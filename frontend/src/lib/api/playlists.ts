@@ -21,6 +21,56 @@ export interface PlaylistTrack {
 	created_at: string;
 	plex_rating_key: string | null;
 	library_file_id: string | null;
+	// "Request all tracks" resolution (#204); absent on older backends.
+	recording_mbid?: string | null;
+	target_release_group_mbid?: string | null;
+	home_tier?: HomeTier | null;
+	resolution_status?: ResolutionStatus | null;
+	flag_options?: HomeOption[] | null;
+}
+
+export type HomeTier =
+	'album' | 'ep' | 'single' | 'soundtrack' | 'artist_compilation' | 'other_compilation' | 'other';
+
+export type ResolutionStatus = 'resolved' | 'flagged' | 'unresolved' | 'chosen';
+
+/** One album a flagged track can come from. */
+export interface HomeOption {
+	kind: 'studio' | 'compilation';
+	recording_mbid: string;
+	release_group_mbid: string;
+	title: string;
+	tier: HomeTier;
+}
+
+export type TrackRequestMode = 'auto' | 'review';
+export type CompilationPolicy = 'match_playlist' | 'studio' | 'flag';
+
+export interface PlaylistTrackRequestSettings {
+	mode: TrackRequestMode;
+	compilation_policy: CompilationPolicy;
+}
+
+export type TrackJobKind = 'resolve' | 'request' | 'resolve_and_request';
+
+export interface TrackRequestJob {
+	playlist_id: string;
+	status: 'started' | 'already_running';
+	job: TrackJobKind;
+	job_id: string | null;
+}
+
+/** What a resolve run decided; ``albums_by_tier`` counts distinct albums. */
+export interface ResolutionSummary {
+	tracks: number;
+	owned: number;
+	chosen: number;
+	resolved: number;
+	flagged: number;
+	unresolved: number;
+	failed: number;
+	albums: number;
+	albums_by_tier: Partial<Record<HomeTier, number>>;
 }
 
 export interface PlaylistSummary {

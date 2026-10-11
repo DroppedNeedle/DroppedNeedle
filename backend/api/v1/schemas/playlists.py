@@ -184,6 +184,9 @@ class TrackRequestJobResponse(AppStruct):
     playlist_id: str
     status: Literal["started", "already_running"]
     job: Literal["resolve", "request", "resolve_and_request"]
+    # Echoed in the job's SSE payload so a client matches the outcome of the
+    # job it started, not a replayed earlier one. None when already running.
+    job_id: str | None = None
 
 
 class ChooseTrackHomeRequest(AppStruct):

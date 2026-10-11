@@ -676,6 +676,7 @@ export const API = {
 	settingsSpotify: () => '/api/v1/settings/spotify',
 	settingsSpotifyRedirectUri: () => '/api/v1/settings/spotify/redirect-uri',
 	settingsGetIt: () => '/api/v1/settings/get-it',
+	settingsPlaylistTrackRequests: () => '/api/v1/settings/playlist-track-requests',
 	settingsFreeMusic: () => '/api/v1/settings/free-music',
 	profile: {
 		get: () => '/api/v1/profile',
@@ -729,7 +730,12 @@ export const API = {
 		checkTracks: () => '/api/v1/playlists/check-tracks',
 		resolveSources: (id: string) => `/api/v1/playlists/${id}/resolve-sources`,
 		share: (id: string) => `/api/v1/playlists/${id}/share`,
-		requestMissing: (id: string) => `/api/v1/playlists/${id}/request-missing`
+		requestMissing: (id: string) => `/api/v1/playlists/${id}/request-missing`,
+		trackRequestSettings: () => '/api/v1/playlists/track-request-settings',
+		resolveTracks: (id: string) => `/api/v1/playlists/${id}/resolve-tracks`,
+		requestTracks: (id: string) => `/api/v1/playlists/${id}/request-tracks`,
+		chooseTrackHome: (id: string, trackId: string) =>
+			`/api/v1/playlists/${id}/tracks/${trackId}/choose-home`
 	},
 	stream: {
 		jellyfin: (itemId: string) => `/api/v1/stream/jellyfin/${itemId}`,

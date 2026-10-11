@@ -177,6 +177,7 @@ async def _run_track_job(
     svc: PlaylistTrackRequestService,
     *,
     job: str,
+    job_id: str,
     playlist_id: str,
     policy: CompilationPolicy,
     user_id: str,
@@ -185,7 +186,11 @@ async def _run_track_job(
 ) -> None:
     """Background resolve and/or request; the outcome goes to the user's SSE
     channel, since a large playlist takes minutes at MusicBrainz's 1 req/s."""
-    payload: dict = {"playlist_id": playlist_id, "event_id": uuid.uuid4().hex}
+    payload: dict = {
+        "playlist_id": playlist_id,
+        "event_id": uuid.uuid4().hex,
+        "job_id": job_id,
+    }
     try:
         if job in ("resolve", "resolve_and_request"):
             summary = await svc.resolve(playlist_id, policy)
@@ -226,10 +231,12 @@ def _start_track_job(
         return TrackRequestJobResponse(
             playlist_id=playlist_id, status="already_running", job=job
         )
+    job_id = uuid.uuid4().hex
     task = asyncio.create_task(
         _run_track_job(
             svc,
             job=job,
+            job_id=job_id,
             playlist_id=playlist_id,
             policy=policy,
             user_id=current_user.id,
@@ -244,7 +251,9 @@ def _start_track_job(
         return TrackRequestJobResponse(
             playlist_id=playlist_id, status="already_running", job=job
         )
-    return TrackRequestJobResponse(playlist_id=playlist_id, status="started", job=job)
+    return TrackRequestJobResponse(
+        playlist_id=playlist_id, status="started", job=job, job_id=job_id
+    )
 
 
 def _summary_view_to_response(

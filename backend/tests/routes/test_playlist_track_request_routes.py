@@ -168,13 +168,15 @@ def test_auto_mode_resolves_then_requests_each_missing_track(env):
     resp = client.post(f"/playlists/{pid}/request-tracks", json={"mode": "auto"})
 
     assert resp.status_code == 202
-    assert resp.json() == {
-        "playlist_id": pid,
-        "status": "started",
-        "job": "resolve_and_request",
-    }
+    body = resp.json()
+    assert (body["playlist_id"], body["status"], body["job"]) == (
+        pid,
+        "started",
+        "resolve_and_request",
+    )
     channel, event, data = _wait(sse)
     assert (channel, event) == (f"user:{OWNER}", "playlist_tracks_requested")
+    assert data["job_id"] == body["job_id"] and len(body["job_id"]) == 32
     assert data["summary"]["albums_by_tier"] == {"album": 2}
     assert data["summary"]["owned"] == 1
     assert data["result"]["requested"] == 2
@@ -254,6 +256,7 @@ def test_second_click_while_running_is_a_no_op(env):
 
     assert first.json()["status"] == "started"
     assert second.json()["status"] == "already_running"
+    assert second.json()["job_id"] is None
 
 
 def test_other_users_playlist_is_refused(env):

@@ -9,6 +9,7 @@
 		isRedactedPlaylist,
 		type PlaylistDetail,
 		type PlaylistDetailItem,
+		type PlaylistTrack,
 		type RedactedPlaylist
 	} from '$lib/api/playlists';
 	import { playlistTrackToQueueItem } from '$lib/player/queueHelpers';
@@ -30,6 +31,7 @@
 	import PlaylistHeader from './PlaylistHeader.svelte';
 	import PlaylistTrackList from './PlaylistTrackList.svelte';
 	import DeletePlaylistModal from './DeletePlaylistModal.svelte';
+	import RequestTracksPanel from './RequestTracksPanel.svelte';
 
 	let { data }: { data: PageData } = $props();
 
@@ -255,6 +257,21 @@
 		playerStore.playQueue(items, startIndex, false);
 	}
 
+	function refreshDetail() {
+		if (!playlist) return;
+		void invalidateQueriesWithPersister({
+			queryKey: PlaylistQueryKeyFactory.detail(authStore.user?.id, playlist.id)
+		});
+	}
+
+	function handleTrackUpdate(updated: PlaylistTrack) {
+		if (!playlist) return;
+		playlist = {
+			...playlist,
+			tracks: playlist.tracks.map((t) => (t.id === updated.id ? { ...t, ...updated } : t))
+		};
+	}
+
 	function handleSourceChange() {
 		if (playlist) invalidateSourcesCache(playlist.id);
 	}
@@ -438,6 +455,14 @@
 						Request {missingAlbumCount === 1 ? 'album' : missingAlbumCount + ' albums'}
 					</button>
 				</div>
+			{/if}
+
+			{#if isOwner}
+				<RequestTracksPanel
+					{playlist}
+					onrefresh={refreshDetail}
+					ontrackupdate={handleTrackUpdate}
+				/>
 			{/if}
 
 			<PlaylistTrackList
