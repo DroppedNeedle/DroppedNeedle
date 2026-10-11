@@ -41,6 +41,7 @@ mod export_envelope;
 mod export_seal;
 mod export_v2;
 mod health;
+mod home_page;
 mod import_migration;
 mod import_pipeline;
 mod import_safety;
