@@ -455,6 +455,8 @@ export const MANAGEMENT_REASON_LABELS: Record<string, string> = {
 	WRITE_FAILED: 'Files could not be written',
 	INTERRUPTED: 'Server stopped before this album finished',
 	NOT_SCHEDULED: 'Not part of the apply',
+	ALBUM_CHANGED: 'Album changed after this preview was planned',
+	SIDECAR_UNREADABLE: 'Album sidecar files could not be read',
 	IDENTITY_NOT_ACCEPTED: 'Identity needs review before organizing',
 	RELEASE_NOT_SELECTED: 'Exact MusicBrainz edition not chosen',
 	TRACK_NOT_MAPPED: 'Exact edition selected; track map missing',

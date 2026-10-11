@@ -530,14 +530,33 @@ fn plan_sidecars(ctx: &PlanContext<'_>, items: &mut [PlannedItem]) {
     if !organization.move_sidecars || organization.sidecar_patterns.is_empty() {
         return;
     }
-    let Some(index) = items.iter().position(|item| {
-        item.desired
-            .plan
-            .as_ref()
-            .is_some_and(|plan| plan.kind == PlanKind::Move)
-    }) else {
-        return;
-    };
+    // Every folder the album's files move out of (one per disc for an
+    // album kept in disc subfolders) takes its own sidecars along.
+    let mut folders = HashSet::new();
+    let firsts: Vec<usize> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            let plan = item.desired.plan.as_ref()?;
+            let folder = Path::new(&plan.source_rel).parent()?.to_path_buf();
+            (plan.kind == PlanKind::Move && folders.insert((plan.source_root.clone(), folder)))
+                .then_some(index)
+        })
+        .collect();
+    let mut seen = HashSet::new();
+    for index in firsts {
+        plan_folder_sidecars(ctx, items, index, &mut seen);
+    }
+}
+
+/// Sidecars of one moving folder, carried by the item at `index`.
+fn plan_folder_sidecars(
+    ctx: &PlanContext<'_>,
+    items: &mut [PlannedItem],
+    index: usize,
+    seen: &mut HashSet<crate::library::publish::CollisionKey>,
+) {
+    let organization = &ctx.pinned.profile.organization;
     let Some(plan) = items[index].desired.plan.clone() else {
         return;
     };
@@ -583,7 +602,6 @@ fn plan_sidecars(ctx: &PlanContext<'_>, items: &mut [PlannedItem]) {
         .filter_map(|item| item.desired.plan.as_ref())
         .map(|plan| collision_key(&plan.dest_root, &plan.dest_rel))
         .collect();
-    let mut seen = HashSet::new();
     let mut sidecars = Vec::new();
     for relative in found {
         let source_rel = format!("{source_dir}/{relative}");
