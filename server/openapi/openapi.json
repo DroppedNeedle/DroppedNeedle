@@ -5590,6 +5590,194 @@
         }
       }
     },
+    "/api/v3/free-music/tasks": {
+      "get": {
+        "tags": [
+          "crate::acquire::free_music::http"
+        ],
+        "summary": "Your Free Music downloads; admins may pass `all=true`.\n`GET /api/v3/free-music/tasks`.",
+        "operationId": "list_tasks_handler",
+        "parameters": [
+          {
+            "name": "all",
+            "in": "path",
+            "description": "Admins: every user's tasks.",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FreeMusicTasksResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "crate::acquire::free_music::http"
+        ],
+        "summary": "Remove finished downloads from your history; admins may pass\n`all=true`. `DELETE /api/v3/free-music/tasks`.",
+        "operationId": "clear_history_handler",
+        "parameters": [
+          {
+            "name": "all",
+            "in": "path",
+            "description": "Admins: every user's tasks.",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FreeMusicHistoryClearResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/free-music/tasks/{task_id}": {
+      "get": {
+        "tags": [
+          "crate::acquire::free_music::http"
+        ],
+        "summary": "One Free Music download. `GET /api/v3/free-music/tasks/{task_id}`.",
+        "operationId": "get_task_handler",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Free Music task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FreeMusicTaskResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "crate::acquire::free_music::http"
+        ],
+        "summary": "Remove one finished download from your history.\n`DELETE /api/v3/free-music/tasks/{task_id}`.",
+        "operationId": "remove_task_handler",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Free Music task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FreeMusicHistoryClearResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/free-music/tasks/{task_id}/cancel": {
+      "post": {
+        "tags": [
+          "crate::acquire::free_music::http"
+        ],
+        "summary": "Stop a download that has not started importing.\n`POST /api/v3/free-music/tasks/{task_id}/cancel`.",
+        "operationId": "cancel_task_handler",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Free Music task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FreeMusicTaskResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/free-music/tasks/{task_id}/retry": {
+      "post": {
+        "tags": [
+          "crate::acquire::free_music::http"
+        ],
+        "summary": "Start a failed or cancelled download again. Sources that already\nfailed are not tried twice. `POST /api/v3/free-music/tasks/{task_id}/retry`.",
+        "operationId": "retry_task_handler",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Free Music task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FreeMusicTaskResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/home": {
       "get": {
         "tags": [
@@ -5940,6 +6128,177 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/import/items/{item_id}/discard": {
+      "post": {
+        "tags": [
+          "crate::acquire::drop_import::http"
+        ],
+        "summary": "Throw a review item's files away.\n`POST /api/v3/import/items/{item_id}/discard`.",
+        "operationId": "discard_item_handler",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "path",
+            "description": "Import item id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DropImportItemResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/import/items/{item_id}/match": {
+      "post": {
+        "tags": [
+          "crate::acquire::drop_import::http"
+        ],
+        "summary": "Import a review item as the album you picked.\n`POST /api/v3/import/items/{item_id}/match`.",
+        "operationId": "match_item_handler",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "path",
+            "description": "Import item id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DropImportMatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DropImportItemResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/import/jobs": {
+      "get": {
+        "tags": [
+          "crate::acquire::drop_import::http"
+        ],
+        "summary": "Your recent import jobs; admins may pass `all=true` for everyone's.\n`GET /api/v3/import/jobs`.",
+        "operationId": "list_jobs_handler",
+        "parameters": [
+          {
+            "name": "all",
+            "in": "path",
+            "description": "Admins: every user's jobs.",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DropImportJobsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/import/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "crate::acquire::drop_import::http"
+        ],
+        "summary": "One import job. `GET /api/v3/import/jobs/{job_id}`.",
+        "operationId": "get_job_handler",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Import job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DropImportJobResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/import/uploads": {
+      "post": {
+        "tags": [
+          "crate::acquire::drop_import::http"
+        ],
+        "summary": "Upload files to import: audio files or `.zip` archives, at most 25\nper drop. Returns the new job; it keeps working in the background.\n`POST /api/v3/import/uploads`.",
+        "operationId": "upload_handler",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/DropUploadForm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DropImportJobResponse"
                 }
               }
             }
@@ -28724,6 +29083,157 @@
           }
         }
       },
+      "DropImportItemResponse": {
+        "type": "object",
+        "description": "One album-shaped folder of an upload. Staged paths never leave the\nserver.",
+        "required": [
+          "id",
+          "folder_name",
+          "status",
+          "updated_at",
+          "files_total",
+          "files_imported"
+        ],
+        "properties": {
+          "album_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artist_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What happened, as one plain sentence."
+          },
+          "files_imported": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "files_total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "folder_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reason_action": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What to do about it."
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Stable reason code when the item stopped short."
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "`processing`, `imported`, `skipped`, `needs_review`, `failed` or\n`discarded`."
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "DropImportJobResponse": {
+        "type": "object",
+        "description": "One upload and its items.",
+        "required": [
+          "id",
+          "status",
+          "created_at",
+          "upload_name",
+          "user_id",
+          "user_name",
+          "items"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the job failed, or notes on what was skipped."
+          },
+          "id": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DropImportItemResponse"
+            }
+          },
+          "status": {
+            "type": "string",
+            "description": "`processing`, `completed` or `failed`."
+          },
+          "upload_name": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "user_name": {
+            "type": "string"
+          }
+        }
+      },
+      "DropImportJobsResponse": {
+        "type": "object",
+        "description": "Newest jobs first.",
+        "required": [
+          "jobs"
+        ],
+        "properties": {
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DropImportJobResponse"
+            }
+          }
+        }
+      },
+      "DropImportMatchRequest": {
+        "type": "object",
+        "description": "The album a person picked for a review item.",
+        "required": [
+          "release_group_mbid"
+        ],
+        "properties": {
+          "release_group_mbid": {
+            "type": "string"
+          }
+        }
+      },
       "DropImportUpdated": {
         "type": "object",
         "description": "`drop_import_updated`: one of the user's drop-import jobs moved.",
@@ -28739,6 +29249,22 @@
           "job_id": {
             "type": "string",
             "description": "The job that moved."
+          }
+        }
+      },
+      "DropUploadForm": {
+        "type": "object",
+        "description": "The upload form: one or more `files` parts (audio or `.zip`).",
+        "required": [
+          "files"
+        ],
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "binary"
+            }
           }
         }
       },
@@ -30131,6 +30657,151 @@
               }
             ],
             "default": "flac"
+          }
+        }
+      },
+      "FreeMusicHistoryClearResponse": {
+        "type": "object",
+        "description": "How many history entries went.",
+        "required": [
+          "cleared"
+        ],
+        "properties": {
+          "cleared": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "FreeMusicTaskResponse": {
+        "type": "object",
+        "description": "One Free Music download.",
+        "required": [
+          "id",
+          "user_id",
+          "kind",
+          "mbid",
+          "artist",
+          "title",
+          "status",
+          "created_at",
+          "updated_at",
+          "identifier",
+          "licence_url",
+          "format",
+          "files_total",
+          "files_completed",
+          "bytes_total",
+          "bytes_downloaded"
+        ],
+        "properties": {
+          "artist": {
+            "type": "string"
+          },
+          "bytes_downloaded": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "bytes_total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed, as one plain sentence."
+          },
+          "error_action": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What to do about it."
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Stable code for the failure."
+          },
+          "files_completed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "files_total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "format": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "identifier": {
+            "type": "string",
+            "description": "The Internet Archive item being downloaded."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`album` or `track`."
+          },
+          "licence_url": {
+            "type": "string"
+          },
+          "mbid": {
+            "type": "string",
+            "description": "Release group (album) or recording (track)."
+          },
+          "quality_snapshot_hash": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The quality policy pinned when the request was made."
+          },
+          "quality_snapshot_summary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "That policy in one line (\"MP3 320 to lossless, FLAC first\")."
+          },
+          "status": {
+            "type": "string",
+            "description": "`searching`, `downloading`, `importing`, `completed`, `failed` or\n`cancelled`."
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        }
+      },
+      "FreeMusicTasksResponse": {
+        "type": "object",
+        "description": "Newest first.",
+        "required": [
+          "tasks"
+        ],
+        "properties": {
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FreeMusicTaskResponse"
+            }
           }
         }
       },

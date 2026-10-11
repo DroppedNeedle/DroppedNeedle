@@ -1,7 +1,6 @@
 import { createMutation } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { LOCAL_KEYS } from '$lib/queries/local/LocalV3Keys';
@@ -9,6 +8,7 @@ import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFact
 import { toastStore } from '$lib/stores/toast';
 
 import { DropImportQueryKeyFactory } from './DropImportQueryKeyFactory';
+import { DROP_IMPORT_ENDPOINTS } from './endpoints';
 import type { DropImportItem, DropImportJob } from './types';
 
 const invalidateJobs = () =>
@@ -27,7 +27,7 @@ export const uploadDropMutation = () =>
 		mutationFn: (files: File[]) => {
 			const form = new FormData();
 			for (const file of files) form.append('files', file, file.name);
-			return api.global.upload<DropImportJob>(API.dropImport.uploads(), form);
+			return api.global.upload<DropImportJob>(DROP_IMPORT_ENDPOINTS.uploads(), form);
 		},
 		onSuccess: async () => {
 			toastStore.show({ message: 'Import started - identifying your files.', type: 'success' });
@@ -41,7 +41,7 @@ export const uploadDropMutation = () =>
 export const matchDropItemMutation = () =>
 	createMutation(() => ({
 		mutationFn: ({ itemId, releaseGroupMbid }: { itemId: number; releaseGroupMbid: string }) =>
-			api.global.post<DropImportItem>(API.dropImport.match(itemId), {
+			api.global.post<DropImportItem>(DROP_IMPORT_ENDPOINTS.match(itemId), {
 				release_group_mbid: releaseGroupMbid
 			}),
 		onSuccess: async (item) => {
@@ -62,7 +62,8 @@ export const matchDropItemMutation = () =>
 
 export const discardDropItemMutation = () =>
 	createMutation(() => ({
-		mutationFn: (itemId: number) => api.global.post<DropImportItem>(API.dropImport.discard(itemId)),
+		mutationFn: (itemId: number) =>
+			api.global.post<DropImportItem>(DROP_IMPORT_ENDPOINTS.discard(itemId)),
 		onSuccess: async () => {
 			toastStore.show({ message: 'Discarded.', type: 'info' });
 			await invalidateJobs();

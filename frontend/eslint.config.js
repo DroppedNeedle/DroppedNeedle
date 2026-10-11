@@ -87,7 +87,7 @@ const transportRules = [
 // registry), grouped by feature: edition conversions, scan diagnostics,
 // reviews, bulk review and management operations, repairs and identity
 // preparations, Library Management recovery, tag editing, baselines,
-// activation dry runs and preview artwork, Free Music and drop import. When a
+// activation dry runs and preview artwork. When a
 // route lands, its call moves onto a v3() template and its builder leaves
 // that file.
 const WAITING_ON_BACKEND = ['src/lib/constants.ts'];

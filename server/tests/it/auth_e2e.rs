@@ -1405,6 +1405,39 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/api/v3/downloads/cutoff-unmet", Posture::Curator),
     ("POST", "/api/v3/downloads/upgrade/album", Posture::Curator),
     ("POST", "/api/v3/downloads/upgrade/track", Posture::Curator),
+    // Drop import: curators only (their own jobs; admins may list all).
+    ("POST", "/api/v3/import/uploads", Posture::Curator),
+    ("GET", "/api/v3/import/jobs", Posture::Curator),
+    ("GET", "/api/v3/import/jobs/{job_id}", Posture::Curator),
+    (
+        "POST",
+        "/api/v3/import/items/{item_id}/match",
+        Posture::Curator,
+    ),
+    (
+        "POST",
+        "/api/v3/import/items/{item_id}/discard",
+        Posture::Curator,
+    ),
+    // Free Music: your own downloads; cancel and retry are curator actions.
+    ("GET", "/api/v3/free-music/tasks", Posture::User),
+    ("DELETE", "/api/v3/free-music/tasks", Posture::User),
+    ("GET", "/api/v3/free-music/tasks/{task_id}", Posture::User),
+    (
+        "DELETE",
+        "/api/v3/free-music/tasks/{task_id}",
+        Posture::User,
+    ),
+    (
+        "POST",
+        "/api/v3/free-music/tasks/{task_id}/cancel",
+        Posture::Curator,
+    ),
+    (
+        "POST",
+        "/api/v3/free-music/tasks/{task_id}/retry",
+        Posture::Curator,
+    ),
     // Stage-4 library reads.
     ("GET", "/api/v3/library/albums", Posture::User),
     ("GET", "/api/v3/library/albums/{id}", Posture::User),
@@ -2501,6 +2534,9 @@ async fn auth_on_every_endpoint() {
                 | ("PUT", "/api/v3/albums/{album_id}/edition")
         ) {
             body = Some(json!({"release_mbid": "e2e-dummy-id"}));
+        }
+        if *template == "/api/v3/import/items/{item_id}/match" {
+            body = Some(json!({"release_group_mbid": "e2e-dummy-id"}));
         }
         // Covers answer SVG/PNG bytes, so the user pass reads them raw;
         // every other row still decodes JSON for the failure message.

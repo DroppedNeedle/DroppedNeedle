@@ -1,33 +1,24 @@
-// Hand-mirrors backend/api/v1/schemas/drop_import.py (snake_case wire format).
+import type { components } from '$lib/api/v3/openapi';
+
+// The generated v3 drop-import schemas, with the status values the server
+// sends spelled out.
 
 export type DropImportJobStatus = 'processing' | 'completed' | 'failed';
 
 export type DropImportItemStatus =
 	'processing' | 'imported' | 'skipped' | 'needs_review' | 'failed' | 'discarded';
 
-export interface DropImportItem {
-	id: number;
-	folder_name: string;
+export type DropImportItem = Omit<components['schemas']['DropImportItemResponse'], 'status'> & {
 	status: DropImportItemStatus;
-	updated_at: number;
-	release_group_mbid: string | null;
-	album_title: string | null;
-	artist_name: string | null;
-	files_total: number;
-	files_imported: number;
-	detail: string | null;
-}
+};
 
-export interface DropImportJob {
-	id: string;
+export type DropImportJob = Omit<
+	components['schemas']['DropImportJobResponse'],
+	'status' | 'items'
+> & {
 	status: DropImportJobStatus;
-	created_at: number;
-	upload_name: string;
-	user_id: string;
-	user_name: string;
-	error: string | null;
 	items: DropImportItem[];
-}
+};
 
 export interface DropImportJobList {
 	jobs: DropImportJob[];

@@ -103,7 +103,7 @@ impl SpaceProbe for FsSpaceProbe {
     }
 }
 
-fn free_bytes_for(dir: &Path) -> Result<u64, PublishError> {
+pub(crate) fn free_bytes_for(dir: &Path) -> Result<u64, PublishError> {
     let text = dir.to_string_lossy().into_owned();
     let cstr = std::ffi::CString::new(text)
         .map_err(|_| PublishError::UnsafePath("root path holds a NUL byte".into()))?;

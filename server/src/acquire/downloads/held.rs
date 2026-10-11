@@ -443,6 +443,8 @@ impl HeldImports {
                 .clone()
                 .unwrap_or_else(|| format!("held-{}", row.id)),
             staging: Some(format!("held-{}", row.id)),
+            origin: crate::acquire::landing::ports::ImportOrigin::Download,
+            extras: Vec::new(),
             release: release.clone(),
             files: vec![ImportFile {
                 path: source.clone(),

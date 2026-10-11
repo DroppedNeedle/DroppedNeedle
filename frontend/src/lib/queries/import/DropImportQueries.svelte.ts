@@ -1,10 +1,10 @@
 import { createQuery } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
 
 import { DropImportQueryKeyFactory } from './DropImportQueryKeyFactory';
+import { DROP_IMPORT_ENDPOINTS } from './endpoints';
 import type { DropImportJobList } from './types';
 
 type Getter<T> = () => T;
@@ -19,7 +19,7 @@ export const getDropImportJobsQuery = (
 	createQuery(() => ({
 		queryKey: DropImportQueryKeyFactory.jobs(authStore.user?.id, getAll()),
 		queryFn: ({ signal }) =>
-			api.global.get<DropImportJobList>(API.dropImport.jobs(getAll()), { signal }),
+			api.global.get<DropImportJobList>(DROP_IMPORT_ENDPOINTS.jobs(getAll()), { signal }),
 		enabled: getEnabled(),
 		refetchInterval: (query: { state: { data?: DropImportJobList } }) =>
 			query.state.data?.jobs.some((job) => job.status === 'processing') ? 2000 : false

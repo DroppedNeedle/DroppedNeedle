@@ -65,7 +65,23 @@ pub struct HttpClientFactory {
     client: Client,
     no_redirect: Client,
     direct: Client,
+    archive: Client,
 }
+
+/// Whether a redirect target stays on the Internet Archive over HTTPS.
+fn archive_host(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+        && url
+            .host_str()
+            .is_some_and(|host| host == "archive.org" || host.ends_with(".archive.org"))
+}
+
+/// The longest the archive client waits for any bytes at all.
+const ARCHIVE_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Redirect hops a file download may take (archive.org hands out a data
+/// node, sometimes through one more hop).
+const ARCHIVE_MAX_REDIRECTS: usize = 10;
 
 impl HttpClientFactory {
     /// Build both clients with the default settings.
@@ -93,7 +109,32 @@ impl HttpClientFactory {
                 .redirect(Policy::none())
                 .no_proxy()
                 .build()?,
+            // Free Music file transfers: no total timeout (an album can take
+            // minutes; the caller times out a stalled chunk instead), and
+            // redirects only within archive.org over HTTPS, checked per hop.
+            archive: Client::builder()
+                .user_agent(settings.user_agent())
+                .connect_timeout(settings.connect_timeout)
+                // Per read, not total: a long transfer is fine, a silent
+                // one (no headers, no bytes) gives up.
+                .read_timeout(ARCHIVE_READ_TIMEOUT)
+                .redirect(Policy::custom(|attempt| {
+                    if attempt.previous().len() >= ARCHIVE_MAX_REDIRECTS {
+                        attempt.error("too many redirects")
+                    } else if archive_host(attempt.url()) {
+                        attempt.follow()
+                    } else {
+                        attempt.stop()
+                    }
+                }))
+                .build()?,
         })
+    }
+
+    /// For long Internet Archive file transfers: no total timeout, and
+    /// redirects followed only within `*.archive.org` over HTTPS.
+    pub fn archive_transfers(&self) -> &Client {
+        &self.archive
     }
 
     /// The shared client for upstreams with default behavior.

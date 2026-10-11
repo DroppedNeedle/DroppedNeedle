@@ -138,6 +138,15 @@
 						{/if}
 						{#if task.error}
 							<p class="mt-0.5 truncate text-xs text-error" title={task.error}>{task.error}</p>
+							{#if task.error_action}
+								<p
+									class="mt-0.5 truncate text-xs text-base-content/50"
+									data-testid="free-music-error-action"
+									title={task.error_action}
+								>
+									{task.error_action}
+								</p>
+							{/if}
 						{/if}
 					</div>
 

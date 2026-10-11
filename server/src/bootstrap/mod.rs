@@ -331,7 +331,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
     // Startup recovery before serving traffic. Re-running after a clean
     // shutdown is a no-op: nothing destructive repeats.
     let recovery = acquire
-        .run_recovery(runtime.wakeups(), runtime.lane())
+        .run_recovery()
         .await
         .map_err(stage("acquire recovery"))?;
     tracing::info!(

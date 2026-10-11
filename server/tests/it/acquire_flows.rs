@@ -16,19 +16,12 @@ use droppedneedle::acquire::flows::{
         SYNC_INTERVAL, SYNC_JOB, SweepDeps, SyncDeps, WantedDeps, WantedSettings, follow_tick,
         interval_seconds, prune_tick, spawn_sync_loop, sweep_tick, sync_tick, wanted_tick,
     },
-    operations::{
-        DROP_IMPORT_JOB, DropImportDeps, FreeMusicDeps, FreeMusicOutcome, FreeMusicRequest,
-        OpState, OpStore, ResolveDecision, create_drop_job, process_drop_job, register_durable_ops,
-        resolve_quarantined_item, run_free_music, settle_free_music, title_containment,
-    },
     seams::{
-        Candidate, DispatchKind, ManualClock, MemoryHandoff, MemoryOrganise, MemoryTicks,
-        ObservedRelease, ScriptedDownloads, ScriptedPoll, ScriptedSearch, ScriptedVerify,
-        SystemClock, VerifyVerdict,
+        Candidate, MemoryTicks, ObservedRelease, ScriptedDownloads, ScriptedPoll, ScriptedSearch,
+        SystemClock,
     },
     stores::{
-        AdminDirectory, FollowStore, LibraryPresence, MemoryWorklist, QuarantineStore, UpgradeItem,
-        UpgradePolicy,
+        AdminDirectory, FollowStore, LibraryPresence, MemoryWorklist, UpgradeItem, UpgradePolicy,
     },
 };
 use droppedneedle::acquire::requests::{
@@ -368,178 +361,6 @@ async fn upgrade_sweep_gates_and_cap() {
     assert_eq!(grabs[0].user_id, "admin-1");
 }
 
-// Drop import: good files resolve, bad sources quarantine durably under a
-// job-prefixed name (a second job's same-named file never overwrites it),
-// and a hand match clears the entry.
-#[tokio::test]
-async fn drop_import_quarantines_and_resolves() {
-    let (runtime, db, dir) = runtime("drop").await;
-    register_durable_ops(runtime.wakeups(), runtime.lane())
-        .await
-        .unwrap();
-    let ops = OpStore::new(db.clone());
-    let staging = dir.join("staging");
-    let ledger = RequestStore::new(db.clone());
-    seed_request(&ledger, "rg-blue", "downloading", None).await;
-    let verify = Arc::new(ScriptedVerify::new());
-    verify.set(
-        "bad.flac",
-        VerifyVerdict::BadSource("wrong album".to_owned()),
-    );
-    let organise = Arc::new(MemoryOrganise::new());
-    let deps = DropImportDeps {
-        verify,
-        organise: organise.clone(),
-        quarantine: QuarantineStore::new(db.clone()),
-        ledger: ledger.clone(),
-        ticks: Arc::new(MemoryTicks::new()),
-        clock: Arc::new(ManualClock::new(NOW)),
-    };
-    let mut jobs = Vec::new();
-    for seq in 1..=2 {
-        let upload_dir = dir.join(format!("upload-{seq}"));
-        std::fs::create_dir_all(&upload_dir).unwrap();
-        let mut uploads = Vec::new();
-        for name in ["good.flac", "bad.flac"] {
-            let path = upload_dir.join(name);
-            std::fs::write(&path, format!("job {seq}")).unwrap();
-            uploads.push((name.to_owned(), path));
-        }
-        let mut job = create_drop_job(
-            runtime.wakeups(),
-            runtime.lane(),
-            &ops,
-            &staging,
-            seq,
-            "user-1",
-            &uploads,
-            NOW,
-        )
-        .await
-        .unwrap();
-        process_drop_job(
-            runtime.wakeups(),
-            runtime.lane(),
-            &ops,
-            &deps,
-            &staging,
-            &mut job,
-            Some("rg-blue"),
-        )
-        .await
-        .unwrap();
-        jobs.push(job);
-    }
-    let held = QuarantineStore::new(db.clone()).list().await.unwrap();
-    assert_eq!(held.len(), 2);
-    for (seq, job) in jobs.iter().enumerate() {
-        let staged = &job.items[1].staged_path;
-        assert_eq!(
-            std::fs::read_to_string(staged).unwrap(),
-            format!("job {}", seq + 1)
-        );
-    }
-    assert_eq!(status_of(&ledger, "rg-blue").await, "imported");
-
-    let matched = resolve_quarantined_item(
-        &deps,
-        &mut jobs[0],
-        "bad.flac",
-        ResolveDecision::Match,
-        None,
-    )
-    .await
-    .unwrap();
-    assert!(matched);
-    assert!(
-        !deps
-            .quarantine
-            .is_quarantined("drop-1:bad.flac")
-            .await
-            .unwrap()
-    );
-    assert_eq!(organise.placements().len(), 3);
-    runtime.shutdown().await;
-}
-
-// Free music runs as a durable operation and lands once its download
-// completes; on restart a drop-import run cut off mid-way is failed while
-// open free-music runs stay for their settle.
-#[tokio::test]
-async fn free_music_lands_and_operations_recover() {
-    let (runtime, db, _dir) = runtime("free-music").await;
-    register_durable_ops(runtime.wakeups(), runtime.lane())
-        .await
-        .unwrap();
-    let ops = OpStore::new(db.clone());
-    let search = Arc::new(ScriptedSearch::new());
-    search.set(
-        "Ketsa",
-        "Live at Freiraum",
-        Ok(vec![Candidate {
-            title: "Live at Freiraum".to_owned(),
-            source: "archive".to_owned(),
-        }]),
-    );
-    let downloads = Arc::new(ScriptedDownloads::new());
-    let handoff = Arc::new(MemoryHandoff::new());
-    let deps = FreeMusicDeps {
-        search,
-        downloads: downloads.clone(),
-        handoff: handoff.clone(),
-        ticks: Arc::new(MemoryTicks::new()),
-        clock: Arc::new(ManualClock::new(NOW)),
-        enabled: true,
-    };
-    let request = FreeMusicRequest {
-        user_id: "user-1".to_owned(),
-        kind: DispatchKind::Album,
-        mbid: "rg-ketsa".to_owned(),
-        artist: "Ketsa".to_owned(),
-        title: "Live at Freiraum".to_owned(),
-    };
-    let FreeMusicOutcome::Pending { op_id, task_id } =
-        run_free_music(runtime.wakeups(), runtime.lane(), &ops, &deps, &request)
-            .await
-            .unwrap()
-    else {
-        panic!("expected pending while downloading");
-    };
-    let drop_op = ops.register(DROP_IMPORT_JOB, "drop-9", NOW).await.unwrap();
-    ops.transition(&drop_op.id, OpState::Running, NOW, "")
-        .await
-        .unwrap();
-
-    let restarted = OpStore::new(db.clone());
-    let report = restarted.recover(NOW + 5).await.unwrap();
-    assert_eq!((report.interrupted, report.resumed), (1, 1));
-    assert_eq!(
-        restarted.get(&drop_op.id).await.unwrap().unwrap().state,
-        OpState::Failed
-    );
-
-    downloads.set_status(&task_id, "completed");
-    let settled = settle_free_music(
-        runtime.wakeups(),
-        runtime.lane(),
-        &restarted,
-        &deps,
-        &op_id,
-        &request,
-    )
-    .await
-    .unwrap();
-    assert!(matches!(settled, FreeMusicOutcome::Landed { .. }));
-    assert_eq!(handoff.landings().len(), 1);
-    // The same request reuses its operation instead of queuing another.
-    let again = restarted
-        .register("free-music", "user-1:rg-ketsa:album", NOW + 10)
-        .await
-        .unwrap();
-    assert_eq!(again.id, op_id);
-    runtime.shutdown().await;
-}
-
 // The sync loop waits its startup delay, runs a pass, sleeps the honest
 // interval and parks the job stopped on shutdown; a shutdown during the
 // delay still parks it stopped without running a pass.
@@ -593,10 +414,9 @@ async fn loop_cadence_and_shutdown() {
     runtime.shutdown().await;
 }
 
-// The wanted recheck table matches v2's age bands, and the free-music
-// title floor keeps unrelated records out.
+// The wanted recheck table matches v2's age bands.
 #[test]
-fn recheck_bands_and_title_floor() {
+fn recheck_bands() {
     let now = 1_716_720_000; // 2024-05-26 UTC
     assert_eq!(interval_seconds(Some("2024-05-20"), 0, now), 2 * 86_400);
     assert_eq!(interval_seconds(Some("2024-04-01"), 0, now), 4 * 86_400);
@@ -604,8 +424,6 @@ fn recheck_bands_and_title_floor() {
     assert_eq!(interval_seconds(Some("2020-01-01"), 0, now), 14 * 86_400);
     assert_eq!(interval_seconds(Some("2020-01-01"), 10, now), 28 * 86_400);
     assert_eq!(interval_seconds(None, 0, now), 14 * 86_400);
-    assert!(title_containment("Blue Lines", "Blue Lines (Deluxe Edition)") >= 0.60);
-    assert!(title_containment("Blue Lines", "Tribute Band Sings Jazz") < 0.60);
 }
 
 /// Spin until the loop records `count` sleep requests.

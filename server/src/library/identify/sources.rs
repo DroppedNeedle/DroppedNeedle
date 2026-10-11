@@ -387,6 +387,15 @@ pub trait FingerprintSource: Send + Sync {
     ) -> BoxFuture<'a, HashMap<String, Vec<String>>> {
         Box::pin(async { HashMap::new() })
     }
+
+    /// Like [`Self::identify_files`], but the releases the heard
+    /// recordings appear on, for identifying an album nobody named.
+    fn identify_file_releases<'a>(
+        &'a self,
+        _files: &'a [(String, PathBuf)],
+    ) -> BoxFuture<'a, HashMap<String, Vec<String>>> {
+        Box::pin(async { HashMap::new() })
+    }
 }
 
 /// No fingerprinting (tests, and wiring without a pool).
@@ -563,6 +572,20 @@ impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
     }
 
     async fn identify_paths(&self, files: &[(String, PathBuf)]) -> HashMap<String, Vec<String>> {
+        self.heard_in_paths(files)
+            .await
+            .into_iter()
+            .filter_map(|(id, heard)| {
+                (!heard.recording_ids.is_empty()).then_some((id, heard.recording_ids))
+            })
+            .collect()
+    }
+
+    /// Print files outside the library and look them up, by caller id.
+    async fn heard_in_paths(
+        &self,
+        files: &[(String, PathBuf)],
+    ) -> HashMap<String, crate::providers::acoustid::BatchMatch> {
         let key = self.api_key();
         if key.is_empty() || files.is_empty() {
             return HashMap::new();
@@ -580,7 +603,7 @@ impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
             .into_iter()
             .filter_map(|(index, heard)| {
                 let (id, _, _) = prints.get(index)?;
-                (!heard.recording_ids.is_empty()).then(|| (id.clone(), heard.recording_ids))
+                Some((id.clone(), heard))
             })
             .collect()
     }
@@ -596,5 +619,20 @@ impl<P: Pacer, S: DegradationSink> FingerprintSource for AcoustIdFingerprints<P,
         files: &'a [(String, PathBuf)],
     ) -> BoxFuture<'a, HashMap<String, Vec<String>>> {
         Box::pin(self.identify_paths(files))
+    }
+
+    fn identify_file_releases<'a>(
+        &'a self,
+        files: &'a [(String, PathBuf)],
+    ) -> BoxFuture<'a, HashMap<String, Vec<String>>> {
+        Box::pin(async move {
+            self.heard_in_paths(files)
+                .await
+                .into_iter()
+                .filter_map(|(id, heard)| {
+                    (!heard.release_ids.is_empty()).then_some((id, heard.release_ids))
+                })
+                .collect()
+        })
     }
 }

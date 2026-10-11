@@ -253,21 +253,5 @@ export const API = {
 			`/api/v1/library/management/recovery/import-bundles/${encodeURIComponent(bundleId)}/resolve`,
 		previewArtwork: (jobId: string, ordinal: number, sha256: string) =>
 			`/api/v1/library/management/previews/${encodeURIComponent(jobId)}/items/${ordinal}/artwork/${encodeURIComponent(sha256)}`
-	},
-	// profile + connections + spotify builders lived here until the profile
-	// seam migration moved them onto the v3 registry (their endpoints.ts
-	// files); only stragglers with out-of-scope consumers remain.
-	freeMusic: {
-		tasks: (all: boolean = false) => `/api/v1/free-music/tasks${all ? '?all=true' : ''}`,
-		remove: (id: string) => `/api/v1/free-music/tasks/${id}`,
-		clearHistory: (all: boolean = false) => `/api/v1/free-music/tasks${all ? '?all=true' : ''}`,
-		cancel: (id: string) => `/api/v1/free-music/tasks/${id}/cancel`,
-		retry: (id: string) => `/api/v1/free-music/tasks/${id}/retry`
-	},
-	dropImport: {
-		uploads: () => '/api/v1/import/uploads',
-		jobs: (all: boolean = false) => `/api/v1/import/jobs${all ? '?all=true' : ''}`,
-		match: (itemId: number) => `/api/v1/import/items/${itemId}/match`,
-		discard: (itemId: number) => `/api/v1/import/items/${itemId}/discard`
 	}
 } as const;

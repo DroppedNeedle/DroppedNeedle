@@ -273,11 +273,17 @@ fn adopt_track(
             track.track_id
         )));
     }
-    // Provenance, as v2 recorded it: which download brought the file.
+    // Provenance, as v2 recorded it: how the file came in, and which
+    // download (if any) brought it.
     conn.execute(
-        "UPDATE local_tracks SET ingest_source = 'download', download_task_id = ?2, \
+        "UPDATE local_tracks SET ingest_source = ?4, download_task_id = ?2, \
          source_path = ?3 WHERE id = ?1",
-        rusqlite::params![adopted, adoption.download_task_id, adoption.source_path],
+        rusqlite::params![
+            adopted,
+            adoption.download_task_id,
+            adoption.source_path,
+            adoption.ingest_source
+        ],
     )?;
     Ok(())
 }

@@ -59,14 +59,51 @@ pub struct ImportSource {
     pub track: usize,
 }
 
-/// A verified download to put in the library.
+/// A file that came with an album but is none of the release's tracks (a
+/// bonus track MusicBrainz lacks). It is filed with the album under its
+/// own title and number, with no track identity (v2 drop import "extra
+/// files kept alongside the album").
+#[derive(Debug, Clone)]
+pub struct ExtraSource {
+    pub path: PathBuf,
+    pub title: String,
+    pub disc: u32,
+    pub position: u32,
+}
+
+/// Where imported files come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ImportOrigin {
+    /// A finished download; `task_id` is its download task.
+    #[default]
+    Download,
+    /// Files a person uploaded (drop import); `task_id` names the drop
+    /// item and is not a download task.
+    Drop,
+}
+
+impl ImportOrigin {
+    /// The catalog's `ingest_source` value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Download => "download",
+            Self::Drop => "drop",
+        }
+    }
+}
+
+/// Verified files to put in the library.
 #[derive(Debug, Clone)]
 pub struct DownloadImport {
+    /// Names the hidden import folder; for a download, its task id.
     pub task_id: String,
+    pub origin: ImportOrigin,
     /// Staging folder name when it must differ from the task id.
     pub staging: Option<String>,
     pub release: Release,
     pub files: Vec<ImportSource>,
+    /// Extra files, after `files` in request order.
+    pub extras: Vec<ExtraSource>,
 }
 
 /// Where the files went.
@@ -96,7 +133,8 @@ struct Placement {
     /// Index in the request.
     index: usize,
     source: PathBuf,
-    track: usize,
+    /// The release track, or a stand-in for an extra file (empty ids).
+    track: super::matching::ReleaseTrack,
     staged_rel: String,
     dest_rel: String,
     format: String,
@@ -108,7 +146,7 @@ impl LibrarySetup {
     /// run it off the async runtime.
     pub fn import_download(&self, import: &DownloadImport) -> Result<ImportedAlbum, ImportError> {
         let fault = |message: String| ImportError::LocalFault(message);
-        if import.files.is_empty() {
+        if import.files.is_empty() && import.extras.is_empty() {
             return Err(fault("nothing to import".to_owned()));
         }
         let registry = self.live_registry();
@@ -129,12 +167,28 @@ impl LibrarySetup {
             "{HIDDEN_PREFIX}import/{}",
             safe_name(import.staging.as_deref().unwrap_or(&import.task_id))
         );
-        let mut placements = Vec::with_capacity(import.files.len());
-        for (ordinal, file) in import.files.iter().enumerate() {
+        let mut sources = Vec::with_capacity(import.files.len() + import.extras.len());
+        for file in &import.files {
             let track = import.release.tracks.get(file.track).ok_or_else(|| {
                 fault("a file names a track the release does not have".to_owned())
             })?;
-            let format = super::tags::format_for_path(&file.path)
+            sources.push((&file.path, track.clone()));
+        }
+        for extra in &import.extras {
+            sources.push((
+                &extra.path,
+                super::matching::ReleaseTrack {
+                    title: extra.title.clone(),
+                    disc: extra.disc.max(1),
+                    position: extra.position,
+                    ..super::matching::ReleaseTrack::default()
+                },
+            ));
+        }
+        let mut placements = Vec::with_capacity(sources.len());
+        for (ordinal, (path, track)) in sources.into_iter().enumerate() {
+            let track = &track;
+            let format = super::tags::format_for_path(path)
                 .map_err(|error| fault(format!("unsupported file: {error}")))?
                 .as_str()
                 .to_owned();
@@ -167,15 +221,15 @@ impl LibrarySetup {
                 })
             });
             if !super::tags::save::writable(
-                super::tags::format_for_path(&file.path)
+                super::tags::format_for_path(path)
                     .map_err(|error| fault(format!("unsupported file: {error}")))?,
             ) {
                 tags.clear();
             }
             placements.push(Placement {
                 index: ordinal,
-                source: file.path.clone(),
-                track: file.track,
+                source: path.clone(),
+                track: track.clone(),
                 staged_rel: format!("{task_dir}/{ordinal:03}.{format}"),
                 dest_rel: naming::render(&template, &fields),
                 format,
@@ -235,8 +289,10 @@ impl LibrarySetup {
         let dest_policy = |dest_rel: &str| super::publish::planner::Adoption {
             policy: root.policy_for(&root.path.join(dest_rel)),
             policy_revision: registry.policy_revision().to_owned(),
-            download_task_id: Some(import.task_id.clone()),
+            download_task_id: (import.origin == ImportOrigin::Download)
+                .then(|| import.task_id.clone()),
             source_path: None,
+            ingest_source: import.origin.as_str().to_owned(),
         };
         let result = (|| {
             let mut items = Vec::with_capacity(placements.len());
@@ -247,7 +303,7 @@ impl LibrarySetup {
                     .map_err(|error| fault(error.to_string()))?;
                 let fingerprint = copy_in(&placement.source, &staged)
                     .map_err(|error| fault(format!("copy into the library failed: {error}")))?;
-                let track = &import.release.tracks[placement.track];
+                let track = &placement.track;
                 let track_id = super::scan::sqlite_store::adoptable_track_id(
                     open.publisher.connection(),
                     &root.id,
@@ -287,7 +343,7 @@ impl LibrarySetup {
                     }),
                 });
             }
-            write_provenance(&staged_dir, &import.task_id, &placements)
+            write_provenance(&staged_dir, import, &placements)
                 .map_err(|error| fault(format!("import provenance not written: {error}")))?;
             let catalog_revision = SqliteCatalog
                 .revision(open.publisher.connection())
@@ -398,6 +454,10 @@ impl LibrarySetup {
             );
         }
         for item in &bundle.items {
+            // Extra files carry no recording: nothing to seal.
+            if item.identity.recording_mbid.is_empty() {
+                continue;
+            }
             let current = store.track_identity(&item.track_id);
             if current
                 .as_ref()
@@ -448,13 +508,21 @@ struct Provenance {
     task_id: String,
     /// Staged file name to the downloaded file it copies.
     sources: BTreeMap<String, String>,
+    /// `download` or `drop`; empty in records written before drop imports.
+    #[serde(default)]
+    ingest_source: String,
 }
 
 /// Record the task and each staged copy's source, synced, before publish.
-fn write_provenance(dir: &Path, task_id: &str, placements: &[Placement]) -> std::io::Result<()> {
+fn write_provenance(
+    dir: &Path,
+    import: &DownloadImport,
+    placements: &[Placement],
+) -> std::io::Result<()> {
     use std::io::Write as _;
     let provenance = Provenance {
-        task_id: task_id.to_owned(),
+        task_id: import.task_id.clone(),
+        ingest_source: import.origin.as_str().to_owned(),
         sources: placements
             .iter()
             .filter_map(|placement| {
@@ -473,23 +541,53 @@ fn write_provenance(dir: &Path, task_id: &str, placements: &[Placement]) -> std:
     file.sync_all()
 }
 
-/// The download task and source path recorded for a staged import copy
-/// (`None`s when the record is gone).
-pub(crate) fn recovered_provenance(staged: &Path) -> (Option<String>, Option<String>) {
+/// What a resumed commit learns from an import's provenance record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Recovered {
+    /// The download task, for a download import.
+    pub task_id: Option<String>,
+    pub source_path: Option<String>,
+    /// `download` or `drop`.
+    pub ingest_source: String,
+}
+
+impl Default for Recovered {
+    fn default() -> Self {
+        Self {
+            task_id: None,
+            source_path: None,
+            ingest_source: ImportOrigin::Download.as_str().to_owned(),
+        }
+    }
+}
+
+/// The provenance recorded for a staged import copy (download defaults
+/// when the record is gone).
+pub(crate) fn recovered_provenance(staged: &Path) -> Recovered {
     let Some(dir) = staged.parent() else {
-        return (None, None);
+        return Recovered::default();
     };
     let Some(provenance) = std::fs::read(dir.join(PROVENANCE_FILE))
         .ok()
         .and_then(|body| serde_json::from_slice::<Provenance>(&body).ok())
     else {
-        return (None, None);
+        return Recovered::default();
     };
-    let source = staged
+    let source_path = staged
         .file_name()
         .and_then(|name| provenance.sources.get(name.to_string_lossy().as_ref()))
         .cloned();
-    (Some(provenance.task_id).filter(|id| !id.is_empty()), source)
+    let origin = if provenance.ingest_source == ImportOrigin::Drop.as_str() {
+        ImportOrigin::Drop
+    } else {
+        ImportOrigin::Download
+    };
+    Recovered {
+        task_id: Some(provenance.task_id)
+            .filter(|id| !id.is_empty() && origin == ImportOrigin::Download),
+        source_path,
+        ingest_source: origin.as_str().to_owned(),
+    }
 }
 
 /// Copy one landed file into the hidden import folder, synced, hashing

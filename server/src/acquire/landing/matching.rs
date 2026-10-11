@@ -416,10 +416,13 @@ pub fn plan(summary: &MatchSummary, target: &Target, files: usize) -> FilePlan {
             continue;
         }
         let track = &found.release.tracks[pair.track];
-        if summary.owns(track) {
-            out.owned.push(pair.local);
-        } else if pair.distance > ACCEPT_TRACK {
+        // A file too far from its track is held even when the library
+        // owns that track: it may be another song, and an upgrade must
+        // never replace the owned copy with it.
+        if pair.distance > ACCEPT_TRACK {
             out.held.push((pair.local, pair.track));
+        } else if summary.owns(track) {
+            out.owned.push(pair.local);
         } else {
             out.import.push((pair.local, pair.track));
         }

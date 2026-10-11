@@ -140,6 +140,15 @@
 											{item.detail}
 										</p>
 									{/if}
+									{#if item.reason_action && item.status !== 'imported'}
+										<p
+											class="mt-0.5 truncate text-xs text-base-content/40"
+											data-testid="drop-import-reason-action"
+											title={item.reason_action}
+										>
+											{item.reason_action}
+										</p>
+									{/if}
 								</div>
 								{#if item.status === 'needs_review'}
 									<div class="flex shrink-0 items-center gap-1">

@@ -158,19 +158,34 @@ pub struct Adoption {
     pub download_task_id: Option<String>,
     /// Where the file was downloaded to.
     pub source_path: Option<String>,
+    /// How the file came in: `download` (a finished download) or `drop`
+    /// (files a person uploaded). Bundles journaled before drop imports
+    /// existed read as downloads.
+    #[serde(default = "Adoption::download_source")]
+    pub ingest_source: String,
 }
 
 impl Adoption {
     /// What a resumed commit knows: the provenance the import recorded
     /// next to its staged copies, and the automatic policy (the next scan
     /// re-reads the policy).
-    pub fn recovered(download_task_id: Option<String>, source_path: Option<String>) -> Self {
+    pub fn recovered(
+        download_task_id: Option<String>,
+        source_path: Option<String>,
+        ingest_source: String,
+    ) -> Self {
         Self {
             policy: crate::library::scan::models::EffectivePolicy::Automatic,
             policy_revision: String::new(),
             download_task_id,
             source_path,
+            ingest_source,
         }
+    }
+
+    /// The ingest source of a finished download.
+    pub fn download_source() -> String {
+        "download".to_owned()
     }
 }
 

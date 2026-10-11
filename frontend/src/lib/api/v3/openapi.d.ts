@@ -2789,6 +2789,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/free-music/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Your Free Music downloads; admins may pass `all=true`.
+         *     `GET /api/v3/free-music/tasks`.
+         */
+        get: operations["list_tasks_handler"];
+        put?: never;
+        post?: never;
+        /**
+         * Remove finished downloads from your history; admins may pass
+         *     `all=true`. `DELETE /api/v3/free-music/tasks`.
+         */
+        delete: operations["clear_history_handler"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/free-music/tasks/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One Free Music download. `GET /api/v3/free-music/tasks/{task_id}`. */
+        get: operations["get_task_handler"];
+        put?: never;
+        post?: never;
+        /**
+         * Remove one finished download from your history.
+         *     `DELETE /api/v3/free-music/tasks/{task_id}`.
+         */
+        delete: operations["remove_task_handler"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/free-music/tasks/{task_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop a download that has not started importing.
+         *     `POST /api/v3/free-music/tasks/{task_id}/cancel`.
+         */
+        post: operations["cancel_task_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/free-music/tasks/{task_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a failed or cancelled download again. Sources that already
+         *     failed are not tried twice. `POST /api/v3/free-music/tasks/{task_id}/retry`.
+         */
+        post: operations["retry_task_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/home": {
         parameters: {
             query?: never;
@@ -2888,6 +2973,104 @@ export interface paths {
         get: operations["your_top_albums"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/import/items/{item_id}/discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Throw a review item's files away.
+         *     `POST /api/v3/import/items/{item_id}/discard`.
+         */
+        post: operations["discard_item_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/import/items/{item_id}/match": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import a review item as the album you picked.
+         *     `POST /api/v3/import/items/{item_id}/match`.
+         */
+        post: operations["match_item_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/import/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Your recent import jobs; admins may pass `all=true` for everyone's.
+         *     `GET /api/v3/import/jobs`.
+         */
+        get: operations["list_jobs_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/import/jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One import job. `GET /api/v3/import/jobs/{job_id}`. */
+        get: operations["get_job_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/import/uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload files to import: audio files or `.zip` archives, at most 25
+         *     per drop. Returns the new job; it keeps working in the background.
+         *     `POST /api/v3/import/uploads`.
+         */
+        post: operations["upload_handler"];
         delete?: never;
         options?: never;
         head?: never;
@@ -12310,12 +12493,67 @@ export interface components {
              */
             reason: string;
         };
+        /**
+         * @description One album-shaped folder of an upload. Staged paths never leave the
+         *     server.
+         */
+        DropImportItemResponse: {
+            album_title?: string | null;
+            artist_name?: string | null;
+            /** @description What happened, as one plain sentence. */
+            detail?: string | null;
+            /** Format: int64 */
+            files_imported: number;
+            /** Format: int64 */
+            files_total: number;
+            folder_name: string;
+            /** Format: int64 */
+            id: number;
+            /** @description What to do about it. */
+            reason_action?: string | null;
+            /** @description Stable reason code when the item stopped short. */
+            reason_code?: string | null;
+            release_group_mbid?: string | null;
+            /**
+             * @description `processing`, `imported`, `skipped`, `needs_review`, `failed` or
+             *     `discarded`.
+             */
+            status: string;
+            /** Format: double */
+            updated_at: number;
+        };
+        /** @description One upload and its items. */
+        DropImportJobResponse: {
+            /** Format: double */
+            created_at: number;
+            /** @description Why the job failed, or notes on what was skipped. */
+            error?: string | null;
+            id: string;
+            items: components["schemas"]["DropImportItemResponse"][];
+            /** @description `processing`, `completed` or `failed`. */
+            status: string;
+            upload_name: string;
+            user_id: string;
+            user_name: string;
+        };
+        /** @description Newest jobs first. */
+        DropImportJobsResponse: {
+            jobs: components["schemas"]["DropImportJobResponse"][];
+        };
+        /** @description The album a person picked for a review item. */
+        DropImportMatchRequest: {
+            release_group_mbid: string;
+        };
         /** @description `drop_import_updated`: one of the user's drop-import jobs moved. */
         DropImportUpdated: {
             /** @description Id for de-duplication. */
             event_id: string;
             /** @description The job that moved. */
             job_id: string;
+        };
+        /** @description The upload form: one or more `files` parts (audio or `.zip`). */
+        DropUploadForm: {
+            files: string[];
         };
         DuplicateCandidate: {
             artist_name?: string;
@@ -12972,6 +13210,57 @@ export interface components {
             enabled: boolean;
             /** @default flac */
             preferred_format: components["schemas"]["AudioFormat"];
+        };
+        /** @description How many history entries went. */
+        FreeMusicHistoryClearResponse: {
+            /** Format: int64 */
+            cleared: number;
+        };
+        /** @description One Free Music download. */
+        FreeMusicTaskResponse: {
+            artist: string;
+            /** Format: int64 */
+            bytes_downloaded: number;
+            /** Format: int64 */
+            bytes_total: number;
+            /** Format: double */
+            created_at: number;
+            /** @description Why it failed, as one plain sentence. */
+            error?: string | null;
+            /** @description What to do about it. */
+            error_action?: string | null;
+            /** @description Stable code for the failure. */
+            error_code?: string | null;
+            /** Format: int64 */
+            files_completed: number;
+            /** Format: int64 */
+            files_total: number;
+            format: string;
+            id: string;
+            /** @description The Internet Archive item being downloaded. */
+            identifier: string;
+            /** @description `album` or `track`. */
+            kind: string;
+            licence_url: string;
+            /** @description Release group (album) or recording (track). */
+            mbid: string;
+            /** @description The quality policy pinned when the request was made. */
+            quality_snapshot_hash?: string | null;
+            /** @description That policy in one line ("MP3 320 to lossless, FLAC first"). */
+            quality_snapshot_summary?: string | null;
+            /**
+             * @description `searching`, `downloading`, `importing`, `completed`, `failed` or
+             *     `cancelled`.
+             */
+            status: string;
+            title: string;
+            /** Format: double */
+            updated_at: number;
+            user_id: string;
+        };
+        /** @description Newest first. */
+        FreeMusicTasksResponse: {
+            tasks: components["schemas"]["FreeMusicTaskResponse"][];
         };
         /** @description `free_music_updated`: one of the user's Free Music tasks moved. */
         FreeMusicUpdated: {
@@ -26516,6 +26805,138 @@ export interface operations {
             };
         };
     };
+    list_tasks_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Admins: every user's tasks. */
+                all: boolean;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FreeMusicTasksResponse"];
+                };
+            };
+        };
+    };
+    clear_history_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Admins: every user's tasks. */
+                all: boolean;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FreeMusicHistoryClearResponse"];
+                };
+            };
+        };
+    };
+    get_task_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Free Music task id */
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FreeMusicTaskResponse"];
+                };
+            };
+        };
+    };
+    remove_task_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Free Music task id */
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FreeMusicHistoryClearResponse"];
+                };
+            };
+        };
+    };
+    cancel_task_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Free Music task id */
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FreeMusicTaskResponse"];
+                };
+            };
+        };
+    };
+    retry_task_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Free Music task id */
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FreeMusicTaskResponse"];
+                };
+            };
+        };
+    };
     get_home: {
         parameters: {
             query?: never;
@@ -26775,6 +27196,121 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    discard_item_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Import item id */
+                item_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DropImportItemResponse"];
+                };
+            };
+        };
+    };
+    match_item_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Import item id */
+                item_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DropImportMatchRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DropImportItemResponse"];
+                };
+            };
+        };
+    };
+    list_jobs_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Admins: every user's jobs. */
+                all: boolean;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DropImportJobsResponse"];
+                };
+            };
+        };
+    };
+    get_job_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Import job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DropImportJobResponse"];
+                };
+            };
+        };
+    };
+    upload_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["DropUploadForm"];
+            };
+        };
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DropImportJobResponse"];
                 };
             };
         };

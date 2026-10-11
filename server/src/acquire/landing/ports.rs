@@ -22,6 +22,8 @@ pub struct OwnedTracks {
     pub recordings: HashSet<String>,
 }
 
+pub use crate::library::import::ExtraSource as ExtraFile;
+
 /// One landed file to publish, and the release track it is.
 #[derive(Debug, Clone)]
 pub struct ImportFile {
@@ -29,6 +31,8 @@ pub struct ImportFile {
     /// Index into [`ImportRequest::release`]'s tracks.
     pub track: usize,
 }
+
+pub use crate::library::import::ImportOrigin;
 
 /// A library file holding a track an upgrade may replace.
 #[derive(Debug, Clone)]
@@ -44,13 +48,18 @@ pub use crate::library::mutations::Recycled;
 /// A verified download to publish into the library.
 #[derive(Debug, Clone)]
 pub struct ImportRequest {
+    /// The download task, or the drop item, the files came from.
     pub task_id: String,
+    pub origin: ImportOrigin,
     /// Name of the hidden staging folder, when it must differ from the
     /// task id (a held file imported while its task may land again).
     pub staging: Option<String>,
     /// The matched release; files are tagged from it.
     pub release: Release,
     pub files: Vec<ImportFile>,
+    /// Files filed with the album that are none of its tracks; their
+    /// request indexes follow `files`.
+    pub extras: Vec<ExtraFile>,
 }
 
 /// What the library did with an import.
@@ -144,6 +153,25 @@ pub trait LandingLibrary: Send + Sync {
         &self,
         files: Vec<(String, PathBuf)>,
     ) -> BoxFuture<'_, HashMap<String, Vec<String>>>;
+
+    /// Releases of one release group, best known first, for matching
+    /// files a person assigned to that album by hand. Empty when the
+    /// source cannot list them.
+    fn group_releases<'a>(
+        &'a self,
+        _release_group_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    /// AcoustID releases each file's audio appears on, by the caller's
+    /// key. Empty when no AcoustID key is set or nothing was heard.
+    fn fingerprint_releases(
+        &self,
+        _files: Vec<(String, PathBuf)>,
+    ) -> BoxFuture<'_, HashMap<String, Vec<String>>> {
+        Box::pin(async { HashMap::new() })
+    }
 
     /// The library root folders; landed paths inside them are refused.
     fn library_dirs(&self) -> Vec<PathBuf>;

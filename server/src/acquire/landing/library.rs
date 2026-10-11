@@ -12,7 +12,7 @@ use sqlx::SqlitePool;
 use super::ports::{
     ImportFailure, ImportReceipt, ImportRequest, LandingLibrary, OwnedCopy, OwnedTracks, Recycled,
 };
-use crate::library::identify::sources::{ReleaseHit, ReleaseSource, SourceError};
+use crate::library::identify::sources::{EditionQuery, ReleaseHit, ReleaseSource, SourceError};
 use crate::library::import::{DownloadImport, ImportError, ImportSource};
 use crate::library::matching::Release;
 use crate::library::mutations::{MutationError, Mutations};
@@ -296,6 +296,44 @@ impl LandingLibrary for LibraryLanding {
         })
     }
 
+    fn group_releases<'a>(
+        &'a self,
+        release_group_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
+        Box::pin(async move {
+            let query = EditionQuery {
+                title: String::new(),
+                artist: String::new(),
+                release_group_mbid: Some(release_group_mbid.to_owned()),
+                limit: 25,
+                offset: 0,
+            };
+            let page = self.releases.search_editions(&query).await?;
+            Ok(page
+                .items
+                .into_iter()
+                .map(|edition| ReleaseHit {
+                    id: edition.release_mbid,
+                    release_group_id: edition.release_group_mbid,
+                    score: edition.score,
+                    track_count: (edition.track_count > 0).then_some(edition.track_count),
+                })
+                .collect())
+        })
+    }
+
+    fn fingerprint_releases(
+        &self,
+        files: Vec<(String, PathBuf)>,
+    ) -> BoxFuture<'_, HashMap<String, Vec<String>>> {
+        Box::pin(async move {
+            match &self.library.fingerprints {
+                Some(source) => source.identify_file_releases(&files).await,
+                None => HashMap::new(),
+            }
+        })
+    }
+
     fn library_dirs(&self) -> Vec<PathBuf> {
         self.library
             .live_registry()
@@ -313,6 +351,8 @@ impl LandingLibrary for LibraryLanding {
             let library = self.library.clone();
             let import = DownloadImport {
                 task_id: request.task_id,
+                origin: request.origin,
+                extras: request.extras,
                 staging: request.staging,
                 release: request.release,
                 files: request

@@ -507,6 +507,8 @@ impl LandingService {
             let request = ImportRequest {
                 staging: None,
                 task_id: task.id.clone(),
+                origin: self::ports::ImportOrigin::Download,
+                extras: Vec::new(),
                 release: found.release.clone(),
                 files: plan
                     .import
@@ -1051,7 +1053,7 @@ fn confine(reported: Vec<Reported>, libraries: &[PathBuf]) -> Vec<Reported> {
 }
 
 /// Library folders as the filesystem resolves them.
-fn canonical_dirs(dirs: &[PathBuf]) -> Vec<PathBuf> {
+pub(crate) fn canonical_dirs(dirs: &[PathBuf]) -> Vec<PathBuf> {
     dirs.iter()
         .map(|dir| {
             dir.canonicalize()

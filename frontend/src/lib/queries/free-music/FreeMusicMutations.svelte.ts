@@ -1,11 +1,11 @@
 import { createMutation } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
 
 import { FreeMusicQueryKeyFactory } from './FreeMusicQueryKeyFactory';
+import { FREE_MUSIC_ENDPOINTS } from './endpoints';
 import type { FreeMusicTask } from './types';
 
 const invalidateTasks = () =>
@@ -13,7 +13,8 @@ const invalidateTasks = () =>
 
 export const cancelFreeMusicMutation = () =>
 	createMutation(() => ({
-		mutationFn: (taskId: string) => api.global.post<FreeMusicTask>(API.freeMusic.cancel(taskId)),
+		mutationFn: (taskId: string) =>
+			api.global.post<FreeMusicTask>(FREE_MUSIC_ENDPOINTS.cancel(taskId)),
 		onSuccess: async () => {
 			toastStore.show({ message: 'Download cancelled.', type: 'info' });
 			await invalidateTasks();
@@ -25,7 +26,8 @@ export const cancelFreeMusicMutation = () =>
 
 export const retryFreeMusicMutation = () =>
 	createMutation(() => ({
-		mutationFn: (taskId: string) => api.global.post<FreeMusicTask>(API.freeMusic.retry(taskId)),
+		mutationFn: (taskId: string) =>
+			api.global.post<FreeMusicTask>(FREE_MUSIC_ENDPOINTS.retry(taskId)),
 		onSuccess: async () => {
 			toastStore.show({ message: 'Trying again.', type: 'success' });
 			await invalidateTasks();
@@ -38,7 +40,7 @@ export const retryFreeMusicMutation = () =>
 export const removeFreeMusicHistoryMutation = () =>
 	createMutation(() => ({
 		mutationFn: (taskId: string) =>
-			api.global.delete<{ cleared: number }>(API.freeMusic.remove(taskId)),
+			api.global.delete<{ cleared: number }>(FREE_MUSIC_ENDPOINTS.remove(taskId)),
 		onSuccess: async () => {
 			toastStore.show({ message: 'Removed from Free Music history.', type: 'info' });
 			await invalidateTasks();
@@ -54,7 +56,7 @@ export const removeFreeMusicHistoryMutation = () =>
 export const clearFreeMusicHistoryMutation = () =>
 	createMutation(() => ({
 		mutationFn: (all: boolean) =>
-			api.global.delete<{ cleared: number }>(API.freeMusic.clearHistory(all)),
+			api.global.delete<{ cleared: number }>(FREE_MUSIC_ENDPOINTS.clearHistory(all)),
 		onSuccess: async ({ cleared }) => {
 			toastStore.show({
 				message:

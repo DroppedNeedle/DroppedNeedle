@@ -21,20 +21,21 @@ use super::db::AcquireDb;
 use super::dispatch::{Journal, RetryPolicySource, UnifiedDispatch};
 use super::downloads::orphans::RecycleBin;
 use super::downloads::watchdog::{RetryPolicy, WatchdogConfig};
+use super::drop_import::DropImports;
+use super::drop_import::store::DropStore;
 use super::flows::loops::{
     FollowDeps, PruneDeps, PruneSettings, SweepDeps, SyncDeps, ThreadJitter, TokioSleeper,
     WantedDeps, WantedSettings, register_ephemeral_loop, spawn_follow_loop, spawn_prune_loop,
     spawn_sweep_loop, spawn_sync_loop, spawn_wanted_loop,
 };
-use super::flows::operations::{DropImportDeps, OpStore, register_durable_ops};
-use super::flows::seams::{
-    Candidate, CandidateSearch, Clock, DropVerify, LibraryOrganise, MemoryHandoff, SystemClock,
-    TickSink, VerifyVerdict,
-};
+use super::flows::seams::{Candidate, CandidateSearch, Clock, SystemClock, TickSink};
 use super::flows::stores::{
-    AdminDirectory, FollowStore as FlowsFollowStore, LibraryPresence, QuarantineStore,
-    UpgradePolicy, UpgradeWorklist,
+    AdminDirectory, FollowStore as FlowsFollowStore, LibraryPresence, UpgradePolicy,
+    UpgradeWorklist,
 };
+use super::free_music::archive::LiveArchive;
+use super::free_music::store::FreeMusicStore;
+use super::free_music::{FreeMusic as FreeMusicService, FreeMusicSettings};
 use super::imports::handlers::{
     ImportsDeps, imports_callback_router, imports_gated_router, imports_legacy_callback_router,
 };
@@ -87,8 +88,8 @@ use crate::runtime_config::secret_sections::{
     ProwlarrConnection, SecretSection, SlskdConnection, TypedLibrary,
 };
 use crate::runtime_config::sections::{
-    DownloadPolicy, FreeMusic, Section, SourcePriority, UsenetBackendSetting, UserPreferences,
-    WantedWatcher,
+    AudioFormat, DownloadPolicy, FreeMusic, Section, SourcePriority, UsenetBackendSetting,
+    UserPreferences, WantedWatcher,
 };
 
 /// Spotify API bases (v2 `spotify_client.py`).
@@ -405,6 +406,10 @@ pub struct AcquireSetup {
     pub landing: Arc<LandingService>,
     /// Manual album searches over the worker's live sources.
     pub search_jobs: Arc<SearchJobs>,
+    /// Drop import: uploaded music into the library.
+    pub drops: Arc<DropImports>,
+    /// Free Music: lawful Internet Archive downloads.
+    pub free_music: Arc<FreeMusicService>,
 }
 
 /// Flows stores plus the loop deps built over them.
@@ -418,19 +423,12 @@ pub struct FlowsBundle {
     pub follows: FlowsFollowStore,
     /// Upgrade worklist, read from the catalog.
     pub worklist: UpgradeWorklist,
-    /// Drop-import quarantine.
-    pub quarantine: QuarantineStore,
     /// Library presence, read from the catalog.
     pub library: Arc<LibraryPresence>,
     /// Sweep ownership directory, read from the accounts.
     pub admins: AdminDirectory,
     /// Plugin ticks.
     pub ticks: Arc<dyn TickSink>,
-    /// Free-music landing handoff (memory records; file staging waits on
-    /// the path-carrying handoff).
-    pub handoff: Arc<MemoryHandoff>,
-    /// Durable operation records.
-    pub ops: OpStore,
     /// Wanted-watcher deps.
     pub wanted_deps: Arc<WantedDeps>,
     /// Follow-poll deps.
@@ -443,75 +441,35 @@ pub struct FlowsBundle {
     pub sync_deps: Arc<SyncDeps>,
 }
 
-impl FlowsBundle {
-    /// Production drop-import deps over the shared stores: extension
-    /// verify plus resolve-into-staging organise (the library engine owns
-    /// real identification and placement).
-    pub fn drop_deps(&self, staging_root: &Path) -> DropImportDeps {
-        DropImportDeps {
-            verify: Arc::new(ExtensionVerify),
-            organise: Arc::new(StagingOrganise::new(staging_root.to_owned())),
-            quarantine: self.quarantine.clone(),
-            ledger: self.ledger.clone(),
-            ticks: self.ticks.clone(),
-            clock: Arc::new(SystemClock),
-        }
-    }
+/// The drop-import service over the landing's library port, a staging
+/// folder of its own, and the request stores it resolves.
+fn drop_imports(
+    db: &AcquireDb,
+    landing: &LandingService,
+    staging_root: &Path,
+    events: &EventSink,
+    flows: &FlowsBundle,
+) -> Arc<DropImports> {
+    Arc::new(DropImports::new(
+        DropStore::new(db.clone()),
+        landing.library_slot().clone(),
+        staging_root.join("drop"),
+        events.clone(),
+        flows.ticks.clone(),
+        flows.ledger.clone(),
+        flows.watches.clone(),
+    ))
 }
 
-/// Drop-file verify by audio extension, matching the formats the library
-/// imports. Unknown types fail open as local faults (never quarantined):
-/// the library engine owns identification.
-struct ExtensionVerify;
-
-impl DropVerify for ExtensionVerify {
-    fn verify(&self, file_name: &str) -> VerifyVerdict {
-        let ext = file_name
-            .rsplit('.')
-            .next()
-            .unwrap_or_default()
-            .to_lowercase();
-        match ext.as_str() {
-            "flac" | "mp3" | "ogg" | "oga" | "opus" | "m4a" | "m4b" | "mp4" | "aac" | "wav" => {
-                VerifyVerdict::Ok
-            }
-            _ => VerifyVerdict::LocalFault(format!("unsupported file type: {ext}")),
-        }
-    }
-}
-
-/// Library organise into the staging `resolved` dir. Real library
-/// placement belongs to the library engine; until it is wired, drops resolve out of
-/// quarantine into a visible staging area instead of the library.
-struct StagingOrganise {
-    staging_root: PathBuf,
-}
-
-impl StagingOrganise {
-    fn new(staging_root: PathBuf) -> Self {
-        Self { staging_root }
-    }
-}
-
-impl LibraryOrganise for StagingOrganise {
-    fn organise(&self, job_id: &str, staged_path: &str) -> Result<String, String> {
-        let source = PathBuf::from(staged_path);
-        let name = source
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "drop.bin".to_owned());
-        let dir = self.staging_root.join("resolved").join(job_id);
-        std::fs::create_dir_all(&dir)
-            .map_err(|error| format!("cannot create resolve dir: {error}"))?;
-        let dest = dir.join(name);
-        if dest.exists() {
-            return Err(format!(
-                "resolve destination is occupied: {}",
-                dest.display()
-            ));
-        }
-        std::fs::rename(&source, &dest).map_err(|error| format!("cannot resolve drop: {error}"))?;
-        Ok(dest.to_string_lossy().into_owned())
+/// Free Music settings plus the download quality band, read per task.
+fn free_music_settings(store: &ConfigStore) -> FreeMusicSettings {
+    let section: FreeMusic = plain(store);
+    let policy: DownloadPolicy = plain(store);
+    FreeMusicSettings {
+        enabled: section.enabled,
+        prefer_mp3: section.preferred_format == AudioFormat::Mp3,
+        quality_min: policy.quality_min,
+        quality_max: policy.quality_max,
     }
 }
 
@@ -644,6 +602,7 @@ impl AcquireSetup {
         config_store: Arc<ConfigStore>,
         collections: &mut CollectionsState,
     ) -> Result<Self, String> {
+        let archive_transfers = http.archive_transfers().clone();
         let (http, no_redirect) = (http.shared().clone(), http.no_redirect().clone());
         let staging_root = config.imports_dir();
         let policy_store = config_store.clone();
@@ -860,6 +819,21 @@ impl AcquireSetup {
             search_quota,
             events.clone(),
         ));
+        let drops = drop_imports(&db, &landing, &staging_root, &events, &core.flows);
+        let free_store = config_store.clone();
+        let source_worker = worker.clone();
+        let free_music = Arc::new(FreeMusicService::new(
+            FreeMusicStore::new(db.clone()),
+            Arc::new(LiveArchive::new(http.clone(), archive_transfers)),
+            drops.clone(),
+            Arc::new(move || free_music_settings(&free_store)),
+            Arc::new(move || !source_worker.sources_now().is_empty()),
+            events.clone(),
+        ));
+        let route: Arc<dyn super::dispatch::FreeMusicRoute> = free_music.clone();
+        if core.dispatch.free_music_slot().set(route).is_err() {
+            tracing::warn!("free music was already attached to the request dispatch");
+        }
 
         Ok(Self {
             db,
@@ -878,6 +852,8 @@ impl AcquireSetup {
             events,
             landing,
             search_jobs,
+            drops,
+            free_music,
         })
     }
 
@@ -1073,6 +1049,25 @@ impl AcquireSetup {
             Arc::new(QuotaLedger::unlimited(db.clone())),
             events.clone(),
         ));
+        let drops = drop_imports(&db, &landing, &staging_root, &events, &core.flows);
+        // Not attached to the request dispatch: test requests stay on the
+        // download queue unless a test attaches it.
+        let free_music = Arc::new(FreeMusicService::new(
+            FreeMusicStore::new(db.clone()),
+            Arc::new(LiveArchive::new(
+                factory.shared().clone(),
+                factory.archive_transfers().clone(),
+            )),
+            drops.clone(),
+            Arc::new(|| FreeMusicSettings {
+                enabled: true,
+                prefer_mp3: false,
+                quality_min: "low".to_owned(),
+                quality_max: "lossless".to_owned(),
+            }),
+            Arc::new(|| false),
+            events.clone(),
+        ));
         let probe_cache = Arc::new(ProbeCache::new(seed_from_config(
             &SlskdConnection::default(),
             &DownloadClients::default(),
@@ -1105,6 +1100,8 @@ impl AcquireSetup {
             events,
             landing,
             search_jobs,
+            drops,
+            free_music,
         })
     }
 
@@ -1125,6 +1122,12 @@ impl AcquireSetup {
             ))
             .merge(super::downloads::search_core_routes(
                 self.search_jobs.clone(),
+            ))
+            .merge(super::drop_import::http::drop_import_routes(
+                self.drops.clone(),
+            ))
+            .merge(super::free_music::http::free_music_routes(
+                self.free_music.clone(),
             ));
         let requests = legs.layer(axum::middleware::from_fn_with_state(
             self.users.clone(),
@@ -1147,25 +1150,13 @@ impl AcquireSetup {
         imports_legacy_callback_router(self.imports.clone())
     }
 
-    /// Run startup recovery before serving traffic: durable-op
-    /// registration and recovery, the download journal classification,
-    /// and the request ledger (interrupted cancels and dispatches).
-    /// Re-running after a clean shutdown is a no-op.
-    pub async fn run_recovery(
-        &self,
-        wakeups: &DurableWorkWakeups,
-        lane: &WriteLane,
-    ) -> Result<super::worker::RecoveryReport, String> {
-        register_durable_ops(wakeups, lane).await?;
-        let now = super::db::now_epoch();
-        let ops = self.flows.ops.recover(super::db::to_i64(now)).await?;
-        if ops.interrupted > 0 || ops.resumed > 0 {
-            tracing::info!(
-                interrupted = ops.interrupted,
-                resumed = ops.resumed,
-                "flow operations recovered"
-            );
-        }
+    /// Run startup recovery before serving traffic: drop imports and
+    /// Free Music tasks a restart cut off, the download journal
+    /// classification, and the request ledger (interrupted cancels and
+    /// dispatches). Re-running after a clean shutdown is a no-op.
+    pub async fn run_recovery(&self) -> Result<super::worker::RecoveryReport, String> {
+        self.drops.sweep_stale().await;
+        self.free_music.sweep_stale().await;
         let report = run_startup_recovery(&self.journal, &self.staging_root).await?;
         let requests = super::requests::service::RequestsService::new(&self.requests)
             .recover()
@@ -1357,11 +1348,8 @@ fn flows_bundle(
     let ledger = requests.store.clone();
     let follows = FlowsFollowStore::new(db.clone());
     let worklist = UpgradeWorklist::new(db.clone());
-    let quarantine = QuarantineStore::new(db.clone());
     let library = Arc::new(LibraryPresence::over_catalog(db.pool().clone()));
     let admins = AdminDirectory::over_users(db.clone());
-    let handoff = Arc::new(MemoryHandoff::new());
-    let ops = OpStore::new(db.clone());
     let wanted_deps = Arc::new(WantedDeps {
         settings: wanted_settings,
         watches: watches.clone(),
@@ -1407,12 +1395,9 @@ fn flows_bundle(
         ledger,
         follows,
         worklist,
-        quarantine,
         library,
         admins,
         ticks,
-        handoff,
-        ops,
         wanted_deps,
         follow_deps,
         release_poll,

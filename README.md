@@ -228,6 +228,26 @@ The second source is Usenet through SABnzbd. For searching, either add Newznab-c
 
 slskd and Usenet can run side by side; the source priority control picks who goes first.
 
+### Free Music
+
+Free Music is DroppedNeedle's own download client. It only fetches music from the Internet Archive that carries a Creative Commons or public-domain licence, and it needs no account or key. It is on by default; turn it off under Settings > Free Music.
+
+When no other source is set up (no slskd, no Usenet, no plugin source), album and track requests go to Free Music. It searches the Archive for the artist and title, skips anything whose title isn't really the album you asked for, and ranks what is left: the right number of tracks (from the edition your library keeps, or the album's best-known release) first, then your preferred format, then lossless over lossy, then the bigger copy. Downloaded files must fit your download quality range as it was when you asked (changing settings later doesn't move a download already requested; the list shows the range each one uses). A copy that doesn't fit is thrown away and the next source is tried. The downloads list shows each one with its licence, its progress, and, when it fails, why and what to do about it. Retry never tries a source that already failed.
+
+Finished downloads go through drop import (below), which identifies them, files them into your library and marks the request done.
+
+### Drop imports
+
+Bought music somewhere else? Drop it in. Admins and trusted users can upload up to 25 files at once on the downloads page: audio files, or `.zip` archives straight from the store. DroppedNeedle unpacks the archives (audio only), treats each top-level folder as one album, and works out which album it is the way a library scan would: MusicBrainz tags first, then the album and artist names (from the tags, or a folder named `Artist - Album`), then AcoustID fingerprints when you have set an AcoustID key.
+
+- A folder that matches closely is renamed with your naming template, tagged, and added to the library. If the album is now complete, its open request and wanted watch are settled and everyone who asked for it is told.
+- If your library already keeps an edition of that album, the files must match that edition. Files of another edition wait for review instead of quietly importing as a second edition.
+- Tracks you already have are skipped, unless the upload is better quality and clearly the same song: its tags must match the track closely, and with an AcoustID key set the audio must not be a different recording (after a hand match, AcoustID has to confirm it). Then it replaces your copy and the old file goes to the recycle bin; if the new file can't be placed, the old one is put back. A file that fails these checks waits for review with the reason.
+- Extra files that came with the album but aren't on its tracklist (a bonus track MusicBrainz doesn't list) are kept alongside the album under their own title and number. Files whose tags name a track they don't match wait for review on their own.
+- Anything DroppedNeedle can't place waits for review with a plain reason and what to do. Pick the album yourself with Match, or Discard to delete the files. Review items are kept for 90 days.
+
+If the server restarts in the middle of an import, that import is marked as interrupted; drop the files in again.
+
 ---
 
 ## Configuration

@@ -1,10 +1,10 @@
 import { createQuery } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
 
 import { FreeMusicQueryKeyFactory } from './FreeMusicQueryKeyFactory';
+import { FREE_MUSIC_ENDPOINTS } from './endpoints';
 import type { FreeMusicTasks } from './types';
 
 type Getter<T> = () => T;
@@ -20,7 +20,7 @@ export const getFreeMusicTasksQuery = (
 	createQuery(() => ({
 		queryKey: FreeMusicQueryKeyFactory.tasks(authStore.user?.id, getAll()),
 		queryFn: ({ signal }) =>
-			api.global.get<FreeMusicTasks>(API.freeMusic.tasks(getAll()), { signal }),
+			api.global.get<FreeMusicTasks>(FREE_MUSIC_ENDPOINTS.tasks(getAll()), { signal }),
 		enabled: getEnabled(),
 		refetchInterval: (query: { state: { data?: FreeMusicTasks } }) =>
 			query.state.data?.tasks.some((task) => ACTIVE.includes(task.status)) ? 1500 : false
