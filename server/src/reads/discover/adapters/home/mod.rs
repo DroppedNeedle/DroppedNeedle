@@ -292,6 +292,7 @@ impl LiveHome {
         let (kept, attempt, mut building) = match self.lock() {
             Some(mut state) => {
                 state.pages.retain(|_, kept| kept.expires > now);
+                state.attempts.retain(|_, (at, _)| now - *at <= KEEP_SECS);
                 (
                     state.pages.get(&key).map(|kept| kept.page.clone()),
                     state.attempts.get(&key).copied(),

@@ -29,6 +29,10 @@ use crate::reads::discover::models::{
 use crate::reads::discover::ports::{BoxFuture, ChartsSource, ProviderFailure};
 use crate::reads::platform::artwork::ArtworkService;
 
+/// Popular rows per lane at most.
+const MAX_ROWS: i64 = 100;
+/// Warm-up runs running or waiting at once; more are refused.
+const PREWARM_QUEUE_MAX: usize = 10;
 /// Owned rows per lane (v2).
 const LIBRARY_ROWS: i64 = 50;
 /// Images one warm-up run fetches at most.
@@ -74,7 +78,7 @@ impl GenrePages {
         artist_offset: i64,
         album_offset: i64,
     ) -> GenreDetailResponse {
-        let limit_u32 = u32::try_from(limit.clamp(1, 200)).unwrap_or(50);
+        let limit_u32 = u32::try_from(limit.clamp(1, MAX_ROWS)).unwrap_or(50);
         let offset = |value: i64| u32::try_from(value.max(0)).unwrap_or(u32::MAX);
         let (owned_artists, owned_albums, popular_artists, popular_albums, artwork) = tokio::join!(
             self.library.genre_artists(genre, LIBRARY_ROWS),
@@ -199,7 +203,7 @@ impl Prewarm {
         let genre = fold(genre);
         match self.active.lock() {
             Ok(mut active) => {
-                if !active.insert(genre.clone()) {
+                if active.len() >= PREWARM_QUEUE_MAX || !active.insert(genre.clone()) {
                     return;
                 }
             }

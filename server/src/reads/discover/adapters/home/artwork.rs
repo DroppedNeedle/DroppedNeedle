@@ -9,9 +9,10 @@
 //! visit to visit. Different artists and different images are preferred.
 //!
 //! A choice is remembered for a day under the genre's revision, which the
-//! database bumps whenever an album's art or tags in that genre change. A
-//! remembered choice is checked again before use: when one of its albums
-//! lost its art or its file is gone, the genre is chosen again.
+//! database bumps whenever an album's art or tags in that genre change
+//! (a scan that finds an art file gone removes its row). While the
+//! revision holds, a remembered choice costs one small read: no candidate
+//! query and no disk checks.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Mutex;
@@ -66,21 +67,52 @@ impl GenreArt {
             return HashMap::new();
         }
         let asked: Vec<String> = names.iter().map(|(_, folded)| folded.clone()).collect();
-        let rows = match self.library.art_candidates(&asked).await {
-            Ok(rows) => rows,
+        let revisions = match self.library.revisions(&asked).await {
+            Ok(revisions) => revisions,
             Err(cause) => {
                 tracing::warn!(%cause, "genre artwork unreadable; showing gradients");
                 return HashMap::new();
             }
         };
+        let mut out = HashMap::new();
+        let mut missing: Vec<(String, String)> = Vec::new();
+        if let Ok(mut memo) = self.memo.lock() {
+            memo.retain(|_, (_, at)| at.elapsed() < REMEMBER);
+            for (name, folded) in names {
+                let revision = revisions.get(&folded).copied().unwrap_or(0);
+                match memo.get(&(folded.clone(), revision)) {
+                    Some((artwork, _)) => {
+                        out.insert(name, artwork.clone());
+                    }
+                    None => missing.push((name, folded)),
+                }
+            }
+        }
+        if missing.is_empty() {
+            return out;
+        }
+        let wanted: Vec<String> = missing.iter().map(|(_, folded)| folded.clone()).collect();
+        let rows = match self.library.art_candidates(&wanted).await {
+            Ok(rows) => rows,
+            Err(cause) => {
+                tracing::warn!(%cause, "genre artwork unreadable; showing gradients");
+                return out;
+            }
+        };
         let by_genre: HashMap<&str, &GenreCandidates> =
             rows.iter().map(|row| (row.folded.as_str(), row)).collect();
-        let mut out = HashMap::new();
-        for (name, folded) in &names {
+        for (name, folded) in missing {
             let Some(genre) = by_genre.get(folded.as_str()) else {
                 continue;
             };
-            out.insert(name.clone(), self.artwork(genre).await);
+            let artwork = select(genre).await;
+            if let Ok(mut memo) = self.memo.lock() {
+                memo.insert(
+                    (genre.folded.clone(), genre.revision),
+                    (artwork.clone(), Instant::now()),
+                );
+            }
+            out.insert(name, artwork);
         }
         out
     }
@@ -92,44 +124,6 @@ impl GenreArt {
             .remove(genre)
             .unwrap_or_else(|| artwork_of(0, Vec::new()))
     }
-
-    async fn artwork(&self, genre: &GenreCandidates) -> GenreArtwork {
-        let key = (genre.folded.clone(), genre.revision);
-        let remembered = self.memo.lock().ok().and_then(|memo| {
-            memo.get(&key)
-                .filter(|(_, at)| at.elapsed() < REMEMBER)
-                .map(|(artwork, _)| artwork.clone())
-        });
-        if let Some(artwork) = remembered
-            && still_current(&artwork, &genre.candidates).await
-        {
-            return artwork;
-        }
-        let artwork = select(genre).await;
-        if let Ok(mut memo) = self.memo.lock() {
-            memo.retain(|_, (_, at)| at.elapsed() < REMEMBER);
-            memo.insert(key, (artwork.clone(), Instant::now()));
-        }
-        artwork
-    }
-}
-
-/// True when every album of a remembered choice still has the same art
-/// and its file is still there.
-async fn still_current(artwork: &GenreArtwork, candidates: &[ArtCandidate]) -> bool {
-    let by_id: HashMap<&str, &ArtCandidate> = candidates
-        .iter()
-        .map(|candidate| (candidate.album_id.as_str(), candidate))
-        .collect();
-    for album in &artwork.albums {
-        let Some(candidate) = by_id.get(album.album_id.as_str()) else {
-            return false;
-        };
-        if candidate.cover_version != album.cover_version || !file_present(candidate).await {
-            return false;
-        }
-    }
-    true
 }
 
 async fn file_present(candidate: &ArtCandidate) -> bool {

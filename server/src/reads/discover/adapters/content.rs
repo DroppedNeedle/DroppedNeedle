@@ -155,6 +155,15 @@ impl DiscoverContent for LiveContent {
         let status = self.status();
         Box::pin(async move {
             if let Some((home, _)) = &self.home {
+                // A visit keeps home in the warm cycle while it is used.
+                let page = self.page.clone();
+                let user = user_id.to_owned();
+                tokio::spawn(async move {
+                    if let Err(error) = page.record_activity(&user, "home", None, None, None).await
+                    {
+                        tracing::warn!(%error, "could not record home activity");
+                    }
+                });
                 return Ok(home.page(user_id).await);
             }
             Ok(HomeResponse {

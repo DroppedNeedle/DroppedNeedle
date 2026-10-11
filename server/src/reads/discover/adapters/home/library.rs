@@ -6,6 +6,8 @@
 //! Only albums with at least one indexed track count, and retired albums
 //! and artists never show.
 
+use std::collections::HashMap;
+
 use sqlx::SqlitePool;
 
 use crate::reads::discover::adapters::page::library::fold;
@@ -296,6 +298,27 @@ impl HomeLibrary {
         .await
         .map_err(|error| format!("genre albums read: {error}"))?;
         Ok(rows.into_iter().map(album).collect())
+    }
+
+    /// The artwork revision of each folded genre (0 when it has none).
+    pub async fn revisions(&self, folded: &[String]) -> Result<HashMap<String, i64>, String> {
+        if folded.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let sql = format!(
+            "SELECT genre_folded, value FROM library_genre_artwork_revisions \
+             WHERE genre_folded IN ({})",
+            vec!["?"; folded.len()].join(",")
+        );
+        let mut query = sqlx::query_as::<_, (String, i64)>(&sql);
+        for genre in folded {
+            query = query.bind(genre);
+        }
+        let rows = query
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|error| format!("genre artwork revisions read: {error}"))?;
+        Ok(rows.into_iter().collect())
     }
 
     /// Collage candidates for each genre (folded, deduplicated, at most

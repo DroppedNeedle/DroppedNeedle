@@ -277,7 +277,19 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
     assert!(!popular.has_more_artists);
     assert_eq!(genre.genre_artwork.kind, "collage");
 
-    // Art that disappears from disk is not shown again.
+    // Art the scan finds gone is not shown again: dropping its row bumps
+    // the genre's revision, so the remembered collage is replaced.
     std::fs::remove_file(&cover).expect("cover removed");
+    runtime
+        .lane()
+        .write(Lane::Foreground, "art gone", |tx| {
+            tx.execute(
+                "DELETE FROM local_album_artwork WHERE local_album_id = 'al1'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("art row removed");
     assert_eq!(art.one("Shoegaze").await.kind, "gradient");
 }
