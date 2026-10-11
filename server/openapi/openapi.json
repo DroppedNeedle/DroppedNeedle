@@ -3131,6 +3131,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "500": {
+            "description": "The batch store failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       },
@@ -3138,7 +3148,7 @@
         "tags": [
           "crate::reads::discover::handlers"
         ],
-        "summary": "Create a discovery batch: one request per album.",
+        "summary": "Create a discovery batch: every album the library lacks and nobody\nhas requested yet is filed as an album request, under the caller's\nquota and approval rules.",
         "operationId": "create_batch",
         "requestBody": {
           "content": {
@@ -3162,13 +3172,33 @@
             }
           },
           "400": {
-            "description": "Bad request body"
+            "description": "Empty or oversized batch, or every album is already owned or requested"
           },
           "401": {
             "description": "Not authenticated"
           },
+          "403": {
+            "description": "Storage full (STORAGE_FULL)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Request quota spent (QUOTA_EXCEEDED)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
           "503": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "description": "Acquisition is not running (NOT_AVAILABLE)",
             "content": {
               "application/json": {
                 "schema": {
@@ -3185,7 +3215,7 @@
         "tags": [
           "crate::reads::discover::handlers"
         ],
-        "summary": "One batch. Foreign ids read as missing.",
+        "summary": "One batch with each album's current state. Admins may open any batch;\nanyone else's reads as missing.",
         "operationId": "get_batch",
         "parameters": [
           {
@@ -3221,7 +3251,7 @@
         "tags": [
           "crate::reads::discover::handlers"
         ],
-        "summary": "Remove one batch. Foreign ids read as missing.",
+        "summary": "Remove one batch. With `remove_albums` (the default) its pending\nrequests are cancelled and the albums it brought in go to the recycle\nbin; albums that were already owned or requested are never touched.",
         "operationId": "remove_batch",
         "parameters": [
           {
@@ -3300,8 +3330,11 @@
           "401": {
             "description": "Not authenticated"
           },
-          "503": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+          "404": {
+            "description": "Unknown seed album or playlist"
+          },
+          "502": {
+            "description": "A music provider failed",
             "content": {
               "application/json": {
                 "schema": {
@@ -3862,8 +3895,11 @@
           "401": {
             "description": "Not authenticated"
           },
-          "503": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+          "404": {
+            "description": "Unknown seed album or playlist"
+          },
+          "502": {
+            "description": "A music provider failed",
             "content": {
               "application/json": {
                 "schema": {
@@ -3909,8 +3945,11 @@
           "401": {
             "description": "Not authenticated"
           },
-          "503": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+          "404": {
+            "description": "Unknown seed album or playlist"
+          },
+          "502": {
+            "description": "A music provider failed",
             "content": {
               "application/json": {
                 "schema": {
@@ -39006,7 +39045,7 @@
           },
           "genre_distribution": {
             "type": "object",
-            "description": "Genre distribution (genre to artist names).",
+            "description": "Genres per artist MBID on the playlist, from the library.",
             "additionalProperties": {
               "type": "array",
               "items": {
@@ -41118,8 +41157,7 @@
         "type": "object",
         "description": "Body planning track-level radio. The UI resolves playback per track\n(library rows use the native stream endpoint, the rest use YouTube or\n30-second previews).",
         "required": [
-          "seed_type",
-          "mode"
+          "seed_type"
         ],
         "properties": {
           "count": {
@@ -41143,7 +41181,7 @@
           },
           "mode": {
             "type": "string",
-            "description": "`library` (owned only) or `hybrid` (owned plus provider picks)."
+            "description": "`library` (owned only) or `hybrid` (owned plus provider picks, the\ndefault)."
           },
           "seed_id": {
             "type": [

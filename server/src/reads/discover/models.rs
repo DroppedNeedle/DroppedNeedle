@@ -975,7 +975,9 @@ pub struct RadioPlanRequest {
     /// Seed rows for `items` plans.
     #[serde(default)]
     pub items: Vec<RadioSeedItem>,
-    /// `library` (owned only) or `hybrid` (owned plus provider picks).
+    /// `library` (owned only) or `hybrid` (owned plus provider picks, the
+    /// default).
+    #[serde(default = "default_radio_mode")]
     pub mode: String,
     /// Wanted track count.
     #[serde(default = "default_radio_count")]
@@ -983,6 +985,10 @@ pub struct RadioPlanRequest {
     /// Recording mbids to leave out.
     #[serde(default)]
     pub exclude_recording_mbids: Vec<String>,
+}
+
+fn default_radio_mode() -> String {
+    "hybrid".to_owned()
 }
 
 fn default_radio_count() -> i64 {
@@ -1057,7 +1063,7 @@ pub struct PlaylistProfile {
     /// Artist mbids the playlist leans on.
     #[serde(default)]
     pub artist_mbids: Vec<String>,
-    /// Genre distribution (genre to artist names).
+    /// Genres per artist MBID on the playlist, from the library.
     #[serde(default)]
     pub genre_distribution: std::collections::HashMap<String, Vec<String>>,
     /// Playlist track count.

@@ -1534,7 +1534,11 @@ export interface paths {
         /** The caller's batches, newest first. */
         get: operations["list_batches"];
         put?: never;
-        /** Create a discovery batch: one request per album. */
+        /**
+         * Create a discovery batch: every album the library lacks and nobody
+         *     has requested yet is filed as an album request, under the caller's
+         *     quota and approval rules.
+         */
         post: operations["create_batch"];
         delete?: never;
         options?: never;
@@ -1549,11 +1553,18 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** One batch. Foreign ids read as missing. */
+        /**
+         * One batch with each album's current state. Admins may open any batch;
+         *     anyone else's reads as missing.
+         */
         get: operations["get_batch"];
         put?: never;
         post?: never;
-        /** Remove one batch. Foreign ids read as missing. */
+        /**
+         * Remove one batch. With `remove_albums` (the default) its pending
+         *     requests are cancelled and the albums it brought in go to the recycle
+         *     bin; albums that were already owned or requested are never touched.
+         */
         delete: operations["remove_batch"];
         options?: never;
         head?: never;
@@ -17076,7 +17087,7 @@ export interface components {
         PlaylistProfile: {
             /** @description Artist mbids the playlist leans on. */
             artist_mbids?: string[];
-            /** @description Genre distribution (genre to artist names). */
+            /** @description Genres per artist MBID on the playlist, from the library. */
             genre_distribution?: {
                 [key: string]: string[];
             };
@@ -18087,8 +18098,11 @@ export interface components {
             exclude_recording_mbids?: string[];
             /** @description Seed rows for `items` plans. */
             items?: components["schemas"]["RadioSeedItem"][];
-            /** @description `library` (owned only) or `hybrid` (owned plus provider picks). */
-            mode: string;
+            /**
+             * @description `library` (owned only) or `hybrid` (owned plus provider picks, the
+             *     default).
+             */
+            mode?: string;
             /** @description Seed id (mbid or genre name); empty for item seeds. */
             seed_id?: string | null;
             /** @description Seed kind (`artist`, `album`, `genre`, `items`). */
@@ -24633,6 +24647,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description The batch store failed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     create_batch: {
@@ -24657,7 +24680,7 @@ export interface operations {
                     "application/json": components["schemas"]["DiscoveryBatchDetail"];
                 };
             };
-            /** @description Bad request body */
+            /** @description Empty or oversized batch, or every album is already owned or requested */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -24671,7 +24694,25 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            /** @description Storage full (STORAGE_FULL) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Request quota spent (QUOTA_EXCEEDED) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Acquisition is not running (NOT_AVAILABLE) */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -24802,8 +24843,15 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
-            503: {
+            /** @description Unknown seed album or playlist */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A music provider failed */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25357,8 +25405,15 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
-            503: {
+            /** @description Unknown seed album or playlist */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A music provider failed */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -25404,8 +25459,15 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
-            503: {
+            /** @description Unknown seed album or playlist */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A music provider failed */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -262,7 +262,7 @@ impl LiveRadio {
         .unwrap_or_else(|| mbid.to_owned())
     }
 
-    /// Up to five library artists in one genre, the same ones all day.
+    /// Up to `want` library artists in one genre, the same ones all day.
     async fn genre_seeds(&self, genre: &str, parts: &[&str], want: usize) -> Vec<String> {
         let mut artists = match self.genres.artists_for_genres(&[genre.to_owned()]).await {
             Ok(mut by_genre) => by_genre.remove(&fold(genre)).unwrap_or_default(),
