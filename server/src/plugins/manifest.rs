@@ -42,6 +42,7 @@ pub const V1_ACTIVE_CAPABILITIES: &[&str] = &[
     "metadata_provider",
     "scheduler",
     "streaming_source",
+    "library_writer",
 ];
 
 /// Active capability ids for one API version.
@@ -247,6 +248,7 @@ impl PluginManifest {
                         .unwrap_or(60);
                     format!("Runs on its own every {minutes} minutes")
                 }
+                "library_writer" => "Can add new files to your music library (never replaces one), up to 100 MiB a day".to_owned(),
                 "streaming_source" => "Can serve audio for tracks missing from your library, from a file or a web address".to_owned(),
                 other => format!("Uses the {other} capability"),
             };

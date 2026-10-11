@@ -243,6 +243,8 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         config_store.clone(),
     )
     .map_err(stage("library setup"))?;
+    // Plugin library writes hold the same root leases as the publisher.
+    plugin_host.set_library_fs(library.fs.clone());
     reads = reads.with_library_files(crate::stream::local_files::LibraryFiles::new(
         runtime.pool().clone(),
         library.root_source(),

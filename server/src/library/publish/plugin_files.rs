@@ -16,13 +16,20 @@ use super::PublishError;
 use super::journal::{fsync_dir, fsync_file};
 use super::paths::{Sandbox, ensure_no_symlink};
 
+/// Tag in the temp names plugin writes use (after the hidden prefix), so
+/// a startup sweep can tell them from the publisher's journaled temps.
+pub const TEMP_TAG: &str = "plugin-";
+
 /// Write `data` as a new file at `relative` under the root `root_id`.
-/// Answers the stored absolute path.
+/// `before_temp` sees the temp file's path before it is created, so the
+/// caller can note it for a sweep after a crash. Answers the stored
+/// absolute path.
 pub fn write_new_file(
     sandbox: &Sandbox,
     root_id: &str,
     relative: &str,
     data: &[u8],
+    before_temp: impl FnOnce(&std::path::Path) -> Result<(), PublishError>,
 ) -> Result<PathBuf, PublishError> {
     let dest = sandbox.resolve_no_symlink(root_id, relative)?;
     let parent = dest
@@ -38,7 +45,11 @@ pub fn write_new_file(
             "{relative} already exists; plugins only add new files"
         )));
     }
-    let temp = sandbox.temp_path_for(&dest, &uuid::Uuid::new_v4().simple().to_string())?;
+    let temp = sandbox.temp_path_for(
+        &dest,
+        &format!("{TEMP_TAG}{}", uuid::Uuid::new_v4().simple()),
+    )?;
+    before_temp(&temp)?;
     let written = (|| {
         let mut file = std::fs::OpenOptions::new()
             .write(true)
@@ -79,15 +90,16 @@ mod tests {
             dir: dir.path().to_path_buf(),
         }])
         .expect("sandbox");
-        let stored = write_new_file(&sandbox, "r1", "notes/one.txt", b"first").expect("written");
+        let stored =
+            write_new_file(&sandbox, "r1", "notes/one.txt", b"first", |_| Ok(())).expect("written");
         assert_eq!(std::fs::read(&stored).expect("reads"), b"first");
         assert!(matches!(
-            write_new_file(&sandbox, "r1", "notes/one.txt", b"second"),
+            write_new_file(&sandbox, "r1", "notes/one.txt", b"second", |_| Ok(())),
             Err(PublishError::Collision(_))
         ));
         assert_eq!(std::fs::read(&stored).expect("reads"), b"first");
         assert!(matches!(
-            write_new_file(&sandbox, "r1", "../escape.txt", b"x"),
+            write_new_file(&sandbox, "r1", "../escape.txt", b"x", |_| Ok(())),
             Err(PublishError::UnsafePath(_))
         ));
         let leftovers = std::fs::read_dir(dir.path().join("notes"))

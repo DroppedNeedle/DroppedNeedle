@@ -458,6 +458,7 @@ _CAPABILITY_METHODS = {
     "streaming_source": ("resolve_stream",),
     "indexer": ("search_album", "search_track"),
     "download_client": ("enqueue",),
+    "library_writer": (),
 }
 
 
@@ -732,7 +733,7 @@ class _Server:
             names = _CAPABILITY_METHODS.get(capability)
             if names is None:
                 continue
-            if not names and capability == "publisher":
+            if not names:
                 implemented.append(capability)
             elif any(hasattr(self._instance, name) for name in names):
                 implemented.append(capability)

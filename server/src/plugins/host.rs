@@ -144,6 +144,8 @@ pub struct PluginHost {
     pub(super) events: EventState,
     /// Library writes per plugin (`host.library.write`).
     pub(super) library_writes: super::capabilities::library_files::LibraryWrites,
+    /// The library roots' lease table, set once the library is wired.
+    library_fs: std::sync::OnceLock<crate::library::scan::fs::FsCoordinator>,
 }
 
 impl PluginHost {
@@ -166,6 +168,7 @@ impl PluginHost {
             state: Mutex::new(None),
             events: EventState::default(),
             library_writes: Default::default(),
+            library_fs: std::sync::OnceLock::new(),
         })
     }
 
@@ -174,6 +177,19 @@ impl PluginHost {
         if let Ok(mut slot) = self.state.lock() {
             *slot = Some(store);
         }
+    }
+
+    /// Hold library roots through this lease table when a plugin writes a
+    /// library file, and clear temp files a crash left from such writes.
+    pub fn set_library_fs(&self, fs: crate::library::scan::fs::FsCoordinator) {
+        super::capabilities::library_files::sweep_ledger(&self.data_dir(""));
+        if self.library_fs.set(fs).is_err() {
+            tracing::warn!("plugin host library lease table was already set");
+        }
+    }
+
+    pub(super) fn library_fs(&self) -> Option<crate::library::scan::fs::FsCoordinator> {
+        self.library_fs.get().cloned()
     }
 
     /// Plugins directory.

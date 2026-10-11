@@ -196,6 +196,7 @@ server carries on as if the plugin had said nothing.
 | `publisher` | `handle_route(method, subpath, query, body)` for `[[route]]`s; `await ctx.publish(kind, payload)` | 5 s | the route answers 502 |
 | `metadata_provider` | `enrich_artist(...)`, `enrich_album(...)` | 15 s | nothing is filled in |
 | `scheduler` | `on_tick()` | the interval | the next tick runs as normal |
+| `library_writer` | none; allows `await ctx.write_library_file(rel_path, data)` | 30 s per write | the call fails with the reason |
 | `streaming_source` | `resolve_stream(recording_mbid, user_id)` | 5 s | the next plugin is asked |
 | `indexer` | `search_album(...)`, `search_track(...)` | 35 s | no results from it |
 | `download_client` | `enqueue`, `get_status`, `inspect_materialization`, `discard_client_artifacts`, `abort` | 120 s enqueue, 30 s others | the download fails over |
@@ -314,15 +315,16 @@ and `await ctx.state_get(key)`: small strings (up to 1 MiB each) that the
 server keeps in its database for you (at most 1000 keys and 64 MiB per
 plugin). Files in `ctx.data_dir` also survive.
 
-To put a file into the music library itself, use
-`await ctx.write_library_file(rel_path, data)`. It adds one new file under
-your first library folder and answers the full path. The path is relative,
+To put a file into the music library itself, declare the `library_writer`
+capability and use `await ctx.write_library_file(rel_path, data)`. It adds
+one new file under your first library folder and answers the full path. The path is relative,
 in lowercase letters, digits, `_`, `-`, `.` and `/`, without hidden or `..`
 parts. A file that already exists is never replaced: the call fails
 instead. Each plugin may write 100 MiB a day; past that the call fails until
-older writes are a day old. Files a plugin adds are picked up by the next
-library scan like any other file. A single call carries at most about 6 MiB,
-because each message to the server is capped at 8 MiB.
+older writes are a day old, and one file may be at most 6 MiB. The write
+waits for the library folder to be free (no scan or move running in it) and
+gives up after 30 seconds. Files a plugin adds, audio included, are picked
+up by the next library scan like any other file.
 
 Example: `examples/plugins/http-catalog`.
 

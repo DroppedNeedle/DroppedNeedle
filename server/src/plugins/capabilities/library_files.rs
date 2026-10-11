@@ -1,27 +1,49 @@
 //! `host.library.write`: a plugin adds one file to the music library
 //! (v2's `plugin_write_library_file`).
 //!
+//! Only plugins that declare the `library_writer` capability may write.
 //! The file lands under the first library root, through the library
 //! publisher's sandbox: a root-relative path only, no symlinked
-//! components, and never over an existing file. Each plugin may write
-//! 100 MiB per rolling day; past that, writes are refused until older
-//! ones age out. The last refusal is kept per plugin so it can be shown
-//! next to the plugin's health.
+//! components, and never over an existing file. The write holds the
+//! root's write lease (as every publisher write does, so a scan never
+//! walks a half-written folder) and gives up after 30 seconds.
+//!
+//! Limits: 6 MiB per file and 100 MiB per plugin per rolling day; the
+//! allowance is reserved before the write and handed back if it fails.
+//! The last refusal is kept per plugin so it can be shown with the
+//! plugin's health.
+//!
+//! Each write's hidden temp file is listed in a small ledger under the
+//! plugins folder until the write ends, so a crash mid-write leaves a
+//! name the next start removes.
+//!
+//! Like v2, a plugin may add audio files; the next library scan picks
+//! them up like any other file.
 
 use std::collections::{HashMap, VecDeque};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use super::super::host::PluginHost;
+use crate::library::publish::HIDDEN_PREFIX;
 use crate::library::publish::paths::{Root, Sandbox};
-use crate::library::publish::plugin_files::write_new_file;
+use crate::library::publish::plugin_files::{TEMP_TAG, write_new_file};
 use crate::runtime_config::secret_sections::TypedLibrary;
 
+/// The capability a plugin declares to write library files.
+pub const CAPABILITY: &str = "library_writer";
 /// Bytes one plugin may write per rolling day.
 pub const QUOTA_BYTES_PER_DAY: usize = 100 * 1024 * 1024;
+/// Largest single file.
+pub const MAX_FILE_BYTES: usize = 6 * 1024 * 1024;
 const QUOTA_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
+/// How long one write may wait for the root and run.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Longest relative path accepted.
 const MAX_PATH_LEN: usize = 200;
+/// Ledger folder under the plugins data folder.
+const LEDGER_DIR: &str = ".library-writes";
 
 /// Per-plugin write usage and the last refusal.
 #[derive(Default)]
@@ -45,30 +67,37 @@ impl LibraryWrites {
         reason
     }
 
-    /// Bytes written inside the window, dropping older entries.
-    fn used(&self, plugin: &str, now: Instant) -> usize {
-        let Ok(mut usage) = self.usage.lock() else {
-            return usize::MAX;
-        };
-        let Some(entries) = usage.get_mut(plugin) else {
-            return 0;
-        };
+    /// Check and reserve `bytes` of the plugin's allowance in one step.
+    /// Answers the reservation's stamp, or false when it does not fit.
+    fn reserve(&self, plugin: &str, bytes: usize) -> Option<Instant> {
+        let mut usage = self.usage.lock().ok()?;
+        let entries = usage.entry(plugin.to_owned()).or_default();
+        let now = Instant::now();
         while entries
             .front()
             .is_some_and(|(at, _)| now.duration_since(*at) >= QUOTA_WINDOW)
         {
             entries.pop_front();
         }
-        entries.iter().map(|(_, bytes)| bytes).sum()
+        let used: usize = entries.iter().map(|(_, bytes)| bytes).sum();
+        if used.saturating_add(bytes) > QUOTA_BYTES_PER_DAY {
+            return None;
+        }
+        entries.push_back((now, bytes));
+        Some(now)
     }
 
-    fn record(&self, plugin: &str, bytes: usize) {
-        if let Ok(mut usage) = self.usage.lock() {
-            usage
-                .entry(plugin.to_owned())
-                .or_default()
-                .push_back((Instant::now(), bytes));
+    /// Hand back a reservation whose write failed.
+    fn release(&self, plugin: &str, stamp: Instant) {
+        if let Ok(mut usage) = self.usage.lock()
+            && let Some(entries) = usage.get_mut(plugin)
+            && let Some(at) = entries.iter().position(|(at, _)| *at == stamp)
+        {
+            entries.remove(at);
         }
+    }
+
+    fn landed(&self, plugin: &str) {
         if let Ok(mut refusals) = self.refusals.lock() {
             refusals.remove(plugin);
         }
@@ -98,6 +127,40 @@ pub fn check_rel_path(rel_path: &str) -> Result<(), String> {
     }
 }
 
+/// Remove temp files left by writes a crash interrupted. Only names the
+/// plugin writer creates are touched.
+pub fn sweep_ledger(data_dir: &Path) {
+    let ledger = data_dir.join(LEDGER_DIR);
+    let Ok(entries) = std::fs::read_dir(&ledger) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let note = entry.path();
+        if let Ok(text) = std::fs::read_to_string(&note) {
+            let temp = PathBuf::from(text.trim());
+            let ours = temp
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(&format!("{HIDDEN_PREFIX}{TEMP_TAG}")));
+            if ours {
+                match std::fs::remove_file(&temp) {
+                    Ok(()) => {
+                        tracing::info!(path = %temp.display(), "removed an interrupted plugin library write")
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        tracing::warn!(path = %temp.display(), %error, "interrupted plugin library write not removed");
+                        continue;
+                    }
+                }
+            }
+        }
+        if let Err(error) = std::fs::remove_file(&note) {
+            tracing::warn!(%error, "plugin library write ledger entry not removed");
+        }
+    }
+}
+
 impl PluginHost {
     /// Add one file to the library for `plugin`. Answers the stored path,
     /// or the reason it was refused.
@@ -108,14 +171,22 @@ impl PluginHost {
         data: Vec<u8>,
     ) -> Result<String, String> {
         let writes = &self.library_writes;
+        let declared = self
+            .get(plugin)
+            .is_some_and(|loaded| loaded.serves(CAPABILITY));
+        if !declared {
+            return Err(writes.refuse(
+                plugin,
+                format!("declare the {CAPABILITY} capability to write library files"),
+            ));
+        }
         check_rel_path(rel_path).map_err(|reason| writes.refuse(plugin, reason))?;
-        let used = writes.used(plugin, Instant::now());
-        if used.saturating_add(data.len()) > QUOTA_BYTES_PER_DAY {
+        if data.len() > MAX_FILE_BYTES {
             return Err(writes.refuse(
                 plugin,
                 format!(
-                    "the plugin has used its library write allowance ({} MiB a day); try again later",
-                    QUOTA_BYTES_PER_DAY / (1024 * 1024)
+                    "a library file may be at most {} MiB",
+                    MAX_FILE_BYTES / (1024 * 1024)
                 ),
             ));
         }
@@ -128,7 +199,7 @@ impl PluginHost {
             .filter(|root| !root.path.trim().is_empty() && !root.id.is_empty())
             .map(|root| Root {
                 id: root.id.clone(),
-                dir: std::path::PathBuf::from(root.path.trim()),
+                dir: PathBuf::from(root.path.trim()),
             })
             .collect();
         let Some(primary) = roots.first().map(|root| root.id.clone()) else {
@@ -136,16 +207,61 @@ impl PluginHost {
         };
         let sandbox =
             Sandbox::new(roots).map_err(|error| writes.refuse(plugin, error.to_string()))?;
-        let relative = rel_path.to_owned();
         let bytes = data.len();
-        let stored = tokio::task::spawn_blocking(move || {
-            write_new_file(&sandbox, &primary, &relative, &data)
-        })
-        .await
-        .map_err(|error| writes.refuse(plugin, format!("library write stopped: {error}")))?
-        .map_err(|error| writes.refuse(plugin, error.to_string()))?;
-        writes.record(plugin, bytes);
-        tracing::info!(plugin, rel_path, bytes, "plugin added a library file");
-        Ok(stored.to_string_lossy().into_owned())
+        let Some(stamp) = writes.reserve(plugin, bytes) else {
+            return Err(writes.refuse(
+                plugin,
+                format!(
+                    "the plugin has used its library write allowance ({} MiB a day); try again later",
+                    QUOTA_BYTES_PER_DAY / (1024 * 1024)
+                ),
+            ));
+        };
+        let ledger = self.data_dir("").join(LEDGER_DIR);
+        let fs = self.library_fs();
+        let relative = rel_path.to_owned();
+        let root_id = primary.clone();
+        let write = async move {
+            // Hold the root like every publisher write; dropped when done.
+            let _lease = match &fs {
+                Some(fs) => Some(fs.write(&root_id).await),
+                None => None,
+            };
+            tokio::task::spawn_blocking(move || {
+                let note = ledger.join(uuid::Uuid::new_v4().simple().to_string());
+                let stored = write_new_file(&sandbox, &root_id, &relative, &data, |temp| {
+                    std::fs::create_dir_all(&ledger)?;
+                    std::fs::write(&note, temp.to_string_lossy().as_bytes())?;
+                    Ok(())
+                });
+                if let Err(error) = std::fs::remove_file(&note)
+                    && error.kind() != std::io::ErrorKind::NotFound
+                {
+                    tracing::warn!(%error, "plugin library write ledger entry not removed");
+                }
+                stored
+            })
+            .await
+        };
+        let outcome = match tokio::time::timeout(WRITE_TIMEOUT, write).await {
+            Err(_) => Err(format!(
+                "the library write took longer than {} seconds",
+                WRITE_TIMEOUT.as_secs()
+            )),
+            Ok(Err(error)) => Err(format!("library write stopped: {error}")),
+            Ok(Ok(Err(error))) => Err(error.to_string()),
+            Ok(Ok(Ok(stored))) => Ok(stored),
+        };
+        match outcome {
+            Ok(stored) => {
+                writes.landed(plugin);
+                tracing::info!(plugin, rel_path, bytes, "plugin added a library file");
+                Ok(stored.to_string_lossy().into_owned())
+            }
+            Err(reason) => {
+                writes.release(plugin, stamp);
+                Err(writes.refuse(plugin, reason))
+            }
+        }
     }
 }
