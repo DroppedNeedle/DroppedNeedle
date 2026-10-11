@@ -53,6 +53,18 @@ fn settings_error(error: SettingsError) -> ManagementError {
 }
 
 impl Management {
+    /// The library policy revision activation pins compare against (the
+    /// settings' own revision of the roots and rules, as in v2).
+    pub(super) fn activation_policy_revision(&self) -> Result<String, ManagementError> {
+        let library = self
+            .setup
+            .config
+            .get_masked::<crate::runtime_config::secret_sections::TypedLibrary>()
+            .map_err(|error| ManagementError::Store(error.to_string()))?
+            .into_inner();
+        Ok(crate::settings::library_policy::revision(&library))
+    }
+
     /// The settings page's service, or a private one in test bundles.
     fn settings_service(&self) -> Arc<LibraryManagementService> {
         self.setup
@@ -161,6 +173,7 @@ impl Management {
         }
         let service = self.settings_service();
         let current = settings_revision(&self.settings()?);
+        let policy = self.activation_policy_revision()?;
         let mut pins = Vec::new();
         for proof in &request.proofs {
             let proposed = service
@@ -170,7 +183,11 @@ impl Management {
                     &request.expected_settings_revision,
                 )
                 .map_err(settings_error)?;
-            pins.push(self.check_proof(proof, &proposed, &current)?);
+            let mut pin = self.check_proof(proof, &proposed, &current)?;
+            // The dry run is current (its folders did not move), so the
+            // pins name the folders' revision as the settings know it.
+            pin.policy_revision = policy.clone();
+            pins.push(pin);
         }
         service
             .confirm_activation(request.settings, &request.expected_settings_revision, &pins)

@@ -10,7 +10,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 use super::models::{
     HistoryFilter, HistoryItem, ItemFilter, ItemPage, JobDetail, JobIntent, JobMode,
     ManagementError, Origin, PinnedProfile, PlannedItem, PreviewHandle, ResultPage, Revisions,
-    Selection, Summary,
+    Selection, Summary, TagEditMode,
 };
 use super::planner::{self, PlanContext};
 use super::profile::{self, CompiledScripts};
@@ -510,6 +510,23 @@ impl Management {
             ) => mode,
             _ => JobMode::Apply,
         };
+        if mode == JobMode::DuplicateResolution {
+            if detail.job.row_revision != request.expected_row_revision {
+                return Err(stale(
+                    "This preview changed since the page loaded. Reload the page and try again.",
+                ));
+            }
+            if self.recycle_for_duplicate(&snapshot)? {
+                // The incoming file is in the recycle bin: nothing else
+                // to write.
+                return self.write(|tx| {
+                    store::complete_without_work(tx, job_id, "DUPLICATE_RECYCLED", now_unix())?;
+                    ops::job(tx, job_id)?.ok_or(ManagementError::NotFound(
+                        "This management job does not exist.",
+                    ))
+                });
+            }
+        }
         self.begin(
             job_id,
             mode,
@@ -545,6 +562,24 @@ impl Management {
             if bundles.is_empty() && mode == JobMode::DuplicateResolution {
                 // Keeping both files: the decision is the whole job.
                 store::complete_without_work(tx, job_id, "DUPLICATE_KEPT", now)?;
+                return ops::job(tx, job_id)?.ok_or(ManagementError::NotFound(
+                    "This management job does not exist.",
+                ));
+            }
+            let edit = store::snapshot(tx, job_id)?.and_then(|snapshot| snapshot.intent().tag_edit);
+            if bundles.is_empty()
+                && let Some(edit) = edit.filter(|edit| edit.mode != TagEditMode::WriteOnce)
+            {
+                // The files already hold these values: only the kept
+                // override changes.
+                store::save_tag_edit(
+                    tx,
+                    &edit,
+                    job_id,
+                    current.requested_by_user_id.as_deref(),
+                    now,
+                )?;
+                store::complete_without_work(tx, job_id, "TAG_EDIT_SAVED", now)?;
                 return ops::job(tx, job_id)?.ok_or(ManagementError::NotFound(
                     "This management job does not exist.",
                 ));

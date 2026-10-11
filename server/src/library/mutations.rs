@@ -365,6 +365,39 @@ impl<'a> Mutations<'a> {
             Ok(())
         })?;
         Ok(self.put_back(&moves, actor))
+
+    /// Move one file the catalog does not list into the recycle bin (a
+    /// file standing where a managed file should go). Returns where it
+    /// went, so it can be moved back by hand.
+    pub fn recycle_untracked(
+        &self,
+        root_id: &str,
+        relative_path: &str,
+    ) -> Result<PathBuf, MutationError> {
+        let registry = self.setup.live_registry();
+        let root = registry
+            .resolve(root_id)
+            .ok_or(MutationError::Conflict(FILE_OUTSIDE_ROOT))?;
+        let path = join_inside(&root.path, relative_path)
+            .ok_or(MutationError::Conflict(FILE_OUTSIDE_ROOT))?;
+        let bin = self
+            .configured_bin()
+            .unwrap_or_else(|| root.path.join(super::scan::fs::RECYCLE_BIN_DIRECTORY_NAME));
+        let _guard = self
+            .setup
+            .fs
+            .try_write(root_id)
+            .ok_or(MutationError::Conflict(LIBRARY_BUSY))?;
+        if path
+            .symlink_metadata()
+            .map_or(true, |meta| !meta.file_type().is_file())
+        {
+            return Err(MutationError::Conflict(FILE_OUTSIDE_ROOT));
+        }
+        recycle_file(&path, &bin).map_err(|error| {
+            tracing::warn!(%error, "recycle move failed");
+            MutationError::Files(restore(&[]))
+        })
     }
 
     /// Undo recycle moves (an upgrade whose new file could not be placed):

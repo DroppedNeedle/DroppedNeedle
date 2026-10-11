@@ -16,7 +16,9 @@ use super::reasons::ItemReason;
 use super::selection;
 use super::service::{JobSpec, Management, stale};
 use super::store::{self, Snapshot};
+use crate::library::mutations::MutationError;
 use crate::library::publish::planner::PlanKind;
+use rusqlite::OptionalExtension as _;
 
 /// A request to settle one blocked file.
 pub struct DuplicateRequest {
@@ -35,14 +37,18 @@ fn duplicate_changed() -> ItemReason {
     }
 }
 
-fn recycle_unavailable() -> ItemReason {
-    ItemReason {
-        code: "RECYCLE_UNAVAILABLE".to_owned(),
-        message:
-            "Moving a file to the recycle bin is not something a management run can do here yet."
-                .to_owned(),
-        action: "Keep the existing file, or put the new one next to it under another name."
-            .to_owned(),
+/// A recycle-bin refusal as a management one, in its own words.
+fn recycle_refused(error: MutationError) -> ManagementError {
+    match error {
+        MutationError::Conflict(reason) | MutationError::Files(reason) => {
+            ManagementError::Conflict(format!("{} {}", reason.message, reason.action))
+        }
+        MutationError::NotFound(_) => ManagementError::Conflict(format!(
+            "{} {}",
+            duplicate_changed().message,
+            duplicate_changed().action
+        )),
+        MutationError::Store(cause) => ManagementError::Store(cause),
     }
 }
 
@@ -136,6 +142,96 @@ impl Management {
             proposed_settings_revision: None,
             retention_hours: stored.preview_retention_hours,
         })
+    }
+
+    /// When a duplicate resolution is applied: move the file its action
+    /// sends to the recycle bin, after checking it is still the file the
+    /// preview showed. True when that was the whole job. The recycle bin
+    /// keeps the file in a dated folder, so it can be moved back by hand.
+    pub(super) fn recycle_for_duplicate(
+        &self,
+        snapshot: &Snapshot,
+    ) -> Result<bool, ManagementError> {
+        let Some(intent) = snapshot.intent().duplicate else {
+            return Ok(false);
+        };
+        let actor = snapshot
+            .job
+            .requested_by_user_id
+            .clone()
+            .unwrap_or_default();
+        let mutations = crate::library::mutations::Mutations::new(&self.setup);
+        let changed = || {
+            ManagementError::Conflict(format!(
+                "{} {}",
+                duplicate_changed().message,
+                duplicate_changed().action
+            ))
+        };
+        let sandbox = self.setup.publish_sandbox().map_err(|_| {
+            ManagementError::Conflict(
+                "The library folders are not available right now. Try again later.".to_owned(),
+            )
+        })?;
+        match intent.action {
+            DuplicateAction::RecycleIncomingKeepExisting => {
+                let item = self.source_item(snapshot, 0)?;
+                let track_id = item.track_id.clone().ok_or_else(changed)?;
+                let unchanged = sandbox
+                    .resolve_no_symlink(&item.source_root, &item.source_rel)
+                    .ok()
+                    .and_then(|path| crate::library::publish::paths::read_regular_file(&path).ok())
+                    .is_some_and(|bytes| {
+                        crate::library::publish::snapshots::sha256_hex(&bytes) == item.fingerprint
+                    });
+                if !unchanged {
+                    return Err(changed());
+                }
+                mutations
+                    .remove_track(&track_id, true, &actor)
+                    .map_err(recycle_refused)?;
+                Ok(true)
+            }
+            DuplicateAction::RecycleExistingKeepIncoming => {
+                let tracked: Option<String> = self.read(|conn| {
+                    Ok(conn
+                        .query_row(
+                            "SELECT id FROM local_tracks WHERE root_id = ?1 AND relative_path = ?2 \
+                             AND availability = 'indexed'",
+                            rusqlite::params![
+                                intent.existing_root_id,
+                                intent.existing_relative_path
+                            ],
+                            |row| row.get(0),
+                        )
+                        .optional()?)
+                })?;
+                if intent
+                    .existing_local_track_id
+                    .as_ref()
+                    .is_some_and(|expected| tracked.as_ref() != Some(expected))
+                {
+                    return Err(changed());
+                }
+                match tracked {
+                    Some(track_id) => {
+                        mutations
+                            .remove_track(&track_id, true, &actor)
+                            .map_err(recycle_refused)?;
+                    }
+                    None => {
+                        mutations
+                            .recycle_untracked(
+                                &intent.existing_root_id,
+                                &intent.existing_relative_path,
+                            )
+                            .map_err(recycle_refused)?;
+                    }
+                }
+                Ok(false)
+            }
+            _ => Ok(false),
+        }
     }
 
     fn source_item(
@@ -254,17 +350,41 @@ impl Management {
                         item.block(duplicate_changed());
                     }
                 }
-                DuplicateAction::RecycleExistingKeepIncoming
-                | DuplicateAction::RecycleIncomingKeepExisting => {
-                    item.block(recycle_unavailable());
+                DuplicateAction::RecycleIncomingKeepExisting => {
+                    // Nothing is published: applying moves this file to
+                    // the recycle bin.
+                    item.desired.plan = None;
+                    item.dest_root = None;
+                    item.dest_rel = None;
+                    item.diff = Default::default();
+                    item.diff.path_changed = true;
+                    item.facts.warnings.push(
+                        "This file moves to the recycle bin; the file in its way stays.".to_owned(),
+                    );
+                    item.eligibility = Eligibility::Warning;
+                }
+                DuplicateAction::RecycleExistingKeepIncoming => {
+                    // The file in the way goes to the recycle bin first;
+                    // this file then takes its place.
+                    if item.desired.plan.is_none() {
+                        item.block(duplicate_changed());
+                    } else {
+                        item.facts.warnings.push(format!(
+                            "{} moves to the recycle bin first, then this file takes its place.",
+                            intent.existing_relative_path
+                        ));
+                        item.eligibility = Eligibility::Warning;
+                    }
                 }
             }
         }
-        let mut summary = Summary::default();
-        summary.bundle_count = 1;
+        let mut summary = Summary {
+            bundle_count: 1,
+            selected_item_count: Some(1),
+            expanded_track_count: 1,
+            ..Summary::default()
+        };
         summary.count(&item);
-        summary.selected_item_count = Some(1);
-        summary.expanded_track_count = 1;
         if !self.keep_items(snapshot, worker, std::slice::from_ref(&item))? {
             return Ok(None);
         }

@@ -289,6 +289,16 @@ pub fn terminal(code: &str) -> Reason {
             "This run stopped on an unexpected problem.",
             "Make a new preview. If it happens again, the server log has the details.",
         ),
+        "TAG_EDIT_SAVED" => reason(
+            "TAG_EDIT_SAVED",
+            "The files already held these values, so only the kept value changed.",
+            "Nothing to do.",
+        ),
+        "DUPLICATE_RECYCLED" => reason(
+            "DUPLICATE_RECYCLED",
+            "The file was moved to the recycle bin; the file in its way stays.",
+            "Nothing to do; move it back from the recycle bin if you change your mind.",
+        ),
         "DUPLICATE_KEPT" => reason(
             "DUPLICATE_KEPT",
             "Both files were kept where they are; nothing was written.",

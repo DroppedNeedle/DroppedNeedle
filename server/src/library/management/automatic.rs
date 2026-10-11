@@ -223,8 +223,9 @@ impl Management {
         }
         let registry = self.setup.live_registry();
         let policy = registry.policy_revision().to_owned();
-        if !activation_is_current(&stored, &assignment, &policy)
-            && !migration_carry_applies(&stored, &assignment, &policy)
+        let pinned_policy = self.activation_policy_revision()?;
+        if !activation_is_current(&stored, &assignment, &pinned_policy)
+            && !migration_carry_applies(&stored, &assignment, &pinned_policy)
         {
             tracing::info!(
                 album_id,

@@ -3752,4 +3752,293 @@ async fn library_journey_identity_repair_and_preparation() {
     assert!(lib.library.identify_store.album_identity(&album).is_none());
     // The undo puts back the match state the acceptance replaced.
     assert_eq!(match_state().as_deref(), Some("unmatched:NO_CANDIDATE"));
+
+/// Apply a ready preview from its handle and run the worker once.
+async fn management_apply(
+    library: &LibrarySetup,
+    handle: &droppedneedle::library::management::models::PreviewHandle,
+) -> droppedneedle::library::management::models::JobDetail {
+    use droppedneedle::library::management::service::{ApplyRequest, Management};
+    let management = Management::new(library);
+    let detail = management.detail(&handle.job_id).expect("detail");
+    assert!(detail.ready_for_confirmation, "{:?}", detail.stale_reasons);
+    let job = management
+        .apply(
+            &handle.job_id,
+            ApplyRequest {
+                preview_token: handle.preview_token.clone(),
+                expected_row_revision: detail.job.row_revision,
+                idempotency_key: format!("apply-{}", handle.job_id),
+                confirmation: true,
+            },
+        )
+        .expect("apply queued");
+    if job.state.as_str() == "queued" {
+        assert!(management_step(library).await, "apply runs");
+    }
+    management.detail(&handle.job_id).expect("detail")
+}
+
+/// Library Management tools end to end, every write through the
+/// publisher:
+/// - the tag editor shows a file's tags; a saved edit writes the file and
+///   keeps the value, and its undo puts the tag back despite the kept
+///   value it saved;
+/// - a reset that changes no tag only drops the kept value;
+/// - a baseline restore puts the file back to its original, and the
+///   purge then drops the originals after a typed confirmation;
+/// - the journal reports nothing needing attention;
+/// - a dry run, confirmed, turns automatic management on: a queued album
+///   is then managed without asking, and looked at again it is left
+///   alone because it is already managed.
+#[tokio::test]
+async fn library_management_tools_journey() {
+    use droppedneedle::library::management::activation::{
+        ActivationConfirm, ActivationProof, ActivationRequest,
+    };
+    use droppedneedle::library::management::models::{Selection, SelectionKind, TagEditMode};
+    use droppedneedle::library::management::restore::{PurgeRequest, RestoreRequest};
+    use droppedneedle::library::management::service::Management;
+    use droppedneedle::library::management::tag_edit::TagEditRequest;
+    use droppedneedle::library::scan::CatalogStore as _;
+    use droppedneedle::library::tags::{TagField, read_fields};
+    use droppedneedle::settings::management as lm;
+
+    let (scratch, library, music) = bare_library("lib-management-tools");
+    let file = plant(&music, "incoming/tool track.flac", "management_full.flac");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "incoming/tool track.flac")
+        .expect("track indexed");
+    let album = library.scan_store.album_for_track(&track).expect("album");
+    library
+        .test_providers
+        .as_ref()
+        .expect("scripted providers")
+        .set_recall(ambiguous_recall(&library, &album));
+    assert_eq!(library.identify_tick().await, 1);
+    library
+        .scan_store
+        .execute_batch_for_tests(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+        )
+        .expect("admin row");
+    droppedneedle::library::operations::service::Operations::new(&library)
+        .confirm_match(&album, "admin")
+        .expect("match confirmed");
+    library
+        .config
+        .save(lm::initial_settings(""))
+        .expect("settings saved");
+    // The settings page reads them first, which stores them normalized.
+    lm::service::LibraryManagementService::new(
+        library.config.clone(),
+        library.ids.clone(),
+        Arc::new(lm::StructuralCompiler),
+    )
+    .get_settings()
+    .expect("settings normalized");
+    let original = read_fields(&file).expect("original tags");
+    let title =
+        |path: &std::path::Path| read_fields(path).expect("tags read")[&TagField::Title].clone();
+    let management = Management::new(&library);
+    let policy = library.live_registry().policy_revision().to_owned();
+    let revision = || {
+        lm::settings_revision(
+            &library
+                .config
+                .get::<droppedneedle::runtime_config::sections::LibraryManagement>()
+                .expect("settings read"),
+        )
+    };
+    let overrides = |_: &LibrarySetup| -> i64 {
+        droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db"))
+            .expect("db opens")
+            .query_row(
+                "SELECT COUNT(*) FROM library_management_overrides",
+                [],
+                |row| row.get(0),
+            )
+            .expect("overrides counted")
+    };
+
+    // The editor shows the file; a saved edit writes it and keeps it.
+    let editor = management.tag_editor(&track).expect("tag editor");
+    assert!(editor.accepted_identity, "{:?}", editor.identity_reason);
+    assert!(
+        editor
+            .fields
+            .iter()
+            .any(|field| field.field_name == "title")
+    );
+    let edit = |mode: TagEditMode, value: &str, key: &str| TagEditRequest {
+        local_track_id: track.clone(),
+        mode,
+        expected_settings_revision: revision(),
+        expected_policy_revision: policy.clone(),
+        fields: vec![("title".to_owned(), serde_json::json!(value))],
+        idempotency_key: Some(key.to_owned()),
+    };
+    let saved = management
+        .create_tag_edit(
+            edit(TagEditMode::SaveOverride, "Edited Title", "edit-1"),
+            "admin",
+        )
+        .expect("edit preview");
+    assert!(management_step(&library).await, "edit planning runs");
+    let applied = management_apply(&library, &saved).await;
+    assert_eq!(applied.job.state.as_str(), "succeeded");
+    assert_eq!(title(&file), vec!["Edited Title".to_owned()]);
+    assert_eq!(overrides(&library), 1, "the edit is kept");
+
+    // Its undo is not blocked by the value the edit itself kept.
+    let undo = management
+        .undo_preview(
+            &saved.job_id,
+            applied.job.row_revision,
+            "undo-edit",
+            "admin",
+        )
+        .expect("undo preview");
+    assert!(management_step(&library).await, "undo planning runs");
+    let undone = management_apply(&library, &undo).await;
+    assert_eq!(undone.job.state.as_str(), "succeeded");
+    assert_eq!(title(&file), original[&TagField::Title]);
+
+    // A reset that changes no tag only drops the kept value.
+    let reset = management
+        .create_tag_edit(edit(TagEditMode::ResetCanonical, "", "edit-reset"), "admin")
+        .expect("reset preview");
+    assert!(management_step(&library).await, "reset planning runs");
+    let reset = management_apply(&library, &reset).await;
+    assert_eq!(reset.job.state.as_str(), "succeeded");
+    assert_eq!(overrides(&library), 0, "the kept value is gone");
+
+    // Write once, then back to the original.
+    let once = management
+        .create_tag_edit(edit(TagEditMode::WriteOnce, "Once", "edit-once"), "admin")
+        .expect("write-once preview");
+    assert!(management_step(&library).await, "write-once planning runs");
+    management_apply(&library, &once).await;
+    assert_eq!(title(&file), vec!["Once".to_owned()]);
+    let restore = management
+        .create_restore_preview(
+            RestoreRequest {
+                selection: Selection {
+                    kind: SelectionKind::Albums,
+                    ids: vec![album.clone()],
+                    catalog_filter: None,
+                },
+                expected_settings_revision: revision(),
+                expected_policy_revision: policy.clone(),
+                idempotency_key: "restore-1".to_owned(),
+            },
+            "admin",
+        )
+        .expect("restore preview");
+    assert!(management_step(&library).await, "restore planning runs");
+    let restored = management_apply(&library, &restore).await;
+    assert_eq!(restored.job.state.as_str(), "succeeded");
+    assert_eq!(read_fields(&file).expect("restored"), original);
+
+    // The purge drops the originals only with the typed confirmation.
+    let impact = management.purge_impact().expect("purge impact");
+    assert_eq!(impact.baseline_count, 1);
+    let purge = |phrase: &str, key: &str| PurgeRequest {
+        impact_token: impact.impact_token.clone(),
+        expected_catalog_revision: impact.catalog_revision,
+        typed_confirmation: phrase.to_owned(),
+        idempotency_key: key.to_owned(),
+    };
+    assert!(management.purge(purge("yes", "purge-0"), "admin").is_err());
+    let purged = management
+        .purge(purge("CONFIRM", "purge-1"), "admin")
+        .expect("purged");
+    assert_eq!(purged.purged_baseline_count, 1);
+    assert_eq!(management.purge_impact().expect("impact").baseline_count, 0);
+    assert_eq!(
+        management
+            .recovery_diagnostics()
+            .expect("diagnostics")
+            .needs_attention_count,
+        0
+    );
+
+    // A confirmed dry run turns automatic management on for the folder.
+    let mut proposed = library
+        .config
+        .get::<droppedneedle::runtime_config::sections::LibraryManagement>()
+        .expect("settings read");
+    let assignment = proposed
+        .root_assignments
+        .iter_mut()
+        .find(|assignment| assignment.root_id == "music");
+    match assignment {
+        Some(assignment) => {
+            assignment.enabled = true;
+            assignment.automatic_scan_discovered = true;
+        }
+        None => proposed.root_assignments.push(
+            droppedneedle::runtime_config::sections::LibraryManagementRootAssignment {
+                root_id: "music".to_owned(),
+                profile_id: Some(lm::PICARD_ORGANIZER_PROFILE_ID.to_owned()),
+                enabled: true,
+                automatic_scan_discovered: true,
+                ..Default::default()
+            },
+        ),
+    }
+    let dry_run = management
+        .create_activation(
+            ActivationRequest {
+                root_id: "music".to_owned(),
+                settings: proposed.clone(),
+                expected_settings_revision: revision(),
+                expected_policy_revision: policy.clone(),
+                idempotency_key: Some("dry-run".to_owned()),
+            },
+            "admin",
+        )
+        .expect("dry run");
+    assert!(management_step(&library).await, "dry run planning runs");
+    assert!(
+        management
+            .activation_detail(&dry_run.job_id)
+            .expect("dry run detail")
+            .ready_for_confirmation
+    );
+    management
+        .confirm_activation(ActivationConfirm {
+            settings: proposed,
+            proofs: vec![ActivationProof {
+                root_id: "music".to_owned(),
+                job_id: dry_run.job_id.clone(),
+                preview_token: dry_run.preview_token.clone(),
+            }],
+            expected_settings_revision: revision(),
+            confirmation: true,
+        })
+        .expect("activation confirmed");
+
+    // The album is then managed without asking: moved by the profile.
+    library.queue_automatic_management(&album);
+    assert!(management.automatic_next().expect("automatic step"));
+    assert!(management_step(&library).await, "automatic planning runs");
+    assert!(management_step(&library).await, "automatic apply runs");
+    assert!(!file.exists(), "the profile moved the file");
+    let (history, _) = management.history(Default::default()).expect("history");
+    let automatic = history
+        .iter()
+        .find(|item| item.origin == "scan_discovered")
+        .expect("an automatic run");
+    assert_eq!(automatic.mode, "automatic_apply");
+    assert_eq!(automatic.job.state.as_str(), "succeeded");
+
+    // Looked at again, the album is already managed: nothing new runs.
+    library.queue_automatic_management(&album);
+    assert!(management.automatic_next().expect("automatic step"));
+    let (again, _) = management.history(Default::default()).expect("history");
+    assert_eq!(again.len(), history.len());
 }
