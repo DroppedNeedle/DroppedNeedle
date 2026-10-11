@@ -247,7 +247,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         &config,
         auth.users.clone(),
         crypto.clone(),
-        http.shared().clone(),
+        &http,
         ids.clone(),
         Some(library.root_source()),
         runtime.pool().clone(),

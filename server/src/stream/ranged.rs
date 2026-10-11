@@ -74,7 +74,19 @@ pub fn spans(first: reqwest::Response, chunks: ChunkFn, reopen: RangeOpen) -> Sp
         futures_util::stream::once(async move {
             let response = reopen(range).await.map_err(std::io::Error::other)?;
             match response.status().as_u16() {
-                206 => Ok(byte_window(chunks(response), 0, len)),
+                206 => {
+                    let served = response
+                        .headers()
+                        .get(reqwest::header::CONTENT_RANGE)
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(range_start);
+                    if served != Some(start) {
+                        return Err(std::io::Error::other(
+                            "upstream answered a different range than asked",
+                        ));
+                    }
+                    Ok(byte_window(chunks(response), 0, len))
+                }
                 200 => Ok(byte_window(chunks(response), start, len)),
                 status => Err(std::io::Error::other(format!(
                     "upstream range request answered {status}"
@@ -86,6 +98,12 @@ pub fn spans(first: reqwest::Response, chunks: ChunkFn, reopen: RangeOpen) -> Sp
     })
 }
 
+/// First byte of a `Content-Range: bytes <start>-<end>/<total>` value.
+fn range_start(value: &str) -> Option<u64> {
+    let span = value.trim().strip_prefix("bytes")?.trim_start();
+    span.split('-').next()?.trim().parse().ok()
+}
+
 /// A response body as chunks, each due within [`IDLE_TIMEOUT`].
 pub fn response_chunks(response: reqwest::Response) -> ChunkStream {
     futures_util::stream::unfold(Some(response), |state| async move {
@@ -93,7 +111,8 @@ pub fn response_chunks(response: reqwest::Response) -> ChunkStream {
         match tokio::time::timeout(IDLE_TIMEOUT, response.chunk()).await {
             Ok(Ok(Some(bytes))) => Some((Ok(bytes.to_vec()), Some(response))),
             Ok(Ok(None)) => None,
-            Ok(Err(error)) => Some((Err(std::io::Error::other(error)), None)),
+            // The URL can carry credentials (Subsonic auth is in the query).
+            Ok(Err(error)) => Some((Err(std::io::Error::other(error.without_url())), None)),
             Err(_) => Some((Err(std::io::Error::other("upstream audio stalled")), None)),
         }
     })
@@ -118,5 +137,11 @@ mod tests {
         assert_eq!(out, b"cdefgh");
         let short = byte_window(chunks(&[b"abc"]), 1, 5).try_concat().await;
         assert!(short.is_err());
+    }
+
+    #[test]
+    fn content_range_start_parses() {
+        assert_eq!(range_start("bytes 100-199/1000"), Some(100));
+        assert_eq!(range_start("bytes */1000"), None);
     }
 }

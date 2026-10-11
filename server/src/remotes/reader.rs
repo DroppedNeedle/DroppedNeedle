@@ -110,12 +110,15 @@ impl RemotesRemoteReader {
         })
     }
 
-    /// Resolve and send the audio request for one key.
+    /// Resolve and send the audio request for one key. `head_only` asks
+    /// with HEAD first and falls back to GET (dropped after the headers)
+    /// for a server that does not answer HEAD with a size.
     async fn audio_response(
         &self,
         source: AudioSource,
         key: &str,
         user_id: &str,
+        head_only: bool,
     ) -> Result<(reqwest::Response, Option<reqwest::Request>), StreamFault> {
         let request = self
             .handle(source, user_id)
@@ -123,6 +126,18 @@ impl RemotesRemoteReader {
             .audio_request(key)
             .map_err(|error| map_fault(source, error))?;
         let again = request.try_clone();
+        if head_only && let Some(mut head) = request.try_clone() {
+            *head.method_mut() = reqwest::Method::HEAD;
+            match send(&self.http, head).await {
+                Ok(response) if response.content_length().is_some_and(|len| len > 0) => {
+                    return Ok((response, again));
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::debug!(%error, source = source.as_str(), "remote HEAD failed; asking with GET");
+                }
+            }
+        }
         let response = send(&self.http, request)
             .await
             .map_err(|error| map_fault(source, error))?;
@@ -137,7 +152,7 @@ impl RemoteReader for RemotesRemoteReader {
         key: &str,
         user_id: &str,
     ) -> Result<RemoteMedia, StreamFault> {
-        let (response, _) = self.audio_response(source, key, user_id).await?;
+        let (response, _) = self.audio_response(source, key, user_id, false).await?;
         let content_type = content_type(&response);
         let bytes = response.bytes().await.map_err(|cause| {
             tracing::warn!(cause = %cause.without_url(), source = source.as_str(), "remote audio read failed");
@@ -156,7 +171,7 @@ impl RemoteReader for RemotesRemoteReader {
         user_id: &str,
         head_only: bool,
     ) -> Result<StreamMedia, StreamFault> {
-        let (response, again) = self.audio_response(source, key, user_id).await?;
+        let (response, again) = self.audio_response(source, key, user_id, head_only).await?;
         let content_type = content_type(&response);
         let sized = response.content_length().filter(|len| *len > 0);
         let media = match (sized, again) {
@@ -198,9 +213,12 @@ impl RemoteReader for RemotesRemoteReader {
 /// How long a remote server may take to start answering an audio request.
 const SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// Send one audio request and require a success status. Only the start of
-/// the answer is timed; the body is paced by the chunk idle timeout, so a
-/// long track is never cut off mid-play.
+/// Send one audio request and require a success status. `http` is the
+/// remote-audio client (connect timeout only, no redirects), so only the
+/// start of the answer is timed here, by [`SEND_TIMEOUT`]; the body is
+/// paced by [`ranged::IDLE_TIMEOUT`] per chunk, so a long track is never
+/// cut off mid-play. A redirect is refused as an error status, so a
+/// server token never goes to another host.
 async fn send(
     http: &reqwest::Client,
     request: reqwest::Request,

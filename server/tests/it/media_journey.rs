@@ -154,7 +154,7 @@ impl E2e {
             &app_config,
             auth.users.clone(),
             Arc::clone(&self.crypto),
-            self.http.shared().clone(),
+            &self.http,
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             Some(library.root_source()),
             self.runtime.pool().clone(),

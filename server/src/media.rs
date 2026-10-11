@@ -104,7 +104,7 @@ impl MediaSetup {
         app_config: &AppConfig,
         users: UsersDeps,
         crypto: Arc<Crypto>,
-        http: reqwest::Client,
+        http_factory: &crate::http_client::HttpClientFactory,
         ids: Arc<dyn IdGenerator>,
         library_roots: Option<crate::library::wiring::RootSource>,
         pool: sqlx::SqlitePool,
@@ -112,6 +112,8 @@ impl MediaSetup {
         config: Arc<ConfigStore>,
         imports: Arc<dyn ImportSink>,
     ) -> Result<(Self, MediaWorkers), String> {
+        let http = http_factory.shared().clone();
+        crate::stream::plugin_url::sweep_stale_spools();
         let library = library_roots.map(|roots| LibraryFiles::new(pool.clone(), roots));
         let download = DownloadState::new(
             library.clone(),
@@ -148,7 +150,10 @@ impl MediaSetup {
             auth: users,
             ids: ids.clone(),
         };
-        let reader = RemotesRemoteReader::with_resolver(http.clone(), resolver.clone());
+        let reader = RemotesRemoteReader::with_resolver(
+            http_factory.remote_audio().clone(),
+            resolver.clone(),
+        );
         let spawner = StdFfmpegSpawner::detect()
             .unwrap_or_else(|| StdFfmpegSpawner::with_path(PathBuf::from("ffmpeg")));
         let transcoder = FfmpegTranscoder::new(spawner, Arc::new(LocalTranscodeGate::new()));

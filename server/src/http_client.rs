@@ -64,6 +64,7 @@ impl HttpSettings {
 pub struct HttpClientFactory {
     client: Client,
     no_redirect: Client,
+    remote_audio: Client,
     direct: Client,
     archive: Client,
 }
@@ -101,6 +102,14 @@ impl HttpClientFactory {
         Ok(Self {
             client: builder().build()?,
             no_redirect: builder().redirect(Policy::none()).build()?,
+            // Remote server audio: no total timeout (a long track streams
+            // for minutes; the caller times the answer and each chunk), and
+            // no redirects, so a server token never goes to another host.
+            remote_audio: Client::builder()
+                .user_agent(settings.user_agent())
+                .connect_timeout(settings.connect_timeout)
+                .redirect(Policy::none())
+                .build()?,
             // No total timeout: it carries long audio streams, which the
             // caller paces chunk by chunk instead.
             direct: Client::builder()
@@ -146,6 +155,12 @@ impl HttpClientFactory {
     /// response instead of being followed.
     pub fn no_redirect(&self) -> &Client {
         &self.no_redirect
+    }
+
+    /// For audio streamed from the user's own remote servers (Jellyfin,
+    /// Navidrome, Plex): no total timeout and no redirects.
+    pub fn remote_audio(&self) -> &Client {
+        &self.remote_audio
     }
 
     /// Redirects off and no proxy: the connection goes straight to the
