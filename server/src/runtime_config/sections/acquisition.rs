@@ -647,6 +647,10 @@ pub struct DownloadPolicy {
     pub unknown_quality_behavior: String,
     /// Source-vs-quality selection.
     pub source_selection_mode: String,
+    /// When an automatic download waits for a hand pick: `when_unsure`
+    /// (no candidate looks like the whole album in an accepted quality),
+    /// `always`, or `off` (grab the best guess).
+    pub search_review: String,
 }
 
 impl Default for DownloadPolicy {
@@ -692,6 +696,7 @@ impl Default for DownloadPolicy {
             lossless_max_sample_rate_hz: None,
             unknown_quality_behavior: "allow_as_fallback".to_owned(),
             source_selection_mode: "source_first".to_owned(),
+            search_review: "when_unsure".to_owned(),
         }
     }
 }
@@ -934,6 +939,16 @@ impl Section for DownloadPolicy {
                 ),
             ));
         }
+        if !matches!(
+            self.search_review.as_str(),
+            "when_unsure" | "always" | "off"
+        ) {
+            return Err(validation(
+                key,
+                "search_review",
+                format!("invalid search_review: {:?}", self.search_review),
+            ));
+        }
         for (field, value) in [
             (
                 "preferred_lossy_bitrate_kbps",
@@ -1029,6 +1044,12 @@ impl Section for DownloadPolicy {
             "source_first" | "quality_first"
         ) {
             self.source_selection_mode = "source_first".to_owned();
+        }
+        if !matches!(
+            self.search_review.as_str(),
+            "when_unsure" | "always" | "off"
+        ) {
+            self.search_review = "when_unsure".to_owned();
         }
         for bound in [
             &mut self.preferred_lossy_bitrate_kbps,

@@ -45,12 +45,15 @@ use super::downloads::store::{AttemptRow, NewTask, StoreError, TaskRow};
 use super::downloads::watchdog::{PollSample, RetryPolicy, Watchdog, WatchdogConfig};
 use super::landing::LandingService;
 use super::plugin_source::PluginDownloadSource;
+use super::search_jobs::review::ReviewMode;
 use super::sources::{JournalOwnership, SabnzbdSource, SlskdSource};
+use super::target::Targets;
 use super::target::reasons::TrackReason;
 use crate::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
 
 mod controls;
 mod landings;
+mod review;
 
 pub use controls::{NextSourceError, RetryError};
 pub use landings::ReimportError;
@@ -382,6 +385,8 @@ pub struct WorkerConfig {
     pub orphan_roots: Vec<(String, PathBuf)>,
     /// Lease owner name for cleanup claims.
     pub worker_id: String,
+    /// When an album waits for a hand pick instead of the best guess.
+    pub review: ReviewMode,
 }
 
 impl Default for WorkerConfig {
@@ -397,6 +402,7 @@ impl Default for WorkerConfig {
             recycle: Vec::new(),
             orphan_roots: Vec::new(),
             worker_id: "download-worker".to_owned(),
+            review: ReviewMode::default(),
         }
     }
 }
@@ -488,6 +494,9 @@ pub struct DownloadWorker {
     events: crate::events::EventSink,
     /// Wakes the loop early after a queue action (retry, next source).
     wake: tokio::sync::Notify,
+    /// Album targets for the look before an automatic grab; without them
+    /// every source grabs its own best guess.
+    targets: Option<Arc<Targets>>,
 }
 
 /// Called after a landing settles a task, so its requests and wanted
@@ -516,7 +525,15 @@ impl DownloadWorker {
             landing_tasks: Mutex::new(Vec::new()),
             events: crate::events::EventSink::default(),
             wake: tokio::sync::Notify::new(),
+            targets: None,
         }
+    }
+
+    /// Search every source and look over the candidates before an album's
+    /// first automatic attempt (search review).
+    pub fn with_targets(mut self, targets: Arc<Targets>) -> Self {
+        self.targets = Some(targets);
+        self
     }
 
     /// Send live progress through this sink.
@@ -690,7 +707,8 @@ impl DownloadWorker {
     /// Enqueue one queued task. Answers whether a fetch started.
     async fn enqueue_one(&self, pass: &Pass, task: &TaskRow) -> bool {
         let now = pass.now;
-        if self.landing_in_flight(&task.id) {
+        if self.landing_in_flight(&task.id) || Self::parked(task) {
+            // A parked task waits for its owner's pick from its search.
             return false;
         }
         if task.artist_name.trim().is_empty() && task.album_title.trim().is_empty() {
@@ -738,6 +756,19 @@ impl DownloadWorker {
             self.fail_unserved(task, &attempts, now, None).await;
             return false;
         }
+        let linked;
+        let task = if handled == 0 && task.search_job_id.is_none() {
+            match self.review(pass, task).await {
+                review::Reviewed::Take(task) => {
+                    linked = task;
+                    &*linked
+                }
+                review::Reviewed::Wait => return false,
+                review::Reviewed::Search => task,
+            }
+        } else {
+            task
+        };
         // The key marks the window between the client add and the attempt
         // journal write. A repeat claim means a crash landed in it: the
         // enqueue below re-attaches (usenet probes queue and history by the

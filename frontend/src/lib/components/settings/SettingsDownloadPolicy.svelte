@@ -18,6 +18,7 @@
 		validateRecipeEntry,
 		type RecipeDraftEntry
 	} from './acquisition/qualityRecipeModel';
+	import SearchReviewSection from './acquisition/SearchReviewSection.svelte';
 	import SourceSelectionSection from './acquisition/SourceSelectionSection.svelte';
 	import UpgradesSection from './acquisition/UpgradesSection.svelte';
 	import type { DownloadPolicySettings } from '$lib/types';
@@ -52,6 +53,7 @@
 	>(null);
 	let migrationMessage = $state<string | null>(null);
 	let sourceSelectionMode = $state('source_first');
+	let searchReview = $state('when_unsure');
 	let verifyDownloads = $state(true);
 	let autoAccept = $state(0.7);
 	let manualMin = $state(0.5);
@@ -114,6 +116,7 @@
 			lossyMinBitrateKbps = d.lossy_min_bitrate_kbps ?? null;
 			lossyMaxBitrateKbps = d.lossy_max_bitrate_kbps ?? null;
 			sourceSelectionMode = d.source_selection_mode ?? 'source_first';
+			searchReview = d.search_review ?? 'when_unsure';
 			baselineFingerprint = recipeFingerprint(migration.recipe, unknown);
 			seeded = true;
 		});
@@ -175,6 +178,7 @@
 			lossless_max_sample_rate_hz: d.lossless_max_sample_rate_hz ?? null,
 			unknown_quality_behavior: unknownQualityBehavior,
 			source_selection_mode: sourceSelectionMode,
+			search_review: searchReview,
 			quality_recipe_status: 'v2',
 			quality_recipe_error: null
 		};
@@ -268,6 +272,14 @@
 			<div>
 				<h3 class="font-medium">Source selection</h3>
 				<SourceSelectionSection bind:sourceSelectionMode />
+			</div>
+
+			<div>
+				<h3 class="font-medium">Picking a copy</h3>
+				<p class="text-xs text-base-content/60">
+					When an album should wait for you to pick which copy to download.
+				</p>
+				<SearchReviewSection bind:searchReview />
 			</div>
 
 			<AdvancedBehaviorSection

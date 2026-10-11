@@ -11,10 +11,15 @@
 //! wanted watchlist instead; cancel just closes the job. Each change is
 //! announced to the owner as `search_job_updated` on the event stream.
 //!
+//! The automatic downloader uses the same jobs when it looks before it
+//! grabs ([`review`]): a download parked on a job waits for its owner's
+//! pick, which resumes that download instead of starting another.
+//!
 //! Ownership follows v2: a job belongs to the person who started it.
 //! Only they may view, pick or cancel it; an admin may also dismiss it.
 
 pub mod candidates;
+pub mod review;
 pub mod store;
 
 use std::collections::HashMap;
@@ -37,7 +42,7 @@ use super::requests::ledger::{WATCH_DORMANT, WATCH_FULFILLED, WATCH_STOPPED, Wan
 use super::requests::quota::QuotaLedger;
 use super::requests::sqlite::WantedStore;
 use super::target::{SearchTarget, Targets};
-use super::worker::DownloadWorker;
+use super::worker::{DownloadWorker, Source};
 use crate::events::{EventSink, SearchJobUpdated, UserNotice, new_event_id};
 
 /// How long one source may take to answer a manual search.
@@ -304,34 +309,8 @@ impl SearchJobs {
             track: None,
         };
         let sources = self.worker.sources_now();
-        let searches = sources.iter().map(|source| {
-            let target = &target;
-            async move {
-                let found =
-                    tokio::time::timeout(SOURCE_TIMEOUT, source.search_candidates(target)).await;
-                (source.journal_source().to_owned(), found)
-            }
-        });
-        let mut candidates: Vec<Candidate> = Vec::new();
-        let mut failed = 0;
-        // Sources come back in the configured try order, so the list is
-        // grouped Soulseek, Usenet, plugins (or as configured).
-        for (source, found) in futures_util::future::join_all(searches).await {
-            match found {
-                Ok(Ok(found)) => candidates.extend(found),
-                Ok(Err(error)) => {
-                    failed += 1;
-                    tracing::warn!(job_id = %job.id, source, %error, "manual search: source failed");
-                }
-                Err(_) => {
-                    failed += 1;
-                    tracing::warn!(job_id = %job.id, source, "manual search: source timed out");
-                }
-            }
-        }
-        for (index, candidate) in candidates.iter_mut().enumerate() {
-            candidate.view.candidate_index = index;
-        }
+        let (candidates, failed) =
+            search_sources(&sources.iter().collect::<Vec<_>>(), &target, &job.id).await;
         let count = candidates.len();
         let (status, reason) = if count == 0 && failed > 0 && failed == sources.len() {
             (FAILED, Some(SearchReason::SourcesFailed.code()))
@@ -473,7 +452,7 @@ impl SearchJobs {
             .await
             .map_err(SearchJobError::Internal)?
         {
-            Ok(()) => {
+            Ok(task_id) => {
                 self.worker.wake();
                 self.announce(&row.user_id, job_id, MATCHED, payload.candidates.len());
                 Ok(task_id)
@@ -486,7 +465,8 @@ impl SearchJobs {
         }
     }
 
-    /// Close a job without downloading anything.
+    /// Close a job without downloading anything. A download parked on it
+    /// waiting for a pick is cancelled with it.
     pub async fn cancel(&self, principal: &Principal, job_id: &str) -> Result<(), SearchJobError> {
         let row = self.owned(principal, job_id, false).await?;
         self.close(&row).await
@@ -507,7 +487,7 @@ impl SearchJobs {
             handle.abort();
         }
         self.store
-            .transition(&row.id, CANCELLED, &[SEARCHING, COMPLETED, FAILED], None)
+            .close(&row.id)
             .await
             .map_err(SearchJobError::Internal)?;
         self.announce(&row.user_id, &row.id, CANCELLED, 0);
@@ -592,6 +572,41 @@ impl SearchJobs {
         tracing::info!(job_id, release_group_mbid = %group, "manual search dismissed; album watched");
         Ok(state)
     }
+}
+
+/// Ask every source at once for the target's album. Candidates come back
+/// grouped by source in the order given (the configured try order), each
+/// source's best first, numbered in that order. Answers the candidates and
+/// how many sources failed or timed out; a failing source only drops its
+/// own group.
+pub async fn search_sources(
+    sources: &[&Source],
+    target: &SearchTarget,
+    job_id: &str,
+) -> (Vec<Candidate>, usize) {
+    let searches = sources.iter().map(|source| async move {
+        let found = tokio::time::timeout(SOURCE_TIMEOUT, source.search_candidates(target)).await;
+        (source.journal_source().to_owned(), found)
+    });
+    let mut candidates: Vec<Candidate> = Vec::new();
+    let mut failed = 0;
+    for (source, found) in futures_util::future::join_all(searches).await {
+        match found {
+            Ok(Ok(found)) => candidates.extend(found),
+            Ok(Err(error)) => {
+                failed += 1;
+                tracing::warn!(job_id, source, %error, "album search: source failed");
+            }
+            Err(_) => {
+                failed += 1;
+                tracing::warn!(job_id, source, "album search: source timed out");
+            }
+        }
+    }
+    for (index, candidate) in candidates.iter_mut().enumerate() {
+        candidate.view.candidate_index = index;
+    }
+    (candidates, failed)
 }
 
 /// Why a job can no longer be picked from.

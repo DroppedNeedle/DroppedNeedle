@@ -66,6 +66,24 @@ export const SOURCE_MODE_OPTIONS = [
 	}
 ] as const;
 
+export const SEARCH_REVIEW_OPTIONS = [
+	{
+		value: 'when_unsure',
+		label: 'When no copy looks right',
+		hint: 'Download a copy that looks like the whole album in a quality you accept. Otherwise wait in the queue so you can pick one.'
+	},
+	{
+		value: 'always',
+		label: 'Always let me pick',
+		hint: 'Every album waits in the queue with the copies found, until you pick one.'
+	},
+	{
+		value: 'off',
+		label: 'Never wait',
+		hint: 'Download the best copy found, even when it may be incomplete or in the wrong quality.'
+	}
+] as const;
+
 const MP3_REGIONS: Record<
 	Exclude<QualityRecipeQuality, 'custom' | 'cd' | '24_48' | '24_96' | '24_192' | 'hi_res'>,
 	{

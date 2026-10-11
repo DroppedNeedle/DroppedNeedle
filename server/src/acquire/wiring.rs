@@ -808,6 +808,7 @@ impl AcquireSetup {
                 }),
             )
             .with_plugin_events(worker_plugins)
+            .with_targets(clients.targets().clone())
             .with_events(events.clone())
             .with_landing(landing.clone())
             .with_settled(settled_hook(core.flows.clone())),
@@ -1626,5 +1627,8 @@ fn worker_config(
         recycle,
         orphan_roots,
         worker_id: "download-worker".to_owned(),
+        review: crate::acquire::search_jobs::review::ReviewMode::from_setting(
+            &policy.search_review,
+        ),
     }
 }

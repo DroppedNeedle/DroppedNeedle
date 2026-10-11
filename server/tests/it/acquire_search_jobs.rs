@@ -11,6 +11,7 @@ use droppedneedle::acquire::db::AcquireDb;
 use droppedneedle::acquire::dispatch::Journal;
 use droppedneedle::acquire::downloads::manifest::ManifestCodec;
 use droppedneedle::acquire::downloads::sources::SourceHandle;
+use droppedneedle::acquire::downloads::store::{NewTask, TaskDetails};
 use droppedneedle::acquire::requests::auth::{Principal, Role};
 use droppedneedle::acquire::requests::quota::QuotaLedger;
 use droppedneedle::acquire::search_jobs::candidates::CandidateTier;
@@ -73,14 +74,17 @@ fn album() -> AlbumRelease {
     }
 }
 
-#[tokio::test]
-async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
-    let mock = MockSlskd::start().await.expect("mock starts");
-    mock.script_responses(vec![
-        peer("halfway", "@@music\\Massive Attack\\Blue Lines", &[0, 1]),
-        peer("complete", "@@music\\MA\\Blue Lines (1991)", &[0, 1, 2, 3]),
-    ]);
+struct Rig {
+    journal: Arc<Journal>,
+    staging: crate::common::ScratchDir,
+    worker: Arc<DownloadWorker>,
+    jobs: Arc<SearchJobs>,
+}
 
+/// The search service and a worker over the slskd mock, with a fixed
+/// MusicBrainz tracklist. `review` turns on the look before an automatic
+/// grab.
+async fn rig(mock: &MockSlskd, review: bool) -> Rig {
     let db = AcquireDb::scratch().expect("scratch db");
     db.add_user("u1", "U", "user").await.expect("user seeds");
     db.add_user("u2", "V", "user").await.expect("user seeds");
@@ -104,14 +108,18 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
         },
     );
     let source = SlskdSource::new(Arc::new(repo), journal.clone()).with_targets(targets.clone());
-    let worker = Arc::new(DownloadWorker::fixed(
+    let mut worker = DownloadWorker::fixed(
         journal.clone(),
         vec![Source::Slskd(Arc::new(source))],
         WorkerConfig {
             staging_root: staging.to_path_buf(),
             ..WorkerConfig::default()
         },
-    ));
+    );
+    if review {
+        worker = worker.with_targets(targets.clone());
+    }
+    let worker = Arc::new(worker);
     let jobs = Arc::new(SearchJobs::new(
         JobStore::new(db.clone()),
         worker.clone(),
@@ -119,16 +127,38 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
         Arc::new(QuotaLedger::unlimited(db.clone())),
         EventSink::default(),
     ));
-    let owner = Principal {
-        user_id: "u1".to_owned(),
+    Rig {
+        journal,
+        staging,
+        worker,
+        jobs,
+    }
+}
+
+fn principal(user_id: &str) -> Principal {
+    Principal {
+        user_id: user_id.to_owned(),
         username: None,
         role: Role::User,
-    };
-    let stranger = Principal {
-        user_id: "u2".to_owned(),
-        username: None,
-        role: Role::User,
-    };
+    }
+}
+
+#[tokio::test]
+async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
+    let mock = MockSlskd::start().await.expect("mock starts");
+    mock.script_responses(vec![
+        peer("halfway", "@@music\\Massive Attack\\Blue Lines", &[0, 1]),
+        peer("complete", "@@music\\MA\\Blue Lines (1991)", &[0, 1, 2, 3]),
+    ]);
+
+    let Rig {
+        journal,
+        staging,
+        worker,
+        jobs,
+    } = rig(&mock, false).await;
+    let owner = principal("u1");
+    let stranger = principal("u2");
 
     let started = jobs
         .start(
@@ -217,4 +247,95 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
         jobs.cancel(&owner, &job_id).await,
         Err(SearchJobError::Conflict(_))
     ));
+}
+
+/// Search review: an automatic download with no recommended candidate
+/// waits on its search instead of grabbing, stays parked across passes,
+/// and the owner's pick resumes that same download.
+#[tokio::test]
+async fn automatic_download_waits_for_a_pick_when_unsure() {
+    let mock = MockSlskd::start().await.expect("mock starts");
+    mock.script_responses(vec![peer(
+        "halfway",
+        "@@music\\Massive Attack\\Blue Lines",
+        &[0, 1],
+    )]);
+    let rig = rig(&mock, true).await;
+    let task_id = "0123456789abcdef0123456789abcdef";
+    rig.journal
+        .run("test.seed", move |store| {
+            store.insert_task(
+                &NewTask {
+                    id: task_id.to_owned(),
+                    user_id: "u1".to_owned(),
+                    artist_name: "Massive Attack".to_owned(),
+                    album_title: "Blue Lines".to_owned(),
+                    release_group_mbid: GROUP.to_owned(),
+                    origin: "user".to_owned(),
+                    retry_count: 0,
+                },
+                1_000.0,
+            )?;
+            store.set_task_details(
+                task_id,
+                &TaskDetails {
+                    release_mbid: Some(RELEASE.to_owned()),
+                    year: Some(1991),
+                    ..TaskDetails::default()
+                },
+                1_000.0,
+            )
+        })
+        .await
+        .expect("task seeds");
+
+    rig.worker.run_once(1).await;
+    let searched = mock.search_texts().len();
+    assert!(searched > 0, "the worker searched before grabbing");
+    rig.worker.run_once(2).await;
+    let task = rig
+        .journal
+        .read_task(task_id)
+        .await
+        .expect("task reads")
+        .expect("task exists");
+    assert_eq!(task.status.as_str(), "queued");
+    assert_eq!(task.candidate_index, None);
+    let job_id = task.search_job_id.expect("parked on its search");
+    assert_eq!(
+        mock.search_texts().len(),
+        searched,
+        "a parked task is not searched again"
+    );
+    assert!(
+        rig.journal
+            .read_source_handles(task_id, "soulseek")
+            .await
+            .expect("handles read")
+            .is_empty()
+    );
+
+    let owner = principal("u1");
+    let view = rig.jobs.get(&owner, &job_id).await.expect("job reads");
+    assert_eq!(view.row.status, "completed");
+    let payload = view.payload.expect("candidates decode");
+    assert_eq!(payload.candidates.len(), 1);
+    assert_eq!(payload.candidates[0].view.tier, CandidateTier::Possible);
+
+    let picked = rig
+        .jobs
+        .pick(&owner, &job_id, 0)
+        .await
+        .expect("pick resumes");
+    assert_eq!(picked, task_id, "the parked download resumes");
+    rig.worker.run_once(3).await;
+    let handles = rig
+        .journal
+        .read_source_handles(task_id, "soulseek")
+        .await
+        .expect("handles read");
+    assert_eq!(handles.len(), 1, "one enqueue: {handles:?}");
+    let handle: SourceHandle = serde_json::from_str(&handles[0]).expect("handle decodes");
+    assert_eq!(handle.username, "halfway");
+    drop(rig.staging);
 }

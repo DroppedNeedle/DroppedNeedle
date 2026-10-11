@@ -93,6 +93,20 @@ pub enum PickRefusal {
 
 const PICK_REFUSED: &str = "search-job-pick-refused:";
 
+/// The download parked on a job: queued, linked to the job, no candidate
+/// picked yet.
+const PARKED_TASK_SQL: &str = "SELECT id FROM download_tasks WHERE search_job_id = ?1 \
+     AND candidate_index IS NULL AND status = 'queued' ORDER BY created_at LIMIT 1";
+
+/// What the automatic downloader decided about its search.
+#[derive(Debug, Clone)]
+pub enum ReviewOutcome {
+    /// Take this candidate: `(index, source, username)`.
+    Take(i64, String, Option<String>),
+    /// Wait for a pick.
+    Park,
+}
+
 /// How long an unpicked job is kept after it last changed: a week.
 pub const PRUNE_AFTER_SECONDS: f64 = 7.0 * 86_400.0;
 
@@ -221,6 +235,100 @@ impl JobStore {
             .map_err(|error| error.to_string())
     }
 
+    /// Record the automatic downloader's search for one queued task, in
+    /// one transaction: the finished job with its candidates, then either
+    /// the taken candidate linked to the task (the job reads `matched`) or
+    /// the task parked on the job until someone picks. Answers false, and
+    /// writes nothing, when the task is no longer queued and unlinked
+    /// (cancelled or picked meanwhile).
+    pub async fn record_review(
+        &self,
+        job: NewJob,
+        payload: JobPayload,
+        task_id: &str,
+        outcome: ReviewOutcome,
+    ) -> Result<bool, String> {
+        let task_id = task_id.to_owned();
+        self.db
+            .write("search_jobs.review", move |tx| {
+                let at = now();
+                let open: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM download_tasks WHERE id = ?1 \
+                     AND status = 'queued' AND search_job_id IS NULL)",
+                    params![task_id],
+                    |row| row.get(0),
+                )?;
+                if !open {
+                    return Ok(false);
+                }
+                let status = match outcome {
+                    ReviewOutcome::Take(..) => MATCHED,
+                    ReviewOutcome::Park => COMPLETED,
+                };
+                tx.execute(
+                    "INSERT INTO search_jobs (id, user_id, artist_name, album_title, year, \
+                     release_group_mbid, search_query, status, candidates_blob, created_at, \
+                     updated_at, completed_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?10)",
+                    params![
+                        job.id,
+                        job.user_id,
+                        job.artist_name,
+                        job.album_title,
+                        job.year,
+                        job.release_group_mbid,
+                        format!("{} - {}", job.artist_name, job.album_title),
+                        status,
+                        payload.encode()?,
+                        at,
+                    ],
+                )?;
+                match outcome {
+                    ReviewOutcome::Take(index, source, username) => DownloadStore::new(tx)
+                        .link_candidate(&task_id, &source, username.as_deref(), &job.id, index, at)
+                        .map_err(|error| OpError::Abort(error.to_string()))?,
+                    ReviewOutcome::Park => {
+                        tx.execute(
+                            "UPDATE download_tasks SET search_job_id = ?2, updated_at = ?3 \
+                             WHERE id = ?1",
+                            params![task_id, job.id, at],
+                        )?;
+                    }
+                }
+                Ok(true)
+            })
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    /// Close a job (cancel or dismiss): it moves to `cancelled` from
+    /// searching, completed or failed, and a download parked on it waiting
+    /// for a pick is cancelled with it, so it never waits forever. Answers
+    /// whether the job moved.
+    pub async fn close(&self, job_id: &str) -> Result<bool, String> {
+        let job_id = job_id.to_owned();
+        self.db
+            .write("search_jobs.close", move |tx| {
+                let at = now();
+                let moved = tx.execute(
+                    "UPDATE search_jobs SET status = ?2, updated_at = ?3 \
+                     WHERE id = ?1 AND status IN (?4, ?5, ?6)",
+                    params![job_id, CANCELLED, at, SEARCHING, COMPLETED, FAILED],
+                )?;
+                let parked: Option<String> = tx
+                    .query_row(PARKED_TASK_SQL, params![job_id], |row| row.get(0))
+                    .optional()?;
+                if let Some(task_id) = parked {
+                    DownloadStore::new(tx)
+                        .cancel_task(&task_id, at)
+                        .map_err(|error| OpError::Abort(error.to_string()))?;
+                }
+                Ok(moved > 0)
+            })
+            .await
+            .map_err(|error| error.to_string())
+    }
+
     /// Move a job to `to` when its status is one of `from`. Answers
     /// whether it moved.
     pub async fn transition(
@@ -251,7 +359,8 @@ impl JobStore {
     /// Delete jobs nobody needs any more: unpicked ones (searching,
     /// completed, failed, cancelled) last touched more than
     /// [`PRUNE_AFTER_SECONDS`] before `now`, and picked ones whose download
-    /// finished or was removed. A picked task that outlives its job just
+    /// finished or was removed. A job a download is parked on stays for as
+    /// long as the download waits. A picked task that outlives its job just
     /// searches as usual on failover. Answers how many rows went.
     pub async fn prune(&self, now: f64) -> Result<u64, String> {
         let cutoff = now - PRUNE_AFTER_SECONDS;
@@ -259,7 +368,9 @@ impl JobStore {
             .write_background("search_jobs.prune", move |tx| {
                 let stale = tx.execute(
                     "DELETE FROM search_jobs WHERE status IN (?1, ?2, ?3, ?4) \
-                     AND updated_at < ?5",
+                     AND updated_at < ?5 AND NOT EXISTS ( \
+                     SELECT 1 FROM download_tasks t WHERE t.search_job_id = search_jobs.id \
+                     AND t.status = 'queued')",
                     params![SEARCHING, COMPLETED, FAILED, CANCELLED, cutoff],
                 )?;
                 let picked = tx.execute(
@@ -275,13 +386,15 @@ impl JobStore {
     }
 
     /// Start the picked download in one transaction: the job must still be
-    /// `completed` and no download of the album may be running. The job
-    /// becomes `matched` and the task is queued, linked to the candidate.
+    /// `completed`. A download parked on this job waiting for a pick is
+    /// linked to the candidate and resumes; otherwise no download of the
+    /// album may be running and a new task is queued, linked to the
+    /// candidate. The job becomes `matched`. Answers the task's id.
     pub async fn pick(
         &self,
         job_id: &str,
         picked: PickedTask,
-    ) -> Result<Result<(), PickRefusal>, String> {
+    ) -> Result<Result<String, PickRefusal>, String> {
         let job_id = job_id.to_owned();
         let outcome = self
             .db
@@ -299,10 +412,30 @@ impl JobStore {
                 if status != COMPLETED {
                     return Err(refuse(&format!("status:{status}")));
                 }
+                let parked: Option<String> = tx
+                    .query_row(PARKED_TASK_SQL, params![job_id], |row| row.get(0))
+                    .optional()?;
                 let store = DownloadStore::new(tx);
                 let store_error = |error: crate::acquire::downloads::store::StoreError| {
                     OpError::Abort(error.to_string())
                 };
+                if let Some(task_id) = parked {
+                    store
+                        .link_candidate(
+                            &task_id,
+                            &picked.source,
+                            picked.username.as_deref(),
+                            &job_id,
+                            picked.candidate_index,
+                            at,
+                        )
+                        .map_err(store_error)?;
+                    tx.execute(
+                        "UPDATE search_jobs SET status = ?2, updated_at = ?3 WHERE id = ?1",
+                        params![job_id, MATCHED, at],
+                    )?;
+                    return Ok(task_id);
+                }
                 if !picked.task.release_group_mbid.is_empty()
                     && store
                         .newest_active_for_album(&picked.task.release_group_mbid)
@@ -329,11 +462,11 @@ impl JobStore {
                     "UPDATE search_jobs SET status = ?2, updated_at = ?3 WHERE id = ?1",
                     params![job_id, MATCHED, at],
                 )?;
-                Ok(())
+                Ok(picked.task.id.clone())
             })
             .await;
         match outcome {
-            Ok(()) => Ok(Ok(())),
+            Ok(task_id) => Ok(Ok(task_id)),
             Err(crate::db::DbError::WriteFailed { cause, .. })
                 if cause.starts_with(PICK_REFUSED) =>
             {

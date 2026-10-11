@@ -2049,6 +2049,8 @@ export interface DownloadPolicySettings {
 	lossless_max_sample_rate_hz?: number | null;
 	unknown_quality_behavior?: string;
 	source_selection_mode?: string;
+	/** when an automatic download waits for a pick: when_unsure, always or off */
+	search_review?: string;
 	quality_recipe?: QualityRecipeEntry[];
 	quality_recipe_status?: QualityRecipeStatus;
 	quality_recipe_error?: string | null;
