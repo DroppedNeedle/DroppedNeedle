@@ -333,7 +333,7 @@ async fn seed_library(pool: &SqlitePool) {
             "INSERT INTO local_album_external_identities \
              (local_album_id, provider, release_group_mbid, release_mbid, decision_source, \
              selected_at) VALUES ('album-okc', 'musicbrainz', '{OK_COMPUTER}', '{RELEASE_CD}', \
-             'manual', 0)"
+             'automatic', 0)"
         ),
         "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
          path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \

@@ -794,7 +794,7 @@ async fn brief_seed_builds_exact_editor_form() {
     assert_eq!(seed.fields.first().unwrap().value, "Test Album");
     assert_eq!(seed.fields.last().unwrap().name, "redirect_uri");
     assert!(seed.fields.last().unwrap().value.starts_with(
-        "https://needle.example.com/api/v1/library/contributions/musicbrainz/callback?token="
+        "https://needle.example.com/api/v3/library/contributions/musicbrainz/callback?token="
     ));
     let value = |name: &str| {
         seed.fields

@@ -347,12 +347,12 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
         .expect("identity kept");
     assert_eq!(identity.decision_source, DecisionSource::Manual);
     assert_eq!(identity.release_mbid.as_deref(), Some("rel-blue"));
-    // The pinned edition is now the album's protected edition.
+    // The pinned edition is now the person's own choice of edition.
     let pinned = library
         .identify_store
         .album_identity(PINNED_ALBUM_ID)
         .expect("pinned identity");
-    assert_eq!(pinned.decision_source, DecisionSource::LegacyImport);
+    assert_eq!(pinned.decision_source, DecisionSource::Manual);
     assert_eq!(pinned.release_mbid.as_deref(), Some("rel-giant-jp"));
 
     // "Restore original" brings back the file as v2 first found it: its

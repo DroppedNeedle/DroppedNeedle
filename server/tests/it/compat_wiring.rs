@@ -223,7 +223,13 @@ fn access_logging_records_path_only() {
                 }
                 let full_target =
                     line.contains("uri().path_and_query") || line.contains("uri().to_string()");
-                let logged = line.contains("tracing::") && line.contains("uri");
+                // Match `uri` as an identifier so words like "during" pass.
+                let names_uri = line
+                    .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                    .any(|word| {
+                        word == "uri" || word.ends_with("_uri") || word.starts_with("uri_")
+                    });
+                let logged = line.contains("tracing::") && names_uri;
                 if full_target || logged {
                     violations.push(format!("{}:{}: {line}", path.display(), number + 1));
                 }

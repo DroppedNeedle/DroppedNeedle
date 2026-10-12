@@ -522,7 +522,7 @@ async fn follow_auto_download_states_and_admin_reads() {
 }
 
 #[tokio::test]
-async fn pins_steer_display_and_never_write_identity() {
+async fn edition_pin_reads_the_identity_and_needs_a_curator() {
     let rig = Rig::open().await;
     rig.exec(
         "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
@@ -552,37 +552,9 @@ async fn pins_steer_display_and_never_write_identity() {
             shown["selected_release_mbid"].as_str(),
             shown["hint_source"].as_str()
         ),
-        (Some("rel-a"), Some("default"))
+        (Some("rel-a"), Some("pin")),
+        "a manual identity is the person's chosen edition"
     );
-
-    let (status, _) = call(
-        &app,
-        Method::PUT,
-        pin,
-        Some(TRUSTED),
-        Some(json!({"release_mbid": "rel-zzz"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "unknown editions refuse");
-    let (_, pinned) = call(
-        &app,
-        Method::PUT,
-        pin,
-        Some(TRUSTED),
-        Some(json!({"release_mbid": "rel-b"})),
-    )
-    .await;
-    assert_eq!(pinned["selected_release_mbid"], "rel-b");
-    let (_, cleared) = call(&app, Method::DELETE, pin, Some(TRUSTED), None).await;
-    assert_eq!(cleared["hint_source"], "default");
-
-    let identity: (String, i64) = sqlx::query_as(
-        "SELECT release_mbid, row_revision FROM local_album_external_identities WHERE local_album_id = 'alb-1'",
-    )
-    .fetch_one(rig.runtime.pool())
-    .await
-    .unwrap();
-    assert_eq!(identity, ("rel-a".to_owned(), 1), "identity untouched");
 }
 
 #[tokio::test]

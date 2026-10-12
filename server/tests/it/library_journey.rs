@@ -853,7 +853,7 @@ async fn library_loops_start_and_stop() {
     lib.library.run_recovery().await;
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let loops = lib.library.spawn_loops(shutdown_rx);
-    assert_eq!(loops.len(), 6);
+    assert_eq!(loops.len(), 7);
     let names: Vec<&str> = loops.iter().map(|(name, _)| *name).collect();
     assert_eq!(
         names,
@@ -863,6 +863,7 @@ async fn library_loops_start_and_stop() {
             "library-identify",
             "library-contrib",
             "library-operations",
+            "library-management",
             "library-publish",
         ]
     );
@@ -1622,11 +1623,7 @@ async fn identification_survives_restarts() {
         .expect("scripted providers")
         .set_recall(ambiguous_recall(&second, &album));
     assert_eq!(second.identify_tick().await, 1, "queued job survives");
-    let review = second.pending_reviews(&album);
-    assert_eq!(review.len(), 1);
-    second
-        .approve_review(&review[0].id, "curator", "rg-1:rel-1")
-        .expect("review approves");
+    choose_first_edition(&second, &album).await;
     drop(second);
 
     let third = bundle();
@@ -1638,7 +1635,8 @@ async fn identification_survives_restarts() {
     assert_eq!(identity.release_mbid.as_deref(), Some("rel-1"));
 }
 
-/// Identify the album by approving the first of two tied candidates.
+/// Identify the album, then have a person choose the first of two tied
+/// editions (the automatic pass only keeps a best guess).
 async fn approve_first_candidate(library: &LibrarySetup, album: &str) {
     library
         .test_providers
@@ -1646,10 +1644,15 @@ async fn approve_first_candidate(library: &LibrarySetup, album: &str) {
         .expect("scripted providers")
         .set_recall(ambiguous_recall(library, album));
     assert_eq!(library.identify_tick().await, 1);
-    let review = library.pending_reviews(album);
-    library
-        .approve_review(&review[0].id, "curator", "rg-1:rel-1")
-        .expect("review approves");
+    choose_first_edition(library, album).await;
+}
+
+/// A person chooses `rel-1` as the album's edition.
+async fn choose_first_edition(library: &LibrarySetup, album: &str) {
+    droppedneedle::library::operations::service::Operations::new(library)
+        .choose_edition(album, "rel-1", Some("curator"))
+        .await
+        .expect("edition chosen");
 }
 
 /// Preview and apply one managed write; returns the bundle id.

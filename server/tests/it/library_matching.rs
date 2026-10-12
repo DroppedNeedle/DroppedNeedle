@@ -13,7 +13,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use droppedneedle::library::identify;
-use droppedneedle::library::matching::decide::REVIEW_CEILING;
 use droppedneedle::providers::Providers;
 use droppedneedle::providers::musicbrainz::{
     MbPacing, MbRequest, MbTransport, MusicBrainzClient, RawResponse, TransportError,
@@ -23,12 +22,12 @@ use identify::memory::{
     MemoryReviewStore,
 };
 use identify::models::{
-    EvidenceClass, IdentificationOutcome, IdentifyKind, LocalAlbumFacts, LocalTrackFacts,
+    DecisionSource, IdentificationOutcome, IdentifyKind, LocalAlbumFacts, LocalTrackFacts,
 };
 use identify::providers::LiveProviders;
 use identify::service::{IdentifyDeps, IdentifyService};
 use identify::sources::NoFingerprints;
-use identify::stores::{IdentityStore, QueueStore, ReleaseStore, ReviewStore};
+use identify::stores::{IdentityStore, QueueStore, ReleaseStore};
 
 const STANDARD: &str = "c0ffee00-0000-4000-8000-00000000c001";
 const REMASTER: &str = "c0ffee00-0000-4000-8000-00000000c002";
@@ -93,7 +92,6 @@ struct Rig {
     service: IdentifyService,
     identities: Arc<MemoryIdentityStore>,
     queue: Arc<MemoryQueueStore>,
-    reviews: Arc<MemoryReviewStore>,
     releases: Arc<MemoryReleaseStore>,
     seen: Arc<Mutex<Vec<String>>>,
 }
@@ -118,7 +116,7 @@ fn rig(down: bool) -> Rig {
         proofs: Arc::new(MemoryProofStore::default()),
         aliases: Arc::new(MemoryAliasStore::default()),
         queue: queue.clone(),
-        reviews: reviews.clone(),
+        reviews,
         releases: releases.clone(),
         providers: Arc::new(LiveProviders::new(
             musicbrainz,
@@ -130,7 +128,6 @@ fn rig(down: bool) -> Rig {
         service,
         identities,
         queue,
-        reviews,
         releases,
         seen,
     }
@@ -234,10 +231,11 @@ async fn tagged_album_identifies_through_a_merged_release_id() {
 }
 
 /// Untagged files, one a minute shorter than any edition's track (left
-/// unmatched) and one with a placeholder title: close enough to show a
-/// curator, not close enough to seal.
+/// unmatched) and one with a placeholder title: not close enough to
+/// confirm, so the best guess is kept as the album's identity (flagged
+/// unconfirmed) and nothing waits in a review.
 #[tokio::test]
-async fn messy_album_goes_to_review_with_its_distances() {
+async fn messy_album_keeps_a_best_guess_without_a_review() {
     let rig = rig(false);
     let files: [FileTags<'_>; 4] = [
         ("Lamplight", 214, None),
@@ -250,25 +248,14 @@ async fn messy_album_goes_to_review_with_its_distances() {
 
     assert_eq!(report.outcome, IdentificationOutcome::Ambiguous);
     assert_eq!(report.reason_code, "WEAK_MATCH");
-    assert!(rig.identities.album_identity("album-1").is_none());
-    let review = rig
-        .reviews
-        .get(report.review_id.as_deref().expect("review"))
-        .expect("review stored");
-    assert_eq!(review.candidates.len(), 2);
-    for candidate in &review.candidates {
-        assert_eq!(candidate.release_group_mbid, GROUP);
-        assert!(candidate.distance > 0.0 && candidate.distance <= REVIEW_CEILING);
-        assert!(!candidate.penalties.is_empty());
-        let tracks = &candidate.track_evidence;
-        assert_eq!(tracks[0].classification, EvidenceClass::Supported);
-        // Neither the unmatched file nor the bad pair is ever sealed.
-        assert_eq!(tracks[1].classification, EvidenceClass::Unknown);
-        assert_eq!(tracks[1].release_track_mbid, None);
-        assert_eq!(tracks[3].classification, EvidenceClass::Unknown);
-        assert!(tracks[3].release_track_mbid.is_some());
-    }
-    // A curator approving it finds the documents still on file.
+    assert_eq!(report.review_id, None);
+    let identity = rig
+        .identities
+        .album_identity("album-1")
+        .expect("best guess");
+    assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP));
+    assert_eq!(identity.decision_source, DecisionSource::Automatic);
+    // "Pick another edition" finds the documents still on file.
     assert!(rig.releases.release(STANDARD, None).is_some());
     assert!(rig.releases.release(REMASTER, None).is_some());
 }

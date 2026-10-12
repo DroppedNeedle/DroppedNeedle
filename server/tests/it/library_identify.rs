@@ -264,8 +264,8 @@ async fn automatic_retracts_on_contradiction() {
         .expect("report");
     assert_eq!(report.outcome, IdentificationOutcome::Contradictory);
     assert!(rig.identities.album_identity("album-1").is_none());
-    let review = report.review_id.expect("review filed");
-    assert!(rig.service.review_is_pending(&review));
+    // Nothing waits in a blocking review: the album keeps its own tags.
+    assert_eq!(report.review_id, None);
 }
 
 #[tokio::test]
@@ -298,7 +298,7 @@ async fn manual_survives_rescan() {
         .run_claimed_job("job-1", 0)
         .await
         .expect("report");
-    assert_eq!(report.reason_code, "PROTECTED_IDENTITY");
+    assert_eq!(report.reason_code, "CHOSEN_EDITION_KEPT");
     let identity = rig.identities.album_identity("album-1").expect("identity");
     assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP_A));
     assert_eq!(identity.decision_source, DecisionSource::Manual);
@@ -385,76 +385,6 @@ async fn automatic_pass_skips_protected_track_rows() {
     let kept = rig.identities.track_identity("t2").expect("t2");
     assert_eq!(kept.decision_source, DecisionSource::Manual);
     assert_eq!(kept.row_revision, 7);
-}
-
-#[tokio::test]
-async fn quiet_reconfirm_files_no_review() {
-    let rig = rig_with_recall(recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_2])]));
-    rig.identities
-        .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
-    rig.identities.save_album_identity(AlbumIdentity {
-        local_album_id: "album-1".to_owned(),
-        provider: "musicbrainz".to_owned(),
-        release_group_mbid: Some(GROUP_A.to_owned()),
-        release_mbid: Some(RELEASE_A1.to_owned()),
-        decision_source: DecisionSource::Manual,
-        row_revision: 1,
-    });
-    rig.service.enqueue_album(
-        "job-1",
-        "album-1",
-        IdentifyKind::Automatic,
-        "rev-1",
-        None,
-        0,
-    );
-    rig.queue.claim(0, 60_000);
-    let report = rig
-        .service
-        .run_claimed_job("job-1", 0)
-        .await
-        .expect("report");
-    assert_eq!(report.reason_code, "QUIET_RECONFIRM");
-    assert_eq!(report.review_id, None);
-    assert!(rig.reviews.pending_for_album("album-1").is_empty());
-}
-
-#[tokio::test]
-async fn protected_identified_agreement_quietly_reconfirms() {
-    // An Identified winner that agrees with a protected row is a
-    // settled question, not new information: no review, no write.
-    let rig = rig_with_recall(recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_1])]));
-    rig.identities
-        .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
-    rig.identities.save_album_identity(AlbumIdentity {
-        local_album_id: "album-1".to_owned(),
-        provider: "musicbrainz".to_owned(),
-        release_group_mbid: Some(GROUP_A.to_owned()),
-        release_mbid: Some(RELEASE_A1.to_owned()),
-        decision_source: DecisionSource::Manual,
-        row_revision: 3,
-    });
-    rig.service.enqueue_album(
-        "job-1",
-        "album-1",
-        IdentifyKind::Automatic,
-        "rev-1",
-        None,
-        0,
-    );
-    rig.queue.claim(0, 60_000);
-    let report = rig
-        .service
-        .run_claimed_job("job-1", 0)
-        .await
-        .expect("report");
-    assert_eq!(report.reason_code, "QUIET_RECONFIRM");
-    assert_eq!(report.review_id, None);
-    assert!(rig.reviews.pending_for_album("album-1").is_empty());
-    let identity = rig.identities.album_identity("album-1").expect("identity");
-    assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP_A));
-    assert_eq!(identity.decision_source, DecisionSource::Manual);
-    assert_eq!(identity.row_revision, 3);
 }
 
 #[test]
@@ -910,9 +840,10 @@ async fn review_reject_keeps_tagged() {
 }
 
 /// A live release needs confirmation: without release-track ids on the
-/// files, only the release group is pinned.
+/// files the best guess is still kept (flagged unconfirmed), never left
+/// undecided.
 #[tokio::test]
-async fn edition_uncertain_pins_group_only() {
+async fn edition_uncertain_keeps_the_best_guess() {
     let rig = rig_with_recall(recall(vec![
         live(release(GROUP_A, RELEASE_A1, &[RECORDING_1, RECORDING_2])),
         live(release(GROUP_A, RELEASE_A2, &[RECORDING_1, RECORDING_2])),
@@ -936,7 +867,8 @@ async fn edition_uncertain_pins_group_only() {
     assert_eq!(report.outcome, IdentificationOutcome::EditionUncertain);
     let identity = rig.identities.album_identity("album-1").expect("identity");
     assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP_A));
-    assert_eq!(identity.release_mbid, None);
+    assert!(identity.release_mbid.is_some());
+    assert_eq!(identity.decision_source, DecisionSource::Automatic);
 }
 
 #[tokio::test]

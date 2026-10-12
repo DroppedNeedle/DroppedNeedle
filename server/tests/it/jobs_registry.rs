@@ -108,7 +108,8 @@ async fn panicking_task_marks_failed_row() {
 #[test]
 fn boot_jobs_lists_every_always_on_loop_once() {
     use droppedneedle::jobs::{
-        BOOT_JOBS, checkpoint, events_watcher, personal_mix, playlist_sync, presence,
+        BOOT_JOBS, checkpoint, discovery_demand, events_watcher, personal_mix, playlist_sync,
+        presence,
     };
     assert_eq!(
         BOOT_JOBS,
@@ -118,6 +119,7 @@ fn boot_jobs_lists_every_always_on_loop_once() {
             personal_mix::JOB_NAME,
             playlist_sync::JOB_NAME,
             events_watcher::JOB_NAME,
+            discovery_demand::JOB_NAME,
         ]
     );
     let mut sorted = BOOT_JOBS.to_vec();

@@ -69,6 +69,12 @@ impl E2e {
             store.get().expect("security section reads");
         security.hibp_check = false;
         store.save(security).expect("hibp switch saves");
+        // With no download source set up, Free Music would take every
+        // request; these journeys follow the download queue instead.
+        let mut free_music: droppedneedle::runtime_config::sections::FreeMusic =
+            store.get().expect("free music section reads");
+        free_music.enabled = false;
+        store.save(free_music).expect("free music switch saves");
         store
             .save_secret(
                 droppedneedle::runtime_config::secret_sections::WrappedSettings {
