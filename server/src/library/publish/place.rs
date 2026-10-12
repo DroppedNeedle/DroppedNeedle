@@ -249,6 +249,29 @@ pub enum SetAsideError {
     Io(#[from] std::io::Error),
 }
 
+impl SetAsideError {
+    /// The publisher error for a file at `root:rel` that was not set
+    /// aside.
+    pub(super) fn into_publish(self, root: &str, rel: &str) -> super::PublishError {
+        use super::PublishError;
+        match self {
+            Self::NotLinkable(_) => PublishError::NotLinkable(format!(
+                "DroppedNeedle can't safely change \"{rel}\": it does not own the file and \
+                 cannot write to it, the file is locked against changes, or the disk it is on \
+                 does not support hard links."
+            )),
+            Self::Unavailable(_) => PublishError::NoSafePlacement(NO_SAFE_METHOD.to_owned()),
+            Self::HiddenTaken => PublishError::Journal(format!(
+                "an earlier change left a set-aside copy of {root}:{rel} behind"
+            )),
+            Self::Replaced | Self::ReplacedKept(_) => PublishError::Collision(format!(
+                "{root}:{rel} was replaced while it was being changed"
+            )),
+            Self::Io(error) => PublishError::Io(error.to_string()),
+        }
+    }
+}
+
 /// Set a user's file aside under its journaled hidden name, in a way that
 /// can neither lose it nor strand it there.
 ///

@@ -23,6 +23,10 @@
 //! - Recovery places files only through `place::place_from_hidden`, so
 //!   it cannot replace a file either. A set-aside original that cannot
 //!   go home stays under its backup name and its row needs attention.
+//! - Recovery sets an original aside only through
+//!   `place::set_original_aside`, as the publisher does. An original that
+//!   could not come back, or that changed since the journal was written,
+//!   is left under its own name and the bundle needs attention.
 //! - Committed journals are never rolled back: recovery verifies the
 //!   catalog still names the journaled destination with matching
 //!   bytes, then retries the pinned cleanup policy.
@@ -34,7 +38,9 @@ use rusqlite::Connection;
 
 use super::journal::{FileJournal, JournalKind, JournalState, JournalStore};
 use super::paths::Sandbox;
-use super::place::{PlaceError, place_from_hidden};
+use super::place::{
+    Original, PlaceError, Seams, SetAsideError, place_from_hidden, place_with, set_original_aside,
+};
 use super::publisher::{BundleCommit, Catalog, TrackCommit};
 use super::snapshots::sha256_hex;
 use super::{PublishError, paths};
@@ -174,10 +180,12 @@ fn reconcile_bundle<C: Catalog>(
             }
         };
     }
-    Ok(match compensate_bundle(conn, sandbox, &journals)? {
-        None => RecoveryAction::Compensated,
-        Some(reason) => RecoveryAction::NeedsAttention(reason),
-    })
+    Ok(
+        match compensate_bundle(conn, sandbox, &journals, Seams::default())? {
+            None => RecoveryAction::Compensated,
+            Some(reason) => RecoveryAction::NeedsAttention(reason),
+        },
+    )
 }
 
 /// Filesystem truth for one bundle, by fingerprint comparison only.
@@ -440,7 +448,7 @@ fn resume_precommit<C: Catalog>(
         .map_err(PublishError::from)?;
     if let Err(err) = catalog.commit_bundle(&tx, &commit) {
         drop(tx);
-        if let Some(reason) = compensate_bundle(conn, sandbox, &refreshed)? {
+        if let Some(reason) = compensate_bundle(conn, sandbox, &refreshed, Seams::default())? {
             tracing::warn!(
                 bundle_id,
                 reason,
@@ -471,7 +479,8 @@ fn resume_precommit<C: Catalog>(
 /// Complete one journal's placement during resume, honoring the same
 /// rules as publish: occupied foreign destinations block, same-path
 /// originals are retained under a hidden backup first. `Some(reason)`
-/// when the file has no safe way onto its name; it is left alone.
+/// when the file has no safe way onto its name, or its original could
+/// not be set aside safely; it is left alone.
 fn resume_rename(
     conn: &Connection,
     sandbox: &Sandbox,
@@ -550,15 +559,28 @@ fn resume_rename(
             let backup = sandbox.backup_path_for(&dest, &journal.id)?;
             sandbox.ensure_under_roots(&backup)?;
             JournalStore::new(conn).set_backup(&journal.id, &backup.to_string_lossy())?;
-            // An unwind that linked the original home and stopped left it
-            // under both names. Renaming a file onto its own link does
-            // nothing, so the hidden name goes first.
-            if paths::same_file(&dest, &backup) {
-                std::fs::remove_file(&backup).map_err(PublishError::from)?;
-            }
-            std::fs::rename(&dest, &backup).map_err(PublishError::from)?;
-            if let Some(parent) = dest.parent() {
-                super::journal::fsync_dir(parent)?;
+            let home = paths::backup_home(
+                sandbox,
+                journal.source.as_ref(),
+                &journal.dest_root,
+                &journal.dest_rel,
+            )?;
+            let original = Original {
+                visible: &dest,
+                hidden: &backup,
+                home: &home,
+                sha256: journal.backup_sha256(),
+            };
+            let mode = sandbox.placement_mode(&journal.dest_root);
+            match set_original_aside(mode, original) {
+                Ok(()) => {}
+                Err(SetAsideError::Io(error)) => return Err(PublishError::from(error)),
+                Err(error) => {
+                    return Ok(Some(format!(
+                        "journal {} could not set its original aside: {error}",
+                        journal.id
+                    )));
+                }
             }
         }
     }
@@ -798,11 +820,13 @@ fn finish_cleanup(
 /// the unwind is never compensated: it goes to `needs_attention` with the
 /// backup kept, and the reason is returned. When the original has no safe
 /// way home at all, it stays under its backup name, nothing more is moved
-/// and every row still active goes with it.
+/// and every row still active goes with it. `seams` is the default
+/// outside tests.
 pub(super) fn compensate_bundle(
     conn: &Connection,
     sandbox: &Sandbox,
     journals: &[FileJournal],
+    seams: Seams,
 ) -> Result<Option<String>, PublishError> {
     let store = JournalStore::new(conn);
     let mut attention = None;
@@ -815,7 +839,7 @@ pub(super) fn compensate_bundle(
         {
             continue;
         }
-        let next = match unwind_row(sandbox, journal)? {
+        let next = match unwind_row(sandbox, journal, seams)? {
             Unwound::Clean => JournalState::Compensated,
             Unwound::BackupKept(reason) => {
                 tracing::warn!(
@@ -854,7 +878,11 @@ enum Unwound {
 /// set-aside original back on an empty name, and delete the staged temp.
 /// A backup whose bytes changed or whose home is taken is decided before
 /// anything is removed.
-fn unwind_row(sandbox: &Sandbox, journal: &FileJournal) -> Result<Unwound, PublishError> {
+fn unwind_row(
+    sandbox: &Sandbox,
+    journal: &FileJournal,
+    seams: Seams,
+) -> Result<Unwound, PublishError> {
     let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
     if journal.kind == JournalKind::Delete {
         // A delete journal's staged copy is the generated file itself.
@@ -932,7 +960,7 @@ fn unwind_row(sandbox: &Sandbox, journal: &FileJournal) -> Result<Unwound, Publi
     }
     if let Some((backup, home)) = put_back {
         let mode = sandbox.placement_mode(&journal.dest_root);
-        match place_from_hidden(mode, backup, &home) {
+        match place_with(mode, backup, &home, seams) {
             Ok(_) => {}
             // The original is home; a folder sync that failed does not
             // stop the rest of the unwind.

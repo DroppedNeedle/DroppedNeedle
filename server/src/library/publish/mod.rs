@@ -31,7 +31,10 @@
 //!   and Unicode/case-fold collisions) under one exclusive multi-root
 //!   lease, then places each staged temp on its destination through
 //!   `place::place_from_hidden`, which cannot replace a file that turned
-//!   up there since the check. Each file is atomic; a crash
+//!   up there since the check. A file the write replaces in place is
+//!   first set aside under a hidden backup by `place::set_original_aside`,
+//!   which refuses a file it could not put back and returns one that
+//!   changed since it was read. Each file is atomic; a crash
 //!   between two files is resolved per journal by comparing staged,
 //!   destination, source, and backup fingerprints, never by assuming
 //!   path existence means ownership. Journal: `staged -> published`.

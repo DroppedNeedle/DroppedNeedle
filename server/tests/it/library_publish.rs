@@ -1073,6 +1073,118 @@ fn check_then_rename_needs_a_check_root() {
     }
 }
 
+/// A tagger can save a file after the publisher last read it and before
+/// the file is set aside for a write in place. The newer file is never
+/// lost or left under a hidden name: it goes back under its own name and
+/// the bundle fails with a collision. The same holds on a disk without a
+/// no-replace rename, where the file is set aside by a plain rename.
+#[test]
+fn a_file_replaced_before_its_set_aside_goes_back() {
+    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
+    for skip_rename in [false, true] {
+        let case = format!("skip_rename={skip_rename}");
+        let fix = fixture("aside-replaced");
+        let (bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
+        let (sealed, live) = seal(&bundle);
+        let target = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+        let mut publisher = open_publisher(&fix);
+        publisher.set_place_seams(Seams {
+            skip_rename,
+            ..Seams::default()
+        });
+        let saved = target.clone();
+        publisher.set_before_set_aside(Some(Box::new(move |dest| {
+            if dest == saved {
+                // As a tagger saves: a new file renamed over the old one.
+                let temp = dest.with_extension("tagger");
+                std::fs::write(&temp, b"saved-by-a-tagger").unwrap();
+                std::fs::rename(&temp, dest).unwrap();
+            }
+        })));
+        let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+        assert!(
+            matches!(err, PublishError::Collision(_)),
+            "{case}: got {err:?}"
+        );
+
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"saved-by-a-tagger",
+            "{case}"
+        );
+        let other = fix.sandbox.resolve("music", "staging/b.flac").unwrap();
+        assert!(std::fs::read(other).unwrap() == original, "{case}");
+        assert!(hidden_leftovers(&fix.dir).is_empty(), "{case}");
+        let journals = JournalStore::new(publisher.connection())
+            .bundle("bundle-1")
+            .unwrap();
+        assert!(
+            journals
+                .iter()
+                .all(|journal| journal.state == JournalState::Compensated),
+            "{case}"
+        );
+        assert_eq!(
+            SqliteCatalog.revision(publisher.connection()).unwrap(),
+            start_revision(),
+            "{case}"
+        );
+    }
+}
+
+/// A file written in place is set aside first, so it has to be able to
+/// come back. Where neither safe step works for it, it is refused before
+/// anything moves: the original keeps its own name, nothing hidden is
+/// left, and the error names the file.
+#[test]
+fn a_file_that_could_not_come_back_is_never_set_aside() {
+    use std::os::unix::fs::MetadataExt as _;
+    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
+    let no_safe_step = Seams {
+        skip_rename: true,
+        link_errno: Some(libc::EPERM),
+        ..Seams::default()
+    };
+    for mode in [PlacementMode::Rename, PlacementMode::Link] {
+        let fix = fixture("aside-refused");
+        fix.sandbox.set_placement_mode("music", mode);
+        let (bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
+        let (sealed, live) = seal(&bundle);
+        let first = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+        let inode = std::fs::metadata(&first).unwrap().ino();
+        let mut publisher = open_publisher(&fix);
+        publisher.set_place_seams(no_safe_step);
+        let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+
+        for rel in ["staging/a.flac", "staging/b.flac"] {
+            let path = fix.sandbox.resolve("music", rel).unwrap();
+            assert!(
+                std::fs::read(path).is_ok_and(|bytes| bytes == original),
+                "{mode:?}: {rel} is in place"
+            );
+        }
+        assert_eq!(
+            std::fs::metadata(&first).unwrap().ino(),
+            inode,
+            "{mode:?}: never moved"
+        );
+        assert!(hidden_leftovers(&fix.dir).is_empty(), "{mode:?}");
+        assert!(
+            matches!(&err, PublishError::NotLinkable(text) if text.contains("\"staging/a.flac\"")),
+            "{mode:?}: got {err:?}"
+        );
+        let journals = JournalStore::new(publisher.connection())
+            .bundle("bundle-1")
+            .unwrap();
+        assert!(
+            journals
+                .iter()
+                .all(|journal| journal.state == JournalState::Compensated),
+            "{mode:?}"
+        );
+    }
+}
+
 /// A planned replacement sets the file in the way aside under the
 /// journal. A crash before the commit resumes; the replaced file reaches
 /// the recycle bin only after the commit, and its track is retired as

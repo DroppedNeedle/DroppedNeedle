@@ -18,6 +18,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use super::journal::{FileJournal, JournalKind, JournalReplacement, JournalState, JournalStore};
 use super::paths::Sandbox;
+use super::place::Original;
 use super::planner::{
     CapabilityGate, CollisionGate, DiskPreflight, PlanBundle, PlanKind, SealError, SealRecheck,
     SealedPreview, SpaceProbe,
@@ -394,6 +395,7 @@ pub struct Publisher<C: Catalog, P: SpaceProbe> {
     injector: Option<CrashPoint>,
     place_seams: super::place::Seams,
     before_place: Option<BeforePlace>,
+    before_set_aside: Option<BeforePlace>,
     today_day: i64,
     undo_retention_days: i64,
 }
@@ -429,6 +431,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             injector: None,
             place_seams: super::place::Seams::default(),
             before_place: None,
+            before_set_aside: None,
             today_day,
             undo_retention_days: super::DEFAULT_UNDO_RETENTION_DAYS as i64,
         })
@@ -460,6 +463,14 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_before_place(&mut self, hook: Option<BeforePlace>) {
         self.before_place = hook;
+    }
+
+    /// Run `hook` with the destination while the file there is being set
+    /// aside, just before it moves. Tests only; production never calls
+    /// this.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_before_set_aside(&mut self, hook: Option<BeforePlace>) {
+        self.before_set_aside = hook;
     }
 
     /// Borrow the publisher's database connection.
@@ -950,7 +961,9 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
     /// Place one staged journal on its destination. Same-path
     /// writes retain the original under a hidden backup first; moves
     /// keep the source until after catalog commit. A late occupier
-    /// fails the bundle instead of being overwritten.
+    /// fails the bundle instead of being overwritten, and so does an
+    /// original that another program replaced since it was read or that
+    /// could not be put back once set aside.
     fn publish_one(
         &mut self,
         bundle: &PlanBundle,
@@ -1041,10 +1054,25 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 self.sandbox.ensure_under_roots(&backup)?;
                 JournalStore::new(&self.conn).set_backup(&journal.id, &backup.to_string_lossy())?;
                 self.maybe_crash(CrashPoint::AfterBackupJournaled)?;
-                std::fs::rename(&dest, &backup).map_err(PublishError::from)?;
-                if let Some(parent) = dest.parent() {
-                    super::journal::fsync_dir(parent)?;
-                }
+                let home = paths::backup_home(
+                    &self.sandbox,
+                    current.source.as_ref(),
+                    &journal.dest_root,
+                    &journal.dest_rel,
+                )?;
+                let original = Original {
+                    visible: &dest,
+                    hidden: &backup,
+                    home: &home,
+                    sha256: current.backup_sha256(),
+                };
+                let hook = self
+                    .before_set_aside
+                    .as_deref()
+                    .map(|hook| hook as &dyn Fn(&Path));
+                let mode = self.sandbox.placement_mode(&journal.dest_root);
+                super::place::set_aside_with(mode, original, self.place_seams, hook)
+                    .map_err(|error| error.into_publish(&journal.dest_root, &journal.dest_rel))?;
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => return Err(PublishError::Io(err.to_string())),
@@ -1258,7 +1286,12 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
     /// its own error. True when a backup was kept.
     fn compensate(&mut self, bundle: &PlanBundle) -> Result<bool, PublishError> {
         let journals = JournalStore::new(&self.conn).bundle(&bundle.id)?;
-        let kept = super::recovery::compensate_bundle(&self.conn, &self.sandbox, &journals)?;
+        let kept = super::recovery::compensate_bundle(
+            &self.conn,
+            &self.sandbox,
+            &journals,
+            self.place_seams,
+        )?;
         Ok(kept.is_some())
     }
 
