@@ -14,6 +14,8 @@
 //!   a scan purity pin (zero byte writes across scan+identify).
 //! - `library_journey_retag_apply_baseline_restore`: manual retag
 //!   preview → Apply → baseline restore.
+//! - `manage_routes_limit_a_trusted_user_to_a_plain_retag`: what a
+//!   trusted user may and may not do on the manage routes.
 //! - `library_loops_start_and_stop`: every background loop starts
 //!   over the real bundle and shuts down cleanly.
 //! - `library_journey_undo_edition_then_reidentify`: an automatic
@@ -893,6 +895,235 @@ async fn library_journey_retag_apply_baseline_restore() {
         fields_before,
         "every field the retag wrote is back"
     );
+}
+
+/// A trusted user may write an album's edition tags into its files and
+/// nothing more: no destination, no tag values of their own, no undo and
+/// no restore. An admin's same calls go through.
+#[tokio::test]
+async fn manage_routes_limit_a_trusted_user_to_a_plain_retag() {
+    use droppedneedle::library::scan::CatalogStore as _;
+    use droppedneedle::library::tags::{TagField, read_fields};
+
+    let lib = Lib::open("manage-roles").await;
+    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
+    let admin_auth = bearer(&admin);
+    let admin_headers = [("authorization", admin_auth.as_str())];
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/admin/users",
+        &admin_headers,
+        Some(json!({"username": "tris", "password": "tris-password-1234"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let tris_id = body["id"].as_str().expect("user id").to_owned();
+    let (status, body) = call(
+        lib.router(),
+        "PUT",
+        &format!("/api/v3/admin/users/{tris_id}/role"),
+        &admin_headers,
+        Some(json!({"role": "trusted"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/auth/login",
+        &[],
+        Some(json!({
+            "username": "tris",
+            "password": "tris-password-1234",
+            "transport": "bearer",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let tris_auth = bearer(body["token"].as_str().expect("user token"));
+    let tris_headers = [("authorization", tris_auth.as_str())];
+
+    let music = lib.dir.join("music");
+    let file = plant(&music, "album/01.flac", "management_full.flac");
+    add_music_root(&lib.library, &music).await;
+    let track = lib
+        .library
+        .scan_store
+        .track_at("music", "album/01.flac")
+        .expect("track indexed");
+    let album = lib
+        .library
+        .scan_store
+        .album_for_track(&track)
+        .expect("album");
+    approve_first_candidate(&lib.library, &album).await;
+    let fields_before = read_fields(&file).expect("fields read");
+
+    // A second identified album: its file is never part of a preview
+    // for the first, whoever asks.
+    plant(&music, "other/01.flac", "management_full.flac");
+    rescan(&lib.library).await;
+    let other_track = lib
+        .library
+        .scan_store
+        .track_at("music", "other/01.flac")
+        .expect("track indexed");
+    let other_album = lib
+        .library
+        .scan_store
+        .album_for_track(&other_track)
+        .expect("album");
+    assert_ne!(other_album, album);
+    approve_first_candidate(&lib.library, &other_album).await;
+    let sealed_previews = || lib.library.previews.lock().expect("preview map").len();
+    for headers in [&tris_headers, &admin_headers] {
+        let (status, body) = call(
+            lib.router(),
+            "POST",
+            "/api/v3/library/manage/preview",
+            headers,
+            Some(json!({
+                "kind": "retag",
+                "album_id": album,
+                "items": [{
+                    "root_id": "music",
+                    "rel_path": "other/01.flac",
+                    "managed_updates": {},
+                }],
+            })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    }
+    assert_eq!(sealed_previews(), 0, "nothing was sealed");
+
+    let preview = |dest_rel: Option<&str>, updates: Value| {
+        let mut item = json!({
+            "root_id": "music",
+            "rel_path": "album/01.flac",
+            "managed_updates": updates,
+        });
+        if let Some(dest_rel) = dest_rel {
+            item["dest_rel"] = json!(dest_rel);
+        }
+        json!({
+            "kind": if dest_rel.is_some() { "organize" } else { "retag" },
+            "album_id": album,
+            "items": [item],
+        })
+    };
+    let with_destination = preview(Some("elsewhere/01.flac"), json!({}));
+    let with_updates = preview(None, json!({"title": ["Their Title"]}));
+
+    for refused in [&with_destination, &with_updates] {
+        let (status, body) = call(
+            lib.router(),
+            "POST",
+            "/api/v3/library/manage/preview",
+            &tris_headers,
+            Some(refused.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{refused}: {body}");
+        assert_eq!(body["error"]["code"], json!("FORBIDDEN"));
+    }
+    assert_eq!(read_fields(&file).expect("fields read"), fields_before);
+
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/manage/preview",
+        &tris_headers,
+        Some(preview(None, json!({}))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let token = body["preview_token"].as_str().expect("token").to_owned();
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/manage/apply",
+        &tris_headers,
+        Some(json!({"preview_token": token})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let bundle_id = body["bundle_id"].as_str().expect("bundle").to_owned();
+    assert_eq!(
+        read_fields(&file).expect("fields read")[&TagField::MusicBrainzReleaseId],
+        vec![REL_1.to_owned()],
+        "the plain retag wrote the edition's tags"
+    );
+
+    let undo = json!({"bundle_id": bundle_id});
+    let restore = json!({"track_ids": [track]});
+    for (uri, request) in [
+        ("/api/v3/library/manage/undo", &undo),
+        ("/api/v3/library/manage/baseline/restore", &restore),
+    ] {
+        let (status, body) = call(
+            lib.router(),
+            "POST",
+            uri,
+            &tris_headers,
+            Some(request.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{uri}: {body}");
+    }
+    assert!(file.is_file(), "the retagged file stays where it was");
+
+    for (uri, request) in [
+        ("/api/v3/library/manage/preview", &with_destination),
+        ("/api/v3/library/manage/preview", &with_updates),
+        ("/api/v3/library/manage/undo", &undo),
+        ("/api/v3/library/manage/baseline/restore", &restore),
+    ] {
+        let (status, body) = call(
+            lib.router(),
+            "POST",
+            uri,
+            &admin_headers,
+            Some(request.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+    }
+
+    // An admin's move preview is not the trusted user's to apply, and
+    // their refused attempt leaves it for the admin.
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/manage/preview",
+        &admin_headers,
+        Some(with_destination.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let apply = json!({"preview_token": body["preview_token"]});
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/manage/apply",
+        &tris_headers,
+        Some(apply.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    let moved = music.join("elsewhere/01.flac");
+    assert!(file.is_file() && !moved.exists(), "nothing moved");
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/manage/apply",
+        &admin_headers,
+        Some(apply),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(moved.is_file() && !file.exists(), "the admin's move lands");
 }
 
 #[tokio::test]

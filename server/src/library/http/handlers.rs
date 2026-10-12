@@ -20,7 +20,7 @@ use super::models::{
     ScanRunsResponse, ScanScopeView, snake,
 };
 use crate::library::identify::models::{IdentifyKind, JobState};
-use crate::library::manage::PreviewItemInput;
+use crate::library::manage::{PreviewItemInput, plain_retag};
 use crate::library::publish::planner::PlanKind;
 use crate::library::scan::models::{EffectivePolicy, ScanRun, ScanScope};
 use crate::library::wiring::LibrarySetup;
@@ -132,6 +132,18 @@ fn check_managed_names(items: &[ManageItemBody]) -> Result<(), LibraryError> {
         }
     }
     Ok(())
+}
+
+/// Only an admin may move a file or choose tag values. Anyone else gets
+/// the plain retag: the album's edition tags, written in place.
+fn check_plain_retag(caller: &Principal, plain: bool) -> Result<(), LibraryError> {
+    if plain || caller.role.is_admin() {
+        Ok(())
+    } else {
+        Err(LibraryError::Forbidden {
+            message: "Admin role required to move files or set tag values".to_owned(),
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -346,13 +358,13 @@ pub async fn enqueue_identify(
         (status = 200, description = "Sealed preview", body = ManagePreviewResponse),
         (status = 400, description = "Bad kind, fields, or items"),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Curator role required"),
+        (status = 403, description = "Curator role required; admin role for anything but a plain retag"),
         (status = 409, description = "Missing identity, collision, or no space"),
     )
 )]
 pub async fn manage_preview(
     State(state): State<LibrarySetup>,
-    _caller: RequireCurator,
+    RequireCurator(caller): RequireCurator,
     ValidJson(body): ValidJson<ManagePreviewBody>,
 ) -> Result<Json<ManagePreviewResponse>, LibraryError> {
     let kind = match body.kind.as_str() {
@@ -385,6 +397,7 @@ pub async fn manage_preview(
             managed_updates: item.managed_updates.into_iter().collect(),
         })
         .collect();
+    check_plain_retag(&caller, plain_retag(kind, &inputs))?;
     let sealed =
         tokio::task::spawn_blocking(move || state.plan_preview(kind, &body.album_id, inputs))
             .await
@@ -415,14 +428,14 @@ pub async fn manage_preview(
         (status = 200, description = "Apply answer", body = ManageApplyResponse),
         (status = 400, description = "Missing preview token"),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Curator role required"),
+        (status = 403, description = "Curator role required; admin role for anything but a plain retag"),
         (status = 404, description = "Unknown preview token"),
         (status = 409, description = "Stale preview or blocked bundle"),
     )
 )]
 pub async fn manage_apply(
     State(state): State<LibrarySetup>,
-    _caller: RequireCurator,
+    RequireCurator(caller): RequireCurator,
     ValidJson(body): ValidJson<ManageApplyBody>,
 ) -> Result<Json<ManageApplyResponse>, LibraryError> {
     if body.preview_token.is_empty() {
@@ -430,9 +443,15 @@ pub async fn manage_apply(
             message: "Preview token must not be empty".to_owned(),
         });
     }
-    let applied = tokio::task::spawn_blocking(move || state.apply_preview(&body.preview_token))
-        .await
-        .map_err(|cause| LibraryError::internal(&cause))??;
+    // The role is checked before the token is spent, so a refused caller
+    // cannot use up someone else's preview.
+    let applied = blocking(move || {
+        if let Some(plain) = state.preview_is_plain_retag(&body.preview_token) {
+            check_plain_retag(&caller, plain)?;
+        }
+        Ok::<_, LibraryError>(state.apply_preview(&body.preview_token)?)
+    })
+    .await??;
     Ok(Json(ManageApplyResponse {
         bundle_id: applied.bundle_id,
         outcome: applied.outcome,
@@ -457,14 +476,14 @@ pub async fn manage_apply(
         (status = 200, description = "Undo answer", body = ManageUndoResponse),
         (status = 400, description = "Missing bundle id"),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Curator role required"),
+        (status = 403, description = "Admin role required"),
         (status = 404, description = "Unknown bundle id"),
         (status = 409, description = "Undo blocked for a file"),
     )
 )]
 pub async fn manage_undo(
     State(state): State<LibrarySetup>,
-    _caller: RequireCurator,
+    _caller: RequireAdmin,
     ValidJson(body): ValidJson<ManageUndoBody>,
 ) -> Result<Json<ManageUndoResponse>, LibraryError> {
     if body.bundle_id.is_empty() {
@@ -495,13 +514,13 @@ pub async fn manage_undo(
         (status = 200, description = "Restore answer", body = BaselineRestoreResponse),
         (status = 400, description = "No tracks listed"),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Curator role required"),
+        (status = 403, description = "Admin role required"),
         (status = 409, description = "Restore blocked for a file"),
     )
 )]
 pub async fn baseline_restore(
     State(state): State<LibrarySetup>,
-    _caller: RequireCurator,
+    _caller: RequireAdmin,
     ValidJson(body): ValidJson<BaselineRestoreBody>,
 ) -> Result<Json<BaselineRestoreResponse>, LibraryError> {
     if body.track_ids.is_empty() {

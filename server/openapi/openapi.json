@@ -9933,7 +9933,7 @@
             "description": "Not authenticated"
           },
           "403": {
-            "description": "Curator role required"
+            "description": "Curator role required; admin role for anything but a plain retag"
           },
           "404": {
             "description": "Unknown preview token"
@@ -9979,7 +9979,7 @@
             "description": "Not authenticated"
           },
           "403": {
-            "description": "Curator role required"
+            "description": "Admin role required"
           },
           "409": {
             "description": "Restore blocked for a file"
@@ -10022,7 +10022,7 @@
             "description": "Not authenticated"
           },
           "403": {
-            "description": "Curator role required"
+            "description": "Curator role required; admin role for anything but a plain retag"
           },
           "409": {
             "description": "Missing identity, collision, or no space"
@@ -10065,7 +10065,7 @@
             "description": "Not authenticated"
           },
           "403": {
-            "description": "Curator role required"
+            "description": "Admin role required"
           },
           "404": {
             "description": "Unknown bundle id"

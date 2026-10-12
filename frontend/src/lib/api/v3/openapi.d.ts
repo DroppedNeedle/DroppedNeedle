@@ -32444,7 +32444,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Curator role required */
+            /** @description Curator role required; admin role for anything but a plain retag */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -32503,7 +32503,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Curator role required */
+            /** @description Admin role required */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -32555,7 +32555,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Curator role required */
+            /** @description Curator role required; admin role for anything but a plain retag */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -32607,7 +32607,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Curator role required */
+            /** @description Admin role required */
             403: {
                 headers: {
                     [name: string]: unknown;

@@ -48,6 +48,7 @@ pub(super) fn policy_revision_u64(registry: &RootRegistry) -> u64 {
 pub struct PreviewEntry {
     sealed: SealedPreview,
     docs: BTreeMap<String, TagDocument>,
+    plain_retag: bool,
 }
 
 /// Open publisher plus the sandbox it runs under.
@@ -328,6 +329,16 @@ pub struct PreviewItemInput {
     pub dest_rel: Option<String>,
     /// Managed-field updates.
     pub managed_updates: BTreeMap<String, Vec<String>>,
+}
+
+/// Whether a preview request is a plain retag: the album's edition tags
+/// written in place, with no destination and no tag values from the
+/// caller. Anything else moves a file or writes what the caller chose.
+pub fn plain_retag(kind: PlanKind, items: &[PreviewItemInput]) -> bool {
+    kind == PlanKind::SamePath
+        && items
+            .iter()
+            .all(|item| item.dest_rel.is_none() && item.managed_updates.is_empty())
 }
 
 /// One planned file inside a sealed preview.
@@ -722,6 +733,14 @@ impl LibrarySetup {
             super::publish::staging::check_new_values(&item.managed_updates)
                 .map_err(publish_error)?;
             let track_id = self.scan_track(&item.root_id, &item.rel_path)?;
+            if self.track_album(&track_id)? != album_id {
+                return Err(ServiceError::Conflict {
+                    message: format!(
+                        "{}/{} is not part of album {album_id}",
+                        item.root_id, item.rel_path
+                    ),
+                });
+            }
             let fingerprint = Self::live_fingerprint(&sandbox, &item.root_id, &item.rel_path)?;
             let format = Self::live_format(&item.rel_path)?;
             let identity = self.resolve_identity(album_id, &track_id)?;
@@ -830,7 +849,14 @@ impl LibrarySetup {
                 .previews
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            previews.insert(token_hash, PreviewEntry { sealed, docs });
+            previews.insert(
+                token_hash,
+                PreviewEntry {
+                    sealed,
+                    docs,
+                    plain_retag: plain_retag(kind, &items),
+                },
+            );
         }
         Ok(PreviewSealed {
             token,
@@ -838,6 +864,18 @@ impl LibrarySetup {
             bundle_id: bundle.id,
             files,
         })
+    }
+
+    /// Whether the preview behind `token` is a plain retag; `None` when
+    /// no such preview waits. Looking does not spend the token.
+    pub fn preview_is_plain_retag(&self, token: &str) -> Option<bool> {
+        let previews = self
+            .previews
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        previews
+            .get(&sha256_hex(token.as_bytes()))
+            .map(|entry| entry.plain_retag)
     }
 
     /// Apply a sealed preview exactly once. The write guards span
