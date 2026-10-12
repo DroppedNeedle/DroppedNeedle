@@ -122,6 +122,8 @@ Coming from v2? Follow [docs/upgrading-from-v2.md](docs/upgrading-from-v2.md). S
 
 A `:dev` tag (`droppedneedle/droppedneedle:dev`) is built from `main` on every push and may break. Pin a commit with `:dev-<short-sha>`.
 
+Pre-releases are published to the same image under their own version tag, for example `droppedneedle/droppedneedle:v3.1.0-rc.1`. They never move `:latest`, so you only get one by asking for its tag.
+
 </details>
 
 ---
