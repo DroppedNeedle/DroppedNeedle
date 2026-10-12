@@ -632,7 +632,12 @@ pub async fn run(
         }
     };
     if !request.keep_backup {
-        delete_backups(dirs).map_err(|error| UpgradeError::BackupNotRemoved(Box::new(error)))?;
+        // The marker's removal has to be on disk first. A marker that came
+        // back after a power cut, beside a half-deleted backup, would make
+        // the next run delete the v3 data.
+        sync_dir(&dirs.cache_dir)
+            .and_then(|()| delete_backups(dirs))
+            .map_err(|error| UpgradeError::BackupNotRemoved(Box::new(error)))?;
     }
     Ok(Upgraded::Done(Box::new(Summary {
         report,
