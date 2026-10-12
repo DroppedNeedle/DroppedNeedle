@@ -12,7 +12,7 @@
 //! anything else would make debris invisible to the sweep.
 
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use futures_util::future::BoxFuture;
@@ -184,34 +184,12 @@ impl Journal {
 /// Live retry policy, read on every use.
 pub type RetryPolicySource = Arc<dyn Fn() -> RetryPolicy + Send + Sync>;
 
-/// Free Music as the request dispatch sees it: when no other download
-/// source is set up, album and track requests go there instead of the
-/// download queue (v2 `AcquisitionDispatcher`).
-pub trait FreeMusicRoute: Send + Sync {
-    /// Whether requests go to Free Music right now.
-    fn takes_requests(&self) -> bool;
-
-    /// Start a Free Music task; answers its id.
-    fn start(
-        self: Arc<Self>,
-        ask: super::free_music::FreeMusicAsk,
-    ) -> BoxFuture<'static, Result<String, String>>;
-
-    /// A Free Music task's status, when the id is one.
-    fn status<'a>(&'a self, task_id: &'a str) -> BoxFuture<'a, Option<String>>;
-
-    /// Cancel a Free Music task that has not started importing (its
-    /// request was cancelled).
-    fn cancel<'a>(&'a self, task_id: &'a str) -> BoxFuture<'a, Result<(), String>>;
-}
-
 /// One production dispatch behind both trait spellings.
 pub struct UnifiedDispatch {
     journal: Arc<Journal>,
     ids: Arc<dyn IdGenerator>,
     staging_root: PathBuf,
     retry: RetryPolicySource,
-    free_music: OnceLock<Arc<dyn FreeMusicRoute>>,
 }
 
 /// The task columns the request-path reads need.
@@ -240,29 +218,6 @@ impl UnifiedDispatch {
             ids,
             staging_root,
             retry,
-            free_music: OnceLock::new(),
-        }
-    }
-
-    /// Where boot attaches Free Music, so requests can go there when no
-    /// other source is set up.
-    pub fn free_music_slot(&self) -> &OnceLock<Arc<dyn FreeMusicRoute>> {
-        &self.free_music
-    }
-
-    /// The Free Music route, when requests should take it now.
-    fn free_music_route(&self) -> Option<Arc<dyn FreeMusicRoute>> {
-        self.free_music
-            .get()
-            .filter(|route| route.takes_requests())
-            .cloned()
-    }
-
-    /// A Free Music task's status, for ids the journal does not know.
-    async fn free_music_status(&self, task_id: &str) -> Option<String> {
-        match self.free_music.get() {
-            Some(route) => route.status(task_id).await,
-            None => None,
         }
     }
 
@@ -497,40 +452,6 @@ impl requests::DownloadDispatch for UnifiedDispatch {
                 requests::DispatchOrigin::Retry | requests::DispatchOrigin::Wanted => "retry",
                 requests::DispatchOrigin::Upgrade => "upgrade",
             };
-            // No download source but Free Music on: the request is served
-            // from the Internet Archive. The wanted watcher and upgrades
-            // stay on the download queue (they need source scouting).
-            if let Some(route) = self.free_music_route()
-                && origin == "user"
-            {
-                use super::free_music::{AskKind, FreeMusicAsk};
-                let ask = FreeMusicAsk {
-                    user_id: request.user_id.clone(),
-                    kind: if is_track {
-                        AskKind::Track
-                    } else {
-                        AskKind::Album
-                    },
-                    mbid: request.key.clone(),
-                    artist: request.artist_name.clone(),
-                    title: request.title.clone(),
-                    track_count: 0,
-                    origin: "user".to_owned(),
-                    release_group_mbid: (!is_track).then(|| request.key.clone()),
-                    // The edition pin rides along so ranking uses its
-                    // tracklist; a repeated ask answers the first task.
-                    release_mbid: request.release_mbid.clone(),
-                    idempotency_key: request
-                        .idempotency_key
-                        .as_ref()
-                        .map(|key| format!("dispatch:{key}")),
-                };
-                return route
-                    .start(ask)
-                    .await
-                    .map(|task_id| requests::DispatchOutcome::Dispatched { task_id })
-                    .map_err(failed);
-            }
             self.insert(
                 &request.user_id,
                 &request.artist_name,
@@ -552,14 +473,7 @@ impl requests::DownloadDispatch for UnifiedDispatch {
         &'a self,
         task_id: &'a str,
     ) -> BoxFuture<'a, Result<(), requests::DispatchError>> {
-        Box::pin(async move {
-            if let Some(route) = self.free_music.get()
-                && route.status(task_id).await.is_some()
-            {
-                return route.cancel(task_id).await.map_err(failed);
-            }
-            self.cancel(task_id).await.map_err(failed)
-        })
+        Box::pin(async move { self.cancel(task_id).await.map_err(failed) })
     }
 
     fn task_state<'a>(
@@ -569,18 +483,6 @@ impl requests::DownloadDispatch for UnifiedDispatch {
         Box::pin(async move {
             use requests::DispatchTaskState as State;
             let snapshot = self.snapshot(task_id).await.map_err(failed)?;
-            if snapshot.is_none()
-                && let Some(status) = self.free_music_status(task_id).await
-            {
-                // A finished Free Music task handed its files to drop
-                // import; the request settles when the album is in the
-                // library.
-                return Ok(match status.as_str() {
-                    "failed" => State::Failed,
-                    "cancelled" => State::Cancelled,
-                    _ => State::Active,
-                });
-            }
             Ok(match snapshot.map(|row| row.status) {
                 None => State::Missing,
                 Some(TaskStatus::Queued | TaskStatus::Downloading | TaskStatus::Processing) => {
@@ -742,16 +644,7 @@ impl flows::DownloadDispatch for UnifiedDispatch {
     ) -> BoxFuture<'a, Result<Option<String>, String>> {
         Box::pin(async move {
             let Some(row) = self.snapshot(task_id).await? else {
-                // Free Music: working reads as downloading; a finished task
-                // leaves the request to the library-presence check.
-                return Ok(self.free_music_status(task_id).await.and_then(|status| {
-                    match status.as_str() {
-                        "failed" => Some("failed".to_owned()),
-                        "cancelled" => Some("cancelled".to_owned()),
-                        "completed" => None,
-                        _ => Some("downloading".to_owned()),
-                    }
-                }));
+                return Ok(None);
             };
             let status = match row.status {
                 // v2's download_task.status has no queued state; a queued

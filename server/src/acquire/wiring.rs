@@ -33,9 +33,6 @@ use super::flows::stores::{
     AdminDirectory, FollowStore as FlowsFollowStore, LibraryPresence, UpgradePolicy,
     UpgradeWorklist,
 };
-use super::free_music::archive::LiveArchive;
-use super::free_music::store::FreeMusicStore;
-use super::free_music::{FreeMusic as FreeMusicService, FreeMusicSettings};
 use super::imports::handlers::{
     ImportsDeps, imports_callback_router, imports_gated_router, imports_legacy_callback_router,
 };
@@ -88,8 +85,8 @@ use crate::runtime_config::secret_sections::{
     ProwlarrConnection, SecretSection, SlskdConnection, TypedLibrary,
 };
 use crate::runtime_config::sections::{
-    AudioFormat, DownloadPolicy, FreeMusic, Section, SourcePriority, UsenetBackendSetting,
-    UserPreferences, WantedWatcher,
+    DownloadPolicy, FreeMusic, Section, SourcePriority, UsenetBackendSetting, UserPreferences,
+    WantedWatcher,
 };
 
 /// Spotify API bases (v2 `spotify_client.py`).
@@ -408,8 +405,6 @@ pub struct AcquireSetup {
     pub search_jobs: Arc<SearchJobs>,
     /// Drop import: uploaded music into the library.
     pub drops: Arc<DropImports>,
-    /// Free Music: lawful Internet Archive downloads.
-    pub free_music: Arc<FreeMusicService>,
 }
 
 /// Flows stores plus the loop deps built over them.
@@ -459,18 +454,6 @@ fn drop_imports(
         flows.ledger.clone(),
         flows.watches.clone(),
     ))
-}
-
-/// Free Music settings plus the download quality band, read per task.
-fn free_music_settings(store: &ConfigStore) -> FreeMusicSettings {
-    let section: FreeMusic = plain(store);
-    let policy: DownloadPolicy = plain(store);
-    FreeMusicSettings {
-        enabled: section.enabled,
-        prefer_mp3: section.preferred_format == AudioFormat::Mp3,
-        quality_min: policy.quality_min,
-        quality_max: policy.quality_max,
-    }
 }
 
 /// After a landing settles a task, resolve its requests and wanted watch
@@ -611,7 +594,6 @@ impl AcquireSetup {
         config_store: Arc<ConfigStore>,
         collections: &mut CollectionsState,
     ) -> Result<Self, String> {
-        let archive_transfers = http.archive_transfers().clone();
         let (http, no_redirect) = (http.shared().clone(), http.no_redirect().clone());
         let staging_root = config.imports_dir();
         let policy_store = config_store.clone();
@@ -830,26 +812,9 @@ impl AcquireSetup {
             events.clone(),
         ));
         let drops = drop_imports(&db, &landing, &staging_root, &events, &core.flows);
-        let free_store = config_store.clone();
-        let source_worker = worker.clone();
-        let free_music = Arc::new(FreeMusicService::new(
-            FreeMusicStore::new(db.clone()),
-            Arc::new(LiveArchive::new(http.clone(), archive_transfers)),
-            drops.clone(),
-            Arc::new(move || free_music_settings(&free_store)),
-            Arc::new(move || !source_worker.sources_now().is_empty()),
-            events.clone(),
-        ));
-        let route: Arc<dyn super::dispatch::FreeMusicRoute> = free_music.clone();
-        if core.dispatch.free_music_slot().set(route).is_err() {
-            tracing::warn!("free music was already attached to the request dispatch");
-        }
-        let (ready_worker, ready_music) = (worker.clone(), free_music.clone());
-        let queue_worker = worker.clone();
+        let (ready_worker, queue_worker) = (worker.clone(), worker.clone());
         let readiness = super::requests::state::AcquireReadiness {
-            sources_ready: Arc::new(move || {
-                !ready_worker.sources_now().is_empty() || ready_music.takes_requests()
-            }),
+            sources_ready: Arc::new(move || !ready_worker.sources_now().is_empty()),
             queue_ready: Arc::new(move || !queue_worker.sources_now().is_empty()),
             staging_root: staging_root.clone(),
         };
@@ -875,7 +840,6 @@ impl AcquireSetup {
             landing,
             search_jobs,
             drops,
-            free_music,
         })
     }
 
@@ -1072,24 +1036,6 @@ impl AcquireSetup {
             events.clone(),
         ));
         let drops = drop_imports(&db, &landing, &staging_root, &events, &core.flows);
-        // Not attached to the request dispatch: test requests stay on the
-        // download queue unless a test attaches it.
-        let free_music = Arc::new(FreeMusicService::new(
-            FreeMusicStore::new(db.clone()),
-            Arc::new(LiveArchive::new(
-                factory.shared().clone(),
-                factory.archive_transfers().clone(),
-            )),
-            drops.clone(),
-            Arc::new(|| FreeMusicSettings {
-                enabled: true,
-                prefer_mp3: false,
-                quality_min: "low".to_owned(),
-                quality_max: "lossless".to_owned(),
-            }),
-            Arc::new(|| false),
-            events.clone(),
-        ));
         let probe_cache = Arc::new(ProbeCache::new(seed_from_config(
             &SlskdConnection::default(),
             &DownloadClients::default(),
@@ -1123,7 +1069,6 @@ impl AcquireSetup {
             landing,
             search_jobs,
             drops,
-            free_music,
         })
     }
 
@@ -1147,9 +1092,6 @@ impl AcquireSetup {
             ))
             .merge(super::drop_import::http::drop_import_routes(
                 self.drops.clone(),
-            ))
-            .merge(super::free_music::http::free_music_routes(
-                self.free_music.clone(),
             ));
         let requests = legs.layer(axum::middleware::from_fn_with_state(
             self.users.clone(),
@@ -1172,13 +1114,12 @@ impl AcquireSetup {
         imports_legacy_callback_router(self.imports.clone())
     }
 
-    /// Run startup recovery before serving traffic: drop imports and
-    /// Free Music tasks a restart cut off, the download journal
-    /// classification, and the request ledger (interrupted cancels and
-    /// dispatches). Re-running after a clean shutdown is a no-op.
+    /// Run startup recovery before serving traffic: drop imports a restart
+    /// cut off, the download journal classification, and the request
+    /// ledger (interrupted cancels and dispatches). Re-running after a
+    /// clean shutdown is a no-op.
     pub async fn run_recovery(&self) -> Result<super::worker::RecoveryReport, String> {
         self.drops.sweep_stale().await;
-        self.free_music.sweep_stale().await;
         let report = run_startup_recovery(&self.journal, &self.staging_root).await?;
         let requests = super::requests::service::RequestsService::new(&self.requests)
             .recover()

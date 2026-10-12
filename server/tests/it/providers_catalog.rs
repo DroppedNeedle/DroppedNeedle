@@ -1,9 +1,9 @@
-//! Discogs, iTunes, preview (Deezer and iTunes), LRCLIB, Internet Archive
-//! and Wikidata clients over a scripted transport: the decode of each real
+//! Discogs, iTunes, preview (Deezer and iTunes), LRCLIB and Wikidata
+//! clients over a scripted transport: the decode of each real
 //! wire shape, identity gates, rate limits and degradation.
 
 use droppedneedle::providers::{HttpFault, HttpPort, HttpReply};
-use droppedneedle::providers::{archive, discogs, itunes, lrclib, preview, wikidata};
+use droppedneedle::providers::{discogs, itunes, lrclib, preview, wikidata};
 
 // ---------------------------------------------------------------------------
 // Scripted fakes
@@ -80,14 +80,12 @@ scripted_client!(ScriptDiscogs);
 scripted_client!(ScriptITunes);
 scripted_client!(ScriptPreview);
 scripted_client!(ScriptLrclib);
-scripted_client!(ScriptArchive);
 scripted_client!(ScriptWiki);
 
 reply_fns!(dreply, dreply_retry, dfault);
 reply_fns!(ireply, ireply_retry, _ifault);
 reply_fns!(preply, preply_retry, pfault);
 reply_fns!(lreply, lreply_retry, _lfault);
-reply_fns!(areply, areply_retry, _afault);
 reply_fns!(wreply, wreply_retry, wfault);
 
 // ---------------------------------------------------------------------------
@@ -523,113 +521,6 @@ async fn lrclib_degradation_404_429_500_bad_json() {
     assert_eq!(
         client.get_exact_lyrics("T", "A", "C", 1).await,
         Err(lrclib::FetchError::Unusable)
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Internet Archive
-// ---------------------------------------------------------------------------
-
-const ARCHIVE_CC: &str = "http://creativecommons.org/licenses/by-nc-sa/3.0/";
-const ARCHIVE_PD: &str = "https://creativecommons.org/publicdomain/zero/1.0/";
-
-fn archive_client(http: &ScriptArchive) -> archive::ArchiveClient<'_, ScriptArchive> {
-    archive::ArchiveClient::with_endpoints(
-        http,
-        "http://fake/advancedsearch.php",
-        "http://fake/metadata/{identifier}",
-    )
-}
-
-#[test]
-fn archive_contract_licence_table() {
-    // The v2 licence table, ported case for case.
-    for (value, expected) in [
-        (Some(ARCHIVE_CC), true),
-        (Some(ARCHIVE_PD), true),
-        (Some("https://creativecommons.org/licenses/by/4.0/"), true),
-        (Some(""), false),
-        (None, false),
-        (Some("http://example.com/all-rights-reserved"), false),
-        (
-            Some("https://evil.example/creativecommons.org/licenses/by/4.0/"),
-            false,
-        ),
-    ] {
-        assert_eq!(
-            archive::is_open_licence(value),
-            expected,
-            "value: {value:?}"
-        );
-    }
-}
-
-#[tokio::test]
-async fn archive_contract_search_drops_unlicensed_items() {
-    let body = format!(
-        r#"{{"response": {{"docs": [
-            {{"identifier": "good", "title": "Good", "licenseurl": "{ARCHIVE_CC}", "futureField": 1}},
-            {{"identifier": "unlicensed", "title": "Bad"}},
-            {{"identifier": "closed", "title": "Bad", "licenseurl": "http://x/arr"}},
-            {{"title": "No Id", "licenseurl": "{ARCHIVE_CC}"}}
-        ]}}}}"#
-    );
-    let http = ScriptArchive::scripted(vec![areply(200, &body)]);
-    let items = archive_client(&http)
-        .search_audio("A", "B", 12)
-        .await
-        .unwrap();
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0].identifier, "good");
-    assert_eq!(items[0].licence_url, ARCHIVE_CC);
-}
-
-#[tokio::test]
-async fn archive_quirk_dark_and_closed_items_yield_nothing() {
-    // A removed item answers `{}` rather than 404.
-    let http = ScriptArchive::scripted(vec![areply(200, "{}")]);
-    assert_eq!(
-        archive_client(&http).get_item_files("gone").await.unwrap(),
-        (String::new(), Vec::new())
-    );
-
-    let body = r#"{"metadata": {"licenseurl": ""},
-        "files": [{"name": "a.mp3", "format": "MP3"}]}"#;
-    let http = ScriptArchive::scripted(vec![areply(200, body)]);
-    assert_eq!(
-        archive_client(&http).get_item_files("x").await.unwrap(),
-        (String::new(), Vec::new())
-    );
-}
-
-#[tokio::test]
-async fn archive_degradation_429_500_bad_json() {
-    let http = ScriptArchive::scripted(vec![areply_retry(429, "{}", "1")]);
-    assert_eq!(
-        archive_client(&http).search_audio("A", "B", 12).await,
-        Err(archive::FetchError::RateLimited {
-            retry_after_secs: 1.0
-        })
-    );
-
-    let http = ScriptArchive::scripted(vec![areply(429, "{}")]);
-    assert_eq!(
-        archive_client(&http).search_audio("A", "B", 12).await,
-        Err(archive::FetchError::RateLimited {
-            retry_after_secs: 60.0
-        })
-    );
-
-    let http = ScriptArchive::scripted(vec![areply(500, "{}")]);
-    assert_eq!(
-        archive_client(&http).search_audio("A", "B", 12).await,
-        Err(archive::FetchError::Unusable)
-    );
-
-    let http = ScriptArchive::scripted(vec![areply(200, "<html>")]);
-    assert_eq!(
-        archive_client(&http).search_audio("A", "B", 12).await,
-        Err(archive::FetchError::Unusable)
     );
 }
 

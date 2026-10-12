@@ -98,7 +98,7 @@ pub struct DispatchRequest {
     pub artist: String,
     /// Album or track title for the task row.
     pub title: String,
-    /// Origin tag: `user`, `wanted`, `follow`, `upgrade`, `free-music`.
+    /// Origin tag: `user`, `wanted`, `follow`, `upgrade`.
     pub origin: String,
     /// Caller-supplied idempotency key. A repeat dispatch with the same
     /// key answers the original task instead of minting a duplicate;

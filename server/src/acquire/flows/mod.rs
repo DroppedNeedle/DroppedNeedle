@@ -4,8 +4,8 @@
 //! upgrade sweep, and request-status-sync as registered ephemeral loops
 //! with shutdown plumbing. [`seams`] holds the boundary to code owned
 //! elsewhere (downloads dispatch, provider/indexer search), and [`stores`]
-//! the state the flows read and write. Drop import and Free Music live in
-//! their own modules ([`super::drop_import`], [`super::free_music`]).
+//! the state the flows read and write. Drop import lives in its own
+//! module ([`super::drop_import`]).
 
 pub mod loops;
 pub mod seams;

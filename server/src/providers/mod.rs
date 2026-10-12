@@ -53,7 +53,6 @@
 
 pub mod acoustid;
 pub mod adapters;
-pub mod archive;
 pub mod audiodb;
 pub mod cache;
 pub mod client;

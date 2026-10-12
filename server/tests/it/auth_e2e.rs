@@ -1422,25 +1422,6 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/import/items/{item_id}/discard",
         Posture::Curator,
     ),
-    // Free Music: your own downloads; cancel and retry are curator actions.
-    ("GET", "/api/v3/free-music/tasks", Posture::User),
-    ("DELETE", "/api/v3/free-music/tasks", Posture::User),
-    ("GET", "/api/v3/free-music/tasks/{task_id}", Posture::User),
-    (
-        "DELETE",
-        "/api/v3/free-music/tasks/{task_id}",
-        Posture::User,
-    ),
-    (
-        "POST",
-        "/api/v3/free-music/tasks/{task_id}/cancel",
-        Posture::Curator,
-    ),
-    (
-        "POST",
-        "/api/v3/free-music/tasks/{task_id}/retry",
-        Posture::Curator,
-    ),
     // Stage-4 library reads.
     ("GET", "/api/v3/library/albums", Posture::User),
     ("GET", "/api/v3/library/albums/{id}", Posture::User),

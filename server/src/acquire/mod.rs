@@ -8,9 +8,7 @@
 //! - [`slskd`] and [`usenet`] own the source clients and indexers.
 //! - [`flows`] runs the wanted watcher, follow poll, upgrade sweep and
 //!   status sync.
-//! - [`drop_import`] takes uploaded music into the library, and
-//!   [`free_music`] downloads openly licensed music from the Internet
-//!   Archive when no other source is set up.
+//! - [`drop_import`] takes uploaded music into the library.
 //! - [`imports`] serves Lidarr/Spotify import plus the health smoke.
 //! - [`landing`] verifies a finished download, matches it to the
 //!   requested release, and publishes it into the library or holds it.
@@ -33,7 +31,6 @@ pub mod downloads;
 pub mod drop_import;
 pub mod edition;
 pub mod flows;
-pub mod free_music;
 pub mod imports;
 pub mod landing;
 pub mod library_removal;
