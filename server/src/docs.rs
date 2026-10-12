@@ -570,6 +570,7 @@ use crate::{
         crate::library::http::management::create_management_preview,
         crate::library::http::management::get_management_preview,
         crate::library::http::management::list_management_preview_items,
+        crate::library::http::management::get_management_preview_artwork,
         crate::library::http::management::discard_management_preview,
         crate::library::http::management::apply_management_preview,
         crate::library::http::management::reissue_management_preview,

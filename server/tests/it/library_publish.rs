@@ -1310,8 +1310,8 @@ fn error_messages_name_files_not_server_paths() {
     let mut updates = BTreeMap::new();
     updates.insert("title".to_string(), vec!["X".to_string()]);
     let temp = fix.dir.join("w.tmp");
-    let err =
-        publish::staging::render_staged_bytes(&[0u8; 64], "flac", &updates, &temp).unwrap_err();
+    let err = publish::staging::render_staged_bytes(&[0u8; 64], "flac", &updates, None, &temp)
+        .unwrap_err();
     assert!(matches!(err, PublishError::Validation(_)), "got {err:?}");
     assert!(!err.to_string().contains(&root_text), "{err}");
     // Reading the current tag document off garbage: file name only.

@@ -43,7 +43,57 @@ pub struct TagDocument {
     /// native custom items (see [`recorded_since`]).
     #[serde(default)]
     pub version: u32,
+    /// The embedded pictures, in file order, by the hash of their bytes
+    /// in the blob store. `None` when the document did not record them
+    /// (documents before version 3, v2 baselines): nothing may then be
+    /// inferred about the file's pictures.
+    #[serde(default)]
+    pub pictures: Option<Vec<PictureRef>>,
+    /// The picture bytes behind [`Self::pictures`], carried from the file
+    /// to the publisher, which stores them with the before-state. Never
+    /// serialized.
+    #[serde(skip)]
+    pub picture_bytes: BTreeMap<String, Vec<u8>>,
 }
+
+/// One embedded picture in a [`TagDocument`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PictureRef {
+    pub kind: u8,
+    pub mime: String,
+    pub description: String,
+    pub sha256: String,
+}
+
+impl PictureRef {
+    /// The managed-update value for this picture
+    /// (`kind<TAB>mime<TAB>description<TAB>sha256`).
+    pub fn encode(&self) -> String {
+        format!(
+            "{}\t{}\t{}\t{}",
+            self.kind,
+            self.mime,
+            self.description.replace('\t', " "),
+            self.sha256
+        )
+    }
+
+    /// Parse [`Self::encode`].
+    pub fn decode(value: &str) -> Option<Self> {
+        let mut parts = value.splitn(4, '\t');
+        Some(Self {
+            kind: parts.next()?.parse().ok()?,
+            mime: parts.next()?.to_owned(),
+            description: parts.next()?.to_owned(),
+            sha256: parts.next()?.to_owned(),
+        })
+    }
+}
+
+/// The managed-update name that replaces a file's embedded pictures with
+/// the listed ones (each [`PictureRef::encode`]d); an empty list removes
+/// them all.
+pub const PICTURES_KEY: &str = "pictures";
 
 /// The current [`TagDocument`] shape.
 pub const TAG_DOCUMENT_VERSION: u32 = 4;
@@ -80,6 +130,8 @@ impl TagDocument {
             unknown_frames: BTreeMap::new(),
             opaque: Vec::new(),
             version: TAG_DOCUMENT_VERSION,
+            pictures: Some(Vec::new()),
+            picture_bytes: BTreeMap::new(),
         }
     }
 }

@@ -100,7 +100,7 @@ pub use planner::{
 pub use publisher::{Catalog, CrashPoint, PublishOutcome, Publisher, SqliteCatalog};
 pub use recovery::{BundleRecovery, RecoveryAction, reconcile, startup_gate};
 pub use snapshots::{BaselineStore, BlobStore, SnapshotStore};
-pub use tags_seam::TagDocument;
+pub use tags_seam::{PICTURES_KEY, PictureRef, TagDocument};
 pub use undo::{BaselineRestorePlan, UndoItem, UndoPlan, plan_baseline_restore, plan_undo};
 
 /// Reserved hidden namespace for staging and backup artifacts.

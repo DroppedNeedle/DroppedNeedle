@@ -21,11 +21,12 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use super::super::tags::save::{accepts, writable};
-use super::super::tags::{
-    Refusal, TagEdit, TagField, TagsError, format_for_path, read_document, save_tags,
-};
+use super::super::tags::{Refusal, TagEdit, TagField, TagsError, format_for_path, read_document};
 use super::PublishError;
-use super::tags_seam::{FULL_FIELDS_VERSION, TAG_DOCUMENT_VERSION, TagDocument, recorded_since};
+use super::tags_seam::{
+    FULL_FIELDS_VERSION, PICTURES_KEY, PictureRef, RICH_FIELDS_VERSION, TAG_DOCUMENT_VERSION,
+    TagDocument, recorded_since,
+};
 
 /// Map managed updates onto save-wrapper edits. An empty value list
 /// removes the field (undo uses that for fields an edit added). Values
@@ -39,6 +40,10 @@ pub fn check_managed_updates(
     for (name, values) in managed_updates {
         if let Some(key) = name.strip_prefix(NATIVE_PREFIX) {
             edits.push(TagEdit::native(key, values.clone()));
+            continue;
+        }
+        if name == PICTURES_KEY {
+            // Pictures ride beside the tag edits (see `pictures_update`).
             continue;
         }
         match TagField::from_managed_name(name) {
@@ -65,6 +70,13 @@ pub fn check_new_values(
     for (name, values) in managed_updates {
         // Native items outside the fields are only ever removed (a scrub).
         if name.starts_with(NATIVE_PREFIX) && values.is_empty() {
+            continue;
+        }
+        if name == PICTURES_KEY
+            && values
+                .iter()
+                .all(|value| PictureRef::decode(value).is_some())
+        {
             continue;
         }
         let field = TagField::from_name(name).ok_or_else(|| {
@@ -128,9 +140,10 @@ pub fn render_staged_bytes(
     source: &[u8],
     format: &str,
     managed_updates: &BTreeMap<String, Vec<String>>,
+    pictures: Option<&[super::super::tags::save::PictureSpec]>,
     temp: &Path,
 ) -> Result<Vec<u8>, PublishError> {
-    if managed_updates.is_empty() {
+    if managed_updates.is_empty() && pictures.is_none() {
         return Ok(source.to_vec());
     }
     let edits = check_managed_updates(managed_updates)?;
@@ -139,7 +152,7 @@ pub fn render_staged_bytes(
     if let Err(error) = std::fs::write(&work, source) {
         return Err(PublishError::Io(error.to_string()));
     }
-    let staged = match save_tags(&work, &edits) {
+    let staged = match super::super::tags::save::save_tags_with_pictures(&work, &edits, pictures) {
         Ok(_) => std::fs::read(&work).map_err(PublishError::from),
         Err(error) => Err(map_tags_error(&work, error)),
     };
@@ -177,7 +190,24 @@ pub fn document_from_fields(fields: super::super::tags::FieldDocument) -> TagDoc
     for ((field, spelling), values) in fields.spellings {
         managed.insert(field.spelling_name(spelling), values);
     }
+    let mut picture_bytes = BTreeMap::new();
+    let pictures = fields
+        .pictures
+        .into_iter()
+        .map(|picture| {
+            let sha256 = super::snapshots::sha256_hex(&picture.data);
+            picture_bytes.insert(sha256.clone(), picture.data);
+            PictureRef {
+                kind: picture.kind,
+                mime: picture.mime,
+                description: picture.description,
+                sha256,
+            }
+        })
+        .collect();
     TagDocument {
+        pictures: Some(pictures),
+        picture_bytes,
         managed,
         custom: fields.native,
         unknown_frames: BTreeMap::new(),
@@ -210,13 +240,22 @@ pub fn document_for_write(
         )));
     }
     for name in managed_updates.keys() {
-        // A scrubbed native item's before-state is its values now, so
-        // undo writes them back.
-        let before = name
-            .strip_prefix(NATIVE_PREFIX)
-            .and_then(|key| document.custom.get(key))
-            .cloned()
-            .unwrap_or_default();
+        // A scrubbed native item's before-state is its values now, and
+        // replaced pictures are the ones the file holds now, so undo
+        // writes them back.
+        let before = if name == PICTURES_KEY {
+            document
+                .pictures
+                .iter()
+                .flatten()
+                .map(PictureRef::encode)
+                .collect()
+        } else {
+            name.strip_prefix(NATIVE_PREFIX)
+                .and_then(|key| document.custom.get(key))
+                .cloned()
+                .unwrap_or_default()
+        };
         document.managed.entry(name.clone()).or_insert(before);
     }
     Ok(document)
@@ -240,6 +279,17 @@ pub fn restore_updates(
         return baseline.managed.clone();
     }
     let mut updates = baseline.managed.clone();
+    // The baseline's pictures go back when the file's differ (a later
+    // run embedded art), when the baseline's shape recorded them.
+    if let (Some(original), Some(now)) = (&baseline.pictures, &current.pictures)
+        && baseline.version >= RICH_FIELDS_VERSION
+        && original != now
+    {
+        updates.insert(
+            PICTURES_KEY.to_owned(),
+            original.iter().map(PictureRef::encode).collect(),
+        );
+    }
     // Native items the baseline held and the file no longer holds as it
     // did (a later scrub) go back. Items added since are left alone.
     for (key, values) in &baseline.custom {

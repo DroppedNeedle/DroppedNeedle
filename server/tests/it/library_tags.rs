@@ -1231,6 +1231,78 @@ fn native_items_scrub_and_restore() {
     }
 }
 
+/// ReplayGain analysis decodes each writable format (the fixtures are
+/// digital silence, so they measure no loudness and a zero peak).
+#[test]
+fn loudness_measures_the_fixtures() {
+    use tags::loudness::analyse;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    for name in [
+        "management_full.flac",
+        "management_full.mp3",
+        "management_full.ogg",
+        "management_full.opus",
+        "management_full.m4a",
+    ] {
+        let measured = analyse(&fixture(name), deadline);
+        let loudness = measured
+            .as_ref()
+            .map(|found| (found.loudness(), found.peak));
+        assert_eq!(loudness, Ok((None, 0.0)), "{name}");
+    }
+}
+
+/// Embedded pictures are replaced as a set and read back byte for byte.
+#[test]
+fn pictures_replace_and_read_back() {
+    use tags::save::{PictureSpec, read_document, save_tags_with_pictures};
+    let png = {
+        let mut bytes = Vec::new();
+        image::RgbImage::new(4, 4)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        bytes
+    };
+    let front = PictureSpec {
+        kind: 3,
+        mime: "image/png".to_owned(),
+        description: String::new(),
+        data: png,
+    };
+    for name in [
+        "management_full.flac",
+        "management_full.mp3",
+        "management_full.m4a",
+    ] {
+        let (_scratch, path) = temp_copy(name, "pictures");
+        let before = read_document(&path).unwrap().pictures;
+        save_tags_with_pictures(&path, &[], Some(std::slice::from_ref(&front)))
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        let after = read_document(&path).unwrap().pictures;
+        assert_eq!(after.len(), 1, "{name}");
+        assert_eq!(after[0].data, front.data, "{name}");
+        save_tags_with_pictures(&path, &[], Some(&before))
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        let restored: Vec<Vec<u8>> = read_document(&path)
+            .unwrap()
+            .pictures
+            .into_iter()
+            .map(|picture| picture.data)
+            .collect();
+        assert_eq!(
+            restored,
+            before
+                .into_iter()
+                .map(|picture| picture.data)
+                .collect::<Vec<_>>(),
+            "{name}"
+        );
+    }
+}
+
 #[test]
 fn save_refuses_empty_vorbis_values() {
     let (_scratch, path) = temp_copy("management_full.flac", "empty-vorbis");

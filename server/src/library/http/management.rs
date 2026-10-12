@@ -43,6 +43,10 @@ pub fn management_router() -> Router<LibrarySetup> {
             get(list_management_preview_items),
         )
         .route(
+            "/library/management/previews/{job_id}/items/{ordinal}/artwork/{sha256}",
+            get(get_management_preview_artwork),
+        )
+        .route(
             "/library/management/previews/{job_id}/discard",
             post(discard_management_preview),
         )
@@ -436,6 +440,12 @@ impl From<PlannedItem> for ManagementPlanItemView {
     fn from(item: PlannedItem) -> Self {
         let reason = item.facts.reason.clone();
         let fields = serde_json::to_value(&item.desired.fields).unwrap_or_default();
+        let artwork_choices = item
+            .desired
+            .artwork
+            .iter()
+            .filter_map(|choice| serde_json::to_value(choice).ok())
+            .collect();
         Self {
             ordinal: item.ordinal,
             bundle_ordinal: item.bundle_ordinal,
@@ -452,7 +462,7 @@ impl From<PlannedItem> for ManagementPlanItemView {
                 .map(Into::into),
             estimated_temporary_bytes: i64::try_from(item.estimated_bytes).unwrap_or(i64::MAX),
             desired_document: serde_json::json!({ "fields": fields }),
-            artwork_choices: Vec::new(),
+            artwork_choices,
             diff: serde_json::to_value(&item.diff).unwrap_or_default(),
             capability: serde_json::to_value(&item.facts).unwrap_or_default(),
             collisions: Vec::new(),
@@ -740,6 +750,55 @@ pub async fn list_management_preview_items(
         next_after_ordinal: page.next_after_ordinal,
         has_more: page.has_more,
     }))
+}
+
+/// The cover art one planned file embeds or writes, as the preview lists
+/// it by hash.
+#[utoipa::path(
+    get,
+    path = "/api/v3/library/management/previews/{job_id}/items/{ordinal}/artwork/{sha256}",
+    params(
+        ("job_id" = String, Path, description = "Management job id"),
+        ("ordinal" = i64, Path, description = "Planned file ordinal"),
+        ("sha256" = String, Path, description = "Artwork hash from artwork_choices"),
+    ),
+    responses(
+        (status = 200, description = "The planned image", content_type = "image/jpeg"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required"),
+        (status = 404, description = "Unknown job, file or artwork"),
+    )
+)]
+pub async fn get_management_preview_artwork(
+    State(state): State<LibrarySetup>,
+    _caller: RequireAdmin,
+    Path((job_id, ordinal, sha256)): Path<(String, i64, String)>,
+) -> Result<axum::response::Response, LibraryError> {
+    use axum::http::{HeaderValue, header};
+    if sha256.len() != 64 || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(LibraryError::from(ManagementError::NotFound(
+            "That artwork is not in the preview.",
+        )));
+    }
+    let management = Management::new(&state);
+    let (bytes, mime) =
+        blocking(move || management.preview_artwork(&job_id, ordinal, &sha256)).await?;
+    let mut response = axum::response::Response::new(axum::body::Body::from(bytes));
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&mime)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=3600"),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    Ok(response)
 }
 
 /// Set a preview aside without changing any file.

@@ -2217,6 +2217,11 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         Posture::Admin,
     ),
     (
+        "GET",
+        "/api/v3/library/management/previews/{job_id}/items/{ordinal}/artwork/{sha256}",
+        Posture::Admin,
+    ),
+    (
         "POST",
         "/api/v3/library/management/previews/{job_id}/discard",
         Posture::Admin,

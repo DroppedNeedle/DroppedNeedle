@@ -12,8 +12,9 @@ use std::path::Path;
 use rusqlite::{Connection, OptionalExtension as _, params};
 
 use super::models::{
-    DesiredDocument, DesiredField, Eligibility, ItemDiff, ItemFacts, ManagementError,
-    PinnedProfile, PlannedItem, SidecarMove, TagEditField, TagEditIntent, TagEditMode,
+    ArtworkChoice, DesiredDocument, DesiredField, Eligibility, FieldMutation, ItemDiff, ItemFacts,
+    ManagementError, PinnedProfile, PlannedItem, SidecarMove, TagEditField, TagEditIntent,
+    TagEditMode,
 };
 use super::profile::{self, CompiledScripts, NamingFacts};
 use super::reasons::{self, ItemReason};
@@ -467,6 +468,10 @@ fn plan_file(
             lyrics: &lyrics,
         },
     )?;
+    let mut tag_plan = tag_plan;
+    if writable {
+        embed_cover(ctx, item, extras, &doc, &mut tag_plan)?;
+    }
     item.facts
         .warnings
         .extend(tag_plan.warnings.iter().cloned());
@@ -532,6 +537,11 @@ fn plan_file(
             outputs.push(output);
         }
     }
+    if extras.cover_owner.as_deref() == Some(track.id.as_str())
+        && let Some(output) = cover_file(ctx, item, extras, &dest_root, &dest_rel, track)?
+    {
+        outputs.push(output);
+    }
     if lyrics_settings.enabled && lyrics_settings.required {
         let embedded = tag_plan
             .desired
@@ -562,6 +572,9 @@ fn plan_file(
     let mut capabilities = Vec::new();
     if item.diff.tags_changed {
         capabilities.push(Capability::Metadata);
+    }
+    if item.diff.artwork_changed {
+        capabilities.push(Capability::Artwork);
     }
     if moves {
         capabilities.push(if dest_root == track.root_id {
@@ -633,6 +646,218 @@ fn generated_output(
         size: bytes.len() as u64,
         kind: kind.to_owned(),
     })
+}
+
+/// Keep bytes in the blob store under the planning job.
+fn keep_blob(ctx: &PlanContext<'_>, bytes: &[u8]) -> Result<String, ItemReason> {
+    use crate::library::publish::snapshots::{BlobStore, SnapshotStore};
+    ctx.setup
+        .identify_store
+        .with_connection(|conn| {
+            let sha = BlobStore::new(conn).put(bytes)?;
+            SnapshotStore::new(conn).add_ref(&sha, "preview", ctx.job_id)?;
+            Ok::<_, crate::library::publish::PublishError>(sha)
+        })
+        .map_err(|error| {
+            tracing::error!(%error, "planned artwork not stored");
+            reasons::write_failed()
+        })
+}
+
+fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    let format = image::guess_format(bytes).ok()?;
+    image::ImageReader::with_format(std::io::Cursor::new(bytes), format)
+        .into_dimensions()
+        .ok()
+}
+
+fn format_word(mime: &str) -> &'static str {
+    match mime {
+        "image/png" => "png",
+        "image/webp" => "webp",
+        _ => "jpeg",
+    }
+}
+
+/// Embed the album's front cover when the profile asks for it (v2's
+/// embedded artwork): the file's other pictures stay as they are, a
+/// front cover already holding these bytes is left alone, and with
+/// "never replace with smaller" a larger one is kept. Undo puts the old
+/// pictures back from the before-state.
+fn embed_cover(
+    ctx: &PlanContext<'_>,
+    item: &mut PlannedItem,
+    extras: &super::enrich::AlbumExtras,
+    doc: &crate::library::publish::TagDocument,
+    tag_plan: &mut profile::TagPlan,
+) -> Result<(), ItemReason> {
+    use crate::library::publish::{PICTURES_KEY, PictureRef};
+    let art = &ctx.pinned.profile.artwork;
+    if !art.embedded_enabled {
+        return Ok(());
+    }
+    let Some(cover) = &extras.cover else {
+        if extras.cover_deferred {
+            item.facts.warnings.push(
+                "The cover could not be fetched right now, so the embedded art is left as it is."
+                    .to_owned(),
+            );
+        }
+        return Ok(());
+    };
+    let Some(rendered) =
+        super::enrich::render_cover(&cover.bytes, art.embedded_maximum_size, art.embedded_format)
+    else {
+        item.facts
+            .warnings
+            .push("The cover image could not be read, so no art is embedded.".to_owned());
+        return Ok(());
+    };
+    let Some(existing) = doc.pictures.clone() else {
+        return Ok(());
+    };
+    let new_sha = sha256_hex(&rendered.bytes);
+    let current_front = existing.iter().find(|picture| picture.kind == 3);
+    if current_front.is_some_and(|picture| picture.sha256 == new_sha) {
+        return Ok(());
+    }
+    if art.never_replace_with_smaller
+        && let Some(front) = current_front
+        && let Some((width, height)) = doc
+            .picture_bytes
+            .get(&front.sha256)
+            .and_then(|bytes| image_size(bytes))
+        && u64::from(width) * u64::from(height)
+            > u64::from(rendered.width) * u64::from(rendered.height)
+    {
+        return Ok(());
+    }
+    let mut pictures = vec![PictureRef {
+        kind: 3,
+        mime: rendered.mime.clone(),
+        description: String::new(),
+        sha256: keep_blob(ctx, &rendered.bytes)?,
+    }];
+    for picture in existing.iter().filter(|picture| picture.kind != 3) {
+        let Some(bytes) = doc.picture_bytes.get(&picture.sha256) else {
+            // Without its bytes a picture cannot be written back.
+            return Ok(());
+        };
+        keep_blob(ctx, bytes)?;
+        pictures.push(picture.clone());
+    }
+    let describe = |list: &[PictureRef]| {
+        serde_json::Value::from(
+            list.iter()
+                .map(|picture| format!("{} ({})", picture.mime, &picture.sha256[..12]))
+                .collect::<Vec<_>>(),
+        )
+    };
+    tag_plan.mutations.push(FieldMutation {
+        name: PICTURES_KEY.to_owned(),
+        operation: "set".to_owned(),
+        before: describe(&existing),
+        after: describe(&pictures),
+    });
+    tag_plan.updates.insert(
+        PICTURES_KEY.to_owned(),
+        pictures.iter().map(PictureRef::encode).collect(),
+    );
+    item.diff.artwork_changed = true;
+    item.desired.artwork.push(ArtworkChoice {
+        output_kind: "embedded_art".to_owned(),
+        image_type: "front".to_owned(),
+        source: "cover_art_archive".to_owned(),
+        mime_type: rendered.mime.clone(),
+        blob_sha256: new_sha,
+        width: rendered.width,
+        height: rendered.height,
+        format: format_word(&rendered.mime).to_owned(),
+        destination_relative_path: None,
+    });
+    Ok(())
+}
+
+/// The album's cover file next to its tracks (v2's external artwork):
+/// written only where no cover file the profile recognises already sits,
+/// in the folder the album ends up in or the one it comes from.
+fn cover_file(
+    ctx: &PlanContext<'_>,
+    item: &mut PlannedItem,
+    extras: &super::enrich::AlbumExtras,
+    dest_root: &str,
+    dest_rel: &str,
+    track: &CatalogTrack,
+) -> Result<Option<crate::library::publish::GeneratedOutput>, ItemReason> {
+    let art = &ctx.pinned.profile.artwork;
+    if !art.external_enabled {
+        return Ok(None);
+    }
+    let Some(cover) = &extras.cover else {
+        return Ok(None);
+    };
+    let Some(rendered) =
+        super::enrich::render_cover(&cover.bytes, art.external_maximum_size, art.external_format)
+    else {
+        return Ok(None);
+    };
+    let patterns: Vec<Vec<char>> = art
+        .local_file_patterns
+        .iter()
+        .map(|pattern| pattern.to_lowercase().chars().collect())
+        .collect();
+    let folder_of = |rel: &str| {
+        Path::new(rel)
+            .parent()
+            .map(|parent| parent.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default()
+    };
+    let has_cover = |root: &str, folder: &str| {
+        ctx.sandbox
+            .resolve_no_symlink(root, if folder.is_empty() { "." } else { folder })
+            .ok()
+            .and_then(|dir| std::fs::read_dir(dir).ok())
+            .is_some_and(|entries| {
+                entries.flatten().any(|entry| {
+                    let name: Vec<char> = entry
+                        .file_name()
+                        .to_string_lossy()
+                        .to_lowercase()
+                        .chars()
+                        .collect();
+                    patterns.iter().any(|pattern| glob(pattern, &name))
+                })
+            })
+    };
+    let dest_folder = folder_of(dest_rel);
+    if has_cover(dest_root, &dest_folder)
+        || has_cover(&track.root_id, &folder_of(&track.relative_path))
+    {
+        return Ok(None);
+    }
+    let extension = match rendered.mime.as_str() {
+        "image/png" => "png",
+        "image/webp" => "webp",
+        _ => "jpg",
+    };
+    let rel = if dest_folder.is_empty() {
+        format!("cover.{extension}")
+    } else {
+        format!("{dest_folder}/cover.{extension}")
+    };
+    let output = generated_output(ctx, dest_root, &rel, "artwork", &rendered.bytes)?;
+    item.desired.artwork.push(ArtworkChoice {
+        output_kind: "external_art".to_owned(),
+        image_type: "front".to_owned(),
+        source: "cover_art_archive".to_owned(),
+        mime_type: rendered.mime.clone(),
+        blob_sha256: output.sha256.clone(),
+        width: rendered.width,
+        height: rendered.height,
+        format: format_word(&rendered.mime).to_owned(),
+        destination_relative_path: Some(rel),
+    });
+    Ok(Some(output))
 }
 
 /// Drop generated files that would land where a sidecar moving with the
@@ -748,11 +973,14 @@ fn measure_replaygain(
             })
         })
         .flatten();
-    if settings.album_aware && album.is_none() {
+    if !whole {
         extras.replaygain_note = Some(
-            "Not every file of the album could be measured, so no album gain was written."
+            "Not every file of the album could be decoded, so no album gain was written."
                 .to_owned(),
         );
+    } else if measured.iter().all(|(_, found)| found.loudness().is_none()) {
+        extras.replaygain_note =
+            Some("The album is silent, so there is no loudness to measure.".to_owned());
     }
     for (track_id, found) in measured {
         let Some(value) = found.loudness() else {
@@ -1096,6 +1324,7 @@ pub fn plan_album(
             ),
         };
     let mut extras = super::enrich::gather(&ctx.setup.enrichment, &ctx.pinned.profile, &release);
+    extras.cover_owner = tracks.first().map(|track| track.id.clone());
     measure_replaygain(ctx, tracks, &mut extras);
     for (item, track) in items.iter_mut().zip(tracks) {
         let mut overrides = ctx

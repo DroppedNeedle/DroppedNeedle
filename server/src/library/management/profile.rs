@@ -523,7 +523,7 @@ pub fn plan_tags(
             .collect();
         for (key, values) in &doc.custom {
             let folded = key.to_ascii_lowercase();
-            if preserved.iter().any(|kept| *kept == folded) {
+            if preserved.contains(&folded) {
                 continue;
             }
             let name = format!("{}{key}", crate::library::publish::staging::NATIVE_PREFIX);

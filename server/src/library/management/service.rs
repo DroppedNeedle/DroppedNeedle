@@ -393,6 +393,42 @@ impl Management {
         self.read(|conn| Ok(store::items_page(conn, job_id, after, limit, filter)?))
     }
 
+    /// The cover art a planned file embeds or writes, by the hash the
+    /// preview lists: its bytes and MIME type. Blocking.
+    pub fn preview_artwork(
+        &self,
+        job_id: &str,
+        ordinal: i64,
+        sha256: &str,
+    ) -> Result<(Vec<u8>, String), ManagementError> {
+        let page = self.items(job_id, ordinal - 1, 1, &ItemFilter::default())?;
+        let item = page
+            .items
+            .into_iter()
+            .find(|item| item.ordinal == ordinal)
+            .ok_or(ManagementError::NotFound(
+                "That file is not in the preview.",
+            ))?;
+        let choice = item
+            .desired
+            .artwork
+            .iter()
+            .find(|choice| choice.blob_sha256 == sha256)
+            .ok_or(ManagementError::NotFound(
+                "That artwork is not in the preview.",
+            ))?;
+        let bytes = self
+            .read(|conn| {
+                Ok(crate::library::publish::snapshots::BlobStore::new(conn)
+                    .get(sha256)
+                    .ok())
+            })?
+            .ok_or(ManagementError::NotFound(
+                "That artwork is no longer kept; make a new preview.",
+            ))?;
+        Ok((bytes, choice.mime_type.clone()))
+    }
+
     /// A page of applied results. Blocking.
     pub fn results(
         &self,

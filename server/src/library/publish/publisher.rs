@@ -557,10 +557,12 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             self.sandbox.ensure_under_roots(&temp)?;
             // Real tag staging through the tags save wrapper.
             // Refusals surface before any journal or temp lands.
+            let pictures = self.planned_pictures(item)?;
             let staged_bytes = super::staging::render_staged_bytes(
                 &source_bytes,
                 &item.format,
                 &item.managed_updates,
+                pictures.as_deref(),
                 &temp,
             )?;
             let staged_sha = sha256_hex(&staged_bytes);
@@ -622,6 +624,56 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         Ok(staged_files)
     }
 
+    /// The pictures a plan item sets, with their bytes from the blob
+    /// store; `None` when it leaves the file's pictures alone.
+    fn planned_pictures(
+        &self,
+        item: &super::planner::PlanItem,
+    ) -> Result<Option<Vec<crate::library::tags::save::PictureSpec>>, PublishError> {
+        let Some(values) = item.managed_updates.get(super::PICTURES_KEY) else {
+            return Ok(None);
+        };
+        let blobs = BlobStore::new(&self.conn);
+        let mut specs = Vec::with_capacity(values.len());
+        for value in values {
+            let picture = super::PictureRef::decode(value).ok_or_else(|| {
+                PublishError::Validation(format!("picture entry {value} is malformed"))
+            })?;
+            let data = blobs.get(&picture.sha256)?;
+            if sha256_hex(&data) != picture.sha256 {
+                return Err(PublishError::Validation(
+                    "a planned picture is not the stored one".into(),
+                ));
+            }
+            specs.push(crate::library::tags::save::PictureSpec {
+                kind: picture.kind,
+                mime: picture.mime,
+                description: picture.description,
+                data,
+            });
+        }
+        Ok(Some(specs))
+    }
+
+    /// Keep the picture bytes a before-state names, owned like it.
+    fn keep_pictures(
+        &self,
+        before: &TagDocument,
+        owner_kind: &str,
+        owner_id: &str,
+    ) -> Result<(), PublishError> {
+        let blobs = BlobStore::new(&self.conn);
+        let snapshots = SnapshotStore::new(&self.conn);
+        for (sha256, bytes) in &before.picture_bytes {
+            let stored = blobs.put(bytes)?;
+            if &stored != sha256 {
+                return Err(PublishError::Snapshot("picture bytes hash mismatch".into()));
+            }
+            snapshots.add_ref(sha256, owner_kind, owner_id)?;
+        }
+        Ok(())
+    }
+
     /// Before-state for undo and the first-management baseline.
     fn capture_before(
         &mut self,
@@ -649,6 +701,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 .get(&item.track_id)?
                 .is_none()
             {
+                self.keep_pictures(&before_state.doc, "baseline", &item.track_id)?;
                 let baseline_blob = BlobStore::new(&self.conn).put(&before_state.to_bytes()?)?;
                 match super::snapshots::BaselineStore::new(&self.conn).capture(
                     &item.track_id,
@@ -662,6 +715,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                     Err(other) => return Err(other),
                 }
             }
+            self.keep_pictures(&before_state.doc, "operation", &bundle.id)?;
             let blob = BlobStore::new(&self.conn).put(&before_state.to_bytes()?)?;
             let snapshots = SnapshotStore::new(&self.conn);
             snapshots.record(

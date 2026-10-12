@@ -3890,6 +3890,197 @@ async fn library_management_tools_journey() {
             .expect("overrides counted")
     };
 
+    // Art, lyrics, ReplayGain and a scrub land through the publisher and
+    // all come off again with the run's undo.
+    {
+        use droppedneedle::library::management::enrich::{Cover, LyricsFound, ScriptedEnrichment};
+        use droppedneedle::library::tags::save::read_document;
+        use droppedneedle::runtime_config::sections::{LibraryManagement, ReplayGainMode};
+        let db = || {
+            droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db")).expect("db")
+        };
+        let cover = {
+            let mut bytes = Vec::new();
+            image::RgbImage::from_pixel(8, 8, image::Rgb([200, 30, 30]))
+                .write_to(
+                    &mut std::io::Cursor::new(&mut bytes),
+                    image::ImageFormat::Png,
+                )
+                .expect("png");
+            bytes
+        };
+        let synced = "[00:01.00]Plain words\n".to_owned();
+        assert!(
+            library
+                .enrichment
+                .set(Arc::new(ScriptedEnrichment {
+                    listenbrainz: None,
+                    lyrics: Some(LyricsFound {
+                        plain: Some("Plain words".to_owned()),
+                        synced: Some(synced.clone()),
+                    }),
+                    cover: Some(Cover {
+                        bytes: cover.clone(),
+                        mime: "image/png".to_owned(),
+                    }),
+                }))
+                .is_ok()
+        );
+        droppedneedle::library::tags::save_tags(
+            &file,
+            &[droppedneedle::library::tags::TagEdit::native(
+                "vorbis:MOOD",
+                vec!["Calm".to_owned()],
+            )],
+        )
+        .expect("custom tag planted");
+        rescan(&library).await;
+        let before = read_document(&file).expect("tags before");
+        let stored: LibraryManagement = library.config.get().expect("settings");
+        let mut enriched = stored.clone();
+        for profile in enriched
+            .profiles
+            .iter_mut()
+            .filter(|profile| profile.id == lm::PICARD_ORGANIZER_PROFILE_ID)
+        {
+            profile.enrichment.lyrics.enabled = true;
+            profile.enrichment.lyrics.write_plain = true;
+            profile.enrichment.lyrics.write_synced = true;
+            profile.enrichment.replaygain.enabled = true;
+            profile.enrichment.replaygain.mode = ReplayGainMode::Replace;
+            profile.enrichment.replaygain.album_aware = true;
+            profile.artwork.embedded_enabled = true;
+            profile.artwork.external_enabled = true;
+            profile.metadata.scrub_unmanaged_tags = true;
+        }
+        library.config.save(enriched).expect("profile saved");
+        let normalize = || {
+            lm::service::LibraryManagementService::new(
+                library.config.clone(),
+                library.ids.clone(),
+                Arc::new(lm::StructuralCompiler),
+            )
+            .get_settings()
+            .expect("settings normalized");
+        };
+        normalize();
+        let run = management
+            .create_preview(
+                droppedneedle::library::management::service::PreviewRequest {
+                    selection: Selection {
+                        kind: SelectionKind::Albums,
+                        ids: vec![album.clone()],
+                        catalog_filter: None,
+                    },
+                    profile_id: lm::PICARD_ORGANIZER_PROFILE_ID.to_owned(),
+                    expected_settings_revision: revision(),
+                    expected_policy_revision: policy.clone(),
+                    idempotency_key: Some("parity".to_owned()),
+                    target_root_id: None,
+                    overrides: None,
+                },
+                "admin",
+            )
+            .expect("parity preview");
+        assert!(management_step(&library).await, "parity planning runs");
+        let planned = management
+            .items(&run.job_id, -1, 10, &Default::default())
+            .expect("parity items")
+            .items;
+        let item = planned.first().expect("one file");
+        assert!(item.eligibility.writes(), "{:?}", item.facts);
+        assert!(
+            item.diff
+                .scrubbed_raw_tags
+                .iter()
+                .any(|tag| tag.key == "vorbis:MOOD"),
+            "the preview lists the scrub"
+        );
+        let art = item
+            .desired
+            .artwork
+            .iter()
+            .find(|choice| choice.output_kind == "external_art")
+            .expect("a cover file is planned");
+        let (shown, mime) = management
+            .preview_artwork(&run.job_id, item.ordinal, &art.blob_sha256)
+            .expect("the preview serves its artwork");
+        assert_eq!((shown, mime.as_str()), (cover.clone(), "image/png"));
+        let applied = management_apply(&library, &run).await;
+        assert_eq!(applied.job.state.as_str(), "succeeded");
+        let rel: String = db()
+            .query_row(
+                "SELECT relative_path FROM local_tracks WHERE id = ?1",
+                [&track],
+                |row| row.get(0),
+            )
+            .expect("managed path");
+        let managed = music.join(&rel);
+        let after = read_document(&managed).expect("tags after");
+        assert!(!after.native.contains_key("vorbis:MOOD"), "scrubbed");
+        assert_eq!(
+            after.values.get(&TagField::Lyrics),
+            Some(&vec!["Plain words".to_owned()])
+        );
+        // The fixtures are digital silence: ReplayGain says so rather than
+        // writing a made-up gain.
+        assert!(
+            item.facts
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("silent")),
+            "{:?}",
+            item.facts.warnings
+        );
+        assert!(!after.values.contains_key(&TagField::ReplayGainTrackGain));
+        let front = after
+            .pictures
+            .iter()
+            .find(|picture| picture.kind == 3)
+            .expect("front cover embedded");
+        assert!(image::load_from_memory(&front.data).is_ok());
+        let lrc = managed.with_extension("lrc");
+        assert_eq!(std::fs::read_to_string(&lrc).expect("lrc written"), synced);
+        let cover_file = managed.parent().expect("album folder").join("cover.png");
+        assert_eq!(std::fs::read(&cover_file).expect("cover written"), cover);
+
+        let undo = management
+            .undo_preview(
+                &run.job_id,
+                applied.job.row_revision,
+                "undo-parity",
+                "admin",
+            )
+            .expect("undo preview");
+        assert!(management_step(&library).await, "undo planning runs");
+        let undone = management_apply(&library, &undo).await;
+        assert_eq!(undone.job.state.as_str(), "succeeded");
+        let restored = read_document(&file).expect("tags restored");
+        assert_eq!(
+            restored.native.get("vorbis:MOOD"),
+            Some(&vec!["Calm".to_owned()]),
+            "the scrubbed tag is back"
+        );
+        assert_eq!(restored.values, before.values, "every field as it was");
+        assert_eq!(
+            restored
+                .pictures
+                .iter()
+                .map(|picture| &picture.data)
+                .collect::<Vec<_>>(),
+            before
+                .pictures
+                .iter()
+                .map(|picture| &picture.data)
+                .collect::<Vec<_>>(),
+            "the pictures as they were"
+        );
+        assert!(!lrc.exists(), "the lyrics file is gone");
+        assert!(!cover_file.exists(), "the cover file is gone");
+        library.config.save(stored).expect("profile back");
+        normalize();
+    }
+
     // The editor shows the file; a saved edit writes it and keeps it.
     let editor = management.tag_editor(&track).expect("tag editor");
     assert!(editor.accepted_identity, "{:?}", editor.identity_reason);
@@ -4347,6 +4538,151 @@ async fn library_management_tools_journey() {
             .undo_available_count
             > 0,
         "an album recovery finished after the stop can still be undone"
+    );
+}
+
+/// A custom edition (files sealed under a release group, no release) is
+/// managed from its manifest, writes no release ids, and waits once its
+/// files no longer match what was sealed.
+#[tokio::test]
+async fn library_management_custom_edition_journey() {
+    use droppedneedle::library::management::models::{Selection, SelectionKind};
+    use droppedneedle::library::management::service::{Management, PreviewRequest};
+    use droppedneedle::library::scan::CatalogStore as _;
+    use droppedneedle::library::tags::{TagField, read_fields};
+    use droppedneedle::settings::management as lm;
+
+    let (scratch, library, music) = bare_library("lib-management-custom");
+    let file = plant(&music, "custom/sealed track.flac", "management_full.flac");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "custom/sealed track.flac")
+        .expect("track indexed");
+    let album = library.scan_store.album_for_track(&track).expect("album");
+    library
+        .test_providers
+        .as_ref()
+        .expect("scripted providers")
+        .set_recall(ambiguous_recall(&library, &album));
+    assert_eq!(library.identify_tick().await, 1);
+    library
+        .scan_store
+        .execute_batch_for_tests(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+        )
+        .expect("admin row");
+    droppedneedle::library::operations::service::Operations::new(&library)
+        .confirm_match(&album, "admin")
+        .expect("match confirmed");
+    library
+        .config
+        .save(lm::initial_settings(""))
+        .expect("settings saved");
+    lm::service::LibraryManagementService::new(
+        library.config.clone(),
+        library.ids.clone(),
+        Arc::new(lm::StructuralCompiler),
+    )
+    .get_settings()
+    .expect("settings normalized");
+    // Seal the album as a custom edition: its release is let go, and the
+    // manifest records the files as they are.
+    let db =
+        || droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db")).expect("db");
+    let release_id_before =
+        read_fields(&file).expect("tags")[&TagField::MusicBrainzReleaseId].clone();
+    db().execute_batch(&format!(
+        "UPDATE local_album_external_identities SET release_mbid = NULL, \
+         row_revision = row_revision + 1 WHERE local_album_id = '{album}'; \
+         UPDATE local_track_external_identities SET release_mbid = NULL, \
+         release_track_mbid = NULL WHERE local_track_id = '{track}'; \
+         INSERT INTO library_custom_edition_manifests (id, local_album_id, version, \
+         release_group_mbid, album_title, album_artist_name, artist_mbid, album_metadata_json, \
+         source_album_revision, input_revision, content_hash, sealed_by_user_id, sealed_at) \
+         VALUES ('manifest-1', '{album}', 1, 'group-1', 'Sealed Album', 'Sealed Artist', NULL, \
+         '{{\"year\": 2001}}', 1, 'input', 'hash', 'admin', 0); \
+         INSERT INTO library_custom_edition_tracks (manifest_id, ordinal, local_track_id, \
+         source_track_revision, stat_revision, tag_revision, title, artist_name, album_title, \
+         album_artist_name, disc_number, track_number) VALUES ('manifest-1', 0, '{track}', 1, \
+         's', 't', 'Sealed Title', 'Sealed Artist', 'Sealed Album', 'Sealed Artist', 1, 1); \
+         INSERT INTO library_custom_edition_active (local_album_id, manifest_id, activated_at) \
+         VALUES ('{album}', 'manifest-1', 0);"
+    ))
+    .expect("custom edition sealed");
+    let management = Management::new(&library);
+    let revision = lm::settings_revision(
+        &library
+            .config
+            .get::<droppedneedle::runtime_config::sections::LibraryManagement>()
+            .expect("settings read"),
+    );
+    let preview = |key: &str| PreviewRequest {
+        selection: Selection {
+            kind: SelectionKind::Albums,
+            ids: vec![album.clone()],
+            catalog_filter: None,
+        },
+        profile_id: lm::PICARD_ORGANIZER_PROFILE_ID.to_owned(),
+        expected_settings_revision: revision.clone(),
+        expected_policy_revision: library.live_registry().policy_revision().to_owned(),
+        idempotency_key: Some(key.to_owned()),
+        target_root_id: None,
+        overrides: None,
+    };
+    let handle = management
+        .create_preview(preview("custom-1"), "admin")
+        .expect("custom preview");
+    assert!(management_step(&library).await, "custom planning runs");
+    let applied = management_apply(&library, &handle).await;
+    assert_eq!(
+        applied.job.state.as_str(),
+        "succeeded",
+        "{:?}",
+        applied.job.terminal_code
+    );
+    let rel: String = db()
+        .query_row(
+            "SELECT relative_path FROM local_tracks WHERE id = ?1",
+            [&track],
+            |row| row.get(0),
+        )
+        .expect("managed path");
+    let fields = read_fields(&music.join(&rel)).expect("managed tags");
+    assert_eq!(fields[&TagField::Title], vec!["Sealed Title".to_owned()]);
+    assert_eq!(fields[&TagField::Album], vec!["Sealed Album".to_owned()]);
+    assert_eq!(
+        fields[&TagField::MusicBrainzReleaseId],
+        release_id_before,
+        "no release id is written for a custom edition"
+    );
+
+    // A file added since the seal: the album waits for a new seal.
+    plant(&music, "custom/added track.flac", "management_full.flac");
+    rescan(&library).await;
+    let extra = library
+        .scan_store
+        .track_at("music", "custom/added track.flac")
+        .expect("added track indexed");
+    db().execute(
+        "UPDATE local_tracks SET local_album_id = ?1 WHERE id = ?2",
+        [&album, &extra],
+    )
+    .expect("added to the album");
+    let handle = management
+        .create_preview(preview("custom-2"), "admin")
+        .expect("second preview");
+    assert!(management_step(&library).await, "second planning runs");
+    let items = management
+        .items(&handle.job_id, -1, 10, &Default::default())
+        .expect("items")
+        .items;
+    assert!(
+        items.iter().all(|item| item
+            .reason()
+            .is_some_and(|reason| reason.code == "RELEASE_NOT_SELECTED")),
+        "a stale manifest blocks the album"
     );
 }
 

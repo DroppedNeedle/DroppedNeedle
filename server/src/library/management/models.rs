@@ -323,6 +323,8 @@ pub struct ItemDiff {
     pub sidecars: Vec<SidecarMove>,
     /// Files written next to the audio from no source file.
     pub generated: Vec<GeneratedFile>,
+    /// The embedded pictures change.
+    pub artwork_changed: bool,
     /// Native tags outside the managed fields a scrub removes.
     pub scrubbed_raw_tags: Vec<ScrubbedTag>,
     /// Genre sources that could not be asked.
@@ -356,6 +358,7 @@ impl ItemDiff {
             || self.path_changed
             || !self.sidecars.is_empty()
             || !self.generated.is_empty()
+            || self.artwork_changed
     }
 }
 
@@ -393,6 +396,28 @@ pub struct DesiredDocument {
     /// A file to move to the recycle bin just before this one is
     /// published (a duplicate resolution that keeps the new file).
     pub recycle_first: Option<RecycleFirst>,
+    /// The cover art the plan embeds or writes, as the pages show it.
+    pub artwork: Vec<ArtworkChoice>,
+}
+
+/// One piece of cover art a plan writes (v2's artwork choice).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ArtworkChoice {
+    /// `embedded_art` or `external_art`.
+    pub output_kind: String,
+    /// `front`.
+    pub image_type: String,
+    /// Where it came from (`cover_art_archive`).
+    pub source: String,
+    pub mime_type: String,
+    /// The bytes, in the blob store.
+    pub blob_sha256: String,
+    pub width: u32,
+    pub height: u32,
+    pub format: String,
+    /// For a cover file: where it goes.
+    pub destination_relative_path: Option<String>,
 }
 
 /// The file in the way of a duplicate resolution, as the preview saw it.
@@ -486,11 +511,12 @@ impl Summary {
             if !item.diff.sidecars.is_empty() {
                 self.sidecar_change_count += 1;
             }
-            if item
-                .diff
-                .generated
-                .iter()
-                .any(|file| file.kind == "artwork")
+            if item.diff.artwork_changed
+                || item
+                    .diff
+                    .generated
+                    .iter()
+                    .any(|file| file.kind == "artwork")
             {
                 self.artwork_change_count += 1;
             }

@@ -200,11 +200,32 @@ pub fn writable(format: AudioFormat) -> bool {
 
 /// Apply `edits` to `path` through the full wrapper pipeline.
 pub fn save_tags(path: &Path, edits: &[TagEdit]) -> Result<SaveReport, TagsError> {
+    save_tags_with_pictures(path, edits, None)
+}
+
+/// One embedded picture, as written and as read back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PictureSpec {
+    /// ID3 / FLAC picture type (3 is the front cover). MP4 stores none.
+    pub kind: u8,
+    pub mime: String,
+    pub description: String,
+    pub data: Vec<u8>,
+}
+
+/// [`save_tags`], also replacing the file's embedded pictures with
+/// `pictures` (in order) when given; `Some(&[])` removes them all. The
+/// verify then expects exactly those picture bytes.
+pub fn save_tags_with_pictures(
+    path: &Path,
+    edits: &[TagEdit],
+    pictures: Option<&[PictureSpec]>,
+) -> Result<SaveReport, TagsError> {
     let format = format_for_path(path)?;
     if let Some(refusal) = read_only(format) {
         return Err(refused(path, refusal));
     }
-    if edits.is_empty() {
+    if edits.is_empty() && pictures.is_none() {
         return Ok(SaveReport {
             format,
             id3_version: None,
@@ -231,7 +252,7 @@ pub fn save_tags(path: &Path, edits: &[TagEdit]) -> Result<SaveReport, TagsError
     let native = resolve_edits(&snapshot, edits).map_err(|refusal| refused(path, refusal))?;
 
     let temp = TempCopy::create(path)?;
-    apply_edits(format, &snapshot, &tagged, &native, temp.path())
+    apply_edits(format, &snapshot, &tagged, &native, pictures, temp.path())
         .map_err(|refusal| refused(temp.path(), refusal))?;
     let temp_bytes = fs::read(temp.path()).map_err(|source| TagsError::Io {
         path: temp.path().display().to_string(),
@@ -244,7 +265,7 @@ pub fn save_tags(path: &Path, edits: &[TagEdit]) -> Result<SaveReport, TagsError
     let after = Snapshot::capture(format, &temp_bytes, &temp_tagged)
         .map_err(|refusal| refused(temp.path(), refusal))?;
     snapshot
-        .verify_against(&after, &native)
+        .verify_against(&after, &native, pictures)
         .map_err(|refusal| refused(path, refusal))?;
     temp.commit()?;
     Ok(SaveReport {
@@ -273,6 +294,8 @@ pub struct FieldDocument {
     /// Pictures and non-text items are not listed: they are never
     /// scrubbed.
     pub native: BTreeMap<String, Vec<String>>,
+    /// Embedded pictures in file order.
+    pub pictures: Vec<PictureSpec>,
 }
 
 /// Read a file's [`FieldDocument`]. Read-only containers report nothing:
@@ -328,7 +351,38 @@ pub fn read_document(path: &Path) -> Result<FieldDocument, TagsError> {
         AudioFormat::Aac | AudioFormat::Wav => Vec::new(),
     };
     collect_reads(&mut document, reads);
+    document.pictures = read_pictures(path, format);
     Ok(document)
+}
+
+/// A file's embedded pictures as lofty reads them (none when unreadable).
+fn read_pictures(path: &Path, format: AudioFormat) -> Vec<PictureSpec> {
+    let tag_type = match format {
+        AudioFormat::Mp3 => TagType::Id3v2,
+        AudioFormat::Flac | AudioFormat::Ogg | AudioFormat::Opus => TagType::VorbisComments,
+        AudioFormat::M4a => TagType::Mp4Ilst,
+        AudioFormat::Aac | AudioFormat::Wav => return Vec::new(),
+    };
+    let Ok(tagged) = lofty::read_from_path(path) else {
+        return Vec::new();
+    };
+    tagged
+        .tag(tag_type)
+        .map(|tag| {
+            tag.pictures()
+                .iter()
+                .map(|picture| PictureSpec {
+                    kind: picture.pic_type().as_u8(),
+                    mime: picture
+                        .mime_type()
+                        .map(|mime| mime.as_str().to_owned())
+                        .unwrap_or_default(),
+                    description: picture.description().unwrap_or_default().to_owned(),
+                    data: picture.data().to_vec(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// ID3 text frames no writable field owns, in either tag version.
@@ -1510,7 +1564,18 @@ impl Snapshot {
         }
     }
 
-    fn verify_against(&self, after: &Snapshot, edits: &[NativeEdit]) -> Result<(), Refusal> {
+    fn verify_against(
+        &self,
+        after: &Snapshot,
+        edits: &[NativeEdit],
+        pictures: Option<&[PictureSpec]>,
+    ) -> Result<(), Refusal> {
+        let expected: Option<Vec<Vec<u8>>> =
+            pictures.map(|list| list.iter().map(|picture| picture.data.clone()).collect());
+        let pictures_hold = |before: &Vec<Vec<u8>>, after: &Vec<Vec<u8>>| match &expected {
+            Some(expected) => expected == after,
+            None => before == after,
+        };
         match (self, after) {
             (
                 Snapshot::Id3 {
@@ -1524,8 +1589,14 @@ impl Snapshot {
                     ..
                 },
             ) => {
-                verify_id3(*had_tag, before.as_ref(), after.as_ref(), edits)?;
-                if pictures != after_pictures {
+                verify_id3(
+                    *had_tag,
+                    before.as_ref(),
+                    after.as_ref(),
+                    edits,
+                    expected.is_some(),
+                )?;
+                if !pictures_hold(pictures, after_pictures) {
                     return mismatch("pictures changed".to_owned());
                 }
                 Ok(())
@@ -1543,7 +1614,7 @@ impl Snapshot {
                 },
             ) => {
                 verify_vorbis(*had_tag, before.as_ref(), after.as_ref(), edits)?;
-                if pictures != after_pictures {
+                if !pictures_hold(pictures, after_pictures) {
                     return mismatch("pictures changed".to_owned());
                 }
                 Ok(())
@@ -1560,8 +1631,13 @@ impl Snapshot {
                     ..
                 },
             ) => {
-                verify_mp4(before.as_deref(), after.as_deref(), edits)?;
-                if pictures != after_pictures {
+                verify_mp4(
+                    before.as_deref(),
+                    after.as_deref(),
+                    edits,
+                    expected.is_some(),
+                )?;
+                if !pictures_hold(pictures, after_pictures) {
                     return mismatch("pictures changed".to_owned());
                 }
                 Ok(())
@@ -2253,16 +2329,22 @@ fn verify_id3(
     before: Option<&DeepId3>,
     after: Option<&DeepId3>,
     edits: &[NativeEdit],
+    pictures_edited: bool,
 ) -> Result<(), Refusal> {
-    let edited: Vec<String> = edits.iter().filter_map(NativeEdit::id3_key).collect();
-    let removal_only = edits.iter().all(|edit| match edit {
-        NativeEdit::Id3Text { values, .. } | NativeEdit::Id3User { values, .. } => {
-            values.is_empty()
-        }
-        NativeEdit::Id3Ufid { value, .. } => value.is_none(),
-        NativeEdit::Id3Lyrics { text } => text.is_none(),
-        _ => true,
-    });
+    let mut edited: Vec<String> = edits.iter().filter_map(NativeEdit::id3_key).collect();
+    // Picture bytes are checked on their own.
+    if pictures_edited {
+        edited.push("APIC".to_owned());
+    }
+    let removal_only = !pictures_edited
+        && edits.iter().all(|edit| match edit {
+            NativeEdit::Id3Text { values, .. } | NativeEdit::Id3User { values, .. } => {
+                values.is_empty()
+            }
+            NativeEdit::Id3Ufid { value, .. } => value.is_none(),
+            NativeEdit::Id3Lyrics { text } => text.is_none(),
+            _ => true,
+        });
     match (had_tag, before, after) {
         (false, _, None) if removal_only => return Ok(()),
         (false, _, after) => {
@@ -2498,8 +2580,9 @@ fn verify_mp4(
     before: Option<&[Mp4AtomTruth]>,
     after: Option<&[Mp4AtomTruth]>,
     edits: &[NativeEdit],
+    pictures_edited: bool,
 ) -> Result<(), Refusal> {
-    let edited_codes: Vec<[u8; 4]> = edits
+    let mut edited_codes: Vec<[u8; 4]> = edits
         .iter()
         .filter_map(|edit| match edit {
             NativeEdit::Mp4Text { code, .. }
@@ -2508,6 +2591,10 @@ fn verify_mp4(
             _ => None,
         })
         .collect();
+    // Picture bytes are checked on their own.
+    if pictures_edited {
+        edited_codes.push(*b"covr");
+    }
     let edited_names: Vec<&str> = edits
         .iter()
         .filter_map(|edit| match edit {
@@ -2718,8 +2805,16 @@ fn apply_edits(
     snapshot: &Snapshot,
     tagged: &lofty::file::TaggedFile,
     edits: &[NativeEdit],
+    pictures: Option<&[PictureSpec]>,
     temp: &Path,
 ) -> Result<(), Refusal> {
+    let lofty_picture = |spec: &PictureSpec| {
+        lofty::picture::Picture::unchecked(spec.data.clone())
+            .pic_type(lofty::picture::PictureType::from_u8(spec.kind))
+            .mime_type(lofty::picture::MimeType::from_str(&spec.mime))
+            .description(spec.description.clone())
+            .build()
+    };
     match format {
         AudioFormat::Mp3 => {
             let truth = match snapshot {
@@ -2786,6 +2881,15 @@ fn apply_edits(
                     _ => {}
                 }
             }
+            if let Some(pictures) = pictures {
+                native.retain(|frame| !matches!(frame, Frame::Picture(_)));
+                for spec in pictures {
+                    native.insert(Frame::Picture(lofty::id3::v2::AttachedPictureFrame::new(
+                        TextEncoding::UTF8,
+                        lofty_picture(spec),
+                    )));
+                }
+            }
             let pin_v23 = truth.is_some_and(|tag| tag.major == 3)
                 || matches!(native.original_version(), Id3v2Version::V3);
             native
@@ -2832,6 +2936,15 @@ fn apply_edits(
             for (key, values) in edited {
                 for value in values {
                     native.push(key.clone(), value.clone());
+                }
+            }
+            if let Some(pictures) = pictures {
+                use lofty::ogg::OggPictureStorage as _;
+                native.remove_pictures();
+                for spec in pictures {
+                    native
+                        .insert_picture(lofty_picture(spec), None)
+                        .map_err(save_failed)?;
                 }
             }
             native
@@ -2892,6 +3005,12 @@ fn apply_edits(
                         }
                     }
                     _ => {}
+                }
+            }
+            if let Some(pictures) = pictures {
+                native.remove_pictures();
+                for spec in pictures {
+                    native.insert_picture(lofty_picture(spec));
                 }
             }
             native

@@ -11242,6 +11242,62 @@
         }
       }
     },
+    "/api/v3/library/management/previews/{job_id}/items/{ordinal}/artwork/{sha256}": {
+      "get": {
+        "tags": [
+          "crate::library::http::management"
+        ],
+        "summary": "The cover art one planned file embeds or writes, as the preview lists\nit by hash.",
+        "operationId": "get_management_preview_artwork",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Management job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ordinal",
+            "in": "path",
+            "description": "Planned file ordinal",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sha256",
+            "in": "path",
+            "description": "Artwork hash from artwork_choices",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The planned image",
+            "content": {
+              "image/jpeg": {}
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown job, file or artwork"
+          }
+        }
+      }
+    },
     "/api/v3/library/management/previews/{job_id}/reissue": {
       "post": {
         "tags": [

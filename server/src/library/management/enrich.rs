@@ -93,6 +93,13 @@ pub struct AlbumExtras {
     pub files: std::collections::HashMap<String, FileExtras>,
     /// Why ReplayGain was not measured for the album, when it was wanted.
     pub replaygain_note: Option<String>,
+    /// The album's front cover, when the profile writes art and one was
+    /// found.
+    pub cover: Option<Cover>,
+    /// The cover could not be fetched now.
+    pub cover_deferred: bool,
+    /// The library track whose plan carries the album's cover file.
+    pub cover_owner: Option<String>,
 }
 
 /// What planning gathered for one file.
@@ -122,6 +129,25 @@ pub fn gather(
     let Some(port) = slot.get() else {
         return extras;
     };
+    let artwork = &profile.artwork;
+    let archive = artwork.providers.iter().any(|provider| {
+        matches!(
+            provider,
+            crate::runtime_config::sections::ArtworkProvider::CoverArtArchiveRelease
+                | crate::runtime_config::sections::ArtworkProvider::CoverArtArchiveReleaseGroup
+        )
+    });
+    if (artwork.embedded_enabled || artwork.external_enabled) && archive {
+        let release_id = if super::custom::is_custom(release) {
+            ""
+        } else {
+            release.id.as_str()
+        };
+        match wait(port.front_cover(release_id, &release.release_group_id)) {
+            Some(cover) => extras.cover = cover,
+            None => extras.cover_deferred = true,
+        }
+    }
     if profile.genres.enabled {
         if profile.genres.sources.contains(&GenreSource::Listenbrainz) {
             extras.genres.listenbrainz = wait(port.listenbrainz_genres(&release.release_group_id));
@@ -179,6 +205,87 @@ pub fn lyrics(
         Some(None) => LyricsAnswer::Missing,
         None => LyricsAnswer::Deferred,
     }
+}
+
+/// A cover ready to write: bytes, MIME type and size in pixels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderedCover {
+    pub bytes: Vec<u8>,
+    pub mime: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Fit a cover inside `max` pixels (0 keeps its size) and encode it as
+/// `format` asks (`Original` keeps its encoding when no resize is
+/// needed). `None` for bytes that are not a JPEG, PNG or WebP image, or
+/// over 40 megapixels (a decompression-bomb guard).
+pub fn render_cover(
+    bytes: &[u8],
+    max: i64,
+    format: crate::runtime_config::sections::ArtworkOutputFormat,
+) -> Option<RenderedCover> {
+    use crate::runtime_config::sections::ArtworkOutputFormat;
+    use image::{ImageFormat, ImageReader, imageops::FilterType};
+    use std::io::Cursor;
+
+    let source = image::guess_format(bytes).ok()?;
+    if !matches!(
+        source,
+        ImageFormat::Jpeg | ImageFormat::Png | ImageFormat::WebP
+    ) {
+        return None;
+    }
+    let (width, height) = ImageReader::with_format(Cursor::new(bytes), source)
+        .into_dimensions()
+        .ok()?;
+    if u64::from(width) * u64::from(height) > 40_000_000 {
+        return None;
+    }
+    let target = match format {
+        ArtworkOutputFormat::Original => source,
+        ArtworkOutputFormat::Jpeg => ImageFormat::Jpeg,
+        ArtworkOutputFormat::Png => ImageFormat::Png,
+        ArtworkOutputFormat::Webp => ImageFormat::WebP,
+    };
+    let limit = u32::try_from(max).unwrap_or(0);
+    let shrink = limit > 0 && width.max(height) > limit;
+    let mime = |format: ImageFormat| match format {
+        ImageFormat::Png => "image/png",
+        ImageFormat::WebP => "image/webp",
+        _ => "image/jpeg",
+    };
+    if !shrink && target == source {
+        return Some(RenderedCover {
+            bytes: bytes.to_vec(),
+            mime: mime(source).to_owned(),
+            width,
+            height,
+        });
+    }
+    let mut picture = ImageReader::with_format(Cursor::new(bytes), source)
+        .decode()
+        .ok()?;
+    if shrink {
+        picture = picture.resize(limit, limit, FilterType::Lanczos3);
+    }
+    let mut out = Vec::new();
+    match target {
+        ImageFormat::Jpeg => {
+            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 90);
+            picture.to_rgb8().write_with_encoder(encoder).ok()?;
+        }
+        other => picture
+            .to_rgba8()
+            .write_to(&mut Cursor::new(&mut out), other)
+            .ok()?,
+    }
+    Some(RenderedCover {
+        width: picture.width(),
+        height: picture.height(),
+        bytes: out,
+        mime: mime(target).to_owned(),
+    })
 }
 
 /// Normalize LRC text: Unix line ends, no blank edges, one final newline.
