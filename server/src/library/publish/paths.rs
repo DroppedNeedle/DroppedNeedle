@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use super::place::{self, PlacementMode};
+use super::place::{self, PlaceError, PlacementMode};
 use super::{HIDDEN_PREFIX, PublishError};
 
 /// A configured library root: a stable id plus its absolute directory.
@@ -310,12 +310,16 @@ pub fn backup_home(
 /// Move a replaced file's backup into the recycle bin after commit. The
 /// backup must still hold `sha256`; a bin path that already holds those
 /// bytes (an earlier attempt copied it there) only drops the backup, and
-/// a bin path holding anything else is refused, never overwritten. On
-/// another filesystem the bytes are copied under a temporary name,
-/// synced, renamed into place, and only then is the backup removed.
+/// a bin path holding anything else is refused, never overwritten. The
+/// file goes in through [`place::place_from_hidden`], so an entry that
+/// turns up after those checks is not replaced either. On another
+/// filesystem the bytes are copied under a temporary name, synced, placed
+/// the same way, and only then is the backup removed. `mode` is the
+/// placement mode of the root the backup is under.
 /// True when the file is in the bin now; false when there was nothing
 /// left to move.
 pub fn recycle_backup(
+    mode: PlacementMode,
     backup: &Path,
     recycle_to: &Path,
     sha256: &str,
@@ -361,9 +365,24 @@ pub fn recycle_backup(
         .parent()
         .ok_or_else(|| PublishError::UnsafePath("recycle bin path has no folder".into()))?;
     std::fs::create_dir_all(parent).map_err(PublishError::from)?;
-    match std::fs::rename(backup, recycle_to) {
-        Ok(()) => {}
-        Err(error) if error.raw_os_error() == Some(18) => {
+    let refused = |error: PlaceError| match error {
+        PlaceError::Collision => PublishError::Collision(format!(
+            "recycle bin entry {} is taken",
+            message_name(recycle_to)
+        )),
+        PlaceError::Unavailable(_) | PlaceError::CrossDevice => PublishError::Cleanup(format!(
+            "the recycle bin folder has no safe way to add {} without risking an overwrite",
+            message_name(recycle_to)
+        )),
+        other => PublishError::Io(other.to_string()),
+    };
+    match place::place_from_hidden(mode, backup, recycle_to) {
+        Ok(_) => {}
+        Err(PlaceError::Unsynced(error)) => {
+            tracing::warn!(%error, "recycle bin folder sync failed");
+        }
+        // The bin is on another disk: the one caller that copies.
+        Err(PlaceError::CrossDevice) => {
             let temp = parent.join(format!(
                 "{HIDDEN_PREFIX}incoming-{}",
                 recycle_to
@@ -375,14 +394,10 @@ pub fn recycle_backup(
             let file = std::fs::File::open(&temp).map_err(PublishError::from)?;
             super::journal::fsync_file(&file)?;
             drop(file);
-            std::fs::rename(&temp, recycle_to).map_err(PublishError::from)?;
-            super::journal::fsync_dir(parent)?;
+            place::place_from_hidden(mode, &temp, recycle_to).map_err(refused)?;
             std::fs::remove_file(backup).map_err(PublishError::from)?;
         }
-        Err(error) => return Err(PublishError::from(error)),
-    }
-    if let Err(error) = super::journal::fsync_dir(parent) {
-        tracing::warn!(%error, "recycle bin folder sync failed");
+        Err(error) => return Err(refused(error)),
     }
     Ok(true)
 }

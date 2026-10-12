@@ -1238,7 +1238,9 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         {
             let backup = Path::new(backup_text);
             self.sandbox.ensure_under_roots(backup)?;
-            if paths::recycle_backup(backup, Path::new(&replaced.recycle_to), &replaced.sha256)? {
+            let mode = self.sandbox.placement_mode(&journal.dest_root);
+            let recycle_to = Path::new(&replaced.recycle_to);
+            if paths::recycle_backup(mode, backup, recycle_to, &replaced.sha256)? {
                 JournalStore::new(&self.conn).set_recycled(&journal.id, now_secs())?;
             }
             if let Some(parent) = backup.parent() {

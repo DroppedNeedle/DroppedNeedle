@@ -784,6 +784,7 @@ fn finish_cleanup(
                 .ensure_under_roots(Path::new(backup_text))
                 .and_then(|()| {
                     paths::recycle_backup(
+                        sandbox.placement_mode(&journal.dest_root),
                         Path::new(backup_text),
                         Path::new(&replaced.recycle_to),
                         &replaced.sha256,
