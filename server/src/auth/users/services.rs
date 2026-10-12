@@ -17,7 +17,9 @@ use super::models::{
     RecoveryCode, RecoveryCodeResponse, SessionListResponse, SessionView, UserRecord, UserResponse,
 };
 use super::roles::{AuthContext, Role, SessionKind};
-use super::stores::{LastFmError, LastFmKeys, RoleChange, StoreError, UserDeletion};
+use super::stores::{
+    LastFmError, LastFmKeys, RecoveryStore, RoleChange, StoreError, UserDeletion, UserStore,
+};
 use super::{UsersDeps, clock_now};
 
 // ---------------------------------------------------------------------------
@@ -859,10 +861,11 @@ pub async fn admin_delete_user(
 // Password recovery (no live mail; codes travel out of band)
 // ---------------------------------------------------------------------------
 
-/// Mint a recovery code: 20 alphabet chars, SHA-256 at rest, 15-minute TTL,
-/// single active code per user.
-fn mint_recovery_code(deps: &UsersDeps) -> Result<(String, String), UsersError> {
-    let bytes = random_bytes::<RECOVERY_LEN>(deps)?;
+/// A fresh code as (display form, hash at rest): 20 alphabet chars shown in
+/// groups of four, stored as SHA-256.
+fn new_recovery_code() -> Result<(String, String), getrandom::Error> {
+    let mut bytes = [0u8; RECOVERY_LEN];
+    getrandom::fill(&mut bytes)?;
     let canonical: String = bytes
         .iter()
         .map(|byte| RECOVERY_ALPHABET[(usize::from(*byte)) % RECOVERY_ALPHABET.len()] as char)
@@ -884,47 +887,134 @@ pub fn canonicalize_recovery_code(raw: &str) -> String {
         .to_uppercase()
 }
 
+/// Why a recovery code was not issued.
+#[derive(Debug, thiserror::Error)]
+pub enum RecoveryIssueError {
+    /// No user has this id.
+    #[error("no such user")]
+    UnknownUser,
+    /// The account signs in through another service only, and the caller
+    /// may not hand out a first password.
+    #[error("the account has no local password")]
+    NoLocalPassword,
+    /// The account has no username, so it could not sign in with a
+    /// password or name itself on the reset page.
+    #[error("the account has no username")]
+    NoUsername,
+    /// The OS random generator failed.
+    #[error("random generator failed: {0}")]
+    Random(String),
+    /// A store read or write failed.
+    #[error(transparent)]
+    Store(#[from] StoreError),
+}
+
+/// Which accounts a caller may issue a recovery code for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryReach {
+    /// Accounts that already have a local password. The admin route: an
+    /// admin must not be able to put a password on someone else's
+    /// single-sign-on account.
+    LocalPasswordOnly,
+    /// Also accounts with none, whose reset then creates the password.
+    /// The offline tool only: access to the data directory is the proof.
+    AnyAccount,
+}
+
+/// A code just issued.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssuedRecoveryCode {
+    /// The code (shown once) and its expiry.
+    pub code: RecoveryCodeResponse,
+    /// False when using the code will create the account's first password.
+    pub has_local_password: bool,
+}
+
+/// Issue a recovery code for one user: 15-minute TTL, one live code per
+/// user (a new one replaces the last), only the hash stored. The admin
+/// route and the offline tool both issue through here.
+pub async fn issue_recovery_code(
+    users: &dyn UserStore,
+    recovery: &dyn RecoveryStore,
+    user_id: &str,
+    reach: RecoveryReach,
+    now: i64,
+) -> Result<IssuedRecoveryCode, RecoveryIssueError> {
+    let user = users
+        .get_by_id(user_id)
+        .await?
+        .ok_or(RecoveryIssueError::UnknownUser)?;
+    let has_local_password = users.local_credential(&user.id).await?.is_some();
+    if !has_local_password {
+        if reach == RecoveryReach::LocalPasswordOnly {
+            return Err(RecoveryIssueError::NoLocalPassword);
+        }
+        if user.username.is_none() {
+            return Err(RecoveryIssueError::NoUsername);
+        }
+    }
+    let (display, code_hash) =
+        new_recovery_code().map_err(|cause| RecoveryIssueError::Random(cause.to_string()))?;
+    let expires_at = now + RECOVERY_TTL_SECS;
+    recovery
+        .store(RecoveryCode {
+            user_id: user.id,
+            code_hash,
+            created_at: now,
+            expires_at,
+        })
+        .await?;
+    Ok(IssuedRecoveryCode {
+        code: RecoveryCodeResponse {
+            recovery_code: display,
+            expires_at,
+        },
+        has_local_password,
+    })
+}
+
 /// POST /admin/users/{id}/recovery-code: mint a code for a local account.
 /// The code returns once; delivery is out of band (shown to the admin).
 pub async fn admin_mint_recovery_code(
     deps: &UsersDeps,
     user_id: &str,
 ) -> Result<RecoveryCodeResponse, UsersError> {
-    let user = deps
-        .users
-        .get_by_id(user_id)
-        .await
-        .map_err(|error| store_internal(deps, error))?
-        .ok_or(UsersError::NotFound)?;
-    let local = deps
-        .users
-        .local_credential(&user.id)
-        .await
-        .map_err(|error| store_internal(deps, error))?;
-    if local.is_none() {
-        return Err(UsersError::Conflict {
-            message: "Local password recovery is not available for this account".to_owned(),
-        });
-    }
-    let (display, code_hash) = mint_recovery_code(deps)?;
-    let now = clock_now(deps);
-    deps.recovery
-        .store(RecoveryCode {
-            user_id: user.id,
-            code_hash,
-            created_at: now,
-            expires_at: now + RECOVERY_TTL_SECS,
-        })
-        .await
-        .map_err(|error| store_internal(deps, error))?;
-    Ok(RecoveryCodeResponse {
-        recovery_code: display,
-        expires_at: now + RECOVERY_TTL_SECS,
+    issue_recovery_code(
+        deps.users.as_ref(),
+        deps.recovery.as_ref(),
+        user_id,
+        RecoveryReach::LocalPasswordOnly,
+        clock_now(deps),
+    )
+    .await
+    .map(|issued| issued.code)
+    .map_err(|error| match error {
+        RecoveryIssueError::UnknownUser => UsersError::NotFound,
+        RecoveryIssueError::NoLocalPassword | RecoveryIssueError::NoUsername => {
+            UsersError::Conflict {
+                message: "Local password recovery is not available for this account".to_owned(),
+            }
+        }
+        RecoveryIssueError::Random(cause) => UsersError::internal(
+            &format_args!("random generator failed: {cause}"),
+            deps.ids.as_ref(),
+        ),
+        RecoveryIssueError::Store(error) => store_internal(deps, error),
     })
 }
 
 /// POST /auth/password-recovery/reset (public): consume a code to set a new
 /// password. Failures share one message: no username/code oracle.
+///
+/// A code for an account with no local password creates one, so what
+/// keeps this route from putting a password on a single-sign-on account
+/// is who writes code rows. The admin route refuses an account without a
+/// local password. The offline tool issues for any account, and running
+/// it takes access to the data directory. The v2 importer copies v2's
+/// rows with their expiry; v2 issued none for a passwordless account, and
+/// an import file comes from whoever already holds the database. Any
+/// future path that removes a local password must delete the account's
+/// pending codes in the same transaction.
 pub async fn reset_password(deps: &UsersDeps, body: &PasswordReset) -> Result<(), UsersError> {
     validate_password(&body.new_password)?;
     let canonical = canonicalize_recovery_code(&body.recovery_code);
@@ -955,9 +1045,6 @@ pub async fn reset_password(deps: &UsersDeps, body: &PasswordReset) -> Result<()
         .local_credential(&code.user_id)
         .await
         .map_err(|error| store_internal(deps, error))?;
-    let Some(local) = local else {
-        return Err(invalid());
-    };
     // Only a caller holding a live code reaches the breach screen, so the
     // public reset route cannot be used to probe the HIBP service.
     screen_password(deps, &body.new_password).await?;
@@ -965,11 +1052,28 @@ pub async fn reset_password(deps: &UsersDeps, body: &PasswordReset) -> Result<()
     // One atomic write: the new hash lands, every prior session dies, and
     // the code is consumed. A reset that left sessions live would hand the
     // account to whoever holds an old token.
-    let replaced = deps
-        .users
-        .complete_recovery_reset(&code.user_id, &local.hash, native_scheme(), &hash)
-        .await
-        .map_err(|error| store_internal(deps, error))?;
+    let replaced = match local {
+        Some(local) => {
+            deps.users
+                .complete_recovery_reset(&code.user_id, &local.hash, native_scheme(), &hash)
+                .await
+        }
+        None => {
+            deps.users
+                .complete_recovery_first_password(
+                    LocalCredential {
+                        id: deps.ids.new_id(),
+                        user_id: code.user_id.clone(),
+                        scheme: native_scheme().to_owned(),
+                        hash,
+                    },
+                    &code.code_hash,
+                    now,
+                )
+                .await
+        }
+    }
+    .map_err(|error| store_internal(deps, error))?;
     if !replaced {
         return Err(invalid());
     }

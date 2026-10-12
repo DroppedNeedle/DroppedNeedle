@@ -698,6 +698,217 @@ fn upgrade_turns_a_v2_directory_into_v3_in_place() {
     assert!(is_v3(&root));
 }
 
+/// A locked-out admin who only ever used single sign-on gets a recovery
+/// code from the host, with the server stopped. The web reset takes the
+/// code once and gives the account its first password; the admin route
+/// still refuses such an account.
+#[tokio::test]
+async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
+    use droppedneedle::auth::prod::{
+        Argon2idHasher, AuthDb, SqliteCredentialLookup, SqliteRecoveryStore, SqliteSessionStore,
+        SqliteUserStore,
+    };
+    use droppedneedle::auth::session::login::{
+        LoginContext, LoginRequest, LoginService, TransportParam,
+    };
+    use droppedneedle::auth::session::store::{SessionKind, SessionRecord, SessionStore as _};
+    use droppedneedle::auth::session::tokens;
+    use droppedneedle::auth::users::memory::TestRig;
+    use droppedneedle::auth::users::models::PasswordReset;
+    use droppedneedle::auth::users::services;
+    use droppedneedle::auth::users::stores::SystemClock;
+    use std::sync::Arc;
+
+    const NEW_PASSWORD: &str = "a brand new password 99";
+    let scratch = scratch_dir("recovery-code");
+    let root = scratch.join("data");
+    droppedneedle::tooling::fixture::build_v2_fixture(&root).expect("fixture builds");
+    let upgraded = tool_in(&root, &["upgrade"]);
+    assert!(
+        upgraded.status.success(),
+        "stderr: {}",
+        stderr_of(&upgraded)
+    );
+    let db_path = root.join("cache").join("library.db");
+    let count = |sql: &str| -> i64 {
+        rusqlite::Connection::open(&db_path)
+            .expect("database opens")
+            .query_row(sql, [], |row| row.get(0))
+            .expect("count reads")
+    };
+    const CODES: &str = "SELECT count(*) FROM auth_password_recovery_codes";
+    const ALICE_CODES: &str = "SELECT count(*) FROM auth_password_recovery_codes WHERE user_id = \
+        (SELECT id FROM auth_users WHERE username = 'alice')";
+    const ALICE_SIGN_INS: &str = "SELECT group_concat(provider, ',') FROM (SELECT provider \
+        FROM auth_providers WHERE user_id = (SELECT id FROM auth_users WHERE username = 'alice') \
+        ORDER BY provider)";
+    let alice_sign_ins = || -> String {
+        rusqlite::Connection::open(&db_path)
+            .expect("database opens")
+            .query_row(ALICE_SIGN_INS, [], |row| row.get(0))
+            .expect("providers read")
+    };
+    // Alice, the admin, signs in through single sign-on only.
+    rusqlite::Connection::open(&db_path)
+        .expect("database opens")
+        .execute_batch(
+            "DELETE FROM auth_providers WHERE provider = 'local' AND provider_uid = 'alice';
+             INSERT INTO auth_providers (id, user_id, provider, provider_uid, created_at)
+             SELECT 'prov-alice-oidc', id, 'oidc', 'sub-alice', '2024-01-01T00:00:00+00:00'
+             FROM auth_users WHERE username = 'alice';",
+        )
+        .expect("alice is single sign-on only");
+    assert_eq!(alice_sign_ins(), "oidc");
+    let before = count(CODES);
+
+    let refused = |args: &[&str], says: &str| {
+        let run = tool_in(&root, args);
+        assert_eq!(run.status.code(), Some(1), "stderr: {}", stderr_of(&run));
+        assert!(run.stdout.is_empty(), "a refusal prints no code");
+        assert!(
+            stderr_of(&run).contains(says),
+            "stderr: {}",
+            stderr_of(&run)
+        );
+    };
+    {
+        let _server =
+            droppedneedle::tooling::datalock::DataLock::shared(&db_path).expect("server lock");
+        refused(&["recovery-code", "alice"], "Stop the server");
+        refused(&["recovery-code", "--list-admins"], "Stop the server");
+    }
+    // A dash-led argument is a flag, never a username, and help answers
+    // even while the server holds the data directory.
+    refused(&["recovery-code", "-x"], "unknown flag");
+    {
+        let _server =
+            droppedneedle::tooling::datalock::DataLock::shared(&db_path).expect("server lock");
+        let help = tool_in(&root, &["recovery-code", "-h"]);
+        assert!(help.status.success(), "stderr: {}", stderr_of(&help));
+        assert!(String::from_utf8_lossy(&help.stdout).contains("--list-admins"));
+    }
+    refused(&["recovery-code", "nobody"], "No user named");
+    refused(&["recovery-code", "--", "--nobody"], "No user named");
+    assert_eq!(count(CODES), before, "a refusal writes nothing");
+
+    // Only the admin is listed: bob is trusted.
+    let listed = tool_in(&root, &["recovery-code", "--list-admins"]);
+    assert!(listed.status.success(), "stderr: {}", stderr_of(&listed));
+    assert_eq!(String::from_utf8_lossy(&listed.stdout), "alice\n");
+
+    // An account with a password gets a plain code.
+    let bob = tool_in(&root, &["recovery-code", "bob"]);
+    assert!(bob.status.success(), "stderr: {}", stderr_of(&bob));
+    assert!(!stderr_of(&bob).contains("no password yet"));
+
+    let run = tool_in(&root, &["recovery-code", "Alice"]);
+    assert!(run.status.success(), "stderr: {}", stderr_of(&run));
+    let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
+    let code = stdout.trim_end_matches('\n');
+    let groups: Vec<&str> = code.split('-').collect();
+    assert!(
+        groups.len() == 5
+            && groups
+                .iter()
+                .all(|group| group.len() == 4 && group.bytes().all(|b| b.is_ascii_alphanumeric())),
+        "stdout is the code and nothing else: {stdout:?}"
+    );
+    let stderr = stderr_of(&run);
+    assert!(!stderr.contains(code), "the code prints once");
+    assert!(stderr.contains("no password yet"), "stderr: {stderr}");
+    let stored: i64 = count(&format!(
+        "SELECT count(*) FROM auth_password_recovery_codes WHERE code_hash LIKE '%{}%'",
+        code.replace('-', "")
+    ));
+    assert_eq!(stored, 0, "only a hash is kept");
+    assert_eq!(count(ALICE_CODES), 1);
+
+    // The services the web routes call, over the same database.
+    let runtime = droppedneedle::db::open_runtime(&droppedneedle::db::DbConfig::new(&db_path))
+        .await
+        .expect("database opens");
+    let auth_db = AuthDb::new(runtime.pool(), runtime.lane());
+    let hasher = Argon2idHasher::new();
+    let mut deps = TestRig::new().expect("rig builds").deps;
+    deps.users = Arc::new(SqliteUserStore::new(&auth_db));
+    deps.recovery = Arc::new(SqliteRecoveryStore::new(&auth_db));
+    deps.passwords = Arc::new(hasher.clone());
+    deps.clock = Arc::new(SystemClock);
+    let alice = deps
+        .users
+        .get_by_username("alice")
+        .await
+        .expect("store reads")
+        .expect("alice exists");
+
+    // An admin in the web UI cannot do what the host command just did, and
+    // a refused attempt leaves the host's code alone.
+    assert!(
+        services::admin_mint_recovery_code(&deps, &alice.id)
+            .await
+            .is_err(),
+        "the admin route refuses an account with no password"
+    );
+
+    let login = LoginService::new(
+        SqliteSessionStore::new(&auth_db),
+        hasher.clone(),
+        SqliteCredentialLookup::new(&auth_db),
+    );
+    let sign_in = || {
+        login.login(
+            LoginRequest {
+                username: "alice".to_owned(),
+                password: NEW_PASSWORD.to_owned(),
+                transport: TransportParam::Bearer,
+            },
+            LoginContext {
+                user_agent: None,
+                now_unix: droppedneedle::auth::session::store::now_unix(),
+            },
+        )
+    };
+    assert!(sign_in().await.is_err(), "no password before the reset");
+    let now = droppedneedle::auth::session::store::now_unix();
+    SqliteSessionStore::new(&auth_db)
+        .insert(SessionRecord {
+            id: "sess-alice".to_owned(),
+            user_id: alice.id.clone(),
+            token_hash: tokens::hash_token("a session from before the reset"),
+            kind: SessionKind::Standard,
+            label: None,
+            issued_at: now,
+            expires_at: tokens::expires_at(now),
+            last_seen_at: now,
+            revoked: false,
+            user_agent: None,
+        })
+        .await
+        .expect("session inserts");
+    let reset = PasswordReset {
+        username: "alice".to_owned(),
+        recovery_code: code.to_owned(),
+        new_password: NEW_PASSWORD.to_owned(),
+    };
+    services::reset_password(&deps, &reset)
+        .await
+        .expect("the code sets the first password");
+    assert!(
+        services::reset_password(&deps, &reset).await.is_err(),
+        "a used code is refused"
+    );
+    // Read before the sign-in below, which sweeps revoked sessions.
+    let revoked: i64 =
+        sqlx::query_scalar("SELECT revoked FROM auth_tokens WHERE id = 'sess-alice'")
+            .fetch_one(runtime.pool())
+            .await
+            .expect("session reads");
+    assert_eq!(revoked, 1, "the reset ends the sessions from before it");
+    assert_eq!(sign_in().await.expect("sign-in works").user_id, alice.id);
+    runtime.shutdown().await;
+    assert_eq!(count(ALICE_CODES), 0, "the code is gone once used");
+}
+
 /// A run that cannot finish leaves the v2 data directory as it found it,
 /// byte for byte, whether it stops before or after the files moved.
 #[tokio::test]

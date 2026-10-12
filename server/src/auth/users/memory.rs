@@ -542,8 +542,8 @@ impl UserStore for MemoryUserStore {
                     "recovery reset peers are not linked".to_owned(),
                 ));
             };
-            // Fixed lock order (users, sessions, recovery): this is the only
-            // path that ever holds two of these locks at once.
+            // Fixed lock order (users, sessions, recovery), shared with the
+            // first-password reset below.
             let mut users = self.state.write().await;
             let Some(row) = users.local.get_mut(id) else {
                 return Ok(false);
@@ -559,6 +559,43 @@ impl UserStore for MemoryUserStore {
                 }
             }
             peers.recovery.state.write().await.remove(id);
+            Ok(true)
+        })
+    }
+
+    fn complete_recovery_first_password<'a>(
+        &'a self,
+        credential: LocalCredential,
+        code_hash: &'a str,
+        now: i64,
+    ) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(async move {
+            let Some(peers) = self.reset_peers.get() else {
+                return Err(StoreError::Internal(
+                    "recovery reset peers are not linked".to_owned(),
+                ));
+            };
+            let id = credential.user_id.clone();
+            let mut users = self.state.write().await;
+            let mut sessions = peers.sessions.state.write().await;
+            let mut codes = peers.recovery.state.write().await;
+            let has_username = users
+                .users
+                .get(&id)
+                .is_some_and(|user| user.username.is_some());
+            let code_live = codes
+                .get(&id)
+                .is_some_and(|row| row.code_hash == code_hash && row.expires_at > now);
+            if !has_username || !code_live || users.local.contains_key(&id) {
+                return Ok(false);
+            }
+            codes.remove(&id);
+            users.local.insert(id.clone(), credential);
+            for row in sessions.sessions.values_mut() {
+                if row.user_id == id {
+                    row.revoked = true;
+                }
+            }
             Ok(true)
         })
     }

@@ -1,5 +1,5 @@
-//! Offline migration tooling: upgrade, export, validate, import, dry-run,
-//! restore.
+//! Offline tooling: upgrade, export, validate, import, dry-run, restore,
+//! recovery-code.
 //!
 //! Thin operator surface over the migration engines:
 //! [`upgrade`](droppedneedle::tooling::upgrade) turns a v2 data directory
@@ -7,6 +7,9 @@
 //! envelopes from a v2 instance, [`import`](droppedneedle::import)
 //! validates and applies them, and
 //! [`restore`](droppedneedle::tooling::restore) revives server backups.
+//! [`recovery-code`](droppedneedle::tooling::recovery_code) lets a
+//! locked-out admin reset a password; its stdout is the code and nothing
+//! else.
 //! Everything is file plus SQLite; nothing here touches the network.
 //!
 //! The operator passphrase never travels as a CLI argument: it comes from
@@ -30,13 +33,14 @@ use droppedneedle::export::{ExportRequest, export_v2_to_file};
 use droppedneedle::r#import::ExitCode;
 use droppedneedle::runtime_config::Secret;
 use droppedneedle::tooling::datalock::DataLock;
+use droppedneedle::tooling::recovery_code;
 use droppedneedle::tooling::upgrade::{
     self, DataDirs, Layout, OfflineImport, Step, Summary, UpgradeError, UpgradeRequest, Upgraded,
 };
 
 /// Usage text, printed for `help` and on bad invocations.
 const USAGE: &str = "\
-droppedneedle-tool: offline v2 migration tooling
+droppedneedle-tool: offline tooling for a DroppedNeedle data directory
 
 Usage:
   droppedneedle-tool upgrade [--no-backup] [--v2-commit <tag>]
@@ -50,6 +54,8 @@ Usage:
   droppedneedle-tool dry-run --file <export> --db <v3.db> --config-dir <dir>
       [--cache-dir <dir>] [--passphrase-file <file>] [--v2-config <config.json>]
   droppedneedle-tool restore --backup <file> --target-dir <dir> [--allow-downgrade]
+  droppedneedle-tool recovery-code [--] <username>
+  droppedneedle-tool recovery-code --list-admins
 
 upgrade turns the v2 data in the server's config and cache folders into
 v3 data, in place. Stop the server first. The v2 files are kept in a
@@ -63,6 +69,30 @@ The passphrase comes from --passphrase-file or stdin, never from argv.
 Export writes <file> plus <name>.bundle.sqlite beside it; keep the two
 together. Import and dry-run print exactly one JSON report to stdout.
 --cache-dir defaults to the folder holding --db.
+
+recovery-code prints a one-time password recovery code for an account.
+droppedneedle-tool recovery-code --help says how to use it.
+";
+
+/// Help for `recovery-code`, printed without touching the data directory.
+const RECOVERY_CODE_HELP: &str = "\
+Usage:
+  droppedneedle-tool recovery-code [--] <username>
+  droppedneedle-tool recovery-code --list-admins
+
+Prints a one-time password recovery code for an account, for when nobody
+can sign in to make one. Stop the server first, run it, start the server,
+then enter the username, the code and a new password on the Forgot
+password page within 15 minutes. An account that only signs in through
+single sign-on, Plex or Jellyfin gets its first password this way and
+keeps its other sign-in.
+
+<username> is the DroppedNeedle username; --list-admins prints the admin
+usernames. Put -- before a username that starts with a dash.
+
+It finds the data the way upgrade does and opens the database the way a
+server start does, so a database from an older version is backed up and
+migrated first. Whoever holds the code can take over that account.
 ";
 
 /// Flags that take no value.
@@ -82,6 +112,7 @@ fn main() {
         "import" => run_import_cmd(&args[1..], false),
         "dry-run" => run_import_cmd(&args[1..], true),
         "restore" => run_restore(&args[1..]),
+        "recovery-code" => run_recovery_code(&args[1..]),
         "help" | "--help" | "-h" => {
             println!("{USAGE}");
             return;
@@ -601,6 +632,65 @@ fn run_restore(args: &[String]) -> Result<(), String> {
     match serde_json::to_string_pretty(&summary) {
         Ok(text) => println!("{text}"),
         Err(_) => return Err("cannot render restore summary".to_owned()),
+    }
+    Ok(())
+}
+
+/// `recovery-code <username>`, `recovery-code -- <username>` or
+/// `recovery-code --list-admins`. The code (or the usernames) is the only
+/// thing on stdout; what to do with it goes to stderr. A first argument
+/// that starts with a dash is a flag unless it follows `--`.
+fn run_recovery_code(args: &[String]) -> Result<(), String> {
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let username = match args.as_slice() {
+        ["-h" | "--help"] => {
+            println!("{RECOVERY_CODE_HELP}");
+            return Ok(());
+        }
+        ["--list-admins"] => return run_list_admins(),
+        ["--", username] => *username,
+        [username] if !username.starts_with('-') => *username,
+        [] => {
+            return Err(format!(
+                "recovery-code needs a username\n{RECOVERY_CODE_HELP}"
+            ));
+        }
+        [flag] => return Err(format!("unknown flag {flag:?}\n{RECOVERY_CODE_HELP}")),
+        _ => {
+            return Err(format!(
+                "recovery-code takes one username\n{RECOVERY_CODE_HELP}"
+            ));
+        }
+    };
+    let issued = new_runtime()?
+        .block_on(recovery_code::issue(&data_dirs()?, username))
+        .map_err(|error| error.to_string())?;
+    println!("{}", issued.code.recovery_code);
+    eprintln!(
+        "Recovery code for {username}, good for {} minutes and one use. Start the server, \
+         open \"Forgot password?\" on the sign-in page and enter this username, the code and \
+         a new password.",
+        droppedneedle::auth::users::services::RECOVERY_TTL_SECS / 60
+    );
+    if !issued.has_local_password {
+        eprintln!(
+            "{username} has no password yet. Using the code gives the account one; its other \
+             sign-in methods stay as they are."
+        );
+    }
+    Ok(())
+}
+
+/// `recovery-code --list-admins`: admin usernames, one per line.
+fn run_list_admins() -> Result<(), String> {
+    let names = new_runtime()?
+        .block_on(recovery_code::admin_usernames(&data_dirs()?))
+        .map_err(|error| error.to_string())?;
+    if names.is_empty() {
+        return Err("No admin account has a username.".to_owned());
+    }
+    for name in names {
+        println!("{name}");
     }
     Ok(())
 }

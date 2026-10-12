@@ -577,6 +577,62 @@ impl UserStore for SqliteUserStore {
         })
     }
 
+    fn complete_recovery_first_password<'a>(
+        &'a self,
+        credential: UsersLocalCredential,
+        code_hash: &'a str,
+        now: i64,
+    ) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(async move {
+            let Some((_, lane)) = self.db.live() else {
+                return Err(internal("auth user store is not wired"));
+            };
+            let code_hash = code_hash.to_owned();
+            lane.write(
+                Lane::Foreground,
+                "auth.users.recovery_first_password",
+                move |tx| {
+                    let id = credential.user_id.as_str();
+                    let ready: bool = tx
+                        .query_row(
+                            "SELECT username IS NOT NULL AND NOT EXISTS (SELECT 1 FROM \
+                             auth_providers WHERE user_id = auth_users.id AND provider = 'local') \
+                             FROM auth_users WHERE id = ?",
+                            rusqlite::params![id],
+                            |row| row.get(0),
+                        )
+                        .optional()
+                        .map_err(op_error)?
+                        .unwrap_or(false);
+                    if !ready {
+                        return Ok(false);
+                    }
+                    // The code is the only authorisation: no live row for
+                    // it, no password.
+                    let consumed = tx
+                        .execute(
+                            "DELETE FROM auth_password_recovery_codes \
+                             WHERE user_id = ? AND code_hash = ? AND expires_at > ?",
+                            rusqlite::params![id, code_hash, to_iso(now)],
+                        )
+                        .map_err(op_error)?;
+                    if consumed == 0 {
+                        return Ok(false);
+                    }
+                    insert_local_row(tx, &credential)?;
+                    tx.execute(
+                        "UPDATE auth_tokens SET revoked = 1 WHERE user_id = ?",
+                        rusqlite::params![id],
+                    )
+                    .map_err(op_error)?;
+                    Ok(true)
+                },
+            )
+            .await
+            .map_err(internal)
+        })
+    }
+
     fn get_provider_binding<'a>(
         &'a self,
         provider: &'a str,

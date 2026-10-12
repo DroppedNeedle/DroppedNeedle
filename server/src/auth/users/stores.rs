@@ -183,6 +183,19 @@ pub trait UserStore: Send + Sync {
         scheme: &'a str,
         new_hash: &'a str,
     ) -> BoxFuture<'a, Result<bool, StoreError>>;
+    /// Complete a recovery reset for an account with no local password:
+    /// consume the code, insert the credential and revoke every session of
+    /// the user, in one transaction. The code is the only authorisation
+    /// here, so it is checked again inside the transaction. Returns false
+    /// (and writes nothing) when the code with `code_hash` is gone or
+    /// expired at `now`, the account already has a local credential, or it
+    /// has no username to sign in with.
+    fn complete_recovery_first_password<'a>(
+        &'a self,
+        credential: LocalCredential,
+        code_hash: &'a str,
+        now: i64,
+    ) -> BoxFuture<'a, Result<bool, StoreError>>;
     /// Fetch one federated (non-local) binding by `(provider, provider_uid)`.
     /// None is absence, never failure.
     fn get_provider_binding<'a>(

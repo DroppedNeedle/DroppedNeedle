@@ -11,6 +11,8 @@
 //!   the v2 files in backup folders, and tells the server which data
 //!   directories it must not boot on. It also holds the offline import
 //!   the tool's `import` and `dry-run` commands run.
+//! - [`recovery_code`] issues a password recovery code from the host, for
+//!   an admin who cannot sign in.
 //! - [`restore`] wraps the backup mechanism as an offline restore command.
 //!   There is no HTTP route for restore, on purpose.
 //! - [`covers_debug`] serves the covers-debug shape on a dev-only
@@ -24,6 +26,7 @@ pub mod covers_debug;
 pub mod datalock;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fixture;
+pub mod recovery_code;
 pub mod restore;
 #[cfg(any(test, feature = "test-support"))]
 pub mod scratch;
