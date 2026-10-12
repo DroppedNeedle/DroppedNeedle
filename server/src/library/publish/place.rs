@@ -78,6 +78,24 @@ pub enum PlaceError {
     Io(#[from] std::io::Error),
 }
 
+impl PlaceError {
+    /// The publisher error for a file that could not be placed at
+    /// `root:rel`.
+    pub(super) fn into_publish(self, root: &str, rel: &str) -> super::PublishError {
+        use super::PublishError;
+        match self {
+            Self::Collision => PublishError::Collision(format!("late occupier at {root}:{rel}")),
+            Self::CrossDevice | Self::Unavailable(_) => PublishError::Io(NO_SAFE_METHOD.to_owned()),
+            Self::Interrupted => PublishError::InjectedCrash("after-link".to_owned()),
+            Self::Unsynced(error) | Self::Io(error) => PublishError::Io(error.to_string()),
+        }
+    }
+}
+
+/// What a file fails with when no safe step can place it.
+pub const NO_SAFE_METHOD: &str = "This folder has no safe way to add a file without risking an \
+     overwrite, so the file was left alone.";
+
 /// Test seams. Production always passes the default.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Seams {

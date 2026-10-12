@@ -21,6 +21,7 @@ use std::path::PathBuf;
 
 use crate::common::ScratchDir;
 use publish::paths::Root;
+use publish::place::{PlacementMode, Seams};
 use publish::planner::{
     Capability, CapabilityGate, CollisionGate, FileFingerprint, PlanBundle, PlanItem, PlanKind,
     ReleaseIdentity, SealError, SealRecheck, SealedPreview, SidecarPlan, SpaceProbe, TrackMapping,
@@ -659,6 +660,148 @@ fn occupied_destination_is_never_overwritten() {
     assert!(matches!(err, PublishError::Collision(_)), "got {err:?}");
     assert_eq!(std::fs::read(&occupier).unwrap(), b"existing-library-file");
     assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// A file another program creates at the destination after the publisher's
+/// last check is never replaced, whether the file is placed by the
+/// no-replace rename or by link-then-unlink (the step an NFS library
+/// takes). The bundle reports a collision and nothing of the user's is
+/// lost.
+#[test]
+fn late_occupier_survives_placement() {
+    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
+    for (kind, skip_rename) in [
+        (PlanKind::Move, false),
+        (PlanKind::Move, true),
+        (PlanKind::SamePath, false),
+        (PlanKind::SamePath, true),
+    ] {
+        let case = format!("{kind:?} skip_rename={skip_rename}");
+        let fix = fixture("late-occupier");
+        let (bundle, docs) = two_track_bundle(&fix, kind);
+        let (sealed, live) = seal(&bundle);
+        let target = fix
+            .sandbox
+            .resolve("music", &bundle.items[0].dest_rel)
+            .unwrap();
+        let mut publisher = open_publisher(&fix);
+        publisher.set_place_seams(Seams {
+            skip_rename,
+            ..Seams::default()
+        });
+        let planted = target.clone();
+        publisher.set_before_place(Some(Box::new(move |dest| {
+            if dest == planted {
+                std::fs::write(dest, b"arrived-late").unwrap();
+            }
+        })));
+        let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+        assert!(
+            matches!(err, PublishError::Collision(_)),
+            "{case}: got {err:?}"
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"arrived-late", "{case}");
+
+        let journals = JournalStore::new(publisher.connection())
+            .bundle("bundle-1")
+            .unwrap();
+        match kind {
+            PlanKind::Move => {
+                for rel in ["staging/a.flac", "staging/b.flac"] {
+                    let source = fix.sandbox.resolve("music", rel).unwrap();
+                    assert_eq!(std::fs::read(source).unwrap(), original, "{case}");
+                }
+                assert!(hidden_leftovers(&fix.dir).is_empty(), "{case}");
+                assert!(
+                    journals
+                        .iter()
+                        .all(|journal| journal.state == JournalState::Compensated),
+                    "{case}"
+                );
+            }
+            PlanKind::SamePath => {
+                // The original cannot go home: it waits under its backup
+                // name, untouched.
+                let backup = journals[0].backup.as_deref().expect("backup journaled");
+                assert_eq!(std::fs::read(backup).unwrap(), original, "{case}");
+                let other = fix.sandbox.resolve("music", "staging/b.flac").unwrap();
+                assert_eq!(std::fs::read(other).unwrap(), original, "{case}");
+            }
+        }
+        assert_eq!(
+            SqliteCatalog.revision(publisher.connection()).unwrap(),
+            start_revision(),
+            "{case}"
+        );
+    }
+}
+
+/// The placement probe writes only under a root a bundle targets, and
+/// leaves nothing there.
+#[test]
+fn only_a_targeted_root_is_probed() {
+    let fix = fixture("probe-lazy");
+    let incoming = fix.dir.join("incoming");
+    let touched = || std::fs::metadata(&incoming).unwrap().modified().unwrap();
+    let before = touched();
+    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    assert_eq!(
+        fix.sandbox.placement_mode("music"),
+        PlacementMode::Unknown,
+        "nothing is probed before a bundle"
+    );
+    publisher.publish(&sealed, &live, &docs).unwrap();
+
+    assert_eq!(fix.sandbox.placement_mode("music"), PlacementMode::Rename);
+    assert!(hidden_leftovers(&fix.dir.join("music")).is_empty());
+    assert_eq!(
+        fix.sandbox.placement_mode("incoming"),
+        PlacementMode::Unknown
+    );
+    assert_eq!(touched(), before, "the other root was never written to");
+    assert_eq!(std::fs::read_dir(&incoming).unwrap().count(), 0);
+}
+
+/// A file neither safe step can place is left alone on a root whose
+/// probe found a safe step: check-then-rename is not a fallback there.
+/// Only a root probed as having neither step places that way.
+#[test]
+fn check_then_rename_needs_a_check_root() {
+    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
+    let no_safe_step = Seams {
+        skip_rename: true,
+        link_errno: Some(libc::EPERM),
+        ..Seams::default()
+    };
+    for mode in [PlacementMode::Rename, PlacementMode::Check] {
+        let fix = fixture("no-safe-step");
+        fix.sandbox.set_placement_mode("music", mode);
+        let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+        let (sealed, live) = seal(&bundle);
+        let mut publisher = open_publisher(&fix);
+        publisher.set_place_seams(no_safe_step);
+        let outcome = publisher.publish(&sealed, &live, &docs);
+        if mode == PlacementMode::Check {
+            assert_eq!(outcome.unwrap(), PublishOutcome::Committed);
+            let dest = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
+            assert_staged(&dest, "track-a");
+            continue;
+        }
+        let err = outcome.unwrap_err();
+        assert!(
+            matches!(&err, PublishError::Io(text) if text == publish::place::NO_SAFE_METHOD),
+            "got {err:?}"
+        );
+        for rel in ["staging/a.flac", "staging/b.flac"] {
+            let source = fix.sandbox.resolve("music", rel).unwrap();
+            assert_eq!(std::fs::read(source).unwrap(), original);
+        }
+        let dest = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
+        assert!(dest.symlink_metadata().is_err(), "nothing was placed");
+        assert!(hidden_leftovers(&fix.dir).is_empty());
+    }
 }
 
 /// A planned replacement sets the file in the way aside under the

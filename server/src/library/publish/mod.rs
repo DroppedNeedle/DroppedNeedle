@@ -29,8 +29,9 @@
 //! - **Publish** rechecks the sealed preview (settings, profile, naming,
 //!   policy, accepted identity, override revisions, fingerprints, exact
 //!   and Unicode/case-fold collisions) under one exclusive multi-root
-//!   lease, then renames each staged temp onto its destination. Renames
-//!   are same-directory `rename(2)`, so each file is atomic; a crash
+//!   lease, then places each staged temp on its destination through
+//!   `place::place_from_hidden`, which cannot replace a file that turned
+//!   up there since the check. Each file is atomic; a crash
 //!   between two files is resolved per journal by comparing staged,
 //!   destination, source, and backup fingerprints, never by assuming
 //!   path existence means ownership. Journal: `staged -> published`.

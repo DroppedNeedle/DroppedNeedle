@@ -11,7 +11,7 @@
 //! steps so the tests can prove that restart recovery always resumes
 //! or compensates. Production never sets a crash point.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension};
@@ -392,9 +392,15 @@ pub struct Publisher<C: Catalog, P: SpaceProbe> {
     space: P,
     gate: CapabilityGate,
     injector: Option<CrashPoint>,
+    place_seams: super::place::Seams,
+    before_place: Option<BeforePlace>,
     today_day: i64,
     undo_retention_days: i64,
 }
+
+/// Test hook run with the destination just before a staged file is
+/// placed there, after every check has passed.
+pub type BeforePlace = Box<dyn Fn(&Path) + Send>;
 
 impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
     /// Open a publisher on the application database through the
@@ -415,6 +421,8 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             space,
             gate: CapabilityGate::production(),
             injector: None,
+            place_seams: super::place::Seams::default(),
+            before_place: None,
             today_day,
             undo_retention_days: super::DEFAULT_UNDO_RETENTION_DAYS as i64,
         })
@@ -432,6 +440,20 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_crash_point(&mut self, point: Option<CrashPoint>) {
         self.injector = point;
+    }
+
+    /// Make placement behave like a filesystem without one of its steps.
+    /// Tests only; production never calls this.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_place_seams(&mut self, seams: super::place::Seams) {
+        self.place_seams = seams;
+    }
+
+    /// Run `hook` between the last destination check and the placement.
+    /// Tests only; production never calls this.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_before_place(&mut self, hook: Option<BeforePlace>) {
+        self.before_place = hook;
     }
 
     /// Borrow the publisher's database connection.
@@ -887,6 +909,13 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         staged: &[PreparedFile],
     ) -> Result<PublishOutcome, PublishError> {
         let journals = JournalStore::new(&self.conn).bundle(&bundle.id)?;
+        let roots: BTreeSet<&str> = journals
+            .iter()
+            .map(|journal| journal.dest_root.as_str())
+            .collect();
+        for root in roots {
+            self.sandbox.probe_placement(root)?;
+        }
         let mut first = true;
         for journal in journals.iter() {
             self.publish_one(bundle, staged, journal)?;
@@ -905,10 +934,10 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         Ok(PublishOutcome::Committed)
     }
 
-    /// Rename one staged journal onto its destination. Same-path
+    /// Place one staged journal on its destination. Same-path
     /// writes retain the original under a hidden backup first; moves
     /// keep the source until after catalog commit. A late occupier
-    /// fails the bundle instead of overwriting.
+    /// fails the bundle instead of being overwritten.
     fn publish_one(
         &mut self,
         bundle: &PlanBundle,
@@ -1007,10 +1036,14 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => return Err(PublishError::Io(err.to_string())),
         }
-        std::fs::rename(staged_path, &dest).map_err(PublishError::from)?;
-        if let Some(parent) = dest.parent() {
-            super::journal::fsync_dir(parent)?;
+        if let Some(hook) = self.before_place.as_ref() {
+            hook(&dest);
         }
+        // The checks above can go stale before the file lands, so the
+        // placement itself refuses a name that is taken by then.
+        let mode = self.sandbox.placement_mode(&journal.dest_root);
+        super::place::place_with(mode, staged_path, &dest, self.place_seams)
+            .map_err(|error| error.into_publish(&journal.dest_root, &journal.dest_rel))?;
         let moved = JournalStore::new(&self.conn).transition(
             &journal.id,
             JournalState::Staged,
