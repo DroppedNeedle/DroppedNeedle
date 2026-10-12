@@ -1578,6 +1578,13 @@ impl ReviewStore for SqliteIdentifyStore {
             for track in &approval.tracks {
                 seal_track_identity(&tx, track)?;
             }
+            // A curator's approval confirms the album: an unconfirmed flag
+            // left by an earlier best guess must not keep holding its files
+            // back from management (an edition choice clears it the same way).
+            tx.execute(
+                "DELETE FROM library_album_match_state WHERE local_album_id = ?1",
+                params![approval.album.local_album_id],
+            )?;
             // A candidate without track evidence (an edition a catalog
             // correction dropped, restored from its review) names the
             // release only: the remap worker places the files on it.
