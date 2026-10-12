@@ -306,6 +306,23 @@ pub fn reads_inputs(
         youtube_quota_path: dir.join("youtube_quota.json"),
         lastfm_key: Arc::new(|| None),
         discover_warmer: false,
+        // Nothing listens on the discard port, so no test reaches a real
+        // chart or discovery provider.
+        endpoints: closed_endpoints(),
+    }
+}
+
+/// Every catalog upstream on the discard port (nothing listens there).
+pub fn closed_endpoints() -> droppedneedle::reads::catalog::upstream::Endpoints {
+    let closed = "http://127.0.0.1:9".to_owned();
+    droppedneedle::reads::catalog::upstream::Endpoints {
+        listenbrainz: closed.clone(),
+        lastfm: format!("{closed}/"),
+        audiodb: closed.clone(),
+        wikidata: closed.clone(),
+        wikipedia: closed.clone(),
+        commons: closed.clone(),
+        itunes: closed,
     }
 }
 

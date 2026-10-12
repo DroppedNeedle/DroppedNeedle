@@ -91,6 +91,7 @@ impl ReadsSetup {
             users: users.clone(),
             lastfm_key: inputs.lastfm_key.clone(),
             discover_warmer: inputs.discover_warmer,
+            endpoints: inputs.endpoints.clone(),
             batch_requests: discover_requests.clone(),
             artwork: None,
         };
@@ -358,6 +359,9 @@ pub struct ReadsInputs {
     pub lastfm_key: catalog::upstream::InstanceLastFmKey,
     /// Whether the discover warm cycle runs (`DISCOVER_WARMER_ENABLED`).
     pub discover_warmer: bool,
+    /// Base URLs of the chart, discovery and wrapped upstreams. Production
+    /// uses the real hosts; tests point them at a closed local port.
+    pub endpoints: catalog::upstream::Endpoints,
 }
 
 /// Production platform states: local and Cover Art Archive art (plus
@@ -373,7 +377,7 @@ fn platform_state(
     use crate::providers::adapters::{CorePacer, CoreSink};
     use crate::providers::coverart::ReqwestCaaTransport;
     use crate::providers::github::GitHubClient;
-    use crate::providers::listenbrainz::{DEFAULT_BASE_URL, ListenBrainzClient};
+    use crate::providers::listenbrainz::ListenBrainzClient;
     use platform::{
         artwork::{
             ArtworkService,
@@ -411,7 +415,12 @@ fn platform_state(
             Some(pacer) => Arc::new(ListenBrainzWrapped::new(
                 users.users.clone(),
                 inputs.listenbrainz_links,
-                ListenBrainzClient::new(inputs.http.clone(), DEFAULT_BASE_URL, pacer, CoreSink),
+                ListenBrainzClient::new(
+                    inputs.http.clone(),
+                    &inputs.endpoints.listenbrainz,
+                    pacer,
+                    CoreSink,
+                ),
             )),
             None => {
                 tracing::error!("no listenbrainz rate limit row; wrapped has no data source");

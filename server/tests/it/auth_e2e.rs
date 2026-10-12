@@ -2562,6 +2562,16 @@ const MATRIX: &[(&str, &str, Posture)] = &[
 ];
 
 /// Fill `{param}` segments with a dummy id.
+/// Rows that read ListenBrainz charts live. The harness points ListenBrainz
+/// at a closed local port, so these answer 502 (the provider is down), the
+/// same answer a real outage gets.
+fn charts_provider_down(method: &str, template: &str) -> bool {
+    matches!(
+        (method, template),
+        ("GET", "/api/v3/home/trending/artists") | ("GET", "/api/v3/home/popular/albums")
+    )
+}
+
 fn concretize(template: &str) -> String {
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
@@ -2787,10 +2797,18 @@ async fn auth_on_every_endpoint() {
                     status != StatusCode::UNAUTHORIZED && status != StatusCode::FORBIDDEN,
                     "user {method} {uri} must be admitted, got {status}: {response_body}"
                 );
-                assert!(
-                    !status.is_server_error(),
-                    "user {method} {uri} must not 5xx on dummy input, got {status}: {response_body}"
-                );
+                if charts_provider_down(method, template) {
+                    assert_eq!(
+                        status,
+                        StatusCode::BAD_GATEWAY,
+                        "user {method} {uri} must 502 while charts are down: {response_body}"
+                    );
+                } else {
+                    assert!(
+                        !status.is_server_error(),
+                        "user {method} {uri} must not 5xx on dummy input, got {status}: {response_body}"
+                    );
+                }
             }
             Posture::Public => unreachable!("filtered above"),
         }
@@ -2907,10 +2925,18 @@ async fn auth_on_every_endpoint() {
                 status != StatusCode::UNAUTHORIZED && status != StatusCode::FORBIDDEN,
                 "admin {method} {uri} must be admitted, got {status}: {response_body}"
             );
-            assert!(
-                !status.is_server_error(),
-                "admin {method} {uri} must not 5xx on dummy input, got {status}: {response_body}"
-            );
+            if charts_provider_down(method, template) {
+                assert_eq!(
+                    status,
+                    StatusCode::BAD_GATEWAY,
+                    "admin {method} {uri} must 502 while charts are down: {response_body}"
+                );
+            } else {
+                assert!(
+                    !status.is_server_error(),
+                    "admin {method} {uri} must not 5xx on dummy input, got {status}: {response_body}"
+                );
+            }
         }
         if *template == "/api/v3/auth/logout-all" {
             let (status, body, _) =

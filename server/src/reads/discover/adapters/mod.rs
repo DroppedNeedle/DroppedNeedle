@@ -29,7 +29,7 @@ use crate::providers::{
     Providers,
     adapters::{CorePacer, CoreSink, ReqwestGet},
     lastfm::{self, LastFmClient},
-    listenbrainz::{DEFAULT_BASE_URL, ListenBrainzClient},
+    listenbrainz::ListenBrainzClient,
     youtube::{DEFAULT_DAILY_QUOTA_LIMIT, YouTubeClient, YouTubeSettings},
 };
 use crate::reads::catalog::Catalog;
@@ -68,6 +68,8 @@ pub struct DiscoverInputs {
     pub lastfm_key: InstanceLastFmKey,
     /// Whether the discover warm cycle runs (the deployment kill switch).
     pub discover_warmer: bool,
+    /// Base URLs of the chart and discovery upstreams.
+    pub endpoints: crate::reads::catalog::upstream::Endpoints,
     /// The cover and artist image cache, which genre pages warm.
     pub artwork: Option<crate::reads::platform::artwork::ArtworkService>,
     /// Where boot puts the requests side of discovery batches, once the
@@ -81,7 +83,7 @@ pub fn production_deps(inputs: DiscoverInputs, ids: Arc<dyn IdGenerator>) -> Rea
         Some(pacer) => Some(charts::LastFmCharts::new(
             LastFmClient::new(
                 inputs.http.clone(),
-                lastfm::DEFAULT_BASE_URL,
+                &inputs.endpoints.lastfm,
                 pacer,
                 CoreSink,
             ),
@@ -96,7 +98,12 @@ pub fn production_deps(inputs: DiscoverInputs, ids: Arc<dyn IdGenerator>) -> Rea
     let charts: Arc<dyn ChartsSource> =
         match CorePacer::for_source(inputs.providers.clone(), "listenbrainz") {
             Some(pacer) => Arc::new(charts::LiveCharts::new(
-                ListenBrainzClient::new(inputs.http.clone(), DEFAULT_BASE_URL, pacer, CoreSink),
+                ListenBrainzClient::new(
+                    inputs.http.clone(),
+                    &inputs.endpoints.listenbrainz,
+                    pacer,
+                    CoreSink,
+                ),
                 inputs.listenbrainz_links.clone(),
                 lastfm_charts,
                 inputs.pool.clone(),
@@ -183,6 +190,7 @@ fn live_upstream(inputs: &DiscoverInputs) -> Upstream {
         inputs.users.clone(),
     )
     .with_instance_lastfm_key(inputs.lastfm_key.clone())
+    .with_endpoints(inputs.endpoints.clone())
 }
 
 /// The live provider reads the queue, the page and radio share.
