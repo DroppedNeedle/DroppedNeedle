@@ -44,6 +44,29 @@ fn read_config(dir: &std::path::Path) -> String {
     std::fs::read_to_string(dir.join("config.json")).unwrap()
 }
 
+/// A fresh install's MusicBrainz source id is minted once at boot and then
+/// read back unchanged, also after a reopen. Clients key their caches on
+/// it, so a new id per read made them refetch without end.
+#[test]
+fn musicbrainz_source_id_is_minted_once() {
+    let (dir, store) = test_store("mb-source-id");
+    store
+        .seed_default::<MusicBrainzSettings>()
+        .expect("default seeds");
+    let first = store.get::<MusicBrainzSettings>().unwrap().source_id;
+    assert_eq!(store.get::<MusicBrainzSettings>().unwrap().source_id, first);
+    drop(store);
+    let crypto = Crypto::from_key_bytes(&[42u8; 32]).unwrap();
+    let reopened = ConfigStore::open(&dir.join("config.json"), crypto).unwrap();
+    reopened
+        .seed_default::<MusicBrainzSettings>()
+        .expect("seeding again keeps the stored section");
+    assert_eq!(
+        reopened.get::<MusicBrainzSettings>().unwrap().source_id,
+        first
+    );
+}
+
 /// Every secret section's mask lifecycle: unset shows `fresh`, a new
 /// secret round-trips and masks exactly, the mask keeps the stored value,
 /// a value that merely starts with the mask is a new secret, and a padded

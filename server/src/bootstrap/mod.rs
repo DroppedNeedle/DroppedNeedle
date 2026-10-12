@@ -111,6 +111,10 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         &config.config_file,
         Crypto::load(&config.config_dir())?,
     )?);
+    // A fresh install has no MusicBrainz section; its default mints a source
+    // id, so store it once or every read reports a new source (and clients
+    // keyed on it refetch without end).
+    config_store.seed_default::<crate::runtime_config::sections::MusicBrainzSettings>()?;
     let ids = Arc::new(UuidGenerator);
     let clock = Arc::new(SystemClock);
     // One live event hub for the process. Bundles built below publish into

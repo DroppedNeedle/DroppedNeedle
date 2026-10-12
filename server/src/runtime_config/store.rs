@@ -137,6 +137,34 @@ impl ConfigStore {
         Ok(normalized)
     }
 
+    /// Store a section's default when the file has none, so a default that
+    /// mints values (the MusicBrainz source id) is minted once instead of
+    /// on every read. A section already present is left as it is.
+    pub fn seed_default<S: PlainSection>(&self) -> Result<(), ConfigError> {
+        let mut guard = self
+            .cache
+            .write()
+            .map_err(|_| ConfigError::LockUnavailable("config cache"))?;
+        if !matches!(guard.get(S::KEY), None | Some(serde_json::Value::Null)) {
+            return Ok(());
+        }
+        let mut section = S::default();
+        section.normalize();
+        let value = serde_json::to_value(&section).map_err(|error| ConfigError::SectionDecode {
+            section: S::KEY,
+            reason: error.to_string(),
+        })?;
+        let mut snapshot = guard.clone();
+        let object = snapshot.as_object_mut().ok_or(ConfigError::SectionDecode {
+            section: S::KEY,
+            reason: "config root must be a JSON object".to_owned(),
+        })?;
+        object.insert(S::KEY.to_owned(), value);
+        write_json_atomically(&self.path, &snapshot)?;
+        *guard = snapshot;
+        Ok(())
+    }
+
     /// Read one secret section with secrets masked (safe for API responses).
     pub fn get_masked<S: SecretSection>(&self) -> Result<Masked<S>, ConfigError> {
         let mut section = self.decode_section::<S>()?;
