@@ -54,6 +54,10 @@ two data folders:
 Where the report or a message names `V2_ROOT/cache` or `V2_ROOT/config`,
 it means these two folders.
 
+Everything in the config and cache folders moves into the backup, not only
+what v2 wrote. Files of your own that you kept there move too. Take out
+anything you want to keep before you remove the backup.
+
 Moving them takes no time and no extra disk space. The upgrade does need
 some free space in the cache folder while it runs, about twice the size of
 the v2 database plus the originals Library Management saved. It checks
@@ -229,10 +233,11 @@ As long as the `v2-backup` folders are there:
 
 3. Set the image tag back to your v2 version and start it.
 
-The undo deletes everything v3 wrote to the config and cache folders, so
-anything done in v3 since the upgrade is lost, and moves the v2 files back
-where they were. It asks for `--yes` because of that. Without `--yes` it
-only says what it would do.
+The undo deletes everything in the config and cache folders except the
+`v2-backup` folders, then puts the v2 files back where they were. Anything
+done in v3 since the upgrade is lost, and so is any file of your own you
+put in those folders after the upgrade. It asks for `--yes` because of
+that. Without `--yes` it only says what it would do.
 
 This restores the v2 database and settings. It does not undo changes v3
 made to music files, such as renames or retags from Library Management.
@@ -413,10 +418,11 @@ import leaves their v2 version out.
 | `cannot tell what this data directory holds` | The folders are neither a v2 nor a v3 data directory, for example a v2 database beside a v3 key file | Nothing was changed. Check that the mounts point at the right folders |
 | `already exists. Move it away or delete it` | A `v2-backup` folder is left from an earlier upgrade | Move or delete it, then run the upgrade again |
 | `the upgrade needs about N MiB free` | Not enough free space in the cache folder | Free some space and run the upgrade again |
+| `cannot move ...: Permission denied` | A file or folder in the config or cache folder could not be moved, because the user the tool runs as does not own it | Nothing is lost, the v2 files are back in place. Fix the ownership (`chown -R` to your `PUID` and `PGID`) and run the upgrade again |
 | `no complete v2 backup` | `--undo` found no `v2-backup` folders to go back to | Restore your own copy of the v2 folders |
 | `V2_KEY_NOT_FOUND` | v2's `config/.env` is missing | Put it back from a copy of your own, then run again |
 | `V2_KEY_MISMATCH` | The key in `config/.env` does not decrypt your stored secrets | Use the `config/.env` that v2 actually ran with |
-| `V2_WAL_PRESENT` | v2's database still has writes in its `-wal` file | Start v2 once and stop it cleanly, then run again |
+| `V2_WAL_PRESENT` | v2's database still has writes in its `-wal` file | If v2 is still running, stop it first. Otherwise start v2 once and stop it cleanly, then run again |
 | `DANGLING_USER_REF` | Orphan follows or approvals in v2 | The upgrade removes them itself. By hand: the step 4 cleanup, then export again |
 | `INSTANCE_MISMATCH` | The export came from a different v2 instance | Export from the right `V2_ROOT` |
 | `ENVELOPE_AUTH_FAILED` | Wrong passphrase | Re-run with the right passphrase file; no records were imported |

@@ -457,8 +457,9 @@ pub enum UpgradeError {
     BackupExists(PathBuf),
     /// The v2 database was not closed cleanly.
     #[error(
-        "V2_WAL_PRESENT: v2 database {} has unmerged writes in its -wal file; start v2 and \
-         stop it cleanly, then run the upgrade again",
+        "V2_WAL_PRESENT: v2 database {} has unmerged writes in its -wal file. If v2 is still \
+         running, stop it first. Otherwise start v2 and stop it cleanly, then run the upgrade \
+         again",
         .path.display()
     )]
     WalPresent {
