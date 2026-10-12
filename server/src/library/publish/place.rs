@@ -17,6 +17,10 @@
 //! the hidden file (same device and inode) means an earlier attempt
 //! linked it and stopped: the hidden name goes and the file counts as
 //! placed.
+//!
+//! The other direction, a user's file moved out of the way under a hidden
+//! name, is [`set_original_aside`]. It never links then unlinks, because
+//! there the name to unlink would be the user's.
 
 use std::path::Path;
 
@@ -107,6 +111,10 @@ pub struct Seams {
     pub link_errno: Option<i32>,
     /// Stop after a good link, before the hidden name is removed.
     pub stop_after_link: bool,
+    /// The link test makes its link and then answers EEXIST, as NFS does
+    /// when the reply to a LINK that succeeded is lost and the retry finds
+    /// the name taken. Wins over `link_errno` for the link test only.
+    pub lost_link_reply: bool,
 }
 
 /// Place `hidden_from` at `to`, never replacing a file at `to`. `mode` is
@@ -200,6 +208,221 @@ fn run_steps(
     }
 }
 
+/// A user's file that is about to be moved out of the way.
+#[derive(Debug, Clone, Copy)]
+pub struct Original<'a> {
+    /// The name it holds now.
+    pub visible: &'a Path,
+    /// The journaled hidden name it moves to.
+    pub hidden: &'a Path,
+    /// The name it goes back to. Only a case-only rename makes this differ
+    /// from `visible`: the original spelling, not the new one.
+    pub home: &'a Path,
+    /// The bytes it held when it was last read. `None` skips the check.
+    pub sha256: Option<&'a str>,
+}
+
+/// Why a user's file was not set aside.
+#[derive(Debug, thiserror::Error)]
+pub enum SetAsideError {
+    /// The file cannot be hard-linked, so it could be set aside but never
+    /// put back by a safe step. Nothing was moved.
+    #[error("the file cannot be hard-linked (os error {0})")]
+    NotLinkable(i32),
+    /// The folder has no safe step to put the file back with. Nothing was
+    /// moved.
+    #[error("no safe way to put the file back (os error {0})")]
+    Unavailable(i32),
+    /// The hidden name holds another file. Nothing was moved.
+    #[error("the hidden name is taken")]
+    HiddenTaken,
+    /// Another program replaced the file after it was last read. What was
+    /// set aside is back under its own name.
+    #[error("the file was replaced while it was being set aside")]
+    Replaced,
+    /// As `Replaced`, but the replacement could not be put back. It is
+    /// kept under the hidden name.
+    #[error("the file was replaced, and its replacement could not be put back: {0}")]
+    ReplacedKept(PlaceError),
+    /// Any other filesystem failure.
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+
+/// Set a user's file aside under its journaled hidden name, in a way that
+/// can neither lose it nor strand it there.
+///
+/// 1. Where the way back would be a hard link (a `Link` or `Unknown`
+///    root), the link is tried first, onto the hidden name, and removed
+///    again. A file that cannot be linked is refused before it moves.
+/// 2. The file moves by [`set_aside_to_hidden`].
+/// 3. What arrived under the hidden name is hashed. The last read of the
+///    file can be a whole album old, and a file saved since by another
+///    program is not the one this journal is about: it goes straight back
+///    to `home` through [`place_from_hidden`].
+pub fn set_original_aside(
+    mode: PlacementMode,
+    original: Original<'_>,
+) -> Result<(), SetAsideError> {
+    set_aside_with(mode, original, Seams::default(), None)
+}
+
+/// [`set_original_aside`] with test seams. `before_move` runs with the
+/// visible name after the first link test, just before the file moves.
+pub(super) fn set_aside_with(
+    mode: PlacementMode,
+    original: Original<'_>,
+    seams: Seams,
+    before_move: Option<&dyn Fn(&Path)>,
+) -> Result<(), SetAsideError> {
+    let Original {
+        visible,
+        hidden,
+        home,
+        sha256,
+    } = original;
+    if matches!(mode, PlacementMode::Link | PlacementMode::Unknown) {
+        link_test(visible, hidden, seams)?;
+    }
+    if let Some(hook) = before_move {
+        hook(visible);
+    }
+    // A rename root puts a file back by the no-replace rename, whoever
+    // owns it, so it needs no link test. Unless that rename does not work
+    // for this file after all (a different disk mounted below the root):
+    // then the way back is a link here too.
+    set_aside_to_hidden(visible, hidden, seams, mode == PlacementMode::Rename)?;
+    if let Some(parent) = visible.parent() {
+        sync_dir(parent)?;
+    }
+    if let Some(parent) = hidden.parent()
+        && Some(parent) != visible.parent()
+    {
+        sync_dir(parent)?;
+    }
+    let Some(expected) = sha256 else {
+        return Ok(());
+    };
+    let intact = paths::read_regular_file(hidden)
+        .is_ok_and(|bytes| super::snapshots::sha256_hex(&bytes) == expected);
+    if intact {
+        return Ok(());
+    }
+    match place_with(mode, hidden, home, seams) {
+        Ok(_) => Err(SetAsideError::Replaced),
+        Err(PlaceError::Unsynced(error)) => {
+            tracing::warn!(file = %home.display(), %error, "directory sync failed");
+            Err(SetAsideError::Replaced)
+        }
+        Err(error) => {
+            tracing::warn!(
+                file = %home.display(),
+                kept = %hidden.display(),
+                %error,
+                "a file replaced during a managed write could not be put back; it is kept"
+            );
+            Err(SetAsideError::ReplacedKept(error))
+        }
+    }
+}
+
+/// Move a user-visible file to a hidden name the publisher made: the
+/// no-replace rename, else a check that the hidden name is free and a
+/// plain rename.
+///
+/// Never link-then-unlink, on any root. That would remove the visible
+/// name, and with it whatever another program saved there between the
+/// link and the unlink. A plain rename moves whatever holds the name at
+/// that instant, and the caller's hash check sees a swap. It is safe on
+/// the hidden side: only the publisher makes these names, one per journal.
+///
+/// `link_test_before_plain_rename` runs [`link_test`] once the no-replace
+/// rename has turned out not to work, before anything moves.
+fn set_aside_to_hidden(
+    from: &Path,
+    hidden_to: &Path,
+    seams: Seams,
+    link_test_before_plain_rename: bool,
+) -> Result<(), SetAsideError> {
+    free_hidden_name(from, hidden_to)?;
+    if !seams.skip_rename
+        && let Some(renamed) = rename_noreplace(from, hidden_to)
+    {
+        match renamed {
+            Ok(()) => return Ok(()),
+            Err(error) if error.raw_os_error() == Some(libc::EEXIST) => {
+                return Err(SetAsideError::HiddenTaken);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(SetAsideError::Io(error));
+            }
+            Err(_) => {}
+        }
+    }
+    if link_test_before_plain_rename {
+        link_test(from, hidden_to, seams)?;
+    }
+    match std::fs::symlink_metadata(hidden_to) {
+        Ok(_) => Err(SetAsideError::HiddenTaken),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::rename(from, hidden_to)?;
+            Ok(())
+        }
+        Err(error) => Err(SetAsideError::Io(error)),
+    }
+}
+
+/// The hidden name has to be free before a file is set aside under it.
+/// If it is the visible file itself (same device and inode), an earlier
+/// put-back linked the file home and stopped: the hidden name goes.
+/// Anything else there is not ours to move.
+fn free_hidden_name(visible: &Path, hidden: &Path) -> Result<(), SetAsideError> {
+    match std::fs::symlink_metadata(hidden) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(SetAsideError::Io(error)),
+        Ok(_) if paths::same_file(visible, hidden) => Ok(remove_hidden(hidden)?),
+        Ok(_) => Err(SetAsideError::HiddenTaken),
+    }
+}
+
+/// Prove the file can come back by a hard link before it is set aside:
+/// link it to its hidden name, then remove that name. Only the hidden name
+/// is ever removed. Linux refuses to link a file the caller neither owns
+/// nor can write (`fs.protected_hardlinks`), and an immutable one, with
+/// EPERM. So does a disk with no hard links at all, such as FAT.
+fn link_test(visible: &Path, hidden: &Path, seams: Seams) -> Result<(), SetAsideError> {
+    free_hidden_name(visible, hidden)?;
+    let linked = match seams.link_errno {
+        _ if seams.lost_link_reply => std::fs::hard_link(visible, hidden)
+            .and_then(|()| Err(std::io::Error::from_raw_os_error(libc::EEXIST))),
+        Some(code) => Err(std::io::Error::from_raw_os_error(code)),
+        None => std::fs::hard_link(visible, hidden),
+    };
+    let error = match linked {
+        Ok(()) => return Ok(remove_hidden(hidden)?),
+        Err(error) => error,
+    };
+    let refusal = match error.raw_os_error() {
+        // The name was free a moment ago, so a hidden name that is this
+        // file is our own link: its reply was lost and the retry found it.
+        Some(libc::EEXIST) if paths::same_file(visible, hidden) => {
+            return Ok(remove_hidden(hidden)?);
+        }
+        Some(libc::EEXIST) => SetAsideError::HiddenTaken,
+        Some(libc::EPERM) => SetAsideError::NotLinkable(libc::EPERM),
+        Some(code) if no_link_support(code) || code == libc::EMLINK || code == libc::EXDEV => {
+            SetAsideError::Unavailable(code)
+        }
+        _ => return Err(SetAsideError::Io(error)),
+    };
+    tracing::warn!(
+        file = %visible.display(),
+        errno = error.raw_os_error(),
+        "this file could not be put back safely once set aside; it was left alone"
+    );
+    Err(refusal)
+}
+
 /// The destination name was taken. If it is the hidden file itself, an
 /// earlier attempt linked it (a crash before the unlink, or an NFS reply
 /// lost on a link that succeeded): finish by removing the hidden name.
@@ -214,11 +437,10 @@ fn already_linked(hidden_from: &Path, to: &Path) -> Result<Placed, PlaceError> {
 
 /// Remove the hidden name. Already gone counts as done; any other
 /// failure is returned, so a file never counts as placed under two names.
-fn remove_hidden(hidden: &Path) -> Result<(), PlaceError> {
+fn remove_hidden(hidden: &Path) -> std::io::Result<()> {
     match std::fs::remove_file(hidden) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(PlaceError::Io(error)),
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
     }
 }
 
@@ -496,6 +718,162 @@ mod tests {
         let placed = place_with(PlacementMode::Check, &hidden, &to, no_safe_step).expect("placed");
         assert_eq!(placed, Placed::Checked);
         assert_eq!(listing(scratch.path()), ["song.flac"]);
+    }
+
+    fn aside<'a>(visible: &'a Path, hidden: &'a Path, home: &'a Path) -> Original<'a> {
+        Original {
+            visible,
+            hidden,
+            home,
+            sha256: Some("not-checked-here"),
+        }
+    }
+
+    /// A file is refused before it moves when it could not come back: its
+    /// hidden name is someone else's, or it cannot be linked where a link
+    /// is the way back. A root that puts back by rename asks for no link.
+    #[test]
+    fn a_file_that_could_not_come_back_is_not_set_aside() {
+        let no_links = Seams {
+            link_errno: Some(libc::EPERM),
+            ..Seams::default()
+        };
+        let no_safe_step = Seams {
+            skip_rename: true,
+            ..no_links
+        };
+        let scratch = ScratchDir::new("aside-refused").expect("scratch dir");
+        let visible = scratch.path().join("song.flac");
+        let hidden = scratch.path().join(".hidden");
+        std::fs::write(&visible, b"theirs").expect("writes");
+        let untouched = || {
+            assert_eq!(listing(scratch.path()), ["song.flac"]);
+            assert_eq!(std::fs::read(&visible).expect("reads"), b"theirs");
+        };
+
+        for (mode, seams) in [
+            (PlacementMode::Link, no_links),
+            (PlacementMode::Unknown, no_links),
+            (PlacementMode::Rename, no_safe_step),
+        ] {
+            let refused = set_aside_with(mode, aside(&visible, &hidden, &visible), seams, None);
+            assert!(
+                matches!(refused, Err(SetAsideError::NotLinkable(_))),
+                "{mode:?}: got {refused:?}"
+            );
+            untouched();
+        }
+
+        std::fs::write(&hidden, b"someone else's").expect("writes");
+        for seams in [
+            Seams::default(),
+            Seams {
+                skip_rename: true,
+                ..Seams::default()
+            },
+        ] {
+            for mode in [PlacementMode::Rename, PlacementMode::Link] {
+                let refused = set_aside_with(mode, aside(&visible, &hidden, &visible), seams, None);
+                assert!(
+                    matches!(refused, Err(SetAsideError::HiddenTaken)),
+                    "{mode:?}: got {refused:?}"
+                );
+                assert_eq!(std::fs::read(&visible).expect("reads"), b"theirs");
+                assert_eq!(std::fs::read(&hidden).expect("reads"), b"someone else's");
+            }
+        }
+        std::fs::remove_file(&hidden).expect("removes");
+
+        // Each of these succeeds with every link but the link test's
+        // refused, so the move itself never links.
+        // - Rename root: the no-replace rename works, so no link is asked
+        //   for at all.
+        // - Check root: no link test, and the move is a plain rename.
+        // - Link root: the link test passes (its link was made and the
+        //   reply lost, which also shows a retried link is not taken for
+        //   someone else's file), then the file moves by a plain rename. A
+        //   set-aside that linked then unlinked would be refused here.
+        let only_the_link_test = Seams {
+            lost_link_reply: true,
+            ..no_safe_step
+        };
+        for (mode, seams) in [
+            (PlacementMode::Rename, no_links),
+            (PlacementMode::Check, no_safe_step),
+            (PlacementMode::Link, only_the_link_test),
+        ] {
+            let original = Original {
+                sha256: None,
+                ..aside(&visible, &hidden, &visible)
+            };
+            set_aside_with(mode, original, seams, None).expect("set aside");
+            assert_eq!(listing(scratch.path()), [".hidden"]);
+            std::fs::rename(&hidden, &visible).expect("renames");
+        }
+    }
+
+    /// A file another program saves over the original while it is being
+    /// set aside is never deleted and never left hidden: it goes back to
+    /// the original's home name. If that name is taken too, it is kept
+    /// under the hidden name. A hidden name left by an interrupted
+    /// put-back is cleared first.
+    #[test]
+    fn a_file_swapped_in_during_a_set_aside_is_kept() {
+        let sha = super::super::snapshots::sha256_hex(b"original");
+        let link_only = Seams {
+            skip_rename: true,
+            ..Seams::default()
+        };
+        let swap = |visible: &Path| {
+            let temp = visible.with_extension("tagger");
+            std::fs::write(&temp, b"saved since").expect("writes");
+            std::fs::rename(&temp, visible).expect("renames");
+        };
+        for seams in [Seams::default(), link_only] {
+            let scratch = ScratchDir::new("aside-swapped").expect("scratch dir");
+            let visible = scratch.path().join("song.flac");
+            let hidden = scratch.path().join(".hidden");
+            let original = Original {
+                visible: &visible,
+                hidden: &hidden,
+                home: &visible,
+                sha256: Some(&sha),
+            };
+            std::fs::write(&visible, b"original").expect("writes");
+            std::fs::hard_link(&visible, &hidden).expect("links");
+
+            set_aside_with(PlacementMode::Link, original, seams, None).expect("set aside");
+            assert_eq!(listing(scratch.path()), [".hidden"]);
+            assert_eq!(std::fs::read(&hidden).expect("reads"), b"original");
+            std::fs::rename(&hidden, &visible).expect("renames");
+
+            let swapped = set_aside_with(PlacementMode::Link, original, seams, Some(&swap));
+            assert!(
+                matches!(swapped, Err(SetAsideError::Replaced)),
+                "got {swapped:?}"
+            );
+            assert_eq!(listing(scratch.path()), ["song.flac"]);
+            assert_eq!(std::fs::read(&visible).expect("reads"), b"saved since");
+
+            let home = scratch.path().join("Song.flac");
+            std::fs::write(&visible, b"original").expect("writes");
+            std::fs::write(&home, b"also theirs").expect("writes");
+            let away_from_home = Original {
+                home: &home,
+                ..original
+            };
+            let kept = set_aside_with(PlacementMode::Link, away_from_home, seams, Some(&swap));
+            assert!(
+                matches!(
+                    kept,
+                    Err(SetAsideError::ReplacedKept(PlaceError::Collision))
+                ),
+                "got {kept:?}"
+            );
+            assert_eq!(listing(scratch.path()), [".hidden", "Song.flac"]);
+            assert_eq!(std::fs::read(&hidden).expect("reads"), b"saved since");
+            assert_eq!(std::fs::read(&home).expect("reads"), b"also theirs");
+        }
     }
 
     /// The probe answers from what the disk does, cleans up after itself
