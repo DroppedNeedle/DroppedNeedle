@@ -8,7 +8,6 @@ export const SETTINGS_ENDPOINTS = {
 	events: () => v3('/api/v3/settings/events'),
 	eventsTestTicketmaster: () => v3('/api/v3/settings/events/test-ticketmaster'),
 	eventsTestSkiddle: () => v3('/api/v3/settings/events/test-skiddle'),
-	freeMusic: () => v3('/api/v3/settings/free-music'),
 	editionPreferences: () => v3('/api/v3/settings/edition-preferences'),
 	getIt: () => v3('/api/v3/settings/get-it'),
 	jellyfin: () => v3('/api/v3/settings/jellyfin'),

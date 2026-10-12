@@ -4,7 +4,6 @@ type SettingsModule = { default: Component };
 type SettingsLoader = () => Promise<SettingsModule>;
 
 const adminTabs = new Set([
-	'free-music',
 	'download-client',
 	'indexers',
 	'lidarr-import',
@@ -28,7 +27,6 @@ export function isSettingsTabVisible(id: string, isAdmin: boolean): boolean {
 
 const settingsTabLoaders: Record<string, SettingsLoader> = {
 	library: () => import('./SettingsLibrary.svelte'),
-	'free-music': () => import('./SettingsFreeMusic.svelte'),
 	'download-client': () => import('./SettingsDownloadClients.svelte'),
 	indexers: () => import('./SettingsIndexers.svelte'),
 	'lidarr-import': () => import('./SettingsLidarrImport.svelte'),

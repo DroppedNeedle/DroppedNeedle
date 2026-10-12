@@ -1086,9 +1086,6 @@ export type LastFmConnectionSettingsResponse = components['schemas']['LastFmSett
 
 export type SpotifySettings = components['schemas']['SpotifySettings'];
 
-// mirrors backend api/v1/schemas/settings.py (FreeMusicSettings)
-export type FreeMusicSettings = components['schemas']['FreeMusic'];
-
 // mirrors backend api/v1/schemas/settings.py (GetItSettings)
 export type GetItSettings = components['schemas']['GetIt'];
 

@@ -4,7 +4,6 @@ import { ArtistReconciliationQueryKeyFactory } from './artist-reconciliation/Art
 import { AuthQueryKeyFactory } from './auth/AuthQueryKeyFactory';
 import { DownloadQueryKeyFactory } from './downloads/DownloadQueryKeyFactory';
 import { FollowQueryKeyFactory } from './following/FollowQueryKeyFactory';
-import { FreeMusicQueryKeyFactory } from './free-music/FreeMusicQueryKeyFactory';
 import { DropImportQueryKeyFactory } from './import/DropImportQueryKeyFactory';
 import { LibraryManagementQueryKeyFactory } from './library-management/LibraryManagementQueryKeyFactory';
 import { LibraryContributionQueryKeyFactory } from './libraryContributions/LibraryContributionQueryKeyFactory';
@@ -23,7 +22,6 @@ const userKeys: Record<string, UserKey> = {
 	'follow status': (u) => FollowQueryKeyFactory.status('mbid-1', u),
 	'followed artists': (u) => FollowQueryKeyFactory.artists(u),
 	concerts: (u) => FollowQueryKeyFactory.concerts(u),
-	'free music tasks': (u) => FreeMusicQueryKeyFactory.tasks(u, false),
 	'drop import jobs': (u) => DropImportQueryKeyFactory.jobs(u, false),
 	'library management settings': (u) => LibraryManagementQueryKeyFactory.settings(u),
 	'library contributions': (u) => LibraryContributionQueryKeyFactory.detail(u, 'c-1'),

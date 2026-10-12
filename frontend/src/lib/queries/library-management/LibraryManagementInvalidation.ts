@@ -3,7 +3,6 @@ import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { ArtistQueryKeyFactory } from '$lib/queries/artist/ArtistQueryKeyFactory';
 import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyFactory';
 import { DownloadQueryKeyFactory } from '$lib/queries/downloads/DownloadQueryKeyFactory';
-import { FreeMusicQueryKeyFactory } from '$lib/queries/free-music/FreeMusicQueryKeyFactory';
 import { GenreQueryKeyFactory } from '$lib/queries/genre/GenreQueryKeyFactory';
 import { DropImportQueryKeyFactory } from '$lib/queries/import/DropImportQueryKeyFactory';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
@@ -26,7 +25,6 @@ export async function invalidateLibraryManagementSurfaces(): Promise<void> {
 		invalidateQueriesWithPersister({ queryKey: DiscoverQueryKeyFactory.prefix }),
 		invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.all }),
 		invalidateQueriesWithPersister({ queryKey: DropImportQueryKeyFactory.prefix }),
-		invalidateQueriesWithPersister({ queryKey: FreeMusicQueryKeyFactory.prefix }),
 		invalidateQueriesWithPersister({ queryKey: LyricsQueryKeyFactory.prefix })
 	]);
 }

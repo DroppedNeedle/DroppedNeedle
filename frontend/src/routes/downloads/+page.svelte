@@ -4,7 +4,6 @@
 	import { Download, PackageOpen } from 'lucide-svelte';
 
 	import DownloadQueue from '$lib/components/downloads/DownloadQueue.svelte';
-	import FreeMusicQueue from '$lib/components/downloads/FreeMusicQueue.svelte';
 	import DiscoveryBatchList from '$lib/components/discover/DiscoveryBatchList.svelte';
 	import DropImportJobList from '$lib/components/import/DropImportJobList.svelte';
 	import DropImportZone from '$lib/components/import/DropImportZone.svelte';
@@ -97,7 +96,6 @@
 			/>
 		{/if}
 	{:else}
-		<FreeMusicQueue showAll={isAdmin} />
 		<DownloadQueue />
 		<DiscoveryBatchList />
 	{/if}

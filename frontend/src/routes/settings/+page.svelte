@@ -30,7 +30,6 @@
 		CloudDownload,
 		Gift,
 		ShoppingBag,
-		Landmark,
 		Blocks,
 		PanelLeft,
 		Activity,
@@ -72,7 +71,6 @@
 			: []),
 		...(authStore.isAdmin
 			? [
-					{ id: 'free-music', label: 'Free Music', tier: 'setup', icon: Landmark },
 					{
 						id: 'download-client',
 						label: 'Download Client',

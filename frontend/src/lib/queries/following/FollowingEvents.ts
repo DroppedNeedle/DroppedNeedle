@@ -5,10 +5,7 @@ import { PlaylistQueryKeyFactory } from '$lib/queries/playlists/PlaylistQueryKey
 import { FollowQueryKeyFactory } from '$lib/queries/following/FollowQueryKeyFactory';
 import { WantedQueryKeyFactory } from '$lib/queries/wanted/WantedQueryKeyFactory';
 import { DropImportQueryKeyFactory } from '$lib/queries/import/DropImportQueryKeyFactory';
-import { FreeMusicQueryKeyFactory } from '$lib/queries/free-music/FreeMusicQueryKeyFactory';
-import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { LOCAL_KEYS } from '$lib/queries/local/LocalV3Keys';
-import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 import {
 	muxEventStream,
 	type MuxEventStream,
@@ -154,9 +151,8 @@ export function createFollowingEvents(mux: MuxEventStream = muxEventStream) {
 			queryKey: FollowQueryKeyFactory.concerts(userId)
 		});
 		void invalidateQueriesWithPersister({ queryKey: DropImportQueryKeyFactory.prefix });
-		void invalidateQueriesWithPersister({ queryKey: FreeMusicQueryKeyFactory.prefix });
-		// completed Free Music tasks land an album in the library: Library/Home
-		// are covered by the activity.changed replay sweep, but local lists are not
+		// an import can land an album while the tab is hidden: Library/Home are
+		// covered by the activity.changed replay sweep, but local lists are not
 		void invalidateQueriesWithPersister({ queryKey: LOCAL_KEYS.root });
 	}
 
@@ -226,23 +222,6 @@ export function createFollowingEvents(mux: MuxEventStream = muxEventStream) {
 		void invalidateQueriesWithPersister({ queryKey: DropImportQueryKeyFactory.prefix });
 	}
 
-	// The user's own Free Music task progressed server-side - refresh the queue. A
-	// completed task also landed an album in the library, so sweep those caches too
-	// (cross-domain rule), but not on the once-a-second progress ticks.
-	function handleFreeMusicUpdated(event: Event): void {
-		void invalidateQueriesWithPersister({ queryKey: FreeMusicQueryKeyFactory.prefix });
-		let data: Record<string, unknown>;
-		try {
-			data = JSON.parse((event as MessageEvent).data) as Record<string, unknown>;
-		} catch {
-			return;
-		}
-		if (data.status !== 'completed') return;
-		void invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.all });
-		void invalidateQueriesWithPersister({ queryKey: LOCAL_KEYS.root });
-		void invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix });
-	}
-
 	function start(): void {
 		stop();
 		seen = loadSeen(SEEN_KEY);
@@ -260,7 +239,6 @@ export function createFollowingEvents(mux: MuxEventStream = muxEventStream) {
 			mux.on('wanted_fulfilled', handleWantedFulfilled),
 			mux.on('request_imported', handleRequestImported),
 			mux.on('drop_import_updated', handleDropImportUpdated),
-			mux.on('free_music_updated', handleFreeMusicUpdated),
 			mux.onConnect(handleConnect)
 		];
 	}
