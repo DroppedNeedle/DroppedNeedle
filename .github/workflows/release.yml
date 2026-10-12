@@ -45,6 +45,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
       publish: ${{ steps.version.outputs.publish }}
+      latest: ${{ steps.latest.outputs.latest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -83,6 +84,52 @@ jobs:
             echo "prerelease=$prerelease"
             echo "publish=$publish"
           } >> "$GITHUB_OUTPUT"
+
+      # The server gives the crate version to plugins and in its user agent,
+      # so it has to agree with the tag the image is published under.
+      - name: Check the version matches the crate
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          crate="$(awk '
+            /^\[/ { in_package = ($0 == "[package]") }
+            in_package && /^version[[:space:]]*=/ {
+              gsub(/^[^"]*"|".*$/, "")
+              print
+              exit
+            }' server/Cargo.toml)"
+          if [[ -z "$crate" ]]; then
+            echo "::error::No package version found in server/Cargo.toml."
+            exit 1
+          fi
+          if [[ "v$crate" != "$VERSION" ]]; then
+            echo "::error::$VERSION does not match version $crate in server/Cargo.toml. Bump the crate version before tagging."
+            exit 1
+          fi
+
+      # latest only moves forward: a pre-release never moves it, and neither
+      # does a patch to an older line. The full versions already tagged in
+      # the repository count as released.
+      - name: Decide whether latest moves
+        id: latest
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          highest="$(git tag --list 'v*' \
+            | awk -v self="$VERSION" '$0 != self && /^v[0-9]+\.[0-9]+\.[0-9]+$/' \
+            | sort -V | tail -n 1)"
+
+          latest=false
+          if [[ "$PRERELEASE" == "true" ]]; then
+            echo "$VERSION is a pre-release and leaves latest alone."
+          elif [[ "$(printf '%s\n' "$highest" "$VERSION" | sort -V | tail -n 1)" == "$VERSION" ]]; then
+            latest=true
+            echo "$VERSION is newer than ${highest:-every other release} and moves latest."
+          else
+            echo "$VERSION is older than $highest and leaves latest alone."
+          fi
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
 
       - name: Check the commit is on the release branch
         run: |
@@ -233,9 +280,8 @@ jobs:
             type=gha,scope=linux/arm64
           provenance: false
 
-      # A pre-release never moves latest.
       - name: Tag latest
-        if: env.PUBLISH == 'true' && needs.checks.outputs.prerelease == 'false'
+        if: env.PUBLISH == 'true' && needs.checks.outputs.latest == 'true'
         run: |
           docker buildx imagetools create \
             -t "ghcr.io/droppedneedle/droppedneedle:latest" \
