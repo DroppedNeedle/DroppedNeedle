@@ -388,6 +388,7 @@ impl From<GroupDetail> for ArtistDuplicateGroupDetail {
 
 /// Group list filters.
 #[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ArtistGroupListQuery {
     /// Page size, 1 to 100 (default 50).
     pub limit: Option<usize>,

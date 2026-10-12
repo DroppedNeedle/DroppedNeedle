@@ -83,6 +83,7 @@ pub struct DropImportMatchRequest {
 
 /// List filter.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct DropImportJobsQuery {
     /// Admins: every user's jobs.
     #[serde(default)]

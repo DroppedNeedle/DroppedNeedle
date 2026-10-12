@@ -179,6 +179,7 @@ pub struct EditionChoiceView {
 
 /// Which edition to plan.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct EditionPlanQuery {
     /// Any MusicBrainz release; the album's current edition when absent.
     pub release_mbid: Option<String>,
@@ -277,6 +278,7 @@ impl From<EditionPlan> for EditionPlanView {
 
 /// Paging for the unconfirmed list.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct UnconfirmedQuery {
     /// `unconfirmed` (default) or `unmatched`.
     pub state: Option<String>,

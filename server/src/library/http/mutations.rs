@@ -33,6 +33,7 @@ pub fn mutations_router() -> Router<LibrarySetup> {
 
 /// Album removal options.
 #[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct RemoveAlbumQuery {
     /// Move the album's files into the recycle bin too. Off by default:
     /// the album only leaves the catalog.
@@ -46,6 +47,7 @@ pub struct RemoveAlbumQuery {
 
 /// Track removal options.
 #[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct RemoveTrackQuery {
     /// Move the track's file into the recycle bin too. On by default, as
     /// in v2 (where it deleted the file outright).

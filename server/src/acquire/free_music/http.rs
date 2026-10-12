@@ -75,6 +75,7 @@ pub struct FreeMusicHistoryClearResponse {
 
 /// Scope filter.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct FreeMusicScopeQuery {
     /// Admins: every user's tasks.
     #[serde(default)]

@@ -5695,9 +5695,9 @@
         "parameters": [
           {
             "name": "all",
-            "in": "path",
+            "in": "query",
             "description": "Admins: every user's tasks.",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "boolean"
             }
@@ -5725,9 +5725,9 @@
         "parameters": [
           {
             "name": "all",
-            "in": "path",
+            "in": "query",
             "description": "Admins: every user's tasks.",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "boolean"
             }
@@ -6316,9 +6316,9 @@
         "parameters": [
           {
             "name": "all",
-            "in": "path",
+            "in": "query",
             "description": "Admins: every user's jobs.",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "boolean"
             }
@@ -7059,14 +7059,11 @@
           },
           {
             "name": "release_mbid",
-            "in": "path",
+            "in": "query",
             "description": "Any MusicBrainz release; the album's current edition when absent.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -7216,58 +7213,49 @@
           },
           {
             "name": "title",
-            "in": "path",
+            "in": "query",
             "description": "Release title; required unless `release_group_mbid` is given.",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string"
             }
           },
           {
             "name": "artist",
-            "in": "path",
+            "in": "query",
             "description": "Artist name; blank searches every artist.",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string"
             }
           },
           {
             "name": "release_group_mbid",
-            "in": "path",
+            "in": "query",
             "description": "List every release of this release group instead of searching by\ntitle, so any edition of the album can be chosen.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "limit",
-            "in": "path",
+            "in": "query",
             "description": "Page size, 1 to 12 (default 12).",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int32",
               "minimum": 0
             }
           },
           {
             "name": "offset",
-            "in": "path",
+            "in": "query",
             "description": "Page offset (default 0).",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int32",
               "minimum": 0
             }
@@ -7743,18 +7731,18 @@
           },
           {
             "name": "delete_files",
-            "in": "path",
+            "in": "query",
             "description": "Move the album's files into the recycle bin too. Off by default:\nthe album only leaves the catalog.",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "boolean"
             }
           },
           {
             "name": "stop_wanted",
-            "in": "path",
+            "in": "query",
             "description": "Stop the album's wanted watch (default). False keeps looking for a\nreplacement: a fulfilled watch starts watching again.",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "boolean"
             }
@@ -8118,54 +8106,38 @@
         "parameters": [
           {
             "name": "limit",
-            "in": "path",
+            "in": "query",
             "description": "Page size, 1 to 100 (default 50).",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "minimum": 0
             }
           },
           {
             "name": "cursor",
-            "in": "path",
+            "in": "query",
             "description": "`next_cursor` from the previous page.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "state",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "oneOf": [
-                {
-                  "type": "null"
-                },
-                {
-                  "$ref": "#/components/schemas/ArtistGroupState"
-                }
-              ]
+              "$ref": "#/components/schemas/ArtistGroupState"
             }
           },
           {
             "name": "search",
-            "in": "path",
+            "in": "query",
             "description": "Matches the group name or any member's name.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -9479,25 +9451,19 @@
         "parameters": [
           {
             "name": "limit",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "minimum": 0
             }
           },
           {
             "name": "cursor",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -9719,37 +9685,28 @@
           },
           {
             "name": "limit",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "minimum": 0
             }
           },
           {
             "name": "cursor",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "finding_category",
-            "in": "path",
+            "in": "query",
             "description": "Repairs: `valid`, `safe_detach`, `needs_review`, `unverifiable`,\n`manual_identity`. Preparations: `ready`, `mapping_ready`,\n`exact_release_required`, `exact_release_auto_accepted`,\n`needs_review`, `unverifiable`.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -10311,25 +10268,19 @@
         "parameters": [
           {
             "name": "limit",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "minimum": 0
             }
           },
           {
             "name": "cursor",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -10604,37 +10555,28 @@
           },
           {
             "name": "limit",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "minimum": 0
             }
           },
           {
             "name": "cursor",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "finding_category",
-            "in": "path",
+            "in": "query",
             "description": "Repairs: `valid`, `safe_detach`, `needs_review`, `unverifiable`,\n`manual_identity`. Preparations: `ready`, `mapping_ready`,\n`exact_release_required`, `exact_release_auto_accepted`,\n`needs_review`, `unverifiable`.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -13455,9 +13397,9 @@
           },
           {
             "name": "delete_file",
-            "in": "path",
+            "in": "query",
             "description": "Move the track's file into the recycle bin too. On by default, as\nin v2 (where it deleted the file outright).",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "boolean"
             }
@@ -13584,38 +13526,29 @@
         "parameters": [
           {
             "name": "state",
-            "in": "path",
+            "in": "query",
             "description": "`unconfirmed` (default) or `unmatched`.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "limit",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int32",
               "minimum": 0
             }
           },
           {
             "name": "offset",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int32",
               "minimum": 0
             }

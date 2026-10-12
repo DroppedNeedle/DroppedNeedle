@@ -28348,12 +28348,12 @@ export interface operations {
     };
     list_tasks_handler: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query?: {
                 /** @description Admins: every user's tasks. */
-                all: boolean;
+                all?: boolean;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -28370,12 +28370,12 @@ export interface operations {
     };
     clear_history_handler: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query?: {
                 /** @description Admins: every user's tasks. */
-                all: boolean;
+                all?: boolean;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -28791,12 +28791,12 @@ export interface operations {
     };
     list_jobs_handler: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query?: {
                 /** @description Admins: every user's jobs. */
-                all: boolean;
+                all?: boolean;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -29511,13 +29511,14 @@ export interface operations {
     };
     plan_edition: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Any MusicBrainz release; the album's current edition when absent. */
+                release_mbid?: string;
+            };
             header?: never;
             path: {
                 /** @description Local album id */
                 album_id: string;
-                /** @description Any MusicBrainz release; the album's current edition when absent. */
-                release_mbid: string | null;
             };
             cookie?: never;
         };
@@ -29677,24 +29678,25 @@ export interface operations {
     };
     search_reidentification_releases: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Local album id */
-                album_id: string;
+            query?: {
                 /** @description Release title; required unless `release_group_mbid` is given. */
-                title: string;
+                title?: string;
                 /** @description Artist name; blank searches every artist. */
-                artist: string;
+                artist?: string;
                 /**
                  * @description List every release of this release group instead of searching by
                  *     title, so any edition of the album can be chosen.
                  */
-                release_group_mbid: string | null;
+                release_group_mbid?: string;
                 /** @description Page size, 1 to 12 (default 12). */
-                limit: number | null;
+                limit?: number;
                 /** @description Page offset (default 0). */
-                offset: number | null;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
             };
             cookie?: never;
         };
@@ -30208,21 +30210,22 @@ export interface operations {
     };
     remove_album: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Local album id or release-group MBID */
-                id: string;
+            query?: {
                 /**
                  * @description Move the album's files into the recycle bin too. Off by default:
                  *     the album only leaves the catalog.
                  */
-                delete_files: boolean;
+                delete_files?: boolean;
                 /**
                  * @description Stop the album's wanted watch (default). False keeps looking for a
                  *     replacement: a fulfilled watch starts watching again.
                  */
-                stop_wanted: boolean;
+                stop_wanted?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Local album id or release-group MBID */
+                id: string;
             };
             cookie?: never;
         };
@@ -30547,17 +30550,17 @@ export interface operations {
     };
     list_artist_duplicate_groups: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query?: {
                 /** @description Page size, 1 to 100 (default 50). */
-                limit: number | null;
+                limit?: number;
                 /** @description `next_cursor` from the previous page. */
-                cursor: string | null;
-                state: null | components["schemas"]["ArtistGroupState"];
+                cursor?: string;
+                state?: components["schemas"]["ArtistGroupState"];
                 /** @description Matches the group name or any member's name. */
-                search: string | null;
+                search?: string;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -31935,12 +31938,12 @@ export interface operations {
     };
     list_repairs: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                limit: number | null;
-                cursor: string | null;
+            query?: {
+                limit?: number;
+                cursor?: string;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -32174,20 +32177,21 @@ export interface operations {
     };
     repair_findings: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Repair job id */
-                job_id: string;
-                limit: number | null;
-                cursor: string | null;
+            query?: {
+                limit?: number;
+                cursor?: string;
                 /**
                  * @description Repairs: `valid`, `safe_detach`, `needs_review`, `unverifiable`,
                  *     `manual_identity`. Preparations: `ready`, `mapping_ready`,
                  *     `exact_release_required`, `exact_release_auto_accepted`,
                  *     `needs_review`, `unverifiable`.
                  */
-                finding_category: string | null;
+                finding_category?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Repair job id */
+                job_id: string;
             };
             cookie?: never;
         };
@@ -32852,12 +32856,12 @@ export interface operations {
     };
     list_preparations: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                limit: number | null;
-                cursor: string | null;
+            query?: {
+                limit?: number;
+                cursor?: string;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -33146,20 +33150,21 @@ export interface operations {
     };
     preparation_findings: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Preparation job id */
-                job_id: string;
-                limit: number | null;
-                cursor: string | null;
+            query?: {
+                limit?: number;
+                cursor?: string;
                 /**
                  * @description Repairs: `valid`, `safe_detach`, `needs_review`, `unverifiable`,
                  *     `manual_identity`. Preparations: `ready`, `mapping_ready`,
                  *     `exact_release_required`, `exact_release_auto_accepted`,
                  *     `needs_review`, `unverifiable`.
                  */
-                finding_category: string | null;
+                finding_category?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Preparation job id */
+                job_id: string;
             };
             cookie?: never;
         };
@@ -35920,16 +35925,17 @@ export interface operations {
     };
     remove_track: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Local track id */
-                id: string;
+            query?: {
                 /**
                  * @description Move the track's file into the recycle bin too. On by default, as
                  *     in v2 (where it deleted the file outright).
                  */
-                delete_file: boolean;
+                delete_file?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Local track id */
+                id: string;
             };
             cookie?: never;
         };
@@ -36071,14 +36077,14 @@ export interface operations {
     };
     list_unconfirmed: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query?: {
                 /** @description `unconfirmed` (default) or `unmatched`. */
-                state: string | null;
-                limit: number | null;
-                offset: number | null;
+                state?: string;
+                limit?: number;
+                offset?: number;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;

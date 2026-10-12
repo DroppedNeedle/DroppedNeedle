@@ -199,6 +199,7 @@ pub struct PreparationEstimateView {
 
 /// A page of jobs.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct HistoryQuery {
     pub limit: Option<usize>,
     pub cursor: Option<String>,
@@ -206,6 +207,7 @@ pub struct HistoryQuery {
 
 /// A page of findings.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct FindingsQuery {
     pub limit: Option<usize>,
     pub cursor: Option<String>,
