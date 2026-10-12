@@ -6,8 +6,11 @@
 //! fail closed before any mutation. Media symlinks are never followed;
 //! that is a security boundary, not a profile toggle.
 
+use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 
+use super::place::{self, PlacementMode};
 use super::{HIDDEN_PREFIX, PublishError};
 
 /// A configured library root: a stable id plus its absolute directory.
@@ -23,9 +26,15 @@ pub struct Root {
 /// journal, snapshots, and baselines live in the application database;
 /// the only things written under a root are the files themselves and
 /// the hidden staging and backup temps beside them.
+///
+/// Each root also carries how files can be placed under it
+/// ([`PlacementMode`]), found by a probe the first time a bundle targets
+/// the root. It is held in memory only and shared by every clone, so a
+/// rebuilt sandbox starts every root at `Unknown` again.
 #[derive(Debug, Clone)]
 pub struct Sandbox {
     roots: Vec<Root>,
+    modes: Arc<Mutex<BTreeMap<String, PlacementMode>>>,
 }
 
 impl Sandbox {
@@ -44,7 +53,48 @@ impl Sandbox {
                 )));
             }
         }
-        Ok(Self { roots })
+        Ok(Self {
+            roots,
+            modes: Arc::default(),
+        })
+    }
+
+    /// How files are placed under a root. `Unknown` until a bundle has
+    /// targeted it.
+    pub fn placement_mode(&self, root_id: &str) -> PlacementMode {
+        self.modes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(root_id)
+            .copied()
+            .unwrap_or(PlacementMode::Unknown)
+    }
+
+    /// Probe a root whose placement mode is still `Unknown`, because a
+    /// bundle is about to place files under it. This is the only time the
+    /// probe writes to a library. A root that answers `Unknown` again is
+    /// probed again for the next bundle.
+    pub fn probe_placement(&self, root_id: &str) -> Result<PlacementMode, PublishError> {
+        let known = self.placement_mode(root_id);
+        if known != PlacementMode::Unknown {
+            return Ok(known);
+        }
+        let mode = place::probe(self.root_dir(root_id)?);
+        self.store_placement_mode(root_id, mode);
+        Ok(mode)
+    }
+
+    /// Fix a root's placement mode without probing. Tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_placement_mode(&self, root_id: &str, mode: PlacementMode) {
+        self.store_placement_mode(root_id, mode);
+    }
+
+    fn store_placement_mode(&self, root_id: &str, mode: PlacementMode) {
+        self.modes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(root_id.to_owned(), mode);
     }
 
     /// Look up a root directory by stable id.

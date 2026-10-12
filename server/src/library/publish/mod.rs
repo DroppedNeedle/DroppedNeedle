@@ -77,6 +77,7 @@ pub mod generated;
 pub mod journal;
 pub mod operations;
 pub mod paths;
+pub mod place;
 pub mod planner;
 pub mod plugin_files;
 pub mod publisher;
@@ -92,6 +93,7 @@ pub use journal::{
     FileJournal, JournalKind, JournalReplacement, JournalState, JournalStore, fsync_dir,
 };
 pub use paths::{CollisionKey, Sandbox, collision_key};
+pub use place::{PlaceError, Placed, PlacementMode, place_from_hidden};
 pub use planner::{
     AutomaticEligibility, AutomaticHold, Capability, CapabilityGate, DiskPreflight,
     FileFingerprint, GeneratedOutput, PlanBundle, PlanItem, PlanKind, ReleaseIdentity, Replacement,
