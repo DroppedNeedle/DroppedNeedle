@@ -20,15 +20,6 @@ pub const UNSET_BITRATE_KBPS: i64 = 1_000_000_000;
 /// Max `timeOffset` / transcode `offset` seconds.
 pub const MAX_OFFSET_SECONDS: f64 = 604_800.0;
 
-/// Streamable audio suffixes. Anything else is never streamed
-/// (v2 refuses non-audio suffixes in `stream_track`).
-pub fn is_audio_suffix(suffix: &str) -> bool {
-    matches!(
-        suffix.to_lowercase().as_str(),
-        "flac" | "mp3" | "ogg" | "opus" | "m4a" | "aac" | "wav" | "wma"
-    )
-}
-
 /// Content type for an audio suffix (v2 `LocalFilesService` table).
 pub fn content_type_for(suffix: &str) -> Option<&'static str> {
     match suffix.to_lowercase().as_str() {

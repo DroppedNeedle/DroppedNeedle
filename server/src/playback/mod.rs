@@ -61,4 +61,4 @@ pub mod warmup;
 
 pub use handlers::playback_router;
 pub use services::PlaybackDeps;
-pub use warmup::{TokioSleeper, WarmupHandles, WarmupScope, WarmupStats, spawn_warmup_loops};
+pub use warmup::{TokioSleeper, WarmupScope, WarmupStats};

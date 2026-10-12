@@ -137,12 +137,6 @@ impl CompatRateLimits {
         Some(cooldown as u64)
     }
 
-    /// Drop a principal's buckets (v2 `clear_principal`).
-    pub fn clear_principal(&mut self, principal: &str) {
-        self.browse_by_principal.remove(principal);
-        self.mutation_by_principal.remove(principal);
-    }
-
     /// Empty all state (tests).
     pub fn reset(&mut self) {
         self.public_by_ip.clear();

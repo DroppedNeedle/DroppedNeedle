@@ -395,15 +395,6 @@ pub fn out_media_type(out_format: &OutFormat) -> &'static str {
     }
 }
 
-/// Filename suffix for a transcode output codec (v2 `out_suffix`).
-pub fn out_suffix(out_format: &OutFormat) -> &'static str {
-    match out_format {
-        OutFormat::Mp3 => "mp3",
-        OutFormat::Opus => "opus",
-        OutFormat::AacTs => "ts",
-    }
-}
-
 /// Back-of-envelope transcode size in bytes, for the optional Content-Length
 /// (`estimateContentLength`): bitrate over the remaining duration after the
 /// seek offset. `None` for a direct plan.
@@ -420,27 +411,6 @@ pub fn estimate_size(plan: &StreamPlan) -> Option<u64> {
     let seconds = (source_duration_seconds - start_seconds).max(0.0);
     let bytes = *out_bitrate_kbps as f64 * 1000.0 / 8.0 * seconds;
     Some(bytes.max(0.0) as u64)
-}
-
-/// Response headers the gateway sets on a transcode response, ported from v2
-/// `TranscodeService.stream`: no ranges, no caching, identity encoding, and
-/// the estimated length only when the client asked for it. Empty for direct.
-pub fn transcode_response_headers(
-    plan: &StreamPlan,
-    estimate_content_length: bool,
-) -> Vec<(String, String)> {
-    if !plan.is_transcode() {
-        return Vec::new();
-    }
-    let mut headers = vec![
-        ("Accept-Ranges".to_owned(), "none".to_owned()),
-        ("Cache-Control".to_owned(), "no-store".to_owned()),
-        ("Content-Encoding".to_owned(), "identity".to_owned()),
-    ];
-    if estimate_content_length && let Some(size) = estimate_size(plan) {
-        headers.push(("Content-Length".to_owned(), size.to_string()));
-    }
-    headers
 }
 
 /// True when an `ffmpeg` executable is on `PATH` (v2 `ffmpeg_available`, the
@@ -1029,7 +999,7 @@ pub trait Transcoder: Send + Sync {
     /// stream. The lease travels inside the body and releases exactly once
     /// when the stream ends, fails, closes, or drops. Port of v2
     /// `TranscodeService.stream`, minus the HTTP response wrapping, which is
-    /// the gateway's job (see [`transcode_response_headers`]).
+    /// the gateway's job.
     fn stream(
         &self,
         source_path: &Path,

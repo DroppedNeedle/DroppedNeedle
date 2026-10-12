@@ -16,8 +16,6 @@ use super::error::{NOT_AUTHORIZED, NOT_FOUND, SubsonicError};
 pub const API_VERSION: &str = "1.16.1";
 /// Envelope namespace.
 pub const NAMESPACE: &str = "http://subsonic.org/restapi";
-/// Advertised server type when no name is configured.
-pub const DEFAULT_SERVER_NAME: &str = "DroppedNeedle";
 
 /// An ordered response value. Built by the models; [`Val::stripped`]
 /// removes nulls before rendering.

@@ -36,7 +36,3 @@ pub const PREFLIGHT_STATUS: u16 = 204;
 pub fn is_preflight(method: &str, path: &str) -> bool {
     method.eq_ignore_ascii_case("OPTIONS") && path_case::is_compat_path(path)
 }
-
-/// Credentials are never allowed on compat CORS (no
-/// `Access-Control-Allow-Credentials` header is ever emitted).
-pub const ALLOWS_CREDENTIALS: bool = false;
