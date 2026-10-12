@@ -644,8 +644,10 @@ pub async fn run(
 /// backup folders. Also finishes the rollback of an interrupted upgrade.
 pub fn undo(dirs: &DataDirs) -> Result<(), UpgradeError> {
     // No lock file is created unless there is something to undo.
-    if detect(dirs) != Layout::Interrupted {
-        require_backup(dirs)?;
+    match detect(dirs) {
+        Layout::Interrupted => {}
+        Layout::V2 => return Err(UpgradeError::AlreadyV2),
+        _ => require_backup(dirs)?,
     }
     let _lock = lock_exclusive(dirs)?;
     match detect(dirs) {

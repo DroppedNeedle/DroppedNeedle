@@ -892,6 +892,16 @@ fn undo_returns_the_v2_files_and_no_backup_keeps_none() {
         b"mine"
     );
 
+    // Back on v2 there is nothing to undo, backup or not.
+    let already_v2 = tool_in(&root, &["upgrade", "--undo", "--yes"]);
+    assert!(!already_v2.status.success());
+    assert!(
+        stderr_of(&already_v2).contains("already holds v2 data"),
+        "stderr: {}",
+        stderr_of(&already_v2)
+    );
+    assert_eq!(data_trees(&root), original);
+
     let run = tool_in(&root, &["upgrade", "--no-backup"]);
     assert!(run.status.success(), "stderr: {}", stderr_of(&run));
     assert!(is_v3(&root));
