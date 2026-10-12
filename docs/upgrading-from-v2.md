@@ -176,6 +176,93 @@ report lists it too (`left_behind`). In short:
 - Plugins. Install them again from Settings > Plugins; their settings come
   across.
 
+## What changed from v2
+
+Things v2 did that v3 does differently or no longer does. Read this before
+you upgrade: the first entry needs a change on your side first.
+
+### Do this before you upgrade
+
+- **Callback addresses.** v2 was called back on three `/api/v1` addresses.
+  v3 answers only on its own, so the old ones stop working with the
+  upgrade:
+  - Single sign-on (OIDC): in your provider, change the redirect URI from
+    `/api/v1/auth/oidc/callback` to `/api/v3/auth/oidc/callback`, and check
+    that the redirect URI under Settings > Security matches. Until both
+    are changed, single sign-on fails.
+  - Spotify playlist import: in the Spotify developer dashboard, add the
+    redirect URI ending in `/api/v3/acquire/spotify/auth/callback` to your
+    app. Until it is there, Connect on the Spotify card fails.
+  - MusicBrainz contributions: nothing is registered anywhere, but a
+    release editor tab opened from v2 returns to
+    `/api/v1/library/contributions/musicbrainz/callback`. Save or close
+    those tabs before you upgrade. Contributions started in v3 use the v3
+    address.
+
+### Removed
+
+- **Free Music.** v2 had its own download client for Creative Commons and
+  public-domain music from the Internet Archive. v3 has none. Its settings
+  tab and its downloads list are gone. Music it already downloaded stays in
+  your library. If Free Music was your only source, set up slskd, Usenet or
+  a plugin source.
+- **v2 plugins.** v2 plugins do not load in v3. Only plugins written for
+  the current plugin API are accepted. Port yours first ("Porting a v2
+  plugin" in [PLUGINS.md](../PLUGINS.md)), or ask its author to, then
+  install it again from Settings > Plugins.
+- **v2 profile share codes.** A Library Management profile share code made
+  in v2 does not import into v3. Share the profile again from v3 to get a
+  code v3 reads.
+- **Wanted watches going dormant.** v2 stopped checking a watch once it was
+  older than "Go dormant after (days)", 365 by default, until someone
+  resumed it. v3 keeps checking a watch until the album arrives or someone
+  stops it, and the setting is gone. Stop the watches you no longer want.
+- **"Restart under current policy".** v2 saved the quality policy each
+  download started with and could restart a download under the policy in
+  force now (`POST /api/v1/downloads/<id>/restart-with-current-policy`). v3
+  saves no policy per download. It reads the current policy as it works, so
+  a policy change already applies to what is waiting. Nothing to do.
+- **Similar-songs modes for Subsonic and Jellyfin apps.** v2's Connect Apps
+  settings offered three: local only, related artists from MusicBrainz, and
+  Last.fm or ListenBrainz when linked. v3 always answers from your own
+  library and has no setting. If you used one of the other two modes, the
+  similar songs your apps show will change.
+- **The staged "Match exact edition" job.** v2 downloaded a complete exact
+  release as a job with its own steps: a space check, a download, a preview,
+  then Apply, with retry, recheck and cancel along the way. In v3 you choose
+  the edition on the album page and press one button to get the tracks it is
+  missing. The album page shows what is being fetched and what failed, and
+  lets you retry or stop it.
+- **The AudioDB daily sweep.** v2 went through your library once a day
+  fetching artist and album images from TheAudioDB, and queued what you
+  browsed for the same. v3 fetches them after a library scan and when you
+  press "Refresh library images" under Settings > Cache. An artist image is
+  also fetched when a page first needs it. Nothing to do. A page you have
+  never opened may take a moment longer to show its images.
+- **Cache tab buttons and tiles.** v2's cache was split into memory, disk
+  metadata and library parts, each with its own count and its own clear
+  button. Those parts no longer exist. Settings > Cache in v3 counts cached
+  provider responses and cached images, and clears one provider, the
+  images, or everything.
+- **Max connections.** v2 had a "max connections" setting for outbound HTTP,
+  also read from `HTTP_MAX_CONNECTIONS`. v3 has neither. The nearest is the
+  `HTTP_MAX_KEEPALIVE` environment variable, the number of idle connections
+  kept per host. Remove `HTTP_MAX_CONNECTIONS` from your compose file if you
+  set it; v3 ignores it.
+- **slskd concurrency variables.** v2 read
+  `DOWNLOAD_CLIENT_CONCURRENT_SEARCHES` and
+  `DOWNLOAD_CLIENT_CONCURRENT_ENQUEUES`, both 1 by default, to limit how
+  hard it pushed slskd. v3 ignores them. It waits and tries again when slskd
+  answers that it is busy. Remove them from your compose file if you set them.
+
+### Moved
+
+- **Playlist "request missing" for scripts.** v2 had a server route,
+  `POST /api/v1/playlists/<id>/request-missing`. The button on the playlist
+  page works as before, but v3 has no such route: the page works out the
+  missing albums itself and sends them to `POST /api/v3/requests/batches`.
+  A script that called the old route has to do the same.
+
 ## Library Management originals
 
 v3 never changes a file whose v2 original did not come across. If the
