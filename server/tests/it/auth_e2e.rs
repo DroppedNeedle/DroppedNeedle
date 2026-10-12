@@ -3180,9 +3180,45 @@ async fn rate_limits_key_by_client_and_username() {
         assert_eq!(status, StatusCode::OK);
     }
 
-    // Guessing one username from many addresses at once meets the
-    // per-username wall (burst 5) even though every address is fresh.
-    let peers: Vec<String> = (0..8).map(|n| format!("203.0.113.{n}:1")).collect();
+    // One address hammering a username hits its own wall (burst 5) and
+    // leaves the name open to everyone else. Two addresses in one IPv6 /64
+    // are that one client.
+    let guess = |peer: &'static str| {
+        call_from(
+            app.clone(),
+            peer,
+            "/api/v3/auth/login",
+            Some(json!({"username": "victim", "password": "wrong-password-123"})),
+        )
+    };
+    let attempts = (0..8).map(|n| {
+        guess(if n % 2 == 0 {
+            "[2001:db8:1:2::1]:1"
+        } else {
+            "[2001:db8:1:2:aaaa::9]:1"
+        })
+    });
+    let statuses = futures_util::future::join_all(attempts).await;
+    let limited = statuses
+        .iter()
+        .filter(|status| **status == StatusCode::TOO_MANY_REQUESTS)
+        .count();
+    assert_eq!(limited, 3, "{statuses:?}");
+    assert_eq!(
+        guess("[2001:db8:1:3::1]:1").await,
+        StatusCode::UNAUTHORIZED,
+        "another client can still try the same username"
+    );
+}
+
+#[tokio::test]
+async fn login_guesses_from_fresh_addresses_meet_the_username_wall() {
+    let e2e = E2e::open("username-wall").await;
+    let app = e2e.router();
+
+    // No address repeats, so no per-client bucket ever fills: only the
+    // username's own budget (burst 50) can refuse these.
+    let peers: Vec<String> = (0..60).map(|n| format!("203.0.113.{n}:1")).collect();
     let attempts = peers.iter().map(|peer| {
         call_from(
             app.clone(),
@@ -3192,11 +3228,20 @@ async fn rate_limits_key_by_client_and_username() {
         )
     });
     let statuses = futures_util::future::join_all(attempts).await;
+    // The budget refills on the real clock, so the count of refusals moves
+    // with how fast the attempts land. The wall is that some are refused.
     let limited = statuses
         .iter()
         .filter(|status| **status == StatusCode::TOO_MANY_REQUESTS)
         .count();
-    assert_eq!(limited, 3, "{statuses:?}");
+    assert!(limited >= 5, "{statuses:?}");
+    assert!(
+        statuses.iter().all(|status| matches!(
+            *status,
+            StatusCode::UNAUTHORIZED | StatusCode::TOO_MANY_REQUESTS
+        )),
+        "{statuses:?}"
+    );
 }
 
 #[tokio::test]

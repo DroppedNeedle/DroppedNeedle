@@ -3,7 +3,9 @@
 //!
 //! Every request takes one token from a bucket keyed by (class, caller).
 //! The caller is the signed-in user when the session gate resolved one, and
-//! the client IP otherwise, so one client can only exhaust its own budget.
+//! the client address otherwise, so one client can only exhaust its own
+//! budget. An IPv6 client is its /64: that is what one subscriber is handed,
+//! and keying the full address would give it a fresh bucket per request.
 //! Classes come from the table below: exact paths for single endpoints,
 //! segment-bounded prefixes for families (`/api/v3/auth/setup` never
 //! matches `/api/v3/auth/setup/status`). Covers and streams have their own
@@ -11,8 +13,10 @@
 //! The numbers keep v2's (default 30/s burst 60, login 2/s burst 5, setup
 //! 1/s burst 3, search and discover 10/s burst 20).
 //!
-//! Login is also limited per username inside the login handler, so a
-//! password guesser rotating addresses still meets a wall.
+//! Login is also limited per username inside the login handler, across all
+//! clients: the wall a password guesser rotating addresses meets. That
+//! budget sits well above what the per-client login bucket lets one client
+//! spend, so one client hammering a username cannot keep its owner at 429.
 //!
 //! Buckets live in a [`BoundedMap`]: idle entries expire after 15 minutes
 //! (a full refill takes far less) and the map never holds more than
@@ -20,13 +24,13 @@
 //! Every 429 carries `Retry-After` and the budget headers.
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::Mutex;
 use std::time::Instant;
 
 use axum::{
     extract::{ConnectInfo, Request, State},
-    http::{Extensions, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode},
     middleware::Next,
     response::Response,
 };
@@ -192,8 +196,11 @@ impl PathMatch {
 
 /// Class for all `/api/v3/*` traffic without an override.
 pub const DEFAULT_CLASS: RateClass = class("default", 30.0, 60);
-/// Local login, per client and per username.
+/// Local login, per client.
 pub const LOGIN_CLASS: RateClass = class("login", 2.0, 5);
+/// Local login for one username across all clients: five clients' worth of
+/// [`LOGIN_CLASS`] refill, ten of burst.
+pub const LOGIN_USERNAME_CLASS: RateClass = class("login-username", 10.0, 50);
 /// Failed authentications on protected paths, per client address. Charged
 /// by the session gate, which answers before the request limiter runs.
 pub const AUTH_FAILURE_CLASS: RateClass = class("auth-failure", 1.0, 20);
@@ -347,28 +354,67 @@ impl RateLimiter {
         }
     }
 
+    /// Take one [`LOGIN_USERNAME_CLASS`] token for a login as `username`,
+    /// whoever is trying. The request limiter has already charged the
+    /// client's own [`LOGIN_CLASS`] bucket by the time a handler calls this.
+    pub fn check_login(&self, username: &str) -> AcquireOutcome {
+        self.check_login_at(username, self.started.elapsed().as_secs_f64())
+    }
+
+    /// [`RateLimiter::check_login`] at `now` (monotonic seconds).
+    pub fn check_login_at(&self, username: &str, now: f64) -> AcquireOutcome {
+        self.check_at(LOGIN_USERNAME_CLASS, &username_key(username), now)
+    }
+
     /// Caller key for a request: the signed-in user when the session gate
     /// resolved one, else the client address.
     pub fn caller_key(&self, request: &Request) -> String {
         if let Some(session) = request.extensions().get::<CurrentSession>() {
             return format!("user:{}", session.user_id);
         }
-        ip_key(
-            request.extensions(),
-            request.headers(),
-            &self.trusted_proxies,
-        )
+        let peer = request.extensions().get::<ConnectInfo<SocketAddr>>();
+        self.client_key(peer.map(|info| info.0), request.headers())
+    }
+
+    /// Key for the client behind `peer`, resolved by [`client_ip`], or
+    /// `ip:unknown` when the server runs without connect info (in-process
+    /// callers all share that one key).
+    fn client_key(&self, peer: Option<SocketAddr>, headers: &HeaderMap) -> String {
+        match peer {
+            Some(peer) => address_key(client_ip(peer, headers, &self.trusted_proxies)),
+            None => "ip:unknown".to_owned(),
+        }
     }
 }
 
-/// `ip:<addr>` for the client resolved by [`client_ip`], or `ip:unknown`
-/// when the server runs without connect info (in-process callers all share
-/// that one key).
-fn ip_key(extensions: &Extensions, headers: &HeaderMap, trusted: &TrustedProxies) -> String {
-    match extensions.get::<ConnectInfo<SocketAddr>>() {
-        Some(ConnectInfo(peer)) => format!("ip:{}", client_ip(*peer, headers, trusted)),
-        None => "ip:unknown".to_owned(),
+/// Bucket key for one client address: an IPv4 address, or the /64 an IPv6
+/// address sits in.
+fn address_key(ip: IpAddr) -> String {
+    match ip {
+        IpAddr::V4(ip) => format!("ip:{ip}"),
+        IpAddr::V6(ip) => {
+            let network = Ipv6Addr::from(u128::from(ip) & (u128::MAX << 64));
+            format!("ip:{network}/64")
+        }
     }
+}
+
+/// Most bytes of a login username that go into its bucket key.
+const USERNAME_KEY_BYTES: usize = 64;
+
+/// Bucket key for a login username: trimmed, cut to
+/// [`USERNAME_KEY_BYTES`] and lowercased. The login body may carry a name
+/// megabytes long, and the key outlives the request. Cut rather than
+/// hashed: an account's username is at most 32 characters and fits whole,
+/// so the only names that end up sharing a bucket are ones no account has.
+fn username_key(username: &str) -> String {
+    let name = username.trim();
+    let mut end = name.len().min(USERNAME_KEY_BYTES);
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    let kept = name.get(..end).unwrap_or_default();
+    format!("username:{}", kept.to_lowercase())
 }
 
 /// Machine code for exhausted buckets.
@@ -445,6 +491,86 @@ mod tests {
         assert!(denied.retry_after_secs >= 1);
         assert!(limiter.check_at(LOGIN_CLASS, "ip:10.0.0.2", 0.0).allowed);
         assert!(limiter.check_at(LOGIN_CLASS, "ip:10.0.0.1", 3.0).allowed);
+    }
+
+    #[test]
+    fn one_client_cannot_lock_a_username_for_everyone() {
+        // A login attempt as the app runs it: the request limiter charges
+        // the client, then the handler charges the username.
+        fn attempt(limiter: &RateLimiter, client: u32, now: f64) -> bool {
+            limiter
+                .check_at(LOGIN_CLASS, &format!("ip:client-{client}"), now)
+                .allowed
+                && limiter.check_login_at("victim", now).allowed
+        }
+
+        // One client trying ten times a second for a minute gets through at
+        // its own 2/s and never empties the username's budget.
+        let limiter = RateLimiter::new();
+        let admitted = (0..600)
+            .filter(|tick| attempt(&limiter, 1, f64::from(*tick) / 10.0))
+            .count();
+        assert!((120..=125).contains(&admitted), "{admitted}");
+        assert!(attempt(&limiter, 2, 60.0), "the owner still gets in");
+
+        // Guessing from a fresh address each time stops paying after the
+        // username's burst, until it refills.
+        let limiter = RateLimiter::new();
+        for client in 0..50 {
+            assert!(attempt(&limiter, client, 0.0), "client {client}");
+        }
+        assert!(!attempt(&limiter, 50, 0.0));
+        assert!(attempt(&limiter, 51, 1.0));
+    }
+
+    #[test]
+    fn username_keys_are_bounded_and_fold_case() {
+        assert_eq!(username_key(" Victim "), "username:victim");
+        // Past the cut nothing reaches the key, so a megabyte of username
+        // costs the map no more than a short one.
+        let long = |tail: char| format!("{}{}", "a".repeat(64), tail.to_string().repeat(100_000));
+        assert_eq!(username_key(&long('x')), username_key(&long('y')));
+        assert_eq!(
+            username_key(&long('x')).len(),
+            "username:".len() + USERNAME_KEY_BYTES
+        );
+        assert_ne!(username_key(&"a".repeat(64)), username_key(&"a".repeat(63)));
+        // The cut never lands inside a character.
+        let wide = username_key(&format!("a{}", "\u{e9}".repeat(100)));
+        assert_eq!(wide.len(), "username:".len() + USERNAME_KEY_BYTES - 1);
+
+        let limiter = RateLimiter::new();
+        for n in 0..1000 {
+            limiter.check_login_at(&format!("{}{n}", "a".repeat(64)), 0.0);
+        }
+        assert_eq!(limiter.buckets.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn an_ipv6_client_is_its_64() {
+        let key = |ip: &str| address_key(ip.parse().unwrap());
+        assert_eq!(key("2001:db8:1:2::1"), "ip:2001:db8:1:2::/64");
+        assert_eq!(
+            key("2001:db8:1:2:ffff:ffff:ffff:ffff"),
+            key("2001:db8:1:2::1")
+        );
+        assert_ne!(key("2001:db8:1:3::1"), key("2001:db8:1:2::1"));
+        assert_eq!(key("198.51.100.1"), "ip:198.51.100.1");
+
+        // Hopping addresses inside one /64 buys no fresh bucket.
+        let limiter = RateLimiter::new();
+        let from = |peer: &str| {
+            let peer: SocketAddr = peer.parse().unwrap();
+            limiter.client_key(Some(peer), &HeaderMap::new())
+        };
+        for host in 0..5 {
+            let key = from(&format!("[2001:db8:1:2::{host:x}]:1"));
+            assert!(limiter.check_at(LOGIN_CLASS, &key, 0.0).allowed);
+        }
+        let hop = from("[2001:db8:1:2:aaaa::9]:1");
+        assert!(!limiter.check_at(LOGIN_CLASS, &hop, 0.0).allowed);
+        let neighbour = from("[2001:db8:1:3::1]:1");
+        assert!(limiter.check_at(LOGIN_CLASS, &neighbour, 0.0).allowed);
     }
 
     #[test]

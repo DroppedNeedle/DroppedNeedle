@@ -10,7 +10,7 @@ use crate::auth::session::login::{
     INVALID_CREDENTIALS, LoginContext, LoginError, LoginRequest, LoginService,
 };
 use crate::auth::session::middleware::TrustedProxies;
-use crate::auth::session::rate_limit::{LOGIN_CLASS, RateLimiter, rate_limited_response};
+use crate::auth::session::rate_limit::{LOGIN_USERNAME_CLASS, RateLimiter, rate_limited_response};
 use crate::auth::session::store::{SessionKind, SessionRecord, SessionStore, now_unix};
 use crate::auth::session::tokens;
 use crate::auth::users::UsersDeps;
@@ -154,10 +154,12 @@ where
         &headers,
         state.trusted_proxies.is_trusted(peer.0),
     );
-    let username_key = format!("username:{}", body.username.trim().to_lowercase());
-    let budget = state.limits.check(LOGIN_CLASS, &username_key);
+    let budget = state.limits.check_login(&body.username);
     if !budget.allowed {
-        return Ok(rate_limited_response(LOGIN_CLASS, budget.retry_after_secs));
+        return Ok(rate_limited_response(
+            LOGIN_USERNAME_CLASS,
+            budget.retry_after_secs,
+        ));
     }
     let ctx = LoginContext {
         user_agent: user_agent_of(&headers),
