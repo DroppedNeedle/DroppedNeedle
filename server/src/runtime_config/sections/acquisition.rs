@@ -1,5 +1,5 @@
 //! Acquisition: quality tiers, the wanted watcher, source priority, the
-//! Usenet backend, Free Music, store links, and the download policy.
+//! Usenet backend, store links, and the download policy.
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -208,7 +208,7 @@ impl Section for UsenetBackendSetting {
     const KEY: &'static str = "usenet_search_backend";
 }
 
-// --- free_music / get_it --------------------------------------------------
+// --- get_it --------------------------------------------------------
 
 /// Transcode target for remote playback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
@@ -221,40 +221,6 @@ pub enum AudioFormat {
     Mp3,
     /// Opus (transcode targets only).
     Opus,
-}
-
-/// Free-music acquisition settings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-#[serde(default)]
-pub struct FreeMusic {
-    /// Master switch.
-    pub enabled: bool,
-    /// Preferred format.
-    pub preferred_format: AudioFormat,
-}
-
-impl Default for FreeMusic {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            preferred_format: AudioFormat::Flac,
-        }
-    }
-}
-
-impl Section for FreeMusic {
-    const KEY: &'static str = "free_music";
-
-    fn validate(&self) -> Result<(), ConfigError> {
-        if self.preferred_format == AudioFormat::Opus {
-            return Err(ConfigError::Validation {
-                section: Self::KEY,
-                field: "preferred_format",
-                reason: "must be flac or mp3".to_owned(),
-            });
-        }
-        Ok(())
-    }
 }
 
 /// Store-region settings.
@@ -571,7 +537,7 @@ pub struct DownloadPolicy {
     pub quality_max: String,
     /// Reject non-FLAC/MP3 candidates. A v2 recipe requires this on: v2
     /// gates recipe saves on it, the quality snapshot carries it, and the
-    /// matcher, free-music, and orchestrator consumers all read it.
+    /// matcher and orchestrator consumers all read it.
     pub flac_mp3_only: bool,
     /// Verify downloads after landing.
     pub verify_downloads: bool,

@@ -1,5 +1,5 @@
 //! Acquisition flows over the durable stores: the wanted watcher, status
-//! sync, follow poll, upgrade sweep, drop import and free music.
+//! sync, follow poll, upgrade sweep and drop import.
 //!
 //! Time is a manual clock throughout: cadences assert by advancing the
 //! clock, never by sleeping. Stores sit on a scratch database; downloads,

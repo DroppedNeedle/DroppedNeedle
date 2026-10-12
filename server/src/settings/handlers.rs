@@ -41,9 +41,9 @@ use crate::runtime_config::secret_sections::{
     SabnzbdConnection, SlskdConnection, WrappedSettings, YouTubeConnection,
 };
 use crate::runtime_config::sections::{
-    ConnectApps, DownloadPolicy, EditionPreferences, FilesystemWatcher, FreeMusic, GetIt,
-    HomeSettings, LibraryManagementProfile, LibraryScanSchedule, PrimaryMusicSource,
-    ScrobbleSettings, SecuritySettings, UserPreferences, WantedWatcher,
+    ConnectApps, DownloadPolicy, EditionPreferences, FilesystemWatcher, GetIt, HomeSettings,
+    LibraryManagementProfile, LibraryScanSchedule, PrimaryMusicSource, ScrobbleSettings,
+    SecuritySettings, UserPreferences, WantedWatcher,
 };
 
 type JsonResult<T> = Result<Json<T>, SettingsError>;
@@ -200,30 +200,6 @@ pub async fn put_lastfm(
     ValidJson(body): ValidJson<Masked<LastFmSettings>>,
 ) -> JsonResult<Masked<LastFmSettings>> {
     settings.service().save_masked(body).await.map(Json)
-}
-
-/// Read the free-music settings.
-#[utoipa::path(
-    get,
-    path = "/api/v3/settings/free-music",
-    responses((status = 200, description = "Free-music settings", body = FreeMusic))
-)]
-pub async fn get_free_music(State(settings): State<SettingsSetup>) -> JsonResult<FreeMusic> {
-    settings.service().get().map(Json)
-}
-
-/// Save the free-music settings.
-#[utoipa::path(
-    put,
-    path = "/api/v3/settings/free-music",
-    request_body = FreeMusic,
-    responses((status = 200, description = "Saved settings", body = FreeMusic))
-)]
-pub async fn put_free_music(
-    State(settings): State<SettingsSetup>,
-    ValidJson(body): ValidJson<FreeMusic>,
-) -> JsonResult<FreeMusic> {
-    settings.service().save(body).await.map(Json)
 }
 
 /// Read the store-region settings.

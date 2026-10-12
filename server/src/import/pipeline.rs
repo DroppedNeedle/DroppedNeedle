@@ -75,7 +75,6 @@ pub(crate) const REPLACE_UNIVERSE: &[&str] = &[
     "library_management",
     "scrobble_settings",
     "primary_music_source",
-    "free_music",
     "get_it",
     "advanced_settings",
     "download_policy",

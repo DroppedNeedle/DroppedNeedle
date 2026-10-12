@@ -701,7 +701,7 @@ pub async fn get_spotify_job(
     }
 }
 
-/// Acquisition health smoke: Free or slskd or Usenet readiness plus the
+/// Acquisition health smoke: slskd or Usenet readiness plus the
 /// independent per-source release gates.
 #[utoipa::path(get, path = "/api/v3/acquire/health",
     responses((status = 200, description = "Acquisition health", body = AcquireHealth)))]

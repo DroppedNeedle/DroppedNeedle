@@ -69,7 +69,6 @@ impl PlainSection for SourcePriority {}
 impl PlainSection for UsenetBackendSetting {}
 impl PlainSection for ScrobbleSettings {}
 impl PlainSection for PrimaryMusicSource {}
-impl PlainSection for FreeMusic {}
 impl PlainSection for GetIt {}
 impl PlainSection for SecuritySettings {}
 impl PlainSection for ConnectApps {}

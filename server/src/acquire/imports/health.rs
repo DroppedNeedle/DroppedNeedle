@@ -3,13 +3,13 @@
 //! Ports the v2 download-status halves (the download client `/status`,
 //! `/sabnzbd/status`, and the status service): saved-config probes whose verdicts
 //! travel in the body, never as leaked 5xx. The smoke answers one question:
-//! Free or slskd or Usenet readiness. The four release gates (slskd,
+//! slskd or Usenet readiness. The four release gates (slskd,
 //! SABnzbd, Newznab, Lidarr import) each gate independently: one red gate
 //! never flips another.
 //!
 //! Every probe is a minimal local trait. The live implementations sit over
-//! the slskd and SABnzbd clients, the Newznab indexers, and the Free Music
-//! settings; tests use the scripted probes below instead.
+//! the slskd and SABnzbd clients and the Newznab indexers; tests use the
+//! scripted probes below instead.
 
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::Mutex;
@@ -47,16 +47,6 @@ pub struct IndexerProbe {
     pub reachable: bool,
 }
 
-/// Free Music readiness (v2 `FreeMusicSettings`: enabled by default,
-/// lawful-licensed Internet Archive downloads, no signup).
-#[derive(Debug, Clone, PartialEq)]
-pub struct FreeReadiness {
-    /// Master switch.
-    pub enabled: bool,
-    /// Preferred format label (`flac` or `mp3`).
-    pub preferred_format: String,
-}
-
 /// slskd client probe (v2 `DownloadClientRepository` health half).
 pub trait SlskdProbe: Send + Sync {
     /// Probe the saved slskd config.
@@ -88,12 +78,6 @@ pub trait NewznabProbe: Send + Sync {
 pub trait LidarrReadinessProbe: Send + Sync {
     /// Probe the saved Lidarr import connection.
     fn status(&self) -> ClientProbe;
-}
-
-/// Free Music readiness (v2 `FreeMusicSettings` + lawful-source guard).
-pub trait FreeMusicProbe: Send + Sync {
-    /// Current Free Music readiness.
-    fn readiness(&self) -> FreeReadiness;
 }
 
 /// Scripted slskd probe for tests.
@@ -133,13 +117,6 @@ pub struct ScriptedLidarr {
     inner: Mutex<ClientProbe>,
 }
 
-/// Scripted Free Music readiness.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-pub struct ScriptedFree {
-    inner: Mutex<FreeReadiness>,
-}
-
 impl Default for ClientProbe {
     fn default() -> Self {
         Self {
@@ -148,15 +125,6 @@ impl Default for ClientProbe {
             reachable: false,
             version: None,
             message: "Not configured".to_owned(),
-        }
-    }
-}
-
-impl Default for FreeReadiness {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            preferred_format: "flac".to_owned(),
         }
     }
 }
@@ -286,32 +254,6 @@ impl LidarrReadinessProbe for ScriptedLidarr {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
-impl ScriptedFree {
-    /// Default-on Free Music.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Script one readiness.
-    pub fn set(&self, readiness: FreeReadiness) {
-        *self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = readiness;
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl FreeMusicProbe for ScriptedFree {
-    fn readiness(&self) -> FreeReadiness {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
-}
-
 /// Every probe the smoke reads, injected by constructor.
 pub struct HealthProbes {
     /// slskd client probe.
@@ -322,11 +264,9 @@ pub struct HealthProbes {
     pub newznab: std::sync::Arc<dyn NewznabProbe>,
     /// Lidarr import readiness.
     pub lidarr: std::sync::Arc<dyn LidarrReadinessProbe>,
-    /// Free Music readiness.
-    pub free: std::sync::Arc<dyn FreeMusicProbe>,
 }
 
-/// Build the acquisition health smoke: `ready` is Free or slskd or Usenet
+/// Build the acquisition health smoke: `ready` is slskd or Usenet
 /// readiness, and each release gate reports independently. Usenet readiness
 /// means the SABnzbd client probes clean; Newznab indexers gate Usenet
 /// *search* separately, so a bare client still counts the path ready while
@@ -336,16 +276,11 @@ pub fn smoke(probes: &HealthProbes) -> AcquireHealth {
     let sabnzbd = probes.sabnzbd.status();
     let indexers = probes.newznab.indexers();
     let lidarr = probes.lidarr.status();
-    let free = probes.free.readiness();
 
-    let free_ready = free.enabled;
     let slskd_ready = slskd.enabled && slskd.configured && slskd.reachable;
     let usenet_ready = sabnzbd.enabled && sabnzbd.configured && sabnzbd.reachable;
 
     let mut ready_via = Vec::new();
-    if free_ready {
-        ready_via.push("free".to_owned());
-    }
     if slskd_ready {
         ready_via.push("slskd".to_owned());
     }

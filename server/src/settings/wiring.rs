@@ -331,10 +331,6 @@ impl SettingsSetup {
             )
             .route("/settings/youtube", get(h::get_youtube).put(h::put_youtube))
             .route("/settings/youtube/verify", post(h::verify_youtube))
-            .route(
-                "/settings/free-music",
-                get(h::get_free_music).put(h::put_free_music),
-            )
             .route("/settings/get-it", get(h::get_get_it).put(h::put_get_it))
             .route(
                 "/settings/edition-preferences",

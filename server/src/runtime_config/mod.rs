@@ -66,7 +66,6 @@ pub const KNOWN_TOP_LEVEL_KEYS: &[&str] = &[
     "musicbrainz_settings",
     "scrobble_settings",
     "primary_music_source",
-    "free_music",
     "get_it",
     "edition_preferences",
     "plugins",

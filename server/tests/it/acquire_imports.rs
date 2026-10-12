@@ -21,8 +21,7 @@ use droppedneedle::auth::users::memory::TestRig;
 use droppedneedle::auth::users::roles::{Role, SessionKind};
 use imports::handlers::{ImportsDeps, imports_router};
 use imports::health::{
-    ClientProbe, HealthProbes, ScriptedFree, ScriptedLidarr, ScriptedNewznab, ScriptedSabnzbd,
-    ScriptedSlskd,
+    ClientProbe, HealthProbes, ScriptedLidarr, ScriptedNewznab, ScriptedSabnzbd, ScriptedSlskd,
 };
 use imports::jobs::{JobRegistry, QueuedSpotifyImport, TaskExecutor};
 use imports::lidarr::{
@@ -85,7 +84,6 @@ struct Rig {
     sabnzbd: Arc<ScriptedSabnzbd>,
     newznab: Arc<ScriptedNewznab>,
     lidarr_probe: Arc<ScriptedLidarr>,
-    free_probe: Arc<ScriptedFree>,
 }
 
 fn rig_for(rig: &TestRig, lidarr_base: &str, api_base: &str, accounts_base: &str) -> Rig {
@@ -128,7 +126,6 @@ fn rig_for(rig: &TestRig, lidarr_base: &str, api_base: &str, accounts_base: &str
     let sabnzbd = Arc::new(ScriptedSabnzbd::new());
     let newznab = Arc::new(ScriptedNewznab::new());
     let lidarr_probe = Arc::new(ScriptedLidarr::new());
-    let free_probe = Arc::new(ScriptedFree::new());
     let _ = lidarr_base;
     let deps = ImportsDeps {
         http: http.clone(),
@@ -150,7 +147,6 @@ fn rig_for(rig: &TestRig, lidarr_base: &str, api_base: &str, accounts_base: &str
             sabnzbd: sabnzbd.clone(),
             newznab: newznab.clone(),
             lidarr: lidarr_probe.clone(),
-            free: free_probe.clone(),
         }),
         auth: rig.deps.clone(),
         ids: Arc::new(FixedIdGenerator),
@@ -170,7 +166,6 @@ fn rig_for(rig: &TestRig, lidarr_base: &str, api_base: &str, accounts_base: &str
         sabnzbd,
         newznab,
         lidarr_probe,
-        free_probe,
     }
 }
 
@@ -1160,13 +1155,14 @@ fn gate<'a>(body: &'a Value, source: &str) -> &'a Value {
 }
 
 #[tokio::test]
-async fn health_smoke_defaults_to_free_ready() {
+async fn health_smoke_is_not_ready_with_no_source() {
     let (_, _, user_id, bundle) = seed_scripted_bases().await;
 
     let (status, body) = get_json(authed_app(bundle.deps, &user_id), "/acquire/health").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["ready"], true);
-    assert_eq!(body["ready_via"], json!(["free"]));
+    assert_eq!(body["status"], "error");
+    assert_eq!(body["ready"], false);
+    assert_eq!(body["ready_via"], json!([]));
     assert_eq!(gate(&body, "slskd")["open"], false);
     assert_eq!(gate(&body, "sabnzbd")["open"], false);
     assert_eq!(gate(&body, "newznab")["open"], false);
@@ -1184,7 +1180,7 @@ async fn slskd_gate_greens_independently() {
     assert_eq!(gate(&body, "sabnzbd")["open"], false);
     assert_eq!(gate(&body, "newznab")["open"], false);
     assert_eq!(gate(&body, "lidarr_import")["open"], false);
-    assert_eq!(body["ready_via"], json!(["free", "slskd"]));
+    assert_eq!(body["ready_via"], json!(["slskd"]));
 }
 
 #[tokio::test]
@@ -1197,12 +1193,15 @@ async fn health_degrades_when_an_enabled_path_is_down() {
         version: None,
         message: "slskd is unreachable".to_owned(),
     });
+    bundle
+        .sabnzbd
+        .set(open_client("4.5.1", "SABnzbd 4.5.1"), Vec::new(), None);
 
     let (status, body) = get_json(authed_app(bundle.deps, &user_id), "/acquire/health").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "degraded");
     assert_eq!(body["ready"], true);
-    assert_eq!(body["ready_via"], json!(["free"]));
+    assert_eq!(body["ready_via"], json!(["usenet"]));
 }
 
 #[tokio::test]

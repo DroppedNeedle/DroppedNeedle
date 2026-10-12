@@ -62,7 +62,6 @@ const KEPT_SECTIONS: &[&str] = &[
     "library_management",
     "scrobble_settings",
     "primary_music_source",
-    "free_music",
     "get_it",
 ];
 

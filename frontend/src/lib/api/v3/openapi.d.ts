@@ -12,7 +12,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Acquisition health smoke: Free or slskd or Usenet readiness plus the
+         * Acquisition health smoke: slskd or Usenet readiness plus the
          *     independent per-source release gates.
          */
         get: operations["get_health"];
@@ -7863,24 +7863,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v3/settings/free-music": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Read the free-music settings. */
-        get: operations["get_free_music"];
-        /** Save the free-music settings. */
-        put: operations["put_free_music"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v3/settings/get-it": {
         parameters: {
             query?: never;
@@ -9330,14 +9312,14 @@ export interface components {
     schemas: {
         /**
          * @description Acquisition health smoke (v2 `StatusReport` shape, extended). `ready`
-         *     is Free or slskd or Usenet readiness; the gates unpack per source.
+         *     is slskd or Usenet readiness; the gates unpack per source.
          */
         AcquireHealth: {
             /** @description Independent per-source release gates. */
             gates: components["schemas"]["SourceGate"][];
             /** @description True when at least one acquisition path can serve releases. */
             ready: boolean;
-            /** @description Paths currently ready: any of `free`, `slskd`, `usenet`. */
+            /** @description Paths currently ready: any of `slskd`, `usenet`. */
             ready_via: string[];
             /** @description Overall verdict: `ok`, `degraded`, or `error`. */
             status: string;
@@ -12769,7 +12751,7 @@ export interface components {
             /**
              * @description Reject non-FLAC/MP3 candidates. A v2 recipe requires this on: v2
              *     gates recipe saves on it, the quality snapshot carries it, and the
-             *     matcher, free-music, and orchestrator consumers all read it.
+             *     matcher and orchestrator consumers all read it.
              * @default true
              */
             flac_mp3_only: boolean;
@@ -13941,16 +13923,6 @@ export interface components {
             remove_id3_from_flac: boolean;
             /** @default id3 */
             wav_tag_policy: components["schemas"]["WavTagPolicy"];
-        };
-        /** @description Free-music acquisition settings. */
-        FreeMusic: {
-            /**
-             * @description Master switch.
-             * @default true
-             */
-            enabled: boolean;
-            /** @default flac */
-            preferred_format: components["schemas"]["AudioFormat"];
         };
         /**
          * @description Frontend cache TTLs in backend units (milliseconds), verbatim from
@@ -40804,50 +40776,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VerifyConnectionResponse"];
-                };
-            };
-        };
-    };
-    get_free_music: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Free-music settings */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FreeMusic"];
-                };
-            };
-        };
-    };
-    put_free_music: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FreeMusic"];
-            };
-        };
-        responses: {
-            /** @description Saved settings */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FreeMusic"];
                 };
             };
         };

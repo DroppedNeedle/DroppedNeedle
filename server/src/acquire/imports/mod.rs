@@ -13,7 +13,7 @@
 //! `jobs` holds the `spotify:import` durable-job key plus the minimal local
 //! [`jobs::SpotifyImportExecutor`] seam onto the downloads state machine
 //! (the in-memory implementation spawns a task), `health`
-//! holds the Free/slskd/Usenet smoke plus the per-source release gates,
+//! holds the slskd/Usenet smoke plus the per-source release gates,
 //! `handlers` owns the native routes, and `mocks` carries the loopback mock
 //! servers the tests run against. The app mounts
 //! [`handlers::imports_gated_router`] inside the session gate and the

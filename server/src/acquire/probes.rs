@@ -2,7 +2,7 @@
 //! verdicts.
 //!
 //! The imports health traits are sync, but reachability needs HTTP. The
-//! split: [`LiveProbes`] implements all five traits over a [`ProbeCache`]
+//! split: [`LiveProbes`] implements all four traits over a [`ProbeCache`]
 //! snapshot, and [`refresh_probes`] recomputes the snapshot with real
 //! client health checks. Wiring runs one refresh at boot and repeats it on
 //! a slow loop, so the smoke and the status routes always render a fresh
@@ -12,8 +12,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use super::imports::health::{
-    ClientProbe, FreeMusicProbe, FreeReadiness, HealthProbes, IndexerProbe, LidarrReadinessProbe,
-    NewznabProbe, SabnzbdProbe, SlskdProbe,
+    ClientProbe, HealthProbes, IndexerProbe, LidarrReadinessProbe, NewznabProbe, SabnzbdProbe,
+    SlskdProbe,
 };
 use super::imports::lidarr::{LidarrClient, LidarrError};
 use super::imports::mount::{self, SlskdMountReport};
@@ -25,7 +25,6 @@ use crate::runtime_config::secret_sections::{
     DownloadClients, LidarrImportConnection, NewznabIndexer as ConfigIndexer, ProwlarrConnection,
     SlskdConnection,
 };
-use crate::runtime_config::sections::{AudioFormat, FreeMusic};
 
 /// One cached verdict per probe.
 #[derive(Debug, Clone, Default)]
@@ -44,8 +43,6 @@ pub struct CachedProbes {
     pub indexers: Vec<IndexerProbe>,
     /// Lidarr import readiness.
     pub lidarr: ClientProbe,
-    /// Free Music readiness.
-    pub free: FreeReadiness,
 }
 
 /// Shared verdict snapshot behind the live probes.
@@ -91,14 +88,13 @@ impl LiveProbes {
         Self { cache }
     }
 
-    /// Bundle for the imports deps. One struct serves all five traits.
+    /// Bundle for the imports deps. One struct serves all four traits.
     pub fn bundle(probes: &Arc<LiveProbes>) -> HealthProbes {
         HealthProbes {
             slskd: probes.clone(),
             sabnzbd: probes.clone(),
             newznab: probes.clone(),
             lidarr: probes.clone(),
-            free: probes.clone(),
         }
     }
 }
@@ -139,12 +135,6 @@ impl LidarrReadinessProbe for LiveProbes {
     }
 }
 
-impl FreeMusicProbe for LiveProbes {
-    fn readiness(&self) -> FreeReadiness {
-        self.cache.snapshot().free
-    }
-}
-
 /// Everything one refresh pass needs: live clients plus config snapshots.
 pub struct ProbeInputs {
     /// slskd repository, when the section configures one.
@@ -173,8 +163,6 @@ pub struct ProbeInputs {
     pub lidarr: LidarrClient,
     /// Lidarr saved connection (raw, with the real key).
     pub lidarr_section: LidarrImportConnection,
-    /// Free Music settings.
-    pub free: FreeMusic,
 }
 
 /// Recompute every verdict with live health checks and store the snapshot.
@@ -189,13 +177,6 @@ pub async fn refresh_probes(cache: &ProbeCache, inputs: &ProbeInputs) {
         sabnzbd_complete_dir: refresh_sabnzbd_complete_dir(inputs).await,
         indexers: refresh_indexers(inputs).await,
         lidarr: refresh_lidarr(inputs).await,
-        free: FreeReadiness {
-            enabled: inputs.free.enabled,
-            preferred_format: match inputs.free.preferred_format {
-                AudioFormat::Mp3 => "mp3".to_owned(),
-                AudioFormat::Flac | AudioFormat::Opus => "flac".to_owned(),
-            },
-        },
     });
 }
 
@@ -207,7 +188,6 @@ pub fn seed_from_config(
     indexers: &[ConfigIndexer],
     prowlarr: &ProwlarrConnection,
     lidarr: &LidarrImportConnection,
-    free: &FreeMusic,
 ) -> CachedProbes {
     let slskd_configured = !slskd.url.is_empty() && !slskd.api_key.expose().is_empty();
     let sab = &sabnzbd.sabnzbd;
@@ -260,13 +240,6 @@ pub fn seed_from_config(
                 "Probe pending".to_owned()
             } else {
                 "Not configured".to_owned()
-            },
-        },
-        free: FreeReadiness {
-            enabled: free.enabled,
-            preferred_format: match free.preferred_format {
-                AudioFormat::Mp3 => "mp3".to_owned(),
-                AudioFormat::Flac | AudioFormat::Opus => "flac".to_owned(),
             },
         },
         indexers: entries,

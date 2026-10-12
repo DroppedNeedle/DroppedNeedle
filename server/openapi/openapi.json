@@ -15,7 +15,7 @@
         "tags": [
           "crate::acquire::imports::handlers"
         ],
-        "summary": "Acquisition health smoke: Free or slskd or Usenet readiness plus the\nindependent per-source release gates.",
+        "summary": "Acquisition health smoke: slskd or Usenet readiness plus the\nindependent per-source release gates.",
         "operationId": "get_health",
         "responses": {
           "200": {
@@ -19481,56 +19481,6 @@
         }
       }
     },
-    "/api/v3/settings/free-music": {
-      "get": {
-        "tags": [
-          "crate::settings::handlers"
-        ],
-        "summary": "Read the free-music settings.",
-        "operationId": "get_free_music",
-        "responses": {
-          "200": {
-            "description": "Free-music settings",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FreeMusic"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "crate::settings::handlers"
-        ],
-        "summary": "Save the free-music settings.",
-        "operationId": "put_free_music",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FreeMusic"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Saved settings",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FreeMusic"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v3/settings/get-it": {
       "get": {
         "tags": [
@@ -22929,7 +22879,7 @@
     "schemas": {
       "AcquireHealth": {
         "type": "object",
-        "description": "Acquisition health smoke (v2 `StatusReport` shape, extended). `ready`\nis Free or slskd or Usenet readiness; the gates unpack per source.",
+        "description": "Acquisition health smoke (v2 `StatusReport` shape, extended). `ready`\nis slskd or Usenet readiness; the gates unpack per source.",
         "required": [
           "status",
           "ready",
@@ -22953,7 +22903,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Paths currently ready: any of `free`, `slskd`, `usenet`."
+            "description": "Paths currently ready: any of `slskd`, `usenet`."
           },
           "status": {
             "type": "string",
@@ -30377,7 +30327,7 @@
           },
           "flac_mp3_only": {
             "type": "boolean",
-            "description": "Reject non-FLAC/MP3 candidates. A v2 recipe requires this on: v2\ngates recipe saves on it, the quality snapshot carries it, and the\nmatcher, free-music, and orchestrator consumers all read it.",
+            "description": "Reject non-FLAC/MP3 candidates. A v2 recipe requires this on: v2\ngates recipe saves on it, the quality snapshot carries it, and the\nmatcher and orchestrator consumers all read it.",
             "default": true
           },
           "ignored_terms": {
@@ -32828,26 +32778,6 @@
               }
             ],
             "default": "id3"
-          }
-        }
-      },
-      "FreeMusic": {
-        "type": "object",
-        "description": "Free-music acquisition settings.",
-        "properties": {
-          "enabled": {
-            "type": "boolean",
-            "description": "Master switch.",
-            "default": true
-          },
-          "preferred_format": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/AudioFormat",
-                "description": "Preferred format."
-              }
-            ],
-            "default": "flac"
           }
         }
       },

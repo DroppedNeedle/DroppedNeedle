@@ -206,14 +206,14 @@ pub struct SourceGate {
 }
 
 /// Acquisition health smoke (v2 `StatusReport` shape, extended). `ready`
-/// is Free or slskd or Usenet readiness; the gates unpack per source.
+/// is slskd or Usenet readiness; the gates unpack per source.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AcquireHealth {
     /// Overall verdict: `ok`, `degraded`, or `error`.
     pub status: String,
     /// True when at least one acquisition path can serve releases.
     pub ready: bool,
-    /// Paths currently ready: any of `free`, `slskd`, `usenet`.
+    /// Paths currently ready: any of `slskd`, `usenet`.
     pub ready_via: Vec<String>,
     /// Independent per-source release gates.
     pub gates: Vec<SourceGate>,

@@ -85,8 +85,7 @@ use crate::runtime_config::secret_sections::{
     ProwlarrConnection, SecretSection, SlskdConnection, TypedLibrary,
 };
 use crate::runtime_config::sections::{
-    DownloadPolicy, FreeMusic, Section, SourcePriority, UsenetBackendSetting, UserPreferences,
-    WantedWatcher,
+    DownloadPolicy, Section, SourcePriority, UsenetBackendSetting, UserPreferences, WantedWatcher,
 };
 
 /// Spotify API bases (v2 `spotify_client.py`).
@@ -147,8 +146,6 @@ pub struct ClientSettings {
     pub lidarr: LidarrImportConnection,
     /// Download policy (quality gates, timeouts).
     pub policy: DownloadPolicy,
-    /// Free Music settings.
-    pub free: FreeMusic,
     /// Active Usenet search side.
     pub backend: UsenetBackendSetting,
     /// Library root folders (the mount probe compares filesystems).
@@ -169,7 +166,6 @@ impl ClientSettings {
             prowlarr: secret(store),
             lidarr: secret(store),
             policy: plain(store),
-            free: plain(store),
             backend: plain(store),
             library_roots: plain::<TypedLibrary>(store)
                 .library_roots
@@ -340,7 +336,6 @@ impl LiveClients {
             prowlarr_section: settings.prowlarr.clone(),
             lidarr: LidarrClient::new(http.clone()),
             lidarr_section: settings.lidarr.clone(),
-            free: settings.free,
         });
         ClientSet {
             search,
@@ -728,7 +723,6 @@ impl AcquireSetup {
             &boot_settings.indexers,
             &boot_settings.prowlarr,
             &boot_settings.lidarr,
-            &boot_settings.free,
         )));
         let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
         let imports = ImportsDeps {
@@ -897,8 +891,7 @@ impl AcquireSetup {
         collections: &mut CollectionsState,
     ) -> Result<Self, String> {
         use super::imports::health::{
-            HealthProbes, ScriptedFree, ScriptedLidarr, ScriptedNewznab, ScriptedSabnzbd,
-            ScriptedSlskd,
+            HealthProbes, ScriptedLidarr, ScriptedNewznab, ScriptedSabnzbd, ScriptedSlskd,
         };
         use super::imports::lidarr::{MemoryApprovalSink, MemoryFollowStore, MemoryLidarrSettings};
         use super::imports::spotify::MemorySpotifySettings;
@@ -998,7 +991,6 @@ impl AcquireSetup {
                 sabnzbd: Arc::new(ScriptedSabnzbd::new()),
                 newznab: Arc::new(ScriptedNewznab::new()),
                 lidarr: Arc::new(ScriptedLidarr::new()),
-                free: Arc::new(ScriptedFree::new()),
             }),
             auth: users.clone(),
             ids: ids.clone(),
@@ -1041,7 +1033,6 @@ impl AcquireSetup {
             &[],
             &ProwlarrConnection::default(),
             &LidarrImportConnection::default(),
-            &FreeMusic::default(),
         )));
         let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
         let prune = Arc::new(PruneDeps {
