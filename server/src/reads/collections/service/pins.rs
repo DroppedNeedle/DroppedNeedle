@@ -68,6 +68,12 @@ impl CollectionsService<'_> {
     ) -> Result<EditionPinResponse, CollectionsError> {
         caller.require_curator()?;
         self.state
+            .stores
+            .pins
+            .album(album_id)
+            .await?
+            .ok_or(CollectionsError::NotFound)?;
+        self.state
             .editions
             .choose(album_id, release_mbid, &caller.user_id)
             .await
