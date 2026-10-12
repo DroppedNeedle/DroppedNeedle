@@ -400,12 +400,18 @@ pub fn plan_tags(
     )?;
     if profile.metadata.enabled {
         let canonical = picard::release_tags(release, track);
-        let preserved: BTreeSet<&str> = profile
+        let mut preserved: BTreeSet<&str> = profile
             .metadata
             .preserve_fields
             .iter()
             .flat_map(|name| targets(name).iter().map(|field| field.name()))
             .collect();
+        if super::custom::is_custom(release) {
+            // A custom edition has no release behind it: the file keeps
+            // whatever release ids it holds (v2's custom release claims).
+            preserved.insert(TagField::MusicBrainzReleaseId.name());
+            preserved.insert(TagField::MusicBrainzReleaseTrackId.name());
+        }
         for managed in &profile.metadata.fields {
             for field in targets(&managed.field) {
                 if preserved.contains(field.name()) {

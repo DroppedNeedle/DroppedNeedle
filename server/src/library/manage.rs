@@ -478,6 +478,32 @@ impl LibrarySetup {
                     "Album {album_id} has no accepted identity; identify it first"
                 ))
             })?;
+        if album.release_mbid.is_none()
+            && let Some(release_group_mbid) = album.release_group_mbid.clone()
+        {
+            // A custom edition: the identity Library Management planned with.
+            let custom = self
+                .identify_store
+                .with_connection(|conn| super::management::custom::active(conn, album_id))
+                .map_err(|error| ServiceError::internal(&error.to_string()))?
+                .ok_or_else(|| {
+                    missing(format!(
+                        "Album {album_id} has no accepted exact release; approve an exact edition"
+                    ))
+                })?;
+            let track = self.identify_store.track_identity(track_id);
+            return Ok(ReleaseIdentity {
+                release_mbid: custom.id,
+                release_group_mbid,
+                recording_mbid: track
+                    .as_ref()
+                    .and_then(|track| track.recording_mbid.clone())
+                    .unwrap_or_default(),
+                release_track_mbid: String::new(),
+                album_identity_revision: album.row_revision,
+                mapping_revision: track.map_or(0, |track| track.row_revision),
+            });
+        }
         let release_mbid = album.release_mbid.clone().ok_or_else(|| {
             missing(format!(
                 "Album {album_id} has no accepted exact release; approve an exact edition"

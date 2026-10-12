@@ -104,6 +104,11 @@ pub fn skip_reason(code: &str) -> ItemReason {
             "Open it on the operations page; each file says why. It is tried again when that preview expires.",
         ),
         "RELEASE_NOT_SELECTED" => reasons::release_not_selected(),
+        "CUSTOM_EDITION" => reason(
+            code,
+            "This album is a custom edition, and the library folder does not manage custom editions automatically.",
+            "Turn on \"Custom editions\" for the folder in Settings > Library Management, or manage the album with a preview by hand.",
+        ),
         "UNCONFIRMED_MATCH" => reasons::unconfirmed_match(),
         "IDENTITY_NOT_ACCEPTED" => reasons::identity_not_accepted(),
         "TRACK_NOT_MAPPED" => reasons::track_not_mapped(),
@@ -388,7 +393,17 @@ impl Management {
         let Some(identity) = identities.album_identity(album_id) else {
             return Ok(Verdict::Wait("IDENTITY_NOT_ACCEPTED"));
         };
-        if identity.release_mbid.is_none() || identity.release_group_mbid.is_none() {
+        // A custom edition is managed automatically only where the folder
+        // says so (v2's automatic_custom_editions).
+        let custom = identity.release_mbid.is_none()
+            && identity.release_group_mbid.is_some()
+            && self
+                .read(|conn| Ok(super::custom::active(conn, album_id)?))?
+                .is_some();
+        if custom && !assignment.automatic_custom_editions {
+            return Ok(Verdict::Park("CUSTOM_EDITION"));
+        }
+        if !custom && (identity.release_mbid.is_none() || identity.release_group_mbid.is_none()) {
             return Ok(Verdict::Park("RELEASE_NOT_SELECTED"));
         }
         let mut mapping = Vec::new();
@@ -398,6 +413,10 @@ impl Management {
                     if track.recording_mbid.is_some() && track.release_track_mbid.is_some() =>
                 {
                     mapping.push((file.id.clone(), track.row_revision));
+                }
+                // A custom edition's file may have no recording at all.
+                track if custom => {
+                    mapping.push((file.id.clone(), track.map_or(0, |track| track.row_revision)));
                 }
                 _ => return Ok(Verdict::Wait("TRACK_NOT_MAPPED")),
             }

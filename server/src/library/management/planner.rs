@@ -213,6 +213,23 @@ fn album_state(ctx: &PlanContext<'_>, album_id: &str) -> Result<AlbumState, Mana
     if let Some(reason) = gate {
         return Ok(AlbumState::Blocked(reason));
     }
+    if identity.release_mbid.is_none()
+        && let Some(release_group_mbid) = identity.release_group_mbid.clone()
+    {
+        // A custom edition plans from its sealed manifest.
+        let custom = store
+            .with_connection(|conn| super::custom::active(conn, album_id))
+            .map_err(ManagementError::from)?;
+        return Ok(match custom {
+            Some(release) => AlbumState::Ready {
+                release_mbid: release.id.clone(),
+                release: Box::new(release),
+                release_group_mbid,
+                album_identity_revision: identity.row_revision,
+            },
+            None => AlbumState::Blocked(reasons::release_not_selected()),
+        });
+    }
     let (Some(release_mbid), Some(release_group_mbid)) = (
         identity.release_mbid.clone(),
         identity.release_group_mbid.clone(),
@@ -362,20 +379,46 @@ fn plan_file(
     extras: &super::enrich::AlbumExtras,
 ) -> Result<(), ItemReason> {
     let store = &ctx.setup.identify_store;
-    let mapping = store
-        .track_identity(&track.id)
-        .ok_or_else(reasons::track_not_mapped)?;
-    let (Some(recording_mbid), Some(release_track_mbid)) = (
-        mapping.recording_mbid.clone(),
-        mapping.release_track_mbid.clone(),
-    ) else {
-        return Err(reasons::track_not_mapped());
-    };
-    let release_track = release
-        .tracks
-        .iter()
-        .find(|candidate| candidate.id.eq_ignore_ascii_case(&release_track_mbid))
-        .ok_or_else(reasons::track_not_mapped)?;
+    let (recording_mbid, release_track_mbid, mapping_revision, release_track) =
+        if super::custom::is_custom(release) {
+            // A custom edition's tracks are the album's own files.
+            let mapping = store.track_identity(&track.id);
+            let release_track = release
+                .tracks
+                .iter()
+                .find(|candidate| candidate.id == track.id)
+                .ok_or_else(reasons::track_not_mapped)?;
+            (
+                mapping
+                    .as_ref()
+                    .and_then(|mapping| mapping.recording_mbid.clone())
+                    .unwrap_or_default(),
+                String::new(),
+                mapping.map_or(0, |mapping| mapping.row_revision),
+                release_track,
+            )
+        } else {
+            let mapping = store
+                .track_identity(&track.id)
+                .ok_or_else(reasons::track_not_mapped)?;
+            let (Some(recording_mbid), Some(release_track_mbid)) = (
+                mapping.recording_mbid.clone(),
+                mapping.release_track_mbid.clone(),
+            ) else {
+                return Err(reasons::track_not_mapped());
+            };
+            let release_track = release
+                .tracks
+                .iter()
+                .find(|candidate| candidate.id.eq_ignore_ascii_case(&release_track_mbid))
+                .ok_or_else(reasons::track_not_mapped)?;
+            (
+                recording_mbid,
+                release_track_mbid,
+                mapping.row_revision,
+                release_track,
+            )
+        };
     let format = tags::format_for_path(Path::new(&track.relative_path))
         .map_err(|_| reasons::format_unsupported(&track.file_format))?;
     let format_name = format.as_str().to_owned();
@@ -548,7 +591,7 @@ fn plan_file(
             recording_mbid,
             release_track_mbid,
             album_identity_revision,
-            mapping_revision: mapping.row_revision,
+            mapping_revision,
         },
         override_revision: overrides.revision,
         capabilities,

@@ -20,6 +20,7 @@
 pub mod activation;
 pub mod after_apply;
 pub mod automatic;
+pub mod custom;
 pub mod duplicates;
 pub mod enrich;
 pub mod genre;
