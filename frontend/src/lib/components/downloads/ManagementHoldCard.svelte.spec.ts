@@ -239,6 +239,7 @@ describe('ManagementHoldCard.svelte', () => {
 		await page.getByRole('button', { name: 'Retry organizer' }).click();
 		const events = await retryEvents();
 		events.emit('organizer_retry', {
+			task_id: 'task-1',
 			state: 'complete',
 			stage: 'finalizing',
 			files_completed: 13,
@@ -248,6 +249,7 @@ describe('ManagementHoldCard.svelte', () => {
 		});
 		await expect.element(page.getByText('Organizer retry imported 13 files.')).toBeVisible();
 		events.emit('organizer_retry', {
+			task_id: 'task-1',
 			state: 'failed',
 			stage: 'publishing',
 			files_completed: 7,
@@ -273,6 +275,7 @@ describe('ManagementHoldCard.svelte', () => {
 		await page.getByRole('button', { name: 'Retry organizer' }).click();
 		const events = await retryEvents();
 		events.emit('organizer_retry', {
+			task_id: 'task-1',
 			state: 'complete',
 			stage: 'finalizing',
 			files_completed: 13,
@@ -294,6 +297,7 @@ describe('ManagementHoldCard.svelte', () => {
 
 		const events = await retryEvents();
 		events.emit('organizer_retry', {
+			task_id: 'task-1',
 			state: 'running',
 			stage: 'publishing',
 			files_completed: 5,
