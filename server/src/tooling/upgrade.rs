@@ -1120,7 +1120,10 @@ fn remove_marker(dirs: &DataDirs) -> Result<(), UpgradeError> {
             Err(error) => return Err(failed("remove", &path, error)),
         }
     }
-    sync_dir(&dirs.cache_dir)
+    // The marker is gone, so the work is done. A flush that fails now must
+    // not turn a finished run into a failed one.
+    let _ = sync_dir(&dirs.cache_dir);
+    Ok(())
 }
 
 fn tmp_name(name: &OsStr) -> OsString {
@@ -1134,7 +1137,8 @@ fn tmp_path(path: &Path) -> PathBuf {
 }
 
 /// Write an owner-only file through a temporary name and a rename, and
-/// flush the file and its folder to disk.
+/// flush the file and its folder to disk. A failed write leaves no
+/// temporary file behind.
 fn write_durably(path: &Path, bytes: &[u8]) -> Result<(), UpgradeError> {
     let tmp = tmp_path(path);
     let mut options = std::fs::OpenOptions::new();
@@ -1144,14 +1148,18 @@ fn write_durably(path: &Path, bytes: &[u8]) -> Result<(), UpgradeError> {
         use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600);
     }
-    options
+    let written = options
         .open(&tmp)
         .and_then(|mut file| {
             file.write_all(bytes)?;
             file.sync_all()
         })
-        .and_then(|()| std::fs::rename(&tmp, path))
-        .map_err(|error| failed("write", path, error))?;
+        .and_then(|()| std::fs::rename(&tmp, path));
+    if let Err(error) = written {
+        // The write error is the one to report, whatever the cleanup does.
+        let _ = std::fs::remove_file(&tmp);
+        return Err(failed("write", path, error));
+    }
     sync_dir(path.parent().unwrap_or(Path::new(".")))
 }
 
