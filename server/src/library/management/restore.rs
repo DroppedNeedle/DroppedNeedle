@@ -343,15 +343,6 @@ impl Management {
                  row_revision = row_revision + 1 WHERE baseline_id IS NOT NULL",
                 [],
             )?;
-            tx.execute(
-                "UPDATE library_file_mutation_journal SET baseline_id = NULL \
-                 WHERE baseline_id IS NOT NULL",
-                [],
-            )?;
-            tx.execute(
-                "DELETE FROM library_management_blob_references WHERE reference_kind = 'baseline'",
-                [],
-            )?;
             tx.execute("DELETE FROM library_management_baselines", [])?;
             tx.execute(
                 "INSERT INTO library_management_baseline_purges (idempotency_key, impact_token, \

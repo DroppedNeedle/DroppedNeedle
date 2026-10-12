@@ -1114,7 +1114,7 @@ impl ReleaseStore for SqliteIdentifyStore {
 }
 
 /// Point what people made of a merged album, artist or track (favorites,
-/// playlist entries, play history, app ids) at the record it merged into.
+/// play history) at the record it merged into.
 /// A person who already favorited the survivor keeps one row.
 pub(crate) fn retarget_references(
     tx: &Connection,
@@ -1146,15 +1146,9 @@ pub(crate) fn retarget_references(
         "DELETE FROM library_user_favorites WHERE item_kind = ?1 AND item_id = ?2",
         params![item_kind, retired_id],
     )?;
-    for table in ["library_playlist_tracks", "library_play_history"] {
-        tx.execute(
-            &format!("UPDATE {table} SET {column} = ?1 WHERE {column} = ?2"),
-            params![surviving_id, retired_id],
-        )?;
-    }
     tx.execute(
-        "UPDATE library_compat_id_map SET internal_id = ?1 WHERE kind = ?2 AND internal_id = ?3",
-        params![surviving_id, item_kind, retired_id],
+        &format!("UPDATE library_play_history SET {column} = ?1 WHERE {column} = ?2"),
+        params![surviving_id, retired_id],
     )?;
     Ok(())
 }
@@ -1232,15 +1226,10 @@ fn alias_table(kind: AliasKind) -> (&'static str, &'static str, &'static str) {
     match kind {
         AliasKind::MergedAlbum => ("local_album_aliases", "local_album_id", "merged_album"),
         AliasKind::MergedArtist => ("local_artist_aliases", "local_artist_id", "merged_artist"),
-        AliasKind::MergedTrack => ("local_track_aliases", "local_track_id", "merged_track"),
     }
 }
 
-const ALIAS_KINDS: [AliasKind; 3] = [
-    AliasKind::MergedAlbum,
-    AliasKind::MergedArtist,
-    AliasKind::MergedTrack,
-];
+const ALIAS_KINDS: [AliasKind; 2] = [AliasKind::MergedAlbum, AliasKind::MergedArtist];
 
 impl AliasStore for SqliteIdentifyStore {
     fn save_alias(&self, alias: Alias) {
@@ -1317,7 +1306,6 @@ impl AliasStore for SqliteIdentifyStore {
         let item_kind = match kind {
             AliasKind::MergedAlbum => "album",
             AliasKind::MergedArtist => "artist",
-            AliasKind::MergedTrack => "track",
         };
         self.write("retarget references", |tx| {
             retarget_references(tx, item_kind, retired_id, surviving_id)

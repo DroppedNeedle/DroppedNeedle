@@ -117,10 +117,7 @@ fn candidates(conn: &Connection) -> Result<Vec<Candidate>, ReconcileError> {
               WHERE album.album_artist_id = artist.id AND {ACTIVE_ALBUM}), \
            (SELECT COUNT(*) FROM library_user_favorites \
               WHERE item_kind = 'artist' AND item_id = artist.id), \
-           (SELECT COUNT(*) FROM library_playlist_tracks WHERE local_artist_id = artist.id), \
-           (SELECT COUNT(*) FROM library_play_history WHERE local_artist_id = artist.id), \
-           (SELECT COUNT(*) FROM library_compat_id_map \
-              WHERE kind = 'artist' AND internal_id = artist.id) \
+           (SELECT COUNT(*) FROM library_play_history WHERE local_artist_id = artist.id) \
          FROM current_artists artist \
          LEFT JOIN local_artist_external_identities identity \
            ON identity.local_artist_id = artist.id AND identity.provider = 'musicbrainz' \
@@ -142,9 +139,9 @@ fn candidates(conn: &Connection) -> Result<Vec<Candidate>, ReconcileError> {
                         track_credits: row.get(8)?,
                         primary_albums: row.get(9)?,
                         favorites: row.get(10)?,
-                        playlist_snapshots: row.get(11)?,
-                        history: row.get(12)?,
-                        compatibility_ids: row.get(13)?,
+                        playlist_snapshots: 0,
+                        history: row.get(11)?,
+                        compatibility_ids: 0,
                         proven_credits: 0,
                     },
                 },
@@ -291,14 +288,9 @@ fn merged_artists(
         "SELECT local_artist_id, COUNT(*) FROM local_album_artists WHERE local_artist_id IN ({}) GROUP BY 1",
         "SELECT local_artist_id, COUNT(*) FROM local_track_artists WHERE local_artist_id IN ({}) GROUP BY 1",
         "SELECT album_artist_id, COUNT(*) FROM local_albums WHERE album_artist_id IN ({}) GROUP BY 1",
-        "SELECT target_id, COUNT(*) FROM library_migration_provenance \
-           WHERE target_kind = 'local_artist' AND target_id IN ({}) GROUP BY 1",
         "SELECT item_id, COUNT(*) FROM library_user_favorites \
            WHERE item_kind = 'artist' AND item_id IN ({}) GROUP BY 1",
-        "SELECT local_artist_id, COUNT(*) FROM library_playlist_tracks WHERE local_artist_id IN ({}) GROUP BY 1",
         "SELECT local_artist_id, COUNT(*) FROM library_play_history WHERE local_artist_id IN ({}) GROUP BY 1",
-        "SELECT internal_id, COUNT(*) FROM library_compat_id_map \
-           WHERE kind = 'artist' AND internal_id IN ({}) GROUP BY 1",
     ];
     for query in count_queries {
         let sql = query.replace("{}", &marks);

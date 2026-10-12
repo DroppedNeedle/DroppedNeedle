@@ -194,8 +194,8 @@ pub struct CreditProof {
     pub track_identity_revision: u64,
 }
 
-/// A retired local id that keeps resolving to its survivor, so favorites,
-/// playlists, play history, and compat references never break.
+/// A retired local id that keeps resolving to its survivor, so favorites
+/// and play history never break.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Alias {
     pub retired_id: String,
@@ -209,7 +209,6 @@ pub struct Alias {
 pub enum AliasKind {
     MergedAlbum,
     MergedArtist,
-    MergedTrack,
 }
 
 /// A provider artist credit on one track.

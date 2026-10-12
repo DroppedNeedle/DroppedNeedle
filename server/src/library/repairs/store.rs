@@ -123,10 +123,7 @@ fn scope_sql(
         Purpose::ManagementReadiness => format!(
             "FROM local_albums a WHERE a.retired_into_album_id IS NULL {indexed} \
              AND NOT EXISTS (SELECT 1 FROM library_management_exclusions x \
-             WHERE x.local_album_id = a.id) \
-             AND NOT EXISTS (SELECT 1 FROM library_edition_conversion_jobs c \
-             WHERE c.local_album_id = a.id AND c.state IN \
-             ('preflight','acquiring','ready','needs_recheck')) {roots}"
+             WHERE x.local_album_id = a.id) {roots}"
         ),
         Purpose::CatalogIdentityHygiene => {
             let albums = if album_ids.is_empty() {
