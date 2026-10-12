@@ -787,7 +787,15 @@ fn plan_pictures(
         None => {}
     }
     if !scrub {
-        pictures.extend(existing.iter().filter(|picture| picture.kind != 3).cloned());
+        // Every other picture stays, extra front covers included.
+        let front_at = existing.iter().position(|picture| picture.kind == 3);
+        pictures.extend(
+            existing
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| Some(*index) != front_at)
+                .map(|(_, picture)| picture.clone()),
+        );
     }
     let unchanged = pictures.len() == existing.len()
         && pictures

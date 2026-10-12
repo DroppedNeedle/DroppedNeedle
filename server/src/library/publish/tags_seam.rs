@@ -45,7 +45,7 @@ pub struct TagDocument {
     pub version: u32,
     /// The embedded pictures, in file order, by the hash of their bytes
     /// in the blob store. `None` when the document did not record them
-    /// (documents before version 3, v2 baselines): nothing may then be
+    /// (documents before version 4, v2 baselines): nothing may then be
     /// inferred about the file's pictures.
     #[serde(default)]
     pub pictures: Option<Vec<PictureRef>>,
