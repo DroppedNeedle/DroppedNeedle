@@ -41,7 +41,6 @@ describe('role-gated loads', () => {
 
 	it.each([
 		['Settings', settingsLoad, '/'],
-		['Library Review', reviewLoad, '/library'],
 		['Unmatched Library', unmatchedLoad, '/library'],
 		['Library Management', libraryManagementLoad, '/library'],
 		['legacy library settings', legacyLibrarySettingsLoad, '/']
@@ -50,6 +49,12 @@ describe('role-gated loads', () => {
 		const result = load({ parent: hydration.parent } as never);
 		hydration.release();
 		await expect(result).rejects.toMatchObject({ status: 302, location });
+	});
+
+	it('admits any signed-in user to Unconfirmed matches', async () => {
+		await expect(reviewLoad({ parent: async () => ({ user: regular }) } as never)).resolves.toEqual(
+			{}
+		);
 	});
 
 	it('sends an administrator through the legacy library-settings redirect', async () => {

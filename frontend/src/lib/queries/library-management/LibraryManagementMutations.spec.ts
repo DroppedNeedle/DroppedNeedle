@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const captured = vi.hoisted(() => ({ current: null as Record<string, unknown> | null }));
 const invalidate = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
-vi.mock('@tanstack/svelte-query', () => ({
+vi.mock('@tanstack/svelte-query', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@tanstack/svelte-query')>()),
 	createMutation: vi.fn((factory: () => Record<string, unknown>) => {
 		captured.current = factory();
 		return captured.current;
