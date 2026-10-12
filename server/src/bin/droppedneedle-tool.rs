@@ -55,8 +55,9 @@ upgrade turns the v2 data in the server's config and cache folders into
 v3 data, in place. Stop the server first. The v2 files are kept in a
 v2-backup folder inside each of the two, unless --no-backup. It finds the
 folders the way the server does (/app/config and /app/cache unless the
-environment says otherwise). upgrade --undo --yes deletes the v3 data and
-puts the v2 files back. remove-v2-backup deletes the kept v2 files.
+environment says otherwise). upgrade --undo --yes deletes everything in
+the two folders except the v2-backup folders, then puts the v2 files back.
+remove-v2-backup deletes the kept v2 files.
 
 The passphrase comes from --passphrase-file or stdin, never from argv.
 Export writes <file> plus <name>.bundle.sqlite beside it; keep the two

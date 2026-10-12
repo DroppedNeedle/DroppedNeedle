@@ -58,10 +58,10 @@ Everything in the config and cache folders moves into the backup, not only
 what v2 wrote. Files of your own that you kept there move too. Take out
 anything you want to keep before you remove the backup.
 
-Moving them takes no time and no extra disk space. The upgrade does need
-some free space in the cache folder while it runs, about twice the size of
-the v2 database plus the originals Library Management saved. It checks
-before it moves anything.
+Moving the files into the backup takes no time and no extra disk space.
+The upgrade does need some free space in the cache folder while it runs,
+about twice the size of the v2 database plus the originals Library
+Management saved. It checks before it moves anything.
 
 The backup sits on the same disk as your data. It lets you go back to v2,
 but it is not a second copy. If you want one, copy your config and cache
@@ -75,8 +75,8 @@ docker compose run --rm droppedneedle droppedneedle-tool remove-v2-backup
 
 This works while v3 is running. To keep no backup in the first place, run
 `droppedneedle-tool upgrade --no-backup`. The v2 files are then deleted as
-soon as the import has finished, and there is no way back to v2 without a
-copy of your own.
+soon as the import has finished, along with any files of your own in the
+two folders, and there is no way back to v2 without a copy of your own.
 
 ### If the upgrade fails or is interrupted
 
@@ -418,7 +418,7 @@ import leaves their v2 version out.
 | `cannot tell what this data directory holds` | The folders are neither a v2 nor a v3 data directory, for example a v2 database beside a v3 key file | Nothing was changed. Check that the mounts point at the right folders |
 | `already exists. Move it away or delete it` | A `v2-backup` folder is left from an earlier upgrade | Move or delete it, then run the upgrade again |
 | `the upgrade needs about N MiB free` | Not enough free space in the cache folder | Free some space and run the upgrade again |
-| `cannot move ...: Permission denied` | A file or folder in the config or cache folder could not be moved, because the user the tool runs as does not own it | Nothing is lost, the v2 files are back in place. Fix the ownership (`chown -R` to your `PUID` and `PGID`) and run the upgrade again |
+| `cannot move ...: Permission denied` | A file or folder in the config or cache folder could not be moved, because the user the tool runs as does not own it | Nothing is deleted. The upgrade normally puts the v2 files back itself; if it says that failed too, the next run does it. Fix the ownership (`chown -R` to your `PUID` and `PGID`) and run the upgrade again |
 | `no complete v2 backup` | `--undo` found no `v2-backup` folders to go back to | Restore your own copy of the v2 folders |
 | `V2_KEY_NOT_FOUND` | v2's `config/.env` is missing | Put it back from a copy of your own, then run again |
 | `V2_KEY_MISMATCH` | The key in `config/.env` does not decrypt your stored secrets | Use the `config/.env` that v2 actually ran with |
