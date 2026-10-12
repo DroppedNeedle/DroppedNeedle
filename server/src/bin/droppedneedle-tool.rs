@@ -1,14 +1,18 @@
-//! Offline migration tooling: export, validate, import, dry-run, restore.
+//! Offline migration tooling: upgrade, export, validate, import, dry-run,
+//! restore.
 //!
-//! Thin operator surface over the migration engines: [`export`](droppedneedle::export)
-//! builds sealed envelopes from a v2 instance dir,
-//! [`import`](droppedneedle::import) validates and applies them, and
+//! Thin operator surface over the migration engines:
+//! [`upgrade`](droppedneedle::tooling::upgrade) turns a v2 data directory
+//! into a v3 one in place, [`export`](droppedneedle::export) builds sealed
+//! envelopes from a v2 instance, [`import`](droppedneedle::import)
+//! validates and applies them, and
 //! [`restore`](droppedneedle::tooling::restore) revives server backups.
 //! Everything is file plus SQLite; nothing here touches the network.
 //!
 //! The operator passphrase never travels as a CLI argument: it comes from
-//! `--passphrase-file` or from stdin (first line). Import and dry-run print
-//! exactly one JSON report object to stdout.
+//! `--passphrase-file` or from stdin (first line). `upgrade` makes its own
+//! and keeps it in memory. Import and dry-run print exactly one JSON
+//! report object to stdout.
 //!
 //! Ordering note: import and dry-run migrate the target schema and probe
 //! the write lock before the pipeline decides anything, so a refused run
@@ -20,15 +24,24 @@
 
 use std::path::PathBuf;
 
+use droppedneedle::AppConfig;
+use droppedneedle::export::v2dir::V2Dirs;
 use droppedneedle::export::{ExportRequest, export_v2_to_file};
-use droppedneedle::r#import::{ExitCode, ImportRequest, run_import};
-use droppedneedle::runtime_config::{Crypto, Secret};
+use droppedneedle::r#import::ExitCode;
+use droppedneedle::runtime_config::Secret;
+use droppedneedle::tooling::datalock::DataLock;
+use droppedneedle::tooling::upgrade::{
+    self, DataDirs, Layout, OfflineImport, Step, Summary, UpgradeError, UpgradeRequest, Upgraded,
+};
 
 /// Usage text, printed for `help` and on bad invocations.
 const USAGE: &str = "\
 droppedneedle-tool: offline v2 migration tooling
 
 Usage:
+  droppedneedle-tool upgrade [--no-backup] [--v2-commit <tag>]
+  droppedneedle-tool upgrade --undo --yes
+  droppedneedle-tool remove-v2-backup
   droppedneedle-tool export --v2-root <dir> --out <file> [--db <path>]
       [--v2-commit <sha>] [--passphrase-file <file>]
   droppedneedle-tool validate <file> [--v2-root <dir>] [--passphrase-file <file>]
@@ -38,11 +51,21 @@ Usage:
       [--cache-dir <dir>] [--passphrase-file <file>] [--v2-config <config.json>]
   droppedneedle-tool restore --backup <file> --target-dir <dir> [--allow-downgrade]
 
+upgrade turns the v2 data in the server's config and cache folders into
+v3 data, in place. Stop the server first. The v2 files are kept in a
+v2-backup folder inside each of the two, unless --no-backup. It finds the
+folders the way the server does (/app/config and /app/cache unless the
+environment says otherwise). upgrade --undo --yes deletes the v3 data and
+puts the v2 files back. remove-v2-backup deletes the kept v2 files.
+
 The passphrase comes from --passphrase-file or stdin, never from argv.
 Export writes <file> plus <name>.bundle.sqlite beside it; keep the two
 together. Import and dry-run print exactly one JSON report to stdout.
 --cache-dir defaults to the folder holding --db.
 ";
+
+/// Flags that take no value.
+const BARE_FLAGS: &[&str] = &["--allow-downgrade", "--no-backup", "--undo", "--yes"];
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -51,6 +74,8 @@ fn main() {
         std::process::exit(2);
     };
     let outcome = match command {
+        "upgrade" => run_upgrade(&args[1..]),
+        "remove-v2-backup" => run_remove_backup(&args[1..]),
         "export" => run_export(&args[1..]),
         "validate" => run_validate(&args[1..]),
         "import" => run_import_cmd(&args[1..], false),
@@ -109,7 +134,7 @@ fn check_flags(args: &[String], known: &[&str], positional: bool) -> Result<(), 
     while index < args.len() {
         let arg = args[index].as_str();
         if known.contains(&arg) {
-            if arg == "--allow-downgrade" {
+            if BARE_FLAGS.contains(&arg) {
                 index += 1;
             } else {
                 index += 2;
@@ -158,7 +183,7 @@ fn run_export(args: &[String]) -> Result<(), String> {
         false,
     )?;
     let request = ExportRequest {
-        v2_root: PathBuf::from(required_flag(args, "--v2-root")?),
+        v2: V2Dirs::under_root(std::path::Path::new(&required_flag(args, "--v2-root")?)),
         db_path: flag_value(args, "--db")?.map(PathBuf::from),
         passphrase: read_passphrase(args)?,
         exported_at: None,
@@ -276,7 +301,8 @@ fn print_left_behind(root: &serde_json::Value) {
 /// Optional `--v2-root` cross-check: the file must name the instance it was
 /// exported from.
 fn check_instance_match(export_instance: &str, v2_root: &str) -> Result<(), String> {
-    let config = droppedneedle::export::v2dir::read_config(std::path::Path::new(v2_root))
+    let dirs = V2Dirs::under_root(std::path::Path::new(v2_root));
+    let config = droppedneedle::export::v2dir::read_config(&dirs.config_dir)
         .map_err(|error| format!("{}: {error}", error.code()))?;
     let v2_instance = config
         .get("instance_id")
@@ -307,74 +333,47 @@ fn run_import_cmd(args: &[String], dry_run: bool) -> Result<(), String> {
         false,
     )?;
     let export_path = required_flag(args, "--file")?;
-    let db_path = required_flag(args, "--db")?;
+    let db_path = PathBuf::from(required_flag(args, "--db")?);
     let config_dir = PathBuf::from(required_flag(args, "--config-dir")?);
     // The bundle sits beside the export file; avatars land in the v3
     // cache folder, which holds the database unless told otherwise.
     let attachments_dir = folder_of(std::path::Path::new(&export_path));
     let cache_dir = match flag_value(args, "--cache-dir")? {
         Some(dir) => PathBuf::from(dir),
-        None => folder_of(std::path::Path::new(&db_path)),
+        None => folder_of(&db_path),
     };
     let export_bytes =
         std::fs::read(&export_path).map_err(|_| format!("cannot read {export_path}"))?;
     let passphrase = read_passphrase(args)?;
     let v2_config = flag_value(args, "--v2-config")?.map(PathBuf::from);
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| format!("cannot start runtime: {error}"))?;
+    let runtime = new_runtime()?;
     let verb = if dry_run { "dry-run" } else { "import" };
-    // Held for the whole run: a server holding its shared lock refuses
-    // the import, and a server cannot start until the import ends.
-    if let Some(parent) = PathBuf::from(&db_path).parent()
+    if let Some(parent) = db_path.parent()
         && !parent.as_os_str().is_empty()
     {
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("cannot create database dir: {error}"))?;
     }
-    let _data_lock =
-        droppedneedle::tooling::datalock::DataLock::exclusive(PathBuf::from(&db_path).as_path())
-            .map_err(|error| format!("{error} (stop the server before importing)"))?;
-    let report = runtime.block_on(async {
-        // Writable pool, not the serving runtime: its pool turns read-only
-        // after boot, while the offline import owns its writes. The server
-        // must be stopped: the data lock above refuses a running server,
-        // and the immediate-lock probe below refuses any other writer.
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(5)
-            .connect(&format!("sqlite:{db_path}?mode=rwc"))
-            .await
-            .map_err(|error| format!("cannot open target database: {error}"))?;
-        droppedneedle::schema::apply_migrations(&pool)
-            .await
-            .map_err(|error| error.to_string())?;
-        probe_write_lock(&pool).await?;
-        let crypto = if dry_run {
-            // Throwaway in-memory key: dry-run re-encrypts into a staged
-            // config it discards, so no key file may be minted here.
-            Crypto::from_key_bytes(&[42u8; 32]).map_err(|error| error.to_string())?
-        } else {
-            Crypto::load_or_generate(&config_dir).map_err(|error| error.to_string())?
-        };
-        Ok::<_, String>(
-            run_import(ImportRequest {
+    // Held for the whole run: a server holding its shared lock refuses
+    // the import, and a server cannot start until the import ends.
+    let data_lock = DataLock::exclusive(&db_path)
+        .map_err(|error| format!("{error} (stop the server before importing)"))?;
+    let report = runtime
+        .block_on(upgrade::run_offline_import(
+            &data_lock,
+            OfflineImport {
                 export_bytes,
-                passphrase: passphrase.expose().to_owned(),
-                pool,
-                config_path: config_dir.join("config.json"),
-                crypto,
-                v2_config_path: v2_config,
-                attachments_dir: Some(attachments_dir),
-                cache_dir: Some(cache_dir),
+                passphrase,
+                db_path,
+                config_dir,
+                cache_dir,
+                attachments_dir,
+                v2_config,
                 dry_run,
                 fault_before_commit: false,
-                fault_after_commit: false,
-                fault_after_sections: None,
-            })
-            .await,
-        )
-    })?;
+            },
+        ))
+        .map_err(|error| error.to_string())?;
     println!("{}", report.to_json());
     match report.exit.code {
         ExitCode::Ok | ExitCode::OkWithDrops => Ok(()),
@@ -389,22 +388,197 @@ fn folder_of(path: &std::path::Path) -> PathBuf {
         .map_or_else(|| PathBuf::from("."), std::path::Path::to_path_buf)
 }
 
-/// Refuse a database another writer holds: one connection takes an
-/// immediate lock and releases it, so a live server fails the import
-/// before anything is decided.
-async fn probe_write_lock(pool: &sqlx::SqlitePool) -> Result<(), String> {
-    let mut connection = pool
-        .acquire()
-        .await
-        .map_err(|error| format!("cannot open target database: {error}"))?;
-    sqlx::query("BEGIN IMMEDIATE")
-        .execute(&mut *connection)
-        .await
-        .map_err(|_| "target database is locked (stop the server before importing)".to_owned())?;
-    sqlx::query("ROLLBACK")
-        .execute(&mut *connection)
-        .await
-        .map_err(|error| format!("cannot probe target database: {error}"))?;
+/// The single-threaded runtime the import pipeline runs on.
+fn new_runtime() -> Result<tokio::runtime::Runtime, String> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("cannot start runtime: {error}"))
+}
+
+/// The config and cache folders the server would use, from the same
+/// environment.
+fn data_dirs() -> Result<DataDirs, String> {
+    AppConfig::load()
+        .map(|config| DataDirs::from_config(&config))
+        .map_err(|error| error.to_string())
+}
+
+/// `upgrade [--no-backup] [--v2-commit <tag>]`, or `upgrade --undo --yes`.
+fn run_upgrade(args: &[String]) -> Result<(), String> {
+    check_flags(
+        args,
+        &["--no-backup", "--undo", "--yes", "--v2-commit"],
+        false,
+    )?;
+    let undo = has_flag(args, "--undo");
+    let v2_commit = flag_value(args, "--v2-commit")?;
+    if undo && (has_flag(args, "--no-backup") || v2_commit.is_some()) {
+        return Err(format!("--undo goes with --yes only\n{USAGE}"));
+    }
+    if has_flag(args, "--yes") && !undo {
+        return Err(format!("--yes goes with --undo only\n{USAGE}"));
+    }
+    let dirs = data_dirs()?;
+    if undo {
+        return run_undo(&dirs, has_flag(args, "--yes"));
+    }
+    let request = UpgradeRequest {
+        dirs,
+        keep_backup: !has_flag(args, "--no-backup"),
+        v2_commit,
+        fault: None,
+    };
+    let outcome = new_runtime()?
+        .block_on(upgrade::run(&request, &mut print_step))
+        .map_err(|error| upgrade_failure(&error))?;
+    match outcome {
+        Upgraded::NothingToDo(Layout::V3) => {
+            println!("This data directory is already on v3. Nothing to do.");
+        }
+        Upgraded::NothingToDo(_) => println!(
+            "No v2 data in {} and {}. Nothing to do.",
+            request.dirs.config_dir.display(),
+            request.dirs.cache_dir.display()
+        ),
+        Upgraded::Done(summary) => print_summary(&request.dirs, &summary),
+    }
+    Ok(())
+}
+
+/// One progress line per step, on stderr so stdout stays the summary.
+fn print_step(step: Step) {
+    match step {
+        Step::Recovering => {
+            eprintln!("An earlier upgrade did not finish. Putting the v2 files back first.");
+        }
+        Step::MovingAside => eprintln!("Moving the v2 files into the v2-backup folders."),
+        Step::Exporting => eprintln!("Exporting from v2."),
+        Step::OrphansRemoved(count) => eprintln!(
+            "Removed {count} follows and approvals of deleted users from the v2 database. \
+             Exporting again."
+        ),
+        Step::DryRun => eprintln!("Checking the import with a dry run."),
+        Step::Importing => eprintln!("Importing into v3."),
+        Step::RollingBack => eprintln!("The upgrade failed. Putting the v2 files back."),
+    }
+}
+
+/// The failure as text. A failed import adds the errors its report lists.
+fn upgrade_failure(error: &UpgradeError) -> String {
+    let mut text = format!("upgrade failed: {error}");
+    let failed_import = match error {
+        UpgradeError::RollbackFailed { cause, .. } => cause.as_ref(),
+        other => other,
+    };
+    if let UpgradeError::ImportFailed { report, .. } = failed_import {
+        for item in report.items.iter().filter(|item| item.outcome == "error") {
+            text.push_str(&format!(
+                "\n  {} {}: {}",
+                item.entity, item.key, item.detail
+            ));
+        }
+    }
+    text
+}
+
+/// What the upgrade moved, what it left, and where the v2 files are now.
+fn print_summary(dirs: &DataDirs, summary: &Summary) {
+    let report = &summary.report;
+    println!("Upgrade complete. This data directory is now on v3.");
+
+    let mut moved: Vec<(&String, u64)> = report
+        .entities
+        .iter()
+        .map(|(name, counts)| (name, counts.imported))
+        .filter(|(_, imported)| *imported > 0)
+        .collect();
+    moved.sort();
+    if !moved.is_empty() {
+        println!("\nMoved to v3:");
+        for (name, imported) in moved {
+            println!("  {}: {imported}", name.replace('_', " "));
+        }
+    }
+    let attention: u64 = report
+        .entities
+        .values()
+        .map(|counts| {
+            counts.conflict_kept_existing
+                + counts.dropped_unknown_user
+                + counts.dropped_invalid
+                + counts.nulled_field
+                + counts.error
+        })
+        .sum();
+    if attention > 0 {
+        println!(
+            "\n{attention} record(s) were left out or changed on the way. The report lists each."
+        );
+    }
+    if summary.orphans_removed > 0 {
+        println!(
+            "\nRemoved {} follows and approvals that belonged to deleted users.",
+            summary.orphans_removed
+        );
+    }
+    if !report.left_behind.is_empty() {
+        println!("\nLeft behind in v2 (not carried to v3):");
+        for item in &report.left_behind {
+            println!("  {}: {} ({})", item.table, item.rows, item.reason);
+        }
+    }
+    if !report.settings_defaulted.is_empty() {
+        println!(
+            "\nSettings v2 had nothing saved for, now at v3 defaults:\n  {}",
+            report.settings_defaulted.join(", ")
+        );
+    }
+
+    if summary.backup_kept {
+        println!(
+            "\nYour v2 files are kept in:\n  {}\n  {}",
+            dirs.config_backup().display(),
+            dirs.cache_backup().display()
+        );
+        println!("Remove them once you are happy with v3:  droppedneedle-tool remove-v2-backup");
+        println!(
+            "Go back to v2:                           droppedneedle-tool upgrade --undo --yes"
+        );
+    } else {
+        println!("\nThe v2 files were deleted, as asked with --no-backup.");
+    }
+    println!("\nFull report: {}", dirs.report_file().display());
+    println!("Start the server now.");
+}
+
+/// `upgrade --undo`: back to v2. It deletes the v3 data, so it wants
+/// `--yes`.
+fn run_undo(dirs: &DataDirs, yes: bool) -> Result<(), String> {
+    let (config, cache) = (dirs.config_dir.display(), dirs.cache_dir.display());
+    if !yes {
+        return Err(format!(
+            "upgrade --undo deletes everything in {config} and {cache} except the v2-backup \
+             folders, then puts the v2 files back. Nothing was changed. Run it again with \
+             --yes to go ahead."
+        ));
+    }
+    upgrade::undo(dirs).map_err(|error| format!("undo failed: {error}"))?;
+    println!("Back on v2. The v2 files are in {config} and {cache} again; the v3 data is gone.");
+    println!("Set the image tag back to your v2 version, then start the server.");
+    Ok(())
+}
+
+/// `remove-v2-backup`: delete the v2 files a finished upgrade kept.
+fn run_remove_backup(args: &[String]) -> Result<(), String> {
+    check_flags(args, &[], false)?;
+    let removed = upgrade::remove_backup(&data_dirs()?).map_err(|error| error.to_string())?;
+    if removed.is_empty() {
+        println!("No v2 backup found. Nothing to remove.");
+    }
+    for dir in removed {
+        println!("removed {}", dir.display());
+    }
     Ok(())
 }
 

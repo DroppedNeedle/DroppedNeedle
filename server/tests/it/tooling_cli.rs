@@ -1,11 +1,15 @@
 //! Tooling CLI tests: every `droppedneedle-tool` subcommand runs
-//! as the real binary, plus the conflict-merge decisions, the offline
-//! restore guards, and the dev-only covers-debug gate.
+//! as the real binary, plus the in-place upgrade's failure and recovery
+//! paths, the conflict-merge decisions, the offline restore guards, and
+//! the dev-only covers-debug gate.
 //!
 //! Nothing here touches the network; every database is a scratch file.
 
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+use droppedneedle::tooling::upgrade;
 
 use crate::common;
 
@@ -50,7 +54,7 @@ fn repaired_export(
     )
     .expect("repair runs");
     let request = droppedneedle::export::ExportRequest {
-        v2_root: fixture.root.clone(),
+        v2: droppedneedle::export::v2dir::V2Dirs::under_root(&fixture.root),
         db_path: None,
         passphrase: droppedneedle::runtime_config::Secret::new("operator-passphrase"),
         exported_at: None,
@@ -502,6 +506,375 @@ fn import_refuses_while_the_server_holds_the_database() {
         String::from_utf8_lossy(&status.stderr)
     );
     assert!(!db.exists(), "the database was never opened");
+}
+
+/// Run the tool against the data directory under `root` the way a
+/// container does: no path flags, only the environment the server reads.
+fn tool_in(root: &Path, args: &[&str]) -> std::process::Output {
+    Command::new(tool())
+        .args(args)
+        .env_clear()
+        .env("ROOT_APP_DIR", root)
+        .output()
+        .expect("tool runs")
+}
+
+fn stderr_of(output: &std::process::Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+/// A v2 data directory without orphan rows. Upgrading it never changes
+/// the v2 database, so its files can be compared byte for byte.
+fn clean_v2(root: &Path) {
+    droppedneedle::tooling::fixture::build_v2_fixture(root).expect("fixture builds");
+    droppedneedle::tooling::fixture::delete_orphan_rows(&root.join("cache").join("library.db"))
+        .expect("repair runs");
+}
+
+/// Folders (`None`) and files (their bytes) by relative path.
+type Tree = BTreeMap<PathBuf, Option<Vec<u8>>>;
+
+/// Everything under `dir`. The data lock file is left out: taking the
+/// lock creates it and nothing ever removes it.
+fn tree(dir: &Path) -> Tree {
+    fn walk(top: &Path, dir: &Path, found: &mut Tree) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries {
+            let path = entry.expect("entry reads").path();
+            if path
+                .file_name()
+                .is_some_and(|name| name == "library.db.lock")
+            {
+                continue;
+            }
+            let relative = path.strip_prefix(top).expect("under top").to_owned();
+            if path.is_dir() {
+                found.insert(relative, None);
+                walk(top, &path, found);
+            } else {
+                found.insert(relative, Some(std::fs::read(&path).expect("file reads")));
+            }
+        }
+    }
+    let mut found = BTreeMap::new();
+    walk(dir, dir, &mut found);
+    found
+}
+
+/// The config and cache folders of the data directory under `root`.
+fn data_trees(root: &Path) -> (Tree, Tree) {
+    (tree(&root.join("config")), tree(&root.join("cache")))
+}
+
+/// The same two folders as the upgrade keeps them, in its backup.
+fn backup_trees(root: &Path) -> (Tree, Tree) {
+    (
+        tree(&root.join("config").join("v2-backup")),
+        tree(&root.join("cache").join("v2-backup")),
+    )
+}
+
+fn schema_stamp(db: &Path) -> i64 {
+    rusqlite::Connection::open(db)
+        .expect("database opens")
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .expect("stamp reads")
+}
+
+/// True when the data directory under `root` holds a migrated v3 database
+/// and none of the upgrade's temporary files.
+fn is_v3(root: &Path) -> bool {
+    let cache = root.join("cache");
+    schema_stamp(&cache.join("library.db")) > 0
+        && root.join("config").join("data_enc.key").is_file()
+        && !cache.join(".upgrade-work").exists()
+        && !cache.join(".upgrade-in-progress").exists()
+}
+
+fn upgrade_dirs(root: &Path) -> upgrade::DataDirs {
+    upgrade::DataDirs::from_config(&droppedneedle::AppConfig::with_root(0, root))
+}
+
+/// The upgrade through the library, for the failure points the tool has
+/// no switch for.
+async fn upgrade_with_fault(
+    root: &Path,
+    fault: upgrade::Fault,
+) -> Result<upgrade::Upgraded, upgrade::UpgradeError> {
+    let request = upgrade::UpgradeRequest {
+        dirs: upgrade_dirs(root),
+        keep_backup: true,
+        v2_commit: None,
+        fault: Some(fault),
+    };
+    upgrade::run(&request, &mut |_| {}).await
+}
+
+/// One command turns a v2 data directory into a v3 one where it stands:
+/// the v2 files end up in the two backup folders, the import matches an
+/// export and import done by hand, and nothing temporary is left.
+#[test]
+fn upgrade_turns_a_v2_directory_into_v3_in_place() {
+    let scratch = scratch_dir("upgrade");
+    let root = scratch.join("data");
+    let fixture = droppedneedle::tooling::fixture::build_v2_fixture(&root).expect("fixture builds");
+
+    let run = tool_in(&root, &["upgrade"]);
+    assert!(run.status.success(), "stderr: {}", stderr_of(&run));
+    assert!(is_v3(&root));
+    let config: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(root.join("config").join("config.json")).expect("v3 config reads"),
+    )
+    .expect("v3 config parses");
+    assert_eq!(config["instance_id"], fixture.instance_id.as_str());
+
+    // The v2 files are kept, each in its own folder's backup.
+    let config_backup = root.join("config").join("v2-backup");
+    let cache_backup = root.join("cache").join("v2-backup");
+    assert!(config_backup.join(".env").is_file());
+    assert!(config_backup.join("config.json").is_file());
+    assert_eq!(schema_stamp(&cache_backup.join("library.db")), 0);
+
+    // The fixture's follow and approval of a deleted user are removed from
+    // the v2 database, and the summary says so.
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        stdout.contains("Removed 2 follows and approvals"),
+        "stdout: {stdout}"
+    );
+    let orphans: i64 = rusqlite::Connection::open(cache_backup.join("library.db"))
+        .expect("v2 database opens")
+        .query_row(
+            "SELECT (SELECT count(*) FROM user_followed_artists
+                     WHERE user_id NOT IN (SELECT id FROM auth_users))
+                  + (SELECT count(*) FROM auto_download_approvals
+                     WHERE user_id NOT IN (SELECT id FROM auth_users))",
+            [],
+            |row| row.get(0),
+        )
+        .expect("orphans count");
+    assert_eq!(orphans, 0);
+
+    // The same counts as the export and import commands give by hand.
+    let manual_root = scratch.join("manual");
+    let (manual_fixture, export) = repaired_export(&manual_root);
+    let pass = passphrase_file(&manual_root, "operator-passphrase");
+    let manual = Command::new(tool())
+        .args(["import", "--file"])
+        .arg(&export)
+        .args(["--db"])
+        .arg(manual_root.join("v3").join("cache").join("library.db"))
+        .args(["--config-dir"])
+        .arg(manual_root.join("v3").join("config"))
+        .args(["--passphrase-file"])
+        .arg(&pass)
+        .args(["--v2-config"])
+        .arg(manual_fixture.root.join("config").join("config.json"))
+        .output()
+        .expect("tool runs");
+    assert!(manual.status.success(), "stderr: {}", stderr_of(&manual));
+    let manual: serde_json::Value =
+        serde_json::from_slice(&manual.stdout).expect("import prints one JSON object");
+    let report: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(root.join("cache").join("upgrade-report.json")).expect("report saved"),
+    )
+    .expect("report parses");
+    assert_eq!(report["entities"], manual["entities"]);
+    assert_eq!(report["entities"]["user"]["imported"], 2);
+
+    // A second run finds v3 and changes nothing.
+    let before = data_trees(&root);
+    let again = tool_in(&root, &["upgrade"]);
+    assert!(again.status.success(), "stderr: {}", stderr_of(&again));
+    assert!(String::from_utf8_lossy(&again.stdout).contains("Nothing to do"));
+    assert_eq!(data_trees(&root), before);
+
+    // The backup goes once the user asks, and only the backup.
+    let removed = tool_in(&root, &["remove-v2-backup"]);
+    assert!(removed.status.success(), "stderr: {}", stderr_of(&removed));
+    assert!(!config_backup.exists() && !cache_backup.exists());
+    assert!(is_v3(&root));
+}
+
+/// A run that cannot finish leaves the v2 data directory as it found it,
+/// byte for byte, whether it stops before or after the files moved.
+#[tokio::test]
+async fn a_failed_upgrade_leaves_the_v2_directory_as_it_was() {
+    let scratch = scratch_dir("upgrade-fails");
+    let root = scratch.join("data");
+    clean_v2(&root);
+    let key_file = root.join("config").join(".env");
+    let key = std::fs::read(&key_file).expect("key reads");
+    let original = data_trees(&root);
+
+    // A running server holds the data lock: refused.
+    {
+        let _server = droppedneedle::tooling::datalock::DataLock::shared(
+            &root.join("cache").join("library.db"),
+        )
+        .expect("server lock");
+        let run = tool_in(&root, &["upgrade"]);
+        assert!(!run.status.success());
+        assert!(
+            stderr_of(&run).contains("Stop the server"),
+            "stderr: {}",
+            stderr_of(&run)
+        );
+        assert_eq!(data_trees(&root), original);
+    }
+
+    // No key file: refused before anything moves.
+    std::fs::remove_file(&key_file).expect("key removed");
+    let keyless = data_trees(&root);
+    let run = tool_in(&root, &["upgrade"]);
+    assert!(!run.status.success());
+    assert!(
+        stderr_of(&run).contains("V2_KEY_NOT_FOUND"),
+        "stderr: {}",
+        stderr_of(&run)
+    );
+    assert_eq!(data_trees(&root), keyless);
+
+    // A key that does not open the stored secrets: the export fails after
+    // the files moved aside, and they are moved back.
+    let other_key = droppedneedle::export::fernet::FernetKey::generate().expect("key generates");
+    std::fs::write(
+        &key_file,
+        format!("DATA_ENC_KEY={}\n", other_key.to_base64()),
+    )
+    .expect("key writes");
+    let mismatched = data_trees(&root);
+    let run = tool_in(&root, &["upgrade"]);
+    assert!(!run.status.success());
+    assert!(
+        stderr_of(&run).contains("V2_KEY_MISMATCH"),
+        "stderr: {}",
+        stderr_of(&run)
+    );
+    assert_eq!(data_trees(&root), mismatched);
+
+    // The import fails just before it commits: the v3 files it had created
+    // are deleted and the v2 files are moved back.
+    std::fs::write(&key_file, key).expect("key restored");
+    let failed = upgrade_with_fault(&root, upgrade::Fault::ImportFails).await;
+    assert!(
+        matches!(
+            failed,
+            Err(upgrade::UpgradeError::ImportFailed { dry_run: false, .. })
+        ),
+        "outcome: {failed:?}"
+    );
+    assert_eq!(data_trees(&root), original);
+}
+
+/// A killed run leaves a marker. The server refuses to start on it, and
+/// the next run puts the v2 files back before it does anything else.
+#[tokio::test]
+async fn an_interrupted_upgrade_is_rolled_back_first() {
+    let scratch = scratch_dir("upgrade-interrupted");
+    let root = scratch.join("data");
+    clean_v2(&root);
+    let original = data_trees(&root);
+    let dirs = upgrade_dirs(&root);
+
+    // Killed while the files were moving aside: some are in the backup,
+    // the rest still in place. Going back deletes none of them.
+    let killed = upgrade_with_fault(&root, upgrade::Fault::DiesWhileMoving).await;
+    assert!(
+        matches!(killed, Err(upgrade::UpgradeError::InjectedCrash)),
+        "outcome: {killed:?}"
+    );
+    assert_eq!(
+        upgrade::check_bootable(&dirs),
+        Err(upgrade::BootRefusal::Interrupted)
+    );
+    let undone = tool_in(&root, &["upgrade", "--undo", "--yes"]);
+    assert!(undone.status.success(), "stderr: {}", stderr_of(&undone));
+    assert_eq!(data_trees(&root), original);
+
+    // Killed right after the import: the next run deletes the v3 files,
+    // puts v2 back, and upgrades again from the start.
+    let killed = upgrade_with_fault(&root, upgrade::Fault::DiesAfterImport).await;
+    assert!(
+        matches!(killed, Err(upgrade::UpgradeError::InjectedCrash)),
+        "outcome: {killed:?}"
+    );
+    assert_eq!(
+        upgrade::check_bootable(&dirs),
+        Err(upgrade::BootRefusal::Interrupted)
+    );
+    let run = tool_in(&root, &["upgrade"]);
+    assert!(run.status.success(), "stderr: {}", stderr_of(&run));
+    assert!(
+        stderr_of(&run).contains("An earlier upgrade did not finish"),
+        "stderr: {}",
+        stderr_of(&run)
+    );
+    assert!(is_v3(&root));
+    assert_eq!(upgrade::check_bootable(&dirs), Ok(()));
+    assert_eq!(backup_trees(&root), original);
+}
+
+/// `--undo --yes` deletes the v3 data and puts the v2 files back as they
+/// were. `--no-backup` keeps no v2 files, so there is nothing to undo.
+#[test]
+fn undo_returns_the_v2_files_and_no_backup_keeps_none() {
+    let scratch = scratch_dir("upgrade-undo");
+    let root = scratch.join("data");
+    clean_v2(&root);
+    let original = data_trees(&root);
+
+    let run = tool_in(&root, &["upgrade"]);
+    assert!(run.status.success(), "stderr: {}", stderr_of(&run));
+    assert_eq!(backup_trees(&root), original);
+    let upgraded = data_trees(&root);
+
+    // Undo deletes the v3 data, so it asks for --yes first.
+    let unconfirmed = tool_in(&root, &["upgrade", "--undo"]);
+    assert!(!unconfirmed.status.success());
+    assert!(
+        stderr_of(&unconfirmed).contains("--yes"),
+        "stderr: {}",
+        stderr_of(&unconfirmed)
+    );
+    assert_eq!(data_trees(&root), upgraded);
+
+    // A running server holds the data lock: refused.
+    {
+        let _server = droppedneedle::tooling::datalock::DataLock::shared(
+            &root.join("cache").join("library.db"),
+        )
+        .expect("server lock");
+        let refused = tool_in(&root, &["upgrade", "--undo", "--yes"]);
+        assert!(!refused.status.success());
+        assert!(
+            stderr_of(&refused).contains("Stop the server"),
+            "stderr: {}",
+            stderr_of(&refused)
+        );
+        assert_eq!(data_trees(&root), upgraded);
+    }
+
+    let undone = tool_in(&root, &["upgrade", "--undo", "--yes"]);
+    assert!(undone.status.success(), "stderr: {}", stderr_of(&undone));
+    assert_eq!(data_trees(&root), original);
+
+    let run = tool_in(&root, &["upgrade", "--no-backup"]);
+    assert!(run.status.success(), "stderr: {}", stderr_of(&run));
+    assert!(is_v3(&root));
+    assert!(!root.join("config").join("v2-backup").exists());
+    assert!(!root.join("cache").join("v2-backup").exists());
+
+    let nothing_to_undo = tool_in(&root, &["upgrade", "--undo", "--yes"]);
+    assert!(!nothing_to_undo.status.success());
+    assert!(
+        stderr_of(&nothing_to_undo).contains("no complete v2 backup"),
+        "stderr: {}",
+        stderr_of(&nothing_to_undo)
+    );
+    assert!(is_v3(&root));
 }
 
 /// A migrated merge target plus its repaired export, ready for one seed.

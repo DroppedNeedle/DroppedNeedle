@@ -20,7 +20,7 @@ fn scratch_dir(tag: &str) -> crate::common::ScratchDir {
 
 fn export_request(v2_root: &Path, passphrase: &str) -> droppedneedle::export::ExportRequest {
     droppedneedle::export::ExportRequest {
-        v2_root: v2_root.to_path_buf(),
+        v2: droppedneedle::export::v2dir::V2Dirs::under_root(v2_root),
         db_path: None,
         passphrase: Secret::new(passphrase.to_owned()),
         exported_at: None,

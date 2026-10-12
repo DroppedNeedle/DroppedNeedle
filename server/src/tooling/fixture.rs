@@ -244,22 +244,11 @@ struct ApprovalRow {
 }
 
 /// Operator repair for the deleted-ID case: drop follows and approvals
-/// whose user id has no `auth_users` row. Returns rows removed.
+/// whose user id has no `auth_users` row. Returns rows removed. The same
+/// repair the in-place upgrade runs.
 pub fn delete_orphan_rows(db_path: &Path) -> Result<usize, FixtureError> {
-    let db = Connection::open(db_path).map_err(|error| FixtureError::Db(error.to_string()))?;
-    let follows = db
-        .execute(
-            "DELETE FROM user_followed_artists WHERE user_id NOT IN (SELECT id FROM auth_users)",
-            [],
-        )
-        .map_err(|error| FixtureError::Db(error.to_string()))?;
-    let approvals = db
-        .execute(
-            "DELETE FROM auto_download_approvals WHERE user_id NOT IN (SELECT id FROM auth_users)",
-            [],
-        )
-        .map_err(|error| FixtureError::Db(error.to_string()))?;
-    Ok(follows + approvals)
+    crate::tooling::upgrade::delete_orphan_rows(db_path)
+        .map_err(|error| FixtureError::Db(error.to_string()))
 }
 
 /// v2 `config.json`: kept sections, partial sections with kept + dropped

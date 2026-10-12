@@ -26,7 +26,7 @@ fn scratch_dir(name: &str) -> crate::common::ScratchDir {
 
 fn request(v2_root: &Path) -> ExportRequest {
     ExportRequest {
-        v2_root: v2_root.to_owned(),
+        v2: droppedneedle::export::v2dir::V2Dirs::under_root(v2_root),
         db_path: None,
         passphrase: Secret::new(PASSPHRASE),
         exported_at: Some("2026-09-28T12:00:00Z".to_owned()),

@@ -246,7 +246,7 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
     let export_path = root.join("export.json");
     droppedneedle::export::export_v2_to_file(
         &droppedneedle::export::ExportRequest {
-            v2_root: v2_root.clone(),
+            v2: droppedneedle::export::v2dir::V2Dirs::under_root(&v2_root),
             db_path: None,
             passphrase: Secret::new(PASSPHRASE.to_owned()),
             exported_at: None,

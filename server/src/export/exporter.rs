@@ -1,7 +1,8 @@
-//! The v2 exporter: one instance dir in, one sealed envelope out.
+//! The v2 exporter: one instance in, one sealed envelope out.
 //!
 //! The exporter reads a v2 instance read-only (key file, config, database,
-//! plugin manifests), resolves every secret through v2 `decrypt()` semantics
+//! plugin manifests) from the folders its request names
+//! ([`V2Dirs`]), resolves every secret through v2 `decrypt()` semantics
 //! (Fernet or legacy-plaintext passthrough), seals each secret under the
 //! operator passphrase, and assembles the envelope. The JSON carries
 //! accounts, settings, follows and sealed per-user connections; the rest of
@@ -28,6 +29,7 @@ use crate::export::envelope::{
 use crate::export::error::ExportError;
 use crate::export::fernet::FernetKey;
 use crate::export::seal::Sealer;
+use crate::export::v2dir::V2Dirs;
 use crate::export::{EXPORT_FORMAT, FORMAT_VERSION};
 use crate::runtime_config::Secret;
 
@@ -184,9 +186,9 @@ const INTERNAL_KEPT: &[&str] = &[
 /// passphrase stays inside [`Secret`] so a debug print cannot leak it.
 #[derive(Debug)]
 pub struct ExportRequest {
-    /// v2 instance root (`<ROOT_APP_DIR>`).
-    pub v2_root: PathBuf,
-    /// Database override; defaults to `<root>/cache/library.db`.
+    /// Where the v2 instance keeps its config, cache and plugins.
+    pub v2: V2Dirs,
+    /// Database override; defaults to `library.db` in the v2 cache folder.
     pub db_path: Option<PathBuf>,
     /// Operator passphrase sealing every secret in the file.
     pub passphrase: Secret,
@@ -228,8 +230,8 @@ fn build_doc(
     bundle_path: &Path,
     bundle_name: &str,
 ) -> Result<ExportDoc, ExportError> {
-    let key = crate::export::v2dir::read_data_enc_key(&request.v2_root)?;
-    let config = crate::export::v2dir::read_config(&request.v2_root)?;
+    let key = crate::export::v2dir::read_data_enc_key(&request.v2.config_dir)?;
+    let config = crate::export::v2dir::read_config(&request.v2.config_dir)?;
     let instance_id = config
         .get("instance_id")
         .and_then(Value::as_str)
@@ -237,7 +239,7 @@ fn build_doc(
         .to_owned();
     let sealer = Sealer::generate(request.passphrase.expose())?;
     let db_path =
-        crate::export::v2dir::resolve_db_path(&request.v2_root, request.db_path.as_deref());
+        crate::export::v2dir::resolve_db_path(&request.v2.cache_dir, request.db_path.as_deref());
     let db = open_v2_db(&db_path)?;
     let mut users = read_users(&db)?;
     attach_user_rows(&db, &mut users, &key, &sealer)?;
@@ -246,7 +248,7 @@ fn build_doc(
     let approvals = read_approvals(&db)?;
     let event_cities = read_event_cities(&db)?;
     let event_seen = read_event_seen(&db)?;
-    let plugin_flags = crate::export::v2dir::plugin_setting_flags(&request.v2_root);
+    let plugin_flags = crate::export::v2dir::plugin_setting_flags(&request.v2.plugins_dir);
     let settings = build_settings(&config, &key, &sealer, &plugin_flags)?;
     let exported_at = request
         .exported_at
@@ -256,7 +258,7 @@ fn build_doc(
     let built = bundle_with_inventory(
         &db,
         &db_path,
-        &crate::export::v2dir::cache_dir(&request.v2_root),
+        &request.v2.cache_dir,
         bundle_path,
         bundle_name,
     );

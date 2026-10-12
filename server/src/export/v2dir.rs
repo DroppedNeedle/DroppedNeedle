@@ -1,9 +1,11 @@
-//! Reading a v2 instance directory.
+//! Reading a v2 instance's folders.
 //!
 //! Layout (v2 defaults under `<ROOT_APP_DIR>`): `config/.env` holds
 //! `DATA_ENC_KEY`, `config/config.json` holds settings plus the top-level
 //! instance id, `cache/library.db` is the single SQLite file, and
 //! `plugins/<name>/plugin.toml` manifests flag secret plugin settings.
+//! The config and cache folders are separate mounts in a container, so
+//! [`V2Dirs`] names each one instead of assuming a shared root.
 //! Everything here is read-only; the exporter never writes into v2.
 
 use std::collections::HashMap;
@@ -25,25 +27,46 @@ const PLUGINS_DIR_NAME: &str = "plugins";
 /// v2 key variable name.
 const DATA_ENC_KEY_VAR: &str = "DATA_ENC_KEY";
 
+/// The folders one v2 instance keeps its data in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct V2Dirs {
+    /// Holds `.env` (the key file) and `config.json`.
+    pub config_dir: PathBuf,
+    /// Holds `library.db`, avatars, covers, held downloads and saved
+    /// originals.
+    pub cache_dir: PathBuf,
+    /// Holds one folder per plugin, each with its `plugin.toml`.
+    pub plugins_dir: PathBuf,
+}
+
+impl V2Dirs {
+    /// The standard layout under one v2 `<ROOT_APP_DIR>`.
+    #[must_use]
+    pub fn under_root(v2_root: &Path) -> Self {
+        Self {
+            config_dir: v2_root.join("config"),
+            cache_dir: v2_root.join("cache"),
+            plugins_dir: v2_root.join(PLUGINS_DIR_NAME),
+        }
+    }
+}
+
 /// Expected v2 key-file path, for errors and refusal tests.
 #[must_use]
-pub fn key_file_path(v2_root: &Path) -> PathBuf {
-    v2_root.join("config").join(KEY_FILE_NAME)
+pub fn key_file_path(config_dir: &Path) -> PathBuf {
+    config_dir.join(KEY_FILE_NAME)
 }
 
 /// Expected v2 config path.
 #[must_use]
-pub fn config_file_path(v2_root: &Path) -> PathBuf {
-    v2_root.join("config").join(CONFIG_FILE_NAME)
+pub fn config_file_path(config_dir: &Path) -> PathBuf {
+    config_dir.join(CONFIG_FILE_NAME)
 }
 
 /// v2 database path: the explicit override when given, else the default.
 #[must_use]
-pub fn resolve_db_path(v2_root: &Path, override_path: Option<&Path>) -> PathBuf {
-    override_path.map_or_else(
-        || v2_root.join("cache").join(DB_FILE_NAME),
-        Path::to_path_buf,
-    )
+pub fn resolve_db_path(cache_dir: &Path, override_path: Option<&Path>) -> PathBuf {
+    override_path.map_or_else(|| cache_dir.join(DB_FILE_NAME), Path::to_path_buf)
 }
 
 /// Percent-encode the characters a SQLite URI path cannot carry raw.
@@ -59,12 +82,6 @@ pub(crate) fn sqlite_uri_path(path: &Path) -> String {
         }
     }
     out
-}
-
-/// v2 cache dir (`<root>/cache`): avatars and playlist covers live here.
-#[must_use]
-pub fn cache_dir(v2_root: &Path) -> PathBuf {
-    v2_root.join("cache")
 }
 
 /// Parse dotenv text into variables. Enough for the v2 key file: blank
@@ -101,8 +118,8 @@ pub fn parse_dotenv(text: &str) -> HashMap<String, String> {
 /// Load the v2 data key. A missing file refuses with [`ExportError::V2KeyNotFound`];
 /// a present file with no usable key refuses with [`ExportError::V2KeyInvalid`].
 /// Minting here would silently re-key stored ciphertext, so both fail.
-pub fn read_data_enc_key(v2_root: &Path) -> Result<FernetKey, ExportError> {
-    let path = key_file_path(v2_root);
+pub fn read_data_enc_key(config_dir: &Path) -> Result<FernetKey, ExportError> {
+    let path = key_file_path(config_dir);
     let text = std::fs::read_to_string(&path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             ExportError::V2KeyNotFound { path: path.clone() }
@@ -125,9 +142,21 @@ pub fn read_data_enc_key(v2_root: &Path) -> Result<FernetKey, ExportError> {
     FernetKey::from_base64(encoded).map_err(|_| ExportError::V2KeyInvalid)
 }
 
+/// True when `config_dir` holds a v2 key file that names a data key. The
+/// key itself is not checked: this only tells a v2 config folder from any
+/// other.
+#[must_use]
+pub fn names_data_enc_key(config_dir: &Path) -> bool {
+    std::fs::read_to_string(key_file_path(config_dir)).is_ok_and(|text| {
+        parse_dotenv(&text)
+            .get(DATA_ENC_KEY_VAR)
+            .is_some_and(|value| !value.trim().is_empty())
+    })
+}
+
 /// Read the v2 config file as a JSON object.
-pub fn read_config(v2_root: &Path) -> Result<Map<String, Value>, ExportError> {
-    let path = config_file_path(v2_root);
+pub fn read_config(config_dir: &Path) -> Result<Map<String, Value>, ExportError> {
+    let path = config_file_path(config_dir);
     let text = std::fs::read_to_string(&path).map_err(|error| ExportError::V2ConfigUnreadable {
         path: path.clone(),
         reason: error.to_string(),
@@ -139,17 +168,16 @@ pub fn read_config(v2_root: &Path) -> Result<Map<String, Value>, ExportError> {
         .ok_or(ExportError::V2ConfigInvalid)
 }
 
-/// Declared setting flags per plugin, from `<v2root>/plugins/*/plugin.toml`
+/// Declared setting flags per plugin, from the `<plugins>/*/plugin.toml`
 /// manifests (`[[settings]]` keys to their `secret` bit, keyed by the
 /// manifest's own `plugin.name`, which need not match the folder name).
 /// Unreadable or invalid manifests are skipped: settings whose flags are
 /// unknown seal rather than travel verbatim, so a lost manifest fails safe.
 /// A missing plugins dir yields an empty map.
 #[must_use]
-pub fn plugin_setting_flags(v2_root: &Path) -> HashMap<String, HashMap<String, bool>> {
+pub fn plugin_setting_flags(plugins_dir: &Path) -> HashMap<String, HashMap<String, bool>> {
     let mut flags: HashMap<String, HashMap<String, bool>> = HashMap::new();
-    let dir = v2_root.join(PLUGINS_DIR_NAME);
-    let entries = match std::fs::read_dir(&dir) {
+    let entries = match std::fs::read_dir(plugins_dir) {
         Ok(entries) => entries,
         Err(_) => return flags,
     };
