@@ -7036,6 +7036,9 @@
           },
           "404": {
             "description": "Nothing to take back"
+          },
+          "409": {
+            "description": "Another file now sits at an old path; nothing was put back"
           }
         }
       }

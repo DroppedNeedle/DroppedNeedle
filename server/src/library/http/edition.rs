@@ -600,6 +600,7 @@ pub async fn remove_extras(
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
         (status = 404, description = "Nothing to take back"),
+        (status = 409, description = "Another file now sits at an old path; nothing was put back"),
     )
 )]
 pub async fn restore_extras(

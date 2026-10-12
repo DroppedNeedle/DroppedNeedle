@@ -29507,6 +29507,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Another file now sits at an old path; nothing was put back */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     plan_edition: {

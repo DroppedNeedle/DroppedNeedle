@@ -2655,6 +2655,84 @@ async fn removal_recycles_files_and_rescan_targets_the_album() {
     );
 }
 
+/// "Put back" never replaces a file that now sits where the removed one
+/// was: it is refused, the newer file is untouched and the removed file
+/// stays in the recycle bin, where a later "Put back" still finds it.
+#[tokio::test]
+async fn put_back_refuses_an_occupied_path() {
+    use droppedneedle::library::mutations::{MutationError, Mutations};
+    use droppedneedle::library::scan::CatalogStore as _;
+
+    let (scratch, library, music) = bare_library("lib-put-back");
+    let original = plant(&music, "Band/LP/01.flac", "flac_full_01.flac");
+    let removed_bytes = std::fs::read(&original).expect("removed file reads");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "Band/LP/01.flac")
+        .expect("track indexed");
+    let album: String = droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db"))
+        .expect("db opens")
+        .query_row(
+            "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+            [&track],
+            |row| row.get(0),
+        )
+        .expect("album id");
+    library
+        .scan_store
+        .execute_batch_for_tests(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+        )
+        .expect("admin row");
+
+    let (action, _) = Mutations::new(&library)
+        .recycle_album_files(&album, std::slice::from_ref(&track), "admin")
+        .expect("file recycled");
+    let recycled = walk_files(&music.join(".recycle"));
+    assert_eq!(recycled.len(), 1, "one file in the bin");
+    plant(&music, "Band/LP/01.flac", "flac_full_02.flac");
+    let newer_bytes = std::fs::read(&original).expect("newer file reads");
+    assert_ne!(newer_bytes, removed_bytes);
+
+    let refused = Mutations::new(&library).restore_recycled(&album, &action, "admin");
+    assert!(
+        matches!(
+            &refused,
+            Err(MutationError::Conflict(reason)) if reason.code == "RESTORE_PATH_OCCUPIED"
+        ),
+        "{refused:?}"
+    );
+    assert!(
+        !Mutations::new(&library).put_back(&[(original.clone(), recycled[0].clone())], "admin"),
+        "the upgrade put-back refuses too"
+    );
+    drain_scans(&library).await;
+    assert_eq!(
+        std::fs::read(&original).expect("newer file reads"),
+        newer_bytes,
+        "the newer file is untouched"
+    );
+    assert_eq!(
+        std::fs::read(&recycled[0]).expect("recycled copy reads"),
+        removed_bytes,
+        "the removed file is still in the bin"
+    );
+
+    std::fs::remove_file(&original).expect("newer file moved away");
+    assert!(
+        Mutations::new(&library)
+            .restore_recycled(&album, &action, "admin")
+            .expect("put back once the path is free"),
+    );
+    drain_scans(&library).await;
+    assert_eq!(
+        std::fs::read(&original).expect("restored file reads"),
+        removed_bytes
+    );
+}
+
 /// One edition operation: a person chooses another edition (partial
 /// mapping), automatic passes leave it alone, undo takes it back, and
 /// "Let DroppedNeedle choose" returns the album to its best fit.

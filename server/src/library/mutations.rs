@@ -101,6 +101,11 @@ pub const NOTHING_TO_RESTORE: Reason = reason(
     "There is no removal of this album's extra files to take back, or it was already taken back.",
     "Refresh the album page to see its files.",
 );
+pub const RESTORE_PATH_OCCUPIED: Reason = reason(
+    "RESTORE_PATH_OCCUPIED",
+    "Another file now sits where a removed file was, so nothing was put back.",
+    "Move or rename the file that is in the way, then put the files back again. The removed files are still in the recycle bin.",
+);
 
 /// The `before_json` a restore records, naming the removal it undid.
 fn restored_marker(action_id: &str) -> String {
@@ -319,7 +324,10 @@ impl<'a> Mutations<'a> {
     }
 
     /// Put back the files one [`Self::recycle_album_files`] moved, then
-    /// rescan their folders. Answers false when a file could not be put
+    /// rescan their folders. Refused as a whole, and still there to take
+    /// back later, when another file now sits at one of the old paths,
+    /// unless that file's recycled copy is gone from the bin (someone
+    /// moved it back by hand). Answers false when a file could not be put
     /// back (it stays in the recycle bin).
     pub fn restore_recycled(
         &self,
@@ -348,6 +356,19 @@ impl<'a> Mutations<'a> {
             .into_iter()
             .map(|[from, to]| (PathBuf::from(from), PathBuf::from(to)))
             .collect();
+        // A file the person already moved back by hand has no copy left in
+        // the bin, and must not block the undo.
+        if let Some((original, _)) = moves
+            .iter()
+            .find(|(original, recycled)| recycled.exists() && occupied(original))
+        {
+            tracing::warn!(
+                file = %original.file_name().unwrap_or_default().to_string_lossy(),
+                unreadable = ?std::fs::symlink_metadata(original).err().map(|error| error.kind()),
+                "a file sits where a recycled file was; nothing was put back"
+            );
+            return Err(MutationError::Conflict(RESTORE_PATH_OCCUPIED));
+        }
         self.write(|tx| {
             tx.execute(
                 "INSERT INTO library_catalog_actions (id, actor_user_id, action_kind, \
@@ -397,7 +418,8 @@ impl<'a> Mutations<'a> {
     /// Undo recycle moves (an upgrade whose new file could not be placed):
     /// each file goes back where it was, then the folders are rescanned so
     /// the catalog lists them again. Answers false when a file could not
-    /// be put back; it stays in the recycle bin and the error is logged.
+    /// be put back, or another file now sits at its old path; it stays in
+    /// the recycle bin and the error is logged.
     pub fn put_back(&self, moved: &[(PathBuf, PathBuf)], actor: &str) -> bool {
         let reason = restore(moved);
         let restored = reason.code != RESTORE_FAILED.code;
@@ -779,10 +801,29 @@ fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
     }
 }
 
-/// Put moved files back, newest first. Answers the reason to report.
+/// Whether anything sits at `path`, a dangling link included. A path
+/// that cannot be read counts as taken.
+fn occupied(path: &Path) -> bool {
+    !matches!(
+        std::fs::symlink_metadata(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    )
+}
+
+/// Put moved files back, newest first, never onto a path something else
+/// has taken since. The check and the move are two steps, so a file that
+/// lands between them is still replaced. Answers the reason to report.
 fn restore(moved: &[(PathBuf, PathBuf)]) -> Reason {
     let mut failed = false;
     for (original, destination) in moved.iter().rev() {
+        if occupied(original) {
+            failed = true;
+            tracing::error!(
+                file = %original.file_name().unwrap_or_default().to_string_lossy(),
+                "a file sits where a recycled file was; left it in the recycle bin"
+            );
+            continue;
+        }
         let back = original
             .parent()
             .map(std::fs::create_dir_all)
