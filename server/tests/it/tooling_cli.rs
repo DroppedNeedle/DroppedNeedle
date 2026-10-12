@@ -794,6 +794,24 @@ async fn an_interrupted_upgrade_is_rolled_back_first() {
     assert!(undone.status.success(), "stderr: {}", stderr_of(&undone));
     assert_eq!(data_trees(&root), original);
 
+    // The import fails and the run is killed while it puts the files back:
+    // the v3 files are gone, some v2 files are in place again and the rest
+    // still in the backup. The next run finishes the job and deletes none.
+    let killed = upgrade_with_fault(&root, upgrade::Fault::DiesWhileRollingBack).await;
+    assert!(
+        matches!(killed, Err(upgrade::UpgradeError::InjectedCrash)),
+        "outcome: {killed:?}"
+    );
+    assert!(root.join("config").join(".env").is_file());
+    assert!(!root.join("cache").join("library.db").exists());
+    assert_eq!(
+        upgrade::check_bootable(&dirs),
+        Err(upgrade::BootRefusal::Interrupted)
+    );
+    let undone = tool_in(&root, &["upgrade", "--undo", "--yes"]);
+    assert!(undone.status.success(), "stderr: {}", stderr_of(&undone));
+    assert_eq!(data_trees(&root), original);
+
     // Killed right after the import: the next run deletes the v3 files,
     // puts v2 back, and upgrades again from the start.
     let killed = upgrade_with_fault(&root, upgrade::Fault::DiesAfterImport).await;
@@ -857,9 +875,22 @@ fn undo_returns_the_v2_files_and_no_backup_keeps_none() {
         assert_eq!(data_trees(&root), upgraded);
     }
 
+    // A link left in the cache folder is deleted with the v3 data. What it
+    // points at, outside the two folders, is not.
+    let outside = scratch.join("outside");
+    std::fs::create_dir_all(&outside).expect("outside folder");
+    std::fs::write(outside.join("keep.txt"), "mine").expect("outside file");
+    let link = root.join("cache").join("link");
+    std::os::unix::fs::symlink(&outside, &link).expect("link");
+
     let undone = tool_in(&root, &["upgrade", "--undo", "--yes"]);
     assert!(undone.status.success(), "stderr: {}", stderr_of(&undone));
     assert_eq!(data_trees(&root), original);
+    assert!(std::fs::symlink_metadata(&link).is_err());
+    assert_eq!(
+        std::fs::read(outside.join("keep.txt")).expect("target survives"),
+        b"mine"
+    );
 
     let run = tool_in(&root, &["upgrade", "--no-backup"]);
     assert!(run.status.success(), "stderr: {}", stderr_of(&run));

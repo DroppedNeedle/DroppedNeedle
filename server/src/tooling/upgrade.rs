@@ -382,6 +382,10 @@ pub enum Fault {
     DiesWhileMoving,
     /// The process dies right after the import.
     DiesAfterImport,
+    /// The import fails before it commits, and the process dies during the
+    /// rollback, after the config folder went back and before the cache
+    /// folder did.
+    DiesWhileRollingBack,
 }
 
 /// Progress, for the tool to print as the run moves along.
@@ -594,7 +598,7 @@ pub async fn run(
     // Look again under the lock: another run may have finished meanwhile.
     if detect(dirs) == Layout::Interrupted {
         progress(Step::Recovering);
-        roll_back(dirs)?;
+        roll_back(dirs, None)?;
     }
     match detect(dirs) {
         Layout::V2 => {}
@@ -616,8 +620,9 @@ pub async fn run(
         Err(UpgradeError::InjectedCrash) => return Err(UpgradeError::InjectedCrash),
         Err(cause) => {
             progress(Step::RollingBack);
-            return Err(match roll_back(dirs) {
+            return Err(match roll_back(dirs, request.fault) {
                 Ok(()) => cause,
+                Err(UpgradeError::InjectedCrash) => UpgradeError::InjectedCrash,
                 Err(rollback) => UpgradeError::RollbackFailed {
                     cause: Box::new(cause),
                     rollback: Box::new(rollback),
@@ -644,11 +649,11 @@ pub fn undo(dirs: &DataDirs) -> Result<(), UpgradeError> {
     }
     let _lock = lock_exclusive(dirs)?;
     match detect(dirs) {
-        Layout::Interrupted => roll_back(dirs),
+        Layout::Interrupted => roll_back(dirs, None),
         Layout::Empty | Layout::V3 => {
             require_backup(dirs)?;
             write_marker(dirs, Phase::Upgrading)?;
-            roll_back(dirs)
+            roll_back(dirs, None)
         }
         Layout::V2 => Err(UpgradeError::AlreadyV2),
         Layout::Unknown(reason) => Err(UpgradeError::UnknownLayout(reason)),
@@ -874,7 +879,11 @@ async fn convert(
         attachments_dir: work.clone(),
         v2_config: Some(backup.config_file.clone()),
         dry_run,
-        fault_before_commit: !dry_run && request.fault == Some(Fault::ImportFails),
+        fault_before_commit: !dry_run
+            && matches!(
+                request.fault,
+                Some(Fault::ImportFails | Fault::DiesWhileRollingBack)
+            ),
     };
     progress(Step::DryRun);
     require_success(run_offline_import(lock, job(true)).await?)?;
@@ -937,7 +946,7 @@ fn fresh_passphrase() -> Result<Secret, UpgradeError> {
 /// Undo whatever the marker says is under way, then remove the marker.
 /// Without a marker there is nothing that is safe to assume, so nothing is
 /// touched.
-fn roll_back(dirs: &DataDirs) -> Result<(), UpgradeError> {
+fn roll_back(dirs: &DataDirs, fault: Option<Fault>) -> Result<(), UpgradeError> {
     let Some(phase) = read_marker(dirs) else {
         return Ok(());
     };
@@ -955,7 +964,10 @@ fn roll_back(dirs: &DataDirs) -> Result<(), UpgradeError> {
         // may be deleted again.
         write_marker(dirs, Phase::Moving)?;
     }
-    for folder in &folders {
+    for (index, folder) in folders.iter().enumerate() {
+        if index > 0 && fault == Some(Fault::DiesWhileRollingBack) {
+            return Err(UpgradeError::InjectedCrash);
+        }
         for name in entry_names(&folder.backup, &[])? {
             let home = folder.dir.join(&name);
             if std::fs::symlink_metadata(&home).is_ok() {
