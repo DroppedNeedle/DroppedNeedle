@@ -20,8 +20,10 @@ examples/
 **/.env.*
 AGENTS.md
 CLAUDE.md
-Docs/
+.agents/
+.claude/
 .dev-notes/
+.Trash-1000
 
 # Build output and dependencies
 server/target/
@@ -29,6 +31,9 @@ frontend/node_modules/
 frontend/build/
 frontend/.svelte-kit/
 frontend/.vite/
+frontend/.vitest-attachments/
+**/__screenshots__/
+**/__pycache__/
 
 # Docker files themselves
 docker-compose*.yml

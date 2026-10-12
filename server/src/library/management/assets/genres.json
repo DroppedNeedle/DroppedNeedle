@@ -1,7 +1,7 @@
 {
   "source": "https://musicbrainz.org/ws/2/genre/all?fmt=txt",
   "retrieved_at": "2026-07-21",
-  "source_note": "Official MusicBrainz canonical genre list. Update with backend/scripts/update_management_genres.py and review the diff.",
+  "source_note": "Official MusicBrainz canonical genre list. To update, fetch the source URL again and review the diff.",
   "genres": [
     "2 tone",
     "2-step",

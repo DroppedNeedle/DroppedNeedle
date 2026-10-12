@@ -4,14 +4,16 @@
 /cache/
 /dev-data/
 *.log
-*.pid
-*.sock
 *.tmp
 .env
 .env.*
 
 # Rust build output
 server/target/
+
+# Python caches from the plugin SDK and examples
+__pycache__/
+*.pyc
 
 # Frontend build output
 frontend/node_modules/
@@ -35,13 +37,9 @@ Thumbs.db
 ehthumbs.db
 
 # Private working files
-/manage.sh
-/scripts/
-/todos.md
 AGENTS.md
 AGENTS.md.bak
 CLAUDE.md
-Docs/
 .agents/
 .claude/
 .dev-notes/
