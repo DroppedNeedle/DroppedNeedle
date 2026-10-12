@@ -350,16 +350,22 @@ impl IdentityStore for SqliteIdentifyStore {
             );
             return;
         };
-        self.write("save album identity", |tx| {
+        // The write itself refuses to put an automatic or embedded row
+        // over a person's: the caller's own check may have read nothing.
+        let written = self.write("save album identity", |tx| {
             tx.execute(
-                "INSERT INTO local_album_external_identities (local_album_id, provider, \
-                 release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
-                 ON CONFLICT (local_album_id, provider) DO UPDATE SET \
-                 release_group_mbid = excluded.release_group_mbid, \
-                 release_mbid = excluded.release_mbid, \
-                 decision_source = excluded.decision_source, \
-                 selected_at = excluded.selected_at, row_revision = excluded.row_revision",
+                &format!(
+                    "INSERT INTO local_album_external_identities (local_album_id, provider, \
+                     release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+                     ON CONFLICT (local_album_id, provider) DO UPDATE SET \
+                     release_group_mbid = excluded.release_group_mbid, \
+                     release_mbid = excluded.release_mbid, \
+                     decision_source = excluded.decision_source, \
+                     selected_at = excluded.selected_at, row_revision = excluded.row_revision \
+                     WHERE excluded.decision_source NOT IN {REVISABLE} \
+                     OR local_album_external_identities.decision_source IN {REVISABLE}"
+                ),
                 params![
                     identity.local_album_id,
                     PROVIDER,
@@ -371,6 +377,12 @@ impl IdentityStore for SqliteIdentifyStore {
                 ],
             )
         });
+        if written == Some(0) {
+            tracing::warn!(
+                album = identity.local_album_id,
+                "automatic identity not written over a person's album identity"
+            );
+        }
     }
 
     fn clear_album_identity(&self, local_album_id: &str) {
@@ -419,16 +431,21 @@ impl IdentityStore for SqliteIdentifyStore {
             );
             return;
         };
-        self.write("save track identity", |tx| {
+        // Guarded like the album row.
+        let written = self.write("save track identity", |tx| {
             tx.execute(
-                "INSERT INTO local_track_external_identities (local_track_id, provider, \
-                 recording_mbid, release_track_mbid, decision_source, selected_at, row_revision) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
-                 ON CONFLICT (local_track_id, provider) DO UPDATE SET \
-                 recording_mbid = excluded.recording_mbid, \
-                 release_track_mbid = excluded.release_track_mbid, \
-                 decision_source = excluded.decision_source, \
-                 selected_at = excluded.selected_at, row_revision = excluded.row_revision",
+                &format!(
+                    "INSERT INTO local_track_external_identities (local_track_id, provider, \
+                     recording_mbid, release_track_mbid, decision_source, selected_at, row_revision) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+                     ON CONFLICT (local_track_id, provider) DO UPDATE SET \
+                     recording_mbid = excluded.recording_mbid, \
+                     release_track_mbid = excluded.release_track_mbid, \
+                     decision_source = excluded.decision_source, \
+                     selected_at = excluded.selected_at, row_revision = excluded.row_revision \
+                     WHERE excluded.decision_source NOT IN {REVISABLE} \
+                     OR local_track_external_identities.decision_source IN {REVISABLE}"
+                ),
                 params![
                     identity.local_track_id,
                     PROVIDER,
@@ -440,6 +457,12 @@ impl IdentityStore for SqliteIdentifyStore {
                 ],
             )
         });
+        if written == Some(0) {
+            tracing::warn!(
+                track = identity.local_track_id,
+                "automatic identity not written over a person's track identity"
+            );
+        }
     }
 
     fn artist_identity(&self, local_artist_id: &str) -> Option<ArtistIdentity> {

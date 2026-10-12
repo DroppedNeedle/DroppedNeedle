@@ -1752,6 +1752,83 @@ async fn retagged_album_keeps_its_identity() {
     );
 }
 
+/// An automatic identity write never replaces a person's album or track
+/// row, even when the caller's own check for one was skipped or failed.
+#[tokio::test]
+async fn automatic_write_keeps_a_manual_identity() {
+    use droppedneedle::library::identify::models::{AlbumIdentity, DecisionSource, TrackIdentity};
+    use droppedneedle::library::identify::stores::IdentityStore as _;
+    use droppedneedle::library::scan::CatalogStore as _;
+
+    let (_scratch, library, music) = bare_library("lib-manual-identity");
+    plant(&music, "album/01.flac", "flac_full_02.flac");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "album/01.flac")
+        .expect("track indexed");
+    let album = library.scan_store.album_for_track(&track).expect("album");
+    library
+        .scan_store
+        .execute_batch_for_tests(&format!(
+            "DELETE FROM local_album_external_identities; \
+             DELETE FROM local_track_external_identities; \
+             INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
+             VALUES ('{album}', 'musicbrainz', 'rg-chosen', 'rel-chosen', 'manual', 0, 3); \
+             INSERT INTO local_track_external_identities (local_track_id, provider, \
+             recording_mbid, decision_source, selected_at, row_revision) \
+             VALUES ('{track}', 'musicbrainz', 'rec-chosen', 'legacy_import', 0, 3);"
+        ))
+        .expect("identity seed");
+
+    let store = &library.identify_store;
+    store.save_album_identity(AlbumIdentity {
+        local_album_id: album.clone(),
+        provider: "musicbrainz".to_owned(),
+        release_group_mbid: Some("rg-download".to_owned()),
+        release_mbid: Some("rel-download".to_owned()),
+        decision_source: DecisionSource::Automatic,
+        row_revision: 1,
+    });
+    store.save_track_identity(TrackIdentity {
+        local_track_id: track.clone(),
+        provider: "musicbrainz".to_owned(),
+        recording_mbid: Some("rec-download".to_owned()),
+        release_track_mbid: None,
+        decision_source: DecisionSource::Automatic,
+        row_revision: 1,
+    });
+
+    let kept = store.album_identity(&album).expect("album identity");
+    assert_eq!(kept.decision_source, DecisionSource::Manual);
+    assert_eq!(kept.release_group_mbid.as_deref(), Some("rg-chosen"));
+    assert_eq!(kept.release_mbid.as_deref(), Some("rel-chosen"));
+    assert_eq!(kept.row_revision, 3);
+    let kept = store.track_identity(&track).expect("track identity");
+    assert_eq!(kept.decision_source, DecisionSource::LegacyImport);
+    assert_eq!(kept.recording_mbid.as_deref(), Some("rec-chosen"));
+    assert_eq!(kept.row_revision, 3);
+
+    // A row no person decided stays revisable.
+    library
+        .scan_store
+        .execute_batch_for_tests(
+            "UPDATE local_track_external_identities SET decision_source = 'embedded';",
+        )
+        .expect("source flipped");
+    store.save_track_identity(TrackIdentity {
+        local_track_id: track.clone(),
+        provider: "musicbrainz".to_owned(),
+        recording_mbid: Some("rec-download".to_owned()),
+        release_track_mbid: None,
+        decision_source: DecisionSource::Automatic,
+        row_revision: 4,
+    });
+    let revised = store.track_identity(&track).expect("track identity");
+    assert_eq!(revised.recording_mbid.as_deref(), Some("rec-download"));
+}
+
 /// An approval that cannot seal its identity fails as a whole: the
 /// caller gets the error and the review stays pending.
 #[tokio::test]
