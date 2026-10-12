@@ -108,7 +108,14 @@
 		glow?: string;
 	};
 
+	const waitingForSource = $derived(
+		mode === 'active' && item.waiting_reason === 'no_download_source'
+	);
+
 	const statusConfig = $derived.by((): StatusConfig => {
+		if (waitingForSource) {
+			return { badgeClass: 'badge-warning', label: 'Waiting', icon: Clock };
+		}
 		switch (item.status) {
 			case 'pending':
 				return {
@@ -220,6 +227,7 @@
 	const isActive = $derived(mode === 'active');
 	const hasProgress = $derived(
 		isActive &&
+			!waitingForSource &&
 			(item.status === 'downloading' || item.status === 'importing' || item.status === 'paused')
 	);
 	const hasStatusMessages = $derived(
@@ -231,7 +239,7 @@
 	class="request-card relative flex flex-col rounded-box transition-all duration-200"
 	class:border-error={isFailedState}
 	class:border={isFailedState}
-	class:is-downloading={isActive && item.status === 'downloading'}
+	class:is-downloading={isActive && !waitingForSource && item.status === 'downloading'}
 >
 	{#if albumContextMbid}
 		<a
@@ -377,6 +385,10 @@
 						{/if}
 					</div>
 				</div>
+			{:else if waitingForSource}
+				<span class="text-xs text-base-content/70 max-w-44 text-right">
+					Waiting: no download source configured
+				</span>
 			{:else if isActive && isFailedState && item.error_message}
 				<span class="text-xs text-error/80 max-w-44 text-right line-clamp-2"
 					>{item.error_message}</span

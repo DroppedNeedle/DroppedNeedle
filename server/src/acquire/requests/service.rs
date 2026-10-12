@@ -42,6 +42,9 @@ use crate::acquire::edition::chosen_edition;
 /// Batch row cap (v2 `BatchAlbumRequest` schema `max_length=500`).
 const BATCH_MAX_ITEMS: usize = 500;
 
+/// Why a queued download has not started: no download source is on.
+const WAITING_NO_SOURCE: &str = "no_download_source";
+
 /// History page-size cap (v2 `page_size` query `le=100`).
 const HISTORY_MAX_PAGE_SIZE: u32 = 100;
 
@@ -2143,6 +2146,12 @@ impl RequestsService {
                 item.size_remaining = snapshot
                     .total_size_bytes
                     .map(|total| (total - snapshot.downloaded_bytes).max(0) as f64);
+                if snapshot.status == "queued"
+                    && let Some(readiness) = self.readiness.get()
+                    && !(readiness.queue_ready)()
+                {
+                    item.waiting_reason = Some(WAITING_NO_SOURCE.to_owned());
+                }
                 item.error_message = snapshot.error_message;
                 item.quality = snapshot.quality;
                 item.protocol = Some(snapshot.protocol);
@@ -2369,6 +2378,7 @@ impl From<&RequestRecord> for RequestItem {
             size: None,
             size_remaining: None,
             status_messages: None,
+            waiting_reason: None,
             error_message: None,
             quality: None,
             protocol: None,

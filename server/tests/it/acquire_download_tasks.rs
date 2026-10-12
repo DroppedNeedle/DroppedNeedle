@@ -3,7 +3,7 @@
 //! retry pass. Scratch journal only; the reimport landing itself is covered
 //! by the download import journey.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::{
     body::Body,
@@ -21,7 +21,16 @@ use droppedneedle::acquire::landing::{LandingService, LandingSettings, LibrarySl
 use droppedneedle::acquire::requests::dispatch::{
     DispatchOrigin, DispatchOutcome, DispatchRequest, DownloadDispatch as _,
 };
-use droppedneedle::acquire::worker::{DownloadWorker, WorkerConfig};
+use droppedneedle::acquire::requests::{
+    auth::{Principal, Role},
+    models::AlbumIntake,
+    quota::QuotaLedger,
+    service::RequestsService,
+    state::{AcquireReadiness, RequestsState},
+};
+use droppedneedle::acquire::worker::{
+    DownloadWorker, FixedSource, Source, SourceSet, WorkerConfig,
+};
 use droppedneedle::ids::UuidGenerator;
 use serde_json::Value;
 use tower::ServiceExt as _;
@@ -409,4 +418,92 @@ async fn queue_journey_scopes_explains_retries_and_clears() {
     let (_, body) = send(&journal, get("/downloads/activity-summary", USER)).await;
     assert_eq!(body["failed_count"], 1);
     assert_eq!(body["active_count"], 0);
+}
+
+// A request made while no download source is set up is accepted and held,
+// and says why. Once a source is on, the next worker pass starts it.
+#[tokio::test]
+async fn request_waits_for_a_download_source() {
+    let db = AcquireDb::scratch().unwrap();
+    db.add_user("u-ada", "Ada", "trusted").await.unwrap();
+    let journal = Arc::new(Journal::new(db.clone()));
+    let staging = staging_for(&journal);
+    let sources: Arc<Mutex<SourceSet>> = Arc::default();
+    let (provider, config_staging) = (sources.clone(), staging.clone());
+    let worker = Arc::new(DownloadWorker::new(
+        journal.clone(),
+        Arc::new(move || provider.lock().unwrap().clone()),
+        Arc::new(move || WorkerConfig {
+            staging_root: config_staging.clone(),
+            ..WorkerConfig::default()
+        }),
+    ));
+    let state = RequestsState::new(
+        &db,
+        Arc::new(QuotaLedger::unlimited(db.clone())),
+        Arc::new(dispatch_over(journal)),
+    );
+    let (any_source, queue_source) = (worker.clone(), worker.clone());
+    let readiness = AcquireReadiness {
+        sources_ready: Arc::new(move || !any_source.sources_now().is_empty()),
+        queue_ready: Arc::new(move || !queue_source.sources_now().is_empty()),
+        staging_root: staging,
+    };
+    assert!(state.readiness.set(readiness).is_ok());
+    let service = RequestsService::new(&state);
+    let ada = Principal {
+        user_id: "u-ada".to_owned(),
+        username: Some("Ada".to_owned()),
+        role: Role::Trusted,
+    };
+
+    let answer = service
+        .request_album(
+            &ada,
+            &AlbumIntake {
+                musicbrainz_id: "33333333-3333-4333-8333-333333333333".to_owned(),
+                artist: Some("Massive Attack".to_owned()),
+                album: Some("Blue Lines".to_owned()),
+                year: None,
+                artist_mbid: None,
+                release_mbid: None,
+                monitor_artist: false,
+                auto_download_artist: false,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        answer.success,
+        "the request is accepted: {}",
+        answer.message
+    );
+    let task_id = answer.task_id.expect("the request is dispatched");
+
+    worker.run_once(1).await;
+    let held = service.active(&ada).await.unwrap();
+    assert_eq!(held.count, 1, "the request stays live");
+    assert_eq!(
+        held.items[0].waiting_reason.as_deref(),
+        Some("no_download_source")
+    );
+
+    *sources.lock().unwrap() =
+        Arc::new(vec![Source::Fixed(Arc::new(FixedSource::new(Vec::new())))]);
+    worker.run_once(2).await;
+    let attempts: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM download_attempts WHERE task_id = ?1")
+            .bind(&task_id)
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
+    assert_eq!(
+        attempts, 1,
+        "the pass after a source is on starts the fetch"
+    );
+    let live = service.active(&ada).await.unwrap();
+    assert!(
+        live.items.iter().all(|item| item.waiting_reason.is_none()),
+        "a started request no longer waits"
+    );
 }

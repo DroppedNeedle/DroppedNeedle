@@ -255,6 +255,11 @@ pub struct RequestItem {
     /// producer exists (v2 never sent these either).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_messages: Option<Vec<RequestStatusMessage>>,
+    /// Why a dispatched request has not started, as a stable code.
+    /// `no_download_source`: no download source is set up, so the request
+    /// is held and starts by itself once one is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub waiting_reason: Option<String>,
     /// Last failure text from the linked task, when failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,

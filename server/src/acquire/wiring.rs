@@ -845,10 +845,12 @@ impl AcquireSetup {
             tracing::warn!("free music was already attached to the request dispatch");
         }
         let (ready_worker, ready_music) = (worker.clone(), free_music.clone());
+        let queue_worker = worker.clone();
         let readiness = super::requests::state::AcquireReadiness {
             sources_ready: Arc::new(move || {
                 !ready_worker.sources_now().is_empty() || ready_music.takes_requests()
             }),
+            queue_ready: Arc::new(move || !queue_worker.sources_now().is_empty()),
             staging_root: staging_root.clone(),
         };
         if core.requests.readiness.set(readiness).is_err() {

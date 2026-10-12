@@ -20066,6 +20066,12 @@ export interface components {
             /** @description Primary owner id. */
             user_id?: string | null;
             /**
+             * @description Why a dispatched request has not started, as a stable code.
+             *     `no_download_source`: no download source is set up, so the request
+             *     is held and starts by itself once one is.
+             */
+            waiting_reason?: string | null;
+            /**
              * Format: int32
              * @description Release year.
              */

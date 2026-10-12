@@ -46437,6 +46437,13 @@
             ],
             "description": "Primary owner id."
           },
+          "waiting_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why a dispatched request has not started, as a stable code.\n`no_download_source`: no download source is set up, so the request\nis held and starts by itself once one is."
+          },
           "year": {
             "type": [
               "integer",

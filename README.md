@@ -176,6 +176,8 @@ Follow an artist and DroppedNeedle checks MusicBrainz for their new releases onc
 
 ## Download sources
 
+A request made while no download source is turned on is accepted and held. The Requests page shows it as "Waiting: no download source configured", and it starts by itself once an admin turns a source on.
+
 ### slskd
 
 DroppedNeedle talks to your own running slskd over its local HTTP API (`X-API-Key`). You bring slskd; DroppedNeedle drives it.
