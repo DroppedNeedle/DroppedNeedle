@@ -34,6 +34,11 @@
 //! the direct `Host` header and scheme. The peer comes from axum
 //! `ConnectInfo`, so the server must serve with connect info for
 //! non-loopback peers to ever verify.
+//!
+//! A reverse proxy nobody listed is the usual way this goes wrong: every
+//! client then shares the proxy's address for rate limits and HTTPS goes
+//! unseen, so the session cookie loses `Secure`. The gate logs one warning
+//! per process when it sees the signs (see [`warn_unlisted_proxy`]).
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
@@ -254,6 +259,8 @@ pub struct SessionAuth<S> {
     /// Spent by the first refused request that looks like a proxy
     /// misreporting this server's address.
     origin_mismatch_warned: WarnOnce,
+    /// Spent by the first forwarded header from an unlisted private peer.
+    unlisted_proxy_warned: WarnOnce,
 }
 
 impl<S> SessionAuth<S> {
@@ -266,6 +273,7 @@ impl<S> SessionAuth<S> {
             trusted_proxies: TrustedProxies::default(),
             limits: Arc::new(RateLimiter::new()),
             origin_mismatch_warned: WarnOnce::default(),
+            unlisted_proxy_warned: WarnOnce::default(),
         }
     }
 
@@ -298,6 +306,7 @@ where
     if !path.starts_with("/api/v3") {
         return next.run(request).await;
     }
+    warn_unlisted_proxy(&auth.unlisted_proxy_warned, &request, &auth.trusted_proxies);
     if is_public(&path) {
         return next.run(request).await;
     }
@@ -357,6 +366,44 @@ fn auth_failure(limits: &RateLimiter, request: &Request, message: &str) -> Respo
         unauthorized_response(message)
     } else {
         rate_limited_response(AUTH_FAILURE_CLASS, outcome.retry_after_secs)
+    }
+}
+
+/// Headers a reverse proxy adds, any of which marks the peer as one.
+const FORWARDED_HEADERS: [&str; 4] = [
+    "x-forwarded-for",
+    "x-forwarded-proto",
+    "x-forwarded-host",
+    "forwarded",
+];
+
+/// Warn, once per process, when a forwarded header arrives from a
+/// private-range peer that is not a trusted proxy: that is what a reverse
+/// proxy in another container or on another LAN host looks like before it
+/// is listed. A public peer sending the header is a client making things
+/// up and gets no log line.
+fn warn_unlisted_proxy(warned: &WarnOnce, request: &Request, trusted: &TrustedProxies) {
+    let Some(peer) = peer_of(request).map(|peer| peer.ip().to_canonical()) else {
+        return;
+    };
+    let private = match peer {
+        IpAddr::V4(ip) => ip.is_private() || ip.is_loopback(),
+        IpAddr::V6(ip) => ip.is_unique_local() || ip.is_loopback(),
+    };
+    if private
+        && !trusted.trust_all
+        && !trusted.matches(peer)
+        && FORWARDED_HEADERS
+            .iter()
+            .any(|name| request.headers().contains_key(*name))
+        && warned.claim()
+    {
+        tracing::warn!(
+            %peer,
+            "Ignoring the forwarded headers sent by {peer}, which is not a trusted proxy. \
+             If it is your reverse proxy, add it to TRUSTED_PROXY_IPS: until then every \
+             client shares its rate limits and HTTPS goes undetected."
+        );
     }
 }
 
