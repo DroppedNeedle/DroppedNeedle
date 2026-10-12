@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use droppedneedle::library::identify;
+use droppedneedle::library::matching::decide::REVIEW_CEILING;
 use droppedneedle::providers::Providers;
 use droppedneedle::providers::musicbrainz::{
     MbPacing, MbRequest, MbTransport, MusicBrainzClient, RawResponse, TransportError,
@@ -21,6 +22,7 @@ use identify::memory::{
     MemoryAliasStore, MemoryIdentityStore, MemoryProofStore, MemoryQueueStore, MemoryReleaseStore,
     MemoryReviewStore,
 };
+use identify::models::EvidenceClass;
 use identify::models::{
     DecisionSource, IdentificationOutcome, IdentifyKind, LocalAlbumFacts, LocalTrackFacts,
 };
@@ -255,6 +257,26 @@ async fn messy_album_keeps_a_best_guess_without_a_review() {
         .expect("best guess");
     assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP));
     assert_eq!(identity.decision_source, DecisionSource::Automatic);
+    // The unconfirmed flag carries the closest candidates with their
+    // distances: close enough to show a person, not close enough to trust.
+    let flag = rig
+        .identities
+        .match_flag("album-1")
+        .expect("unconfirmed flag");
+    assert_eq!(flag.state, identify::models::MatchFlagState::Unconfirmed);
+    assert_eq!(flag.candidates.len(), 2);
+    for candidate in &flag.candidates {
+        assert_eq!(candidate.release_group_mbid, GROUP);
+        assert!(candidate.distance > 0.0 && candidate.distance <= REVIEW_CEILING);
+        assert!(!candidate.penalties.is_empty());
+        let tracks = &candidate.track_evidence;
+        assert_eq!(tracks[0].classification, EvidenceClass::Supported);
+        // Neither the unmatched file nor the bad pair is ever placed.
+        assert_eq!(tracks[1].classification, EvidenceClass::Unknown);
+        assert_eq!(tracks[1].release_track_mbid, None);
+        assert_eq!(tracks[3].classification, EvidenceClass::Unknown);
+        assert!(tracks[3].release_track_mbid.is_some());
+    }
     // "Pick another edition" finds the documents still on file.
     assert!(rig.releases.release(STANDARD, None).is_some());
     assert!(rig.releases.release(REMASTER, None).is_some());

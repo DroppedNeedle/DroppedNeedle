@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use super::models::{
     AlbumIdentity, Alias, ArtistCredit, ArtistIdentity, CreditProof, IdentifyJob, LocalAlbumFacts,
-    ReviewItem, ReviewState, TrackIdentity,
+    MatchFlag, ReviewItem, ReviewState, TrackIdentity,
 };
 use super::stores::{
     AliasStore, Approval, FactsSource, IdentityStore, ProofStore, QueueStore, ReleaseStore,
@@ -47,6 +47,7 @@ pub struct MemoryIdentityStore {
     owned: Mutex<HashMap<String, String>>,
     credits: Mutex<HashMap<String, Vec<ArtistCredit>>>,
     accepted: Mutex<HashMap<String, String>>,
+    flags: Mutex<HashMap<String, MatchFlag>>,
 }
 
 impl MemoryIdentityStore {
@@ -135,6 +136,24 @@ impl IdentityStore for MemoryIdentityStore {
             .ok()?
             .get(source_local_artist_id)
             .cloned()
+    }
+
+    fn match_flag(&self, local_album_id: &str) -> Option<MatchFlag> {
+        self.flags.lock().ok()?.get(local_album_id).cloned()
+    }
+
+    fn set_match_flag(
+        &self,
+        local_album_id: &str,
+        flag: Option<&MatchFlag>,
+    ) -> Result<(), StoreError> {
+        if let Ok(mut flags) = self.flags.lock() {
+            match flag {
+                Some(flag) => flags.insert(local_album_id.to_owned(), flag.clone()),
+                None => flags.remove(local_album_id),
+            };
+        }
+        Ok(())
     }
 }
 

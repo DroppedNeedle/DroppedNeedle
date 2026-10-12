@@ -456,6 +456,35 @@ fn read_title(path: &Path) -> String {
     .title
 }
 
+/// File the pending review an edition correction leaves when it drops an
+/// album's editions (a merge that detaches conflicting editions): the
+/// dropped editions are the candidates, keyed `group:release`.
+/// Identification itself never files one; it always picks a best guess.
+fn file_edition_review(library: &LibrarySetup, album_id: &str) -> String {
+    use droppedneedle::library::identify::models::CandidateEvidence;
+    let candidate = |group: &str, release: &str| CandidateEvidence {
+        candidate_key: format!("{group}:{release}"),
+        release_group_mbid: group.to_owned(),
+        release_mbid: Some(release.to_owned()),
+        album_title: "Album".to_owned(),
+        album_artist_name: String::new(),
+        track_evidence: Vec::new(),
+        score: 0.0,
+        reason_code: "EDITION_CLEARED_CONFLICT".to_owned(),
+        distance: 0.0,
+        penalties: Vec::new(),
+    };
+    let id = format!("rev-{album_id}");
+    droppedneedle::library::identify::review::file_review(
+        library.identify_store.as_ref(),
+        &id,
+        album_id,
+        "EDITION_CLEARED_CONFLICT",
+        vec![candidate("rg-1", REL_1), candidate("rg-2", REL_2)],
+    );
+    id
+}
+
 #[tokio::test]
 async fn library_journey_scan_identify_review_organize_undo() {
     let lib = Lib::open("organize").await;
@@ -541,8 +570,8 @@ async fn library_journey_scan_identify_review_organize_undo() {
     let album_id = body["album_id"].as_str().expect("album id").to_owned();
     let album_key = album_id.as_str();
 
-    // Scripted providers tie two candidates: the scan-enqueued job
-    // must file an ambiguous review, never guess.
+    // Scripted providers tie two candidates: the scan-enqueued job still
+    // picks a best guess (always pick) and files no review.
     lib.library
         .test_providers
         .as_ref()
@@ -557,6 +586,19 @@ async fn library_journey_scan_identify_review_organize_undo() {
         bytes_before,
         "identify reads wrote files"
     );
+    {
+        use droppedneedle::library::identify::stores::IdentityStore as _;
+        assert!(
+            lib.library
+                .identify_store
+                .album_identity(album_key)
+                .is_some(),
+            "identification picks a best guess"
+        );
+    }
+    assert!(lib.library.pending_reviews(album_key).is_empty());
+    // A correction that drops the album's editions leaves a review.
+    file_edition_review(&lib.library, album_key);
     let (status, body) = call(
         lib.router(),
         "GET",
@@ -568,7 +610,7 @@ async fn library_journey_scan_identify_review_organize_undo() {
     assert_eq!(status, StatusCode::OK, "{body}");
     let reviews = body["reviews"].as_array().expect("reviews");
     assert_eq!(reviews.len(), 1);
-    assert_eq!(reviews[0]["reason_code"], json!("AMBIGUOUS_CANDIDATES"));
+    assert_eq!(reviews[0]["reason_code"], json!("EDITION_CLEARED_CONFLICT"));
     assert_eq!(
         reviews[0]["candidates"]
             .as_array()
@@ -579,7 +621,7 @@ async fn library_journey_scan_identify_review_organize_undo() {
     let review_id = reviews[0]["id"].as_str().expect("review id").to_owned();
 
     // A manual re-enqueue is accepted (job queued); drained with
-    // empty recall so it terminates without filing again.
+    // empty recall so it terminates without touching the review.
     let (status, body) = call(
         lib.router(),
         "POST",
@@ -751,7 +793,8 @@ async fn library_journey_retag_apply_baseline_restore() {
         .expect("track id")
         .to_owned();
 
-    // Identify through a tied review, then approve the winner.
+    // Identify (it picks a best guess), then approve the winner of the
+    // review a dropped edition leaves.
     let (status, body) = call(
         lib.router(),
         "GET",
@@ -769,6 +812,7 @@ async fn library_journey_retag_apply_baseline_restore() {
         .expect("scripted providers")
         .set_recall(ambiguous_recall(&lib.library, album_key));
     assert_eq!(lib.library.identify_tick().await, 1);
+    file_edition_review(&lib.library, album_key);
     let (status, body) = call(
         lib.router(),
         "GET",
@@ -1498,6 +1542,7 @@ async fn failed_approval_leaves_the_review_pending() {
         .expect("scripted providers")
         .set_recall(ambiguous_recall(&library, &album));
     assert_eq!(library.identify_tick().await, 1);
+    file_edition_review(&library, &album);
     let review = library.pending_reviews(&album);
     assert_eq!(review.len(), 1);
     library

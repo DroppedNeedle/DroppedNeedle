@@ -733,55 +733,65 @@ fn exact_contributors_become_appearances() {
     );
 }
 
+/// File a pending review the way an edition correction does when it drops
+/// editions: the dropped editions are the candidates, keyed `group:release`.
+/// Identification itself never files one (it always picks a best guess).
+fn file_edition_review(rig: &Rig, review_id: &str, album: &str) {
+    let candidate = |group: &str, release: &str| identify::models::CandidateEvidence {
+        candidate_key: key(group, release),
+        release_group_mbid: group.to_owned(),
+        release_mbid: Some(release.to_owned()),
+        album_title: "Album".to_owned(),
+        album_artist_name: String::new(),
+        track_evidence: Vec::new(),
+        score: 0.0,
+        reason_code: "EDITION_FILES_CHANGED".to_owned(),
+        distance: 0.0,
+        penalties: Vec::new(),
+    };
+    identify::review::file_review(
+        rig.reviews.as_ref(),
+        review_id,
+        album,
+        "EDITION_FILES_CHANGED",
+        vec![
+            candidate(GROUP_A, RELEASE_A1),
+            candidate(GROUP_B, RELEASE_B1),
+        ],
+    );
+}
+
 #[tokio::test]
 async fn review_approve_seals_manual_and_holds() {
-    let rig = rig_with_recall(recall(vec![
-        release(GROUP_A, RELEASE_A1, &[RECORDING_1]),
-        release(GROUP_B, RELEASE_B1, &[RECORDING_1]),
-    ]));
+    let rig = rig_with_recall(recall(vec![release(GROUP_B, RELEASE_B1, &[RECORDING_1])]));
     rig.identities
         .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
-    rig.service.enqueue_album(
-        "job-1",
-        "album-1",
-        IdentifyKind::Automatic,
-        "rev-1",
-        None,
-        0,
-    );
-    rig.queue.claim(0, 60_000);
-    let report = rig
-        .service
-        .run_claimed_job("job-1", 0)
-        .await
-        .expect("report");
-    assert_eq!(report.outcome, IdentificationOutcome::Ambiguous);
-    let review = report.review_id.expect("review");
+    file_edition_review(&rig, "rev-1", "album-1");
+    let review = "rev-1";
     // Unknown candidate keys never approve.
     assert_eq!(
-        rig.service.approve_candidate(&review, "curator-1", "nope"),
+        rig.service.approve_candidate(review, "curator-1", "nope"),
         Ok(false)
     );
     assert_eq!(
         rig.service
-            .approve_candidate(&review, "curator-1", &key(GROUP_A, RELEASE_A1)),
+            .approve_candidate(review, "curator-1", &key(GROUP_A, RELEASE_A1)),
         Ok(true)
     );
     // Settling twice is a no-op.
     assert_eq!(
         rig.service
-            .approve_candidate(&review, "curator-1", &key(GROUP_B, RELEASE_B1)),
+            .approve_candidate(review, "curator-1", &key(GROUP_B, RELEASE_B1)),
         Ok(false)
     );
-    let stored = rig.reviews.get(&review).expect("review");
+    let stored = rig.reviews.get(review).expect("review");
     assert_eq!(stored.state, ReviewState::Approved);
     let identity = rig.identities.album_identity("album-1").expect("identity");
     assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP_A));
     assert_eq!(identity.decision_source, DecisionSource::Manual);
 
-    // A later automatic pass cannot move the curator's choice.
-    *rig.providers.recall.lock().expect("recall") =
-        Some(recall(vec![release(GROUP_B, RELEASE_B1, &[RECORDING_1])]));
+    // A later automatic pass, whose evidence points at another group,
+    // cannot move the curator's choice.
     rig.service.enqueue_album(
         "job-2",
         "album-1",
@@ -800,42 +810,26 @@ async fn review_approve_seals_manual_and_holds() {
     assert_eq!(held.decision_source, DecisionSource::Manual);
 }
 
-#[tokio::test]
-async fn review_reject_keeps_tagged() {
-    let rig = rig_with_recall(recall(vec![
-        release(GROUP_A, RELEASE_A1, &[RECORDING_1]),
-        release(GROUP_B, RELEASE_B1, &[RECORDING_1]),
-    ]));
+#[test]
+fn review_reject_keeps_tagged() {
+    let rig = rig_with_recall(RecallResult::default());
     rig.identities
         .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
-    rig.service.enqueue_album(
-        "job-1",
-        "album-1",
-        IdentifyKind::Automatic,
-        "rev-1",
-        None,
-        0,
-    );
-    rig.queue.claim(0, 60_000);
-    let report = rig
-        .service
-        .run_claimed_job("job-1", 0)
-        .await
-        .expect("report");
-    let review = report.review_id.expect("review");
-    assert!(rig.service.reject_candidates(&review, "curator-1"));
-    assert!(!rig.service.reject_candidates(&review, "curator-1"));
+    file_edition_review(&rig, "rev-1", "album-1");
+    let review = "rev-1";
+    assert!(rig.service.reject_candidates(review, "curator-1"));
+    assert!(!rig.service.reject_candidates(review, "curator-1"));
     assert_eq!(
         rig.service
-            .approve_candidate(&review, "curator-1", &key(GROUP_A, RELEASE_A1)),
+            .approve_candidate(review, "curator-1", &key(GROUP_A, RELEASE_A1)),
         Ok(false)
     );
     assert_eq!(
-        rig.reviews.get(&review).expect("review").state,
+        rig.reviews.get(review).expect("review").state,
         ReviewState::Rejected
     );
     assert!(rig.identities.album_identity("album-1").is_none());
-    assert!(!rig.service.review_is_pending(&review));
+    assert!(!rig.service.review_is_pending(review));
     assert!(rig.service.pending_reviews("album-1").is_empty());
 }
 
