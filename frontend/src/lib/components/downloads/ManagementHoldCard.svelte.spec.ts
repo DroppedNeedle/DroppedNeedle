@@ -90,38 +90,37 @@ vi.mock('$lib/queries/QueryClient', () => {
 	};
 });
 
-class FakeEventSource {
-	static instances: FakeEventSource[] = [];
-	url: string;
-	listeners: Record<string, ((e: MessageEvent) => void)[]> = {};
-	closed = false;
+// Download streams listen on the shared event stream; this fake records the
+// listeners a card registers so a test can play events into them.
+const mux = vi.hoisted(() => {
+	const listeners: Record<string, ((e: MessageEvent) => void)[]> = {};
+	return {
+		listeners,
+		on(type: string, cb: (e: MessageEvent) => void) {
+			(listeners[type] ??= []).push(cb);
+			return () => {
+				listeners[type] = (listeners[type] ?? []).filter((f) => f !== cb);
+			};
+		},
+		emit(type: string, data: unknown) {
+			const ev = { data: JSON.stringify(data) } as MessageEvent;
+			for (const cb of listeners[type] ?? []) cb(ev);
+		},
+		reset() {
+			for (const key of Object.keys(listeners)) delete listeners[key];
+		}
+	};
+});
 
-	constructor(url: string) {
-		this.url = url;
-		FakeEventSource.instances.push(this);
-	}
-
-	addEventListener(type: string, cb: (e: MessageEvent) => void) {
-		(this.listeners[type] ??= []).push(cb);
-	}
-
-	close() {
-		this.closed = true;
-	}
-
-	emit(type: string, data: unknown) {
-		const ev = { data: JSON.stringify(data) } as MessageEvent;
-		for (const cb of this.listeners[type] ?? []) cb(ev);
-	}
-}
+vi.mock('$lib/queries/events/MuxEventStream', () => ({ muxEventStream: mux }));
 
 import ManagementHoldCard from './ManagementHoldCard.svelte';
 
-async function retryEvents(): Promise<FakeEventSource> {
+async function retryEvents(): Promise<typeof mux> {
 	await vi.waitFor(() => {
-		if (FakeEventSource.instances.length === 0) throw new Error('retry stream not opened yet');
+		if (!mux.listeners['organizer_retry']?.length) throw new Error('retry stream not opened yet');
 	});
-	return FakeEventSource.instances[FakeEventSource.instances.length - 1];
+	return mux;
 }
 
 function held(track: number): HeldImport {
@@ -165,8 +164,7 @@ describe('ManagementHoldCard.svelte', () => {
 		h.retryPending = false;
 		h.isAdmin = true;
 		h.invalidate = vi.fn().mockResolvedValue(undefined);
-		FakeEventSource.instances = [];
-		vi.stubGlobal('EventSource', FakeEventSource as unknown as typeof EventSource);
+		mux.reset();
 		// The organizerRetry store is module-level: clear the shared task id so no
 		// snapshot leaks between tests.
 		resetOrganizerRetry('task-1');

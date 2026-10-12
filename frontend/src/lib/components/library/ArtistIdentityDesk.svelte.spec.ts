@@ -222,7 +222,8 @@ describe('ArtistIdentityDesk', () => {
 		expect(h.preview).toHaveBeenCalledWith({
 			source_artist_ids: ['artist-1', 'artist-2'],
 			surviving_artist_id: 'artist-1',
-			expected_revisions: { 'artist-1': 3, 'artist-2': 5 }
+			expected_revisions: { 'artist-1': 3, 'artist-2': 5 },
+			provider_choice: 'retain_survivor'
 		});
 		await page.getByRole('button', { name: 'Cancel' }).click();
 		await expect.element(opener).toHaveFocus();
