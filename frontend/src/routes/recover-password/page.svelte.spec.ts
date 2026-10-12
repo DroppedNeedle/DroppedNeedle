@@ -40,9 +40,11 @@ describe('password recovery page', () => {
 			.toBeVisible();
 		await page.getByText('Recover as server owner').click();
 		await expect.element(page.getByText(/Only someone with host access/)).toBeVisible();
+		await expect.element(page.getByText(/Stop the server first/)).toBeVisible();
 		await expect
-			.element(page.getByText(/docker compose exec --user droppedneedle droppedneedle/))
+			.element(page.getByText(/droppedneedle-tool recovery-code YOUR_USERNAME/))
 			.toBeVisible();
+		await expect.element(page.getByText(/recovery-code --list-admins/)).toBeVisible();
 		await expect.element(page.getByText(/Enter your username above/)).toBeVisible();
 	});
 
@@ -85,15 +87,15 @@ describe('password recovery page', () => {
 		expect(h.mutate).not.toHaveBeenCalled();
 	});
 
-	it('rejects passwords over the bcrypt byte limit before calling the server', async () => {
+	it('rejects passwords over the server byte limit before calling the server', async () => {
 		await render(RecoveryPage);
 		await page.getByLabelText('Username').fill('Alice');
 		await page.getByLabelText('Recovery code').fill('AAAA-BBBB-CCCC-DDDD-EEEE');
-		await page.getByLabelText('New password').fill('é'.repeat(37));
-		await page.getByLabelText('Confirm password').fill('é'.repeat(37));
+		await page.getByLabelText('New password').fill('é'.repeat(257));
+		await page.getByLabelText('Confirm password').fill('é'.repeat(257));
 		await page.getByRole('button', { name: 'Reset password' }).click();
 
-		await expect.element(page.getByRole('alert')).toHaveTextContent('72 UTF-8 bytes or fewer');
+		await expect.element(page.getByRole('alert')).toHaveTextContent('512 bytes or fewer');
 		expect(h.mutate).not.toHaveBeenCalled();
 	});
 });

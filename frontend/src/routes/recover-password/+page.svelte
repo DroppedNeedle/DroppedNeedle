@@ -14,8 +14,6 @@
 		ShieldCheck
 	} from 'lucide-svelte';
 
-	type OwnerTab = 'compose' | 'docker' | 'source';
-
 	const resetPassword = createPasswordRecoveryResetMutation();
 
 	let username = $state('');
@@ -25,18 +23,16 @@
 	let showPasswords = $state(false);
 	let error = $state<string | null>(null);
 	let complete = $state(false);
-	let ownerTab = $state<OwnerTab>('compose');
 	let copied = $state(false);
 
 	const commandUsername = $derived(
 		/^[a-zA-Z0-9._-]{3,32}$/.test(username.trim()) ? username.trim() : 'YOUR_USERNAME'
 	);
 	const commandReady = $derived(commandUsername !== 'YOUR_USERNAME');
-	const commands = $derived<Record<OwnerTab, string>>({
-		compose: `docker compose exec --user droppedneedle droppedneedle python -m droppedneedle_cli recovery-code ${commandUsername}`,
-		docker: `docker exec --user droppedneedle droppedneedle python -m droppedneedle_cli recovery-code ${commandUsername}`,
-		source: `cd backend && .venv/bin/python -m droppedneedle_cli recovery-code ${commandUsername}`
-	});
+	const toolCommand = 'docker compose run --rm droppedneedle droppedneedle-tool recovery-code';
+	const command = $derived(
+		`${toolCommand} ${commandUsername.startsWith('-') ? '-- ' : ''}${commandUsername}`
+	);
 
 	async function handleReset() {
 		error = null;
@@ -48,8 +44,8 @@
 			error = 'Password must be at least 12 characters';
 			return;
 		}
-		if (new TextEncoder().encode(newPassword).length > 72) {
-			error = 'Password is too long. Use 72 UTF-8 bytes or fewer.';
+		if (new TextEncoder().encode(newPassword).length > 512) {
+			error = 'Password is too long. Use 512 bytes or fewer.';
 			return;
 		}
 		try {
@@ -72,7 +68,7 @@
 	async function copyCommand() {
 		if (!commandReady) return;
 		try {
-			await navigator.clipboard.writeText(commands[ownerTab]);
+			await navigator.clipboard.writeText(command);
 			copied = true;
 			setTimeout(() => (copied = false), 2000);
 		} catch {
@@ -229,22 +225,13 @@
 						If no other administrator can help, use the machine running DroppedNeedle to create a
 						recovery code. Only someone with host access can run this command.
 					</p>
-					<div class="mt-3 flex flex-wrap gap-1" role="tablist" aria-label="Installation method">
-						{#each ['compose', 'docker', 'source'] as tab (tab)}
-							<button
-								type="button"
-								role="tab"
-								aria-selected={ownerTab === tab}
-								class="btn btn-xs {ownerTab === tab ? 'btn-primary' : 'btn-ghost'}"
-								onclick={() => (ownerTab = tab as OwnerTab)}
-							>
-								{tab === 'compose' ? 'Docker Compose' : tab === 'docker' ? 'Docker' : 'Source'}
-							</button>
-						{/each}
-					</div>
+					<p class="mt-2 text-xs leading-relaxed text-base-content/60">
+						Stop the server first (<code class="font-mono">docker compose stop droppedneedle</code
+						>): the command refuses to run while it is up. Then run this from the folder with your
+						compose file.
+					</p>
 					<div class="mt-3 flex items-start gap-2 rounded-box bg-base-300/70 p-3">
-						<code class="min-w-0 flex-1 break-all font-mono text-xs leading-relaxed"
-							>{commands[ownerTab]}</code
+						<code class="min-w-0 flex-1 break-all font-mono text-xs leading-relaxed">{command}</code
 						>
 						<button
 							type="button"
@@ -261,6 +248,20 @@
 							Enter your username above to copy a ready-to-run command.
 						</p>
 					{/if}
+					<p class="mt-2 text-xs leading-relaxed text-base-content/60">
+						It prints a code that works once, for 15 minutes. Start the server again (<code
+							class="font-mono">docker compose up -d droppedneedle</code
+						>) and enter the username, the code and a new password above. An account that only signs
+						in through single sign-on, Plex or Jellyfin gets its first password this way and keeps
+						its other sign-in.
+					</p>
+					<p class="mt-2 text-xs leading-relaxed text-base-content/60">
+						The username is the DroppedNeedle one, which can differ from the name you have with a
+						single sign-on provider. To see the admin usernames, run
+						<code class="break-all font-mono">{toolCommand} --list-admins</code>.
+						<code class="font-mono">droppedneedle</code> in these commands is the service name in your
+						compose file; use yours if it differs.
+					</p>
 				</div>
 			</details>
 		{/if}
