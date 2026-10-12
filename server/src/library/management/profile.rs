@@ -298,6 +298,8 @@ pub struct FileInput<'a> {
     pub overrides: &'a super::planner::Overrides,
     /// What the outside sources said about the album.
     pub extras: &'a super::enrich::AlbumExtras,
+    /// The library track the file is.
+    pub track_id: &'a str,
 }
 
 /// Plan the tags for one file from its edition, the profile and its
@@ -316,6 +318,7 @@ pub fn plan_tags(
         writable,
         overrides,
         extras,
+        track_id,
     } = *file;
     let profile: &LibraryManagementProfile = &pinned.profile;
     let mut desired: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -361,6 +364,14 @@ pub fn plan_tags(
             desired.insert("genre".to_owned(), genres);
         }
     }
+    let file_extras = extras.files.get(track_id);
+    replaygain(
+        profile,
+        file_extras.and_then(|extra| extra.replaygain.as_ref()),
+        extras.replaygain_note.as_deref(),
+        &mut desired,
+        &mut warnings,
+    )?;
     if profile.metadata.enabled {
         let canonical = picard::release_tags(release, track);
         let preserved: BTreeSet<&str> = profile
@@ -495,6 +506,66 @@ pub fn plan_tags(
         mutations,
         warnings,
     })
+}
+
+/// Put measured ReplayGain into the file's fields as the profile's mode
+/// says: preserve never writes, fill-missing writes absent fields only,
+/// replace writes them all. Album values follow `album_aware`.
+fn replaygain(
+    profile: &LibraryManagementProfile,
+    measured: Option<&super::enrich::ReplayGainValues>,
+    note: Option<&str>,
+    desired: &mut BTreeMap<String, Vec<String>>,
+    warnings: &mut Vec<String>,
+) -> Result<(), ItemReason> {
+    use crate::runtime_config::sections::ReplayGainMode;
+    let settings = &profile.enrichment.replaygain;
+    if !settings.enabled || settings.mode == ReplayGainMode::Preserve {
+        return Ok(());
+    }
+    let mut values: Vec<(TagField, Option<&String>)> = vec![
+        (
+            TagField::ReplayGainTrackGain,
+            measured.map(|found| &found.track_gain),
+        ),
+        (
+            TagField::ReplayGainTrackPeak,
+            measured.map(|found| &found.track_peak),
+        ),
+    ];
+    if settings.album_aware {
+        values.push((
+            TagField::ReplayGainAlbumGain,
+            measured.and_then(|found| found.album_gain.as_ref()),
+        ));
+        values.push((
+            TagField::ReplayGainAlbumPeak,
+            measured.and_then(|found| found.album_peak.as_ref()),
+        ));
+    }
+    let mut missing = false;
+    for (field, value) in values {
+        let present = desired.contains_key(field.name());
+        match value {
+            Some(value) if settings.mode == ReplayGainMode::Replace || !present => {
+                desired.insert(field.name().to_owned(), vec![value.clone()]);
+            }
+            Some(_) => {}
+            None => missing |= !present,
+        }
+    }
+    if missing {
+        if settings.required {
+            return Err(reasons::metadata_unavailable("ReplayGain"));
+        }
+        warnings.push(match note {
+            Some(note) => format!("ReplayGain was not written: {note}"),
+            None => {
+                "ReplayGain could not be measured for this file, so it was not written.".to_owned()
+            }
+        });
+    }
+    Ok(())
 }
 
 /// Field values as the pages show them: one value as text, several as a

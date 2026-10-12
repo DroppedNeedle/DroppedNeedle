@@ -412,6 +412,7 @@ fn plan_file(
             writable,
             overrides,
             extras,
+            track_id: &track.id,
         },
     )?;
     item.facts
@@ -483,6 +484,106 @@ fn plan_file(
         replaces: None,
     });
     Ok(())
+}
+
+/// Most files one album's ReplayGain analysis covers (as v2).
+const MAX_REPLAYGAIN_TRACKS: usize = 500;
+
+/// Measure the album's ReplayGain when the profile writes it and some file
+/// needs it. Files are decoded one at a time within a time budget; an
+/// album whose analysis cannot finish is left as it is, with a note.
+fn measure_replaygain(
+    ctx: &PlanContext<'_>,
+    tracks: &[CatalogTrack],
+    extras: &mut super::enrich::AlbumExtras,
+) {
+    use crate::library::tags::loudness::{self, Unanalysed};
+    use crate::runtime_config::sections::ReplayGainMode;
+
+    let settings = &ctx.pinned.profile.enrichment.replaygain;
+    if !settings.enabled || settings.mode == ReplayGainMode::Preserve || tracks.is_empty() {
+        return;
+    }
+    let paths: Vec<(&str, Option<std::path::PathBuf>)> = tracks
+        .iter()
+        .map(|track| {
+            (
+                track.id.as_str(),
+                ctx.sandbox
+                    .resolve_no_symlink(&track.root_id, &track.relative_path)
+                    .ok(),
+            )
+        })
+        .collect();
+    if settings.mode == ReplayGainMode::FillMissing {
+        let mut needed = vec!["replaygain_track_gain", "replaygain_track_peak"];
+        if settings.album_aware {
+            needed.extend(["replaygain_album_gain", "replaygain_album_peak"]);
+        }
+        let complete = paths.iter().all(|(_, path)| {
+            path.as_deref()
+                .and_then(|path| crate::library::publish::staging::document_from_file(path).ok())
+                .is_some_and(|doc| needed.iter().all(|name| doc.managed.contains_key(*name)))
+        });
+        if complete {
+            return;
+        }
+    }
+    if tracks.len() > MAX_REPLAYGAIN_TRACKS {
+        extras.replaygain_note = Some(format!(
+            "The album has more than {MAX_REPLAYGAIN_TRACKS} files, too many to measure."
+        ));
+        return;
+    }
+    let deadline = std::time::Instant::now() + loudness::ALBUM_BUDGET;
+    let mut measured = Vec::new();
+    let mut whole = true;
+    for (track_id, path) in &paths {
+        let result = match path {
+            Some(path) => loudness::analyse(path, deadline),
+            None => Err(Unanalysed::Undecodable),
+        };
+        match result {
+            Ok(found) => measured.push((*track_id, found)),
+            Err(Unanalysed::OutOfTime) => {
+                extras.replaygain_note =
+                    Some("Measuring the album took too long, so it was stopped.".to_owned());
+                return;
+            }
+            Err(Unanalysed::Undecodable) => whole = false,
+        }
+    }
+    let album = (settings.album_aware && whole)
+        .then(|| {
+            let all: Vec<&loudness::TrackLoudness> =
+                measured.iter().map(|(_, found)| found).collect();
+            loudness::album_loudness(&all).map(|value| {
+                let peak = all.iter().map(|found| found.peak).fold(0.0, f64::max);
+                (loudness::gain_text(value), loudness::peak_text(peak))
+            })
+        })
+        .flatten();
+    if settings.album_aware && album.is_none() {
+        extras.replaygain_note = Some(
+            "Not every file of the album could be measured, so no album gain was written."
+                .to_owned(),
+        );
+    }
+    for (track_id, found) in measured {
+        let Some(value) = found.loudness() else {
+            continue;
+        };
+        extras
+            .files
+            .entry(track_id.to_owned())
+            .or_default()
+            .replaygain = Some(super::enrich::ReplayGainValues {
+            track_gain: loudness::gain_text(value),
+            track_peak: loudness::peak_text(found.peak),
+            album_gain: album.as_ref().map(|(gain, _)| gain.clone()),
+            album_peak: album.as_ref().map(|(_, peak)| peak.clone()),
+        });
+    }
 }
 
 /// Most sidecar files one album may carry, and most directory entries
@@ -809,7 +910,8 @@ pub fn plan_album(
                 album_identity_revision,
             ),
         };
-    let extras = super::enrich::gather(&ctx.setup.enrichment, &ctx.pinned.profile, &release);
+    let mut extras = super::enrich::gather(&ctx.setup.enrichment, &ctx.pinned.profile, &release);
+    measure_replaygain(ctx, tracks, &mut extras);
     for (item, track) in items.iter_mut().zip(tracks) {
         let mut overrides = ctx
             .setup
@@ -890,8 +992,9 @@ pub fn plan_one(
                 .setup
                 .identify_store
                 .with_connection(|conn| overrides(conn, &scope.album_id, &track.id))?;
-            let extras =
+            let mut extras =
                 super::enrich::gather(&ctx.setup.enrichment, &ctx.pinned.profile, &release);
+            measure_replaygain(ctx, std::slice::from_ref(track), &mut extras);
             if let Err(reason) = plan_file(
                 ctx,
                 &mut item,

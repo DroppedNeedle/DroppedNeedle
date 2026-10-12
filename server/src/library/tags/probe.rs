@@ -338,6 +338,76 @@ fn decode_count_duration(
     Ok(frames as f64 / f64::from(sample_rate))
 }
 
+/// Decode a file one packet at a time, handing each block of interleaved
+/// samples (scaled to -1..1) to `sink` with the sample rate and channel
+/// count. Nothing larger than one packet is held. `sink` answers false to
+/// stop early. True when the decode wobbled mid-stream.
+pub(crate) fn decode_stream(
+    path: &Path,
+    format: AudioFormat,
+    mut sink: impl FnMut(u32, u32, &[f32]) -> bool,
+) -> Result<bool, TagsError> {
+    let opened = open_reader(path, format).map_err(|error| match error {
+        TagsError::Probe { reason, .. } => TagsError::Decode {
+            path: path.display().to_string(),
+            reason,
+        },
+        other => other,
+    })?;
+    let mut decoder = codec_registry()
+        .make_audio_decoder(&opened.params, &AudioDecoderOptions::default())
+        .map_err(|error| TagsError::Decode {
+            path: path.display().to_string(),
+            reason: error.to_string(),
+        })?;
+    let mut reader = opened.reader;
+    let mut pcm: Vec<i16> = Vec::new();
+    let mut block: Vec<f32> = Vec::new();
+    let mut partial = false;
+    let mut any = false;
+    loop {
+        let packet = match reader.next_packet() {
+            Ok(Some(packet)) => packet,
+            Ok(None) => break,
+            Err(SymphoniaError::IoError(_)) | Err(SymphoniaError::ResetRequired) => break,
+            Err(_) => {
+                partial = true;
+                break;
+            }
+        };
+        if packet.track_id != opened.track_id {
+            continue;
+        }
+        match decoder.decode(&packet) {
+            Ok(decoded) => {
+                pcm.clear();
+                append_interleaved(&mut pcm, &decoded);
+                let channels = decoded.spec().channels().count() as u32;
+                block.clear();
+                block.extend(pcm.iter().map(|sample| f32::from(*sample) / 32768.0));
+                any |= !block.is_empty();
+                if !sink(opened.sample_rate, channels.max(1), &block) {
+                    break;
+                }
+            }
+            Err(SymphoniaError::DecodeError(_)) | Err(SymphoniaError::ResetRequired) => {
+                partial = true;
+            }
+            Err(_) => {
+                partial = true;
+                break;
+            }
+        }
+    }
+    if !any {
+        return Err(TagsError::Decode {
+            path: path.display().to_string(),
+            reason: "decoder produced no samples".to_owned(),
+        });
+    }
+    Ok(partial)
+}
+
 /// Decode to interleaved s16, stopping after `max_seconds` of audio when
 /// set. Tolerates mid-stream errors with the partial flag; a
 /// decode that yields nothing at all is a hard error.

@@ -89,6 +89,26 @@ pub fn wait<T>(call: BoxFuture<'_, Result<T, String>>) -> Option<T> {
 #[derive(Debug, Clone, Default)]
 pub struct AlbumExtras {
     pub genres: super::genre::RemoteGenres,
+    /// Per library track.
+    pub files: std::collections::HashMap<String, FileExtras>,
+    /// Why ReplayGain was not measured for the album, when it was wanted.
+    pub replaygain_note: Option<String>,
+}
+
+/// What planning gathered for one file.
+#[derive(Debug, Clone, Default)]
+pub struct FileExtras {
+    pub replaygain: Option<ReplayGainValues>,
+}
+
+/// Measured ReplayGain tag values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayGainValues {
+    pub track_gain: String,
+    pub track_peak: String,
+    /// Present when the album was measured as a whole.
+    pub album_gain: Option<String>,
+    pub album_peak: Option<String>,
 }
 
 /// Ask the outside sources the profile needs for one album.

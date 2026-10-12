@@ -37,13 +37,14 @@ pub struct TagDocument {
     /// Document shape. Version 2 records every writable field the file
     /// held (and its opaque fields); older documents held a subset, so
     /// a restore never infers from them that a field was absent. Version
-    /// 3 adds ISRC, which a version 2 document could not have recorded.
+    /// 3 adds ISRC and version 4 adds ReplayGain, lyrics, pictures and
+    /// native custom items (see [`recorded_since`]).
     #[serde(default)]
     pub version: u32,
 }
 
 /// The current [`TagDocument`] shape.
-pub const TAG_DOCUMENT_VERSION: u32 = 3;
+pub const TAG_DOCUMENT_VERSION: u32 = 4;
 
 /// The first shape that records every writable field it knew of.
 pub const FULL_FIELDS_VERSION: u32 = 2;
@@ -51,11 +52,22 @@ pub const FULL_FIELDS_VERSION: u32 = 2;
 /// The first document shape that records `field`. A restore from an older
 /// document leaves the field alone: it cannot tell absent from unread.
 pub fn recorded_since(field: crate::library::tags::fields::TagField) -> u32 {
+    use crate::library::tags::fields::TagField;
     match field {
-        crate::library::tags::fields::TagField::Isrc => 3,
+        TagField::Isrc => 3,
+        TagField::ReplayGainTrackGain
+        | TagField::ReplayGainTrackPeak
+        | TagField::ReplayGainAlbumGain
+        | TagField::ReplayGainAlbumPeak
+        | TagField::Lyrics => RICH_FIELDS_VERSION,
         _ => FULL_FIELDS_VERSION,
     }
 }
+
+/// The first shape that records ReplayGain, lyrics, pictures and native
+/// custom items. A restore from an older document leaves pictures and
+/// native items alone.
+pub const RICH_FIELDS_VERSION: u32 = 4;
 
 impl TagDocument {
     /// Empty document.

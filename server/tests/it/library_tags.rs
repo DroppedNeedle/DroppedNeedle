@@ -1140,6 +1140,11 @@ fn picard_edits() -> Vec<TagEdit> {
             TagField::MusicBrainzAlbumArtistId,
             "c0ffee00-0000-4000-8000-00000000a001",
         ),
+        one(TagField::ReplayGainTrackGain, "-6.52 dB"),
+        one(TagField::ReplayGainTrackPeak, "0.988525"),
+        one(TagField::ReplayGainAlbumGain, "-7.01 dB"),
+        one(TagField::ReplayGainAlbumPeak, "1.000000"),
+        one(TagField::Lyrics, "First line\nSecond line"),
     ]
 }
 

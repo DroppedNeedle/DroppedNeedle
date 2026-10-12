@@ -40,7 +40,7 @@ use lofty::config::WriteOptions;
 use lofty::file::TaggedFileExt as _;
 use lofty::id3::v2::{
     ExtendedTextFrame, Frame, FrameId, Id3v2Tag, Id3v2Version, TextInformationFrame,
-    UniqueFileIdentifierFrame,
+    UniqueFileIdentifierFrame, UnsynchronizedTextFrame,
 };
 use lofty::mp4::{Atom, AtomData, AtomIdent, Ilst};
 use lofty::ogg::tag::VorbisComments;
@@ -478,6 +478,22 @@ fn check_edit(edit: &TagEdit) -> Result<(), Refusal> {
                     "unparseable timestamp '{value}' would poison ID3v2 reads"
                 )));
             }
+            FieldKind::Gain
+                if value
+                    .strip_suffix(" dB")
+                    .and_then(|number| number.parse::<f64>().ok())
+                    .is_none_or(|number| !number.is_finite()) =>
+            {
+                return Err(unencodable(format!("gain '{value}' is not '<number> dB'")));
+            }
+            FieldKind::Peak
+                if value
+                    .parse::<f64>()
+                    .ok()
+                    .is_none_or(|number| !number.is_finite() || number < 0.0) =>
+            {
+                return Err(unencodable(format!("peak '{value}' is not a number")));
+            }
             _ => {}
         }
     }
@@ -749,6 +765,28 @@ fn split_utf16_units(body: &[u8]) -> Vec<&[u8]> {
     }
     parts.push(&body[start..]);
     parts
+}
+
+/// The text of a `USLT` frame: encoding, three-byte language, a
+/// terminated description, then the lyrics.
+fn decode_uslt(payload: &[u8]) -> Result<String, String> {
+    let (&encoding, rest) = payload
+        .split_first()
+        .ok_or_else(|| "empty USLT frame".to_owned())?;
+    let body = rest.get(3..).ok_or_else(|| "short USLT frame".to_owned())?;
+    let wide = matches!(encoding, 1 | 2);
+    let end = if wide {
+        body.chunks_exact(2)
+            .position(|pair| pair == [0, 0])
+            .map(|index| index * 2 + 2)
+    } else {
+        body.iter()
+            .position(|byte| *byte == 0)
+            .map(|index| index + 1)
+    }
+    .ok_or_else(|| "USLT description not terminated".to_owned())?;
+    let text = decode_id3_part(encoding, &body[end..])?;
+    Ok(text.trim_end_matches('\0').to_owned())
 }
 
 fn decode_id3_part(encoding: u8, part: &[u8]) -> Result<String, String> {
@@ -1104,8 +1142,11 @@ fn mp4_data_item(kind: [u8; 4], payload: &[u8]) -> Mp4Item {
     }
     if let Ok(text) = std::str::from_utf8(payload)
         && !text.is_empty()
-        && text.chars().all(|c| !c.is_control())
+        && text
+            .chars()
+            .all(|c| !c.is_control() || matches!(c, '\n' | '\r' | '\t'))
     {
+        // Line breaks are text (lyrics, comments), not binary.
         return Mp4Item::Text(text.to_owned());
     }
     match payload.len() {
@@ -1373,6 +1414,10 @@ enum NativeEdit {
         owner: String,
         value: Option<String>,
     },
+    /// The one `USLT` frame: its text, or none to remove it.
+    Id3Lyrics {
+        text: Option<String>,
+    },
     Vorbis {
         key: String,
         values: Vec<String>,
@@ -1403,6 +1448,7 @@ impl NativeEdit {
             NativeEdit::Id3Text { id, .. } => Some(id.clone()),
             NativeEdit::Id3User { desc, .. } => Some(format!("TXXX:{desc}")),
             NativeEdit::Id3Ufid { owner, .. } => Some(format!("UFID:{owner}")),
+            NativeEdit::Id3Lyrics { .. } => Some("USLT".to_owned()),
             _ => None,
         }
     }
@@ -1466,6 +1512,9 @@ fn resolve_edits(snapshot: &Snapshot, edits: &[TagEdit]) -> Result<Vec<NativeEdi
                     Id3Target::Ufid(owner) => push(NativeEdit::Id3Ufid {
                         owner: owner.to_owned(),
                         value: values.into_iter().next(),
+                    }),
+                    Id3Target::Lyrics => push(NativeEdit::Id3Lyrics {
+                        text: (!edit.values.is_empty()).then(|| edit.values.join("\n")),
                     }),
                     Id3Target::Pair(id, slot) => {
                         let index = match pairs.iter().position(|(known, _, _)| *known == id) {
@@ -1806,6 +1855,24 @@ fn id3_read(tag: &DeepId3, field: TagField) -> FieldRead {
                 })
             })
             .unwrap_or(FieldRead::Absent),
+        Id3Target::Lyrics => {
+            let frames: Vec<&Id3FrameTruth> = tag
+                .frames
+                .iter()
+                .filter(|frame| frame.id == "USLT")
+                .collect();
+            match frames.as_slice() {
+                [] => FieldRead::Absent,
+                [one] => match decode_uslt(&one.payload) {
+                    Ok(text) if !text.is_empty() => FieldRead::Values(vec![text]),
+                    Ok(_) => FieldRead::Absent,
+                    Err(_) => FieldRead::Opaque,
+                },
+                // Several lyrics frames (languages, descriptions) cannot
+                // be written back as one value.
+                _ => FieldRead::Opaque,
+            }
+        }
         Id3Target::Pair(id, slot) => {
             let (number, total) = id3_pair(tag, id);
             match slot {
@@ -1987,6 +2054,7 @@ fn verify_id3(
             values.is_empty()
         }
         NativeEdit::Id3Ufid { value, .. } => value.is_none(),
+        NativeEdit::Id3Lyrics { text } => text.is_none(),
         _ => true,
     });
     match (had_tag, before, after) {
@@ -2073,6 +2141,13 @@ fn verify_id3(
                     payload.push(0);
                     payload.extend_from_slice(value.as_bytes());
                     landed.len() == 1 && landed[0].payload == payload
+                }
+            },
+            NativeEdit::Id3Lyrics { text } => match text {
+                None => landed.is_empty(),
+                Some(text) => {
+                    landed.len() == 1
+                        && decode_uslt(&landed[0].payload).ok().as_deref() == Some(text.as_str())
                 }
             },
             _ => true,
@@ -2489,6 +2564,17 @@ fn apply_edits(
                                     value.as_bytes().to_vec(),
                                 ),
                             ));
+                        }
+                    }
+                    NativeEdit::Id3Lyrics { text } => {
+                        native.retain(|frame| !matches!(frame, Frame::UnsynchronizedText(_)));
+                        if let Some(text) = text {
+                            native.insert(Frame::UnsynchronizedText(UnsynchronizedTextFrame::new(
+                                TextEncoding::UTF8,
+                                *b"XXX",
+                                "",
+                                text.clone(),
+                            )));
                         }
                     }
                     _ => {}

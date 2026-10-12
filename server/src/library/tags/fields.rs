@@ -38,6 +38,11 @@ pub enum TagField {
     MusicBrainzReleaseGroupId,
     MusicBrainzArtistId,
     MusicBrainzAlbumArtistId,
+    ReplayGainTrackGain,
+    ReplayGainTrackPeak,
+    ReplayGainAlbumGain,
+    ReplayGainAlbumPeak,
+    Lyrics,
 }
 
 /// How a new value for a field must look. Values replayed from a file
@@ -54,6 +59,10 @@ pub enum FieldKind {
     Single,
     /// `1` or `0`.
     Flag,
+    /// One ReplayGain gain: a signed decimal followed by ` dB`.
+    Gain,
+    /// One ReplayGain peak: a non-negative decimal.
+    Peak,
 }
 
 /// Which half of an `n/m` pair (ID3 `TRCK`/`TPOS`, MP4 `trkn`/`disk`).
@@ -75,6 +84,8 @@ pub enum Id3Target {
     /// ID3v2.3's split date: `TYER` (year), `TDAT` (`DDMM`), `TIME`
     /// (`HHMM`).
     SplitDate,
+    /// The one unsynchronised lyrics frame (`USLT`).
+    Lyrics,
 }
 
 /// Where a field lives in an MP4 `ilst`.
@@ -94,7 +105,7 @@ pub const MP4_MEAN: &str = "com.apple.iTunes";
 pub const MUSICBRAINZ_UFID_OWNER: &str = "http://musicbrainz.org";
 
 impl TagField {
-    pub const ALL: [TagField; 33] = [
+    pub const ALL: [TagField; 38] = [
         TagField::Title,
         TagField::TitleSort,
         TagField::Artist,
@@ -128,6 +139,11 @@ impl TagField {
         TagField::MusicBrainzReleaseGroupId,
         TagField::MusicBrainzArtistId,
         TagField::MusicBrainzAlbumArtistId,
+        TagField::ReplayGainTrackGain,
+        TagField::ReplayGainTrackPeak,
+        TagField::ReplayGainAlbumGain,
+        TagField::ReplayGainAlbumPeak,
+        TagField::Lyrics,
     ];
 
     /// The managed-field name publish requests and documents use.
@@ -166,6 +182,11 @@ impl TagField {
             TagField::MusicBrainzReleaseGroupId => "musicbrainz_release_group_id",
             TagField::MusicBrainzArtistId => "musicbrainz_artist_id",
             TagField::MusicBrainzAlbumArtistId => "musicbrainz_album_artist_id",
+            TagField::ReplayGainTrackGain => "replaygain_track_gain",
+            TagField::ReplayGainTrackPeak => "replaygain_track_peak",
+            TagField::ReplayGainAlbumGain => "replaygain_album_gain",
+            TagField::ReplayGainAlbumPeak => "replaygain_album_peak",
+            TagField::Lyrics => "lyrics",
         }
     }
 
@@ -215,6 +236,8 @@ impl TagField {
             | TagField::MusicBrainzReleaseTrackId
             | TagField::MusicBrainzReleaseId
             | TagField::MusicBrainzReleaseGroupId => FieldKind::Single,
+            TagField::ReplayGainTrackGain | TagField::ReplayGainAlbumGain => FieldKind::Gain,
+            TagField::ReplayGainTrackPeak | TagField::ReplayGainAlbumPeak => FieldKind::Peak,
             _ => FieldKind::Text,
         }
     }
@@ -257,6 +280,11 @@ impl TagField {
             TagField::MusicBrainzReleaseGroupId => &["MUSICBRAINZ_RELEASEGROUPID"],
             TagField::MusicBrainzArtistId => &["MUSICBRAINZ_ARTISTID"],
             TagField::MusicBrainzAlbumArtistId => &["MUSICBRAINZ_ALBUMARTISTID"],
+            TagField::ReplayGainTrackGain => &["REPLAYGAIN_TRACK_GAIN"],
+            TagField::ReplayGainTrackPeak => &["REPLAYGAIN_TRACK_PEAK"],
+            TagField::ReplayGainAlbumGain => &["REPLAYGAIN_ALBUM_GAIN"],
+            TagField::ReplayGainAlbumPeak => &["REPLAYGAIN_ALBUM_PEAK"],
+            TagField::Lyrics => &["LYRICS", "UNSYNCEDLYRICS"],
         }
     }
 
@@ -306,6 +334,11 @@ impl TagField {
             TagField::MusicBrainzReleaseGroupId => Id3Target::User("MusicBrainz Release Group Id"),
             TagField::MusicBrainzArtistId => Id3Target::User("MusicBrainz Artist Id"),
             TagField::MusicBrainzAlbumArtistId => Id3Target::User("MusicBrainz Album Artist Id"),
+            TagField::ReplayGainTrackGain => Id3Target::User("REPLAYGAIN_TRACK_GAIN"),
+            TagField::ReplayGainTrackPeak => Id3Target::User("REPLAYGAIN_TRACK_PEAK"),
+            TagField::ReplayGainAlbumGain => Id3Target::User("REPLAYGAIN_ALBUM_GAIN"),
+            TagField::ReplayGainAlbumPeak => Id3Target::User("REPLAYGAIN_ALBUM_PEAK"),
+            TagField::Lyrics => Id3Target::Lyrics,
         }
     }
 
@@ -350,6 +383,11 @@ impl TagField {
             TagField::MusicBrainzAlbumArtistId => {
                 Mp4Target::Freeform("MusicBrainz Album Artist Id")
             }
+            TagField::ReplayGainTrackGain => Mp4Target::Freeform("replaygain_track_gain"),
+            TagField::ReplayGainTrackPeak => Mp4Target::Freeform("replaygain_track_peak"),
+            TagField::ReplayGainAlbumGain => Mp4Target::Freeform("replaygain_album_gain"),
+            TagField::ReplayGainAlbumPeak => Mp4Target::Freeform("replaygain_album_peak"),
+            TagField::Lyrics => Mp4Target::Text(*b"\xa9lyr"),
         }
     }
 }

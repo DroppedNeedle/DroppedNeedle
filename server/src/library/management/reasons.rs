@@ -35,6 +35,20 @@ impl From<Reason> for ItemReason {
     }
 }
 
+/// Lyrics or ReplayGain the profile requires could not be had (v2's
+/// `METADATA_UNAVAILABLE`).
+pub fn metadata_unavailable(what: &str) -> ItemReason {
+    ItemReason {
+        code: "METADATA_UNAVAILABLE".to_owned(),
+        message: format!(
+            "The profile requires {what} for every file, and none could be found for this one."
+        ),
+        action: format!(
+            "Make a new preview later, or turn off \"required\" for {what} in the profile."
+        ),
+    }
+}
+
 pub fn identity_not_accepted() -> ItemReason {
     ItemReason::new(
         "IDENTITY_NOT_ACCEPTED",
