@@ -301,6 +301,104 @@ pub struct LiveEnrichment {
     pub upstream: crate::reads::catalog::upstream::Upstream,
     pub http: reqwest::Client,
     pub artwork: Option<crate::reads::platform::artwork::ArtworkService>,
+    pub lrclib: LrclibGate,
+}
+
+/// LRCLIB's local pacing and answer cache (the provider notes leave both
+/// to wiring): one request a second, answers kept seven days and "no
+/// lyrics" six hours, and a 429 holds every lookup back for its
+/// `Retry-After`.
+#[derive(Default)]
+pub struct LrclibGate {
+    next_request: tokio::sync::Mutex<Option<tokio::time::Instant>>,
+    held_until: std::sync::Mutex<Option<std::time::Instant>>,
+    answers: std::sync::Mutex<
+        std::collections::HashMap<String, (std::time::Instant, Option<LyricsFound>)>,
+    >,
+}
+
+/// LRCLIB's request spacing.
+const LRCLIB_SPACING: std::time::Duration = std::time::Duration::from_secs(1);
+/// How long a found answer and a "no lyrics" answer are kept.
+const LRCLIB_FOUND_FOR: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 3600);
+const LRCLIB_MISSING_FOR: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
+/// Most answers kept; past it, expired ones go first, then the oldest.
+const LRCLIB_CACHE_ENTRIES: usize = 20_000;
+
+impl LrclibGate {
+    fn key(query: &LyricsQuery, duration: u32) -> String {
+        format!(
+            "{}\u{1f}{}\u{1f}{}\u{1f}{duration}",
+            query.title, query.artist, query.album
+        )
+    }
+
+    fn cached(&self, key: &str) -> Option<Option<LyricsFound>> {
+        let answers = self.answers.lock().ok()?;
+        let (stored, answer) = answers.get(key)?;
+        let keep = if answer.is_some() {
+            LRCLIB_FOUND_FOR
+        } else {
+            LRCLIB_MISSING_FOR
+        };
+        (stored.elapsed() < keep).then(|| answer.clone())
+    }
+
+    fn remember(&self, key: String, answer: Option<LyricsFound>) {
+        let Ok(mut answers) = self.answers.lock() else {
+            return;
+        };
+        if answers.len() >= LRCLIB_CACHE_ENTRIES {
+            answers.retain(|_, (stored, answer)| {
+                stored.elapsed()
+                    < if answer.is_some() {
+                        LRCLIB_FOUND_FOR
+                    } else {
+                        LRCLIB_MISSING_FOR
+                    }
+            });
+            while answers.len() >= LRCLIB_CACHE_ENTRIES {
+                let Some(oldest) = answers
+                    .iter()
+                    .min_by_key(|(_, (stored, _))| *stored)
+                    .map(|(key, _)| key.clone())
+                else {
+                    break;
+                };
+                answers.remove(&oldest);
+            }
+        }
+        answers.insert(key, (std::time::Instant::now(), answer));
+    }
+
+    /// Refuse while a 429's `Retry-After` runs.
+    fn check_held(&self) -> Result<(), String> {
+        let held = self.held_until.lock().ok().and_then(|held| *held);
+        match held {
+            Some(until) if std::time::Instant::now() < until => {
+                Err("LRCLIB asked for a pause, so lyrics wait for the next run".to_owned())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn hold(&self, seconds: f64) {
+        if let Ok(mut held) = self.held_until.lock() {
+            *held = Some(
+                std::time::Instant::now() + std::time::Duration::from_secs_f64(seconds.max(1.0)),
+            );
+        }
+    }
+
+    /// Wait for this request's slot, one a second.
+    async fn pace(&self) {
+        let mut next = self.next_request.lock().await;
+        let now = tokio::time::Instant::now();
+        let slot = next.map_or(now, |next| next.max(now));
+        *next = Some(slot + LRCLIB_SPACING);
+        drop(next);
+        tokio::time::sleep_until(slot).await;
+    }
 }
 
 impl EnrichmentPort for LiveEnrichment {
@@ -374,39 +472,34 @@ impl EnrichmentPort for LiveEnrichment {
         &'a self,
         query: &'a LyricsQuery,
     ) -> BoxFuture<'a, Result<Option<LyricsFound>, String>> {
-        use crate::providers::lrclib::{LrclibClient, signature_matches};
+        use crate::providers::lrclib::{FetchError, LrclibClient};
         Box::pin(async move {
             let duration = query.duration_seconds.round();
             if !duration.is_finite() || duration <= 0.0 {
                 return Ok(None);
             }
+            let key = LrclibGate::key(query, duration as u32);
+            if let Some(answer) = self.lrclib.cached(&key) {
+                return Ok(answer);
+            }
+            self.lrclib.check_held()?;
+            self.lrclib.pace().await;
             let transport = crate::providers::adapters::ReqwestGet::new(self.http.clone());
             let client = LrclibClient::new(&transport);
-            let found = client
+            let found = match client
                 .get_exact_lyrics(&query.title, &query.artist, &query.album, duration as u32)
                 .await
-                .map_err(|error| format!("{error:?}"))?;
-            let Some(candidate) = found.candidate.filter(|_| found.found) else {
-                return Ok(None);
+            {
+                Ok(found) => found,
+                Err(FetchError::RateLimited { retry_after_secs }) => {
+                    self.lrclib.hold(retry_after_secs);
+                    return Err("LRCLIB asked for a pause, so lyrics wait for the next run".into());
+                }
+                Err(error) => return Err(format!("LRCLIB did not answer: {error:?}")),
             };
-            // v2's accuracy gate: the same recording signature, within two
-            // seconds.
-            let same = signature_matches(&candidate.track_name, &query.title)
-                && signature_matches(&candidate.artist_name, &query.artist)
-                && signature_matches(&candidate.album_name, &query.album)
-                && (candidate.duration_seconds - query.duration_seconds).abs() <= 2.0;
-            if !same || candidate.instrumental {
-                return Ok(None);
-            }
-            Ok(Some(LyricsFound {
-                plain: candidate
-                    .plain_lyrics
-                    .filter(|text| !text.trim().is_empty()),
-                synced: candidate
-                    .synced_lyrics
-                    .filter(|text| !text.trim().is_empty())
-                    .map(|text| normalize_lrc(&text)),
-            }))
+            let answer = lyrics_answer(query, found);
+            self.lrclib.remember(key, answer.clone());
+            Ok(answer)
         })
     }
 
@@ -432,6 +525,32 @@ impl EnrichmentPort for LiveEnrichment {
             }
         })
     }
+}
+
+/// v2's accuracy gate on an exact LRCLIB answer: the same recording
+/// signature, within two seconds, and not instrumental.
+fn lyrics_answer(
+    query: &LyricsQuery,
+    found: crate::providers::lrclib::LyricsLookup,
+) -> Option<LyricsFound> {
+    use crate::providers::lrclib::signature_matches;
+    let candidate = found.candidate.filter(|_| found.found)?;
+    let same = signature_matches(&candidate.track_name, &query.title)
+        && signature_matches(&candidate.artist_name, &query.artist)
+        && signature_matches(&candidate.album_name, &query.album)
+        && (candidate.duration_seconds - query.duration_seconds).abs() <= 2.0;
+    if !same || candidate.instrumental {
+        return None;
+    }
+    Some(LyricsFound {
+        plain: candidate
+            .plain_lyrics
+            .filter(|text| !text.trim().is_empty()),
+        synced: candidate
+            .synced_lyrics
+            .filter(|text| !text.trim().is_empty())
+            .map(|text| normalize_lrc(&text)),
+    })
 }
 
 /// Scripted answers for the test suite.

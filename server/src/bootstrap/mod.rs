@@ -460,6 +460,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         .with_instance_lastfm_key(instance_lastfm_key(auth.users.lastfm_switch.clone())),
         http: http.shared().clone(),
         artwork: reads.artwork.clone(),
+        lrclib: Default::default(),
     };
     if library.enrichment.set(Arc::new(enrichment)).is_err() {
         tracing::warn!("library management enrichment was already attached");
