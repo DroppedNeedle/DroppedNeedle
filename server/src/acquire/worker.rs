@@ -662,8 +662,15 @@ impl DownloadWorker {
         .await
     }
 
-    /// Enqueue queued tasks while under the concurrency cap.
+    /// Enqueue queued tasks while under the concurrency cap. With no
+    /// source on, the queue is held as it is.
     async fn enqueue_pass(self: &Arc<Self>, pass: &Pass) {
+        if pass.sources.is_empty() {
+            // No source is on: queued tasks wait untouched, with no look,
+            // no enqueue key and no backoff spent, so the first pass after
+            // one is turned on starts them.
+            return;
+        }
         let Some(live) = self
             .step("downloads.live", |store| {
                 store.list_active(&[TaskStatus::Downloading, TaskStatus::Processing])
