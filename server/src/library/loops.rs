@@ -236,6 +236,14 @@ impl LibrarySetup {
             Some(open) => {
                 let conn = open.publisher.connection();
                 let purged = SnapshotStore::new(conn).purge_expired(today_day())?;
+                // Generated files a preview planned (covers, lyrics) wait in
+                // the blob store until their job is done with them.
+                conn.execute(
+                    "DELETE FROM library_publish_blob_refs WHERE owner_kind = 'preview' \
+                     AND owner_id NOT IN (SELECT id FROM library_operation_jobs \
+                     WHERE state NOT IN ('succeeded', 'cancelled'))",
+                    [],
+                )?;
                 let freed = super::publish::snapshots::BlobStore::new(conn).sweep_unreferenced()?;
                 if freed > 0 {
                     tracing::info!(freed, "freed before-states no undo needs any more");

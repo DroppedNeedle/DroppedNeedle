@@ -321,11 +321,25 @@ pub struct ItemDiff {
     pub tags_changed: bool,
     pub path_changed: bool,
     pub sidecars: Vec<SidecarMove>,
+    /// Files written next to the audio from no source file.
+    pub generated: Vec<GeneratedFile>,
+}
+
+/// A file the plan writes from no source (a cover, a lyrics file).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GeneratedFile {
+    /// `artwork` or `lyrics`.
+    pub kind: String,
+    pub destination_relative_path: String,
 }
 
 impl ItemDiff {
     pub fn changes_anything(&self) -> bool {
-        self.tags_changed || self.path_changed || !self.sidecars.is_empty()
+        self.tags_changed
+            || self.path_changed
+            || !self.sidecars.is_empty()
+            || !self.generated.is_empty()
     }
 }
 
@@ -455,6 +469,14 @@ impl Summary {
             }
             if !item.diff.sidecars.is_empty() {
                 self.sidecar_change_count += 1;
+            }
+            if item
+                .diff
+                .generated
+                .iter()
+                .any(|file| file.kind == "artwork")
+            {
+                self.artwork_change_count += 1;
             }
             self.estimated_temporary_bytes += i64::try_from(item.estimated_bytes).unwrap_or(0);
         }

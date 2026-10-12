@@ -929,6 +929,7 @@ impl Management {
             target_root: snapshot.target_root_id.as_deref(),
             manage_unconfirmed: planner::manage_unconfirmed(&self.setup),
             tag_edit: intent.tag_edit.as_ref(),
+            job_id: &snapshot.job.id,
         };
         // Files that move take their whole album along, so an album is
         // never split between its old and new folder (as in v2). An

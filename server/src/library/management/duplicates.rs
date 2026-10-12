@@ -317,6 +317,7 @@ impl Management {
             target_root: snapshot.target_root_id.as_deref(),
             manage_unconfirmed: planner::manage_unconfirmed(&self.setup),
             tag_edit: None,
+            job_id: &snapshot.job.id,
         };
         let albums = self.read(|conn| selection::albums(conn, &selection))?;
         let Some(scope) = albums.first() else {

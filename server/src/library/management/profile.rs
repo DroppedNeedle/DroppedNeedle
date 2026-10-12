@@ -300,6 +300,8 @@ pub struct FileInput<'a> {
     pub extras: &'a super::enrich::AlbumExtras,
     /// The library track the file is.
     pub track_id: &'a str,
+    /// What LRCLIB said about the file's lyrics.
+    pub lyrics: &'a super::enrich::LyricsAnswer,
 }
 
 /// Plan the tags for one file from its edition, the profile and its
@@ -319,6 +321,7 @@ pub fn plan_tags(
         overrides,
         extras,
         track_id,
+        lyrics,
     } = *file;
     let profile: &LibraryManagementProfile = &pinned.profile;
     let mut desired: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -362,6 +365,18 @@ pub fn plan_tags(
         }
         if !genres.is_empty() {
             desired.insert("genre".to_owned(), genres);
+        }
+    }
+    let lyrics_settings = &profile.enrichment.lyrics;
+    if lyrics_settings.enabled && lyrics_settings.write_plain {
+        let has = desired
+            .get(TagField::Lyrics.name())
+            .is_some_and(|values| values.iter().any(|value| !value.trim().is_empty()));
+        if let super::enrich::LyricsAnswer::Found(found) = lyrics
+            && let Some(plain) = &found.plain
+            && !(lyrics_settings.preserve_existing && has)
+        {
+            desired.insert(TagField::Lyrics.name().to_owned(), vec![plain.clone()]);
         }
     }
     let file_extras = extras.files.get(track_id);

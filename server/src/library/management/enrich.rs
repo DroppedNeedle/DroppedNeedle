@@ -134,6 +134,53 @@ pub fn gather(
     extras
 }
 
+/// What LRCLIB said about one file's lyrics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LyricsAnswer {
+    /// The profile does not manage lyrics.
+    Off,
+    /// LRCLIB could not be asked now.
+    Deferred,
+    /// No exact match.
+    Missing,
+    Found(LyricsFound),
+}
+
+/// Ask LRCLIB for one track's lyrics by its exact signature (v2's
+/// accuracy gate: title, artist, album and a length within two seconds).
+pub fn lyrics(
+    slot: &EnrichmentSlot,
+    settings: &crate::runtime_config::sections::LyricsManagementSettings,
+    release: &crate::library::matching::Release,
+    track: &crate::library::matching::ReleaseTrack,
+) -> LyricsAnswer {
+    if !settings.enabled || (!settings.write_plain && !settings.write_synced) {
+        return LyricsAnswer::Off;
+    }
+    let Some(port) = slot.get() else {
+        return LyricsAnswer::Deferred;
+    };
+    let artist = if track.artists.is_empty() {
+        release.artist_text()
+    } else {
+        crate::library::matching::model::credit_text(&track.artists)
+    };
+    let Some(length) = track.length_ms else {
+        return LyricsAnswer::Missing;
+    };
+    let query = LyricsQuery {
+        title: track.title.clone(),
+        artist,
+        album: release.title.clone(),
+        duration_seconds: length as f64 / 1000.0,
+    };
+    match wait(port.lyrics(&query)) {
+        Some(Some(found)) => LyricsAnswer::Found(found),
+        Some(None) => LyricsAnswer::Missing,
+        None => LyricsAnswer::Deferred,
+    }
+}
+
 /// Normalize LRC text: Unix line ends, no blank edges, one final newline.
 pub fn normalize_lrc(text: &str) -> String {
     let lines: Vec<&str> = text.lines().map(str::trim_end).collect();

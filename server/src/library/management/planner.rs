@@ -144,6 +144,8 @@ pub struct PlanContext<'a> {
     pub manage_unconfirmed: bool,
     /// A manual tag edit the preview carries.
     pub tag_edit: Option<&'a TagEditIntent>,
+    /// The job planning, which owns the generated files it stores.
+    pub job_id: &'a str,
 }
 
 /// A file's overrides with a pending tag edit on top: a reset drops the
@@ -401,6 +403,12 @@ fn plan_file(
         reasons::file_unreadable()
     })?;
     let writable = tags::save::writable(format);
+    let lyrics = super::enrich::lyrics(
+        &ctx.setup.enrichment,
+        &ctx.pinned.profile.enrichment.lyrics,
+        release,
+        release_track,
+    );
     let tag_plan = profile::plan_tags(
         ctx.pinned,
         ctx.scripts,
@@ -413,6 +421,7 @@ fn plan_file(
             overrides,
             extras,
             track_id: &track.id,
+            lyrics: &lyrics,
         },
     )?;
     item.facts
@@ -436,6 +445,59 @@ fn plan_file(
     item.diff.field_mutations = tag_plan.mutations;
     item.diff.tags_changed = !tag_plan.updates.is_empty();
     item.diff.path_changed = moves;
+    let mut outputs = Vec::new();
+    let lyrics_settings = &ctx.pinned.profile.enrichment.lyrics;
+    let lrc_rel = std::path::Path::new(&dest_rel)
+        .with_extension("lrc")
+        .to_string_lossy()
+        .replace('\\', "/");
+    let lrc_there = ctx
+        .sandbox
+        .resolve_no_symlink(&dest_root, &lrc_rel)
+        .is_ok_and(|path| path.symlink_metadata().is_ok());
+    if lyrics_settings.enabled
+        && lyrics_settings.write_synced
+        && let super::enrich::LyricsAnswer::Found(found) = &lyrics
+        && let Some(synced) = &found.synced
+    {
+        if lrc_there {
+            let same = ctx
+                .sandbox
+                .resolve_no_symlink(&dest_root, &lrc_rel)
+                .ok()
+                .and_then(|path| crate::library::publish::paths::read_regular_file(&path).ok())
+                .is_some_and(|bytes| bytes == synced.as_bytes());
+            if !same {
+                item.facts
+                    .warnings
+                    .push(format!("{lrc_rel} already exists, so its lyrics are kept."));
+            }
+        } else {
+            let output = generated_output(ctx, &dest_root, &lrc_rel, "lyrics", synced.as_bytes())?;
+            outputs.push(output);
+        }
+    }
+    if lyrics_settings.enabled && lyrics_settings.required {
+        let embedded = tag_plan
+            .desired
+            .get(TagField::Lyrics.name())
+            .is_some_and(|values| values.iter().any(|value| !value.trim().is_empty()));
+        if !embedded && outputs.is_empty() && !lrc_there {
+            return Err(reasons::metadata_unavailable("lyrics"));
+        }
+    }
+    if lyrics_settings.enabled && lyrics == super::enrich::LyricsAnswer::Deferred {
+        item.facts
+            .warnings
+            .push("LRCLIB could not be reached, so no lyrics were looked up.".to_owned());
+    }
+    item.diff.generated = outputs
+        .iter()
+        .map(|output| super::models::GeneratedFile {
+            kind: output.kind.clone(),
+            destination_relative_path: output.dest_rel.clone(),
+        })
+        .collect();
     if !item.facts.warnings.is_empty() {
         item.eligibility = Eligibility::Warning;
     }
@@ -453,7 +515,9 @@ fn plan_file(
             Capability::CrossRootMove
         });
     }
-    item.estimated_bytes = fingerprint.size + STAGED_HEADROOM_BYTES;
+    item.estimated_bytes = fingerprint.size
+        + STAGED_HEADROOM_BYTES
+        + outputs.iter().map(|output| output.size).sum::<u64>();
     item.desired.plan = Some(PlanItem {
         track_id: track.id.clone(),
         source_root: track.root_id.clone(),
@@ -482,10 +546,74 @@ fn plan_file(
         staged_bytes_estimate: item.estimated_bytes,
         adopt: None,
         replaces: None,
-        outputs: Vec::new(),
+        outputs,
         removals: Vec::new(),
     });
     Ok(())
+}
+
+/// Keep a generated file's bytes for apply and describe where it goes.
+/// The bytes wait in the blob store under the job until it is done.
+fn generated_output(
+    ctx: &PlanContext<'_>,
+    root: &str,
+    rel: &str,
+    kind: &str,
+    bytes: &[u8],
+) -> Result<crate::library::publish::GeneratedOutput, ItemReason> {
+    use crate::library::publish::snapshots::{BlobStore, SnapshotStore};
+    let stored = ctx.setup.identify_store.with_connection(|conn| {
+        let sha = BlobStore::new(conn).put(bytes)?;
+        SnapshotStore::new(conn).add_ref(&sha, "preview", ctx.job_id)?;
+        Ok::<_, crate::library::publish::PublishError>(sha)
+    });
+    let sha256 = stored.map_err(|error| {
+        tracing::error!(%error, "generated file not stored");
+        reasons::write_failed()
+    })?;
+    Ok(crate::library::publish::GeneratedOutput {
+        dest_root: root.to_owned(),
+        dest_rel: rel.to_owned(),
+        sha256,
+        size: bytes.len() as u64,
+        kind: kind.to_owned(),
+    })
+}
+
+/// Drop generated files that would land where a sidecar moving with the
+/// album lands: the album's own file wins.
+fn drop_shadowed_outputs(items: &mut [PlannedItem]) {
+    let taken: HashSet<crate::library::publish::CollisionKey> = items
+        .iter()
+        .filter_map(|item| item.desired.plan.as_ref())
+        .flat_map(|plan| plan.sidecars.iter())
+        .map(|sidecar| {
+            crate::library::publish::collision_key(&sidecar.dest_root, &sidecar.dest_rel)
+        })
+        .collect();
+    for item in items.iter_mut() {
+        let Some(plan) = item.desired.plan.as_mut() else {
+            continue;
+        };
+        let before = plan.outputs.len();
+        plan.outputs.retain(|output| {
+            !taken.contains(&crate::library::publish::collision_key(
+                &output.dest_root,
+                &output.dest_rel,
+            ))
+        });
+        if plan.outputs.len() != before {
+            item.diff.generated.retain(|file| {
+                plan.outputs
+                    .iter()
+                    .any(|output| output.dest_rel == file.destination_relative_path)
+            });
+            item.facts.warnings.push(
+                "The album's own file moves to where a generated file would go, so it is kept."
+                    .to_owned(),
+            );
+        }
+    }
 }
 
 /// Most files one album's ReplayGain analysis covers (as v2).
@@ -937,6 +1065,7 @@ pub fn plan_album(
         }
     }
     plan_sidecars(ctx, &mut items);
+    drop_shadowed_outputs(&mut items);
     check_collisions(ctx, &mut items);
     let writes: Vec<PlanItem> = items
         .iter()
