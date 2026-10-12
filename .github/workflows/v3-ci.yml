@@ -6,6 +6,8 @@ on:
     paths:
       - 'server/**'
       - 'frontend/**'
+      - 'sdk/**'
+      - 'examples/plugins/**'
       - 'Dockerfile'
       - 'entrypoint.sh'
       - 'rust-toolchain.toml'
@@ -14,6 +16,8 @@ on:
     paths:
       - 'server/**'
       - 'frontend/**'
+      - 'sdk/**'
+      - 'examples/plugins/**'
       - 'Dockerfile'
       - 'entrypoint.sh'
       - 'rust-toolchain.toml'
