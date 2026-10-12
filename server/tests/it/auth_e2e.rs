@@ -3237,6 +3237,53 @@ async fn login_store_failure_is_a_500_not_bad_credentials() {
 }
 
 #[tokio::test]
+async fn cookie_mutation_needs_the_exact_origin() {
+    let e2e = E2e::open("csrf-origin").await;
+    let (_, session) =
+        setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "cookie").await;
+    let jar = cookie(session.as_str().expect("setup cookie"));
+    // A bodiless POST is the one mutation a plain cross-origin form can send.
+    let logout_all = |extra: &[(&'static str, &'static str)]| {
+        let mut headers = vec![("cookie", jar.clone())];
+        headers.extend(
+            extra
+                .iter()
+                .map(|(name, value)| (*name, (*value).to_owned())),
+        );
+        let app = e2e.router();
+        async move {
+            let headers: Vec<(&str, &str)> = headers
+                .iter()
+                .map(|(name, value)| (*name, value.as_str()))
+                .collect();
+            call_status(app, "POST", "/api/v3/auth/logout-all", &headers).await
+        }
+    };
+    // Another app on the same host shares the cookie and counts as
+    // same-site, so only the full origin tells the two apart.
+    let foreign: [&[(&str, &str)]; 3] = [
+        &[("origin", "http://e2e.test:8096")],
+        &[("origin", "https://e2e.test")],
+        &[
+            ("origin", "http://e2e.test:8096"),
+            ("sec-fetch-site", "same-site"),
+        ],
+    ];
+    for headers in foreign {
+        assert_eq!(
+            logout_all(headers).await,
+            StatusCode::FORBIDDEN,
+            "{headers:?}"
+        );
+    }
+    assert_eq!(
+        logout_all(&[("origin", "http://e2e.test:80")]).await,
+        StatusCode::NO_CONTENT,
+        "a spelled-out default port is the same origin"
+    );
+}
+
+#[tokio::test]
 async fn password_change_ends_every_other_session() {
     let e2e = E2e::open("password-change").await;
     let (_, setup_token) =

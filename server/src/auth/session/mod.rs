@@ -21,8 +21,9 @@
 //!   requires `Secure`, both incompatible with base-path serving and plain-HTTP
 //!   LAN installs. The base-path-scoped `Path` plus auto-`Secure` is the policy.
 //! - CSRF defence is `Lax` plus the origin check: any cookie-authenticated
-//!   unsafe method (`POST/PUT/PATCH/DELETE`) must present `Origin` (or `Referer`
-//!   fallback) matching the request host, else 403. Bearer requests are exempt.
+//!   unsafe method (`POST/PUT/PATCH/DELETE`) must carry `Sec-Fetch-Site:
+//!   same-origin`, or an `Origin` (or `Referer` fallback) whose scheme, host
+//!   and port match the request's, else 403. Bearer requests are exempt.
 //! - Tokens are opaque 32-byte values (urlsafe-b64), SHA-256 hex at rest,
 //!   constant-time compared, rejected when revoked or expired.
 //! - Login failures run a dummy-hash verify and return one uniform message,

@@ -6,10 +6,10 @@
 //! -> 401 + `WWW-Authenticate: Bearer`; each such failure also takes a token
 //! from the caller's auth-failure bucket, and an empty bucket answers 429)
 //! -> origin check on cookie mutations
-//! against the effective host (forwarded host only from trusted proxies)
-//! (-> 403). Success stashes [`CurrentSession`] in the request extensions for
-//! handlers and role extractors; role gating itself is handler-level, as is
-//! the per-resource 403-or-404 choice.
+//! against the effective origin (forwarded host and scheme only from trusted
+//! proxies) (-> 403). Success stashes [`CurrentSession`] in the request
+//! extensions for handlers and role extractors; role gating itself is
+//! handler-level, as is the per-resource 403-or-404 choice.
 //!
 //! ## Layer order (wiring)
 //!
@@ -28,14 +28,16 @@
 //!
 //! [`TrustedProxies`] names the reverse proxies allowed to set
 //! `X-Forwarded-*` (v2 `ProxyHeadersMiddleware` semantics): the
-//! effective host honors `X-Forwarded-Host` only when the TCP peer is
-//! trusted, and the login routes mark `Secure` from `X-Forwarded-Proto`
-//! under the same verdict. Anything else fails closed to the direct `Host`
-//! header and scheme. The peer comes from axum `ConnectInfo`, so the server
-//! must serve with connect info for non-loopback peers to ever verify.
+//! effective origin honors `X-Forwarded-Host` and `X-Forwarded-Proto` only
+//! when the TCP peer is trusted, and the login routes mark `Secure` from
+//! `X-Forwarded-Proto` under the same verdict. Anything else fails closed to
+//! the direct `Host` header and scheme. The peer comes from axum
+//! `ConnectInfo`, so the server must serve with connect info for
+//! non-loopback peers to ever verify.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::{
     extract::{ConnectInfo, Request, State},
@@ -46,8 +48,9 @@ use thiserror::Error;
 
 use super::{
     allowlist::is_public,
+    cookies::is_secure_trusted,
     extract::{Transport, forbidden_response, unauthorized_response},
-    origin::{OriginDecision, check_origin},
+    origin::{Origin, OriginDecision, check_origin, proxy_mismatch},
     rate_limit::{AUTH_FAILURE_CLASS, RateLimiter, rate_limited_response},
     store::{SessionKind, SessionStore, now_unix},
     tokens::hash_token,
@@ -222,6 +225,18 @@ fn prefix_mask_u128(prefix: u8) -> u128 {
     }
 }
 
+/// A warning worth one log line per process: the first caller to claim it
+/// logs, everyone after stays quiet. Clones share the flag.
+#[derive(Debug, Clone, Default)]
+pub struct WarnOnce(Arc<AtomicBool>);
+
+impl WarnOnce {
+    /// True for the first caller only.
+    fn claim(&self) -> bool {
+        !self.0.load(Ordering::Relaxed) && !self.0.swap(true, Ordering::Relaxed)
+    }
+}
+
 /// Shared middleware state: the session store plus deployment facts.
 #[derive(Debug, Clone)]
 pub struct SessionAuth<S> {
@@ -236,6 +251,9 @@ pub struct SessionAuth<S> {
     /// Shared limiter; failed authentications are charged per client
     /// address, since the request limiter runs after this gate.
     pub limits: Arc<RateLimiter>,
+    /// Spent by the first refused request that looks like a proxy
+    /// misreporting this server's address.
+    origin_mismatch_warned: WarnOnce,
 }
 
 impl<S> SessionAuth<S> {
@@ -247,6 +265,7 @@ impl<S> SessionAuth<S> {
             base_path: base_path.to_owned(),
             trusted_proxies: TrustedProxies::default(),
             limits: Arc::new(RateLimiter::new()),
+            origin_mismatch_warned: WarnOnce::default(),
         }
     }
 
@@ -304,13 +323,19 @@ where
     let Some(record) = record else {
         return auth_failure(&auth.limits, &request, "Invalid or expired token");
     };
+    let target = effective_origin(&request, &auth.trusted_proxies);
     if check_origin(
         request.headers(),
-        &effective_host(&request, &auth.trusted_proxies),
+        target.as_ref(),
         request.method(),
         transport,
     ) == OriginDecision::Deny
     {
+        warn_origin_mismatch(
+            &auth.origin_mismatch_warned,
+            request.headers(),
+            target.as_ref(),
+        );
         return forbidden_response("Origin not allowed");
     }
     let mut request = request;
@@ -335,16 +360,63 @@ fn auth_failure(limits: &RateLimiter, request: &Request, message: &str) -> Respo
     }
 }
 
+/// Log, once per process, a refusal where the page's origin is on this
+/// server's host and only the scheme or port differ. Otherwise a proxy that
+/// drops the port or hides HTTPS shows up as 403s in the browser and
+/// nothing in the log.
+fn warn_origin_mismatch(
+    warned: &WarnOnce,
+    headers: &axum::http::HeaderMap,
+    target: Option<&Origin>,
+) {
+    let Some(target) = target else {
+        return;
+    };
+    let Some(source) = proxy_mismatch(headers, target) else {
+        return;
+    };
+    if warned.claim() {
+        tracing::warn!(
+            %source,
+            %target,
+            "Refused a change from a page at {source}: this server sees itself at {target}. \
+             If that page is DroppedNeedle, the reverse proxy is dropping the port or hiding \
+             HTTPS; see the reverse proxy paragraph under Configuration in the README."
+        );
+    }
+}
+
+/// The origin the browser addressed this request to, for the origin check:
+/// [`effective_host`] plus the scheme, which is `https` on direct TLS or on
+/// `X-Forwarded-Proto: https` from a trusted proxy. A host without a port
+/// is on the scheme's default port, so a proxy on any other port has to
+/// pass the browser's `Host` through unchanged.
+pub fn effective_origin(request: &Request, trusted: &TrustedProxies) -> Option<Origin> {
+    let secure = is_secure_trusted(
+        request.uri().scheme_str().unwrap_or("http"),
+        request.headers(),
+        trusted.is_trusted(peer_of(request)),
+    );
+    Origin::from_host(
+        if secure { "https" } else { "http" },
+        &effective_host(request, trusted),
+    )
+}
+
+/// The TCP peer, when the server runs with connect info.
+fn peer_of(request: &Request) -> Option<SocketAddr> {
+    request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|info| info.0)
+}
+
 /// Effective request host for the origin check. From a trusted proxy the
 /// first `X-Forwarded-Host` entry wins; otherwise the direct `Host` header,
 /// else the URI host. Unknown or untrusted peers fail closed to the direct
 /// host, so a spoofed forwarded host can never satisfy the check.
 pub fn effective_host(request: &Request, trusted: &TrustedProxies) -> String {
-    let peer = request
-        .extensions()
-        .get::<ConnectInfo<SocketAddr>>()
-        .map(|info| info.0);
-    if trusted.is_trusted(peer) {
+    if trusted.is_trusted(peer_of(request)) {
         let forwarded = request
             .headers()
             .get("x-forwarded-host")
@@ -440,6 +512,32 @@ mod tests {
         assert_eq!(
             effective_host(&request(Some(loopback), None), &trusted),
             "direct.test"
+        );
+    }
+
+    #[test]
+    fn effective_origin_takes_scheme_and_host_only_from_trusted_peers() {
+        fn request(peer: &str) -> Request {
+            let mut request = Request::builder()
+                .uri("/api/v3/me")
+                .header("host", "app:8688")
+                .header("x-forwarded-host", "music.example")
+                .header("x-forwarded-proto", "https")
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let peer: SocketAddr = peer.parse().unwrap();
+            request.extensions_mut().insert(ConnectInfo(peer));
+            request
+        }
+
+        let trusted = TrustedProxies::default();
+        assert_eq!(
+            effective_origin(&request("127.0.0.1:1"), &trusted),
+            Origin::from_url("https://music.example")
+        );
+        assert_eq!(
+            effective_origin(&request("203.0.113.9:1"), &trusted),
+            Origin::from_url("http://app:8688")
         );
     }
 }

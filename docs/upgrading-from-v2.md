@@ -255,6 +255,21 @@ you upgrade: the first entry needs a change on your side first.
   hard it pushed slskd. v3 ignores them. It waits and tries again when slskd
   answers that it is busy. Remove them from your compose file if you set them.
 
+### Changed
+
+- **Reverse proxy headers.** v2 accepted a change from the web UI whatever
+  address the page was on. v3 only accepts it from the address it believes
+  it is served at, so your proxy has to tell it the truth. List the proxy
+  in `TRUSTED_PROXY_IPS`, have it send `X-Forwarded-Proto`, and pass the
+  `Host` header as the browser sent it, port included: in nginx,
+  `proxy_set_header Host $http_host;` rather than `$host`. If saving
+  anything in the web UI answers `403 Origin not allowed` after the
+  upgrade, this is why. When only the port or the scheme differ, the log
+  names both addresses; a proxy that replaces `Host` with another name
+  leaves no log line. Either way the fix is the same: pass the browser's
+  `Host` (or send it as `X-Forwarded-Host`) and `X-Forwarded-Proto`
+  through.
+
 ### Moved
 
 - **Playlist "request missing" for scripts.** v2 had a server route,
