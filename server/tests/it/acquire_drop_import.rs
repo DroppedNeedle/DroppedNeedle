@@ -118,6 +118,7 @@ fn release(titles: &[&str], lengths: &[Option<u64>]) -> Release {
             .enumerate()
             .map(|(index, (title, length))| ReleaseTrack {
                 isrcs: Vec::new(),
+                genres: Vec::new(),
                 id: format!("7d0b7a1e-0000-4000-8000-0000000001{index:02}"),
                 recording_id: format!("7d0b7a1e-0000-4000-8000-0000000002{index:02}"),
                 title: (*title).to_owned(),

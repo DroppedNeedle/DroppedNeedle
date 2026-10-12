@@ -83,6 +83,7 @@ pub fn active(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Rele
             length_ms: seconds
                 .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
                 .map(|seconds| (seconds * 1000.0).round() as u64),
+            isrcs: Vec::new(),
             genres: meta["genre"]
                 .as_str()
                 .filter(|genre| !genre.trim().is_empty())
