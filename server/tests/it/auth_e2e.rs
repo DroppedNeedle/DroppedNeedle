@@ -168,11 +168,17 @@ impl E2e {
             self.runtime.pool(),
             auth.users.clone(),
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            crate::common::reads_inputs(
-                Arc::clone(&self.store),
-                self.db_path.parent().expect("db dir"),
-                self.runtime.lane().clone(),
-            ),
+            droppedneedle::reads::ReadsInputs {
+                // Unpaced: every provider sits on the discard port, so
+                // pacing would only add whole seconds of waiting to rows
+                // that are bound to answer "provider down" anyway.
+                providers: Arc::new(Providers::unpaced()),
+                ..crate::common::reads_inputs(
+                    Arc::clone(&self.store),
+                    self.db_path.parent().expect("db dir"),
+                    self.runtime.lane().clone(),
+                )
+            },
             None,
         )
         .with_collections(droppedneedle::reads::collections::db::CollectionsDb::new(
@@ -182,7 +188,7 @@ impl E2e {
         .with_catalog(Catalog::new(
             Upstream::new(
                 &self.http,
-                Arc::new(Providers::new(Arc::new(InMemoryProviderCache::new()))),
+                Arc::new(Providers::unpaced()),
                 Arc::clone(&self.store) as Arc<dyn CatalogSettings>,
                 auth.users.clone(),
             ),
@@ -237,7 +243,7 @@ impl E2e {
                 droppedneedle::compat::settings::LiveSettings::from_config(Arc::clone(&self.store)),
             ),
         );
-        let providers = Arc::new(droppedneedle::providers::Providers::with_memory_cache());
+        let providers = Arc::new(Providers::unpaced());
         let backup_dir = self
             .db_path
             .parent()
@@ -260,7 +266,7 @@ impl E2e {
         let admin = droppedneedle::admin::AdminSetup::new(
             auth.users.clone(),
             acquire.requests.quota.clone(),
-            Arc::new(droppedneedle::providers::InMemoryProviderCache::new()),
+            Arc::new(InMemoryProviderCache::new()),
             providers.clone(),
         )
         .with_db(droppedneedle::admin::AdminDb::new(
@@ -2629,6 +2635,18 @@ async fn auth_on_every_endpoint() {
     }
 
     let e2e = E2e::open("matrix").await;
+    // One app for the whole matrix: building the full state per row
+    // (scratch databases, migrations, the router itself) used to dominate
+    // the runtime. Rows still never share a rate budget: the limiter is
+    // emptied before every request, back to the buckets a fresh build
+    // starts with.
+    let state = e2e.state();
+    let limits = Arc::clone(&state.auth.limits);
+    let app = create_app(state);
+    let fresh = || {
+        limits.reset();
+        app.clone()
+    };
 
     // Anonymous pass: protected rows 401 with the Bearer challenge; public
     // rows answer anything but 401.
@@ -2638,11 +2656,11 @@ async fn auth_on_every_endpoint() {
             "POST" | "PUT" | "PATCH" => Some(json!({})),
             _ => None,
         };
-        let (status, response_body, headers) = call(e2e.router(), method, &uri, &[], body).await;
+        let (status, response_body, headers) = call(fresh(), method, &uri, &[], body).await;
         assert_ne!(
             status,
             StatusCode::TOO_MANY_REQUESTS,
-            "{method} {uri}: anonymous pass tripped the limiter; rebuild routers per pass"
+            "{method} {uri}: anonymous pass tripped the limiter; reset it per row"
         );
         match posture {
             Posture::Public => assert_ne!(
@@ -2694,11 +2712,11 @@ async fn auth_on_every_endpoint() {
 
     // Seed one admin and one user for the credentialed passes.
     let (_, admin_token) =
-        setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
+        setup_admin(fresh(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
     let admin_token = admin_token.as_str().expect("admin token").to_owned();
     let mut admin_auth = bearer(admin_token.as_str());
     let (status, body, _) = call(
-        e2e.router(),
+        fresh(),
         "POST",
         "/api/v3/admin/users",
         &[("authorization", admin_auth.as_str())],
@@ -2707,7 +2725,7 @@ async fn auth_on_every_endpoint() {
     .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     let molly_id = body["id"].as_str().expect("molly id").to_owned();
-    let (status, body, _) = login(e2e.router(), "molly", "molly-password-1234", "bearer").await;
+    let (status, body, _) = login(fresh(), "molly", "molly-password-1234", "bearer").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let user_token = body["token"].as_str().expect("user token").to_owned();
     let mut user_auth = bearer(user_token.as_str());
@@ -2749,7 +2767,7 @@ async fn auth_on_every_endpoint() {
         // every other row still decodes JSON for the failure message.
         let (status, response_body) = if *template == EVENT_STREAM {
             let status = call_status(
-                e2e.router(),
+                fresh(),
                 method,
                 &uri,
                 &[("authorization", user_auth.as_str())],
@@ -2758,7 +2776,7 @@ async fn auth_on_every_endpoint() {
             (status, Value::Null)
         } else if template.starts_with("/api/v3/covers/") {
             let (status, _, _) = call_raw(
-                e2e.router(),
+                fresh(),
                 method,
                 &uri,
                 &[("authorization", user_auth.as_str())],
@@ -2767,7 +2785,7 @@ async fn auth_on_every_endpoint() {
             (status, Value::Null)
         } else {
             let (status, response_body, _) = call_lenient(
-                e2e.router(),
+                fresh(),
                 method,
                 &uri,
                 &[("authorization", user_auth.as_str())],
@@ -2815,8 +2833,7 @@ async fn auth_on_every_endpoint() {
         // Logout-all revokes the pass's own token by design; re-login so
         // the rows after it still run credentialed.
         if *template == "/api/v3/auth/logout-all" {
-            let (status, body, _) =
-                login(e2e.router(), "molly", "molly-password-1234", "bearer").await;
+            let (status, body, _) = login(fresh(), "molly", "molly-password-1234", "bearer").await;
             assert_eq!(status, StatusCode::OK, "user re-login: {body}");
             user_auth = bearer(body["token"].as_str().expect("fresh user token"));
         }
@@ -2861,7 +2878,7 @@ async fn auth_on_every_endpoint() {
         }
         let (status, response_body) = if *template == EVENT_STREAM {
             let status = call_status(
-                e2e.router(),
+                fresh(),
                 method,
                 &uri,
                 &[("authorization", admin_auth.as_str())],
@@ -2870,7 +2887,7 @@ async fn auth_on_every_endpoint() {
             (status, Value::Null)
         } else if template.starts_with("/api/v3/covers/") {
             let (status, _, _) = call_raw(
-                e2e.router(),
+                fresh(),
                 method,
                 &uri,
                 &[("authorization", admin_auth.as_str())],
@@ -2879,7 +2896,7 @@ async fn auth_on_every_endpoint() {
             (status, Value::Null)
         } else {
             let (status, response_body, _) = call_lenient(
-                e2e.router(),
+                fresh(),
                 method,
                 &uri,
                 &[("authorization", admin_auth.as_str())],
@@ -2940,7 +2957,7 @@ async fn auth_on_every_endpoint() {
         }
         if *template == "/api/v3/auth/logout-all" {
             let (status, body, _) =
-                login(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
+                login(fresh(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
             assert_eq!(status, StatusCode::OK, "admin re-login: {body}");
             admin_auth = bearer(body["token"].as_str().expect("fresh admin token"));
         }
@@ -2953,7 +2970,7 @@ async fn auth_on_every_endpoint() {
         }
         let uri = concretize(template);
         let (status, response_body, _) = call(
-            e2e.router(),
+            fresh(),
             method,
             &uri,
             &[("x-wrapped-api-key", TEST_WRAPPED_KEY)],

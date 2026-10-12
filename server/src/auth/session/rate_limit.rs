@@ -302,6 +302,18 @@ impl RateLimiter {
         self
     }
 
+    /// Drop every bucket, as a freshly built limiter would start. Test
+    /// rigs that drive one shared router through hundreds of requests
+    /// call this between requests instead of rebuilding the whole app.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn reset(&self) {
+        let mut buckets = self
+            .buckets
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        *buckets = BoundedMap::default();
+    }
+
     /// Take one token for `key` in `class` now.
     pub fn check(&self, class: RateClass, key: &str) -> AcquireOutcome {
         self.check_at(class, key, self.started.elapsed().as_secs_f64())

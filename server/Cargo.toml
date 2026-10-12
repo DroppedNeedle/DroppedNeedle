@@ -61,3 +61,23 @@ test-support = []
 droppedneedle = { path = ".", features = ["test-support"] }
 regex = "1.13.1"
 tokio = { version = "1", features = ["test-util"] }
+
+# Debug builds (tests, clippy, local runs) optimize the few dependencies
+# whose unoptimized code dominated the test suite: the Argon2id/bcrypt
+# password hashes at their real production parameters, and bundled SQLite,
+# which the build script compiles at -O0 otherwise. Release builds are
+# untouched.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
+
+[profile.dev.package.bcrypt]
+opt-level = 3
+
+[profile.dev.package.blowfish]
+opt-level = 3
+
+[profile.dev.package.libsqlite3-sys]
+opt-level = 3
