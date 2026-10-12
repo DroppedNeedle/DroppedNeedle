@@ -1,16 +1,21 @@
 name: v3 CI
 
+# Runs for pushes to any branch and for pull requests, so it keeps working
+# when the release branch is renamed. Dependabot branches are covered by
+# their pull request.
 on:
   push:
-    branches: [v3]
+    branches-ignore: ['dependabot/**']
     paths:
       - 'server/**'
       - 'frontend/**'
       - 'sdk/**'
       - 'examples/plugins/**'
       - 'Dockerfile'
+      - '.dockerignore'
       - 'entrypoint.sh'
       - 'rust-toolchain.toml'
+      - '.github/node-version'
       - '.github/workflows/v3-ci.yml'
   pull_request:
     paths:
@@ -19,8 +24,10 @@ on:
       - 'sdk/**'
       - 'examples/plugins/**'
       - 'Dockerfile'
+      - '.dockerignore'
       - 'entrypoint.sh'
       - 'rust-toolchain.toml'
+      - '.github/node-version'
       - '.github/workflows/v3-ci.yml'
   workflow_dispatch:
 
@@ -32,8 +39,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Decides which jobs a change needs. A manual run needs all of them.
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.rust == 'true' }}
+      contract: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.contract == 'true' }}
+      image: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.image == 'true' }}
+    steps:
+      - name: Checkout code
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/checkout@v7
+
+      - name: Filter paths
+        id: filter
+        if: github.event_name != 'workflow_dispatch'
+        uses: dorny/paths-filter@v4
+        with:
+          # Compare a push with the commit before it, not with the default
+          # branch, which would report every file on a long-lived branch.
+          base: ${{ github.ref }}
+          filters: |
+            rust:
+              - 'server/**'
+              - 'sdk/**'
+              - 'examples/plugins/**'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/v3-ci.yml'
+            contract:
+              - 'server/**'
+              - 'sdk/**'
+              - 'rust-toolchain.toml'
+              - 'frontend/package.json'
+              - 'frontend/src/lib/api/v3/openapi.d.ts'
+              - '.github/node-version'
+              - '.github/workflows/v3-ci.yml'
+            image:
+              - 'server/**'
+              - 'frontend/**'
+              - 'sdk/**'
+              - 'Dockerfile'
+              - '.dockerignore'
+              - 'entrypoint.sh'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/v3-ci.yml'
+
   test:
     name: Tests
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -43,14 +102,23 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      # The version and components come from rust-toolchain.toml.
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+          save-if: ${{ github.event_name != 'pull_request' }}
 
       - name: Run tests
         run: cargo test --workspace
 
   clippy:
     name: Clippy
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -60,16 +128,27 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
         with:
-          components: clippy
+          workspaces: server
+          save-if: ${{ github.event_name != 'pull_request' }}
 
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # The test targets turn on the test-support feature for the whole
+      # crate. This lints the library and binaries as they ship, without it.
+      - name: Run Clippy on the shipping build
+        run: cargo clippy --workspace --lib --bins -- -D warnings
+
   fmt:
     name: Format
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -79,16 +158,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
+      - name: Install Rust toolchain
+        run: rustup toolchain install
 
       - name: Check formatting
         run: cargo fmt --check
 
   audit:
     name: Audit
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -98,11 +177,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain
+        run: rustup toolchain install
 
       - name: Install cargo-audit
-        run: cargo install --locked cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
 
       - name: Run audit
         # RUSTSEC-2023-0071 (rsa Marvin, no fixed upgrade) is lockfile-only
@@ -112,6 +193,8 @@ jobs:
 
   licenses:
     name: Licenses
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -121,41 +204,54 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain
+        run: rustup toolchain install
 
       - name: Install cargo-deny
-        run: cargo install --locked cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
 
       - name: Check licenses
         run: cargo deny check
 
   ts-diff:
     name: Contract diff
+    needs: changes
+    if: needs.changes.outputs.contract == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+          save-if: ${{ github.event_name != 'pull_request' }}
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
-          version: 10.33.0
+          # The pinned pnpm version is declared in the frontend package.
+          package_json_file: frontend/package.json
 
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version-file: .github/node-version
 
       - name: Check contract drift
         run: ./server/openapi/check.sh
 
   container-e2e:
     name: Container E2E
+    needs: changes
+    if: needs.changes.outputs.image == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
