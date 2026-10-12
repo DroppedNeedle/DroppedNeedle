@@ -62,6 +62,7 @@ mod library_journey;
 mod library_matching;
 mod library_publish;
 mod library_scan;
+mod library_scan_throughput;
 mod library_tags;
 mod media_journey;
 mod migration_library;
