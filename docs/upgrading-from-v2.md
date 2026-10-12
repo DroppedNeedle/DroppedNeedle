@@ -190,6 +190,9 @@ you upgrade: the first entry needs a change on your side first.
     `/api/v1/auth/oidc/callback` to `/api/v3/auth/oidc/callback`, and check
     that the redirect URI under Settings > Security matches. Until both
     are changed, single sign-on fails.
+    Check before you upgrade that at least one admin can also sign in with
+    a username and password. If single sign-on breaks and nobody can sign
+    in, see [Locked out](#locked-out) below.
   - Spotify playlist import: in the Spotify developer dashboard, add the
     redirect URI ending in `/api/v3/acquire/spotify/auth/callback` to your
     app. Until it is there, Connect on the Spotify card fails.
@@ -198,6 +201,39 @@ you upgrade: the first entry needs a change on your side first.
     `/api/v1/library/contributions/musicbrainz/callback`. Save or close
     those tabs before you upgrade. Contributions started in v3 use the v3
     address.
+
+### Locked out
+
+If nobody can sign in to v3 (single sign-on fails and no admin remembers a
+password), make a password recovery code on the host:
+
+```sh
+docker compose stop droppedneedle
+docker compose run --rm droppedneedle droppedneedle-tool recovery-code USERNAME
+docker compose up -d droppedneedle
+```
+
+`droppedneedle` is the service name in your compose file. Use yours if it
+differs. Stop the server first: the command refuses to run while it is up. It
+prints a one-time code. Open "Forgot password?" on the sign-in page and
+enter the username, the code and a new password within 15 minutes.
+
+`USERNAME` is the account's DroppedNeedle username, which can differ from
+the name it has with your single sign-on provider. To see the admin
+usernames (again with the server stopped):
+
+```sh
+docker compose run --rm droppedneedle droppedneedle-tool recovery-code --list-admins
+```
+
+An account that only ever signed in through single sign-on, Plex or
+Jellyfin has no password yet. The command says so, and the code then
+gives the account its first password; its other sign-in stays linked.
+Only this command can do that. A recovery code an admin makes under
+Settings > Users is for accounts that already have a password.
+
+The command asks for no password of its own: anyone with access to the
+machine and its data folders can run it.
 
 ### Removed
 

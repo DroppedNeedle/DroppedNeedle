@@ -373,6 +373,16 @@ You can download a single track or a whole album from the library. A track comes
 
 The first account is always admin. Later accounts are created by an admin or automatically on first Jellyfin, Plex, or OIDC sign-in (all start as User). Every login method toggles in the UI; no environment variables involved. Sessions last 30 days and die with the account if an admin deletes it.
 
+Forgot a password? An admin makes a one-time recovery code for the account under Settings > Users, and "Forgot password?" on the sign-in page takes it. If no admin can sign in either (for example single sign-on stopped working), make the code on the host. Stop the server first, because the command refuses to run while it is up:
+
+```bash
+docker compose stop droppedneedle
+docker compose run --rm droppedneedle droppedneedle-tool recovery-code USERNAME
+docker compose up -d droppedneedle
+```
+
+`droppedneedle` is the service name in your compose file; use yours if it differs. The code works once, for 15 minutes. `USERNAME` is the DroppedNeedle username, which can differ from the name the account has with an OIDC provider; `droppedneedle-tool recovery-code --list-admins` prints the admin usernames. An account that only signs in through OIDC, Plex or Jellyfin gets its first password this way and keeps its other sign-in. Only the host command can do that: a code made by an admin under Settings > Users is for accounts that already have a password. It is still simpler to keep one admin with a username and password.
+
 <details>
 <summary>Setting up OIDC</summary>
 
