@@ -202,7 +202,13 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	handBackAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	confirmAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	undoAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	retagAfterChoice: () => ({ mutateAsync: vi.fn(), isPending: false })
+	retagAfterChoice: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	editionsKey: (id: string) => ['editions', id],
+	getEditionPlanQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	removeEditionExtras: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
+	restoreEditionExtras: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
+	getWaitingAlbumsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	invalidateAlbumEdition: () => Promise.resolve()
 }));
 
 vi.mock('$lib/queries/downloads/UpgradeQueries.svelte', () => ({

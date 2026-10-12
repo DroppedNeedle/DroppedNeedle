@@ -11,7 +11,8 @@ vi.mock('$lib/queries/settings/AdminCacheQueries.svelte', () => ({
 		error: null,
 		refetch: vi.fn()
 	}),
-	createClearCacheMutation: () => ({ mutateAsync: h.clear, isPending: false })
+	createClearCacheMutation: () => ({ mutateAsync: h.clear, isPending: false }),
+	createPrecacheRunMutation: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false })
 }));
 
 import SettingsCache from './SettingsCache.svelte';

@@ -107,7 +107,41 @@ vi.mock('$lib/queries/library-management/LibraryManagementQueries.svelte', () =>
 	getLibraryManagementOperationsQuery: () => ({
 		...h.operations
 	}),
-	getLibraryManagementRecoveryQuery: () => h.recovery
+	getLibraryManagementRecoveryQuery: () => h.recovery,
+	getLibraryManagementSettingsQueryOptions: () => ({
+		mutateAsync: vi.fn(),
+		mutate: vi.fn(),
+		isPending: false
+	}),
+	getLibraryManagementTagEditorQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryManagementPresetDiffQuery: () => ({
+		data: undefined,
+		isLoading: false,
+		isError: false
+	}),
+	getLibraryManagementActivationPreviewQuery: () => ({
+		data: undefined,
+		isLoading: false,
+		isError: false
+	}),
+	getLibraryManagementPreviewQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryManagementPlanItemsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryManagementOperationQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryManagementOperationResultsQuery: () => ({
+		data: undefined,
+		isLoading: false,
+		isError: false
+	}),
+	getLibraryManagementAutomaticSkippedQuery: () => ({
+		data: undefined,
+		isLoading: false,
+		isError: false
+	}),
+	getLibraryManagementActivationHealthQuery: () => ({
+		data: undefined,
+		isLoading: false,
+		isError: false
+	})
 }));
 vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () => ({
 	controlLibraryManagementOperationMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
