@@ -487,20 +487,30 @@ fn id3_native(tag: &DeepId3) -> BTreeMap<String, Vec<String>> {
     }
     // Comment, link, private and object frames, as v2's scrub saw them:
     // each value is one frame's raw payload (base64), so a restore writes
-    // the same bytes back.
-    for frame in &tag.frames {
-        if frame.text.is_some()
-            || !is_raw_native_id(&frame.id)
-            || frame.payload.len() > MAX_RAW_NATIVE_BYTES
-        {
+    // the same bytes back. Frames left out of the list are never touched
+    // (see `raw_listing`).
+    let mut ids: Vec<&str> = tag
+        .frames
+        .iter()
+        .filter(|frame| frame.text.is_none() && is_raw_native_id(&frame.id))
+        .map(|frame| frame.id.as_str())
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    for id in ids {
+        let (listed, _) = raw_listing(&tag.frames, id);
+        if listed.is_empty() {
             continue;
         }
-        out.entry(format!("id3:{}", frame.id))
-            .or_insert_with(Vec::new)
-            .push(base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                &frame.payload,
-            ));
+        out.insert(
+            format!("id3:{id}"),
+            listed
+                .into_iter()
+                .map(|payload| {
+                    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, payload)
+                })
+                .collect(),
+        );
     }
     out
 }
@@ -509,6 +519,29 @@ fn id3_native(tag: &DeepId3) -> BTreeMap<String, Vec<String>> {
 /// is: never scrubbed, never copied into a tag document).
 const MAX_RAW_NATIVE_BYTES: usize = 1 << 20;
 
+/// One raw frame id's payloads, split into the ones listed as a native
+/// item and the ones left alone. Frames over [`MAX_RAW_NATIVE_BYTES`]
+/// are left alone, and so is every frame of an id that holds exact
+/// duplicates (the writer cannot keep two identical frames apart). An
+/// edit of the id rewrites the listed frames only and writes the others
+/// back unchanged.
+fn raw_listing<'a>(frames: &'a [Id3FrameTruth], id: &str) -> (Vec<&'a [u8]>, Vec<&'a [u8]>) {
+    let all: Vec<&[u8]> = frames
+        .iter()
+        .filter(|frame| frame.text.is_none() && frame.id == id)
+        .map(|frame| frame.payload.as_slice())
+        .collect();
+    let duplicated = all
+        .iter()
+        .enumerate()
+        .any(|(index, payload)| all[..index].contains(payload));
+    if duplicated {
+        return (Vec::new(), all);
+    }
+    all.into_iter()
+        .partition(|payload| payload.len() <= MAX_RAW_NATIVE_BYTES)
+}
+
 /// ID3 frames listed whole as native items: comments, URL links,
 /// private and encapsulated-object frames.
 fn is_raw_native_id(id: &str) -> bool {
@@ -516,9 +549,14 @@ fn is_raw_native_id(id: &str) -> bool {
         || (id.len() == 4 && id.starts_with('W') && id.bytes().all(|b| b.is_ascii_alphanumeric()))
 }
 
-/// Vorbis comments no writable field owns (pictures excluded).
+/// Vorbis comments no writable field owns (pictures excluded). A key
+/// the file spells more than one way, or that holds an empty value, is
+/// not listed: an edit of one spelling would touch the others, and an
+/// empty value cannot be written back.
 fn vorbis_native(truth: &VorbisTruth) -> BTreeMap<String, Vec<String>> {
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut unlisted: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut spelling: BTreeMap<String, &str> = BTreeMap::new();
     for (key, value) in &truth.pairs {
         let owned = TagField::ALL.into_iter().any(|field| {
             field
@@ -526,13 +564,21 @@ fn vorbis_native(truth: &VorbisTruth) -> BTreeMap<String, Vec<String>> {
                 .iter()
                 .any(|known| known.eq_ignore_ascii_case(key))
         });
-        if owned || is_picture_field(key) || value.is_empty() {
+        if owned || is_picture_field(key) {
+            continue;
+        }
+        let folded = key.to_ascii_uppercase();
+        if *spelling.entry(folded.clone()).or_insert(key.as_str()) != key.as_str()
+            || value.is_empty()
+        {
+            unlisted.insert(folded);
             continue;
         }
         out.entry(format!("vorbis:{key}"))
             .or_default()
             .push(value.clone());
     }
+    out.retain(|key, _| !unlisted.contains(&key["vorbis:".len()..].to_ascii_uppercase()));
     out
 }
 
@@ -549,6 +595,10 @@ fn mp4_native(atoms: &[Mp4AtomTruth]) -> BTreeMap<String, Vec<String>> {
         }
     }
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // A freeform holding any value that is not text (or is empty) is not
+    // listed: an edit replaces the whole item, and that value could not
+    // be written back.
+    let mut unlisted: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for atom in atoms {
         if atom.kind == *b"----" {
             for item in &atom.items {
@@ -557,12 +607,16 @@ fn mp4_native(atoms: &[Mp4AtomTruth]) -> BTreeMap<String, Vec<String>> {
                     && !owned_names
                         .iter()
                         .any(|known| known.eq_ignore_ascii_case(name))
-                    && let Ok(text) = std::str::from_utf8(data)
-                    && !text.is_empty()
                 {
-                    out.entry(format!("mp4:----:{name}"))
-                        .or_default()
-                        .push(text.to_owned());
+                    let key = format!("mp4:----:{name}");
+                    match std::str::from_utf8(data) {
+                        Ok(text) if !text.is_empty() => {
+                            out.entry(key).or_default().push(text.to_owned());
+                        }
+                        _ => {
+                            unlisted.insert(key);
+                        }
+                    }
                 }
             }
             continue;
@@ -574,15 +628,24 @@ fn mp4_native(atoms: &[Mp4AtomTruth]) -> BTreeMap<String, Vec<String>> {
             .items
             .iter()
             .map(|item| match item {
-                Mp4Item::Text(text) => Some(text.clone()),
+                Mp4Item::Text(text) if !text.is_empty() => Some(text.clone()),
                 _ => None,
             })
             .collect();
-        if let Some(texts) = texts.filter(|texts| !texts.is_empty()) {
-            let code: String = atom.kind.iter().map(|byte| char::from(*byte)).collect();
-            out.insert(format!("mp4:{code}"), texts);
+        let code: String = atom.kind.iter().map(|byte| char::from(*byte)).collect();
+        let key = format!("mp4:{code}");
+        match texts.filter(|texts| !texts.is_empty()) {
+            Some(texts) if !out.contains_key(&key) => {
+                out.insert(key, texts);
+            }
+            // Two atoms of one code, or a value that is not text: left
+            // alone.
+            _ => {
+                unlisted.insert(key);
+            }
         }
     }
+    out.retain(|key, _| !unlisted.contains(key));
     out
 }
 
@@ -609,7 +672,9 @@ fn native_edit(snapshot: &Snapshot, key: &str, values: &[String]) -> Result<Nati
                     .iter()
                     .map(|value| {
                         base64::Engine::decode(&base64::engine::general_purpose::STANDARD, value)
-                            .map_err(|_| foreign())
+                            .map_err(|_| Refusal::NoByteInventory {
+                                detail: format!("tag '{key}' holds a value that is not base64"),
+                            })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(NativeEdit::Id3Raw {
@@ -619,26 +684,65 @@ fn native_edit(snapshot: &Snapshot, key: &str, values: &[String]) -> Result<Nati
             }
             None => Err(foreign()),
         },
-        (Snapshot::Vorbis { .. }, Some(("vorbis", rest))) if valid_vorbis_key(rest) => {
+        (Snapshot::Vorbis { truth, .. }, Some(("vorbis", rest))) if valid_vorbis_key(rest) => {
+            // Spellings are matched without case on write, so a key the
+            // file also spells another way, or holds empty, is refused
+            // rather than touched.
+            let blocked = truth.as_ref().is_some_and(|truth| {
+                truth.pairs.iter().any(|(held, value)| {
+                    held.eq_ignore_ascii_case(rest) && (held != rest || value.is_empty())
+                })
+            });
+            if blocked {
+                return Err(Refusal::NoByteInventory {
+                    detail: format!("tag '{key}' is spelled more than one way or holds no value"),
+                });
+            }
             Ok(NativeEdit::Vorbis {
                 key: rest.to_owned(),
                 values,
             })
         }
-        (Snapshot::Mp4 { .. }, Some(("mp4", rest))) => match rest.strip_prefix("----:") {
-            Some(name) => Ok(NativeEdit::Mp4Freeform {
-                name: name.to_owned(),
-                values,
-            }),
-            None => {
-                let code: Vec<u8> = rest
-                    .chars()
-                    .map(|c| u8::try_from(u32::from(c)).map_err(|_| foreign()))
-                    .collect::<Result<_, _>>()?;
-                let code: [u8; 4] = code.try_into().map_err(|_| foreign())?;
-                Ok(NativeEdit::Mp4Text { code, values })
+        (Snapshot::Mp4 { atoms, .. }, Some(("mp4", rest))) => {
+            // The item is replaced whole: one holding a value that is not
+            // text is refused rather than lose that value.
+            let listed = atoms
+                .as_deref()
+                .map(mp4_native)
+                .unwrap_or_default()
+                .contains_key(key);
+            let held = atoms.as_deref().is_some_and(|atoms| {
+                atoms.iter().any(|atom| match rest.strip_prefix("----:") {
+                    Some(name) => atom.items.iter().any(|item| {
+                        matches!(item, Mp4Item::Freeform { mean, name: held, .. }
+                            if mean == MP4_MEAN && held == name)
+                    }),
+                    None => {
+                        let code: String = atom.kind.iter().map(|byte| char::from(*byte)).collect();
+                        code == rest
+                    }
+                })
+            });
+            if held && !listed {
+                return Err(Refusal::NoByteInventory {
+                    detail: format!("tag '{key}' holds values that cannot be written back"),
+                });
             }
-        },
+            match rest.strip_prefix("----:") {
+                Some(name) => Ok(NativeEdit::Mp4Freeform {
+                    name: name.to_owned(),
+                    values,
+                }),
+                None => {
+                    let code: Vec<u8> = rest
+                        .chars()
+                        .map(|c| u8::try_from(u32::from(c)).map_err(|_| foreign()))
+                        .collect::<Result<_, _>>()?;
+                    let code: [u8; 4] = code.try_into().map_err(|_| foreign())?;
+                    Ok(NativeEdit::Mp4Text { code, values })
+                }
+            }
+        }
         _ => Err(foreign()),
     }
 }
@@ -2554,9 +2658,17 @@ fn verify_id3(
                         && decode_uslt(&landed[0].payload).ok().as_deref() == Some(text.as_str())
                 }
             },
-            NativeEdit::Id3Raw { payloads, .. } => {
-                let mut want: Vec<&Vec<u8>> = payloads.iter().collect();
-                let mut got: Vec<&Vec<u8>> = landed.iter().map(|frame| &frame.payload).collect();
+            NativeEdit::Id3Raw { id, payloads } => {
+                // The frames left out of the listing stay, byte for byte,
+                // beside the edited ones.
+                let mut want: Vec<&[u8]> = before
+                    .map(|before| raw_listing(&before.frames, id).1)
+                    .unwrap_or_default();
+                want.extend(payloads.iter().map(Vec::as_slice));
+                let mut got: Vec<&[u8]> = landed
+                    .iter()
+                    .map(|frame| frame.payload.as_slice())
+                    .collect();
                 want.sort();
                 got.sort();
                 want == got
@@ -2991,9 +3103,20 @@ fn apply_edits(
                         }
                     }
                     NativeEdit::Id3Raw { id, payloads } => {
+                        // Only the listed frames change: the others go
+                        // back exactly as they were.
+                        let kept: Vec<Vec<u8>> = truth
+                            .map(|truth| {
+                                raw_listing(&truth.frames, id)
+                                    .1
+                                    .into_iter()
+                                    .map(<[u8]>::to_vec)
+                                    .collect()
+                            })
+                            .unwrap_or_default();
                         let frame_id = FrameId::Valid(std::borrow::Cow::Owned(id.clone()));
                         let _ = native.remove(&frame_id).count();
-                        for payload in payloads {
+                        for payload in kept.iter().chain(payloads) {
                             native.insert(Frame::Binary(lofty::id3::v2::BinaryFrame::new(
                                 frame_id.clone(),
                                 payload.clone(),

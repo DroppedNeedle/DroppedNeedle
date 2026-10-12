@@ -1233,7 +1233,8 @@ fn native_items_scrub_and_restore() {
 }
 
 /// ReplayGain analysis decodes each writable format (the fixtures are
-/// digital silence, so they measure no loudness and a zero peak).
+/// digital silence, so they measure no loudness and no peak; a lossy
+/// decoder may leave float dust far below one 24-bit step).
 #[test]
 fn loudness_measures_the_fixtures() {
     use tags::loudness::analyse;
@@ -1245,11 +1246,10 @@ fn loudness_measures_the_fixtures() {
         "management_full.opus",
         "management_full.m4a",
     ] {
-        let measured = analyse(&fixture(name), deadline);
-        let loudness = measured
-            .as_ref()
-            .map(|found| (found.loudness(), found.peak));
-        assert_eq!(loudness, Ok((None, 0.0)), "{name}");
+        let measured = analyse(&fixture(name), deadline).expect(name);
+        assert_eq!(measured.loudness(), None, "{name}");
+        assert!(measured.peak < 1e-9, "{name}: {}", measured.peak);
+        assert_eq!(tags::loudness::peak_text(measured.peak), "0.000000");
     }
 }
 
@@ -1329,6 +1329,96 @@ fn flac_picture_facts_survive_a_restore() {
     let (_scratch, path) = temp_copy("management_full.flac", "picture-facts");
     save_tags_with_pictures(&path, &[], Some(std::slice::from_ref(&odd))).unwrap();
     assert_eq!(read_document(&path).unwrap().pictures, vec![odd]);
+}
+
+/// A frame over the listing cap is never listed, so a scrub of its id
+/// removes only the small sibling, and undo brings that one back while
+/// the large one stays put throughout.
+#[test]
+fn id3_large_frame_survives_scrub_and_undo() {
+    use tags::save::read_document;
+    let (_scratch, path) = temp_copy("management_full.mp3", "large-geob");
+    let encode =
+        |bytes: &[u8]| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
+    let geob = |desc: &str, size: usize| {
+        let mut payload = b"\x00application/octet-stream\x00blob.bin\x00".to_vec();
+        payload.extend_from_slice(desc.as_bytes());
+        payload.push(0);
+        payload.extend((0..size).map(|index| (index % 251) as u8));
+        payload
+    };
+    let large = geob("large", (1 << 20) + 4096);
+    let small = encode(&geob("small", 64));
+    tags::save_tags(
+        &path,
+        &[TagEdit::native(
+            "id3:GEOB",
+            vec![encode(&large), small.clone()],
+        )],
+    )
+    .unwrap();
+    let listed = read_document(&path).unwrap().native;
+    assert_eq!(
+        listed.get("id3:GEOB"),
+        Some(&vec![small.clone()]),
+        "only the small frame is listed"
+    );
+    let geob_payloads = |path: &Path| -> Vec<usize> {
+        let tag = lofty::id3::v2::Id3v2Tag::from(
+            lofty::read_from_path(path)
+                .unwrap()
+                .tag(lofty::tag::TagType::Id3v2)
+                .unwrap()
+                .clone(),
+        );
+        let mut sizes: Vec<usize> = tag
+            .iter()
+            .filter(|frame| frame.id().as_str() == "GEOB")
+            .map(|frame| match frame {
+                lofty::id3::v2::Frame::Binary(binary) => binary.as_bytes().len(),
+                other => panic!("unexpected GEOB shape {other:?}"),
+            })
+            .collect();
+        sizes.sort_unstable();
+        sizes
+    };
+    let both = geob_payloads(&path);
+    assert_eq!(both.len(), 2);
+    // Scrub: the listed (small) frame goes, the large one stays.
+    tags::save_tags(&path, &[TagEdit::native("id3:GEOB", Vec::new())]).unwrap();
+    assert_eq!(geob_payloads(&path), vec![both[1]], "the large frame stays");
+    assert!(
+        !read_document(&path)
+            .unwrap()
+            .native
+            .contains_key("id3:GEOB")
+    );
+    // Undo: the small one is back beside it.
+    tags::save_tags(&path, &[TagEdit::native("id3:GEOB", vec![small.clone()])]).unwrap();
+    assert_eq!(geob_payloads(&path), both, "both frames after undo");
+    assert_eq!(
+        read_document(&path).unwrap().native.get("id3:GEOB"),
+        Some(&vec![small])
+    );
+}
+
+/// A Vorbis key spelled two ways is never listed, and an edit of one
+/// spelling is refused rather than touching the other.
+#[test]
+fn vorbis_case_variants_are_left_alone() {
+    use tags::save::read_document;
+    let (_scratch, path) = temp_copy("management_full.flac", "vorbis-case");
+    flac_inject_pairs(&path, &[("Mood", "Calm"), ("MOOD", "Bright")]);
+    let native = read_document(&path).unwrap().native;
+    assert!(
+        native
+            .keys()
+            .all(|key| !key.eq_ignore_ascii_case("vorbis:mood")),
+        "{native:?}"
+    );
+    let before = std::fs::read(&path).unwrap();
+    assert!(tags::save_tags(&path, &[TagEdit::native("vorbis:MOOD", Vec::new())]).is_err());
+    assert_eq!(before, std::fs::read(&path).unwrap());
 }
 
 /// ID3 comment, URL and private frames are native items: a scrub can

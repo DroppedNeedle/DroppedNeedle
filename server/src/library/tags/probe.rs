@@ -361,7 +361,6 @@ pub(crate) fn decode_stream(
             reason: error.to_string(),
         })?;
     let mut reader = opened.reader;
-    let mut pcm: Vec<i16> = Vec::new();
     let mut block: Vec<f32> = Vec::new();
     let mut partial = false;
     let mut any = false;
@@ -381,11 +380,12 @@ pub(crate) fn decode_stream(
         }
         match decoder.decode(&packet) {
             Ok(decoded) => {
-                pcm.clear();
-                append_interleaved(&mut pcm, &decoded);
+                // Straight to f32: peaks and 24-bit sources keep their
+                // precision (an i16 detour would clip and round them).
                 let channels = decoded.spec().channels().count() as u32;
                 block.clear();
-                block.extend(pcm.iter().map(|sample| f32::from(*sample) / 32768.0));
+                block.resize(decoded.frames() * channels as usize, 0.0);
+                decoded.copy_to_slice_interleaved(&mut block);
                 any |= !block.is_empty();
                 if !sink(opened.sample_rate, channels.max(1), &block) {
                     break;
