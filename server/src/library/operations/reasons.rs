@@ -129,11 +129,6 @@ pub const UNDO_STALE: Reason = reason(
 );
 
 // The exact release does not fit.
-pub const EXACT_RELEASE_MAPPING_INCOMPLETE: Reason = reason(
-    "EXACT_RELEASE_MAPPING_INCOMPLETE",
-    "This MusicBrainz release does not fit every file on the album one to one.",
-    "Choose Custom edition, get the missing tracks, or leave the album unmanaged.",
-);
 
 // Choosing an edition.
 pub const EDITION_NOT_FOUND: Reason = reason(

@@ -62,20 +62,6 @@ impl ScanState {
                 | ScanState::Failed
         )
     }
-
-    /// States that hold the worker: nothing else may be claimed while one
-    /// of these exists (v2 `claim_next_scan_run`).
-    pub fn blocks_claim(self) -> bool {
-        matches!(
-            self,
-            ScanState::Discovering
-                | ScanState::Indexing
-                | ScanState::Reconciling
-                | ScanState::Pausing
-                | ScanState::Paused
-                | ScanState::Stopping
-        )
-    }
 }
 
 /// Worker phase. Spelling matches v2 `ScanPhase` exactly.

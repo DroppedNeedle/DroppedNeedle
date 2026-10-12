@@ -10,8 +10,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::time::Duration;
 
 use tokio::sync::watch;
 
@@ -22,9 +20,6 @@ use super::scheduler::{InclusionRule, ScheduleSettings, scheduled_scopes, tick};
 use super::seams::TagReader;
 use super::store::ScanStore;
 use super::watcher::{DirtyScopes, WorkWakeups};
-
-/// Idle recovery ceiling (v2 `EMPTY_RECOVERY_INTERVAL_SECONDS`).
-pub const EMPTY_RECOVERY_INTERVAL_SECS: f64 = 47.0;
 
 /// Supervisor loop inputs. Getters are re-read every iteration.
 pub struct SupervisorInputs {
@@ -222,46 +217,6 @@ where
         };
     }
     false
-}
-
-/// Run the supervisor loop until `shutdown` is set.
-///
-/// Standalone loop form over [`supervise_once`] plus [`startup_recovery`].
-/// The wired bundle drives those two directly from its own
-/// shutdown-watch loop (`LibrarySetup::scan_startup_recovery` /
-/// `supervisor_tick`), so no production caller reaches this; the
-/// scan tests pin its Hook-A-then-exit behavior.
-pub async fn supervise_target_scans<S, T>(
-    coordinator: &LibraryScanCoordinator<S, T>,
-    inputs: &SupervisorInputs,
-    shutdown: &AtomicBool,
-) where
-    S: ScanStore,
-    T: TagReader + 'static,
-{
-    startup_recovery(coordinator, inputs).await;
-    loop {
-        if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
-            break;
-        }
-        let revision = inputs.wakeups.revision("scan");
-        // Hook A inputs are captured during recovery above; the loop below
-        // re-reads every getter each iteration.
-        let processed = supervise_once(coordinator, inputs).await;
-        if processed {
-            continue;
-        }
-        // Idle: sleep on the wakeup revision with the recovery ceiling.
-        // A failed wait must not kill the supervisor either.
-        let _ = inputs
-            .wakeups
-            .wait(
-                "scan",
-                revision,
-                Duration::from_secs_f64(EMPTY_RECOVERY_INTERVAL_SECS),
-            )
-            .await;
-    }
 }
 
 #[cfg(test)]

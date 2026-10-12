@@ -13,7 +13,7 @@
 
 use std::fs::File;
 use std::path::Path;
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 
 use lofty::file::AudioFile as _;
 use symphonia::core::audio::GenericAudioBufferRef;
@@ -66,66 +66,6 @@ fn codec_registry() -> &'static CodecRegistry {
     })
 }
 
-/// Seekable in-memory media source over caller-owned bytes. Lets the
-/// scan tag reader decode from its reused file buffer instead of
-/// re-opening every file for the probe half.
-struct SharedBytes {
-    shared: Arc<Vec<u8>>,
-    position: u64,
-}
-
-impl SharedBytes {
-    fn new(shared: Arc<Vec<u8>>) -> Self {
-        Self {
-            shared,
-            position: 0,
-        }
-    }
-}
-
-impl std::io::Read for SharedBytes {
-    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
-        // Like a file at EOF: a seek past the end reads zero and
-        // holds its position.
-        let start = self.position as usize;
-        if start >= self.shared.len() {
-            return Ok(0);
-        }
-        let take = (self.shared.len() - start).min(out.len());
-        out[..take].copy_from_slice(&self.shared[start..start + take]);
-        self.position = start as u64 + take as u64;
-        Ok(take)
-    }
-}
-
-impl std::io::Seek for SharedBytes {
-    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
-        let position: i64 = match pos {
-            std::io::SeekFrom::Start(offset) => offset as i64,
-            std::io::SeekFrom::Current(offset) => self.position as i64 + offset,
-            std::io::SeekFrom::End(offset) => self.shared.len() as i64 + offset,
-        };
-        if position < 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "cannot seek before the start",
-            ));
-        }
-        self.position = position as u64;
-        Ok(self.position)
-    }
-}
-
-impl MediaSource for SharedBytes {
-    fn is_seekable(&self) -> bool {
-        true
-    }
-
-    fn byte_len(&self) -> Option<u64> {
-        Some(self.shared.len() as u64)
-    }
-}
-
 /// Probe technical info. WMA is rejected before any byte is read.
 pub fn probe(path: &Path) -> Result<AudioInfo, TagsError> {
     let format = format_for_path(path)?;
@@ -164,25 +104,6 @@ struct OpenStream {
     channels: u32,
 }
 
-/// Decode-counted duration from already-loaded bytes. Same verdicts as
-/// [`probe`]: ADTS takes the packet-count fallback, anything undecodable
-/// fails, and the caller decides what a missing duration means.
-pub fn probe_duration_from_shared(
-    shared: Arc<Vec<u8>>,
-    path: &Path,
-    format: AudioFormat,
-) -> Result<f64, TagsError> {
-    if format == AudioFormat::Aac {
-        let opened = open_reader_from_shared(shared, path, format)?;
-        return probe_adts_duration(opened.reader, opened.track_id, opened.sample_rate, path);
-    }
-    let opened = open_reader_from_shared(shared, path, format)?;
-    decode_count_duration(opened.reader, opened.params.clone()).map_err(|reason| TagsError::Probe {
-        path: path.display().to_string(),
-        reason,
-    })
-}
-
 /// Packet-count duration over an opened ADTS stream. Shared by the path
 /// and shared-bytes probes so the fallback stays one implementation.
 fn probe_adts_duration(
@@ -212,15 +133,6 @@ fn open_reader(path: &Path, format: AudioFormat) -> Result<OpenStream, TagsError
         source,
     })?;
     open_stream(Box::new(file), path, format)
-}
-
-/// Same as [`open_reader`] over caller-owned bytes instead of a file.
-fn open_reader_from_shared(
-    shared: Arc<Vec<u8>>,
-    path: &Path,
-    format: AudioFormat,
-) -> Result<OpenStream, TagsError> {
-    open_stream(Box::new(SharedBytes::new(shared)), path, format)
 }
 
 fn open_stream(

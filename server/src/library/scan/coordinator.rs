@@ -315,16 +315,6 @@ impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
         self
     }
 
-    pub fn with_clock(mut self, clock: Clock) -> Self {
-        self.clock = clock;
-        self
-    }
-
-    pub fn with_idgen(mut self, idgen: Arc<dyn Fn() -> String + Send + Sync>) -> Self {
-        self.idgen = idgen;
-        self
-    }
-
     pub fn store(&self) -> &Arc<S> {
         &self.store
     }

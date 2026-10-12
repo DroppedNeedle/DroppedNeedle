@@ -60,11 +60,6 @@ pub const FILE_OUTSIDE_ROOT: Reason = reason(
     "A file of this album is not inside a configured library folder, so it was left alone.",
     "Check the library folders under Settings > Library, then rescan.",
 );
-pub const NO_RECYCLE_BIN: Reason = reason(
-    "NO_RECYCLE_BIN",
-    "There is no recycle bin to move the files into.",
-    "Set an absolute recycle bin path under Settings > Library management, or remove without deleting files.",
-);
 pub const RECYCLE_FAILED: Reason = reason(
     "RECYCLE_FAILED",
     "A file could not be moved into the recycle bin, so nothing was removed.",

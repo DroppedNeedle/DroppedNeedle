@@ -59,11 +59,6 @@ pub const SPLIT_TAKES_EVERYTHING: Reason = reason(
     "A split has to leave at least one track behind.",
     "Untick some tracks, or use Merge to move the whole album.",
 );
-pub const ROOT_MISMATCH: Reason = reason(
-    "ALBUM_ROOT_MISMATCH",
-    "These albums live in different library folders, so they cannot become one album.",
-    "Pick an album from the same library folder.",
-);
 pub const NOTHING_TO_RESET: Reason = reason(
     "NOTHING_TO_RESET",
     "None of the selected tracks were grouped by hand, so there is nothing to reset.",

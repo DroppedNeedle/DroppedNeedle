@@ -830,14 +830,6 @@ fn parse_release(raw: &str) -> Result<String, OperationError> {
         .map_err(|_| OperationError::Invalid(reasons::RELEASE_MBID_INVALID))
 }
 
-/// Whether the album's last edition change can still be undone. Blocking.
-pub fn edition_undo_available(
-    setup: &LibrarySetup,
-    album_id: &str,
-) -> Result<bool, OperationError> {
-    Operations::new(setup).read(|conn| Ok(choice::undo_available(conn, album_id)?))
-}
-
 /// The live automatic-edition undo for one album: the revisions to echo.
 /// Blocking.
 pub fn automatic_edition_undo(

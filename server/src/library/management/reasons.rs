@@ -257,14 +257,6 @@ pub fn root_read_only() -> ItemReason {
     )
 }
 
-pub fn interrupted() -> ItemReason {
-    ItemReason::new(
-        "INTERRUPTED",
-        "The server stopped before this album finished, and the earlier part may already be written.",
-        "Open the album to check it, then make a new preview for what is left.",
-    )
-}
-
 pub fn not_scheduled() -> ItemReason {
     ItemReason::new(
         "NOT_SCHEDULED",

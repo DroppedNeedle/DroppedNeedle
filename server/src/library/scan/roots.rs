@@ -227,17 +227,6 @@ impl StreamRootSeam {
         }
         Ok(path)
     }
-
-    /// First non-excluded root, for callers that still take a single path
-    /// (the `<root>/music` stand-in). Returns `None` when no usable
-    /// root is configured, which callers must read as "local reads 404".
-    pub fn primary_music_root(&self) -> Option<PathBuf> {
-        self.registry
-            .roots()
-            .iter()
-            .find(|root| root.policy != EffectivePolicy::Excluded)
-            .map(|root| root.path.clone())
-    }
 }
 
 fn policy_name(policy: EffectivePolicy) -> &'static str {

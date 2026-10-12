@@ -11,9 +11,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use tokio::sync::Semaphore;
 
-/// Default worker count when the caller does not pick one.
-pub const DEFAULT_MAX_WORKERS: usize = 4;
-
 /// Bounded pool over `spawn_blocking`. Clone is cheap; all clones share one
 /// semaphore, so the bound holds process-wide per pool.
 #[derive(Debug, Clone)]
@@ -33,13 +30,6 @@ impl BlockingPool {
             in_flight: Arc::new(AtomicUsize::new(0)),
             completed: Arc::new(AtomicUsize::new(0)),
         }
-    }
-
-    pub fn with_default_workers() -> Self {
-        let parallelism = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(2);
-        Self::new(parallelism.clamp(1, DEFAULT_MAX_WORKERS))
     }
 
     pub fn max_workers(&self) -> usize {

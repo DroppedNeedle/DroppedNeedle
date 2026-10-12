@@ -212,13 +212,6 @@ impl DirtyScopes {
             .insert(scope_id.to_owned());
     }
 
-    pub fn mark_many(&self, scope_ids: &[String]) {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .extend(scope_ids.iter().cloned());
-    }
-
     pub fn list(&self) -> Vec<String> {
         self.inner
             .lock()
