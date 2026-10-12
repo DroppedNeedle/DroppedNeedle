@@ -59,13 +59,13 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 223);
+    assert_eq!(table_names(&pool).await.len(), 163);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(triggers, 50);
+    assert_eq!(triggers, 37);
 
     let catalog: (i64, i64) =
         sqlx::query_as("SELECT singleton, value FROM library_catalog_revision")
@@ -102,9 +102,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         vec!["contribution", "identification", "operation", "scan"]
     );
     for (table, want) in [
-        ("library_enqueue_sequence", 1),
         ("library_event_stream_revisions", 3),
-        ("mb_response_epoch", 1),
         ("download_activity_global_revision", 1),
     ] {
         let rows: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
@@ -184,10 +182,6 @@ async fn dual_owner_tables_carry_the_merged_shape() {
         (("playlists"), vec!["source_ref", "user_id", "is_public"]),
         (("auth_users"), vec!["username", "username_display"]),
         (("auth_tokens"), vec!["last_seen_at", "session_kind"]),
-        (
-            ("library_identification_jobs"),
-            vec!["provider_reset_count", "attention_cause"],
-        ),
         (("local_albums"), vec!["management_schedule_pending"]),
         (
             ("local_tracks"),
@@ -209,20 +203,10 @@ async fn dual_owner_tables_carry_the_merged_shape() {
             ("library_management_operation_snapshots"),
             vec!["ancillary_snapshot_json", "before_management_state_json"],
         ),
-        (("follow_inventory"), vec!["observation"]),
         (("user_listening_prefs"), vec!["auto_request_personal_mix"]),
         (
             ("request_history"),
             vec!["dispatch_authorized", "generation", "request_kind"],
-        ),
-        (
-            ("canonical_redirect"),
-            vec![
-                "source_mode",
-                "source_id",
-                "source_generation",
-                "official_evidence",
-            ],
         ),
     ] {
         let have = column_names(&pool, table).await;
@@ -248,7 +232,6 @@ async fn dual_owner_tables_carry_the_merged_shape() {
     // Store-side auth FKs won the merge.
     for (table, column) in [
         ("user_favorites", "user_id"),
-        ("play_history", "user_id"),
         ("compat_bookmarks", "user_id"),
         ("compat_play_queues", "user_id"),
     ] {
@@ -300,8 +283,8 @@ async fn foreign_keys_bite_under_enforcement() {
         .unwrap();
 
     let orphan = sqlx::query(
-        "INSERT INTO play_history (id, user_id, track_name, artist_name, played_at) \
-         VALUES ('orphan', 'ghost', 't', 'a', 'now')",
+        "INSERT INTO compat_bookmarks (user_id, file_id, position_ms, created_at, changed_at) \
+         VALUES ('ghost', 'f1', 0, 1, 1)",
     )
     .execute(&pool)
     .await;
@@ -312,8 +295,8 @@ async fn foreign_keys_bite_under_enforcement() {
         .await
         .unwrap();
     sqlx::query(
-        "INSERT INTO play_history (id, user_id, track_name, artist_name, played_at) \
-         VALUES ('h1', 'u1', 't', 'a', 'now')",
+        "INSERT INTO compat_bookmarks (user_id, file_id, position_ms, created_at, changed_at) \
+         VALUES ('u1', 'f1', 0, 1, 1)",
     )
     .execute(&pool)
     .await
@@ -322,11 +305,11 @@ async fn foreign_keys_bite_under_enforcement() {
         .execute(&pool)
         .await
         .unwrap();
-    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM play_history")
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM compat_bookmarks")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(left, 0, "history rows cascade with their user");
+    assert_eq!(left, 0, "bookmarks cascade with their user");
 }
 
 /// Every earlier schema upgrades to the latest one in place and keeps its
@@ -500,6 +483,183 @@ async fn album_art_rebuild_keeps_rows_and_triggers() {
             "trg_genre_artwork_artwork_update",
         ]
     );
+}
+
+/// Migration 0040 drops the tables nothing uses and the triggers that fed
+/// them. Rows in the tables that stay survive, a repair finding loses only
+/// its unused evidence column, and follows still save once the triggers
+/// that wrote the dropped tables are gone.
+#[tokio::test]
+async fn unused_tables_drop_and_live_rows_survive() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 40)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    // The finding's identity revision holds text, which the rebuilt table
+    // would refuse uncast.
+    sqlx::raw_sql(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('u1', 'Kept', 'user', '2024-01-01T00:00:00+00:00'); \
+         INSERT INTO user_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
+         artist_name, followed_at, updated_at) VALUES ('u1', 'M1', 'm1', 'Band', 1, 1); \
+         INSERT INTO play_history (id, user_id, track_name, artist_name, played_at) \
+         VALUES ('h1', 'u1', 't', 'a', 'now'); \
+         INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) \
+         VALUES ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO library_operation_jobs (id, kind, state, created_at, updated_at) \
+         VALUES ('j1', 'repair', 'succeeded', 1, 1); \
+         INSERT INTO library_identity_repair_findings (id, job_id, local_album_id, \
+         expected_album_revision, expected_identity_revision, finding_code, confidence, \
+         created_at, updated_at) VALUES ('f1', 'j1', 'al1', 7, 'unknown', \
+         'exact_release_suggested', 'complete', 1.5, 2.5);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let due: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM follow_due")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(due, 1, "the follow trigger filled a table about to go");
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let tables = table_names(&pool).await;
+    for gone in [
+        "play_history",
+        "follow_due",
+        "follow_inventory",
+        "download_landed_groups",
+        "library_identification_evidence",
+    ] {
+        assert!(!tables.contains(&gone.to_owned()), "{gone} must be dropped");
+    }
+    let dead_triggers: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' \
+         AND (name LIKE 'follow!_%' ESCAPE '!' OR name LIKE 'download!_landed!_%' ESCAPE '!')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(dead_triggers, 0);
+
+    // A trigger left behind would fail these writes on its missing table.
+    sqlx::raw_sql(
+        "INSERT INTO user_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
+         artist_name, followed_at, updated_at) VALUES ('u1', 'M2', 'm2', 'Other', 2, 2); \
+         INSERT INTO auto_download_approvals (user_id, artist_mbid, artist_mbid_lower, \
+         artist_name, requested_at) VALUES ('u1', 'M2', 'm2', 'Other', 2); \
+         DELETE FROM user_followed_artists WHERE artist_mbid_lower = 'm2';",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let follows: Vec<String> =
+        sqlx::query_scalar("SELECT artist_mbid_lower FROM user_followed_artists")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(follows, vec!["m1"]);
+
+    let finding: (String, String, i64, i64, String, f64, f64) = sqlx::query_as(
+        "SELECT job_id, local_album_id, expected_album_revision, expected_identity_revision, \
+         state, created_at, updated_at FROM library_identity_repair_findings WHERE id = 'f1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        finding,
+        (
+            "j1".to_owned(),
+            "al1".to_owned(),
+            7,
+            0,
+            "open".to_owned(),
+            1.5,
+            2.5
+        )
+    );
+    assert!(
+        !column_names(&pool, "library_identity_repair_findings")
+            .await
+            .contains(&"evidence_id".to_owned())
+    );
+    let broken: Vec<(String,)> = sqlx::query_as("SELECT \"table\" FROM pragma_foreign_key_check")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert!(broken.is_empty(), "{broken:?}");
+}
+
+/// Every table in the migrated schema is listed once in
+/// `server/table-owners.txt` under a known area, and the list names no
+/// table the schema lacks.
+#[tokio::test]
+async fn every_table_has_one_owner() {
+    const AREAS: [&str; 10] = [
+        "kernel", "auth", "plugins", "app", "compat", "media", "tool", "acquire", "catalog",
+        "library",
+    ];
+    let mut owners = std::collections::BTreeMap::new();
+    let mut area = None;
+    for line in include_str!("../../table-owners.txt")
+        .lines()
+        .map(str::trim)
+    {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(name) = line
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+        {
+            assert!(AREAS.contains(&name), "unknown area {name}");
+            area = Some(name);
+            continue;
+        }
+        let area = area.expect("every table is listed under an area");
+        assert!(
+            owners.insert(line, area).is_none(),
+            "{line} is listed twice"
+        );
+    }
+
+    // The search index keeps internal tables of its own under its name.
+    let pool = migrated_pool().await;
+    let tables: Vec<String> = table_names(&pool)
+        .await
+        .into_iter()
+        .filter(|name| !name.starts_with("local_tracks_fts_"))
+        .collect();
+    let unowned: Vec<&String> = tables
+        .iter()
+        .filter(|name| !owners.contains_key(name.as_str()))
+        .collect();
+    assert!(
+        unowned.is_empty(),
+        "no owner in table-owners.txt: {unowned:?}"
+    );
+    let stale: Vec<&&str> = owners
+        .keys()
+        .filter(|name| !tables.iter().any(|table| table == *name))
+        .collect();
+    assert!(stale.is_empty(), "listed but not in the schema: {stale:?}");
 }
 
 /// Each migration stamps its own number, so applying them in order on an

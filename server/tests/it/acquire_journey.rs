@@ -518,12 +518,7 @@ async fn migrations_upgrade_from_baseline() {
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .expect("version reads");
     assert_eq!(version, latest_version());
-    for name in [
-        "download_idempotency_keys",
-        "acquire_operations",
-        "acquire_follow_cursors",
-        "acquire_flow_quarantine",
-    ] {
+    for name in ["download_idempotency_keys", "acquire_follow_cursors"] {
         let table: Option<String> = conn
             .query_row(
                 "SELECT name FROM sqlite_master WHERE name = ?1",
