@@ -359,11 +359,6 @@ impl RateLimiter {
             &self.trusted_proxies,
         )
     }
-
-    /// Client-address key for handlers that limit by address themselves.
-    pub fn ip_key_for(&self, parts: &axum::http::request::Parts) -> String {
-        ip_key(&parts.extensions, &parts.headers, &self.trusted_proxies)
-    }
 }
 
 /// `ip:<addr>` for the client resolved by [`client_ip`], or `ip:unknown`

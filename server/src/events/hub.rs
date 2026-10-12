@@ -139,11 +139,6 @@ impl EventHub {
         self.inner.closed.send_replace(true);
     }
 
-    /// Open streams right now.
-    pub fn stream_count(&self) -> usize {
-        self.inner.sender.receiver_count()
-    }
-
     fn lock_retained(&self) -> std::sync::MutexGuard<'_, Retained> {
         self.inner
             .retained

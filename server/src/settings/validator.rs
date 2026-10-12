@@ -53,9 +53,3 @@ pub fn ensure_kept_section(key: &str) -> Result<(), SettingsError> {
         None => Ok(()),
     }
 }
-
-/// True when `key` names a dropped section.
-#[must_use]
-pub fn is_dropped_section(key: &str) -> bool {
-    DROPPED.iter().any(|dropped| dropped.key == key)
-}

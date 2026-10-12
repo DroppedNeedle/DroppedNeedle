@@ -218,11 +218,6 @@ impl SettingsSetup {
         &self.lifecycle
     }
 
-    /// The Library Management service.
-    pub fn library_management(&self) -> &LibraryManagementService {
-        &self.management
-    }
-
     /// The same service, shared with the library's activation dry runs.
     pub fn library_management_shared(&self) -> Arc<LibraryManagementService> {
         self.management.clone()

@@ -247,22 +247,6 @@ impl CheckpointService {
         self.latest.try_read().ok().and_then(|guard| guard.clone())
     }
 
-    /// Wait until backpressure clears. Background producers call this per
-    /// unit of work; it returns at once when nothing is suspended. The
-    /// waiter registers before reading the flag, so a resume landing
-    /// between the check and the sleep still wakes this call.
-    pub async fn wait_for_resume(&self) {
-        loop {
-            let notified = self.resume.notified();
-            tokio::pin!(notified);
-            notified.as_mut().enable();
-            if !self.background_suspended() {
-                break;
-            }
-            notified.await;
-        }
-    }
-
     /// One bounded `PASSIVE` pass on a dedicated fail-fast connection.
     /// Blocking; callers offload it with `spawn_blocking`.
     pub fn run_once(&self) -> CheckpointOutcome {
@@ -318,29 +302,6 @@ impl CheckpointService {
             );
         }
         outcome
-    }
-
-    /// Steady-state loop: a `PASSIVE` pass plus a reclaim check every 30 s
-    /// until `stop` fires. Pass failures are recorded, never fatal.
-    pub async fn run_forever(&self, stop: Arc<Notify>) {
-        let mut interval = tokio::time::interval(CHECKPOINT_CADENCE);
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            tokio::select! {
-                _ = stop.notified() => break,
-                _ = interval.tick() => {
-                    let service = self.clone();
-                    let pass = tokio::task::spawn_blocking(move || {
-                        service.run_once();
-                        service.maybe_truncate(Instant::now());
-                    })
-                    .await;
-                    if pass.is_err() {
-                        tracing::error!("checkpoint pass task failed to join");
-                    }
-                }
-            }
-        }
     }
 
     /// True when every pooled connection is back in the pool.

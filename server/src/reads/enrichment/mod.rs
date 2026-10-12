@@ -552,18 +552,6 @@ impl EnrichmentAggregator {
         }
     }
 
-    /// Override the per-source budgets (tests pin short timeouts).
-    pub fn with_budgets(mut self, budgets: SourceBudgets) -> Self {
-        self.budgets = budgets;
-        self
-    }
-
-    /// Override the preferred popularity source.
-    pub fn with_preferred(mut self, preferred: PreferredCounts) -> Self {
-        self.preferred = preferred;
-        self
-    }
-
     /// Pick the popularity source: the preferred source when available,
     /// else the other one, else none (v2 `_get_enrichment_source`).
     fn counts_source(&self) -> EnrichmentSource {
