@@ -471,6 +471,7 @@ fn plan_file(
     let mut tag_plan = tag_plan;
     if writable {
         embed_cover(ctx, item, extras, &doc, &mut tag_plan)?;
+        scrub_pictures(ctx, item, &doc, &mut tag_plan);
     }
     item.facts
         .warnings
@@ -776,6 +777,48 @@ fn embed_cover(
         destination_relative_path: None,
     });
     Ok(())
+}
+
+/// A scrub that does not preserve embedded art (v2's
+/// `preserve_embedded_art_during_scrub` off) removes the file's pictures,
+/// all but the front cover the run itself embeds. Undo puts them back.
+fn scrub_pictures(
+    ctx: &PlanContext<'_>,
+    item: &mut PlannedItem,
+    doc: &crate::library::publish::TagDocument,
+    tag_plan: &mut profile::TagPlan,
+) {
+    use crate::library::publish::{PICTURES_KEY, PictureRef};
+    let metadata = &ctx.pinned.profile.metadata;
+    if !metadata.enabled
+        || !metadata.scrub_unmanaged_tags
+        || metadata.preserve_embedded_art_during_scrub
+    {
+        return;
+    }
+    let Some(existing) = &doc.pictures else {
+        return;
+    };
+    let kept: Vec<String> = match tag_plan.updates.get(PICTURES_KEY) {
+        // The cover this run embeds comes first.
+        Some(planned) => planned.iter().take(1).cloned().collect(),
+        None => Vec::new(),
+    };
+    let current: Vec<String> = existing.iter().map(PictureRef::encode).collect();
+    if kept == current {
+        return;
+    }
+    tag_plan
+        .mutations
+        .retain(|mutation| mutation.name != PICTURES_KEY);
+    tag_plan.mutations.push(FieldMutation {
+        name: PICTURES_KEY.to_owned(),
+        operation: if kept.is_empty() { "clear" } else { "set" }.to_owned(),
+        before: serde_json::Value::from(existing.len()),
+        after: serde_json::Value::from(kept.len()),
+    });
+    tag_plan.updates.insert(PICTURES_KEY.to_owned(), kept);
+    item.diff.artwork_changed = true;
 }
 
 /// The album's cover file next to its tracks (v2's external artwork):
