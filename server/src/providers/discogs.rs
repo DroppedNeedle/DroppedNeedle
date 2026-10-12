@@ -17,15 +17,10 @@ use std::collections::BTreeMap;
 
 use super::client::HttpPort;
 
-/// Provider key used in logs and degradation records.
-pub const PROVIDER_NAME: &str = "discogs";
 /// Live API origin (discogs_API_NOTES.md, verified 2026-07-21).
 pub const API_BASE: &str = "https://api.discogs.com";
 /// Origin for canonical release/master/artist/label links.
 pub const WEB_BASE: &str = "https://www.discogs.com";
-/// Unauthenticated ceiling advertised by live responses (`x-discogs-ratelimit:
-/// 25`). Enforced by wiring, recorded here as the source of the number.
-pub const RATE_LIMIT_PER_MINUTE: u32 = 25;
 
 /// What can go wrong on a Discogs fetch.
 #[derive(Debug, Clone, PartialEq)]

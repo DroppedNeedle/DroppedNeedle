@@ -16,7 +16,7 @@
 //!
 //! Pacing and degradation ride the shared core traits
 //! ([`Pacer`](super::limiter::Pacer), [`DegradationSink`](super::degradation::DegradationSink)):
-//! wire the pacer to a 1/second bucket ([`RATE_PER_SEC`] / [`BURST`]). v2
+//! wire the pacer to a 1/second bucket. v2
 //! paces at 2.5/second from live edge evidence (30 requests/10 seconds,
 //! 2026-08-26); v3 uses the stricter documented 1/second.
 //!
@@ -44,11 +44,6 @@ pub mod stats;
 
 /// Default API host (v2 `LISTENBRAINZ_API_URL`).
 pub const DEFAULT_BASE_URL: &str = "https://api.listenbrainz.org";
-/// Pacing the wiring must configure: 1 call/second (the documented limit; v2 paced
-/// 2.5/second from live edge evidence, 2026-08-26).
-pub const RATE_PER_SEC: f64 = 1.0;
-/// Bucket burst: none, the baseline stays evenly paced (v2 `capacity=1`).
-pub const BURST: u32 = 1;
 /// Wait hint when a 429 carries no usable delay header (v2
 /// `_RATE_LIMIT_DEFAULT_COOLDOWN_SECONDS`).
 pub const DEFAULT_RETRY_AFTER_SECS: f64 = 2.0;

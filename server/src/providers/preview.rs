@@ -22,8 +22,6 @@ use serde::{Deserialize, Serialize};
 
 use super::client::HttpPort;
 
-/// Provider key used in logs and degradation records.
-pub const PROVIDER_NAME: &str = "preview";
 /// Live Deezer API origin.
 pub const DEEZER_API_BASE: &str = "https://api.deezer.com";
 /// Live iTunes Search API endpoint.

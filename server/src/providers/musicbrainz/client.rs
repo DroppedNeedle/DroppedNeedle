@@ -8,9 +8,8 @@
 use serde::Deserialize;
 
 use super::models::{
-    ArtistSearchHit, MbArtist, MbRecording, MbRelease, MbReleaseGroup, RecordingSearchHit,
-    ReleaseGroupBrowsePage, ReleaseGroupSearchHit, ReleaseSearchHit, SearchPage, UrlResolution,
-    decode_search_page,
+    ArtistSearchHit, MbArtist, MbRecording, MbRelease, MbReleaseGroup, ReleaseGroupBrowsePage,
+    ReleaseGroupSearchHit, ReleaseSearchHit, SearchPage, UrlResolution, decode_search_page,
 };
 use super::pacing::MbPacing;
 use super::redirects::{
@@ -20,8 +19,8 @@ use super::redirects::{
 use super::transport::{MbRequest, MbTransport, RawResponse};
 use super::{
     Criticality, MAX_PAGE_LIMIT, MAX_REDIRECT_HOPS, MbError, MbSource, SourceFn,
-    build_recording_search_query, build_release_group_search_query, build_release_search_query,
-    escape_lucene_phrase, is_valid_mbid, normalize_mb_id, parse_retry_after_secs,
+    build_release_search_query, escape_lucene_phrase, is_valid_mbid, normalize_mb_id,
+    parse_retry_after_secs,
 };
 use crate::providers::RequestPriority;
 use crate::providers::degradation::{DegradationSink, NoopSink};
@@ -282,27 +281,6 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         .await
     }
 
-    /// Search release groups by title and artist (verified Lucene shape).
-    pub async fn search_release_groups(
-        &self,
-        title: &str,
-        artist: &str,
-        limit: u32,
-        criticality: Criticality,
-    ) -> Result<SearchPage<ReleaseGroupSearchHit>, MbError> {
-        let query = build_release_group_search_query(title, artist);
-        self.search_page(
-            "/release-group",
-            &query,
-            limit,
-            0,
-            "release-groups",
-            "search_release_groups",
-            criticality,
-        )
-        .await
-    }
-
     /// Search release groups carrying one tag (v2
     /// `search_release_groups_by_tag`), spelling variants included.
     pub async fn search_release_groups_by_tag(
@@ -374,27 +352,6 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
             0,
             "artists",
             "search_artists",
-            criticality,
-        )
-        .await
-    }
-
-    /// Search recordings by track title and artist (verified Lucene shape).
-    pub async fn search_recordings(
-        &self,
-        title: &str,
-        artist: &str,
-        limit: u32,
-        criticality: Criticality,
-    ) -> Result<SearchPage<RecordingSearchHit>, MbError> {
-        let query = build_recording_search_query(title, artist);
-        self.search_page(
-            "/recording",
-            &query,
-            limit,
-            0,
-            "recordings",
-            "search_recordings",
             criticality,
         )
         .await

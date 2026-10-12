@@ -592,28 +592,6 @@ pub struct ArtistSearchHit {
     pub area: Option<AreaRef>,
 }
 
-/// Recording search hit: candidate plus the releases it appears on.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct RecordingSearchHit {
-    /// Recording MBID: required identity.
-    pub id: String,
-    /// Plain score key.
-    #[serde(default)]
-    pub score: Option<i64>,
-    /// Namespaced score key.
-    #[serde(rename = "ext:score", default)]
-    pub ext_score: Option<i64>,
-    /// Recording title.
-    #[serde(default)]
-    pub title: Option<String>,
-    /// Recording length in milliseconds.
-    #[serde(default)]
-    pub length: Option<u64>,
-    /// Releases carrying this recording.
-    #[serde(default)]
-    pub releases: Vec<RecordingRelease>,
-}
-
 /// Search page: items plus the envelope counters. The wire shape is
 /// `{count, created, offset, <entities>}` (contribution probe 2026-07-21);
 /// `created` is ignored and each search reads its own entity key.

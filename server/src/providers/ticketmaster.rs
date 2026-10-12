@@ -428,17 +428,6 @@ impl TicketmasterClient {
         })
     }
 
-    /// True iff the configured key can reach the Discovery API. Like v2,
-    /// this checks reachability only and never decodes the body.
-    pub async fn test_connection(&self) -> bool {
-        self.fetch(
-            "/attractions.json",
-            &[("keyword", "test".to_owned()), ("size", "1".to_owned())],
-        )
-        .await
-        .is_ok()
-    }
-
     /// One GET with the key merged into the params. Ticketmaster answers
     /// strict 200 on success; anything else (besides 429) is an API error.
     async fn fetch(

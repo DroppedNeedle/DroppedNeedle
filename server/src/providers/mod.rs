@@ -91,11 +91,11 @@ pub use client::{
 };
 pub use degradation::{
     DegradationContext, DegradationSink, IntegrationStatus, NoopSink, ProviderOutcome,
-    aggregate_status, degraded_none, record_current, record_outcome_current, scoped, with_current,
+    aggregate_status, degraded_none, record_current, scoped, with_current,
 };
 pub use error::{MAX_RETRY_AFTER, ProviderError, classify_status, parse_retry_after};
 pub use limiter::{LimiterSet, OverCapacity, Pacer, RateLimiter, RatePolicy, policy_for};
-pub use matrix::{OperationKind, SourceRole, apply, outcome_from, role};
+pub use matrix::{OperationKind, SourceRole, apply, role};
 #[cfg(any(test, feature = "test-support"))]
 pub use retry::ManualClock;
 pub use retry::{Clock, RetryPolicy, TokioClock, execute};

@@ -13,7 +13,7 @@
 //! new sources degrade openly until the table explicitly promotes them.
 
 use super::{
-    degradation::{IntegrationStatus, ProviderOutcome, record_current},
+    degradation::{IntegrationStatus, record_current},
     error::ProviderError,
 };
 
@@ -130,32 +130,6 @@ fn apply_failure<T>(
     match role(operation, source) {
         SourceRole::Optional => Ok(None),
         SourceRole::IdentityCritical | SourceRole::Required => Err(failure),
-    }
-}
-
-/// Convert one provider call into a typed [`ProviderOutcome`] without role
-/// logic, for aggregation boundaries that combine several outcomes before
-/// consulting the matrix.
-///
-/// Returns `None` for absence (`NotFound`): there is no outcome to
-/// aggregate, because absence is not degradation and carries no data.
-#[must_use]
-pub fn outcome_from<T>(
-    source: &'static str,
-    result: Result<T, ProviderError>,
-) -> Option<ProviderOutcome<T>> {
-    match result {
-        Ok(value) => Some(ProviderOutcome::ok(value, source)),
-        Err(failure) => {
-            let message = failure.to_string();
-            if matches!(failure, ProviderError::NotFound { .. }) {
-                None
-            } else if failure.is_deterministic() {
-                Some(ProviderOutcome::deterministic_error(source, message))
-            } else {
-                Some(ProviderOutcome::error(source, message))
-            }
-        }
     }
 }
 

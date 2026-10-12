@@ -17,8 +17,6 @@ use sha2::{Digest, Sha256};
 
 use super::client::HttpPort;
 
-/// Provider key used in logs and degradation records.
-pub const PROVIDER_NAME: &str = "lrclib";
 /// Live API origin (lrclib_API_NOTES.md).
 pub const API_BASE: &str = "https://lrclib.net";
 /// Largest response body accepted before the lookup is rejected.

@@ -34,7 +34,6 @@ pub use pacing::{BrainzMashCooldown, MbPacing, MbPacingState};
 pub use redirects::{
     BRAINZMASH_HOST, RedirectHop, brainzmash_redirect_path, lookup_redirect_pair,
     official_redirect_hop, validate_brainzmash_path, validate_brainzmash_request_url,
-    validate_brainzmash_url,
 };
 pub use transport::{MbRequest, MbTransport, RawResponse, ReqwestMbTransport, TransportError};
 
@@ -272,20 +271,6 @@ pub fn build_release_match_query(
     )
 }
 
-/// Release-group query, live-verified against MusicBrainz WS/2 on 2026-08-13
-/// (v2 `build_release_group_search_query`).
-pub fn build_release_group_search_query(title: &str, artist: &str) -> String {
-    let escaped = escape_lucene_phrase(title);
-    let mut query = format!(r#"(releasegroup:"{escaped}" OR release:"{escaped}")"#);
-    if !artist.is_empty() {
-        query.push_str(&format!(
-            r#" AND artist:"{}""#,
-            escape_lucene_phrase(artist)
-        ));
-    }
-    query
-}
-
 /// Release-group tag query (v2 `build_musicbrainz_tag_query`): the tag as
 /// written, boosted, OR'd with its common spelling variants (hyphen and
 /// space swapped, `&` and `and` swapped), each a quoted `tag:` phrase.
@@ -328,16 +313,6 @@ pub fn build_tag_query(tag: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" OR ")
-}
-
-/// Recording query using the same verified Lucene field escaping (v2
-/// `build_recording_search_query`).
-pub fn build_recording_search_query(title: &str, artist: &str) -> String {
-    format!(
-        r#"recording:"{}" AND artist:"{}""#,
-        escape_lucene_phrase(title),
-        escape_lucene_phrase(artist)
-    )
 }
 
 /// Search-result score from either observed key (v2 `get_score`):

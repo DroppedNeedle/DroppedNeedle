@@ -101,23 +101,6 @@ impl<T> ProviderOutcome<T> {
     pub const fn is_ok(&self) -> bool {
         matches!(self.status, IntegrationStatus::Ok)
     }
-
-    /// Whether the answer is partial.
-    #[must_use]
-    pub const fn is_degraded(&self) -> bool {
-        matches!(self.status, IntegrationStatus::Degraded)
-    }
-
-    /// Whether the source failed completely.
-    #[must_use]
-    pub const fn is_error(&self) -> bool {
-        matches!(self.status, IntegrationStatus::Error)
-    }
-
-    /// The data, or `default` when the source failed completely.
-    pub fn data_or(self, default: T) -> T {
-        self.data.unwrap_or(default)
-    }
 }
 
 /// The worst status across several outcomes: error beats degraded beats ok.
@@ -242,12 +225,6 @@ pub fn record_current(
                 .record_status(source, status, deterministic);
         })
         .is_ok()
-}
-
-/// Record one outcome into the current request's context. See
-/// [`record_current`].
-pub fn record_outcome_current<T>(outcome: &ProviderOutcome<T>) -> bool {
-    record_current(outcome.source, outcome.status, outcome.deterministic)
 }
 
 /// Read the current request's context without recording. Returns `None`

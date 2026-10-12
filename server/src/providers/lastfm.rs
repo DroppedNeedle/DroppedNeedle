@@ -10,7 +10,7 @@
 //! key pair, on purpose:
 //! every method takes the calling user's credentials, and the client itself
 //! stores none. The one shared thing is pacing: wiring must hand every
-//! per-user client the same community limiter ([`RATE_PER_SEC`] / [`BURST`])
+//! per-user client the same community limiter
 //! so the host as a whole stays under 5 calls/second.
 //!
 //! Pacing and degradation ride the shared core traits
@@ -34,11 +34,6 @@ use super::{DegradationSink, Pacer};
 
 /// Default API host (v2 `LASTFM_API_URL`).
 pub const DEFAULT_BASE_URL: &str = "https://ws.audioscrobbler.com/2.0/";
-/// Community pacing the wiring must configure: 5 calls/second shared by all
-/// users of this host (v2 `_lastfm_rate_limiter`).
-pub const RATE_PER_SEC: f64 = 5.0;
-/// Community bucket burst (v2 `capacity=10`).
-pub const BURST: u32 = 10;
 /// Last.fm's documented rate-limit error code (v2 `LASTFM_ERROR_MAP[29]`).
 /// The management notes call out that this code was never provoked live on
 /// purpose; it is decoded from the documented envelope and covered by a
@@ -101,16 +96,6 @@ pub struct LastFmCredentials {
     pub username: Option<String>,
     /// Session key from `auth.getSession`, when linked.
     pub session_key: Option<String>,
-}
-
-impl LastFmCredentials {
-    /// Whether signed calls that need a session can be made (v2 `_can_sign`).
-    /// The user-stats surface signs its reads opportunistically when this
-    /// holds; that surface has not been ported yet, so this currently serves
-    /// the auth checks and the wiring step.
-    pub fn can_sign(&self) -> bool {
-        !self.shared_secret.is_empty() && self.session_key.is_some()
-    }
 }
 
 /// An approved-token reply from `auth.getToken`. The token is required: v2

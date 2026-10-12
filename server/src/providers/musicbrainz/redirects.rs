@@ -5,7 +5,7 @@
 //! same-entity lookup between two well-formed MBIDs; BrainzMash requests
 //! must also stay on the one approved origin and path allowlist.
 
-use super::{BRAINZMASH_API_BASE, MbError, is_valid_mbid};
+use super::{MbError, is_valid_mbid};
 
 /// One followed redirect hop: same entity on both ends, both MBIDs valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,25 +144,6 @@ const BRAINZMASH_ENTITY_PATHS: [&str; 6] = [
     "isrc",
     "url",
 ];
-
-/// Validate the one server-owned BrainzMash origin and return its base URL
-/// (v2 `validate_brainzmash_url`): https, exact host, no port, no
-/// credentials, no query or fragment, exactly `/ws/2`.
-pub fn validate_brainzmash_url(url: &str) -> Result<&str, MbError> {
-    let rejected = || {
-        MbError::Misconfigured(
-            "brainzmash endpoint must be the approved HTTPS /ws/2 origin".to_owned(),
-        )
-    };
-    let (scheme, host, port, path) = split_origin(url).ok_or_else(rejected)?;
-    if scheme != "https" || host != BRAINZMASH_HOST || port.is_some() {
-        return Err(rejected());
-    }
-    if path.contains(['?', '#', '%']) || path.trim_end_matches('/') != "/ws/2" {
-        return Err(rejected());
-    }
-    Ok(BRAINZMASH_API_BASE)
-}
 
 /// Allow only the MusicBrainz WS/2 entity paths this application uses (v2
 /// `validate_brainzmash_path`): one or two segments, allowlisted entity,

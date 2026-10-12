@@ -10,8 +10,8 @@ use crate::{
     acquire::AcquireSetup, admin::AdminSetup, auth::wiring::AuthSetup, compat::CompatSetup,
     concerts::ConcertsSetup, config::AppConfig, events::EventHub, http_client::HttpClientFactory,
     ids::IdGenerator, jobs::wiring::JobsSetup, library::wiring::LibrarySetup, media::MediaSetup,
-    plugins::wiring::PluginsSetup, provider_policy::ProviderPolicy, providers::Providers,
-    reads::ReadsSetup, settings::wiring::SettingsSetup,
+    plugins::wiring::PluginsSetup, providers::Providers, reads::ReadsSetup,
+    settings::wiring::SettingsSetup,
 };
 
 /// All long-lived server dependencies.
@@ -112,10 +112,5 @@ impl AppState {
         self.library.events.attach(&self.events);
         self.jobs.cache_sync().sink().attach(&self.events);
         self
-    }
-
-    /// Verified per-provider rate policy table.
-    pub fn provider_policies(&self) -> &'static [ProviderPolicy] {
-        crate::provider_policy::PROVIDER_POLICIES
     }
 }

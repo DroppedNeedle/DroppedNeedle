@@ -8,9 +8,8 @@
 //!
 //! Pacing and degradation ride the shared core traits
 //! ([`Pacer`](super::limiter::Pacer), [`DegradationSink`](super::degradation::DegradationSink)):
-//! wire the pacer to the free 30/minute bucket ([`FREE_RATE_PER_SEC`] /
-//! [`FREE_BURST`]) or the premium bucket ([`PREMIUM_RATE_PER_SEC`] /
-//! [`PREMIUM_BURST`]) per v2 `_make_rate_limiter`.
+//! wire the pacer to the free 30/minute bucket or the premium bucket per v2
+//! `_make_rate_limiter`.
 //!
 //! The enabled flag and the settings API key live in user preferences in v2;
 //! wiring passes them in here ([`AudioDbClient::with_enabled`],
@@ -24,14 +23,6 @@ use super::{DegradationSink, Pacer};
 pub const DEFAULT_BASE_URL: &str = "https://www.theaudiodb.com/api/v1/json";
 /// Free key, used when no settings key is configured (v2 `AUDIODB_FREE_KEY`).
 pub const FREE_API_KEY: &str = "123";
-/// Free pacing: 30 requests/minute (v2 free bucket).
-pub const FREE_RATE_PER_SEC: f64 = 0.5;
-/// Free bucket burst (v2 free bucket).
-pub const FREE_BURST: u32 = 2;
-/// Premium pacing (v2 premium bucket).
-pub const PREMIUM_RATE_PER_SEC: f64 = 5.0;
-/// Premium bucket burst (v2 premium bucket).
-pub const PREMIUM_BURST: u32 = 10;
 /// Wait hint surfaced with a 429 (v2 raises with `retry_after_seconds=60`).
 pub const RATE_LIMIT_RETRY_SECS: f64 = 60.0;
 /// Per-request wire timeout (v2 request timeout).
@@ -186,13 +177,6 @@ impl<P: Pacer, S: DegradationSink> AudioDbClient<P, S> {
         if !api_key.trim().is_empty() {
             self.api_key = api_key.to_owned();
         }
-        self
-    }
-
-    /// Enable or disable the source (v2 `audiodb_enabled`). A disabled client
-    /// answers `Missing` without touching the wire or the sink.
-    pub fn with_enabled(mut self, enabled: bool) -> Self {
-        self.enabled = enabled;
         self
     }
 

@@ -277,19 +277,6 @@ impl SkiddleClient {
         Ok(decoded.results)
     }
 
-    /// True iff the configured key can reach the events API.
-    pub async fn test_connection(&self) -> bool {
-        let body = match self
-            .fetch("/events/search/", &[("limit", "1".to_owned())])
-            .await
-        {
-            Ok(body) => body,
-            Err(_) => return false,
-        };
-        serde_json::from_slice::<SkiddleEventsResponse>(&body)
-            .is_ok_and(|decoded| decoded.error == 0)
-    }
-
     /// One GET with the key merged into the params. Skiddle answers strict
     /// 200 on success; anything else (besides 429) is an API error.
     async fn fetch(&self, path: &str, params: &[(&str, String)]) -> Result<Vec<u8>, SkiddleError> {

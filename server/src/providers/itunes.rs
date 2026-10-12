@@ -14,12 +14,8 @@ use serde::{Deserialize, Serialize};
 
 use super::client::HttpPort;
 
-/// Provider key used in logs and degradation records.
-pub const PROVIDER_NAME: &str = "itunes";
 /// Live Search API endpoint (ITUNES_API_NOTES.md).
 pub const SEARCH_URL: &str = "https://itunes.apple.com/search";
-/// Default storefront country.
-pub const DEFAULT_COUNTRY: &str = "US";
 /// Page size v2 requests.
 pub const SEARCH_LIMIT: u32 = 10;
 /// Minimum token-set score (0-100) between the requested artist and the

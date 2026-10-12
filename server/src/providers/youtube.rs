@@ -52,10 +52,6 @@ use thiserror::Error;
 pub const YOUTUBE_API_HOST: &str = "https://www.googleapis.com";
 /// Search endpoint path.
 pub const YOUTUBE_SEARCH_PATH: &str = "/youtube/v3/search";
-/// Key-verification endpoint path.
-pub const YOUTUBE_VERIFY_PATH: &str = "/youtube/v3/videos";
-/// Known video used to probe a key, kept from v2.
-pub const VERIFY_VIDEO_ID: &str = "dQw4w9WgXcQ";
 /// Default daily quota budget, kept from v2.
 pub const DEFAULT_DAILY_QUOTA_LIMIT: u32 = 80;
 /// Largest accepted daily budget (v2 validates 1..=10000).
@@ -287,12 +283,6 @@ impl YouTubeClient {
         })
     }
 
-    /// Replace the API key, keeping the rest of the settings.
-    pub fn configure(&self, api_key: &str) {
-        let mut settings = self.lock_settings();
-        settings.api_key = api_key.to_owned();
-    }
-
     /// Replace the whole settings snapshot after validating it.
     pub fn update_settings(&self, settings: YouTubeSettings) -> Result<(), YoutubeError> {
         settings.validate()?;
@@ -360,41 +350,6 @@ impl YouTubeClient {
         track: &str,
     ) -> Result<Option<String>, YoutubeError> {
         self.search(SearchKind::Track, artist, track).await
-    }
-
-    /// Probe an API key against a known video. Never touches the quota: it
-    /// returns a plain verdict pair, kept from v2.
-    pub async fn verify_api_key(&self, api_key: &str) -> (bool, String) {
-        let url = join(&self.base_url, YOUTUBE_VERIFY_PATH);
-        let params = [
-            ("part", "id".to_owned()),
-            ("id", VERIFY_VIDEO_ID.to_owned()),
-            ("key", api_key.to_owned()),
-        ];
-        let response = match self
-            .http
-            .get(url)
-            .query(&params)
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-            .await
-        {
-            Ok(response) => response,
-            Err(error) => {
-                return (
-                    false,
-                    format!("Connection error: {}", transport_kind(&error)),
-                );
-            }
-        };
-        match response.status().as_u16() {
-            200 => (true, "YouTube API key is valid".to_owned()),
-            403 => (
-                false,
-                "API key is invalid or YouTube Data API is not enabled".to_owned(),
-            ),
-            status => (false, format!("Unexpected response: {status}")),
-        }
     }
 
     /// Test seam: pin the client's UTC date (rollover tests). `None`

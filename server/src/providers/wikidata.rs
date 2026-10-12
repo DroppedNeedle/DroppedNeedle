@@ -20,13 +20,11 @@
 //! for 404 and `Err(Transport)` otherwise, so an outage cannot be mistaken
 //! for "this artist has no bio".
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::HashMap;
 
 use super::client::HttpPort;
 
-/// Provider key used in logs and degradation records.
-pub const PROVIDER_NAME: &str = "wikidata";
 /// Live Wikidata origin.
 pub const WIKIDATA_BASE: &str = "https://www.wikidata.org";
 /// Live Wikipedia origin pattern; `{lang}` selects the edition.
@@ -93,15 +91,6 @@ impl WireDatavalue {
     /// The value when it is a plain string (P18 filenames).
     pub fn string_value(&self) -> Option<&str> {
         self.value.as_ref().and_then(serde_json::Value::as_str)
-    }
-
-    /// The target entity id when the value is an entity object.
-    pub fn entity_id(&self) -> Option<&str> {
-        self.value
-            .as_ref()
-            .and_then(|value| value.get("id"))
-            .and_then(serde_json::Value::as_str)
-            .filter(|id| !id.is_empty())
     }
 }
 
@@ -193,17 +182,6 @@ pub struct WireCommonsResponse {
     /// Query block.
     #[serde(default)]
     pub query: Option<WireCommonsQuery>,
-}
-
-// ---------------------------------------------------------------------------
-// Normalized model
-// ---------------------------------------------------------------------------
-
-/// A resolved relation target: the entity id behind one claim.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RelatedEntity {
-    /// Target entity id ("Q...").
-    pub entity_id: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -523,35 +501,6 @@ impl<'h, H: HttpPort> WikidataClient<'h, H> {
             .and_then(|snak| snak.datavalue.as_ref())
             .and_then(WireDatavalue::string_value)
             .map(str::to_owned))
-    }
-
-    /// Entity ids targeted by one property's claims, in wire order. This
-    /// powers relation reads (performer, composer, member-of, ...) over the
-    /// same `wbgetclaims` path v2 uses for P18. New for v3: v2 reads only
-    /// string filenames here, so there is no v2 quirk to cite beyond the
-    /// shared claims envelope.
-    pub async fn related_entity_ids(
-        &self,
-        wikidata_id: &str,
-        property: &str,
-    ) -> Result<Vec<RelatedEntity>, FetchError> {
-        let page = self.fetch_claims(wikidata_id, property).await?;
-        let Some(page) = page else {
-            return Ok(Vec::new());
-        };
-        Ok(page
-            .claims
-            .get(property)
-            .map(|claims| claims.as_slice())
-            .unwrap_or(&[])
-            .iter()
-            .filter_map(|claim| claim.mainsnak.as_ref())
-            .filter_map(|snak| snak.datavalue.as_ref())
-            .filter_map(WireDatavalue::entity_id)
-            .map(|id| RelatedEntity {
-                entity_id: id.to_owned(),
-            })
-            .collect())
     }
 
     /// Fetch one property's claims, with 404 as absence.

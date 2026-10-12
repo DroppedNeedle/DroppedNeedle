@@ -11,7 +11,7 @@
 //!
 //! Pacing and degradation ride the shared core traits
 //! ([`Pacer`](super::limiter::Pacer), [`DegradationSink`](super::degradation::DegradationSink)):
-//! wire the pacer to a 3/second bucket ([`RATE_PER_SEC`] / [`BURST`], per v2
+//! wire the pacer to a 3/second bucket (per v2
 //! `service_providers.get_audio_fingerprinter`).
 //!
 //! The API key is passed to every [`AcoustIdClient::lookup`] call and never
@@ -26,10 +26,6 @@ use super::{DegradationSink, Pacer};
 pub const DEFAULT_BASE_URL: &str = "https://api.acoustid.org";
 /// Lookup path below the base URL (v2 `AudioFingerprinter.ACOUSTID_API`).
 pub const LOOKUP_PATH: &str = "/v2/lookup";
-/// Pacing the wiring must configure: 3 lookups/second (v2, same source).
-pub const RATE_PER_SEC: f64 = 3.0;
-/// Bucket burst for the 3/second limiter (v2 `capacity=3`).
-pub const BURST: u32 = 3;
 /// A best result under this score is not a confident match
 /// (v2 `_ACOUSTID_MIN_SCORE`).
 pub const MIN_SCORE: f64 = 0.70;
@@ -646,26 +642,4 @@ pub fn parse_fpcalc_output(
         }),
         None => Err(FpCalcError::BadDuration(stderr.trim().to_owned())),
     }
-}
-
-/// Separators v2 `split_artist_credit` splits on.
-const ARTIST_SEPARATORS: &[&str] = &[";", ",", "feat.", "ft.", "&", "+", "vs.", " x ", " with "];
-
-/// Split an AcoustID artist-credit string into individual tokens (v2
-/// `split_artist_credit`). Aggressive splitting is intentional: a target
-/// artist is matched against any token.
-pub fn split_artist_credit(credit: &str) -> Vec<String> {
-    let mut tokens: Vec<String> = vec![credit.to_owned()];
-    for separator in ARTIST_SEPARATORS {
-        let mut split: Vec<String> = Vec::new();
-        for token in &tokens {
-            split.extend(token.split(separator).map(str::to_owned));
-        }
-        tokens = split;
-    }
-    tokens
-        .into_iter()
-        .map(|token| token.trim().to_owned())
-        .filter(|token| !token.is_empty())
-        .collect()
 }
