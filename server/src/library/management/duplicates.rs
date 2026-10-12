@@ -318,6 +318,7 @@ impl Management {
             manage_unconfirmed: planner::manage_unconfirmed(&self.setup),
             tag_edit: None,
             job_id: &snapshot.job.id,
+            analysis_until: std::time::Instant::now() + planner::RUN_ANALYSIS_BUDGET,
         };
         let albums = self.read(|conn| selection::albums(conn, &selection))?;
         let Some(scope) = albums.first() else {

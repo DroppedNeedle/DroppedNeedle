@@ -4686,6 +4686,264 @@ async fn library_management_custom_edition_journey() {
     );
 }
 
+/// Embedded art on an M4A file with a scrub on: the cover lands once and
+/// a second run leaves the pictures alone (MP4 stores no picture types),
+/// and the scrub keeps composer, work ids and ISRC while it removes an
+/// unmanaged tag.
+#[tokio::test]
+async fn library_management_artwork_journey() {
+    use droppedneedle::library::management::enrich::{Cover, ScriptedEnrichment};
+    use droppedneedle::library::management::models::{Selection, SelectionKind};
+    use droppedneedle::library::management::service::{Management, PreviewRequest};
+    use droppedneedle::library::scan::CatalogStore as _;
+    use droppedneedle::library::tags::save::read_document;
+    use droppedneedle::library::tags::{TagEdit, TagField};
+    use droppedneedle::runtime_config::sections::LibraryManagement;
+    use droppedneedle::settings::management as lm;
+
+    let (scratch, library, music) = bare_library("lib-management-artwork");
+    let file = plant(&music, "art/cover track.m4a", "management_full.m4a");
+    droppedneedle::library::tags::save_tags(
+        &file,
+        &[
+            TagEdit::native("mp4:\u{a9}wrt", vec!["Ada Composer".to_owned()]),
+            TagEdit::native(
+                "mp4:----:MusicBrainz Work Id",
+                vec!["c0ffee00-0000-4000-8000-00000000f001".to_owned()],
+            ),
+            TagEdit::native("mp4:----:MOOD", vec!["Calm".to_owned()]),
+            TagEdit::new(TagField::Isrc, vec!["GBAYE0601498".to_owned()]),
+        ],
+    )
+    .expect("tags planted");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "art/cover track.m4a")
+        .expect("track indexed");
+    let album = library.scan_store.album_for_track(&track).expect("album");
+    library
+        .test_providers
+        .as_ref()
+        .expect("scripted providers")
+        .set_recall(ambiguous_recall(&library, &album));
+    assert_eq!(library.identify_tick().await, 1);
+    library
+        .scan_store
+        .execute_batch_for_tests(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+        )
+        .expect("admin row");
+    droppedneedle::library::operations::service::Operations::new(&library)
+        .confirm_match(&album, "admin")
+        .expect("match confirmed");
+    let mut settings = lm::initial_settings("");
+    for profile in settings
+        .profiles
+        .iter_mut()
+        .filter(|profile| profile.id == lm::PICARD_ORGANIZER_PROFILE_ID)
+    {
+        profile.artwork.embedded_enabled = true;
+        profile.artwork.external_enabled = true;
+        profile.metadata.scrub_unmanaged_tags = true;
+    }
+    library.config.save(settings).expect("settings saved");
+    let original = read_document(&file).expect("original tags");
+    lm::service::LibraryManagementService::new(
+        library.config.clone(),
+        library.ids.clone(),
+        Arc::new(lm::StructuralCompiler),
+    )
+    .get_settings()
+    .expect("settings normalized");
+    let cover = {
+        let mut bytes = Vec::new();
+        image::RgbImage::from_pixel(8, 8, image::Rgb([30, 30, 200]))
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("png");
+        bytes
+    };
+    assert!(
+        library
+            .enrichment
+            .set(Arc::new(ScriptedEnrichment {
+                listenbrainz: None,
+                lyrics: None,
+                cover: Some(Cover {
+                    bytes: cover,
+                    mime: "image/png".to_owned(),
+                }),
+            }))
+            .is_ok()
+    );
+    let db =
+        || droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db")).expect("db");
+    let management = Management::new(&library);
+    let preview = |key: &str| PreviewRequest {
+        selection: Selection {
+            kind: SelectionKind::Albums,
+            ids: vec![album.clone()],
+            catalog_filter: None,
+        },
+        profile_id: lm::PICARD_ORGANIZER_PROFILE_ID.to_owned(),
+        expected_settings_revision: lm::settings_revision(
+            &library
+                .config
+                .get::<LibraryManagement>()
+                .expect("settings read"),
+        ),
+        expected_policy_revision: library.live_registry().policy_revision().to_owned(),
+        idempotency_key: Some(key.to_owned()),
+        target_root_id: None,
+        overrides: None,
+    };
+    let managed_path = || {
+        let rel: String = db()
+            .query_row(
+                "SELECT relative_path FROM local_tracks WHERE id = ?1",
+                [&track],
+                |row| row.get(0),
+            )
+            .expect("managed path");
+        music.join(rel)
+    };
+    let managed_doc = || read_document(&managed_path()).expect("managed tags");
+
+    let first = management
+        .create_preview(preview("art-1"), "admin")
+        .expect("first preview");
+    assert!(management_step(&library).await, "first planning runs");
+    let items = management
+        .items(&first.job_id, -1, 10, &Default::default())
+        .expect("items")
+        .items;
+    let item = items.first().expect("one file");
+    assert!(item.eligibility.writes(), "{:?}", item.facts);
+    assert!(item.diff.artwork_changed, "the cover is embedded");
+    let scrubbed: Vec<&str> = item
+        .diff
+        .scrubbed_raw_tags
+        .iter()
+        .map(|tag| tag.key.as_str())
+        .collect();
+    assert!(scrubbed.contains(&"mp4:----:MOOD"), "{scrubbed:?}");
+    assert!(
+        scrubbed
+            .iter()
+            .all(|key| !key.contains("\u{a9}wrt") && !key.contains("MusicBrainz")),
+        "composer and MusicBrainz ids are never scrubbed: {scrubbed:?}"
+    );
+    let applied = management_apply(&library, &first).await;
+    assert_eq!(
+        applied.job.state.as_str(),
+        "succeeded",
+        "{:?}",
+        applied.job.terminal_code
+    );
+    let after = managed_doc();
+    assert_eq!(after.pictures.len(), 1, "one cover, nothing piled up");
+    assert_eq!(after.pictures[0].kind, 3);
+    assert!(!after.native.contains_key("mp4:----:MOOD"), "scrubbed");
+    assert_eq!(
+        after.native.get("mp4:\u{a9}wrt"),
+        Some(&vec!["Ada Composer".to_owned()]),
+        "composer kept"
+    );
+    assert!(
+        after
+            .native
+            .keys()
+            .any(|key| key.eq_ignore_ascii_case("mp4:----:MusicBrainz Work Id")),
+        "work id kept"
+    );
+    assert_eq!(
+        after.values.get(&TagField::Isrc),
+        Some(&vec!["GBAYE0601498".to_owned()]),
+        "ISRC kept"
+    );
+
+    // Run it again: the cover is already there, so the pictures stay as
+    // they are (no remove and re-embed, no second copy).
+    let second = management
+        .create_preview(preview("art-2"), "admin")
+        .expect("second preview");
+    assert!(management_step(&library).await, "second planning runs");
+    let items = management
+        .items(&second.job_id, -1, 10, &Default::default())
+        .expect("items")
+        .items;
+    let item = items.first().expect("one file");
+    assert!(
+        !item.diff.artwork_changed,
+        "{:?}",
+        item.diff.field_mutations
+    );
+    assert!(
+        item.diff
+            .field_mutations
+            .iter()
+            .all(|mutation| mutation.name != "pictures"),
+        "{:?}",
+        item.diff.field_mutations
+    );
+    assert!(item.diff.scrubbed_raw_tags.is_empty());
+    assert!(item.diff.generated.is_empty(), "the cover file is there");
+
+    // Restoring the originals takes the generated cover file away too.
+    let cover_file = managed_path()
+        .parent()
+        .expect("album folder")
+        .join("cover.png");
+    assert!(cover_file.exists(), "the cover file was written");
+    let restore = management
+        .create_restore_preview(
+            droppedneedle::library::management::restore::RestoreRequest {
+                selection: Selection {
+                    kind: SelectionKind::Albums,
+                    ids: vec![album.clone()],
+                    catalog_filter: None,
+                },
+                expected_settings_revision: lm::settings_revision(
+                    &library
+                        .config
+                        .get::<LibraryManagement>()
+                        .expect("settings read"),
+                ),
+                expected_policy_revision: library.live_registry().policy_revision().to_owned(),
+                idempotency_key: "art-restore".to_owned(),
+            },
+            "admin",
+        )
+        .expect("restore preview");
+    assert!(management_step(&library).await, "restore planning runs");
+    let restored = management_apply(&library, &restore).await;
+    assert_eq!(
+        restored.job.state.as_str(),
+        "succeeded",
+        "{:?}",
+        restored.job.terminal_code
+    );
+    assert!(!cover_file.exists(), "the generated cover is gone");
+    let back = read_document(&file).expect("restored tags");
+    assert_eq!(back.native, original.native, "the scrubbed tag is back");
+    assert_eq!(
+        back.pictures
+            .iter()
+            .map(|picture| &picture.data)
+            .collect::<Vec<_>>(),
+        original
+            .pictures
+            .iter()
+            .map(|picture| &picture.data)
+            .collect::<Vec<_>>(),
+        "the pictures as they were"
+    );
+}
+
 /// Every file below `dir`.
 fn walk_files(dir: &std::path::Path) -> Vec<PathBuf> {
     let mut found = Vec::new();

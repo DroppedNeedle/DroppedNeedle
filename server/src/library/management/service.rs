@@ -966,6 +966,7 @@ impl Management {
             manage_unconfirmed: planner::manage_unconfirmed(&self.setup),
             tag_edit: intent.tag_edit.as_ref(),
             job_id: &snapshot.job.id,
+            analysis_until: std::time::Instant::now() + planner::RUN_ANALYSIS_BUDGET,
         };
         // Files that move take their whole album along, so an album is
         // never split between its old and new folder (as in v2). An

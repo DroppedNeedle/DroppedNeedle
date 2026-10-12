@@ -509,10 +509,12 @@ pub fn plan_tags(
         });
         updates.insert(name.clone(), new);
     }
-    // Scrubbing (v2's rule): every native item outside the managed
-    // fields goes, except the ones the profile preserves. The values are
-    // recorded in the before-state, so undo and a baseline restore put
-    // them back.
+    // Scrubbing (v2's rule): every native item outside v2's managed
+    // field names goes, except the ones the profile preserves. Names v2
+    // manages but these fields do not write (composer, performer, work,
+    // every MusicBrainz and AcoustID id and so on) always stay. The
+    // values are recorded in the before-state, so undo and a baseline
+    // restore put them back.
     let mut scrubbed = Vec::new();
     if profile.metadata.enabled && profile.metadata.scrub_unmanaged_tags {
         let preserved: Vec<String> = profile
@@ -523,7 +525,7 @@ pub fn plan_tags(
             .collect();
         for (key, values) in &doc.custom {
             let folded = key.to_ascii_lowercase();
-            if preserved.contains(&folded) {
+            if preserved.contains(&folded) || scrub_keeps(&folded) {
                 continue;
             }
             let name = format!("{}{key}", crate::library::publish::staging::NATIVE_PREFIX);
@@ -563,6 +565,106 @@ pub fn plan_tags(
         scrubbed,
         deferred,
     })
+}
+
+/// Native spellings (folded keys) of v2's managed field names that no
+/// writable field covers. A scrub never removes them: v2 keeps a managed
+/// name it does not write.
+const SCRUB_KEEPS: &[&str] = &[
+    // comment
+    "id3:comm",
+    "vorbis:comment",
+    "vorbis:description",
+    "mp4:\u{a9}cmt",
+    // composer
+    "id3:tcom",
+    "vorbis:composer",
+    "mp4:\u{a9}wrt",
+    // lyricist
+    "id3:text",
+    "vorbis:lyricist",
+    "mp4:----:lyricist",
+    // conductor
+    "id3:tpe3",
+    "vorbis:conductor",
+    "mp4:----:conductor",
+    // performer
+    "id3:tmcl",
+    "vorbis:performer",
+    "mp4:----:performer",
+    // arranger and producer (ID3 keeps them in the involved-people list)
+    "id3:tipl",
+    "id3:ipls",
+    "vorbis:arranger",
+    "mp4:----:arranger",
+    "vorbis:producer",
+    "mp4:----:producer",
+    // remixer
+    "id3:tpe4",
+    "vorbis:remixer",
+    "mp4:----:remixer",
+    // publisher, label, copyright, encoded by
+    "id3:tpub",
+    "vorbis:publisher",
+    "vorbis:organization",
+    "vorbis:label",
+    "mp4:----:label",
+    "id3:tcop",
+    "vorbis:copyright",
+    "mp4:cprt",
+    "id3:tenc",
+    "vorbis:encodedby",
+    "vorbis:encoded-by",
+    "mp4:\u{a9}too",
+    // isrc, barcode, catalog number, media
+    "id3:tsrc",
+    "vorbis:isrc",
+    "mp4:----:isrc",
+    "id3:txxx:barcode",
+    "vorbis:barcode",
+    "mp4:----:barcode",
+    "id3:txxx:catalognumber",
+    "vorbis:catalognumber",
+    "mp4:----:catalognumber",
+    "id3:tmed",
+    "vorbis:media",
+    "mp4:----:media",
+    // work and movement
+    "id3:tit1",
+    "id3:grp1",
+    "id3:txxx:work",
+    "vorbis:work",
+    "mp4:\u{a9}wrk",
+    "id3:mvnm",
+    "id3:mvin",
+    "vorbis:movementname",
+    "vorbis:movement",
+    "vorbis:movementnumber",
+    "vorbis:movementtotal",
+    "mp4:\u{a9}mvn",
+    "mp4:\u{a9}mvi",
+    "mp4:\u{a9}mvc",
+    // lyrics in other spellings
+    "id3:sylt",
+    "vorbis:lyrics",
+    "vorbis:unsyncedlyrics",
+];
+
+/// Whether a scrub keeps this native item (a folded key): v2's managed
+/// names in every spelling, every MusicBrainz and AcoustID id, and
+/// ReplayGain items beyond the written ones.
+fn scrub_keeps(folded: &str) -> bool {
+    if SCRUB_KEEPS.contains(&folded) {
+        return true;
+    }
+    let name = folded
+        .split_once(':')
+        .map_or(folded, |(_, rest)| rest)
+        .trim_start_matches("txxx:")
+        .trim_start_matches("----:");
+    name.starts_with("musicbrainz")
+        || name.starts_with("acoustid")
+        || name.starts_with("replaygain")
 }
 
 /// The native items (folded keys) a preserved profile field name keeps

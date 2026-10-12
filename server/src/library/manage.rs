@@ -1584,6 +1584,19 @@ impl LibrarySetup {
             let same_path = live_loc.0 == before.source_root && live_loc.1 == before.source_rel;
             let updates =
                 super::publish::staging::restore_updates(&before.doc, &current, &live_loc.1);
+            // Files management generated for the track (a cover, an
+            // `.lrc`) go too, while they still hold the bytes it wrote.
+            let removals: Vec<_> = super::publish::operations::generated_for_track(conn, &track_id)
+                .map_err(publish_error)?
+                .into_iter()
+                .filter(|output| {
+                    sandbox
+                        .resolve_no_symlink(&output.dest_root, &output.dest_rel)
+                        .ok()
+                        .and_then(|path| super::publish::paths::read_regular_file(&path).ok())
+                        .is_some_and(|bytes| sha256_hex(&bytes) == output.sha256)
+                })
+                .collect();
             let mut capabilities = Vec::new();
             if !updates.is_empty() {
                 capabilities.push(Capability::Metadata);
@@ -1620,7 +1633,7 @@ impl LibrarySetup {
                     adopt: None,
                     replaces: None,
                     outputs: Vec::new(),
-                    removals: Vec::new(),
+                    removals,
                 },
             });
         }

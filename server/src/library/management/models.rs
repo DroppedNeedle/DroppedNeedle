@@ -336,7 +336,8 @@ pub struct ItemDiff {
 #[serde(default)]
 pub struct ScrubbedTag {
     pub key: String,
-    /// Always `text`: only text items are scrubbed.
+    /// `text`, or `binary` for an ID3 comment, link, private or object
+    /// frame (its values then give each frame's size).
     pub value_kind: String,
     pub values: Vec<String>,
     pub value_count: usize,

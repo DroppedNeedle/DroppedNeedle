@@ -147,7 +147,14 @@ pub struct PlanContext<'a> {
     pub tag_edit: Option<&'a TagEditIntent>,
     /// The job planning, which owns the generated files it stores.
     pub job_id: &'a str,
+    /// When loudness measuring stops for the whole run (see
+    /// [`RUN_ANALYSIS_BUDGET`]).
+    pub analysis_until: std::time::Instant,
 }
+
+/// Most time one run spends measuring loudness, over all its albums.
+/// Albums past it keep their ReplayGain and say so.
+pub const RUN_ANALYSIS_BUDGET: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
 /// A file's overrides with a pending tag edit on top: a reset drops the
 /// saved override so the edition's value comes back, and a written value
@@ -470,8 +477,7 @@ fn plan_file(
     )?;
     let mut tag_plan = tag_plan;
     if writable {
-        embed_cover(ctx, item, extras, &doc, &mut tag_plan)?;
-        scrub_pictures(ctx, item, &doc, &mut tag_plan);
+        plan_pictures(ctx, item, extras, &doc, &mut tag_plan)?;
     }
     item.facts
         .warnings
@@ -494,12 +500,29 @@ fn plan_file(
     item.diff.scrubbed_raw_tags = tag_plan
         .scrubbed
         .iter()
-        .map(|(key, values)| super::models::ScrubbedTag {
-            key: key.clone(),
-            value_kind: "text".to_owned(),
-            value_count: values.len(),
-            values: values.clone(),
-            truncated: false,
+        .map(|(key, values)| {
+            // ID3 comment, link, private and object frames are listed as
+            // raw payloads: the preview shows their size, not the bytes.
+            let binary = key
+                .strip_prefix("id3:")
+                .is_some_and(|id| !id.starts_with('T'));
+            super::models::ScrubbedTag {
+                key: key.clone(),
+                value_kind: if binary { "binary" } else { "text" }.to_owned(),
+                value_count: values.len(),
+                values: if binary {
+                    values
+                        .iter()
+                        .map(|value| {
+                            let padding = value.bytes().rev().take_while(|b| *b == b'=').count();
+                            format!("{} bytes", (value.len() / 4 * 3).saturating_sub(padding))
+                        })
+                        .collect()
+                } else {
+                    values.clone()
+                },
+                truncated: false,
+            }
         })
         .collect();
     item.diff.deferred_sources = tag_plan.deferred.clone();
@@ -680,12 +703,18 @@ fn format_word(mime: &str) -> &'static str {
     }
 }
 
-/// Embed the album's front cover when the profile asks for it (v2's
-/// embedded artwork): the file's other pictures stay as they are, a
-/// front cover already holding these bytes is left alone, and with
-/// "never replace with smaller" a larger one is kept. Undo puts the old
-/// pictures back from the before-state.
-fn embed_cover(
+/// Plan the file's embedded pictures (v2's embedded artwork and its
+/// picture scrub) as one list:
+/// - the front cover: with embedding on, the album's cover, unless the
+///   file's front already holds these bytes or, under "never replace with
+///   smaller", a larger image (then the file's own front stays);
+/// - the other pictures: kept, or removed by a scrub that does not
+///   preserve embedded art (which also drops the front when embedding is
+///   off).
+///
+/// A list equal to the file's own plans nothing, so a second run is
+/// "unchanged". Undo puts the old pictures back from the before-state.
+fn plan_pictures(
     ctx: &PlanContext<'_>,
     item: &mut PlannedItem,
     extras: &super::enrich::AlbumExtras,
@@ -694,58 +723,93 @@ fn embed_cover(
 ) -> Result<(), ItemReason> {
     use crate::library::publish::{PICTURES_KEY, PictureRef};
     let art = &ctx.pinned.profile.artwork;
-    if !art.embedded_enabled {
+    let metadata = &ctx.pinned.profile.metadata;
+    let scrub = metadata.enabled
+        && metadata.scrub_unmanaged_tags
+        && !metadata.preserve_embedded_art_during_scrub;
+    if !art.embedded_enabled && !scrub {
         return Ok(());
     }
-    let Some(cover) = &extras.cover else {
-        if extras.cover_deferred {
-            item.facts.warnings.push(
-                "The cover could not be fetched right now, so the embedded art is left as it is."
-                    .to_owned(),
-            );
-        }
-        return Ok(());
-    };
-    let Some(rendered) =
-        super::enrich::render_cover(&cover.bytes, art.embedded_maximum_size, art.embedded_format)
-    else {
-        item.facts
-            .warnings
-            .push("The cover image could not be read, so no art is embedded.".to_owned());
-        return Ok(());
-    };
     let Some(existing) = doc.pictures.clone() else {
         return Ok(());
     };
-    let new_sha = sha256_hex(&rendered.bytes);
     let current_front = existing.iter().find(|picture| picture.kind == 3);
-    if current_front.is_some_and(|picture| picture.sha256 == new_sha) {
+    let mut new_cover: Option<(PictureRef, super::enrich::RenderedCover)> = None;
+    if art.embedded_enabled {
+        match &extras.cover {
+            None if extras.cover_deferred => item.facts.warnings.push(
+                "The cover could not be fetched right now, so the embedded art is left as it is."
+                    .to_owned(),
+            ),
+            None => {}
+            Some(cover) => match super::enrich::render_cover(
+                &cover.bytes,
+                art.embedded_maximum_size,
+                art.embedded_format,
+            ) {
+                None => item
+                    .facts
+                    .warnings
+                    .push("The cover image could not be read, so no art is embedded.".to_owned()),
+                Some(rendered) => {
+                    let new_sha = sha256_hex(&rendered.bytes);
+                    let holds_it = current_front.is_some_and(|front| front.sha256 == new_sha);
+                    let larger = art.never_replace_with_smaller
+                        && current_front
+                            .and_then(|front| doc.picture_bytes.get(&front.sha256))
+                            .and_then(|bytes| image_size(bytes))
+                            .is_some_and(|(width, height)| {
+                                u64::from(width) * u64::from(height)
+                                    > u64::from(rendered.width) * u64::from(rendered.height)
+                            });
+                    if !holds_it && !larger {
+                        new_cover = Some((
+                            PictureRef {
+                                kind: 3,
+                                mime: rendered.mime.clone(),
+                                description: String::new(),
+                                sha256: new_sha,
+                                info: None,
+                            },
+                            rendered,
+                        ));
+                    }
+                }
+            },
+        }
+    }
+    let mut pictures: Vec<PictureRef> = Vec::new();
+    match &new_cover {
+        Some((picture, _)) => pictures.push(picture.clone()),
+        // Without a new cover the file's front stays, unless a scrub
+        // with embedding off removes all art.
+        None if art.embedded_enabled || !scrub => pictures.extend(current_front.cloned()),
+        None => {}
+    }
+    if !scrub {
+        pictures.extend(existing.iter().filter(|picture| picture.kind != 3).cloned());
+    }
+    let unchanged = pictures.len() == existing.len()
+        && pictures
+            .iter()
+            .zip(&existing)
+            .all(|(planned, held)| planned.same_picture(held));
+    if unchanged {
         return Ok(());
     }
-    if art.never_replace_with_smaller
-        && let Some(front) = current_front
-        && let Some((width, height)) = doc
-            .picture_bytes
-            .get(&front.sha256)
-            .and_then(|bytes| image_size(bytes))
-        && u64::from(width) * u64::from(height)
-            > u64::from(rendered.width) * u64::from(rendered.height)
-    {
-        return Ok(());
-    }
-    let mut pictures = vec![PictureRef {
-        kind: 3,
-        mime: rendered.mime.clone(),
-        description: String::new(),
-        sha256: keep_blob(ctx, &rendered.bytes)?,
-    }];
-    for picture in existing.iter().filter(|picture| picture.kind != 3) {
-        let Some(bytes) = doc.picture_bytes.get(&picture.sha256) else {
-            // Without its bytes a picture cannot be written back.
-            return Ok(());
-        };
-        keep_blob(ctx, bytes)?;
-        pictures.push(picture.clone());
+    for picture in &pictures {
+        match &new_cover {
+            Some((cover, rendered)) if cover.sha256 == picture.sha256 => {
+                keep_blob(ctx, &rendered.bytes)?;
+            }
+            _ => {
+                let Some(bytes) = doc.picture_bytes.get(&picture.sha256) else {
+                    // Without its bytes a picture cannot be written back.
+                    return Ok(());
+                };
+                keep_blob(ctx, bytes)?;
+            }
+        }
     }
     let describe = |list: &[PictureRef]| {
         serde_json::Value::from(
@@ -756,7 +820,7 @@ fn embed_cover(
     };
     tag_plan.mutations.push(FieldMutation {
         name: PICTURES_KEY.to_owned(),
-        operation: "set".to_owned(),
+        operation: if pictures.is_empty() { "clear" } else { "set" }.to_owned(),
         before: describe(&existing),
         after: describe(&pictures),
     });
@@ -765,60 +829,20 @@ fn embed_cover(
         pictures.iter().map(PictureRef::encode).collect(),
     );
     item.diff.artwork_changed = true;
-    item.desired.artwork.push(ArtworkChoice {
-        output_kind: "embedded_art".to_owned(),
-        image_type: "front".to_owned(),
-        source: "cover_art_archive".to_owned(),
-        mime_type: rendered.mime.clone(),
-        blob_sha256: new_sha,
-        width: rendered.width,
-        height: rendered.height,
-        format: format_word(&rendered.mime).to_owned(),
-        destination_relative_path: None,
-    });
+    if let Some((picture, rendered)) = new_cover {
+        item.desired.artwork.push(ArtworkChoice {
+            output_kind: "embedded_art".to_owned(),
+            image_type: "front".to_owned(),
+            source: "cover_art_archive".to_owned(),
+            mime_type: rendered.mime.clone(),
+            blob_sha256: picture.sha256,
+            width: rendered.width,
+            height: rendered.height,
+            format: format_word(&rendered.mime).to_owned(),
+            destination_relative_path: None,
+        });
+    }
     Ok(())
-}
-
-/// A scrub that does not preserve embedded art (v2's
-/// `preserve_embedded_art_during_scrub` off) removes the file's pictures,
-/// all but the front cover the run itself embeds. Undo puts them back.
-fn scrub_pictures(
-    ctx: &PlanContext<'_>,
-    item: &mut PlannedItem,
-    doc: &crate::library::publish::TagDocument,
-    tag_plan: &mut profile::TagPlan,
-) {
-    use crate::library::publish::{PICTURES_KEY, PictureRef};
-    let metadata = &ctx.pinned.profile.metadata;
-    if !metadata.enabled
-        || !metadata.scrub_unmanaged_tags
-        || metadata.preserve_embedded_art_during_scrub
-    {
-        return;
-    }
-    let Some(existing) = &doc.pictures else {
-        return;
-    };
-    let kept: Vec<String> = match tag_plan.updates.get(PICTURES_KEY) {
-        // The cover this run embeds comes first.
-        Some(planned) => planned.iter().take(1).cloned().collect(),
-        None => Vec::new(),
-    };
-    let current: Vec<String> = existing.iter().map(PictureRef::encode).collect();
-    if kept == current {
-        return;
-    }
-    tag_plan
-        .mutations
-        .retain(|mutation| mutation.name != PICTURES_KEY);
-    tag_plan.mutations.push(FieldMutation {
-        name: PICTURES_KEY.to_owned(),
-        operation: if kept.is_empty() { "clear" } else { "set" }.to_owned(),
-        before: serde_json::Value::from(existing.len()),
-        after: serde_json::Value::from(kept.len()),
-    });
-    tag_plan.updates.insert(PICTURES_KEY.to_owned(), kept);
-    item.diff.artwork_changed = true;
 }
 
 /// The album's cover file next to its tracks (v2's external artwork):
@@ -868,7 +892,10 @@ fn cover_file(
                         .to_lowercase()
                         .chars()
                         .collect();
-                    patterns.iter().any(|pattern| glob(pattern, &name))
+                    // A `cover.*` file counts even when the profile lists
+                    // no patterns: it is where this one would go.
+                    name.starts_with(&['c', 'o', 'v', 'e', 'r', '.'])
+                        || patterns.iter().any(|pattern| glob(pattern, &name))
                 })
             })
     };
@@ -945,9 +972,13 @@ const MAX_REPLAYGAIN_TRACKS: usize = 500;
 /// Measure the album's ReplayGain when the profile writes it and some file
 /// needs it. Files are decoded one at a time within a time budget; an
 /// album whose analysis cannot finish is left as it is, with a note.
+/// Album values come only from the whole album (`whole_album`): a run on
+/// single files measures their track values and leaves album values as
+/// they are.
 fn measure_replaygain(
     ctx: &PlanContext<'_>,
     tracks: &[CatalogTrack],
+    whole_album: bool,
     extras: &mut super::enrich::AlbumExtras,
 ) {
     use crate::library::tags::loudness::{self, Unanalysed};
@@ -970,7 +1001,7 @@ fn measure_replaygain(
         .collect();
     if settings.mode == ReplayGainMode::FillMissing {
         let mut needed = vec!["replaygain_track_gain", "replaygain_track_peak"];
-        if settings.album_aware {
+        if settings.album_aware && whole_album {
             needed.extend(["replaygain_album_gain", "replaygain_album_peak"]);
         }
         let complete = paths.iter().all(|(_, path)| {
@@ -988,12 +1019,20 @@ fn measure_replaygain(
         ));
         return;
     }
-    let deadline = std::time::Instant::now() + loudness::ALBUM_BUDGET;
+    let now = std::time::Instant::now();
+    if now >= ctx.analysis_until {
+        extras.replaygain_note = Some(
+            "This run's time for measuring loudness ran out, so the next run measures it."
+                .to_owned(),
+        );
+        return;
+    }
+    let deadline = (now + loudness::ALBUM_BUDGET).min(ctx.analysis_until);
     let mut measured = Vec::new();
     let mut whole = true;
     for (track_id, path) in &paths {
         let result = match path {
-            Some(path) => loudness::analyse(path, deadline),
+            Some(path) => loudness::analyse_cached(path, deadline),
             None => Err(Unanalysed::Undecodable),
         };
         match result {
@@ -1006,7 +1045,7 @@ fn measure_replaygain(
             Err(Unanalysed::Undecodable) => whole = false,
         }
     }
-    let album = (settings.album_aware && whole)
+    let album = (settings.album_aware && whole && whole_album)
         .then(|| {
             let all: Vec<&loudness::TrackLoudness> =
                 measured.iter().map(|(_, found)| found).collect();
@@ -1024,6 +1063,11 @@ fn measure_replaygain(
     } else if measured.iter().all(|(_, found)| found.loudness().is_none()) {
         extras.replaygain_note =
             Some("The album is silent, so there is no loudness to measure.".to_owned());
+    } else if settings.album_aware && !whole_album {
+        extras.replaygain_note = Some(
+            "Album gain is measured over the whole album, so pick the album to write it."
+                .to_owned(),
+        );
     }
     for (track_id, found) in measured {
         let Some(value) = found.loudness() else {
@@ -1368,7 +1412,8 @@ pub fn plan_album(
         };
     let mut extras = super::enrich::gather(&ctx.setup.enrichment, &ctx.pinned.profile, &release);
     extras.cover_owner = tracks.first().map(|track| track.id.clone());
-    measure_replaygain(ctx, tracks, &mut extras);
+    // A selection of single files is not the whole album.
+    measure_replaygain(ctx, tracks, scope.track_ids.is_none(), &mut extras);
     for (item, track) in items.iter_mut().zip(tracks) {
         let mut overrides = ctx
             .setup
@@ -1452,7 +1497,7 @@ pub fn plan_one(
                 .with_connection(|conn| overrides(conn, &scope.album_id, &track.id))?;
             let mut extras =
                 super::enrich::gather(&ctx.setup.enrichment, &ctx.pinned.profile, &release);
-            measure_replaygain(ctx, std::slice::from_ref(track), &mut extras);
+            measure_replaygain(ctx, std::slice::from_ref(track), false, &mut extras);
             if let Err(reason) = plan_file(
                 ctx,
                 &mut item,
