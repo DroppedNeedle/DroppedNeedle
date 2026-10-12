@@ -5219,7 +5219,7 @@
           "events"
         ],
         "summary": "Live events for the signed-in user.",
-        "description": "Event names: `activity.changed` and `snapshot` (now playing) go to\neveryone; `wanted_new_candidates`, `wanted_auto_dispatched`,\n`wanted_fulfilled`, `auto_download_enqueued`, `request_imported`,\n`playlist_imported`, `drop_import_updated`, `free_music_updated`,\n`personal_mix_refreshed`, `concerts_new` and `search_job_updated` go\nonly to the user they concern. Each `data:` line is one JSON payload (see the `ActivityChanged`,\n`NowPlayingSnapshot`, `WantedNotice`, `AutoDownloadEnqueued`,\n`RequestImported`, `PlaylistImported`, `DropImportUpdated`,\n`FreeMusicUpdated`, `PersonalMixRefreshed`, `ConcertsNew` and\n`SearchJobUpdated` schemas).",
+        "description": "Event names: `activity.changed` and `snapshot` (now playing) go to\neveryone; `wanted_new_candidates`, `wanted_auto_dispatched`,\n`wanted_fulfilled`, `auto_download_enqueued`, `request_imported`,\n`playlist_imported`, `drop_import_updated`,\n`personal_mix_refreshed`, `concerts_new` and `search_job_updated` go\nonly to the user they concern. Each `data:` line is one JSON payload (see the `ActivityChanged`,\n`NowPlayingSnapshot`, `WantedNotice`, `AutoDownloadEnqueued`,\n`RequestImported`, `PlaylistImported`, `DropImportUpdated`,\n`PersonalMixRefreshed`, `ConcertsNew` and\n`SearchJobUpdated` schemas).",
         "operationId": "events_stream",
         "responses": {
           "200": {
@@ -32848,29 +32848,6 @@
               }
             ],
             "default": "flac"
-          }
-        }
-      },
-      "FreeMusicUpdated": {
-        "type": "object",
-        "description": "`free_music_updated`: one of the user's Free Music tasks moved.",
-        "required": [
-          "event_id",
-          "task_id",
-          "status"
-        ],
-        "properties": {
-          "event_id": {
-            "type": "string",
-            "description": "Id for de-duplication."
-          },
-          "status": {
-            "type": "string",
-            "description": "Its status now (`completed` makes the UI refresh library views)."
-          },
-          "task_id": {
-            "type": "string",
-            "description": "The task that moved."
           }
         }
       },

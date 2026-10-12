@@ -786,7 +786,6 @@ use crate::{
         crate::events::RequestImported,
         crate::events::PlaylistImported,
         crate::events::DropImportUpdated,
-        crate::events::FreeMusicUpdated,
         crate::events::PersonalMixRefreshed,
         crate::events::ConcertsNew,
         crate::events::DownloadProgress,

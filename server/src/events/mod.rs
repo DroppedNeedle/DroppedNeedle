@@ -19,9 +19,9 @@
 //! - `downloads.changed`: [`downloads::run`], from the durable download
 //!   activity revision.
 //! - `cache.sync`: the library image precache, as it moves.
-//! - `concerts_new`, `personal_mix_refreshed`, `drop_import_updated`,
-//!   `free_music_updated`: their features call [`EventHub::notify`] with
-//!   the matching [`UserNotice`].
+//! - `concerts_new`, `personal_mix_refreshed`, `drop_import_updated`:
+//!   their features call [`EventHub::notify`] with the matching
+//!   [`UserNotice`].
 //!
 //! Bundles built before the application state hold an [`EventSink`];
 //! [`crate::AppState::with_events`] attaches the hub to all of them.
@@ -36,6 +36,6 @@ pub use http::{SessionCheck, router, session_check};
 pub use hub::{EventHub, EventSink, Subscription};
 pub use model::{
     ActivityChanged, AutoDownloadEnqueued, CacheSyncProgress, ConcertsNew, DownloadProgress,
-    DownloadsChanged, DropImportUpdated, Event, FreeMusicUpdated, PersonalMixRefreshed,
-    PlaylistImported, RequestImported, SearchJobUpdated, UserNotice, WantedNotice, new_event_id,
+    DownloadsChanged, DropImportUpdated, Event, PersonalMixRefreshed, PlaylistImported,
+    RequestImported, SearchJobUpdated, UserNotice, WantedNotice, new_event_id,
 };

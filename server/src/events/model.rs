@@ -30,8 +30,6 @@ pub mod names {
     pub const PLAYLIST_IMPORTED: &str = "playlist_imported";
     /// The user's drop-import job moved.
     pub const DROP_IMPORT_UPDATED: &str = "drop_import_updated";
-    /// The user's Free Music task moved.
-    pub const FREE_MUSIC_UPDATED: &str = "free_music_updated";
     /// The user's weekly mix was rebuilt (or could not be).
     pub const PERSONAL_MIX_REFRESHED: &str = "personal_mix_refreshed";
     /// New concerts were found for an artist the user follows.
@@ -149,17 +147,6 @@ pub struct DropImportUpdated {
     pub event_id: String,
     /// The job that moved.
     pub job_id: String,
-}
-
-/// `free_music_updated`: one of the user's Free Music tasks moved.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
-pub struct FreeMusicUpdated {
-    /// Id for de-duplication.
-    pub event_id: String,
-    /// The task that moved.
-    pub task_id: String,
-    /// Its status now (`completed` makes the UI refresh library views).
-    pub status: String,
 }
 
 /// `personal_mix_refreshed`: the weekly mix build finished.
@@ -304,8 +291,6 @@ pub enum UserNotice {
     PlaylistImported(PlaylistImported),
     /// `drop_import_updated`.
     DropImportUpdated(DropImportUpdated),
-    /// `free_music_updated`.
-    FreeMusicUpdated(FreeMusicUpdated),
     /// `personal_mix_refreshed`.
     PersonalMixRefreshed(PersonalMixRefreshed),
     /// `concerts_new`.
@@ -327,7 +312,6 @@ impl UserNotice {
             Self::RequestImported(_) => names::REQUEST_IMPORTED,
             Self::PlaylistImported(_) => names::PLAYLIST_IMPORTED,
             Self::DropImportUpdated(_) => names::DROP_IMPORT_UPDATED,
-            Self::FreeMusicUpdated(_) => names::FREE_MUSIC_UPDATED,
             Self::PersonalMixRefreshed(_) => names::PERSONAL_MIX_REFRESHED,
             Self::ConcertsNew(_) => names::CONCERTS_NEW,
             Self::DownloadProgress(_) => names::DOWNLOAD_PROGRESS,
@@ -344,7 +328,6 @@ impl UserNotice {
             Self::RequestImported(payload) => serde_json::to_string(payload),
             Self::PlaylistImported(payload) => serde_json::to_string(payload),
             Self::DropImportUpdated(payload) => serde_json::to_string(payload),
-            Self::FreeMusicUpdated(payload) => serde_json::to_string(payload),
             Self::PersonalMixRefreshed(payload) => serde_json::to_string(payload),
             Self::ConcertsNew(payload) => serde_json::to_string(payload),
             Self::DownloadProgress(payload) => serde_json::to_string(payload),

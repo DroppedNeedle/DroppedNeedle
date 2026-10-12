@@ -2592,12 +2592,12 @@ export interface paths {
          * @description Event names: `activity.changed` and `snapshot` (now playing) go to
          *     everyone; `wanted_new_candidates`, `wanted_auto_dispatched`,
          *     `wanted_fulfilled`, `auto_download_enqueued`, `request_imported`,
-         *     `playlist_imported`, `drop_import_updated`, `free_music_updated`,
+         *     `playlist_imported`, `drop_import_updated`,
          *     `personal_mix_refreshed`, `concerts_new` and `search_job_updated` go
          *     only to the user they concern. Each `data:` line is one JSON payload (see the `ActivityChanged`,
          *     `NowPlayingSnapshot`, `WantedNotice`, `AutoDownloadEnqueued`,
          *     `RequestImported`, `PlaylistImported`, `DropImportUpdated`,
-         *     `FreeMusicUpdated`, `PersonalMixRefreshed`, `ConcertsNew` and
+         *     `PersonalMixRefreshed`, `ConcertsNew` and
          *     `SearchJobUpdated` schemas).
          */
         get: operations["events_stream"];
@@ -13951,15 +13951,6 @@ export interface components {
             enabled: boolean;
             /** @default flac */
             preferred_format: components["schemas"]["AudioFormat"];
-        };
-        /** @description `free_music_updated`: one of the user's Free Music tasks moved. */
-        FreeMusicUpdated: {
-            /** @description Id for de-duplication. */
-            event_id: string;
-            /** @description Its status now (`completed` makes the UI refresh library views). */
-            status: string;
-            /** @description The task that moved. */
-            task_id: string;
         };
         /**
          * @description Frontend cache TTLs in backend units (milliseconds), verbatim from
