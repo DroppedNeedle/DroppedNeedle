@@ -2,6 +2,7 @@
 	import { X, Info, ExternalLink } from 'lucide-svelte';
 	import { slide } from 'svelte/transition';
 	import { getApiUrl } from '$lib/api/api-utils';
+	import SafeHtml from '$lib/components/SafeHtml.svelte';
 
 	interface Props {
 		open: boolean;
@@ -82,8 +83,8 @@
 				{/if}
 
 				{#if notes}
-					<!-- eslint-disable-next-line svelte/no-at-html-tags -- Notes from Last.fm contain HTML -->
-					<p class="text-sm leading-relaxed text-base-content/80">{@html notes}</p>
+					<!-- Last.fm wiki text relayed by Navidrome. Anyone can edit it. -->
+					<SafeHtml html={notes} class="text-sm leading-relaxed text-base-content/80" />
 				{:else}
 					<p class="text-center text-base-content/40 py-4">No notes available for this release.</p>
 				{/if}

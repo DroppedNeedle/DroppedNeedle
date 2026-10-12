@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { isWhatsNewDismissed, dismissWhatsNew } from '$lib/stores/version.svelte';
-	import { renderMarkdown } from '$lib/utils/markdown';
+	import SafeHtml from '$lib/components/SafeHtml.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { X, Sparkles, ExternalLink } from 'lucide-svelte';
 	import type { GitHubRelease } from '$lib/queries/VersionQuery.svelte';
@@ -14,7 +14,6 @@
 	let { currentVersion, buildDate, releases }: Props = $props();
 
 	let dialogEl: HTMLDialogElement | undefined = $state();
-	let renderedSections: { tag: string; name: string | null; html: string }[] = $state([]);
 
 	const isDev = $derived(currentVersion === 'dev' || currentVersion === 'hosting-local');
 	const latestRelease = $derived(releases.length > 0 ? releases[0] : null);
@@ -31,32 +30,11 @@
 		currentVersion !== null && dismissKey !== null && hasContent && !isWhatsNewDismissed(dismissKey)
 	);
 
-	$effect(() => {
-		let aborted = false;
-		const withContent = releases.filter((r) => r.body && r.body.trim());
-		if (withContent.length === 0) {
-			renderedSections = [];
-			return;
-		}
-
-		Promise.all(
-			withContent.map(async (r) => ({
-				tag: r.tag_name,
-				name: r.name ?? null,
-				html: await renderMarkdown(r.body!)
-			}))
+	const sections = $derived(
+		releases.flatMap((r) =>
+			r.body && r.body.trim() ? [{ tag: r.tag_name, name: r.name ?? null, body: r.body }] : []
 		)
-			.then((sections) => {
-				if (!aborted) renderedSections = sections;
-			})
-			.catch(() => {
-				if (!aborted) renderedSections = [];
-			});
-
-		return () => {
-			aborted = true;
-		};
-	});
+	);
 
 	$effect(() => {
 		if (shouldShow && dialogEl && !dialogEl.open) {
@@ -118,11 +96,11 @@
 
 		<div class="divider my-0 opacity-10"></div>
 
-		{#if renderedSections.length > 0}
+		{#if sections.length > 0}
 			<div
 				class="whats-new-content release-notes-prose max-h-[55vh] max-w-none overflow-y-auto rounded-lg border border-base-content/5 bg-base-100/50 p-4 mt-4"
 			>
-				{#each renderedSections as section, i (section.tag)}
+				{#each sections as section, i (section.tag)}
 					{#if i > 0}
 						<div class="divider my-4 opacity-20"></div>
 					{/if}
@@ -133,15 +111,11 @@
 					>
 						{section.name ?? section.tag}
 					</p>
-					<div class="prose prose-sm max-w-none text-base-content/75">
-						<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized via DOMPurify -->
-						{@html section.html}
-					</div>
+					<SafeHtml
+						markdown={section.body}
+						class="prose prose-sm max-w-none text-base-content/75"
+					/>
 				{/each}
-			</div>
-		{:else if hasContent}
-			<div class="flex justify-center py-12">
-				<span class="loading loading-spinner loading-md text-accent/60"></span>
 			</div>
 		{/if}
 

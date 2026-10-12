@@ -4,7 +4,7 @@
 		getUpdateCheckQuery,
 		getReleaseHistoryQuery
 	} from '$lib/queries/VersionQuery.svelte';
-	import { renderMarkdown } from '$lib/utils/markdown';
+	import SafeHtml from '$lib/components/SafeHtml.svelte';
 	import { ExternalLink, RefreshCw, Info, Tag, Calendar, CircleArrowUp } from 'lucide-svelte';
 	import GitHubIcon from '$lib/components/GitHubIcon.svelte';
 
@@ -16,38 +16,6 @@
 	const updateCheck = $derived(updateCheckQuery.data);
 	const releases = $derived(releaseHistoryQuery.data);
 	const isCheckingUpdate = $derived(updateCheckQuery.isFetching);
-
-	let latestReleaseHtml = $state('');
-	let releaseHtmlMap = $state<Record<string, string>>({});
-
-	$effect(() => {
-		const body = updateCheck?.latest_release?.body;
-		if (body) {
-			renderMarkdown(body)
-				.then((html) => {
-					latestReleaseHtml = html;
-				})
-				.catch(() => {
-					latestReleaseHtml = '';
-				});
-		} else {
-			latestReleaseHtml = '';
-		}
-	});
-
-	$effect(() => {
-		if (!releases) return;
-		const currentMap = releaseHtmlMap;
-		for (const release of releases) {
-			if (release.tag_name in currentMap) continue;
-			const tag = release.tag_name;
-			renderMarkdown(release.body ?? '')
-				.then((html) => {
-					releaseHtmlMap = { ...releaseHtmlMap, [tag]: html };
-				})
-				.catch(() => {});
-		}
-	});
 
 	function formatDate(dateStr: string): string {
 		return new Date(dateStr).toLocaleDateString('en-US', {
@@ -205,15 +173,11 @@
 						{/if}
 					</div>
 				</div>
-				{#if latestReleaseHtml}
-					<div class="release-notes-prose prose prose-sm max-w-none text-base-content/80">
-						<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized via DOMPurify -->
-						{@html latestReleaseHtml}
-					</div>
-				{:else}
-					<div class="flex justify-center py-4">
-						<span class="loading loading-spinner loading-sm text-base-content/40"></span>
-					</div>
+				{#if updateCheck.latest_release.body}
+					<SafeHtml
+						markdown={updateCheck.latest_release.body}
+						class="release-notes-prose prose prose-sm max-w-none text-base-content/80"
+					/>
 				{/if}
 			</div>
 		</div>
@@ -277,17 +241,11 @@
 							</div>
 						</div>
 						<div class="collapse-content">
-							{#if releaseHtmlMap[release.tag_name]}
-								<div
+							{#if release.body}
+								<SafeHtml
+									markdown={release.body}
 									class="release-notes-prose prose prose-sm max-w-none text-base-content/80 pt-2"
-								>
-									<!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized via DOMPurify -->
-									{@html releaseHtmlMap[release.tag_name]}
-								</div>
-							{:else}
-								<div class="flex justify-center py-4">
-									<span class="loading loading-spinner loading-sm text-base-content/40"></span>
-								</div>
+								/>
 							{/if}
 							<div class="mt-4 pt-3 border-t border-base-content/10">
 								<a
