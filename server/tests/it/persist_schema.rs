@@ -72,7 +72,8 @@ async fn fresh_migrate_marks_version_and_seeds() {
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(catalog, (1, 0));
+    // 0026 bumps the revision once so caches drop pre-edition reads.
+    assert_eq!(catalog, (1, 1));
     let sentinels: Vec<(String, String)> =
         sqlx::query_as("SELECT id, kind FROM local_artists ORDER BY id")
             .fetch_all(&pool)

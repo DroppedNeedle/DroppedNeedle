@@ -49,6 +49,10 @@ use tower::ServiceExt as _;
 
 /// Fixed host for every request.
 const HOST: &str = "e2e.test";
+/// The two tied editions the scripted recall offers. Real release MBIDs,
+/// because choosing an edition checks the ID's shape.
+const REL_1: &str = "11111111-1111-4111-8111-111111111111";
+const REL_2: &str = "22222222-2222-4222-8222-222222222222";
 /// Wrapped shared secret saved into every scratch config.
 const TEST_WRAPPED_KEY: &str = "lib-journey-wrapped-key-1";
 
@@ -438,7 +442,7 @@ fn ambiguous_recall(library: &LibrarySetup, album_id: &str) -> RecallResult {
         ..Release::default()
     };
     RecallResult {
-        releases: vec![release("rg-1", "rel-1"), release("rg-2", "rel-2")],
+        releases: vec![release("rg-1", REL_1), release("rg-2", REL_2)],
         ..RecallResult::default()
     }
 }
@@ -598,12 +602,12 @@ async fn library_journey_scan_identify_review_organize_undo() {
         "POST",
         &format!("/api/v3/library/reviews/{review_id}/approve"),
         &headers,
-        Some(json!({"candidate_key": "rg-1:rel-1"})),
+        Some(json!({"candidate_key": format!("rg-1:{REL_1}")})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["review"]["state"], json!("approved"));
-    assert_eq!(body["identity"]["release_mbid"], json!("rel-1"));
+    assert_eq!(body["identity"]["release_mbid"], json!(REL_1));
     assert_eq!(body["identity"]["decision_source"], json!("manual"));
 
     // Auto-organize the whole album: preview, apply, and the files move
@@ -678,7 +682,7 @@ async fn library_journey_scan_identify_review_organize_undo() {
             .identify_store
             .album_identity(album_key)
             .expect("identity stays with the album");
-        assert_eq!(identity.release_mbid.as_deref(), Some("rel-1"));
+        assert_eq!(identity.release_mbid.as_deref(), Some(REL_1));
     }
 
     // Undo restores the exact before state: path and tags.
@@ -783,7 +787,7 @@ async fn library_journey_retag_apply_baseline_restore() {
         "POST",
         &format!("/api/v3/library/reviews/{review_id}/approve"),
         &headers,
-        Some(json!({"candidate_key": "rg-1:rel-1"})),
+        Some(json!({"candidate_key": format!("rg-1:{REL_1}")})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -826,7 +830,7 @@ async fn library_journey_retag_apply_baseline_restore() {
     // The retag also wrote the approved release's tags.
     let written = droppedneedle::library::tags::read_fields(&file).expect("fields read");
     let release_field = droppedneedle::library::tags::TagField::MusicBrainzReleaseId;
-    assert_eq!(written[&release_field], vec!["rel-1".to_owned()]);
+    assert_eq!(written[&release_field], vec![REL_1.to_owned()]);
 
     // Baseline restore returns the pre-management tags.
     let (status, body) = call(
@@ -1504,7 +1508,7 @@ async fn failed_approval_leaves_the_review_pending() {
         )
         .expect("trigger installs");
 
-    let refused = library.approve_review(&review[0].id, "curator", "rg-1:rel-1");
+    let refused = library.approve_review(&review[0].id, "curator", &format!("rg-1:{REL_1}"));
     assert!(
         matches!(refused, Err(ServiceError::Internal { .. })),
         "a store failure is an error, not an approval"
@@ -1632,7 +1636,7 @@ async fn identification_survives_restarts() {
         .album_identity(&album)
         .expect("identity survives");
     assert_eq!(identity.decision_source, DecisionSource::Manual);
-    assert_eq!(identity.release_mbid.as_deref(), Some("rel-1"));
+    assert_eq!(identity.release_mbid.as_deref(), Some(REL_1));
 }
 
 /// Identify the album, then have a person choose the first of two tied
@@ -1650,7 +1654,7 @@ async fn approve_first_candidate(library: &LibrarySetup, album: &str) {
 /// A person chooses `rel-1` as the album's edition.
 async fn choose_first_edition(library: &LibrarySetup, album: &str) {
     droppedneedle::library::operations::service::Operations::new(library)
-        .choose_edition(album, "rel-1", Some("curator"))
+        .choose_edition(album, REL_1, Some("curator"))
         .await
         .expect("edition chosen");
 }
@@ -1771,7 +1775,7 @@ async fn baseline_restore_removes_fields_added_later() {
     let retagged = read_fields(&moved).expect("fields read");
     assert_eq!(
         retagged[&TagField::MusicBrainzReleaseId],
-        vec!["rel-1".to_owned()]
+        vec![REL_1.to_owned()]
     );
 
     library

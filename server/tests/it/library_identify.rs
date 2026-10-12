@@ -303,7 +303,7 @@ async fn manual_survives_rescan() {
     assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP_A));
     assert_eq!(identity.decision_source, DecisionSource::Manual);
     assert_eq!(identity.row_revision, 3);
-    assert!(report.review_id.is_some());
+    assert_eq!(report.review_id, None);
     let brief: IdentityBrief = rig.service.identity_brief("album-1");
     assert!(!brief.revisable);
     assert_eq!(brief.protected_source, Some(DecisionSource::Manual));
