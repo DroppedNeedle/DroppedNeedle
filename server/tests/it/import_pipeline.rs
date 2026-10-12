@@ -90,11 +90,6 @@ async fn fresh_import_applies_everything() {
     .await
     .unwrap();
     assert_eq!(hash, "hash-u1");
-    let due: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM follow_due")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(due, 1, "imported follows requeue the follow poll");
     let runs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM import_runs")
         .fetch_one(&pool)
         .await
@@ -396,11 +391,6 @@ async fn reimport_is_identical_with_zero_writes() {
     assert_eq!(second.secrets_reencrypted, 0);
     assert_eq!(second.settings_applied, first.settings_applied);
     assert_eq!(second.settings_defaulted, first.settings_defaulted);
-    let due: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM follow_due")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(due, 1, "re-import must not double-queue the follow poll");
     assert_eq!(count(&pool, "auth_users").await, users_before);
     assert_eq!(count(&pool, "import_runs").await, runs_before);
     assert_eq!(

@@ -32,9 +32,10 @@ const PRE_UPGRADE_COPIES: &[&str] = &[
     "user_favorites",
 ];
 
-/// Tables v3 rebuilds from carried rows on its own, so nothing is lost:
-/// the landed-release index follows the carried downloads by trigger.
-const REBUILT_FROM_CARRIED: &[&str] = &["download_landed_groups"];
+/// Tables derived from carried rows, so nothing is lost by leaving them:
+/// v2's landed-release index only repeats the carried downloads, and v3
+/// keeps no such index.
+const DERIVED_FROM_CARRIED: &[&str] = &["download_landed_groups"];
 
 /// Sign-in state: everyone signs in again on v3.
 const SIGN_IN_STATE: &[&str] = &["auth_oidc_states", "auth_tokens", "spotify_oauth_states"];
@@ -162,7 +163,7 @@ pub fn left_behind_tables(
         .map_err(read_error)?;
     let mut out = Vec::new();
     for table in tables {
-        if carried.contains(table.as_str()) || REBUILT_FROM_CARRIED.contains(&table.as_str()) {
+        if carried.contains(table.as_str()) || DERIVED_FROM_CARRIED.contains(&table.as_str()) {
             continue;
         }
         let rows: i64 = db

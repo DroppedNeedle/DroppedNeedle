@@ -213,6 +213,5 @@ pub(crate) async fn apply(
     )
     .await?;
     run(conn, "DELETE FROM main.library_album_release_pins").await?;
-    run(conn, "DELETE FROM main.album_release_pins").await?;
     Ok(result)
 }

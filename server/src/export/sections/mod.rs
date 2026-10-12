@@ -348,7 +348,6 @@ pub const ALL: &[&TableSection] = &[
     &library::ARTIST_IDENTITIES,
     &library::ALBUM_IDENTITIES,
     &library::TRACK_IDENTITIES,
-    &library::REVIEW_DECISIONS,
     &library::KEPT_TAGGED,
     &library::REQUEUED_REVIEWS,
     &library::ALBUM_PINS,

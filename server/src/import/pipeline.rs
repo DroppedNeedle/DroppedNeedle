@@ -1,7 +1,7 @@
 //! v2 → v3 importer: parse → unlock → bundle check → settings → users →
 //! secrets → follows/approvals → concerts cities and seen markers → atomic
 //! commit → config write → section carry ([`super::carry`], one transaction
-//! per section) → post-import rebuild.
+//! per section).
 //!
 //! Every run, including dry-run,
 //! produces exactly one [`ImportReport`]; failures are exit codes, never
@@ -403,7 +403,7 @@ fn unseal_consumed(root: &Value, opener: &Opener) -> Result<HashMap<String, Stri
 }
 
 /// The guarded middle of the pipeline: settings staging, entity merge,
-/// atomic commit, config write, section carry, rebuild. Any error before
+/// atomic commit, config write, section carry. Any error before
 /// the config write leaves prior state untouched (DB rolls back, config
 /// unwritten). Carried sections commit one by one after that; a failure
 /// there keeps the sections already applied, and a rerun resumes.
@@ -447,16 +447,8 @@ async fn run_guarded(
         let mut tx = request.pool.begin().await?;
         let snapshot = DatabaseSnapshot::load(&mut tx).await?;
         tx.rollback().await?;
-        let plan = Plan::decide(root, &snapshot, unsealed, report);
+        Plan::decide(root, &snapshot, unsealed, report);
         super::carry::run(carry(true), report).await?;
-        for action in &plan.rebuild {
-            report.note(
-                "rebuild",
-                action.clone(),
-                "would_queue",
-                "dry-run: no writes performed".to_owned(),
-            );
-        }
         return Ok(());
     }
 
@@ -467,7 +459,6 @@ async fn run_guarded(
     let snapshot = DatabaseSnapshot::load(&mut tx).await?;
     let plan = Plan::decide(root, &snapshot, unsealed, report);
     plan.apply(&mut tx, &request.crypto, unsealed).await?;
-    queue_follow_refresh(&mut tx, &plan).await?;
     // A pure re-import (every record identical) writes nothing at all,
     // not even an audit row: idempotency means zero writes.
     let run_id = if plan.has_writes() {
@@ -521,9 +512,6 @@ async fn run_guarded(
             return Err(error.into());
         }
         (Ok(_), audited) => audited?,
-    }
-    for action in &plan.rebuild {
-        report.note("rebuild", action.clone(), "queued", String::new());
     }
     Ok(())
 }
@@ -1073,10 +1061,10 @@ enum Planned {
     },
 }
 
-/// The decided import: writes for real runs, rebuild notes for both.
+/// The decided import. A dry run decides it for the report and applies
+/// nothing.
 struct Plan {
     writes: Vec<Planned>,
-    rebuild: Vec<String>,
 }
 
 impl Plan {
@@ -1093,10 +1081,7 @@ impl Plan {
         unsealed: &HashMap<String, String>,
         report: &mut ReportBuilder,
     ) -> Self {
-        let mut plan = Self {
-            writes: Vec::new(),
-            rebuild: Vec::new(),
-        };
+        let mut plan = Self { writes: Vec::new() };
         let empty_list = Vec::new();
         let users = root
             .get("users")
@@ -1156,28 +1141,6 @@ impl Plan {
             .unwrap_or(&empty_list);
         for seen in event_seen {
             plan.decide_event_seen(seen, snapshot, &known_users, report);
-        }
-
-        let follow_keys: Vec<String> = plan
-            .writes
-            .iter()
-            .filter_map(|write| match write {
-                Planned::InsertFollow { record } | Planned::InsertApproval { record, .. } => {
-                    follow_key(record)
-                }
-                Planned::MergeFollow { key, .. } | Planned::MergeApproval { key, .. } => {
-                    Some(format!("{}|{}", key.0, key.1))
-                }
-                _ => None,
-            })
-            .collect();
-        // Only work this import really queues is listed: the follow
-        // refresh rows land in the same transaction as the follows.
-        if !follow_keys.is_empty() {
-            plan.rebuild.push(format!(
-                "follow-poll-requeue: {} artist(s)",
-                follow_keys.len()
-            ));
         }
         plan
     }
@@ -1907,12 +1870,6 @@ fn users_identical(existing: &UserRow, imported: &Value) -> bool {
         && existing.last_login_at == opt_str(imported, "last_login_at")
 }
 
-fn follow_key(record: &Value) -> Option<String> {
-    let user_id = record.get("user_id").and_then(Value::as_str)?;
-    let mbid = record.get("artist_mbid").and_then(Value::as_str)?;
-    Some(format!("{user_id}|{}", mbid.trim().to_lowercase()))
-}
-
 fn str_or(record: &Value, field: &str, fallback: &str) -> String {
     record
         .get(field)
@@ -2298,45 +2255,6 @@ fn with_plaintexts(value: &Value, crypto: &Crypto) -> Value {
         ),
         _ => value.clone(),
     }
-}
-
-// --- post-import rebuild -----------------------------------------------------
-
-/// Mark every touched artist due for a follow refresh, inside the import
-/// transaction so a committed import always carries its refresh.
-async fn queue_follow_refresh(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    plan: &Plan,
-) -> Result<(), ImportError> {
-    let mut mbids = HashSet::new();
-    for write in &plan.writes {
-        match write {
-            Planned::InsertFollow { record } | Planned::InsertApproval { record, .. } => {
-                if let Some(mbid) = record
-                    .get("artist_mbid")
-                    .and_then(Value::as_str)
-                    .map(|raw| raw.trim().to_lowercase())
-                {
-                    mbids.insert(mbid);
-                }
-            }
-            Planned::MergeFollow { key, .. } | Planned::MergeApproval { key, .. } => {
-                mbids.insert(key.1.clone());
-            }
-            _ => {}
-        }
-    }
-    for mbid in &mbids {
-        sqlx::query(
-            "INSERT INTO follow_due (artist_mbid_lower, due_at, failures, \
-             last_serviced) VALUES (?, 0, 0, 0) \
-             ON CONFLICT (artist_mbid_lower) DO UPDATE SET due_at = 0",
-        )
-        .bind(mbid)
-        .execute(&mut **tx)
-        .await?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

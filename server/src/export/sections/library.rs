@@ -434,44 +434,6 @@ pub const TRACK_IDENTITIES: TableSection = TableSection {
     left_behind: "",
 };
 
-/// Review states that record a curator's decision rather than a question.
-const DECIDED_REVIEW: &str = "s.state IN ('keep_tagged', 'excluded', 'resolved')";
-
-/// v2's decided identification reviews, kept as v2 wrote them.
-pub const REVIEW_DECISIONS: TableSection = TableSection {
-    name: "review_decision",
-    source: Source::Table {
-        table: "library_identification_reviews",
-        filter: DECIDED_REVIEW,
-        requires: &[],
-    },
-    target: Target::Table("library_identification_reviews"),
-    columns: &[
-        col("id"),
-        col("local_album_id"),
-        col("local_track_id"),
-        col("state"),
-        col("reason_code"),
-        col("input_revision"),
-        col("decision_revision"),
-        Column::new("decided_by_user_id").from_sql(live_user!("decided_by_user_id")),
-        col("created_at"),
-        col("updated_at"),
-        col("decided_at"),
-        col("row_revision"),
-        col("edition_uncertain"),
-        col("ranked_edition_keys_json"),
-    ],
-    key: &["id"],
-    unique: &[],
-    parents: &[
-        Parent::optional("local_albums", &[("local_album_id", "id")]),
-        Parent::optional("local_tracks", &[("local_track_id", "id")]),
-    ],
-    user_column: None,
-    left_behind: "open review questions; nothing to do, v3 asks them again from its identify queue",
-};
-
 /// Albums a curator told v2 to keep as tagged, as v3's own record of that
 /// decision: a rejected review, meaning "keep the album's tags, seal
 /// nothing". Albums v2 excluded become excluded reviews, so they show
@@ -501,7 +463,8 @@ pub const KEPT_TAGGED: TableSection = TableSection {
     unique: &[],
     parents: &[ON_ALBUM],
     user_column: None,
-    left_behind: "",
+    left_behind: "open and settled review questions; nothing to do: the matches they led to \
+                  are carried, and v3 asks the open ones again from its identify queue",
 };
 
 /// Albums v2 left waiting on a review question go back on v3's identify

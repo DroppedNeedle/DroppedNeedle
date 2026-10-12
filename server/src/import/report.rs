@@ -92,8 +92,7 @@ impl EntityCounts {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ReportItem {
     /// Entity name (`user`, `follow`, ...; `export` for file-level
-    /// findings, `settings` for section notes, `rebuild` for post-import
-    /// work).
+    /// findings, `settings` for section notes).
     pub entity: String,
     /// Semantic key (an MBID or username), never secret material.
     pub key: String,
@@ -305,8 +304,8 @@ impl ReportBuilder {
         }
     }
 
-    /// Record a file-level, settings, or rebuild note. These never touch
-    /// entity counters.
+    /// Record a file-level or settings note. These never touch entity
+    /// counters.
     pub fn note(&mut self, entity: &str, key: String, outcome: &str, detail: String) {
         self.items.push(ReportItem {
             entity: entity.to_owned(),

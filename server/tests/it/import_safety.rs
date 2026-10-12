@@ -21,7 +21,6 @@ async fn entity_counts(pool: &sqlx::SqlitePool) -> Vec<i64> {
         "auth_password_recovery_codes",
         "user_followed_artists",
         "auto_download_approvals",
-        "follow_due",
         "import_runs",
     ] {
         out.push(count(pool, table).await);
@@ -99,7 +98,7 @@ async fn kill_before_commit_recovers_clean() {
     let report = run_import(crashed).await;
     assert_eq!(report.exit.code, ExitCode::FailedInternal);
 
-    assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0]);
     assert_eq!(
         std::fs::read_to_string(&config_path).unwrap(),
         r#"{"wanted": {"enabled": false}}"#,
@@ -166,7 +165,7 @@ async fn dry_run_matches_real_import() {
 
     assert_eq!(preview.exit.code, ExitCode::Ok);
     assert!(preview.dry_run);
-    assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0]);
     assert!(
         std::fs::read_to_string(&config_path).is_err(),
         "dry-run writes nothing"
@@ -224,7 +223,7 @@ async fn wrong_passphrase_writes_nothing() {
     let report = run_import(request).await;
 
     assert_eq!(report.exit.code, ExitCode::EnvelopeAuthFailed);
-    assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0]);
     assert!(std::fs::read_to_string(&config_path).is_err());
     assert_ne!(PASSPHRASE, "the wrong passphrase");
 }
@@ -244,7 +243,7 @@ async fn wrong_passphrase_preserves_existing_config() {
     let report = run_import(request).await;
 
     assert_eq!(report.exit.code, ExitCode::EnvelopeAuthFailed);
-    assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0]);
     assert_eq!(
         std::fs::read_to_string(&config_path).unwrap(),
         r#"{"wanted": {"enabled": false}}"#
@@ -269,7 +268,7 @@ async fn corrupt_v3_config_refuses_with_zero_db_writes() {
     .await;
 
     assert_eq!(report.exit.code, ExitCode::FailedInternal);
-    assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0]);
     assert_eq!(std::fs::read_to_string(&config_path).unwrap(), "{not json");
 }
 
@@ -363,7 +362,7 @@ async fn validation_failure_writes_nothing() {
     .await;
 
     assert_eq!(report.exit.code, ExitCode::FailedValidation);
-    assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0]);
     assert_eq!(
         std::fs::read_to_string(&config_path).unwrap(),
         r#"{"wanted": {"enabled": false}}"#
@@ -390,7 +389,7 @@ async fn tampered_export_fails_the_checksum() {
         let report = run_import(import_request(&mutant, pool.clone(), config_path, crypto)).await;
         assert_eq!(report.exit.code, ExitCode::FailedValidation);
         assert!(report.exit.message.contains("CHECKSUM_MISMATCH"));
-        assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(entity_counts(&pool).await, vec![0, 0, 0, 0, 0, 0, 0]);
     }
 }
 
