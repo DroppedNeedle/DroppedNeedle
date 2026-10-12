@@ -43,5 +43,6 @@ AGENTS.md.bak
 CLAUDE.md
 Docs/
 .agents/
+.claude/
 .dev-notes/
 .github/instructions/
