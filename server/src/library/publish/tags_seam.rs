@@ -63,30 +63,65 @@ pub struct PictureRef {
     pub mime: String,
     pub description: String,
     pub sha256: String,
+    /// FLAC/Ogg picture-block facts (width, height, colour depth,
+    /// colours used) as the file held them; `None` for other formats and
+    /// for art a run embeds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub info: Option<[u32; 4]>,
 }
 
 impl PictureRef {
     /// The managed-update value for this picture
-    /// (`kind<TAB>mime<TAB>description<TAB>sha256`).
+    /// (`kind<TAB>mime<TAB>description<TAB>sha256`, then
+    /// `<TAB>width,height,depth,colours` when the facts are known).
     pub fn encode(&self) -> String {
-        format!(
+        let mut out = format!(
             "{}\t{}\t{}\t{}",
             self.kind,
             self.mime,
             self.description.replace('\t', " "),
             self.sha256
-        )
+        );
+        if let Some([width, height, depth, colours]) = self.info {
+            out.push_str(&format!("\t{width},{height},{depth},{colours}"));
+        }
+        out
     }
 
     /// Parse [`Self::encode`].
     pub fn decode(value: &str) -> Option<Self> {
-        let mut parts = value.splitn(4, '\t');
+        let mut parts = value.splitn(5, '\t');
+        let kind = parts.next()?.parse().ok()?;
+        let mime = parts.next()?.to_owned();
+        let description = parts.next()?.to_owned();
+        let sha256 = parts.next()?.to_owned();
+        let info = match parts.next() {
+            None => None,
+            Some(facts) => {
+                let numbers: Vec<u32> = facts
+                    .split(',')
+                    .map(|part| part.parse().ok())
+                    .collect::<Option<_>>()?;
+                Some(<[u32; 4]>::try_from(numbers).ok()?)
+            }
+        };
         Some(Self {
-            kind: parts.next()?.parse().ok()?,
-            mime: parts.next()?.to_owned(),
-            description: parts.next()?.to_owned(),
-            sha256: parts.next()?.to_owned(),
+            kind,
+            mime,
+            description,
+            sha256,
+            info,
         })
+    }
+
+    /// The same picture in the file: type, MIME type, description and
+    /// bytes (picture-block facts are not compared).
+    #[must_use]
+    pub fn same_picture(&self, other: &Self) -> bool {
+        self.kind == other.kind
+            && self.mime == other.mime
+            && self.description == other.description
+            && self.sha256 == other.sha256
     }
 }
 

@@ -206,11 +206,16 @@ pub fn save_tags(path: &Path, edits: &[TagEdit]) -> Result<SaveReport, TagsError
 /// One embedded picture, as written and as read back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PictureSpec {
-    /// ID3 / FLAC picture type (3 is the front cover). MP4 stores none.
+    /// ID3 / FLAC picture type (3 is the front cover). MP4 stores none:
+    /// its first `covr` reads as the front cover, the rest as 0.
     pub kind: u8,
     pub mime: String,
     pub description: String,
     pub data: Vec<u8>,
+    /// FLAC and Ogg picture-block facts (width, height, colour depth,
+    /// colours used) as the file held them, so a restore writes them back
+    /// unchanged. `None` lets the writer work them out from the image.
+    pub info: Option<[u32; 4]>,
 }
 
 /// [`save_tags`], also replacing the file's embedded pictures with
@@ -241,8 +246,8 @@ pub fn save_tags_with_pictures(
         path: path.display().to_string(),
         reason: error.to_string(),
     })?;
-    let snapshot = Snapshot::capture(format, &original_bytes, &tagged)
-        .map_err(|refusal| refused(path, refusal))?;
+    let snapshot =
+        Snapshot::capture(format, &original_bytes).map_err(|refusal| refused(path, refusal))?;
     snapshot
         .check_file_state()
         .map_err(|refusal| refused(path, refusal))?;
@@ -258,12 +263,13 @@ pub fn save_tags_with_pictures(
         path: temp.path().display().to_string(),
         source,
     })?;
-    let temp_tagged = lofty::read_from_path(temp.path()).map_err(|error| TagsError::TagRead {
+    // The written copy must still read as a whole.
+    lofty::read_from_path(temp.path()).map_err(|error| TagsError::TagRead {
         path: temp.path().display().to_string(),
         reason: error.to_string(),
     })?;
-    let after = Snapshot::capture(format, &temp_bytes, &temp_tagged)
-        .map_err(|refusal| refused(temp.path(), refusal))?;
+    let after =
+        Snapshot::capture(format, &temp_bytes).map_err(|refusal| refused(temp.path(), refusal))?;
     snapshot
         .verify_against(&after, &native, pictures)
         .map_err(|refusal| refused(path, refusal))?;
@@ -291,8 +297,9 @@ pub struct FieldDocument {
     /// Text items outside the writable fields (a composer, an encoder
     /// note, a custom `TXXX`), keyed the way [`TagEdit::native`] takes
     /// them, so a scrub can remove them and a restore put them back.
-    /// Pictures and non-text items are not listed: they are never
-    /// scrubbed.
+    /// ID3 comment, URL, private and object frames are listed whole
+    /// (`id3:COMM`, one base64 payload per frame). Pictures and other
+    /// non-text items are not listed: they are never scrubbed.
     pub native: BTreeMap<String, Vec<String>>,
     /// Embedded pictures in file order.
     pub pictures: Vec<PictureSpec>,
@@ -351,38 +358,94 @@ pub fn read_document(path: &Path) -> Result<FieldDocument, TagsError> {
         AudioFormat::Aac | AudioFormat::Wav => Vec::new(),
     };
     collect_reads(&mut document, reads);
-    document.pictures = read_pictures(path, format);
+    document.pictures = read_pictures(&bytes, format).map_err(unreadable)?;
     Ok(document)
 }
 
-/// A file's embedded pictures as lofty reads them (none when unreadable).
-fn read_pictures(path: &Path, format: AudioFormat) -> Vec<PictureSpec> {
-    let tag_type = match format {
-        AudioFormat::Mp3 => TagType::Id3v2,
-        AudioFormat::Flac | AudioFormat::Ogg | AudioFormat::Opus => TagType::VorbisComments,
-        AudioFormat::M4a => TagType::Mp4Ilst,
-        AudioFormat::Aac | AudioFormat::Wav => return Vec::new(),
+/// A file's embedded pictures in file order. A file lofty cannot read is
+/// an error, never "no pictures": a plan built on that would remove
+/// them.
+fn read_pictures(bytes: &[u8], format: AudioFormat) -> Result<Vec<PictureSpec>, Refusal> {
+    use lofty::file::AudioFile as _;
+    use lofty::ogg::OggPictureStorage as _;
+    fn failed<E: std::error::Error>(error: E) -> Refusal {
+        Refusal::SaveFailed {
+            reason: format!("pictures unreadable: {}", error_chain(&error)),
+        }
+    }
+    let spec = |picture: &lofty::picture::Picture, info: Option<[u32; 4]>| PictureSpec {
+        kind: picture.pic_type().as_u8(),
+        mime: picture
+            .mime_type()
+            .map(|mime| mime.as_str().to_owned())
+            .unwrap_or_default(),
+        description: picture.description().unwrap_or_default().to_owned(),
+        data: picture.data().to_vec(),
+        info,
     };
-    let Ok(tagged) = lofty::read_from_path(path) else {
-        return Vec::new();
+    let with_info = |list: &[(lofty::picture::Picture, lofty::picture::PictureInformation)]| {
+        list.iter()
+            .map(|(picture, info)| {
+                spec(
+                    picture,
+                    Some([info.width, info.height, info.color_depth, info.num_colors]),
+                )
+            })
+            .collect::<Vec<_>>()
     };
-    tagged
-        .tag(tag_type)
-        .map(|tag| {
-            tag.pictures()
-                .iter()
-                .map(|picture| PictureSpec {
-                    kind: picture.pic_type().as_u8(),
-                    mime: picture
-                        .mime_type()
-                        .map(|mime| mime.as_str().to_owned())
-                        .unwrap_or_default(),
-                    description: picture.description().unwrap_or_default().to_owned(),
-                    data: picture.data().to_vec(),
+    let options = lofty::config::ParseOptions::new().read_properties(false);
+    let mut reader = std::io::Cursor::new(bytes);
+    match format {
+        AudioFormat::Flac => {
+            let file = lofty::flac::FlacFile::read_from(&mut reader, options).map_err(failed)?;
+            // Pictures sit in their own blocks; any inside the comment
+            // block come after them, as lofty writes them back.
+            let mut out = with_info(file.pictures());
+            if let Some(comments) = file.vorbis_comments() {
+                out.extend(with_info(comments.pictures()));
+            }
+            Ok(out)
+        }
+        AudioFormat::Ogg => {
+            let file = lofty::ogg::VorbisFile::read_from(&mut reader, options).map_err(failed)?;
+            Ok(with_info(file.vorbis_comments().pictures()))
+        }
+        AudioFormat::Opus => {
+            let file = lofty::ogg::OpusFile::read_from(&mut reader, options).map_err(failed)?;
+            Ok(with_info(file.vorbis_comments().pictures()))
+        }
+        AudioFormat::Mp3 | AudioFormat::M4a => {
+            let tag_type = if format == AudioFormat::Mp3 {
+                TagType::Id3v2
+            } else {
+                TagType::Mp4Ilst
+            };
+            let tagged = lofty::probe::Probe::new(&mut reader)
+                .options(options)
+                .guess_file_type()
+                .map_err(failed)?
+                .read()
+                .map_err(failed)?;
+            let mut out: Vec<PictureSpec> = tagged
+                .tag(tag_type)
+                .map(|tag| {
+                    tag.pictures()
+                        .iter()
+                        .map(|picture| spec(picture, None))
+                        .collect()
                 })
-                .collect()
-        })
-        .unwrap_or_default()
+                .unwrap_or_default();
+            // MP4 stores no picture type; the first `covr` is the front
+            // cover by convention (iTunes, Picard).
+            if format == AudioFormat::M4a {
+                for (index, picture) in out.iter_mut().enumerate() {
+                    picture.kind = if index == 0 { 3 } else { 0 };
+                }
+            }
+            Ok(out)
+        }
+        AudioFormat::Aac | AudioFormat::Wav => Ok(Vec::new()),
+    }
 }
 
 /// ID3 text frames no writable field owns, in either tag version.
@@ -422,7 +485,35 @@ fn id3_native(tag: &DeepId3) -> BTreeMap<String, Vec<String>> {
         }
         out.insert(format!("id3:{key}"), text.values.clone());
     }
+    // Comment, link, private and object frames, as v2's scrub saw them:
+    // each value is one frame's raw payload (base64), so a restore writes
+    // the same bytes back.
+    for frame in &tag.frames {
+        if frame.text.is_some()
+            || !is_raw_native_id(&frame.id)
+            || frame.payload.len() > MAX_RAW_NATIVE_BYTES
+        {
+            continue;
+        }
+        out.entry(format!("id3:{}", frame.id))
+            .or_insert_with(Vec::new)
+            .push(base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                &frame.payload,
+            ));
+    }
     out
+}
+
+/// Largest frame listed as a native item (a bigger object stays as it
+/// is: never scrubbed, never copied into a tag document).
+const MAX_RAW_NATIVE_BYTES: usize = 1 << 20;
+
+/// ID3 frames listed whole as native items: comments, URL links,
+/// private and encapsulated-object frames.
+fn is_raw_native_id(id: &str) -> bool {
+    matches!(id, "COMM" | "PRIV" | "GEOB")
+        || (id.len() == 4 && id.starts_with('W') && id.bytes().all(|b| b.is_ascii_alphanumeric()))
 }
 
 /// Vorbis comments no writable field owns (pictures excluded).
@@ -511,6 +602,19 @@ fn native_edit(snapshot: &Snapshot, key: &str, values: &[String]) -> Result<Nati
                 Ok(NativeEdit::Id3Text {
                     id: rest.to_owned(),
                     values,
+                })
+            }
+            None if is_raw_native_id(rest) => {
+                let payloads = values
+                    .iter()
+                    .map(|value| {
+                        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, value)
+                            .map_err(|_| foreign())
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(NativeEdit::Id3Raw {
+                    id: rest.to_owned(),
+                    payloads,
                 })
             }
             None => Err(foreign()),
@@ -1460,40 +1564,28 @@ enum Snapshot {
     Id3 {
         had_tag: bool,
         tag: Option<DeepId3>,
-        pictures: Vec<Vec<u8>>,
+        pictures: Vec<PictureSpec>,
     },
     Vorbis {
         had_tag: bool,
         truth: Option<VorbisTruth>,
-        pictures: Vec<Vec<u8>>,
+        pictures: Vec<PictureSpec>,
     },
     Mp4 {
         atoms: Option<Vec<Mp4AtomTruth>>,
-        pictures: Vec<Vec<u8>>,
+        pictures: Vec<PictureSpec>,
     },
 }
 
 impl Snapshot {
-    fn capture(
-        format: AudioFormat,
-        file_bytes: &[u8],
-        tagged: &lofty::file::TaggedFile,
-    ) -> Result<Self, Refusal> {
-        let pictures_of = |tag_type: TagType| -> Vec<Vec<u8>> {
-            tagged.tag(tag_type).map_or_else(Vec::new, |tag| {
-                tag.pictures()
-                    .iter()
-                    .map(|pic| pic.data().to_vec())
-                    .collect()
-            })
-        };
+    fn capture(format: AudioFormat, file_bytes: &[u8]) -> Result<Self, Refusal> {
         match format {
             AudioFormat::Mp3 => {
                 let tag = parse_id3_deep(file_bytes)?;
                 Ok(Snapshot::Id3 {
                     had_tag: tag.is_some(),
                     tag,
-                    pictures: pictures_of(TagType::Id3v2),
+                    pictures: read_pictures(file_bytes, format)?,
                 })
             }
             AudioFormat::Flac | AudioFormat::Ogg | AudioFormat::Opus => {
@@ -1501,12 +1593,12 @@ impl Snapshot {
                 Ok(Snapshot::Vorbis {
                     had_tag: truth.is_some(),
                     truth,
-                    pictures: pictures_of(TagType::VorbisComments),
+                    pictures: read_pictures(file_bytes, format)?,
                 })
             }
             AudioFormat::M4a => Ok(Snapshot::Mp4 {
                 atoms: parse_mp4_atoms(file_bytes)?,
-                pictures: pictures_of(TagType::Mp4Ilst),
+                pictures: read_pictures(file_bytes, format)?,
             }),
             AudioFormat::Aac | AudioFormat::Wav => Err(Refusal::ReadOnlyFormat {
                 format: format.as_str().to_owned(),
@@ -1570,11 +1662,28 @@ impl Snapshot {
         edits: &[NativeEdit],
         pictures: Option<&[PictureSpec]>,
     ) -> Result<(), Refusal> {
-        let expected: Option<Vec<Vec<u8>>> =
-            pictures.map(|list| list.iter().map(|picture| picture.data.clone()).collect());
-        let pictures_hold = |before: &Vec<Vec<u8>>, after: &Vec<Vec<u8>>| match &expected {
-            Some(expected) => expected == after,
-            None => before == after,
+        let expected = pictures;
+        let mp4 = matches!(self, Snapshot::Mp4 { .. });
+        // MP4 keeps only the bytes; ID3 and FLAC/Ogg keep the type, MIME
+        // type and description too, and picture-block facts when given.
+        let same = |want: &PictureSpec, got: &PictureSpec, facts: bool| {
+            want.data == got.data
+                && (mp4
+                    || (want.kind == got.kind
+                        && want.mime == got.mime
+                        && want.description == got.description
+                        && (!facts || want.info.is_none() || want.info == got.info)))
+        };
+        let pictures_hold = |before: &Vec<PictureSpec>, after: &Vec<PictureSpec>| {
+            let (want, facts): (&[PictureSpec], bool) = match expected {
+                Some(expected) => (expected, true),
+                None => (before.as_slice(), false),
+            };
+            want.len() == after.len()
+                && want
+                    .iter()
+                    .zip(after)
+                    .all(|(want, got)| same(want, got, facts))
         };
         match (self, after) {
             (
@@ -1682,6 +1791,11 @@ enum NativeEdit {
     Id3Lyrics {
         text: Option<String>,
     },
+    /// Every frame with this id, as raw payloads (none removes them).
+    Id3Raw {
+        id: String,
+        payloads: Vec<Vec<u8>>,
+    },
     Vorbis {
         key: String,
         values: Vec<String>,
@@ -1713,6 +1827,7 @@ impl NativeEdit {
             NativeEdit::Id3User { desc, .. } => Some(format!("TXXX:{desc}")),
             NativeEdit::Id3Ufid { owner, .. } => Some(format!("UFID:{owner}")),
             NativeEdit::Id3Lyrics { .. } => Some("USLT".to_owned()),
+            NativeEdit::Id3Raw { id, .. } => Some(id.clone()),
             _ => None,
         }
     }
@@ -2343,6 +2458,7 @@ fn verify_id3(
             }
             NativeEdit::Id3Ufid { value, .. } => value.is_none(),
             NativeEdit::Id3Lyrics { text } => text.is_none(),
+            NativeEdit::Id3Raw { payloads, .. } => payloads.is_empty(),
             _ => true,
         });
     match (had_tag, before, after) {
@@ -2438,6 +2554,13 @@ fn verify_id3(
                         && decode_uslt(&landed[0].payload).ok().as_deref() == Some(text.as_str())
                 }
             },
+            NativeEdit::Id3Raw { payloads, .. } => {
+                let mut want: Vec<&Vec<u8>> = payloads.iter().collect();
+                let mut got: Vec<&Vec<u8>> = landed.iter().map(|frame| &frame.payload).collect();
+                want.sort();
+                got.sort();
+                want == got
+            }
             _ => true,
         };
         if !ok {
@@ -2867,6 +2990,16 @@ fn apply_edits(
                             ));
                         }
                     }
+                    NativeEdit::Id3Raw { id, payloads } => {
+                        let frame_id = FrameId::Valid(std::borrow::Cow::Owned(id.clone()));
+                        let _ = native.remove(&frame_id).count();
+                        for payload in payloads {
+                            native.insert(Frame::Binary(lofty::id3::v2::BinaryFrame::new(
+                                frame_id.clone(),
+                                payload.clone(),
+                            )));
+                        }
+                    }
                     NativeEdit::Id3Lyrics { text } => {
                         native.retain(|frame| !matches!(frame, Frame::UnsynchronizedText(_)));
                         if let Some(text) = text {
@@ -2942,8 +3075,16 @@ fn apply_edits(
                 use lofty::ogg::OggPictureStorage as _;
                 native.remove_pictures();
                 for spec in pictures {
+                    let info = spec.info.map(|[width, height, color_depth, num_colors]| {
+                        lofty::picture::PictureInformation {
+                            width,
+                            height,
+                            color_depth,
+                            num_colors,
+                        }
+                    });
                     native
-                        .insert_picture(lofty_picture(spec), None)
+                        .insert_picture(lofty_picture(spec), info)
                         .map_err(save_failed)?;
                 }
             }

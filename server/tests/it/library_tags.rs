@@ -1112,6 +1112,7 @@ fn picard_edits() -> Vec<TagEdit> {
         ),
         one(TagField::CatalogNumber, "LNT001"),
         one(TagField::Barcode, "5051083139822"),
+        one(TagField::Isrc, "GBAYE0601498"),
         one(TagField::Asin, "B07NQ6ZJ4X"),
         one(
             TagField::MusicBrainzRecordingId,
@@ -1271,6 +1272,7 @@ fn pictures_replace_and_read_back() {
         mime: "image/png".to_owned(),
         description: String::new(),
         data: png,
+        info: None,
     };
     for name in [
         "management_full.flac",
@@ -1284,23 +1286,98 @@ fn pictures_replace_and_read_back() {
         let after = read_document(&path).unwrap().pictures;
         assert_eq!(after.len(), 1, "{name}");
         assert_eq!(after[0].data, front.data, "{name}");
+        // MP4 has no picture types: its first cover reads as the front.
+        assert_eq!(after[0].kind, 3, "{name}");
         save_tags_with_pictures(&path, &[], Some(&before))
             .unwrap_or_else(|error| panic!("{name}: {error}"));
-        let restored: Vec<Vec<u8>> = read_document(&path)
-            .unwrap()
-            .pictures
-            .into_iter()
-            .map(|picture| picture.data)
-            .collect();
-        assert_eq!(
-            restored,
-            before
-                .into_iter()
-                .map(|picture| picture.data)
-                .collect::<Vec<_>>(),
-            "{name}"
-        );
+        let restored = read_document(&path).unwrap().pictures;
+        if name.ends_with(".m4a") {
+            let data = |list: &[PictureSpec]| {
+                list.iter()
+                    .map(|picture| picture.data.clone())
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(data(&restored), data(&before), "{name}");
+        } else {
+            // Type, MIME type, description, bytes and FLAC picture facts.
+            assert_eq!(restored, before, "{name}");
+        }
     }
+}
+
+/// FLAC picture-block facts go back as they were, not recomputed.
+#[test]
+fn flac_picture_facts_survive_a_restore() {
+    use tags::save::{PictureSpec, read_document, save_tags_with_pictures};
+    let png = {
+        let mut bytes = Vec::new();
+        image::RgbImage::new(4, 4)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        bytes
+    };
+    let odd = PictureSpec {
+        kind: 4,
+        mime: "image/png".to_owned(),
+        description: "back".to_owned(),
+        data: png,
+        info: Some([7, 9, 16, 0]),
+    };
+    let (_scratch, path) = temp_copy("management_full.flac", "picture-facts");
+    save_tags_with_pictures(&path, &[], Some(std::slice::from_ref(&odd))).unwrap();
+    assert_eq!(read_document(&path).unwrap().pictures, vec![odd]);
+}
+
+/// ID3 comment, URL and private frames are native items: a scrub can
+/// remove them and a restore writes the same bytes back.
+#[test]
+fn id3_raw_frames_scrub_and_restore() {
+    use tags::save::read_document;
+    let (_scratch, path) = temp_copy("management_full.mp3", "raw-frames");
+    let encode =
+        |bytes: &[u8]| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
+    let comment = encode(b"\x03eng\x00a note");
+    let private = encode(b"owner.example\x00\x01\x02\x03");
+    let link = encode(b"https://example.org/artist");
+    tags::save_tags(
+        &path,
+        &[
+            TagEdit::native("id3:COMM", vec![comment.clone()]),
+            TagEdit::native("id3:PRIV", vec![private.clone()]),
+            TagEdit::native("id3:WOAR", vec![link.clone()]),
+        ],
+    )
+    .unwrap();
+    let held = read_document(&path).unwrap().native;
+    assert_eq!(held.get("id3:COMM"), Some(&vec![comment.clone()]));
+    assert_eq!(held.get("id3:PRIV"), Some(&vec![private.clone()]));
+    assert_eq!(held.get("id3:WOAR"), Some(&vec![link.clone()]));
+    tags::save_tags(
+        &path,
+        &[
+            TagEdit::native("id3:PRIV", Vec::new()),
+            TagEdit::native("id3:WOAR", Vec::new()),
+        ],
+    )
+    .unwrap();
+    let scrubbed = read_document(&path).unwrap().native;
+    assert!(!scrubbed.contains_key("id3:PRIV"));
+    assert!(!scrubbed.contains_key("id3:WOAR"));
+    assert_eq!(scrubbed.get("id3:COMM"), Some(&vec![comment]));
+    tags::save_tags(
+        &path,
+        &[
+            TagEdit::native("id3:PRIV", vec![private.clone()]),
+            TagEdit::native("id3:WOAR", vec![link.clone()]),
+        ],
+    )
+    .unwrap();
+    let restored = read_document(&path).unwrap().native;
+    assert_eq!(restored.get("id3:PRIV"), Some(&vec![private]));
+    assert_eq!(restored.get("id3:WOAR"), Some(&vec![link]));
 }
 
 #[test]

@@ -650,6 +650,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 mime: picture.mime,
                 description: picture.description,
                 data,
+                info: picture.info,
             });
         }
         Ok(Some(specs))

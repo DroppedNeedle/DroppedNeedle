@@ -202,6 +202,7 @@ pub fn document_from_fields(fields: super::super::tags::FieldDocument) -> TagDoc
                 mime: picture.mime,
                 description: picture.description,
                 sha256,
+                info: picture.info,
             }
         })
         .collect();
@@ -283,7 +284,11 @@ pub fn restore_updates(
     // run embedded art), when the baseline's shape recorded them.
     if let (Some(original), Some(now)) = (&baseline.pictures, &current.pictures)
         && baseline.version >= RICH_FIELDS_VERSION
-        && original != now
+        && (original.len() != now.len()
+            || original
+                .iter()
+                .zip(now)
+                .any(|(original, now)| !original.same_picture(now)))
     {
         updates.insert(
             PICTURES_KEY.to_owned(),
