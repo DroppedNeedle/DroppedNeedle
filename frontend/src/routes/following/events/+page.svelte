@@ -3,6 +3,7 @@
 	import { ArrowLeft, CalendarClock, ExternalLink, Settings } from 'lucide-svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
+	import { outsideLink } from '$lib/components/outsideLink';
 	import CitySearchInput from '$lib/components/following/CitySearchInput.svelte';
 	import EventCityManager from '$lib/components/following/EventCityManager.svelte';
 	import {
@@ -230,9 +231,9 @@
 								</p>
 							</div>
 
-							{#if concert.ticket_url}
+							{#if outsideLink(concert.ticket_url)}
 								<a
-									href={concert.ticket_url}
+									href={outsideLink(concert.ticket_url)}
 									target="_blank"
 									rel="noopener noreferrer"
 									class="btn btn-ghost btn-sm shrink-0 gap-1.5 rounded-full"

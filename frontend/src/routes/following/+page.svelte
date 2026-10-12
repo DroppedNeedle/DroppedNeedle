@@ -3,6 +3,7 @@
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import ArtistImage from '$lib/components/ArtistImage.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
+	import { outsideLink } from '$lib/components/outsideLink';
 	import {
 		getConcertsQuery,
 		getFollowedArtistsQuery,
@@ -223,9 +224,9 @@
 									</a>
 									<p class="truncate text-sm text-base-content/60">{gigLine(concert)}</p>
 								</div>
-								{#if concert.ticket_url}
+								{#if outsideLink(concert.ticket_url)}
 									<a
-										href={concert.ticket_url}
+										href={outsideLink(concert.ticket_url)}
 										target="_blank"
 										rel="noopener noreferrer"
 										class="btn btn-ghost btn-xs shrink-0 gap-1 rounded-full"

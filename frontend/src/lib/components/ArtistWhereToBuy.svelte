@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Search, ShoppingBag } from 'lucide-svelte';
+	import { outsideLink } from '$lib/components/outsideLink';
 	import { getArtistPurchaseOptionsQuery } from '$lib/queries/albums/GetItQueries.svelte';
 
 	interface Props {
@@ -13,6 +14,7 @@
 		() => artistName
 	);
 	const options = $derived(optionsQuery.data);
+	const links = $derived((options?.links ?? []).filter((link) => outsideLink(link.url)));
 </script>
 
 <!-- The artist's own storefronts, one line. Always renders a way to buy: the
@@ -27,7 +29,7 @@
 		{#if optionsQuery.isLoading}
 			<div class="skeleton h-6 w-28 rounded-full"></div>
 		{:else if options}
-			{#each options.links as link (link.url)}
+			{#each links as link (link.url)}
 				<a
 					href={link.url}
 					target="_blank"
@@ -45,7 +47,7 @@
 					class="btn btn-xs rounded-full border-dashed border-base-content/25 bg-transparent hover:border-primary"
 				>
 					<Search class="h-3 w-3" aria-hidden="true" />
-					{options.links.length ? 'More on Bandcamp' : 'Search Bandcamp'}
+					{links.length ? 'More on Bandcamp' : 'Search Bandcamp'}
 				</a>
 			{/if}
 		{/if}

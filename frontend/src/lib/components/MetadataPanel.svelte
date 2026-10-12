@@ -3,6 +3,7 @@
 	import { slide } from 'svelte/transition';
 	import { getApiUrl } from '$lib/api/api-utils';
 	import SafeHtml from '$lib/components/SafeHtml.svelte';
+	import { outsideLink } from '$lib/components/outsideLink';
 
 	interface Props {
 		open: boolean;
@@ -31,6 +32,8 @@
 		}
 	}
 
+	// Relayed by the connected media server, so it is checked before it is linked.
+	const lastfmLink = $derived(outsideLink(lastfmUrl));
 	const musicbrainzUrl = $derived(
 		musicbrainzId ? `https://musicbrainz.org/release-group/${musicbrainzId}` : ''
 	);
@@ -89,11 +92,11 @@
 					<p class="text-center text-base-content/40 py-4">No notes available for this release.</p>
 				{/if}
 
-				{#if lastfmUrl || musicbrainzUrl}
+				{#if lastfmLink || musicbrainzUrl}
 					<div class="flex flex-wrap gap-2 pt-2">
-						{#if lastfmUrl}
+						{#if lastfmLink}
 							<a
-								href={lastfmUrl}
+								href={lastfmLink}
 								target="_blank"
 								rel="noopener noreferrer"
 								class="btn btn-ghost btn-xs gap-1"

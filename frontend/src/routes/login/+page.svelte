@@ -10,6 +10,7 @@
 		createOidcAuthorizeMutation
 	} from '$lib/queries/auth/AuthMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+	import { outsideLink } from '$lib/components/outsideLink';
 	import { createPlexStartMutation } from '$lib/queries/plex/PlexAuthMutations.svelte';
 	import { pollPlexFlow } from '$lib/queries/plex/PlexFlowApi';
 	import { toAuthUser, type AuthProviders, type SessionUserLike } from '$lib/queries/auth/types';
@@ -124,7 +125,15 @@
 		oidcLoading = true;
 		try {
 			const { authorize_url } = await oidcAuthorize.mutateAsync();
-			window.location.href = authorize_url;
+			// The address starts with whatever the identity provider's discovery
+			// document names, and assigning a script address here would run it.
+			const authorizeLink = outsideLink(authorize_url);
+			if (!authorizeLink) {
+				oidcError = 'SSO is not configured';
+				oidcLoading = false;
+				return;
+			}
+			window.location.href = authorizeLink;
 		} catch {
 			oidcError = 'SSO is not configured';
 			oidcLoading = false;

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { ExternalLink, Puzzle } from 'lucide-svelte';
+	import { outsideLink } from '$lib/components/outsideLink';
 	import { getAlbumPluginDetailsQuery } from '$lib/queries/albums/GetItQueries.svelte';
 
 	interface Props {
@@ -21,7 +22,7 @@
 		const known = new Set(knownTags.map((tag) => tag.toLowerCase()));
 		return (details?.tags ?? []).filter((tag) => !known.has(tag.toLowerCase()));
 	});
-	const links = $derived(details?.links ?? []);
+	const links = $derived((details?.links ?? []).filter((link) => outsideLink(link)));
 	const hasContent = $derived(!!notes || tags.length > 0 || links.length > 0);
 
 	function hostOf(url: string): string {

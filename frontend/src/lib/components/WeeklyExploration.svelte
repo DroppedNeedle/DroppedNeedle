@@ -4,6 +4,7 @@
 	import HorizontalCarousel from './HorizontalCarousel.svelte';
 	import WeeklyExplorationCard from './WeeklyExplorationCard.svelte';
 	import LiveUpdatingBadge from './LiveUpdatingBadge.svelte';
+	import { outsideLink } from '$lib/components/outsideLink';
 
 	interface Props {
 		section: SectionType;
@@ -11,6 +12,7 @@
 	}
 
 	let { section, updating = false }: Props = $props();
+	const sourceLink = $derived(outsideLink(section.source_url));
 
 	function formatPlaylistDate(dateStr: string): string {
 		try {
@@ -40,9 +42,9 @@
 			<LiveUpdatingBadge label="Updating weekly picks" className="px-2 py-0.5" />
 		{/if}
 
-		{#if section.source_url}
+		{#if sourceLink}
 			<a
-				href={section.source_url}
+				href={sourceLink}
 				target="_blank"
 				rel="noopener noreferrer"
 				class="ml-auto flex items-center gap-1 text-xs text-base-content/40

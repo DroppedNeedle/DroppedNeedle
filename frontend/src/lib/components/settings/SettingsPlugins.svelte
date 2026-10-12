@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Blocks, CircleAlert, ExternalLink, RefreshCw, Trash2 } from 'lucide-svelte';
+	import { outsideLink } from '$lib/components/outsideLink';
 	import { getPluginsQuery } from '$lib/queries/plugins/PluginQueries.svelte';
 	import {
 		uninstallPluginMutation,
@@ -80,9 +81,9 @@
 									<div class="flex items-center gap-2">
 										<h3 class="font-semibold">{plugin.display_name}</h3>
 										<span class="text-xs text-base-content/40">v{plugin.version}</span>
-										{#if plugin.homepage}
+										{#if outsideLink(plugin.homepage)}
 											<a
-												href={plugin.homepage}
+												href={outsideLink(plugin.homepage)}
 												target="_blank"
 												rel="noopener noreferrer"
 												class="text-base-content/40 hover:text-primary"
@@ -91,9 +92,9 @@
 												<ExternalLink class="h-3.5 w-3.5" aria-hidden="true" />
 											</a>
 										{/if}
-										{#if plugin.ui_external_url}
+										{#if outsideLink(plugin.ui_external_url)}
 											<a
-												href={plugin.ui_external_url}
+												href={outsideLink(plugin.ui_external_url)}
 												target="_blank"
 												rel="noopener noreferrer"
 												class="text-base-content/40 hover:text-primary"

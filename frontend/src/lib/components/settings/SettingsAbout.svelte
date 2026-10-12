@@ -5,6 +5,7 @@
 		getReleaseHistoryQuery
 	} from '$lib/queries/VersionQuery.svelte';
 	import SafeHtml from '$lib/components/SafeHtml.svelte';
+	import { outsideLink } from '$lib/components/outsideLink';
 	import { ExternalLink, RefreshCw, Info, Tag, Calendar, CircleArrowUp } from 'lucide-svelte';
 	import GitHubIcon from '$lib/components/GitHubIcon.svelte';
 
@@ -122,9 +123,9 @@
 									{/if}
 								</p>
 							</div>
-							{#if updateCheck.latest_release}
+							{#if outsideLink(updateCheck.latest_release?.html_url)}
 								<a
-									href={updateCheck.latest_release.html_url}
+									href={outsideLink(updateCheck.latest_release?.html_url)}
 									target="_blank"
 									rel="noopener noreferrer"
 									class="btn btn-sm btn-ghost ml-auto"
@@ -247,17 +248,19 @@
 									class="release-notes-prose prose prose-sm max-w-none text-base-content/80 pt-2"
 								/>
 							{/if}
-							<div class="mt-4 pt-3 border-t border-base-content/10">
-								<a
-									href={release.html_url}
-									target="_blank"
-									rel="noopener noreferrer"
-									class="link link-primary text-sm inline-flex items-center gap-1"
-								>
-									View on GitHub
-									<ExternalLink class="w-3 h-3" />
-								</a>
-							</div>
+							{#if outsideLink(release.html_url)}
+								<div class="mt-4 pt-3 border-t border-base-content/10">
+									<a
+										href={outsideLink(release.html_url)}
+										target="_blank"
+										rel="noopener noreferrer"
+										class="link link-primary text-sm inline-flex items-center gap-1"
+									>
+										View on GitHub
+										<ExternalLink class="w-3 h-3" />
+									</a>
+								</div>
+							{/if}
 						</div>
 					</div>
 				{/each}

@@ -10,6 +10,7 @@
 	} from 'lucide-svelte';
 	import { getPurchaseOptionsQuery } from '$lib/queries/albums/GetItQueries.svelte';
 	import type { PurchaseLink } from '$lib/types';
+	import { outsideLink } from '$lib/components/outsideLink';
 
 	interface Props {
 		releaseGroupMbid: string;
@@ -27,12 +28,13 @@
 
 	const PREVIEW_LIMIT = 5;
 
+	const linkable = (links: PurchaseLink[]) => links.filter((link) => outsideLink(link.url));
 	const groups = $derived(
 		options
 			? ([
-					{ title: 'Digital', icon: Download, links: options.digital },
-					{ title: 'Vinyl & CD', icon: Disc3, links: options.physical },
-					{ title: 'Free downloads', icon: Gift, links: options.free }
+					{ title: 'Digital', icon: Download, links: linkable(options.digital) },
+					{ title: 'Vinyl & CD', icon: Disc3, links: linkable(options.physical) },
+					{ title: 'Free downloads', icon: Gift, links: linkable(options.free) }
 				] as { title: string; icon: typeof Download; links: PurchaseLink[] }[])
 			: []
 	);

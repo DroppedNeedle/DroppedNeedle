@@ -84,6 +84,7 @@
 <script lang="ts">
 	import { Globe } from 'lucide-svelte';
 	import type { ExternalLink } from '$lib/types';
+	import { outsideLink } from '$lib/components/outsideLink';
 
 	interface Props {
 		links: ExternalLink[];
@@ -151,6 +152,7 @@
 		const seen = new Set<string>();
 
 		for (const link of links) {
+			if (!outsideLink(link.url)) continue;
 			const detected = detectPlatform(link.url, link.type);
 			const label = detected ? detected[0] : link.label;
 			const category = detected ? detected[1] : (link.category ?? 'other');

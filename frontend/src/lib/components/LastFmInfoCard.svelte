@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { ChevronUp, ChevronDown, ExternalLink, Users, Headphones } from 'lucide-svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+	import { outsideLink } from '$lib/components/outsideLink';
 	import { formatListenCount } from '$lib/utils/formatting';
 	import { onMount } from 'svelte';
 
@@ -15,6 +16,7 @@
 	}
 
 	let { text, tags, listeners, playcount, url, loading = false, enabled = true }: Props = $props();
+	const link = $derived(outsideLink(url));
 
 	let textExpanded = $state(false);
 	let textElement: HTMLElement | undefined = $state();
@@ -70,9 +72,9 @@
 					Last.fm
 				</span>
 			</div>
-			{#if url}
+			{#if link}
 				<a
-					href={url}
+					href={link}
 					target="_blank"
 					rel="noopener noreferrer"
 					class="btn btn-ghost btn-xs gap-1 opacity-60 hover:opacity-100"
