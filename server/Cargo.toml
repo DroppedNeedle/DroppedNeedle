@@ -62,6 +62,18 @@ droppedneedle = { path = ".", features = ["test-support"] }
 regex = "1.13.1"
 tokio = { version = "1", features = ["test-util"] }
 
+# Debug builds carry line tables for this crate and no debug info for
+# dependencies. Full debug info nearly doubled the time of a clean test
+# build and made the test binary over 1 GB. Panics and backtraces still
+# give file and line for this crate; a debugger sees no local variables,
+# and dependency frames show function names only. Release builds are
+# untouched.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 # Debug builds (tests, clippy, local runs) optimize the few dependencies
 # whose unoptimized code dominated the test suite: the Argon2id/bcrypt
 # password hashes at their real production parameters, and bundled SQLite,
