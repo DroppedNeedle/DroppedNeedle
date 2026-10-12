@@ -1,23 +1,145 @@
 name: Release
 
+# Publishes droppedneedle/droppedneedle from a version tag. A tag push
+# publishes only after every check below passes and a reviewer approves the
+# `release` environment. A manual run is a dry run unless it is started on
+# the tag itself with `push` ticked.
 on:
   push:
     tags:
-      - "v*"
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, for example v3.0.0 or v3.1.0-rc.1
+        required: true
+        type: string
+      push:
+        description: Publish the image. Only works when run on the tag itself.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # The branch releases are cut from. Set the repository variable when the
+  # branch is renamed.
+  RELEASE_BRANCH: ${{ vars.RELEASE_BRANCH || 'v3' }}
 
 jobs:
+  checks:
+    name: Release checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check the version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PUSH: ${{ inputs.push }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            version="$GITHUB_REF_NAME"
+            publish=true
+          else
+            version="$INPUT_VERSION"
+            publish="$INPUT_PUSH"
+          fi
+
+          core='(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+          suffix='(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?'
+          if [[ ! "$version" =~ ^v${core}${suffix}$ ]]; then
+            echo "::error::'$version' is not a version tag (v1.2.3 or v1.2.3-rc.1)."
+            exit 1
+          fi
+
+          if [[ "$publish" == "true" && "$GITHUB_REF" != "refs/tags/$version" ]]; then
+            echo "::error::Publishing needs a run on the tag $version, not on $GITHUB_REF."
+            exit 1
+          fi
+
+          if [[ "$version" == *-* ]]; then prerelease=true; else prerelease=false; fi
+          {
+            echo "version=$version"
+            echo "prerelease=$prerelease"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check the commit is on the release branch
+        run: |
+          if ! git rev-parse --verify --quiet "origin/$RELEASE_BRANCH" > /dev/null; then
+            echo "::error::Release branch '$RELEASE_BRANCH' does not exist."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "HEAD^{commit}" "origin/$RELEASE_BRANCH"; then
+            echo "::error::$(git rev-parse HEAD) is not on '$RELEASE_BRANCH'."
+            exit 1
+          fi
+
+      # CI is path-filtered, so a commit that changed no code has no v3 CI
+      # run. Start v3 CI by hand on the release branch for such a commit.
+      - name: Check CI passed on the commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="$(git rev-parse 'HEAD^{commit}')"
+          runs="$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$sha&per_page=100" \
+            --jq '.workflow_runs[] | [.path, .run_number, .status, (.conclusion // "none")] | @tsv')"
+
+          latest() {
+            awk -F'\t' -v path="$1" \
+              '$1 == path && $2 > n { n = $2; state = $3 " " $4 } END { print state }' \
+              <<< "$runs"
+          }
+
+          v3="$(latest .github/workflows/v3-ci.yml)"
+          if [[ "$v3" != "completed success" ]]; then
+            echo "::error::v3 CI has not passed on $sha (latest run: ${v3:-none})."
+            exit 1
+          fi
+
+          frontend="$(latest .github/workflows/frontend-ci.yml)"
+          if [[ -n "$frontend" && "$frontend" != "completed success" ]]; then
+            echo "::error::Frontend CI has not passed on $sha (latest run: $frontend)."
+            exit 1
+          fi
+
+      # A job that names a missing environment creates it with no rules, so
+      # the approval gate is checked before any job uses it.
+      - name: Check the release environment needs approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rules="$(gh api "repos/$GITHUB_REPOSITORY/environments/release" \
+            --jq '[.protection_rules[].type] | join(" ")')" || rules=""
+          if [[ " $rules " != *" required_reviewers "* ]]; then
+            echo "::error::The 'release' environment is missing or has no required reviewers."
+            exit 1
+          fi
+
   build:
     name: Build (${{ matrix.arch }})
+    needs: checks
     strategy:
       matrix:
         include:
@@ -36,10 +158,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Extract version from tag
-        id: version
-        run: echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-
       - name: Get build date
         id: date
         run: echo "timestamp=$(git log -1 --pretty=%cI)" >> "$GITHUB_OUTPUT"
@@ -51,7 +169,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: false
           build-args: |
-            COMMIT_TAG=${{ steps.version.outputs.tag }}
+            COMMIT_TAG=${{ needs.checks.outputs.version }}
             BUILD_DATE=${{ steps.date.outputs.timestamp }}
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
@@ -59,12 +177,16 @@ jobs:
 
   publish:
     name: Publish multi-arch image
-    needs: build
+    needs: [checks, build]
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    environment: release
     permissions:
       contents: read
       packages: write
+    env:
+      VERSION: ${{ needs.checks.outputs.version }}
+      PUBLISH: ${{ needs.checks.outputs.publish }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -76,6 +198,7 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Log in to ghcr.io
+        if: env.PUBLISH == 'true'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -83,59 +206,38 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to Docker Hub
+        if: env.PUBLISH == 'true'
         uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract version from tag
-        id: version
-        run: echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-
       - name: Get build date
         id: date
         run: echo "timestamp=$(git log -1 --pretty=%cI)" >> "$GITHUB_OUTPUT"
 
-      - name: Set image tags
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          {
-            echo "TAGS<<EOF"
-            if [[ "$TAG" == *-* ]]; then
-              # pre-release (beta): quiet, obscure name only, Docker Hub
-              echo "droppedneedle/dn-beta:$TAG"
-              echo "droppedneedle/dn-beta:beta"
-            else
-              # stable: org namespace on ghcr + Docker Hub
-              echo "ghcr.io/droppedneedle/droppedneedle:$TAG"
-              echo "droppedneedle/droppedneedle:$TAG"
-            fi
-            echo "EOF"
-          } >> "$GITHUB_ENV"
-
-      - name: Build and push (multi-arch)
+      - name: Build multi-arch image
         uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ env.TAGS }}
+          push: ${{ env.PUBLISH == 'true' }}
+          tags: |
+            ghcr.io/droppedneedle/droppedneedle:${{ env.VERSION }}
+            droppedneedle/droppedneedle:${{ env.VERSION }}
           build-args: |
-            COMMIT_TAG=${{ steps.version.outputs.tag }}
+            COMMIT_TAG=${{ env.VERSION }}
             BUILD_DATE=${{ steps.date.outputs.timestamp }}
           cache-from: |
             type=gha,scope=linux/amd64
             type=gha,scope=linux/arm64
           provenance: false
 
-      - name: Tag latest (stable releases only)
-        if: ${{ !contains(steps.version.outputs.tag, '-') }}
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
+      # A pre-release never moves latest.
+      - name: Tag latest
+        if: env.PUBLISH == 'true' && needs.checks.outputs.prerelease == 'false'
         run: |
           docker buildx imagetools create \
             -t "ghcr.io/droppedneedle/droppedneedle:latest" \
             -t "droppedneedle/droppedneedle:latest" \
-            "droppedneedle/droppedneedle:${TAG}"
-
+            "droppedneedle/droppedneedle:${VERSION}"
