@@ -87,10 +87,8 @@ impl AcquireDb {
         let conn = rusqlite::Connection::open(&path).map_err(|error| error.to_string())?;
         conn.execute_batch("PRAGMA journal_mode=WAL;")
             .map_err(|error| error.to_string())?;
-        for migration in crate::schema::MIGRATOR.iter() {
-            conn.execute_batch(&migration.sql)
-                .map_err(|error| format!("migration {}: {error}", migration.version))?;
-        }
+        crate::schema::apply_migrations_blocking(&conn)
+            .map_err(|error| format!("migrations: {error}"))?;
         drop(conn);
         let options = sqlx::sqlite::SqliteConnectOptions::new()
             .filename(&path)

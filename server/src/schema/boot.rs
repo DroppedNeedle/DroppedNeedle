@@ -46,13 +46,22 @@ pub async fn apply_migrations(pool: &SqlitePool) -> Result<(), SchemaError> {
     assert_migrated(pool).await
 }
 
-/// Apply every embedded migration over one rusqlite connection, for
+/// Apply the pending embedded migrations over one rusqlite connection, for
 /// scratch test databases that never meet the async pool. Production
 /// boots through [`apply_migrations`].
+///
+/// Like the sqlx migrator, a migration already applied is skipped: every
+/// migration stamps `user_version`, so anything at or below the stamp is
+/// done. Running this twice on one database is a no-op, which matters
+/// because SQLite cannot make `ALTER TABLE ... ADD COLUMN` or a table
+/// rebuild safe to replay in SQL alone.
 #[cfg(any(test, feature = "test-support"))]
 pub fn apply_migrations_blocking(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    let applied: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     for migration in MIGRATOR.migrations.iter() {
-        connection.execute_batch(&migration.sql)?;
+        if migration.version > applied {
+            connection.execute_batch(&migration.sql)?;
+        }
     }
     Ok(())
 }

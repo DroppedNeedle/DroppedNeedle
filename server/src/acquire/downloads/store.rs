@@ -33,9 +33,7 @@ pub enum StoreError {
 /// migrator. Running the same SQL here keeps the tests on the real schema.
 #[cfg(any(test, feature = "test-support"))]
 pub fn apply_test_schema(conn: &Connection) -> Result<(), StoreError> {
-    for migration in crate::schema::MIGRATOR.iter() {
-        conn.execute_batch(&migration.sql)?;
-    }
+    crate::schema::apply_migrations_blocking(conn)?;
     Ok(())
 }
 
