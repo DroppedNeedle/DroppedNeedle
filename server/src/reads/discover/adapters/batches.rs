@@ -327,8 +327,6 @@ impl LiveBatches {
                  AND musicbrainz_id_lower = ?1 AND user_id IS NOT NULL AND user_id != ?2) \
              OR EXISTS (SELECT 1 FROM request_history_requesters \
                  WHERE musicbrainz_id_lower = ?1 AND user_id != ?2) \
-             OR EXISTS (SELECT 1 FROM user_favorites WHERE user_id != ?2 \
-                 AND item_kind = 'album' AND lower(item_id) = ?1) \
              OR EXISTS (SELECT 1 FROM library_user_favorites f WHERE f.user_id != ?2 AND ( \
                  (f.item_kind = 'album' AND f.item_id IN (SELECT e.local_album_id \
                      FROM local_album_external_identities e \

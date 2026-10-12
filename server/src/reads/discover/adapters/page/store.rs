@@ -22,8 +22,6 @@ pub const ACTIVITY_WINDOW_SECS: f64 = 86_400.0;
 const ACTIVITY_DEBOUNCE_SECS: f64 = 300.0;
 /// Most activity rows kept per user.
 const ACTIVITY_PER_USER: i64 = 100;
-/// Optional-progress rows older than a week are dropped.
-const PROGRESS_WINDOW_SECS: f64 = 604_800.0;
 
 /// The snapshot key v2 used: the service flags are part of it, so linking
 /// or unlinking a service starts from a fresh page.
@@ -146,10 +144,6 @@ impl PageDb {
                     rusqlite::params![now - ACTIVITY_WINDOW_SECS],
                 )?;
                 tx.execute(
-                    "DELETE FROM discovery_optional_progress WHERE updated_at < ?1",
-                    rusqlite::params![now - PROGRESS_WINDOW_SECS],
-                )?;
-                tx.execute(
                     "INSERT INTO discovery_activity \
                          (user_id, feature, artist_mbid, section, provider, source, last_used) \
                      SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 \
@@ -200,10 +194,6 @@ impl PageDb {
                 tx.execute(
                     "DELETE FROM discovery_activity WHERE last_used <= ?1",
                     rusqlite::params![now - ACTIVITY_WINDOW_SECS],
-                )?;
-                tx.execute(
-                    "DELETE FROM discovery_optional_progress WHERE updated_at <= ?1",
-                    rusqlite::params![now - PROGRESS_WINDOW_SECS],
                 )?;
                 Ok(())
             })
@@ -288,11 +278,7 @@ impl PageDb {
         let user_id = user_id.to_owned();
         self.lane
             .write(Lane::Background, "discover.activity.forget", move |tx| {
-                for table in [
-                    "discovery_activity",
-                    "discovery_optional_progress",
-                    "discovery_snapshots",
-                ] {
+                for table in ["discovery_activity", "discovery_snapshots"] {
                     tx.execute(
                         &format!("DELETE FROM {table} WHERE user_id = ?1"),
                         rusqlite::params![user_id],

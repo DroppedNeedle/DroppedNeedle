@@ -391,7 +391,6 @@ impl UserStore for SqliteUserStore {
                     "ignored_releases",
                     "discovery_snapshots",
                     "discovery_activity",
-                    "discovery_optional_progress",
                 ] {
                     tx.execute(
                         &format!("DELETE FROM {table} WHERE user_id = ?"),
@@ -656,11 +655,6 @@ const RESTRICTING_HISTORY: &[(&str, &str, &str)] = &[
         "library_management_exclusions",
         "excluded_by_user_id",
         "library management exclusions",
-    ),
-    (
-        "library_edition_conversion_jobs",
-        "requested_by_user_id",
-        "edition conversion jobs",
     ),
 ];
 
