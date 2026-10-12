@@ -368,8 +368,9 @@ pub(crate) fn decode_stream(
     loop {
         let packet = match reader.next_packet() {
             Ok(Some(packet)) => packet,
+            // The readers end a stream with `Ok(None)`; a read error is a
+            // file that stopped early, not its end.
             Ok(None) => break,
-            Err(SymphoniaError::IoError(_)) | Err(SymphoniaError::ResetRequired) => break,
             Err(_) => {
                 partial = true;
                 break;

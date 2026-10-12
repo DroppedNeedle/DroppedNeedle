@@ -228,10 +228,68 @@ pub fn analyse(path: &Path, deadline: Instant) -> Result<TrackLoudness, Unanalys
     if late {
         return Err(Unanalysed::OutOfTime);
     }
+    // A stream that stopped early (a decode or read error on the way) is
+    // not measured: its numbers would describe part of the track.
     match (decoded, meter) {
-        (Ok(_), Some(meter)) if !reshaped => Ok(meter.finish()),
+        (Ok(false), Some(meter)) if !reshaped => Ok(meter.finish()),
         _ => Err(Unanalysed::Undecodable),
     }
+}
+
+/// Most 100 ms blocks the measurement cache holds over all its files
+/// (about 55 hours of audio, 16 MB).
+const CACHE_BLOCKS: usize = 2_000_000;
+
+struct Measured {
+    by_sha: std::collections::HashMap<String, std::sync::Arc<TrackLoudness>>,
+    order: std::collections::VecDeque<String>,
+    blocks: usize,
+}
+
+static MEASURED: std::sync::Mutex<Option<Measured>> = std::sync::Mutex::new(None);
+
+/// [`analyse`], remembering each file's result by its content hash, so a
+/// file measured once (a preview, then its replan) is not decoded again.
+pub fn analyse_cached(path: &Path, deadline: Instant) -> Result<TrackLoudness, Unanalysed> {
+    let sha = file_sha256(path).map_err(|_| Unanalysed::Undecodable)?;
+    if let Ok(cache) = MEASURED.lock()
+        && let Some(found) = cache.as_ref().and_then(|cache| cache.by_sha.get(&sha))
+    {
+        return Ok(TrackLoudness::clone(found));
+    }
+    let found = analyse(path, deadline)?;
+    // The file must not have changed while it was decoded.
+    if file_sha256(path).ok().as_deref() == Some(sha.as_str())
+        && let Ok(mut cache) = MEASURED.lock()
+    {
+        let cache = cache.get_or_insert_with(|| Measured {
+            by_sha: std::collections::HashMap::new(),
+            order: std::collections::VecDeque::new(),
+            blocks: 0,
+        });
+        if found.blocks.len() <= CACHE_BLOCKS && !cache.by_sha.contains_key(&sha) {
+            while cache.blocks + found.blocks.len() > CACHE_BLOCKS {
+                let Some(oldest) = cache.order.pop_front() else {
+                    break;
+                };
+                if let Some(gone) = cache.by_sha.remove(&oldest) {
+                    cache.blocks -= gone.blocks.len();
+                }
+            }
+            cache.blocks += found.blocks.len();
+            cache.order.push_back(sha.clone());
+            cache.by_sha.insert(sha, std::sync::Arc::new(found.clone()));
+        }
+    }
+    Ok(found)
+}
+
+fn file_sha256(path: &Path) -> std::io::Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher)?;
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 /// Most time one album's analysis may take before it is deferred.
