@@ -348,6 +348,9 @@ pub enum CrashPoint {
     AfterCatalogCommit,
     /// Midway through post-commit cleanup.
     DuringCleanup,
+    /// After the unwind of a failed publish settled its first row. Needs
+    /// a publish that fails by itself, so not in [`CrashPoint::all`].
+    AfterFirstUnwind,
 }
 
 impl CrashPoint {
@@ -360,6 +363,7 @@ impl CrashPoint {
             Self::BeforeCatalogCommit => "before-catalog-commit",
             Self::AfterCatalogCommit => "after-catalog-commit",
             Self::DuringCleanup => "during-cleanup",
+            Self::AfterFirstUnwind => "after-first-unwind",
         }
     }
 
@@ -1295,12 +1299,14 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
     /// its own error. True when a backup was kept.
     fn compensate(&mut self, bundle: &PlanBundle) -> Result<bool, PublishError> {
         let journals = JournalStore::new(&self.conn).bundle(&bundle.id)?;
-        let kept = super::recovery::compensate_bundle(
-            &self.conn,
-            &self.sandbox,
-            &journals,
-            self.place_seams,
-        )?;
+        let rows = if self.injector == Some(CrashPoint::AfterFirstUnwind) {
+            &journals[..journals.len().min(1)]
+        } else {
+            &journals[..]
+        };
+        let kept =
+            super::recovery::compensate_bundle(&self.conn, &self.sandbox, rows, self.place_seams)?;
+        self.maybe_crash(CrashPoint::AfterFirstUnwind)?;
         Ok(kept.is_some())
     }
 

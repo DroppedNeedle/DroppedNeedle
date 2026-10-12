@@ -11,6 +11,14 @@
 //!   catalog transaction.
 //! - A rejected pre-commit bundle is compensated only when every
 //!   original and staged copy is unambiguous.
+//! - A bundle with a row already compensated or needing attention has
+//!   begun to unwind. It is never resumed: its remaining rows are unwound.
+//!   Unless that unwind found no safe way to put a file back: then the
+//!   remaining rows need attention too and nothing more is moved.
+//! - A resume that is refused unwinds the bundle, as a publish does: an
+//!   original that cannot be set aside, a file with no safe way onto its
+//!   name, or a destination another file holds. That file is never
+//!   touched.
 //! - Duplicate staged locations, changed bytes, unsafe paths, mixed
 //!   commit states, or catalog/destination disagreement move every
 //!   still-active row in the bundle to `needs_attention` with durable
@@ -25,7 +33,7 @@
 //!   it cannot replace a file either. A set-aside original that cannot
 //!   go home stays under its backup name and its row needs attention.
 //! - Recovery sets an original aside only through
-//!   `place::set_original_aside`, as the publisher does. An original that
+//!   `place::set_aside_with`, as the publisher does. An original that
 //!   could not come back, or that changed since the journal was written,
 //!   is left under its own name and the bundle needs attention.
 //! - Committed journals are never rolled back: recovery verifies the
@@ -40,7 +48,7 @@ use rusqlite::Connection;
 use super::journal::{FileJournal, JournalKind, JournalState, JournalStore};
 use super::paths::Sandbox;
 use super::place::{
-    Original, PlaceError, Seams, SetAsideError, place_from_hidden, place_with, set_original_aside,
+    Original, PlaceError, Seams, SetAsideError, place_from_hidden, place_with, set_aside_with,
 };
 use super::publisher::{BundleCommit, Catalog, TrackCommit};
 use super::snapshots::sha256_hex;
@@ -101,6 +109,27 @@ pub fn reconcile<C: Catalog>(
     sandbox: &Sandbox,
     catalog: &C,
 ) -> Result<Vec<BundleRecovery>, PublishError> {
+    reconcile_with(conn, sandbox, catalog, Seams::default())
+}
+
+/// [`reconcile`] on a filesystem made to lack a placement step. Tests
+/// only; production never calls this.
+#[cfg(any(test, feature = "test-support"))]
+pub fn reconcile_with_seams<C: Catalog>(
+    conn: &mut Connection,
+    sandbox: &Sandbox,
+    catalog: &C,
+    seams: Seams,
+) -> Result<Vec<BundleRecovery>, PublishError> {
+    reconcile_with(conn, sandbox, catalog, seams)
+}
+
+fn reconcile_with<C: Catalog>(
+    conn: &mut Connection,
+    sandbox: &Sandbox,
+    catalog: &C,
+    seams: Seams,
+) -> Result<Vec<BundleRecovery>, PublishError> {
     startup_gate(conn)?;
     let bundles = JournalStore::new(conn).active_bundles()?;
     let mut results = Vec::new();
@@ -114,7 +143,7 @@ pub fn reconcile<C: Catalog>(
                 "bundle {bundle_id} names root {root}, which is not a usable library root"
             ))
         } else {
-            match reconcile_bundle(conn, sandbox, catalog, &bundle_id) {
+            match reconcile_bundle(conn, sandbox, catalog, &bundle_id, seams) {
                 Ok(action) => action,
                 Err(error) => {
                     tracing::warn!(bundle_id, %error, "publish bundle left for the next recovery pass");
@@ -147,6 +176,7 @@ fn reconcile_bundle<C: Catalog>(
     sandbox: &Sandbox,
     catalog: &C,
     bundle_id: &str,
+    seams: Seams,
 ) -> Result<RecoveryAction, PublishError> {
     let journals = JournalStore::new(conn).bundle(bundle_id)?;
     if journals.iter().all(|journal| journal.state.is_terminal()) {
@@ -172,21 +202,83 @@ fn reconcile_bundle<C: Catalog>(
     if evidence.any_committed {
         return reconcile_committed(conn, sandbox, catalog, bundle_id, &journals);
     }
-    if evidence.resumeable {
-        return match resume_precommit(conn, sandbox, catalog, bundle_id, &journals)? {
-            None => Ok(RecoveryAction::ResumedCommitted),
-            Some(reason) => {
-                flag_attention(conn, &JournalStore::new(conn).bundle(bundle_id)?)?;
-                Ok(RecoveryAction::NeedsAttention(reason))
-            }
-        };
+    // A compensated or needs-attention row means an unwind already began
+    // and stopped, between two rows or on an error. Such a bundle can
+    // never commit, so it is never resumed.
+    let unwinding = journals.iter().any(|journal| {
+        matches!(
+            journal.state,
+            JournalState::Compensated | JournalState::NeedsAttention
+        )
+    });
+    if unwinding && put_back_refused(sandbox, &journals) {
+        flag_attention(conn, &journals)?;
+        return Ok(RecoveryAction::NeedsAttention(format!(
+            "bundle {bundle_id} has a file with no safe way back onto its name"
+        )));
     }
+    // A resume that is refused unwinds, as a publish does: the files
+    // placed so far come off and their originals go home.
+    let mut refused = None;
+    if evidence.resumeable && !unwinding {
+        match resume_precommit(conn, sandbox, catalog, bundle_id, &journals, seams)? {
+            None => return Ok(RecoveryAction::ResumedCommitted),
+            Some(reason) => {
+                tracing::warn!(bundle_id, reason, "publish bundle unwound after its resume");
+                refused = Some(reason);
+            }
+        }
+    }
+    let journals = JournalStore::new(conn).bundle(bundle_id)?;
     Ok(
-        match compensate_bundle(conn, sandbox, &journals, Seams::default())? {
-            None => RecoveryAction::Compensated,
-            Some(reason) => RecoveryAction::NeedsAttention(reason),
+        match (compensate_bundle(conn, sandbox, &journals, seams)?, refused) {
+            (None, _) => RecoveryAction::Compensated,
+            (Some(kept), None) => RecoveryAction::NeedsAttention(kept),
+            (Some(kept), Some(refused)) => {
+                RecoveryAction::NeedsAttention(format!("{refused}; then {kept}"))
+            }
         },
     )
+}
+
+/// Whether an earlier unwind found no safe way to put a file back: a
+/// needs-attention row whose set-aside file is still under its hidden
+/// name, with the bytes the journal recorded, while its own name is free.
+/// That unwind moved nothing more, since each further row would lose its
+/// placed copy and not get its original back, and recovery does not
+/// either. A hidden file with other bytes was kept for that reason alone,
+/// and the unwind went on past it.
+fn put_back_refused(sandbox: &Sandbox, journals: &[FileJournal]) -> bool {
+    journals
+        .iter()
+        .filter(|journal| journal.state == JournalState::NeedsAttention)
+        .any(|journal| {
+            let (hidden, sha256, home) = if journal.kind == JournalKind::Delete {
+                (
+                    Some(journal.staged.as_str()),
+                    Some(journal.staged_sha256.as_str()),
+                    sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel),
+                )
+            } else {
+                (
+                    journal.backup.as_deref(),
+                    journal.backup_sha256(),
+                    paths::backup_home(
+                        sandbox,
+                        journal.source.as_ref(),
+                        &journal.dest_root,
+                        &journal.dest_rel,
+                    ),
+                )
+            };
+            let (Some(hidden), Ok(home)) = (hidden, home) else {
+                return false;
+            };
+            let expected = sha256.unwrap_or_default();
+            let intact = paths::read_regular_file(Path::new(hidden))
+                .is_ok_and(|bytes| expected.is_empty() || sha256_hex(&bytes) == expected);
+            intact && std::fs::symlink_metadata(&home).is_err()
+        })
 }
 
 /// Filesystem truth for one bundle, by fingerprint comparison only.
@@ -367,14 +459,15 @@ fn flag_attention(conn: &Connection, journals: &[FileJournal]) -> Result<(), Pub
 /// the pinned catalog transaction. Journals already past their rename
 /// (destination holds staged bytes while the row still says staged)
 /// transition forward without a second rename. `Some(reason)` when a file
-/// has no safe way onto its name: nothing more is moved and the caller
-/// flags the bundle.
+/// was refused: nothing more is placed and the caller unwinds the bundle.
+/// `seams` is the default outside tests.
 fn resume_precommit<C: Catalog>(
     conn: &mut Connection,
     sandbox: &Sandbox,
     catalog: &C,
     bundle_id: &str,
     journals: &[FileJournal],
+    seams: Seams,
 ) -> Result<Option<String>, PublishError> {
     for journal in journals {
         if journal.state.is_terminal()
@@ -385,7 +478,7 @@ fn resume_precommit<C: Catalog>(
         {
             continue;
         }
-        if let Some(reason) = resume_rename(conn, sandbox, journal)? {
+        if let Some(reason) = resume_rename(conn, sandbox, journal, seams)? {
             return Ok(Some(reason));
         }
     }
@@ -457,7 +550,7 @@ fn resume_precommit<C: Catalog>(
         .map_err(PublishError::from)?;
     if let Err(err) = catalog.commit_bundle(&tx, &commit) {
         drop(tx);
-        if let Some(reason) = compensate_bundle(conn, sandbox, &refreshed, Seams::default())? {
+        if let Some(reason) = compensate_bundle(conn, sandbox, &refreshed, seams)? {
             tracing::warn!(
                 bundle_id,
                 reason,
@@ -488,13 +581,21 @@ fn resume_precommit<C: Catalog>(
 /// Complete one journal's placement during resume, honoring the same
 /// rules as publish: occupied foreign destinations block, same-path
 /// originals are retained under a hidden backup first. `Some(reason)`
-/// when the file has no safe way onto its name, or its original could
-/// not be set aside safely; it is left alone.
+/// when the file is refused: another file holds its destination, it has
+/// no safe way onto its name, or its original could not be set aside
+/// safely. Neither it nor the file in its way is touched.
 fn resume_rename(
     conn: &Connection,
     sandbox: &Sandbox,
     journal: &FileJournal,
+    seams: Seams,
 ) -> Result<Option<String>, PublishError> {
+    let occupied = || {
+        Ok(Some(format!(
+            "another file holds the destination of journal {}",
+            journal.id
+        )))
+    };
     if journal.state == JournalState::Published {
         return Ok(None);
     }
@@ -507,7 +608,7 @@ fn resume_rename(
             &dest,
             staged,
             &journal.staged_sha256,
-            Seams::default(),
+            seams,
         ) {
             Ok(()) => {}
             Err(error @ (PublishError::NotLinkable(_) | PublishError::NoSafePlacement(_))) => {
@@ -551,10 +652,7 @@ fn resume_rename(
                 .as_ref()
                 .is_some_and(|replaced| sha256_hex(&bytes) == replaced.sha256);
             if !source_match && !replaced_here {
-                return Err(PublishError::Collision(format!(
-                    "late occupier at {}:{}",
-                    journal.dest_root, journal.dest_rel
-                )));
+                return occupied();
             }
             // The original at the destination: a same-path write, or a
             // case-only rename on a filesystem that folds case. Either way
@@ -575,11 +673,10 @@ fn resume_rename(
                         )
                 })
                 .unwrap_or(false);
+            // A move whose destination holds a separate file with the
+            // source's bytes: a copy the user put there.
             if !same_path && !replaced_here {
-                return Err(PublishError::Collision(format!(
-                    "late occupier at {}:{}",
-                    journal.dest_root, journal.dest_rel
-                )));
+                return occupied();
             }
             let backup = sandbox.backup_path_for(&dest, &journal.id)?;
             sandbox.ensure_under_roots(&backup)?;
@@ -597,7 +694,7 @@ fn resume_rename(
                 sha256: journal.backup_sha256(),
             };
             let mode = sandbox.placement_mode(&journal.dest_root);
-            match set_original_aside(mode, original) {
+            match set_aside_with(mode, original, seams, None) {
                 Ok(()) => {}
                 Err(SetAsideError::Io(error)) => return Err(PublishError::from(error)),
                 Err(error) => {
@@ -610,8 +707,9 @@ fn resume_rename(
         }
     }
     let mode = sandbox.placement_mode(&journal.dest_root);
-    match place_from_hidden(mode, staged, &dest) {
+    match place_with(mode, staged, &dest, seams) {
         Ok(_) => {}
+        Err(PlaceError::Collision) => return occupied(),
         Err(PlaceError::Unavailable(_) | PlaceError::CrossDevice) => {
             return Ok(Some(format!(
                 "journal {} has no safe way onto its destination",

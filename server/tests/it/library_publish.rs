@@ -26,6 +26,7 @@ use publish::planner::{
     Capability, CapabilityGate, CollisionGate, FileFingerprint, PlanBundle, PlanItem, PlanKind,
     ReleaseIdentity, SealError, SealRecheck, SealedPreview, SidecarPlan, SpaceProbe, TrackMapping,
 };
+use publish::recovery::reconcile_with_seams;
 use publish::snapshots::{BaselineStore, BlobStore, SnapshotStore, sha256_hex};
 use publish::tags_seam::TagDocument;
 use publish::undo::{
@@ -968,6 +969,245 @@ fn unwind_finishes_when_no_backup_is_left() {
         );
         assert_eq!(SqliteCatalog.revision(&conn).unwrap(), start_revision());
     }
+}
+
+/// An unwind that stopped between two rows is finished as an unwind. The
+/// row it had not reached still looks ready to commit, but its sibling is
+/// already compensated, so the bundle can never commit: both originals go
+/// home and the bundle is settled for good.
+#[test]
+fn recovery_finishes_an_unwind_that_stopped_between_rows() {
+    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
+    let fix = fixture("unwind-between-rows");
+    let (bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
+    let (sealed, live) = seal(&bundle);
+    let second_dest = fix.sandbox.resolve("music", "staging/b.flac").unwrap();
+    let mut publisher = open_publisher(&fix);
+    // The catalog moves on while the files are placed, so the commit
+    // fails with both files published and both originals set aside.
+    let db_path = fix.db_path.clone();
+    publisher.set_before_place(Some(Box::new(move |dest| {
+        if dest == second_dest {
+            let conn = droppedneedle::db::open_connection(&db_path).unwrap();
+            conn.execute(
+                "UPDATE library_catalog_revision SET value = value + 1 WHERE singleton = 1",
+                [],
+            )
+            .unwrap();
+        }
+    })));
+    publisher.set_crash_point(Some(CrashPoint::AfterFirstUnwind));
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+    assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
+    let journals = JournalStore::new(publisher.connection())
+        .bundle("bundle-1")
+        .unwrap();
+    assert_eq!(journals[0].state, JournalState::Compensated);
+    assert_eq!(journals[1].state, JournalState::Published);
+    drop(publisher);
+
+    let mut conn = open_db(&fix);
+    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
+    for rel in ["staging/a.flac", "staging/b.flac"] {
+        let path = fix.sandbox.resolve("music", rel).unwrap();
+        assert!(std::fs::read(&path).unwrap() == original, "{rel} is home");
+    }
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+    let journals = JournalStore::new(&conn).bundle("bundle-1").unwrap();
+    assert!(
+        journals
+            .iter()
+            .all(|journal| journal.state == JournalState::Compensated)
+    );
+    let again = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    assert!(again.is_empty(), "a second pass finds nothing to do");
+}
+
+/// An unwind that finds no safe way to put an original back moves nothing
+/// more. Recovery keeps to that when the unwind stopped before every row
+/// was marked: the next file keeps its placed copy and its backup, and
+/// needs attention with the rest.
+#[test]
+fn recovery_moves_nothing_after_a_put_back_with_no_safe_way() {
+    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
+    let fix = fixture("unwind-no-way-back");
+    let (bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::BeforeCatalogCommit));
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+    assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
+    drop(publisher);
+
+    let mut conn = open_db(&fix);
+    let store = JournalStore::new(&conn);
+    let first = store.bundle("bundle-1").unwrap().remove(0);
+    // As that unwind leaves its row: the placed copy is off the name, the
+    // original is still under its backup name.
+    let first_dest = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+    std::fs::remove_file(&first_dest).unwrap();
+    assert!(
+        store
+            .transition(&first.id, first.state, JournalState::NeedsAttention)
+            .unwrap()
+    );
+
+    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    assert!(
+        matches!(
+            results[0].action,
+            publish::RecoveryAction::NeedsAttention(_)
+        ),
+        "got {:?}",
+        results[0].action
+    );
+    let journals = JournalStore::new(&conn).bundle("bundle-1").unwrap();
+    for journal in journals.iter() {
+        assert_eq!(journal.state, JournalState::NeedsAttention);
+        let backup = journal.backup.as_deref().expect("backup journaled");
+        assert!(std::fs::read(backup).unwrap() == original);
+    }
+    assert!(first_dest.symlink_metadata().is_err());
+    let second_dest = fix.sandbox.resolve("music", "staging/b.flac").unwrap();
+    assert_staged(&second_dest, "track-b");
+}
+
+/// A resume that cannot set an original aside unwinds the bundle, as a
+/// publish does. The file resumed just before it gets its original back
+/// under its own name. The refused file never moved, and the foreign file
+/// under its backup name is kept, so that row alone needs attention.
+#[test]
+fn a_refused_set_aside_during_resume_unwinds_the_bundle() {
+    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
+    let fix = fixture("resume-aside-refused");
+    let (bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::AfterStage));
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+    assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
+    drop(publisher);
+
+    let mut conn = open_db(&fix);
+    let second = JournalStore::new(&conn)
+        .bundle("bundle-1")
+        .unwrap()
+        .remove(1);
+    let second_dest = fix.sandbox.resolve("music", "staging/b.flac").unwrap();
+    let taken = fix
+        .sandbox
+        .backup_path_for(&second_dest, &second.id)
+        .unwrap();
+    std::fs::write(&taken, b"not-ours").unwrap();
+
+    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    assert!(
+        matches!(
+            &results[0].action,
+            publish::RecoveryAction::NeedsAttention(reason)
+                if reason.contains("the hidden name is taken")
+        ),
+        "got {:?}",
+        results[0].action
+    );
+    for rel in ["staging/a.flac", "staging/b.flac"] {
+        let path = fix.sandbox.resolve("music", rel).unwrap();
+        assert!(std::fs::read(&path).unwrap() == original, "{rel} is home");
+    }
+    assert_eq!(std::fs::read(&taken).unwrap(), b"not-ours");
+    let journals = JournalStore::new(&conn).bundle("bundle-1").unwrap();
+    assert_eq!(journals[0].state, JournalState::Compensated);
+    let first_backup = journals[0].backup.as_deref().expect("backup journaled");
+    assert!(std::fs::symlink_metadata(first_backup).is_err());
+    assert_eq!(journals[1].state, JournalState::NeedsAttention);
+}
+
+/// A resume that finds no safe way to place a file unwinds the bundle, as
+/// a publish does: the file placed before the stop comes off its new name
+/// and every file is where it was, under its own name.
+#[test]
+fn a_refused_placement_during_resume_unwinds_the_bundle() {
+    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
+    let fix = fixture("resume-place-refused");
+    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::AfterFirstRename));
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+    assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
+    drop(publisher);
+    let placed = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
+    assert_staged(&placed, "track-a");
+
+    let mut conn = open_db(&fix);
+    let no_safe_step = Seams {
+        skip_rename: true,
+        link_errno: Some(libc::EPERM),
+        ..Seams::default()
+    };
+    let results =
+        reconcile_with_seams(&mut conn, &fix.sandbox, &SqliteCatalog, no_safe_step).unwrap();
+    assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
+    assert!(placed.symlink_metadata().is_err(), "the placed copy is off");
+    for rel in ["staging/a.flac", "staging/b.flac"] {
+        let path = fix.sandbox.resolve("music", rel).unwrap();
+        assert!(std::fs::read(&path).unwrap() == original, "{rel} is home");
+    }
+    let cover = fix.sandbox.resolve("music", "staging/cover.jpg").unwrap();
+    assert_eq!(std::fs::read(cover).unwrap(), b"cover-bytes");
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+    let journals = JournalStore::new(&conn).bundle("bundle-1").unwrap();
+    assert!(
+        journals
+            .iter()
+            .all(|journal| journal.state == JournalState::Compensated)
+    );
+}
+
+/// A move whose destination already holds the user's own copy of the
+/// source is not resumable and not ambiguous. The bundle unwinds once:
+/// the copy is never touched, the source stays, and nothing is left to
+/// retry.
+#[test]
+fn a_users_copy_at_the_destination_unwinds_the_resume() {
+    use std::os::unix::fs::MetadataExt as _;
+    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
+    let fix = fixture("resume-users-copy");
+    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::AfterStage));
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+    assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
+    drop(publisher);
+
+    let source = fix.sandbox.resolve("music", "staging/b.flac").unwrap();
+    let copy = fix.sandbox.resolve("music", "organized/b.flac").unwrap();
+    std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
+    std::fs::copy(&source, &copy).unwrap();
+    let inode = std::fs::metadata(&copy).unwrap().ino();
+
+    let mut conn = open_db(&fix);
+    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
+    assert!(std::fs::read(&copy).unwrap() == original);
+    assert_eq!(std::fs::metadata(&copy).unwrap().ino(), inode);
+    for rel in ["staging/a.flac", "staging/b.flac"] {
+        let path = fix.sandbox.resolve("music", rel).unwrap();
+        assert!(std::fs::read(&path).unwrap() == original, "{rel} is home");
+    }
+    let other = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
+    assert!(other.symlink_metadata().is_err());
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+    let journals = JournalStore::new(&conn).bundle("bundle-1").unwrap();
+    assert!(
+        journals
+            .iter()
+            .all(|journal| journal.state == JournalState::Compensated)
+    );
+    let again = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    assert!(again.is_empty(), "a second pass finds nothing to do");
 }
 
 /// A same-path row with no tag change stages the file's own bytes. When
