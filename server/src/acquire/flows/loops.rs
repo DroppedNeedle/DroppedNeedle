@@ -56,8 +56,6 @@ pub const FOLLOW_ARTIST_REPOLL: Duration = Duration::from_secs(86_400);
 pub const FOLLOW_ARTIST_RETRY: Duration = Duration::from_secs(3_600);
 /// Upgrade-scan startup delay in seconds (v2 `scan_for_upgrades_periodically`).
 pub const UPGRADE_INITIAL_DELAY: Duration = Duration::from_secs(900);
-/// Upgrade-scan default cadence in hours (v2 `interval_hours = 12`).
-pub const UPGRADE_DEFAULT_INTERVAL_HOURS: u64 = 12;
 /// Request-status-sync cadence in seconds (v2 `_REQUEST_SYNC_INTERVAL`).
 pub const SYNC_INTERVAL: Duration = Duration::from_secs(60);
 /// Status-sync startup delay in seconds (v2 `_REQUEST_SYNC_INITIAL_DELAY`).
@@ -269,14 +267,6 @@ impl FlowRegistry {
         if let Ok(mut live) = self.live.lock() {
             live.remove(job);
         }
-    }
-
-    /// True while the loop runs.
-    pub fn is_live(&self, job: &str) -> bool {
-        self.live
-            .lock()
-            .map(|live| live.contains(job))
-            .unwrap_or(false)
     }
 }
 

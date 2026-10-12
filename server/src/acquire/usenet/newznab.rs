@@ -161,36 +161,6 @@ impl Default for NewznabCaps {
     }
 }
 
-impl NewznabCaps {
-    /// Every audio category id advertised (the 3000 parent + subcats),
-    /// e.g. DrunkenSlug → 3000,3010,3020,3030,3040,3060,3999.
-    pub fn audio_category_ids(&self) -> Vec<i32> {
-        let mut out = Vec::new();
-        for cat in &self.categories {
-            if (3000..4000).contains(&cat.id) {
-                out.push(cat.id);
-                out.extend(cat.subcats.iter().map(|sub| sub.id));
-            }
-        }
-        out
-    }
-
-    /// The Audio/Other id read from caps: 3050 on standard Prowlarr, 3999
-    /// on nZEDb-derived indexers like DrunkenSlug. Never hardcoded.
-    pub fn other_audio_category_id(&self) -> Option<i32> {
-        for cat in &self.categories {
-            if cat.id == 3000 || cat.name.eq_ignore_ascii_case("audio") {
-                for sub in &cat.subcats {
-                    if sub.name.eq_ignore_ascii_case("other") {
-                        return Some(sub.id);
-                    }
-                }
-            }
-        }
-        None
-    }
-}
-
 /// `<newznab:apilimits>` usage counters. Parsed and returned but not
 /// consumed for proactive backoff (`*_max` are often absent); the
 /// enforced mechanism is the 429 / "limit reached" backoff.

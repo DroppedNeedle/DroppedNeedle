@@ -243,33 +243,6 @@ pub struct WantedWatch {
     pub new_candidate_count: u32,
 }
 
-/// One still-scheduled auto-retry.
-#[derive(Debug, Clone)]
-pub struct WantedRetrying {
-    /// Lowercased release-group MBID.
-    pub key: String,
-    /// Artist name.
-    pub artist_name: String,
-    /// Album title.
-    pub album_title: String,
-    /// Attempts so far.
-    pub retry_count: u32,
-    /// Attempts allowed.
-    pub max_attempts: u32,
-    /// Epoch seconds when the next try is due, when scheduled.
-    pub next_retry_at: Option<u64>,
-    /// Artist MBID.
-    pub artist_mbid: Option<String>,
-    /// Release year.
-    pub year: Option<i32>,
-    /// Custom artwork URL override.
-    pub cover_url: Option<String>,
-    /// Owner id.
-    pub user_id: String,
-    /// Owner display name (served to admins only).
-    pub user_name: Option<String>,
-}
-
 /// One auto-download approval row.
 #[derive(Debug, Clone)]
 pub struct FollowApproval {

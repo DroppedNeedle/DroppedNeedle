@@ -139,11 +139,6 @@ impl DropImports {
         self.root.join(INCOMING_DIR)
     }
 
-    /// The library port, once boot attached it.
-    pub fn library_port(&self) -> Option<Arc<dyn LandingLibrary>> {
-        self.library.get().cloned()
-    }
-
     fn library(&self) -> Result<Arc<dyn LandingLibrary>, DropError> {
         self.library.get().cloned().ok_or_else(|| {
             DropError::Invalid("The library isn't ready yet. Try again shortly.".into())

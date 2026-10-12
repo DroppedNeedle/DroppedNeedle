@@ -54,16 +54,6 @@ impl FanoutSearch {
             timeout,
         }
     }
-
-    /// Whether any side could answer. Used for health detail.
-    pub fn any_configured(&self) -> bool {
-        let slskd = self.slskd.as_ref().is_some_and(|repo| repo.is_configured());
-        let usenet = match self.backend {
-            UsenetBackend::Indexers => self.newznab.is_configured(),
-            UsenetBackend::Prowlarr => self.prowlarr.is_configured(),
-        };
-        slskd || usenet
-    }
 }
 
 impl CandidateSearch for FanoutSearch {

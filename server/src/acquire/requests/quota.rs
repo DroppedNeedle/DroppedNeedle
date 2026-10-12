@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::auth::Role;
 use super::dispatch::DispatchOrigin;
@@ -261,23 +261,6 @@ impl QuotaLedger {
             });
         }
         Ok(())
-    }
-
-    /// One user's standing for the quota details payloads.
-    pub async fn usage_details(
-        &self,
-        user_id: &str,
-        now_epoch: u64,
-    ) -> Result<Value, RequestsError> {
-        let quota = self.effective_quota(user_id)?;
-        let used = self
-            .count_in_window(user_id, quota.request_days, now_epoch)
-            .await?;
-        Ok(json!({
-            "requests_in_window": used,
-            "request_limit": quota.request_count,
-            "window_days": quota.request_days,
-        }))
     }
 
     /// Whole-library indexed bytes (v2 `get_total_library_bytes`).

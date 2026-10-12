@@ -11,8 +11,6 @@
 
 use super::candidates::{Candidate, CandidateTier};
 
-/// `download_policy.search_review`: grab recommended candidates; wait for a pick otherwise (the default).
-pub const WHEN_UNSURE: &str = "when_unsure";
 /// `download_policy.search_review`: wait for a pick on every album.
 pub const ALWAYS: &str = "always";
 /// `download_policy.search_review`: never wait, grab the best guess.

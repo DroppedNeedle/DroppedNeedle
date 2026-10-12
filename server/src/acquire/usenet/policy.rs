@@ -59,16 +59,6 @@ impl QualityTier {
             QualityTier::Lossless => 4,
         }
     }
-
-    /// Newznab category recipe for this tier: 3040 (Lossless) for lossless,
-    /// 3010 (MP3) for the lossy bands. v2's scorer treats category as the
-    /// primary quality signal (3040 ⇒ lossless).
-    pub fn category_id(self) -> i32 {
-        match self {
-            QualityTier::Lossless => 3040,
-            _ => 3010,
-        }
-    }
 }
 
 /// Accepted quality range plus the Usenet timeout/retention knobs.
@@ -142,37 +132,6 @@ impl UsenetPolicy {
         tier.rank() >= self.quality_min.rank() && tier.rank() <= self.quality_max.rank()
     }
 
-    /// Whether an extension passes the `flac_mp3_only` gate (v2 `_FLAC_MP3_EXT`).
-    pub fn accepts_extension(&self, ext: &str) -> bool {
-        if !self.flac_mp3_only {
-            return true;
-        }
-        matches!(ext.trim().to_ascii_lowercase().as_str(), "flac" | "mp3")
-    }
-
-    /// Category recipe for the accepted band: the distinct category ids of
-    /// every tier in range, lossless first. Callers append the indexer's
-    /// own Audio/Other id (read from caps, never hardcoded) when they
-    /// want promos and oddities too.
-    pub fn recipe_categories(&self) -> Vec<i32> {
-        let mut out = Vec::new();
-        for tier in [
-            QualityTier::Lossless,
-            QualityTier::Mp3_320,
-            QualityTier::Mp3_256,
-            QualityTier::Mp3_192,
-            QualityTier::Low,
-        ] {
-            if self.accepts_tier(tier) {
-                let id = tier.category_id();
-                if !out.contains(&id) {
-                    out.push(id);
-                }
-            }
-        }
-        out
-    }
-
     /// Retention gate: `None` age is unknown, never rejected; otherwise the
     /// release must be younger than `retention_days` (0 disables the gate).
     pub fn within_retention(&self, usenet_date_unix: Option<f64>, now_unix: f64) -> bool {
@@ -183,15 +142,6 @@ impl UsenetPolicy {
             return true;
         }
         now_unix - posted <= f64::from(self.retention_days) * 86_400.0
-    }
-
-    /// Propagation guard: a release younger than `min_release_age` must not
-    /// be permanently blocklisted yet (indexers propagate slowly).
-    pub fn old_enough_to_blocklist(&self, usenet_date_unix: Option<f64>, now_unix: f64) -> bool {
-        let Some(posted) = usenet_date_unix else {
-            return true;
-        };
-        now_unix - posted >= self.min_release_age.as_secs_f64()
     }
 
     /// Size gate: 0 disables; otherwise the album must fit `max_size_mb`.

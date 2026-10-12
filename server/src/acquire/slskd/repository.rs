@@ -159,11 +159,6 @@ impl<T: SlskdHttp> SlskdRepository<T> {
     }
 
     #[must_use]
-    pub fn client_name(&self) -> &'static str {
-        "slskd"
-    }
-
-    #[must_use]
     pub fn is_configured(&self) -> bool {
         self.configured
     }
