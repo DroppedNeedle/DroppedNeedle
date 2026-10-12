@@ -1082,7 +1082,6 @@ async fn identify_state_migration_upgrades_in_place() {
         "library_identify_reviews",
         "library_identify_credit_proofs",
         "library_identify_track_credits",
-        "local_track_aliases",
     ] {
         let found: Option<String> =
             sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1")

@@ -59,7 +59,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 163);
+    assert_eq!(table_names(&pool).await.len(), 149);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -199,10 +199,6 @@ async fn dual_owner_tables_carry_the_merged_shape() {
             ("library_scan_runs"),
             vec!["phase_started_at", "phase_timings_json"],
         ),
-        (
-            ("library_management_operation_snapshots"),
-            vec!["ancillary_snapshot_json", "before_management_state_json"],
-        ),
         (("user_listening_prefs"), vec!["auto_request_personal_mix"]),
         (
             ("request_history"),
@@ -231,7 +227,6 @@ async fn dual_owner_tables_carry_the_merged_shape() {
 
     // Store-side auth FKs won the merge.
     for (table, column) in [
-        ("user_favorites", "user_id"),
         ("compat_bookmarks", "user_id"),
         ("compat_play_queues", "user_id"),
     ] {
@@ -605,6 +600,93 @@ async fn unused_tables_drop_and_live_rows_survive() {
         .await
         .unwrap();
     assert!(broken.is_empty(), "{broken:?}");
+}
+
+/// Migration 0041 drops the tables no code fills, children before their
+/// parents and whether or not a row is in them. Artist and album aliases
+/// stay, and no table left behind points at one that went.
+#[tokio::test]
+async fn empty_tables_drop_and_aliases_survive() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 41)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) \
+         VALUES ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO local_artist_aliases (alias, local_artist_id, kind, created_at) \
+         VALUES ('a-old', 'a1', 'merged_artist', 1); \
+         INSERT INTO local_album_aliases (alias, local_album_id, kind, created_at) \
+         VALUES ('al-old', 'al1', 'merged_album', 1); \
+         INSERT INTO library_playlists (id, name, created_at, updated_at) \
+         VALUES ('p1', 'Old', 'now', 'now'); \
+         INSERT INTO library_playlist_tracks (id, playlist_id, position, track_name, \
+         artist_name, album_name, source_type, created_at, local_artist_id) \
+         VALUES ('e1', 'p1', 0, 't', 'a', 'b', 'local', 'now', 'a1');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let tables = table_names(&pool).await;
+    for gone in [
+        "discovery_optional_progress",
+        "user_favorites",
+        "library_playlist_tracks",
+        "library_playlists",
+        "library_compat_id_map",
+        "library_edition_conversion_jobs",
+        "local_track_aliases",
+        "library_scan_grouping_groups",
+        "library_scan_grouping_contexts",
+        "library_management_blob_references",
+        "library_file_mutation_journal",
+        "library_management_operation_snapshots",
+        "library_migration_provenance",
+        "library_migration_runs",
+    ] {
+        assert!(!tables.contains(&gone.to_owned()), "{gone} must be dropped");
+    }
+    let aliases: Vec<(String, String)> = sqlx::query_as(
+        "SELECT alias, local_artist_id FROM local_artist_aliases \
+         UNION ALL SELECT alias, local_album_id FROM local_album_aliases ORDER BY 1",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        aliases,
+        vec![
+            ("a-old".to_owned(), "a1".to_owned()),
+            ("al-old".to_owned(), "al1".to_owned())
+        ]
+    );
+    let orphaned: Vec<(String, String)> = sqlx::query_as(
+        "SELECT m.name, f.\"table\" FROM sqlite_master m, pragma_foreign_key_list(m.name) f \
+         WHERE m.type = 'table' \
+         AND f.\"table\" NOT IN (SELECT name FROM sqlite_master WHERE type = 'table')",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(orphaned.is_empty(), "{orphaned:?}");
 }
 
 /// Every table in the migrated schema is listed once in
