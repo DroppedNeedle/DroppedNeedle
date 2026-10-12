@@ -1321,6 +1321,79 @@ fn generated_files_land_and_go_away_journaled() {
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
+/// An unwind that linked a set-aside generated file back to its name and
+/// stopped before removing the hidden name leaves one file under two
+/// names. Recovery reads that as the put-back it is: the hidden name goes,
+/// the generated file stays, and the bundle ends unwound.
+#[test]
+fn interrupted_generated_put_back_is_finished_by_recovery() {
+    use std::os::unix::fs::MetadataExt as _;
+    let fix = fixture("generated-put-back");
+    let cover = b"generated-cover-bytes".to_vec();
+    let sha = BlobStore::new(&open_db(&fix)).put(&cover).unwrap();
+    let path = fix.sandbox.resolve("music", "staging/cover.jpg").unwrap();
+    let audio = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+    let fp = write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
+    let audio_bytes = std::fs::read(&audio).unwrap();
+    std::fs::write(&path, &cover).unwrap();
+    let mut item = plan_item(
+        "track-a",
+        "staging/a.flac",
+        "staging/a.flac",
+        fp,
+        PlanKind::SamePath,
+    );
+    item.managed_updates.clear();
+    item.removals.push(publish::GeneratedOutput {
+        dest_root: "music".to_string(),
+        dest_rel: "staging/cover.jpg".to_string(),
+        sha256: sha,
+        size: cover.len() as u64,
+        kind: "artwork".to_string(),
+    });
+    let bundle = PlanBundle {
+        id: "bundle-undo".to_string(),
+        items: vec![item],
+        profile_revision: 7,
+        naming_revision: 3,
+        policy_revision: 5,
+        catalog_revision: db_catalog_revision(&fix),
+    };
+    let mut docs = BTreeMap::new();
+    docs.insert("track-a".to_string(), TagDocument::empty());
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::BeforeCatalogCommit));
+    assert!(matches!(
+        publisher.publish(&sealed, &live, &docs),
+        Err(PublishError::InjectedCrash(_))
+    ));
+    drop(publisher);
+
+    let mut conn = open_db(&fix);
+    let removal = JournalStore::new(&conn)
+        .bundle("bundle-undo")
+        .unwrap()
+        .into_iter()
+        .find(|journal| journal.kind == publish::JournalKind::Delete)
+        .expect("removal journaled");
+    assert!(!path.exists(), "set aside before the commit");
+    std::fs::hard_link(&removal.staged, &path).unwrap();
+
+    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
+    assert_eq!(std::fs::read(&path).unwrap(), cover);
+    assert_eq!(std::fs::metadata(&path).unwrap().nlink(), 1);
+    assert!(std::fs::read(&audio).unwrap() == audio_bytes);
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+    let journals = JournalStore::new(&conn).bundle("bundle-undo").unwrap();
+    assert!(
+        journals
+            .iter()
+            .all(|journal| journal.state == JournalState::Compensated)
+    );
+}
+
 /// An occupant that changed since planning is never set aside.
 #[test]
 fn replacement_of_a_changed_file_is_refused() {

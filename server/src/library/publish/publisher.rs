@@ -993,7 +993,14 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         if current.kind == JournalKind::Delete {
             let aside = Path::new(&journal.staged);
             self.sandbox.ensure_under_roots(aside)?;
-            super::generated::set_aside(&dest, aside, &journal.staged_sha256)?;
+            super::generated::set_aside(
+                self.sandbox.placement_mode(&journal.dest_root),
+                (&journal.dest_root, &journal.dest_rel),
+                &dest,
+                aside,
+                &journal.staged_sha256,
+                self.place_seams,
+            )?;
             JournalStore::new(&self.conn).transition(
                 &journal.id,
                 JournalState::Staged,

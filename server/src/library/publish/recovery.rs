@@ -19,7 +19,8 @@
 //!   name at once, as one file (same device and inode), is a
 //!   link-then-unlink placement that stopped halfway. It is finished by
 //!   removing the hidden name. Two separate files with the same bytes
-//!   stay ambiguous.
+//!   stay ambiguous. A set-aside generated file in that state is a
+//!   put-back that stopped, so its bundle is unwound, never resumed.
 //! - Recovery places files only through `place::place_from_hidden`, so
 //!   it cannot replace a file either. A set-aside original that cannot
 //!   go home stays under its backup name and its row needs attention.
@@ -248,6 +249,14 @@ fn inspect_bundle(
             let present = |path: &Path| std::fs::symlink_metadata(path).is_ok();
             let in_place = holds(&dest);
             let aside = holds(staged);
+            // One file under both names: an unwind linked it home and
+            // stopped, or the link test before a set-aside stopped before
+            // removing its link. The two cannot be told apart, and in both
+            // the file is in place, so the bundle unwinds.
+            if in_place && paths::same_file(staged, &dest) {
+                resumeable = false;
+                continue;
+            }
             if (in_place && present(staged))
                 || (aside && present(&dest))
                 || (!in_place && present(&dest))
@@ -492,7 +501,23 @@ fn resume_rename(
     let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
     let staged = Path::new(&journal.staged);
     if journal.kind == JournalKind::Delete {
-        super::generated::set_aside(&dest, staged, &journal.staged_sha256)?;
+        match super::generated::set_aside(
+            sandbox.placement_mode(&journal.dest_root),
+            (&journal.dest_root, &journal.dest_rel),
+            &dest,
+            staged,
+            &journal.staged_sha256,
+            Seams::default(),
+        ) {
+            Ok(()) => {}
+            Err(error @ (PublishError::NotLinkable(_) | PublishError::NoSafePlacement(_))) => {
+                return Ok(Some(format!(
+                    "journal {} could not set its generated file aside: {error}",
+                    journal.id
+                )));
+            }
+            Err(error) => return Err(error),
+        }
         JournalStore::new(conn).transition(&journal.id, journal.state, JournalState::Published)?;
         return Ok(None);
     }
@@ -866,10 +891,11 @@ pub(super) fn compensate_bundle(
 enum Unwound {
     /// Everything of the user's is back under its own name.
     Clean,
-    /// The set-aside original is still under its backup name, and why.
+    /// The set-aside original, or a set-aside generated file, is still
+    /// under its hidden name, and why.
     BackupKept(String),
     /// The original has no safe way back onto its name and stays under
-    /// its backup name. A placed copy that held the name is already gone.
+    /// its hidden name. A placed copy that held the name is already gone.
     NoSafeMethod(String),
 }
 
@@ -886,8 +912,27 @@ fn unwind_row(
     let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
     if journal.kind == JournalKind::Delete {
         // A delete journal's staged copy is the generated file itself.
-        super::generated::put_back(&dest, Path::new(&journal.staged), &journal.staged_sha256)?;
-        return Ok(Unwound::Clean);
+        let put_back = super::generated::put_back(
+            sandbox.placement_mode(&journal.dest_root),
+            &dest,
+            Path::new(&journal.staged),
+            &journal.staged_sha256,
+            seams,
+        );
+        return match put_back {
+            Ok(()) => Ok(Unwound::Clean),
+            Err(PlaceError::Collision) => Ok(Unwound::BackupKept(format!(
+                "another file took the name journal {} set its generated file aside from",
+                journal.id
+            ))),
+            Err(PlaceError::Unavailable(_) | PlaceError::CrossDevice) => {
+                Ok(Unwound::NoSafeMethod(format!(
+                    "journal {} has no safe way to put its generated file back",
+                    journal.id
+                )))
+            }
+            Err(error) => Err(error.into_publish(&journal.dest_root, &journal.dest_rel)),
+        };
     }
     let staged = Path::new(&journal.staged);
     // Matching bytes do not make the destination the placed copy: a row
