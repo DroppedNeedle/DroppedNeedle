@@ -4,8 +4,10 @@
 # Started as root (the default), it moves the baked droppedneedle user to
 # PUID/PGID and drops to it with gosu. Started with `docker run --user`, it
 # skips user setup and runs the command as that user. Any command works,
-# e.g. `droppedneedle-tool export ...`; only the server (`droppedneedle`)
-# needs /app/config and /app/cache, so only the server checks them.
+# e.g. `droppedneedle-tool upgrade`, which then writes its files as the
+# same user the server runs as. Only the server (`droppedneedle`) has its
+# /app/config and /app/cache checked and chowned here; the tool reports a
+# folder it cannot write to itself.
 set -e
 
 REQUESTED_UMASK=${UMASK:-027}
