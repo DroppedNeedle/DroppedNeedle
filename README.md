@@ -140,7 +140,6 @@ Pre-releases are published to the same image under their own version tag, for ex
 | Live events | Ticketmaster and Skiddle gig alerts for artists you follow, each user with their own cities |
 | Following | New-release radar with optional auto-download, release-type filters, and sidebar badges |
 | Library | Browse, filter, download, rescan, and remove albums; albums DroppedNeedle isn't sure of are listed as unconfirmed, without blocking anything. Admins see artists that appear twice under the same name, with the MusicBrainz evidence for each, and can mark them as different people |
-| Free Music | Internet Archive items under Creative Commons or public-domain licences, licence shown up front, no account or API key, off with one toggle |
 | Drop imports | Drag in a zip or loose files from anywhere you buy music; identified, tagged, and shelved, or held for a manual match |
 | Playlists | Mix Jellyfin, Navidrome, Plex, local, YouTube, and Spotify imports in one place, share read-only with one toggle |
 | YouTube links | Find an album or its tracks on YouTube from the album page and play them there. Paste your own links on the YouTube library page. Each search spends one unit of the daily quota set under Settings > YouTube; a saved link never searches again |
@@ -170,7 +169,7 @@ Follow an artist and DroppedNeedle checks MusicBrainz for their new releases onc
 
 | Direction | What plugs in |
 |-|-|
-| In | Your slskd, your SABnzbd with your Newznab indexers or Prowlarr, Internet Archive free licences, and drop imports. Identity from MusicBrainz and AcoustID, album art from your files and the Cover Art Archive, artist photos from Wikidata and AudioDB |
+| In | Your slskd, your SABnzbd with your Newznab indexers or Prowlarr, and drop imports. Identity from MusicBrainz and AcoustID, album art from your files and the Cover Art Archive, artist photos from Wikidata and AudioDB |
 | Out | Jellyfin, Navidrome, Plex, local files, and YouTube previews, plus OpenSubsonic and Jellyfin APIs so apps like Symfonium, Finamp, Feishin, Amperfy, Jellify, and Manet can play from you |
 | Around | ListenBrainz and Last.fm scrobbling, Spotify playlist import, Ticketmaster and Skiddle gigs, Deezer and iTunes preview clips, and purchase links that put Bandcamp first |
 
@@ -231,14 +230,6 @@ The second source is Usenet through SABnzbd. For searching, either add Newznab-c
 3. Under Settings > Indexers / Prowlarr, pick one search backend: add each indexer's URL plus API key, or enter your Prowlarr URL plus API key. Then Test and Save.
 
 slskd and Usenet can run side by side; the source priority control picks who goes first.
-
-### Free Music
-
-Free Music is DroppedNeedle's own download client. It only fetches music from the Internet Archive that carries a Creative Commons or public-domain licence, and it needs no account or key. It is on by default; turn it off under Settings > Free Music.
-
-When no other source is set up (no slskd, no Usenet, no plugin source), album and track requests go to Free Music. It searches the Archive for the artist and title, skips anything whose title isn't really the album you asked for, and ranks what is left: the right number of tracks (from the edition your library keeps, or the album's best-known release) first, then your preferred format, then lossless over lossy, then the bigger copy. Downloaded files must fit your download quality range as it was when you asked (changing settings later doesn't move a download already requested; the list shows the range each one uses). A copy that doesn't fit is thrown away and the next source is tried. The downloads list shows each one with its licence, its progress, and, when it fails, why and what to do about it. Retry never tries a source that already failed.
-
-Finished downloads go through drop import (below), which identifies them, files them into your library and marks the request done.
 
 ### Drop imports
 
