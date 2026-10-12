@@ -85,7 +85,9 @@ impl PlaceError {
         use super::PublishError;
         match self {
             Self::Collision => PublishError::Collision(format!("late occupier at {root}:{rel}")),
-            Self::CrossDevice | Self::Unavailable(_) => PublishError::Io(NO_SAFE_METHOD.to_owned()),
+            Self::CrossDevice | Self::Unavailable(_) => {
+                PublishError::NoSafePlacement(NO_SAFE_METHOD.to_owned())
+            }
             Self::Interrupted => PublishError::InjectedCrash("after-link".to_owned()),
             Self::Unsynced(error) | Self::Io(error) => PublishError::Io(error.to_string()),
         }

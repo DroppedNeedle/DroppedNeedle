@@ -164,6 +164,16 @@ pub enum PublishError {
     /// Disk preflight: insufficient destination space.
     #[error("insufficient space: {0}")]
     Space(String),
+    /// Placement gate: this folder offers no way to put the file on its
+    /// name that cannot replace another file. The text is the sentence the
+    /// user reads.
+    #[error("{0}")]
+    NoSafePlacement(String),
+    /// Placement gate: the file could be moved out of the way but not put
+    /// back safely, so it was not touched. The text is the sentence the
+    /// user reads, and it names the file.
+    #[error("{0}")]
+    NotLinkable(String),
     /// Injected crash for the crash-matrix tests. Production never
     /// constructs this; tests use it to prove resume-or-compensate.
     #[error("injected crash at {0}")]

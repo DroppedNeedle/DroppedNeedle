@@ -249,6 +249,26 @@ pub fn write_failed() -> ItemReason {
     )
 }
 
+/// The folder has no way to add a file that cannot replace another one.
+/// `message` is the publisher's sentence.
+pub fn no_safe_placement(message: &str) -> ItemReason {
+    ItemReason::new(
+        "WRITE_FAILED",
+        message,
+        "Move this library to a disk that supports hard links, such as ext4 or an NFS share, then make a new preview.",
+    )
+}
+
+/// A file that could be set aside but not put back, so it was left alone.
+/// `message` is the publisher's sentence, which names the file.
+pub fn file_not_linkable(message: &str) -> ItemReason {
+    ItemReason::new(
+        "WRITE_FAILED",
+        message,
+        "Make the server's user the owner of the file and remove any lock on it, or move the library to a disk that supports hard links, then make a new preview.",
+    )
+}
+
 pub fn root_read_only() -> ItemReason {
     ItemReason::new(
         "ROOT_READ_ONLY",
@@ -328,6 +348,8 @@ pub fn from_publish(error: &PublishError) -> ItemReason {
             "Restore the v2 library-management cache from a backup and migrate again before managing it.",
         ),
         PublishError::UnsafePath(_) => symlink_unsupported(),
+        PublishError::NoSafePlacement(message) => no_safe_placement(message),
+        PublishError::NotLinkable(message) => file_not_linkable(message),
         PublishError::Cleanup(_)
         | PublishError::Archive(_)
         | PublishError::Store(_)

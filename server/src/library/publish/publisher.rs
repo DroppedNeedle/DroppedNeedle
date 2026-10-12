@@ -18,7 +18,6 @@ use rusqlite::{Connection, OptionalExtension};
 
 use super::journal::{FileJournal, JournalKind, JournalReplacement, JournalState, JournalStore};
 use super::paths::Sandbox;
-use super::place::PlaceError;
 use super::planner::{
     CapabilityGate, CollisionGate, DiskPreflight, PlanBundle, PlanKind, SealError, SealRecheck,
     SealedPreview, SpaceProbe,
@@ -399,8 +398,8 @@ pub struct Publisher<C: Catalog, P: SpaceProbe> {
     undo_retention_days: i64,
 }
 
-/// What a file fails with when no safe step can place it after the file
-/// it replaces was set aside.
+/// What a file fails with when no safe step can place it and the unwind
+/// could not put the file it replaces back either.
 pub const NO_SAFE_METHOD_ORIGINAL_ASIDE: &str = "This folder has no safe way to add a file \
      without risking an overwrite. The file that was there is kept under a hidden name beside \
      it until an administrator puts it back.";
@@ -490,7 +489,14 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             Ok(outcome) => Ok(outcome),
             Err(err) => {
                 if Self::compensatable(&err) {
-                    self.compensate(bundle)?;
+                    let backup_kept = self.compensate(bundle)?;
+                    // Only the unwind knows whether a set-aside original
+                    // made it home, so the sentence is chosen after it.
+                    if backup_kept && matches!(err, PublishError::NoSafePlacement(_)) {
+                        return Err(PublishError::NoSafePlacement(
+                            NO_SAFE_METHOD_ORIGINAL_ASIDE.to_owned(),
+                        ));
+                    }
                 }
                 Err(err)
             }
@@ -1011,7 +1017,6 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             }
             None => false,
         };
-        let mut original_aside = false;
         match std::fs::symlink_metadata(&dest) {
             Ok(meta) => {
                 if meta.file_type().is_symlink() {
@@ -1040,7 +1045,6 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 if let Some(parent) = dest.parent() {
                     super::journal::fsync_dir(parent)?;
                 }
-                original_aside = true;
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => return Err(PublishError::Io(err.to_string())),
@@ -1051,16 +1055,8 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         // The checks above can go stale before the file lands, so the
         // placement itself refuses a name that is taken by then.
         let mode = self.sandbox.placement_mode(&journal.dest_root);
-        super::place::place_with(mode, staged_path, &dest, self.place_seams).map_err(|error| {
-            match error {
-                // The file already there was set aside and, with no safe
-                // step, the unwind cannot put it back either.
-                PlaceError::Unavailable(_) | PlaceError::CrossDevice if original_aside => {
-                    PublishError::Io(NO_SAFE_METHOD_ORIGINAL_ASIDE.to_owned())
-                }
-                other => other.into_publish(&journal.dest_root, &journal.dest_rel),
-            }
-        })?;
+        super::place::place_with(mode, staged_path, &dest, self.place_seams)
+            .map_err(|error| error.into_publish(&journal.dest_root, &journal.dest_rel))?;
         let moved = JournalStore::new(&self.conn).transition(
             &journal.id,
             JournalState::Staged,
@@ -1259,11 +1255,11 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
     /// copy, restore same-path backups, delete unpublished temps, and
     /// mark journals compensated. A row whose original could not go home
     /// keeps its backup and needs attention; the publish still fails with
-    /// its own error.
-    fn compensate(&mut self, bundle: &PlanBundle) -> Result<(), PublishError> {
+    /// its own error. True when a backup was kept.
+    fn compensate(&mut self, bundle: &PlanBundle) -> Result<bool, PublishError> {
         let journals = JournalStore::new(&self.conn).bundle(&bundle.id)?;
-        super::recovery::compensate_bundle(&self.conn, &self.sandbox, &journals)?;
-        Ok(())
+        let kept = super::recovery::compensate_bundle(&self.conn, &self.sandbox, &journals)?;
+        Ok(kept.is_some())
     }
 
     /// Whether a publish failure compensates (pre-commit) rather than

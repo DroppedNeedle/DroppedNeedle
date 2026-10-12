@@ -1060,7 +1060,7 @@ fn check_then_rename_needs_a_check_root() {
         }
         let err = outcome.unwrap_err();
         assert!(
-            matches!(&err, PublishError::Io(text) if text == publish::place::NO_SAFE_METHOD),
+            matches!(&err, PublishError::NoSafePlacement(text) if text == publish::place::NO_SAFE_METHOD),
             "got {err:?}"
         );
         for rel in ["staging/a.flac", "staging/b.flac"] {

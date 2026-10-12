@@ -397,6 +397,8 @@ pub(crate) fn publish_error(error: PublishError) -> ServiceError {
         | PublishError::Catalog(message)
         | PublishError::Space(message)
         | PublishError::Capability(message)
+        | PublishError::NoSafePlacement(message)
+        | PublishError::NotLinkable(message)
         | PublishError::Cleanup(message) => ServiceError::Conflict { message },
         PublishError::UnsafePath(message) | PublishError::Archive(message) => {
             ServiceError::InvalidInput { message }
