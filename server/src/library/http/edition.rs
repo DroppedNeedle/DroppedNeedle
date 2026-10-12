@@ -58,6 +58,14 @@ pub fn edition_router() -> Router<LibrarySetup> {
             post(undo_edition),
         )
         .route("/library/albums/{album_id}/edition/plan", get(plan_edition))
+        .route(
+            "/library/albums/{album_id}/edition/extras/remove",
+            post(remove_extras),
+        )
+        .route(
+            "/library/albums/{album_id}/edition/extras/restore",
+            post(restore_extras),
+        )
         .route("/library/unconfirmed", get(list_unconfirmed))
 }
 
