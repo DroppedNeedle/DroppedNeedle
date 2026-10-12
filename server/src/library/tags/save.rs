@@ -65,6 +65,11 @@ pub struct TagEdit {
     /// `TRACKTOTAL` with different values gets each back); `None` writes
     /// every spelling the file uses.
     pub spelling: Option<&'static str>,
+    /// A native item outside the writable fields (`vorbis:COMPOSER`,
+    /// `id3:TCOM`, `id3:TXXX:<description>`, `mp4:<atom>`,
+    /// `mp4:----:<name>`), as [`FieldDocument::native`] lists them. Its
+    /// values go back verbatim; none removes it. `field` is unused then.
+    pub native: Option<String>,
 }
 
 impl TagEdit {
@@ -75,6 +80,20 @@ impl TagEdit {
             values,
             verbatim: false,
             spelling: None,
+            native: None,
+        }
+    }
+
+    /// A native item outside the writable fields, written back verbatim
+    /// (or removed, with no values).
+    #[must_use]
+    pub fn native(key: impl Into<String>, values: Vec<String>) -> Self {
+        Self {
+            field: TagField::Title,
+            values,
+            verbatim: true,
+            spelling: None,
+            native: Some(key.into()),
         }
     }
 
@@ -86,6 +105,7 @@ impl TagEdit {
             values,
             verbatim: true,
             spelling: None,
+            native: None,
         }
     }
 
@@ -98,6 +118,7 @@ impl TagEdit {
             values,
             verbatim: true,
             spelling: Some(spelling),
+            native: None,
         }
     }
 
@@ -246,6 +267,12 @@ pub struct FieldDocument {
     /// Each Vorbis spelling's own values, for fields the file spells more
     /// than one way (`TOTALTRACKS` and `TRACKTOTAL`).
     pub spellings: BTreeMap<(TagField, &'static str), Vec<String>>,
+    /// Text items outside the writable fields (a composer, an encoder
+    /// note, a custom `TXXX`), keyed the way [`TagEdit::native`] takes
+    /// them, so a scrub can remove them and a restore put them back.
+    /// Pictures and non-text items are not listed: they are never
+    /// scrubbed.
+    pub native: BTreeMap<String, Vec<String>>,
 }
 
 /// Read a file's [`FieldDocument`]. Read-only containers report nothing:
@@ -266,16 +293,20 @@ pub fn read_document(path: &Path) -> Result<FieldDocument, TagsError> {
     };
     let reads: Vec<(TagField, FieldRead)> = match format {
         AudioFormat::Mp3 => match parse_id3_deep(&bytes).map_err(unreadable)? {
-            Some(tag) => TagField::ALL
-                .into_iter()
-                .map(|field| (field, id3_read(&tag, field)))
-                .collect(),
+            Some(tag) => {
+                document.native = id3_native(&tag);
+                TagField::ALL
+                    .into_iter()
+                    .map(|field| (field, id3_read(&tag, field)))
+                    .collect()
+            }
             None => Vec::new(),
         },
         AudioFormat::Flac | AudioFormat::Ogg | AudioFormat::Opus => {
             match parse_vorbis_truth(format, &bytes).map_err(unreadable)? {
                 Some(truth) => {
                     document.spellings = vorbis_spellings(&truth);
+                    document.native = vorbis_native(&truth);
                     TagField::ALL
                         .into_iter()
                         .map(|field| (field, vorbis_read(&truth, field)))
@@ -285,16 +316,173 @@ pub fn read_document(path: &Path) -> Result<FieldDocument, TagsError> {
             }
         }
         AudioFormat::M4a => match parse_mp4_atoms(&bytes).map_err(unreadable)? {
-            Some(atoms) => TagField::ALL
-                .into_iter()
-                .map(|field| (field, mp4_read(&atoms, field)))
-                .collect(),
+            Some(atoms) => {
+                document.native = mp4_native(&atoms);
+                TagField::ALL
+                    .into_iter()
+                    .map(|field| (field, mp4_read(&atoms, field)))
+                    .collect()
+            }
             None => Vec::new(),
         },
         AudioFormat::Aac | AudioFormat::Wav => Vec::new(),
     };
     collect_reads(&mut document, reads);
     Ok(document)
+}
+
+/// ID3 text frames no writable field owns, in either tag version.
+fn id3_native(tag: &DeepId3) -> BTreeMap<String, Vec<String>> {
+    let mut owned: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for field in TagField::ALL {
+        for v23 in [true, false] {
+            match field.id3(v23) {
+                Id3Target::Text(id) | Id3Target::Pair(id, _) => {
+                    owned.insert(id.to_owned());
+                }
+                Id3Target::User(desc) => {
+                    owned.insert(format!("TXXX:{}", desc.to_ascii_uppercase()));
+                }
+                Id3Target::SplitDate => {
+                    owned.extend(["TYER", "TDAT", "TIME"].map(str::to_owned));
+                }
+                Id3Target::Ufid(_) | Id3Target::Lyrics => {}
+            }
+        }
+    }
+    let mut out = BTreeMap::new();
+    for frame in &tag.frames {
+        let Some(text) = &frame.text else {
+            continue;
+        };
+        let key = match &text.desc {
+            Some(desc) => format!("TXXX:{desc}"),
+            None => frame.id.clone(),
+        };
+        let upper = match &text.desc {
+            Some(desc) => format!("TXXX:{}", desc.to_ascii_uppercase()),
+            None => frame.id.clone(),
+        };
+        if owned.contains(&upper) || text.values.iter().all(String::is_empty) {
+            continue;
+        }
+        out.insert(format!("id3:{key}"), text.values.clone());
+    }
+    out
+}
+
+/// Vorbis comments no writable field owns (pictures excluded).
+fn vorbis_native(truth: &VorbisTruth) -> BTreeMap<String, Vec<String>> {
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (key, value) in &truth.pairs {
+        let owned = TagField::ALL.into_iter().any(|field| {
+            field
+                .vorbis_keys()
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(key))
+        });
+        if owned || is_picture_field(key) || value.is_empty() {
+            continue;
+        }
+        out.entry(format!("vorbis:{key}"))
+            .or_default()
+            .push(value.clone());
+    }
+    out
+}
+
+/// MP4 text atoms and iTunes freeforms no writable field owns.
+fn mp4_native(atoms: &[Mp4AtomTruth]) -> BTreeMap<String, Vec<String>> {
+    let mut owned_codes: Vec<[u8; 4]> = vec![*b"covr"];
+    let mut owned_names: Vec<&'static str> = Vec::new();
+    for field in TagField::ALL {
+        match field.mp4() {
+            Mp4Target::Text(code) | Mp4Target::Pair(code, _) | Mp4Target::Flag(code) => {
+                owned_codes.push(code);
+            }
+            Mp4Target::Freeform(name) => owned_names.push(name),
+        }
+    }
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for atom in atoms {
+        if atom.kind == *b"----" {
+            for item in &atom.items {
+                if let Mp4Item::Freeform { mean, name, data } = item
+                    && mean == MP4_MEAN
+                    && !owned_names
+                        .iter()
+                        .any(|known| known.eq_ignore_ascii_case(name))
+                    && let Ok(text) = std::str::from_utf8(data)
+                    && !text.is_empty()
+                {
+                    out.entry(format!("mp4:----:{name}"))
+                        .or_default()
+                        .push(text.to_owned());
+                }
+            }
+            continue;
+        }
+        if owned_codes.contains(&atom.kind) {
+            continue;
+        }
+        let texts: Option<Vec<String>> = atom
+            .items
+            .iter()
+            .map(|item| match item {
+                Mp4Item::Text(text) => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        if let Some(texts) = texts.filter(|texts| !texts.is_empty()) {
+            let code: String = atom.kind.iter().map(|byte| char::from(*byte)).collect();
+            out.insert(format!("mp4:{code}"), texts);
+        }
+    }
+    out
+}
+
+/// The native edit a [`TagEdit::native`] key names in this file.
+fn native_edit(snapshot: &Snapshot, key: &str, values: &[String]) -> Result<NativeEdit, Refusal> {
+    let foreign = || Refusal::NoByteInventory {
+        detail: format!("tag '{key}' does not belong to this file's format"),
+    };
+    let values = values.to_vec();
+    match (snapshot, key.split_once(':')) {
+        (Snapshot::Id3 { .. }, Some(("id3", rest))) => match rest.strip_prefix("TXXX:") {
+            Some(desc) => Ok(NativeEdit::Id3User {
+                desc: desc.to_owned(),
+                values,
+            }),
+            None if rest.len() == 4 && rest.starts_with('T') && !is_key_value_id(rest) => {
+                Ok(NativeEdit::Id3Text {
+                    id: rest.to_owned(),
+                    values,
+                })
+            }
+            None => Err(foreign()),
+        },
+        (Snapshot::Vorbis { .. }, Some(("vorbis", rest))) if valid_vorbis_key(rest) => {
+            Ok(NativeEdit::Vorbis {
+                key: rest.to_owned(),
+                values,
+            })
+        }
+        (Snapshot::Mp4 { .. }, Some(("mp4", rest))) => match rest.strip_prefix("----:") {
+            Some(name) => Ok(NativeEdit::Mp4Freeform {
+                name: name.to_owned(),
+                values,
+            }),
+            None => {
+                let code: Vec<u8> = rest
+                    .chars()
+                    .map(|c| u8::try_from(u32::from(c)).map_err(|_| foreign()))
+                    .collect::<Result<_, _>>()?;
+                let code: [u8; 4] = code.try_into().map_err(|_| foreign())?;
+                Ok(NativeEdit::Mp4Text { code, values })
+            }
+        },
+        _ => Err(foreign()),
+    }
 }
 
 /// File each field read into the document.
@@ -1473,6 +1661,24 @@ impl NativeEdit {
 /// the half that was not edited, split a v2.3 date over its three
 /// frames, and let a later edit of the same target win.
 fn resolve_edits(snapshot: &Snapshot, edits: &[TagEdit]) -> Result<Vec<NativeEdit>, Refusal> {
+    let fields: Vec<TagEdit> = edits
+        .iter()
+        .filter(|edit| edit.native.is_none())
+        .cloned()
+        .collect();
+    let mut resolved = resolve_field_edits(snapshot, &fields)?;
+    for edit in edits {
+        let Some(key) = &edit.native else {
+            continue;
+        };
+        let native = native_edit(snapshot, key, &edit.values)?;
+        resolved.retain(|known| !known.same_target(&native));
+        resolved.push(native);
+    }
+    Ok(resolved)
+}
+
+fn resolve_field_edits(snapshot: &Snapshot, edits: &[TagEdit]) -> Result<Vec<NativeEdit>, Refusal> {
     let mut resolved: Vec<NativeEdit> = Vec::new();
     let mut push = |edit: NativeEdit| {
         resolved.retain(|known| !known.same_target(&edit));

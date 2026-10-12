@@ -323,6 +323,22 @@ pub struct ItemDiff {
     pub sidecars: Vec<SidecarMove>,
     /// Files written next to the audio from no source file.
     pub generated: Vec<GeneratedFile>,
+    /// Native tags outside the managed fields a scrub removes.
+    pub scrubbed_raw_tags: Vec<ScrubbedTag>,
+    /// Genre sources that could not be asked.
+    pub deferred_sources: Vec<String>,
+}
+
+/// One native tag a scrub removes, with what it held.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScrubbedTag {
+    pub key: String,
+    /// Always `text`: only text items are scrubbed.
+    pub value_kind: String,
+    pub values: Vec<String>,
+    pub value_count: usize,
+    pub truncated: bool,
 }
 
 /// A file the plan writes from no source (a cover, a lyrics file).

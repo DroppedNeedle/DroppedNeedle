@@ -1207,6 +1207,30 @@ fn picard_tag_set_round_trips_per_format() {
     }
 }
 
+/// Native items outside the managed fields are listed, removed and put
+/// back verbatim: what a scrub and its undo do.
+#[test]
+fn native_items_scrub_and_restore() {
+    for (name, key) in [
+        ("management_full.flac", "vorbis:COMPOSER"),
+        ("management_full.mp3", "id3:TCOM"),
+        ("management_full.m4a", "mp4:----:MOOD"),
+    ] {
+        let (_scratch, path) = temp_copy(name, "native");
+        let values = vec!["Someone".to_owned()];
+        let native = |path: &Path| tags::save::read_document(path).unwrap().native;
+        tags::save_tags(&path, &[TagEdit::native(key, values.clone())])
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(native(&path).get(key), Some(&values), "{name}");
+        tags::save_tags(&path, &[TagEdit::native(key, Vec::new())])
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert!(!native(&path).contains_key(key), "{name}");
+        tags::save_tags(&path, &[TagEdit::native(key, values.clone())])
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(native(&path).get(key), Some(&values), "{name}");
+    }
+}
+
 #[test]
 fn save_refuses_empty_vorbis_values() {
     let (_scratch, path) = temp_copy("management_full.flac", "empty-vorbis");

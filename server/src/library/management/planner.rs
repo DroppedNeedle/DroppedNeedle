@@ -442,6 +442,18 @@ fn plan_file(
     item.dest_root = Some(dest_root.clone());
     item.dest_rel = Some(dest_rel.clone());
     item.fingerprint = fingerprint.sha256.clone();
+    item.diff.scrubbed_raw_tags = tag_plan
+        .scrubbed
+        .iter()
+        .map(|(key, values)| super::models::ScrubbedTag {
+            key: key.clone(),
+            value_kind: "text".to_owned(),
+            value_count: values.len(),
+            values: values.clone(),
+            truncated: false,
+        })
+        .collect();
+    item.diff.deferred_sources = tag_plan.deferred.clone();
     item.diff.field_mutations = tag_plan.mutations;
     item.diff.tags_changed = !tag_plan.updates.is_empty();
     item.diff.path_changed = moves;

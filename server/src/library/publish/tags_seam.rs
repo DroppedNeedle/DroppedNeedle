@@ -23,7 +23,9 @@ pub struct TagDocument {
     /// Managed semantic fields; each holds an ordered value list so
     /// multi-valued tags keep their boundaries.
     pub managed: BTreeMap<String, Vec<String>>,
-    /// Custom and unknown-but-named tags, preserved by default.
+    /// Text items outside the writable fields, keyed as
+    /// TagEdit::native takes them. Recorded so a restore can put back what
+    /// a scrub removed; the writer itself never touches them otherwise.
     pub custom: BTreeMap<String, Vec<String>>,
     /// Unknown native frames as opaque bytes, keyed by native
     /// descriptor. The writer never inspects these.

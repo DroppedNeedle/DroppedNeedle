@@ -283,6 +283,11 @@ pub struct TagPlan {
     pub desired: BTreeMap<String, Vec<String>>,
     pub mutations: Vec<FieldMutation>,
     pub warnings: Vec<String>,
+    /// Native items outside the managed fields a scrub removes, with the
+    /// values they held.
+    pub scrubbed: Vec<(String, Vec<String>)>,
+    /// Genre sources that could not be asked.
+    pub deferred: Vec<String>,
 }
 
 /// One file as tag planning sees it.
@@ -333,6 +338,7 @@ pub fn plan_tags(
     }
     let before = desired.clone();
     let mut warnings = Vec::new();
+    let mut deferred: Vec<String> = Vec::new();
     let genre_kept = profile
         .metadata
         .preserve_fields
@@ -352,6 +358,11 @@ pub fn plan_tags(
                 format!("{name} genres could not be read; the genres come from the other sources.")
             });
         }
+        deferred = projection
+            .deferred
+            .iter()
+            .map(|source| (*source).to_owned())
+            .collect();
         let mut genres = projection.genres;
         let constrained = matches!(format, "m4a" | "aac" | "wav");
         if constrained
@@ -456,12 +467,6 @@ pub fn plan_tags(
                 }
             }
         }
-        if profile.metadata.scrub_unmanaged_tags {
-            warnings.push(
-                "Removing tags the profile does not manage is not supported yet; they are kept."
-                    .to_owned(),
-            );
-        }
     }
     desired.retain(|_, values| !values.is_empty());
     let mut updates = BTreeMap::new();
@@ -498,6 +503,34 @@ pub fn plan_tags(
         });
         updates.insert(name.clone(), new);
     }
+    // Scrubbing (v2's rule): every native item outside the managed
+    // fields goes, except the ones the profile preserves. The values are
+    // recorded in the before-state, so undo and a baseline restore put
+    // them back.
+    let mut scrubbed = Vec::new();
+    if profile.metadata.enabled && profile.metadata.scrub_unmanaged_tags {
+        let preserved: Vec<String> = profile
+            .metadata
+            .preserve_fields
+            .iter()
+            .flat_map(|name| preserved_native(name))
+            .collect();
+        for (key, values) in &doc.custom {
+            let folded = key.to_ascii_lowercase();
+            if preserved.iter().any(|kept| *kept == folded) {
+                continue;
+            }
+            let name = format!("{}{key}", crate::library::publish::staging::NATIVE_PREFIX);
+            mutations.push(FieldMutation {
+                name: name.clone(),
+                operation: "clear".to_owned(),
+                before: json_value(values),
+                after: serde_json::Value::Null,
+            });
+            updates.insert(name, Vec::new());
+            scrubbed.push((key.clone(), values.clone()));
+        }
+    }
     if !writable && !updates.is_empty() {
         warnings.push(format!(
             "Tags cannot be written to {} files, so only the file's path is managed.",
@@ -505,6 +538,7 @@ pub fn plan_tags(
         ));
         updates.clear();
         mutations.clear();
+        scrubbed.clear();
     }
     // What the file holds after the write: skipped fields keep their value.
     let mut desired = before;
@@ -520,7 +554,52 @@ pub fn plan_tags(
         desired,
         mutations,
         warnings,
+        scrubbed,
+        deferred,
     })
+}
+
+/// The native items (folded keys) a preserved profile field name keeps
+/// from a scrub, for names outside the managed fields (`composer`,
+/// `comment`, an ISRC) and for any key named outright (`vorbis:mood`).
+fn preserved_native(name: &str) -> Vec<String> {
+    let name = name.trim().to_ascii_lowercase();
+    if name.contains(':') {
+        return vec![name];
+    }
+    let keys: &[&str] = match name.as_str() {
+        "composer" => &["id3:tcom", "vorbis:composer", "mp4:\u{a9}wrt"],
+        "lyricist" => &["id3:text", "vorbis:lyricist", "mp4:----:lyricist"],
+        "conductor" => &["id3:tpe3", "vorbis:conductor", "mp4:----:conductor"],
+        "remixer" => &["id3:tpe4", "vorbis:remixer", "mp4:----:remixer"],
+        "comment" => &["vorbis:comment", "vorbis:description", "mp4:\u{a9}cmt"],
+        "grouping" => &["id3:tit1", "vorbis:grouping", "mp4:\u{a9}grp"],
+        "bpm" => &["id3:tbpm", "vorbis:bpm"],
+        "isrc" => &["id3:tsrc", "vorbis:isrc", "mp4:----:isrc"],
+        "copyright" => &["id3:tcop", "vorbis:copyright", "mp4:cprt"],
+        "encoded_by" | "encodedby" => &["id3:tenc", "vorbis:encodedby", "mp4:\u{a9}too"],
+        "encoder" => &["id3:tsse", "vorbis:encoder", "mp4:\u{a9}too"],
+        "mood" => &["id3:tmoo", "vorbis:mood", "mp4:----:mood"],
+        "language" => &["id3:tlan", "vorbis:language", "mp4:----:language"],
+        "script" => &["id3:txxx:script", "vorbis:script", "mp4:----:script"],
+        "acoustid_id" => &[
+            "id3:txxx:acoustid id",
+            "vorbis:acoustid_id",
+            "mp4:----:acoustid id",
+        ],
+        "acoustid_fingerprint" => &[
+            "id3:txxx:acoustid fingerprint",
+            "vorbis:acoustid_fingerprint",
+            "mp4:----:acoustid fingerprint",
+        ],
+        "musicbrainz_work_id" => &[
+            "id3:txxx:musicbrainz work id",
+            "vorbis:musicbrainz_workid",
+            "mp4:----:musicbrainz work id",
+        ],
+        _ => &[],
+    };
+    keys.iter().map(|key| (*key).to_owned()).collect()
 }
 
 /// Put measured ReplayGain into the file's fields as the profile's mode

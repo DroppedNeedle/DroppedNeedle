@@ -37,6 +37,10 @@ pub fn check_managed_updates(
 ) -> Result<Vec<TagEdit>, PublishError> {
     let mut edits = Vec::with_capacity(managed_updates.len());
     for (name, values) in managed_updates {
+        if let Some(key) = name.strip_prefix(NATIVE_PREFIX) {
+            edits.push(TagEdit::native(key, values.clone()));
+            continue;
+        }
         match TagField::from_managed_name(name) {
             Some((field, None)) => edits.push(TagEdit::verbatim(field, values.clone())),
             Some((field, Some(spelling))) => {
@@ -59,6 +63,10 @@ pub fn check_new_values(
     managed_updates: &BTreeMap<String, Vec<String>>,
 ) -> Result<(), PublishError> {
     for (name, values) in managed_updates {
+        // Native items outside the fields are only ever removed (a scrub).
+        if name.starts_with(NATIVE_PREFIX) && values.is_empty() {
+            continue;
+        }
         let field = TagField::from_name(name).ok_or_else(|| {
             PublishError::Capability(format!(
                 "field {name} is outside the staged writer's surface"
@@ -72,6 +80,11 @@ pub fn check_new_values(
     }
     Ok(())
 }
+
+/// Managed-update names for native items outside the writable fields
+/// (`native:vorbis:COMPOSER`): a scrub removes them, and undo or a
+/// baseline restore writes them back.
+pub const NATIVE_PREFIX: &str = "native:";
 
 /// Audio extensions the staged writer routes. Anything else (WMA
 /// included) has no staged writer and blocks before any mutation.
@@ -166,7 +179,7 @@ pub fn document_from_fields(fields: super::super::tags::FieldDocument) -> TagDoc
     }
     TagDocument {
         managed,
-        custom: BTreeMap::new(),
+        custom: fields.native,
         unknown_frames: BTreeMap::new(),
         opaque: fields
             .opaque
@@ -197,7 +210,14 @@ pub fn document_for_write(
         )));
     }
     for name in managed_updates.keys() {
-        document.managed.entry(name.clone()).or_default();
+        // A scrubbed native item's before-state is its values now, so
+        // undo writes them back.
+        let before = name
+            .strip_prefix(NATIVE_PREFIX)
+            .and_then(|key| document.custom.get(key))
+            .cloned()
+            .unwrap_or_default();
+        document.managed.entry(name.clone()).or_insert(before);
     }
     Ok(document)
 }
@@ -220,6 +240,13 @@ pub fn restore_updates(
         return baseline.managed.clone();
     }
     let mut updates = baseline.managed.clone();
+    // Native items the baseline held and the file no longer holds as it
+    // did (a later scrub) go back. Items added since are left alone.
+    for (key, values) in &baseline.custom {
+        if current.custom.get(key) != Some(values) {
+            updates.insert(format!("{NATIVE_PREFIX}{key}"), values.clone());
+        }
+    }
     for field in TagField::ALL {
         if baseline.version < recorded_since(field) {
             continue;
