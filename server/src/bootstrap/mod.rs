@@ -448,6 +448,22 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
     .with_discovery_demand(Arc::new(crate::jobs::discovery_demand::ContentDemand(
         reads.discover.content.clone(),
     )));
+    // Library Management plans genres, lyrics and covers through the same
+    // clients and artwork cache the pages use.
+    let enrichment = crate::library::management::enrich::LiveEnrichment {
+        upstream: Upstream::new(
+            &http,
+            providers.clone(),
+            config_store.clone(),
+            auth.users.clone(),
+        )
+        .with_instance_lastfm_key(instance_lastfm_key(auth.users.lastfm_switch.clone())),
+        http: http.shared().clone(),
+        artwork: reads.artwork.clone(),
+    };
+    if library.enrichment.set(Arc::new(enrichment)).is_err() {
+        tracing::warn!("library management enrichment was already attached");
+    }
     let admin = match &reads.artwork {
         Some(artwork) => admin.with_covers(artwork.cache().clone()),
         None => admin,

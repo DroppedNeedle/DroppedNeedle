@@ -357,6 +357,7 @@ fn plan_file(
     release_group_mbid: &str,
     album_identity_revision: u64,
     overrides: &Overrides,
+    extras: &super::enrich::AlbumExtras,
 ) -> Result<(), ItemReason> {
     let store = &ctx.setup.identify_store;
     let mapping = store
@@ -410,6 +411,7 @@ fn plan_file(
             format: &format_name,
             writable,
             overrides,
+            extras,
         },
     )?;
     item.facts
@@ -807,6 +809,7 @@ pub fn plan_album(
                 album_identity_revision,
             ),
         };
+    let extras = super::enrich::gather(&ctx.setup.enrichment, &ctx.pinned.profile, &release);
     for (item, track) in items.iter_mut().zip(tracks) {
         let mut overrides = ctx
             .setup
@@ -824,6 +827,7 @@ pub fn plan_album(
             &release_group_mbid,
             album_identity_revision,
             &overrides,
+            &extras,
         ) {
             item.block(reason);
         }
@@ -886,6 +890,8 @@ pub fn plan_one(
                 .setup
                 .identify_store
                 .with_connection(|conn| overrides(conn, &scope.album_id, &track.id))?;
+            let extras =
+                super::enrich::gather(&ctx.setup.enrichment, &ctx.pinned.profile, &release);
             if let Err(reason) = plan_file(
                 ctx,
                 &mut item,
@@ -895,6 +901,7 @@ pub fn plan_one(
                 &release_group_mbid,
                 album_identity_revision,
                 &overrides,
+                &extras,
             ) {
                 item.block(reason);
             }

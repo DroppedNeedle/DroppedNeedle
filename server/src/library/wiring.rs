@@ -197,6 +197,11 @@ pub struct LibrarySetup {
             std::sync::Arc<crate::settings::management::service::LibraryManagementService>,
         >,
     >,
+    /// Genres, lyrics and covers Library Management plans with, attached
+    /// at boot (the artwork cache lives with the reads). Empty in test
+    /// bundles until a test scripts it; planning then treats every outside
+    /// source as unavailable.
+    pub enrichment: super::management::enrich::EnrichmentSlot,
     /// Scratch state of a test bundle, removed with the last clone.
     #[cfg(any(test, feature = "test-support"))]
     pub scratch: Option<Arc<crate::tooling::scratch::ScratchDir>>,
@@ -486,6 +491,7 @@ impl LibrarySetup {
             scan_completed,
             http: None,
             management_settings: Default::default(),
+            enrichment: Default::default(),
             #[cfg(any(test, feature = "test-support"))]
             scratch: None,
         })

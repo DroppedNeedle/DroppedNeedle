@@ -38,7 +38,8 @@ const PROVIDER: &str = "musicbrainz";
 /// Snapshot kind for stored release documents.
 const RELEASE_KIND: &str = "release";
 /// Shape version of the stored document; a new shape is a new input hash.
-const RELEASE_DOCUMENT_VERSION: &str = "matching-release-v1";
+/// v2 adds MusicBrainz genres: older documents are fetched again.
+const RELEASE_DOCUMENT_VERSION: &str = "matching-release-v2";
 
 fn now_secs() -> f64 {
     SystemTime::now()

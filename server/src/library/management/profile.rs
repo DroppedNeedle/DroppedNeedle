@@ -62,8 +62,8 @@ pub fn root_assignment(
 }
 
 /// A tag-only profile for the tag editor (as in v2): the folder's own
-/// profile with only the edited fields managed, no scripts, and no
-/// renames, moves or artwork.
+/// profile with only the edited fields managed: no scripts, genres,
+/// lyrics, ReplayGain, scrubbing, renames, moves or artwork.
 pub fn tag_edit_profile(
     stored: &LibraryManagement,
     root_id: &str,
@@ -83,6 +83,9 @@ pub fn tag_edit_profile(
     profile.metadata.tagging_script_ids.clear();
     profile.metadata.preserve_fields.clear();
     profile.metadata.scrub_unmanaged_tags = false;
+    profile.genres.enabled = false;
+    profile.enrichment.lyrics.enabled = false;
+    profile.enrichment.replaygain.enabled = false;
     profile.artwork.embedded_enabled = false;
     profile.artwork.external_enabled = false;
     profile.organization.rename_enabled = false;
@@ -293,6 +296,8 @@ pub struct FileInput<'a> {
     /// False for containers the writer cannot tag.
     pub writable: bool,
     pub overrides: &'a super::planner::Overrides,
+    /// What the outside sources said about the album.
+    pub extras: &'a super::enrich::AlbumExtras,
 }
 
 /// Plan the tags for one file from its edition, the profile and its
@@ -310,6 +315,7 @@ pub fn plan_tags(
         format,
         writable,
         overrides,
+        extras,
     } = *file;
     let profile: &LibraryManagementProfile = &pinned.profile;
     let mut desired: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -321,6 +327,40 @@ pub fn plan_tags(
     }
     let before = desired.clone();
     let mut warnings = Vec::new();
+    let genre_kept = profile
+        .metadata
+        .preserve_fields
+        .iter()
+        .any(|name| name == "genre");
+    if profile.genres.enabled && !genre_kept {
+        let existing = desired.get("genre").cloned().unwrap_or_default();
+        let projection = super::genre::project(&profile.genres, release, &extras.genres, &existing);
+        for source in &projection.deferred {
+            let name = match *source {
+                "listenbrainz" => "ListenBrainz",
+                _ => "Last.fm",
+            };
+            warnings.push(if projection.preserved_existing {
+                format!("{name} genres could not be read, so the file keeps its genres.")
+            } else {
+                format!("{name} genres could not be read; the genres come from the other sources.")
+            });
+        }
+        let mut genres = projection.genres;
+        let constrained = matches!(format, "m4a" | "aac" | "wav");
+        if constrained
+            && (profile.genres.write_primary_only_for_constrained_formats
+                || profile
+                    .metadata
+                    .format_compatibility
+                    .constrained_genres_primary_only)
+        {
+            genres.truncate(1);
+        }
+        if !genres.is_empty() {
+            desired.insert("genre".to_owned(), genres);
+        }
+    }
     if profile.metadata.enabled {
         let canonical = picard::release_tags(release, track);
         let preserved: BTreeSet<&str> = profile

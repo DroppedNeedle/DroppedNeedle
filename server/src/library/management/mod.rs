@@ -21,6 +21,8 @@ pub mod activation;
 pub mod after_apply;
 pub mod automatic;
 pub mod duplicates;
+pub mod enrich;
+pub mod genre;
 pub mod models;
 pub mod planner;
 pub mod profile;

@@ -148,6 +148,16 @@ pub struct ReleaseTrack {
     /// The recording's ISRCs.
     #[serde(default)]
     pub isrcs: Vec<String>,
+    /// The recording's MusicBrainz genres with their votes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub genres: Vec<Genre>,
+}
+
+/// A MusicBrainz genre and its vote count (`None` when not given).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Genre {
+    pub name: String,
+    pub count: Option<u32>,
 }
 
 /// A release with everything matching and tagging need.
@@ -177,6 +187,9 @@ pub struct Release {
     /// ("deluxe edition"); naming scripts read it as `album_disambiguation`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disambiguation: Option<String>,
+    /// The release's and its release group's MusicBrainz genres.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub genres: Vec<Genre>,
 }
 
 impl Release {

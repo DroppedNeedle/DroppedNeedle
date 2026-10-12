@@ -405,6 +405,7 @@ mod tests {
             }],
             tracks: (0..count)
                 .map(|index| ReleaseTrack {
+                    genres: Vec::new(),
                     id: format!("{group}-track-{index}"),
                     recording_id: format!("recording-{index}"),
                     title: TITLES[index].to_owned(),

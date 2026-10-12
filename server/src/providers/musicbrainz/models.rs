@@ -66,6 +66,22 @@ pub struct ReleaseGroupRef {
     /// Disambiguation comment.
     #[serde(default)]
     pub disambiguation: Option<String>,
+    /// Community genres, under the `genres` include.
+    #[serde(default)]
+    pub genres: Vec<MbGenre>,
+}
+
+/// One MusicBrainz genre with its vote count.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct MbGenre {
+    /// Genre MBID.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Genre name.
+    pub name: String,
+    /// Votes.
+    #[serde(default)]
+    pub count: Option<u32>,
 }
 
 /// Label reference inside label-info entries.
@@ -131,6 +147,9 @@ pub struct RecordingRef {
     /// ISRCs, under `inc=isrcs`.
     #[serde(default)]
     pub isrcs: Vec<String>,
+    /// Community genres, under the `genres` include.
+    #[serde(default)]
+    pub genres: Vec<MbGenre>,
 }
 
 /// One release track. The release-track `id` is not the recording MBID:
@@ -317,6 +336,9 @@ pub struct MbRelease {
     /// Relationships, under the relation includes.
     #[serde(default)]
     pub relations: Vec<Relation>,
+    /// Community genres, under the `genres` include.
+    #[serde(default)]
+    pub genres: Vec<MbGenre>,
 }
 
 /// Release-group lookup document.

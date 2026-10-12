@@ -215,6 +215,30 @@ impl ArtworkService {
         )
     }
 
+    /// A release's front cover (its release group's when the release has
+    /// none) at `size` (`None` for the original), through the cache and
+    /// the fallbacks the pages use. Library Management embeds it and writes
+    /// it next to the album. `Err` when an archive fetch is still running.
+    pub async fn front_cover(
+        &self,
+        release_mbid: &str,
+        release_group_mbid: &str,
+        size: Option<&str>,
+    ) -> Result<Option<CoverBytes>, ()> {
+        let mut warming = false;
+        for (entity, mbid) in [
+            (EntityKind::Release, release_mbid),
+            (EntityKind::ReleaseGroup, release_group_mbid),
+        ] {
+            match self.mbid_cover(entity, mbid, size, PRECACHE_WAIT).await {
+                CoverLookup::Found(cover) => return Ok(Some(cover)),
+                CoverLookup::Warming => warming = true,
+                CoverLookup::Missing => {}
+            }
+        }
+        if warming { Err(()) } else { Ok(None) }
+    }
+
     /// Whether TheAudioDB's thumbnail for a release group is settled.
     pub async fn audiodb_cover_cached(&self, mbid: &str) -> bool {
         self.settled(&audiodb_cover_key(mbid)).await

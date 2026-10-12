@@ -636,6 +636,7 @@ fn ranking_orders_one_recording_without_substitution() {
     // already attached to a recording. Official Album beats Bootleg Live;
     // version-changing secondaries lose; dates break remaining ties.
     let group = |id: &str, primary: &str, secondaries: Vec<&str>| musicbrainz::ReleaseGroupRef {
+        genres: Vec::new(),
         id: id.to_owned(),
         title: Some("T".to_owned()),
         first_release_date: None,

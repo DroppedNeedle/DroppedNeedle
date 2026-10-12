@@ -18,7 +18,7 @@ use futures_util::future::BoxFuture;
 use super::models::LocalTrackFacts;
 use super::stores::FingerprintStore;
 use crate::library::matching::model::{VARIOUS_ARTISTS_MBID, credit_text};
-use crate::library::matching::{CreditedArtist, Release, ReleaseMedium, ReleaseTrack};
+use crate::library::matching::{CreditedArtist, Genre, Release, ReleaseMedium, ReleaseTrack};
 use crate::library::scan::pool::BlockingPool;
 use crate::library::scan::roots::RootRegistry;
 use crate::providers::acoustid::{AcoustIdClient, BatchQuery};
@@ -162,8 +162,9 @@ pub struct AlbumQuery<'a> {
 /// Search hits per query.
 const SEARCH_LIMIT: u32 = 25;
 /// Includes for a release fetched for matching and tagging.
-const RELEASE_INCLUDES: [&str; 5] = [
+const RELEASE_INCLUDES: [&str; 6] = [
     "artist-credits",
+    "genres",
     "isrcs",
     "labels",
     "recordings",
@@ -359,6 +360,7 @@ pub fn release_from_wire(wire: MbRelease, old_ids: Vec<String>) -> Result<Releas
                     .map(|isrc| isrc.trim().to_ascii_uppercase())
                     .filter(|isrc| !isrc.is_empty())
                     .collect(),
+                genres: wire_genres(&recording.genres),
             });
         }
     }
@@ -393,7 +395,27 @@ pub fn release_from_wire(wire: MbRelease, old_ids: Vec<String>) -> Result<Releas
         tracks,
         old_ids,
         disambiguation: wire.disambiguation.filter(|note| !note.trim().is_empty()),
+        genres: {
+            let mut genres = wire_genres(&wire.genres);
+            for genre in wire_genres(&group.genres) {
+                if !genres.iter().any(|known| known.name == genre.name) {
+                    genres.push(genre);
+                }
+            }
+            genres
+        },
     })
+}
+
+fn wire_genres(genres: &[crate::providers::musicbrainz::models::MbGenre]) -> Vec<Genre> {
+    genres
+        .iter()
+        .filter(|genre| !genre.name.trim().is_empty())
+        .map(|genre| Genre {
+            name: genre.name.clone(),
+            count: genre.count,
+        })
+        .collect()
 }
 
 fn credits(credit: &[ArtistCreditName]) -> Vec<CreditedArtist> {
