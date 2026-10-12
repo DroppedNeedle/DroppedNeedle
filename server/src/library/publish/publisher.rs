@@ -1237,76 +1237,13 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         Ok(())
     }
 
-    /// Compensate a pre-commit failure: remove published destinations
-    /// whose bytes still match the staged copy, restore same-path
-    /// backups, delete unpublished temps, and mark journals
-    /// compensated. Anything ambiguous is left for recovery to flag.
+    /// Compensate a pre-commit failure with the unwind recovery uses:
+    /// remove published destinations whose bytes still match the staged
+    /// copy, restore same-path backups, delete unpublished temps, and
+    /// mark journals compensated.
     fn compensate(&mut self, bundle: &PlanBundle) -> Result<(), PublishError> {
         let journals = JournalStore::new(&self.conn).bundle(&bundle.id)?;
-        for journal in journals.iter() {
-            if journal.state.is_terminal() || journal.state == JournalState::Committed {
-                continue;
-            }
-            self.compensate_one(journal)?;
-            let current = JournalStore::new(&self.conn)
-                .get(&journal.id)?
-                .ok_or_else(|| PublishError::Journal(format!("missing journal {}", journal.id)))?;
-            if let Err(error) = JournalStore::new(&self.conn).transition(
-                &journal.id,
-                current.state,
-                JournalState::Compensated,
-            ) {
-                tracing::warn!(journal_id = %journal.id, %error, "compensation not recorded");
-            }
-        }
-        Ok(())
-    }
-
-    /// Unwind one pre-commit journal by byte comparison only.
-    fn compensate_one(&self, journal: &FileJournal) -> Result<(), PublishError> {
-        let dest = self
-            .sandbox
-            .resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
-        if journal.kind == JournalKind::Delete {
-            return super::generated::put_back(
-                &dest,
-                Path::new(&journal.staged),
-                &journal.staged_sha256,
-            );
-        }
-        if let Ok(bytes) = paths::read_regular_file(&dest)
-            && sha256_hex(&bytes) == journal.staged_sha256
-        {
-            std::fs::remove_file(&dest).map_err(PublishError::from)?;
-        }
-        if let Some(backup_text) = journal.backup.as_deref() {
-            let backup = Path::new(backup_text);
-            if std::fs::symlink_metadata(&dest).is_err()
-                && let Ok(bytes) = paths::read_regular_file(backup)
-            {
-                let expected = journal.backup_sha256().unwrap_or_default();
-                if expected.is_empty() || sha256_hex(&bytes) == expected {
-                    let home = paths::backup_home(
-                        &self.sandbox,
-                        journal.source.as_ref(),
-                        &journal.dest_root,
-                        &journal.dest_rel,
-                    )?;
-                    std::fs::rename(backup, &home).map_err(PublishError::from)?;
-                }
-            }
-        }
-        let staged = Path::new(&journal.staged);
-        if std::fs::symlink_metadata(staged).is_ok()
-            && let Ok(bytes) = paths::read_regular_file(staged)
-            && sha256_hex(&bytes) == journal.staged_sha256
-        {
-            std::fs::remove_file(staged).map_err(PublishError::from)?;
-        }
-        if let Some(parent) = dest.parent() {
-            sync_dir_logged(parent);
-        }
-        Ok(())
+        super::recovery::compensate_bundle(&self.conn, &self.sandbox, &journals)
     }
 
     /// Whether a publish failure compensates (pre-commit) rather than

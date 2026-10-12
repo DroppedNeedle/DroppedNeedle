@@ -697,9 +697,10 @@ fn finish_cleanup(
     Ok(())
 }
 
-/// Compensate a pre-commit bundle during recovery: same byte-compared
-/// unwind as the publisher, marking journals compensated.
-fn compensate_bundle(
+/// Compensate a pre-commit bundle, for the publisher after a failed
+/// publish and for recovery: unwind every journal by byte comparison and
+/// mark it compensated.
+pub(super) fn compensate_bundle(
     conn: &Connection,
     sandbox: &Sandbox,
     journals: &[FileJournal],
@@ -713,37 +714,7 @@ fn compensate_bundle(
         {
             continue;
         }
-        let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
-        if journal.kind == JournalKind::Delete {
-            super::generated::put_back(&dest, Path::new(&journal.staged), &journal.staged_sha256)?;
-        } else if let Ok(bytes) = paths::read_regular_file(&dest)
-            && sha256_hex(&bytes) == journal.staged_sha256
-        {
-            std::fs::remove_file(&dest).map_err(PublishError::from)?;
-        }
-        if let Some(backup_text) = journal.backup.as_deref()
-            && std::fs::symlink_metadata(&dest).is_err()
-            && let Ok(bytes) = paths::read_regular_file(Path::new(backup_text))
-        {
-            let expected = journal.backup_sha256().unwrap_or_default();
-            if expected.is_empty() || sha256_hex(&bytes) == expected {
-                let home = paths::backup_home(
-                    sandbox,
-                    journal.source.as_ref(),
-                    &journal.dest_root,
-                    &journal.dest_rel,
-                )?;
-                std::fs::rename(Path::new(backup_text), &home).map_err(PublishError::from)?;
-            }
-        }
-        let staged = Path::new(&journal.staged);
-        // A delete journal's staged copy is the generated file itself.
-        if journal.kind != JournalKind::Delete
-            && let Ok(bytes) = paths::read_regular_file(staged)
-            && sha256_hex(&bytes) == journal.staged_sha256
-        {
-            std::fs::remove_file(staged).map_err(PublishError::from)?;
-        }
+        unwind_row(sandbox, journal)?;
         if !JournalStore::new(conn).transition(
             &journal.id,
             journal.state,
@@ -751,6 +722,53 @@ fn compensate_bundle(
         )? {
             tracing::warn!(journal_id = %journal.id, "compensation not recorded: state moved");
         }
+    }
+    Ok(())
+}
+
+/// Unwind one pre-commit journal by byte comparison only: remove a
+/// published destination that still holds the staged bytes, put a
+/// set-aside original back on an empty name, and delete the staged temp.
+fn unwind_row(sandbox: &Sandbox, journal: &FileJournal) -> Result<(), PublishError> {
+    let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
+    if journal.kind == JournalKind::Delete {
+        // A delete journal's staged copy is the generated file itself.
+        return super::generated::put_back(
+            &dest,
+            Path::new(&journal.staged),
+            &journal.staged_sha256,
+        );
+    }
+    if let Ok(bytes) = paths::read_regular_file(&dest)
+        && sha256_hex(&bytes) == journal.staged_sha256
+    {
+        std::fs::remove_file(&dest).map_err(PublishError::from)?;
+    }
+    if let Some(backup_text) = journal.backup.as_deref()
+        && std::fs::symlink_metadata(&dest).is_err()
+        && let Ok(bytes) = paths::read_regular_file(Path::new(backup_text))
+    {
+        let expected = journal.backup_sha256().unwrap_or_default();
+        if expected.is_empty() || sha256_hex(&bytes) == expected {
+            let home = paths::backup_home(
+                sandbox,
+                journal.source.as_ref(),
+                &journal.dest_root,
+                &journal.dest_rel,
+            )?;
+            std::fs::rename(Path::new(backup_text), &home).map_err(PublishError::from)?;
+        }
+    }
+    let staged = Path::new(&journal.staged);
+    if let Ok(bytes) = paths::read_regular_file(staged)
+        && sha256_hex(&bytes) == journal.staged_sha256
+    {
+        std::fs::remove_file(staged).map_err(PublishError::from)?;
+    }
+    if let Some(parent) = dest.parent()
+        && let Err(error) = super::journal::fsync_dir(parent)
+    {
+        tracing::warn!(dir = %parent.display(), %error, "directory sync failed");
     }
     Ok(())
 }
