@@ -73,6 +73,7 @@
 //!   rejected before any mutation.
 
 pub mod archive;
+pub mod generated;
 pub mod journal;
 pub mod operations;
 pub mod paths;
@@ -93,8 +94,8 @@ pub use journal::{
 pub use paths::{CollisionKey, Sandbox, collision_key};
 pub use planner::{
     AutomaticEligibility, AutomaticHold, Capability, CapabilityGate, DiskPreflight,
-    FileFingerprint, PlanBundle, PlanItem, PlanKind, ReleaseIdentity, Replacement, SealError,
-    SealedPreview, SpaceProbe, TrackMapping,
+    FileFingerprint, GeneratedOutput, PlanBundle, PlanItem, PlanKind, ReleaseIdentity, Replacement,
+    SealError, SealedPreview, SpaceProbe, TrackMapping,
 };
 pub use publisher::{Catalog, CrashPoint, PublishOutcome, Publisher, SqliteCatalog};
 pub use recovery::{BundleRecovery, RecoveryAction, reconcile, startup_gate};

@@ -482,6 +482,8 @@ fn plan_file(
         staged_bytes_estimate: item.estimated_bytes,
         adopt: None,
         replaces: None,
+        outputs: Vec::new(),
+        removals: Vec::new(),
     });
     Ok(())
 }

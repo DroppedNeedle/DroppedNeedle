@@ -604,6 +604,12 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             for (side_ordinal, sidecar) in item.sidecars.iter().enumerate() {
                 self.prepare_sidecar(bundle, &journal_id, side_ordinal, sidecar)?;
             }
+            for (index, output) in item.outputs.iter().enumerate() {
+                self.prepare_output(bundle, &journal_id, index, output)?;
+            }
+            for (index, removal) in item.removals.iter().enumerate() {
+                self.prepare_removal(bundle, &journal_id, index, removal)?;
+            }
             staged_files.push(PreparedFile {
                 journal_id,
                 track_id: item.track_id.clone(),
@@ -726,6 +732,99 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         Ok(())
     }
 
+    /// Stage one generated file from the blob store under its own journal.
+    fn prepare_output(
+        &mut self,
+        bundle: &PlanBundle,
+        audio_journal_id: &str,
+        index: usize,
+        output: &super::planner::GeneratedOutput,
+    ) -> Result<(), PublishError> {
+        let bytes = BlobStore::new(&self.conn).get(&output.sha256)?;
+        if sha256_hex(&bytes) != output.sha256 {
+            return Err(PublishError::Validation(format!(
+                "generated {} for {} is not the planned file",
+                output.kind, output.dest_rel
+            )));
+        }
+        let journal_id = format!("{audio_journal_id}-output-{index}");
+        let dest = self
+            .sandbox
+            .resolve_no_symlink(&output.dest_root, &output.dest_rel)?;
+        self.sandbox.ensure_under_roots(&dest)?;
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(PublishError::from)?;
+        }
+        let temp = self.sandbox.temp_path_for(&dest, &journal_id)?;
+        self.sandbox.ensure_under_roots(&temp)?;
+        let journals = JournalStore::new(&self.conn);
+        if journals.get(&journal_id)?.is_none() {
+            journals.insert(&FileJournal {
+                id: journal_id.clone(),
+                bundle_id: bundle.id.clone(),
+                kind: JournalKind::Output,
+                source: None,
+                dest_root: output.dest_root.clone(),
+                dest_rel: output.dest_rel.clone(),
+                staged: temp.to_string_lossy().to_string(),
+                backup: None,
+                source_sha256: None,
+                staged_sha256: output.sha256.clone(),
+                track_id: None,
+                catalog_revision: Some(bundle.catalog_revision as i64),
+                mgmt_state: None,
+                state: JournalState::Prepared,
+                seq: 0,
+                replaces: None,
+            })?;
+        }
+        write_staged_temp(&temp, &bytes)?;
+        journals.transition(&journal_id, JournalState::Prepared, JournalState::Staged)?;
+        Ok(())
+    }
+
+    /// Journal taking away one generated file (an undo). Nothing moves
+    /// until publish; the file must still hold the bytes that were written.
+    fn prepare_removal(
+        &mut self,
+        bundle: &PlanBundle,
+        audio_journal_id: &str,
+        index: usize,
+        removal: &super::planner::GeneratedOutput,
+    ) -> Result<(), PublishError> {
+        let journal_id = format!("{audio_journal_id}-remove-{index}");
+        let dest = self
+            .sandbox
+            .resolve_no_symlink(&removal.dest_root, &removal.dest_rel)?;
+        self.sandbox.ensure_under_roots(&dest)?;
+        let aside = self.sandbox.temp_path_for(&dest, &journal_id)?;
+        self.sandbox.ensure_under_roots(&aside)?;
+        super::generated::check(&dest, &removal.sha256)?;
+        let journals = JournalStore::new(&self.conn);
+        if journals.get(&journal_id)?.is_none() {
+            journals.insert(&FileJournal {
+                id: journal_id.clone(),
+                bundle_id: bundle.id.clone(),
+                kind: JournalKind::Delete,
+                source: None,
+                dest_root: removal.dest_root.clone(),
+                dest_rel: removal.dest_rel.clone(),
+                staged: aside.to_string_lossy().to_string(),
+                backup: None,
+                source_sha256: Some(removal.sha256.clone()),
+                staged_sha256: removal.sha256.clone(),
+                track_id: None,
+                catalog_revision: Some(bundle.catalog_revision as i64),
+                mgmt_state: None,
+                state: JournalState::Prepared,
+                seq: 0,
+                replaces: None,
+            })?;
+        }
+        journals.transition(&journal_id, JournalState::Prepared, JournalState::Staged)?;
+        Ok(())
+    }
+
     /// Publish renames plus the atomic catalog commit, then cleanup.
     fn publish_and_commit(
         &mut self,
@@ -781,6 +880,17 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             .sandbox
             .resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
         self.sandbox.ensure_under_roots(&dest)?;
+        if current.kind == JournalKind::Delete {
+            let aside = Path::new(&journal.staged);
+            self.sandbox.ensure_under_roots(aside)?;
+            super::generated::set_aside(&dest, aside, &journal.staged_sha256)?;
+            JournalStore::new(&self.conn).transition(
+                &journal.id,
+                JournalState::Staged,
+                JournalState::Published,
+            )?;
+            return Ok(());
+        }
         let staged_path = Path::new(&journal.staged);
         self.sandbox.ensure_under_roots(staged_path)?;
         let staged_bytes = paths::read_regular_file(staged_path)?;
@@ -982,6 +1092,11 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         journal: &FileJournal,
         staged: &[PreparedFile],
     ) -> Result<(), PublishError> {
+        if journal.kind == JournalKind::Delete {
+            let aside = Path::new(&journal.staged);
+            self.sandbox.ensure_under_roots(aside)?;
+            return super::generated::discard(aside, &journal.staged_sha256);
+        }
         if let (Some(replaced), Some(backup_text)) =
             (journal.replaces.as_ref(), journal.backup.as_deref())
         {
@@ -1064,6 +1179,13 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         let dest = self
             .sandbox
             .resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
+        if journal.kind == JournalKind::Delete {
+            return super::generated::put_back(
+                &dest,
+                Path::new(&journal.staged),
+                &journal.staged_sha256,
+            );
+        }
         if let Ok(bytes) = paths::read_regular_file(&dest)
             && sha256_hex(&bytes) == journal.staged_sha256
         {

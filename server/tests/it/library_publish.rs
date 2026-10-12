@@ -196,6 +196,8 @@ fn plan_item(
         staged_bytes_estimate: 1024,
         adopt: None,
         replaces: None,
+        outputs: Vec::new(),
+        removals: Vec::new(),
     }
 }
 
@@ -713,6 +715,86 @@ fn replacement_recycles_only_after_commit() {
         )
         .unwrap();
     assert_eq!(retired, ("missing".to_string(), bin.display().to_string()));
+}
+
+/// A generated file lands only on an empty path, and a later bundle takes
+/// it away again (set aside, then deleted after the commit) only while it
+/// still holds the bytes that were written.
+#[test]
+fn generated_files_land_and_go_away_journaled() {
+    let fix = fixture("generated");
+    let cover = b"generated-cover-bytes".to_vec();
+    let sha = BlobStore::new(&open_db(&fix)).put(&cover).unwrap();
+    let output = publish::GeneratedOutput {
+        dest_root: "music".to_string(),
+        dest_rel: "staging/cover.jpg".to_string(),
+        sha256: sha.clone(),
+        size: cover.len() as u64,
+        kind: "artwork".to_string(),
+    };
+    let fp = write_fixture_source(&fix, "music", "staging/a.flac", "management_full.flac");
+    let mut item = plan_item(
+        "track-a",
+        "staging/a.flac",
+        "staging/a.flac",
+        fp,
+        PlanKind::SamePath,
+    );
+    item.outputs.push(output.clone());
+    let bundle = PlanBundle {
+        id: "bundle-gen".to_string(),
+        items: vec![item],
+        profile_revision: 7,
+        naming_revision: 3,
+        policy_revision: 5,
+        catalog_revision: db_catalog_revision(&fix),
+    };
+    let mut docs = BTreeMap::new();
+    docs.insert("track-a".to_string(), TagDocument::empty());
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.publish(&sealed, &live, &docs).unwrap();
+    let path = fix.sandbox.resolve("music", "staging/cover.jpg").unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), cover);
+
+    // Taking it away: a crash after it was set aside unwinds or finishes,
+    // never loses it half way.
+    let fp = FileFingerprint {
+        size: std::fs::metadata(fix.sandbox.resolve("music", "staging/a.flac").unwrap())
+            .unwrap()
+            .len(),
+        sha256: sha256_hex(
+            &std::fs::read(fix.sandbox.resolve("music", "staging/a.flac").unwrap()).unwrap(),
+        ),
+    };
+    let mut item = plan_item(
+        "track-a",
+        "staging/a.flac",
+        "staging/a.flac",
+        fp,
+        PlanKind::SamePath,
+    );
+    item.managed_updates.clear();
+    item.removals.push(output);
+    let bundle = PlanBundle {
+        id: "bundle-undo".to_string(),
+        items: vec![item],
+        catalog_revision: db_catalog_revision(&fix),
+        ..bundle
+    };
+    let (sealed, live) = seal(&bundle);
+    publisher.set_crash_point(Some(CrashPoint::BeforeCatalogCommit));
+    assert!(matches!(
+        publisher.publish(&sealed, &live, &docs),
+        Err(PublishError::InjectedCrash(_))
+    ));
+    drop(publisher);
+    assert!(!path.exists(), "set aside before the commit");
+    let mut conn = open_db(&fix);
+    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    assert_eq!(results[0].action, publish::RecoveryAction::ResumedCommitted);
+    assert!(!path.exists(), "gone after the commit");
+    assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
 /// An occupant that changed since planning is never set aside.

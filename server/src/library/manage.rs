@@ -757,6 +757,8 @@ impl LibrarySetup {
                 staged_bytes_estimate: size + STAGED_HEADROOM_BYTES,
                 adopt: None,
                 replaces: None,
+                outputs: Vec::new(),
+                removals: Vec::new(),
             });
             docs.insert(
                 track_id.clone(),
@@ -1328,12 +1330,31 @@ impl LibrarySetup {
             let current = Self::live_doc(&open.sandbox, &live_loc.0, &live_loc.1)
                 .map(|doc| doc.managed)
                 .unwrap_or_default();
-            let (sidecars, left) = by_track
+            let (sidecars, mut left) = by_track
                 .get(item.track_id.as_str())
                 .map(|source| Self::undo_sidecars(&open.sandbox, &source.sidecars))
                 .unwrap_or_default();
             if !sidecars.is_empty() {
                 capabilities.push(Capability::Sidecars);
+            }
+            // Files the run generated go away, while they are still what it wrote.
+            let mut removals = Vec::new();
+            for output in by_track
+                .get(item.track_id.as_str())
+                .map(|source| source.outputs.as_slice())
+                .unwrap_or_default()
+            {
+                let unchanged = open
+                    .sandbox
+                    .resolve_no_symlink(&output.dest_root, &output.dest_rel)
+                    .ok()
+                    .and_then(|path| super::publish::paths::read_regular_file(&path).ok())
+                    .is_some_and(|bytes| sha256_hex(&bytes) == output.sha256);
+                if unchanged {
+                    removals.push(output.clone());
+                } else {
+                    left.push(output.dest_rel.clone());
+                }
             }
             files.eligible.push(UndoFile {
                 current,
@@ -1359,6 +1380,8 @@ impl LibrarySetup {
                     staged_bytes_estimate: fingerprint.size + STAGED_HEADROOM_BYTES,
                     adopt: None,
                     replaces: None,
+                    outputs: Vec::new(),
+                    removals,
                 },
             });
         }
@@ -1570,6 +1593,8 @@ impl LibrarySetup {
                     staged_bytes_estimate: fingerprint.size + STAGED_HEADROOM_BYTES,
                     adopt: None,
                     replaces: None,
+                    outputs: Vec::new(),
+                    removals: Vec::new(),
                 },
             });
         }

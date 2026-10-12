@@ -151,6 +151,28 @@ pub struct PlanItem {
     /// recycle bin only after the bundle commits.
     #[serde(default)]
     pub replaces: Option<Replacement>,
+    /// Files this item writes that come from no source file: a cover
+    /// image or a lyrics file. Their bytes wait in the blob store; each
+    /// one only ever lands on an empty path.
+    #[serde(default)]
+    pub outputs: Vec<GeneratedOutput>,
+    /// Files an earlier run generated that undo takes away: each is set
+    /// aside under the journal and deleted only after the commit, and only
+    /// while it still holds the bytes that run wrote.
+    #[serde(default)]
+    pub removals: Vec<GeneratedOutput>,
+}
+
+/// A file generated from no source (see [`PlanItem::outputs`]).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GeneratedOutput {
+    pub dest_root: String,
+    pub dest_rel: String,
+    /// The bytes, and their key in the blob store.
+    pub sha256: String,
+    pub size: u64,
+    /// `artwork` or `lyrics`, for the pages.
+    pub kind: String,
 }
 
 /// A file a plan item replaces at its destination.
@@ -345,6 +367,17 @@ impl CollisionGate {
                     "sidecar",
                     &sidecar.dest_root,
                     &sidecar.dest_rel,
+                    SamePathSelf::absent(),
+                )?;
+            }
+            for output in item.outputs.iter() {
+                Self::check_output(
+                    sandbox,
+                    &mut seen,
+                    &mut blockers,
+                    &output.kind,
+                    &output.dest_root,
+                    &output.dest_rel,
                     SamePathSelf::absent(),
                 )?;
             }

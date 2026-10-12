@@ -115,6 +115,8 @@ pub enum JournalKind {
     Sidecar,
     /// External artwork file.
     Artwork,
+    /// A file generated from no source (cover image, lyrics file).
+    Output,
     /// Fingerprinted delete of generated art on undo: the staged copy
     /// is a safety backup and must never become a live destination.
     Delete,
@@ -127,6 +129,7 @@ impl JournalKind {
             Self::Audio => "audio",
             Self::Sidecar => "sidecar",
             Self::Artwork => "artwork",
+            Self::Output => "output",
             Self::Delete => "delete",
         }
     }
@@ -137,6 +140,7 @@ impl JournalKind {
             "audio" => Ok(Self::Audio),
             "sidecar" => Ok(Self::Sidecar),
             "artwork" => Ok(Self::Artwork),
+            "output" => Ok(Self::Output),
             "delete" => Ok(Self::Delete),
             other => Err(PublishError::Journal(format!(
                 "unknown journal kind {other}"

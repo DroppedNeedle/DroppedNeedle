@@ -342,6 +342,8 @@ impl LibrarySetup {
                         ..dest_policy(&placement.dest_rel)
                     }),
                     replaces: None,
+                    outputs: Vec::new(),
+                    removals: Vec::new(),
                 });
             }
             write_provenance(&staged_dir, import, &placements)

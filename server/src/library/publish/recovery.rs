@@ -23,7 +23,7 @@ use std::path::Path;
 
 use rusqlite::Connection;
 
-use super::journal::{FileJournal, JournalState, JournalStore};
+use super::journal::{FileJournal, JournalKind, JournalState, JournalStore};
 use super::paths::Sandbox;
 use super::publisher::{BundleCommit, Catalog, TrackCommit};
 use super::snapshots::sha256_hex;
@@ -202,6 +202,31 @@ fn inspect_bundle(
                 "journal {} staged path escapes sandbox",
                 journal.id
             )));
+        }
+        if journal.kind == JournalKind::Delete {
+            // A generated file being taken away: it is either still in
+            // place or set aside, never both, and never anything else.
+            let holds = |path: &Path| {
+                paths::read_regular_file(path)
+                    .is_ok_and(|bytes| sha256_hex(&bytes) == journal.staged_sha256)
+            };
+            let present = |path: &Path| std::fs::symlink_metadata(path).is_ok();
+            let in_place = holds(&dest);
+            let aside = holds(staged);
+            if (in_place && present(staged))
+                || (aside && present(&dest))
+                || (!in_place && present(&dest))
+                || (!aside && present(staged))
+            {
+                return Ok(BundleEvidence::Ambiguous(format!(
+                    "journal {} generated file changed",
+                    journal.id
+                )));
+            }
+            if !in_place && !aside {
+                resumeable = false;
+            }
+            continue;
         }
         let staged_bytes = paths::read_regular_file(staged).ok();
         let dest_bytes = paths::read_regular_file(&dest).ok();
@@ -416,6 +441,11 @@ fn resume_rename(
     }
     let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
     let staged = Path::new(&journal.staged);
+    if journal.kind == JournalKind::Delete {
+        super::generated::set_aside(&dest, staged, &journal.staged_sha256)?;
+        JournalStore::new(conn).transition(&journal.id, journal.state, JournalState::Published)?;
+        return Ok(());
+    }
     if let Ok(bytes) = paths::read_regular_file(&dest) {
         if sha256_hex(&bytes) == journal.staged_sha256 {
             if paths::read_regular_file(staged).is_err() {
@@ -528,6 +558,11 @@ fn reconcile_committed<C: Catalog>(
                 "bundle {bundle_id} disagrees with its catalog commit"
             )));
         }
+        if journal.kind == JournalKind::Delete {
+            // Its destination is meant to be gone; cleanup deletes the
+            // set-aside copy.
+            continue;
+        }
         let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
         match paths::read_regular_file(&dest) {
             Ok(bytes) if sha256_hex(&bytes) == journal.staged_sha256 => {}
@@ -594,7 +629,14 @@ fn finish_cleanup(
             continue;
         }
         let mut failed = false;
-        if let (Some(replaced), Some(backup_text)) =
+        if journal.kind == JournalKind::Delete {
+            let aside = Path::new(&journal.staged);
+            if sandbox.ensure_under_roots(aside).is_err()
+                || super::generated::discard(aside, &journal.staged_sha256).is_err()
+            {
+                failed = true;
+            }
+        } else if let (Some(replaced), Some(backup_text)) =
             (journal.replaces.as_ref(), journal.backup.as_deref())
         {
             // The replaced file goes to the recycle bin, never away.
@@ -672,7 +714,9 @@ fn compensate_bundle(
             continue;
         }
         let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
-        if let Ok(bytes) = paths::read_regular_file(&dest)
+        if journal.kind == JournalKind::Delete {
+            super::generated::put_back(&dest, Path::new(&journal.staged), &journal.staged_sha256)?;
+        } else if let Ok(bytes) = paths::read_regular_file(&dest)
             && sha256_hex(&bytes) == journal.staged_sha256
         {
             std::fs::remove_file(&dest).map_err(PublishError::from)?;
@@ -693,7 +737,9 @@ fn compensate_bundle(
             }
         }
         let staged = Path::new(&journal.staged);
-        if let Ok(bytes) = paths::read_regular_file(staged)
+        // A delete journal's staged copy is the generated file itself.
+        if journal.kind != JournalKind::Delete
+            && let Ok(bytes) = paths::read_regular_file(staged)
             && sha256_hex(&bytes) == journal.staged_sha256
         {
             std::fs::remove_file(staged).map_err(PublishError::from)?;
