@@ -20,6 +20,7 @@
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import { getLibrarySearchQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import { LIBRARY_MANAGEMENT_ENDPOINTS } from '$lib/queries/library-management/endpoints';
 	import { createLibraryManagementEvents } from '$lib/queries/library-management/LibraryManagementEvents';
 	import { LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE } from '$lib/queries/library-management/LibraryManagementConfirmation';
 	import {
@@ -49,6 +50,7 @@
 		firstDeferredSource,
 		managementAudioFormat,
 		managementAlbumArtworkVersion,
+		managementArtworkPreviewHash,
 		managementDesiredField,
 		managementPlanAlbum,
 		managementPlanAlbumArtist,
@@ -379,6 +381,9 @@
 	}
 
 	function planAuditEntry(item: LibraryManagementPlanItem): ManagementAuditEntry {
+		const artworkHash = item.artwork_choices
+			.map(managementArtworkPreviewHash)
+			.find((value): value is string => Boolean(value));
 		return {
 			ordinal: item.ordinal,
 			bundleOrdinal: item.bundle_ordinal,
@@ -403,7 +408,9 @@
 			sourcePath: item.source_relative_path,
 			destinationRoot: rootLabel(item.destination_root_id),
 			destinationPath: item.destination_relative_path,
-			artworkUrl: null
+			artworkUrl: artworkHash
+				? LIBRARY_MANAGEMENT_ENDPOINTS.previewArtwork(jobId, item.ordinal, artworkHash)
+				: null
 		};
 	}
 
@@ -571,6 +578,7 @@
 	{#if item}
 		<LibraryManagementPlanInspector
 			{item}
+			{jobId}
 			{roots}
 			reasonLabel={inspectorReasonLabel}
 			onresolve={openCollision}

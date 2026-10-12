@@ -50,6 +50,10 @@ export const LIBRARY_MANAGEMENT_ENDPOINTS = {
 	profileImportPreview: () => v3('/api/v3/settings/library-management/profile-imports/preview'),
 	profileImports: () => v3('/api/v3/settings/library-management/profile-imports'),
 	previews: () => v3('/api/v3/library/management/previews'),
+	previewArtwork: (jobId: string, ordinal: number, sha256: string) =>
+		v3('/api/v3/library/management/previews/{job_id}/items/{ordinal}/artwork/{sha256}', {
+			path: { job_id: jobId, ordinal, sha256 }
+		}),
 	preview: (jobId: string) => v3('/api/v3/library/management/previews/{job_id}', job(jobId)),
 	previewItems: (jobId: string, params: LibraryManagementPlanItemParams = {}) =>
 		v3('/api/v3/library/management/previews/{job_id}/items', {

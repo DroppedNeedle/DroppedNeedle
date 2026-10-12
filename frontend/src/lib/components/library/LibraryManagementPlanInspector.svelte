@@ -1,12 +1,15 @@
 <script lang="ts">
 	import { ArrowRight, Eraser, FileClock, Image, RotateCcw, Tags } from 'lucide-svelte';
 
+	import { getApiUrl } from '$lib/api/api-utils';
+	import { LIBRARY_MANAGEMENT_ENDPOINTS } from '$lib/queries/library-management/endpoints';
 	import type { LibraryManagementPlanItem } from '$lib/queries/library-management/types';
 	import {
 		firstDeferredSource,
 		formatManagementValue,
 		managementAdapter,
 		managementAudioFormat,
+		managementArtworkPreviewHash,
 		managementCollisions,
 		managementCustomTagDiffs,
 		managementFieldDiffs,
@@ -25,6 +28,7 @@
 
 	interface Props {
 		item: LibraryManagementPlanItem;
+		jobId: string;
 		roots: Array<{ id: string; label: string }>;
 		reasonLabel: (value: string) => string;
 		onresolve: (
@@ -34,7 +38,7 @@
 		) => void;
 	}
 
-	let { item, roots, reasonLabel, onresolve }: Props = $props();
+	let { item, jobId, roots, reasonLabel, onresolve }: Props = $props();
 	const diffs = $derived([...managementFieldDiffs(item), ...managementCustomTagDiffs(item)]);
 	const restoration = $derived(managementRestoration(item));
 	const scrubbedRawTags = $derived(managementScrubbedRawTags(item));
@@ -107,6 +111,12 @@
 		return typeof width === 'number' && typeof height === 'number'
 			? `${width.toLocaleString()} × ${height.toLocaleString()} px`
 			: null;
+	}
+
+	function artworkPreviewUrl(choice: Record<string, unknown>): string | null {
+		const sha256 = managementArtworkPreviewHash(choice);
+		if (!sha256) return null;
+		return getApiUrl(LIBRARY_MANAGEMENT_ENDPOINTS.previewArtwork(jobId, item.ordinal, sha256));
 	}
 </script>
 
@@ -425,6 +435,15 @@
 					<article
 						class="flex gap-3 rounded-lg border border-base-content/10 bg-base-100/70 p-2 text-xs"
 					>
+						{#if artworkPreviewUrl(choice)}
+							<img
+								src={artworkPreviewUrl(choice)}
+								alt={`${titleManagementValue(artworkText(choice, 'image_type') ?? 'Artwork')} preview`}
+								class="h-20 w-20 shrink-0 rounded-md bg-base-200 object-cover"
+								loading="lazy"
+								decoding="async"
+							/>
+						{/if}
 						<div class="min-w-0">
 							<strong
 								>{titleManagementValue(

@@ -81,6 +81,13 @@ export interface ManagementScrubbedRawTag {
 
 export type ManagementAuditChangeKind = 'tags' | 'artwork' | 'path' | 'sidecars';
 
+const MANAGEMENT_ARTWORK_PREVIEW_MIME_TYPES = new Set([
+	'image/gif',
+	'image/jpeg',
+	'image/png',
+	'image/webp'
+]);
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -348,6 +355,13 @@ export function managementPlanIsExceptional(item: LibraryManagementPlanItem): bo
 		managementStringList(capability.representation_losses).length ||
 		(Array.isArray(item.collisions) && item.collisions.length)
 	);
+}
+
+export function managementArtworkPreviewHash(choice: Record<string, unknown>): string | null {
+	const sha256 = stringOrNull(choice.blob_sha256);
+	const mimeType = stringOrNull(choice.mime_type);
+	if (!sha256?.match(/^[0-9a-f]{64}$/)) return null;
+	return mimeType === null || MANAGEMENT_ARTWORK_PREVIEW_MIME_TYPES.has(mimeType) ? sha256 : null;
 }
 
 export function managementAudioFormat(item: LibraryManagementPlanItem): string {

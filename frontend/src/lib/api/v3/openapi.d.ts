@@ -4620,6 +4620,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/management/previews/{job_id}/items/{ordinal}/artwork/{sha256}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The cover art one planned file embeds or writes, as the preview lists
+         *     it by hash.
+         */
+        get: operations["get_management_preview_artwork"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/management/previews/{job_id}/reissue": {
         parameters: {
             query?: never;
@@ -33666,6 +33686,54 @@ export interface operations {
                 content?: never;
             };
             /** @description Unknown job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_management_preview_artwork: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Management job id */
+                job_id: string;
+                /** @description Planned file ordinal */
+                ordinal: number;
+                /** @description Artwork hash from artwork_choices */
+                sha256: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The planned image */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": unknown;
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown job, file or artwork */
             404: {
                 headers: {
                     [name: string]: unknown;
