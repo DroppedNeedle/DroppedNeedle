@@ -15,16 +15,26 @@
 //!   commit states, or catalog/destination disagreement move every
 //!   still-active row in the bundle to `needs_attention` with durable
 //!   structured evidence, deleting nothing.
+//! - A staged or backup file found under its hidden name and its visible
+//!   name at once, as one file (same device and inode), is a
+//!   link-then-unlink placement that stopped halfway. It is finished by
+//!   removing the hidden name. Two separate files with the same bytes
+//!   stay ambiguous.
+//! - Recovery places files only through `place::place_from_hidden`, so
+//!   it cannot replace a file either. A set-aside original that cannot
+//!   go home stays under its backup name and its row needs attention.
 //! - Committed journals are never rolled back: recovery verifies the
 //!   catalog still names the journaled destination with matching
 //!   bytes, then retries the pinned cleanup policy.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use rusqlite::Connection;
 
 use super::journal::{FileJournal, JournalKind, JournalState, JournalStore};
 use super::paths::Sandbox;
+use super::place::{PlaceError, place_from_hidden};
 use super::publisher::{BundleCommit, Catalog, TrackCommit};
 use super::snapshots::sha256_hex;
 use super::{PublishError, paths};
@@ -142,15 +152,32 @@ fn reconcile_bundle<C: Catalog>(
         }
         BundleEvidence::Clear(clear) => clear,
     };
+    // Whatever comes next may place a file: find out how each root the
+    // bundle targets can do that, if nothing has yet.
+    let roots: BTreeSet<&str> = journals
+        .iter()
+        .filter(|journal| !journal.state.is_terminal())
+        .map(|journal| journal.dest_root.as_str())
+        .collect();
+    for root in roots {
+        sandbox.probe_placement(root)?;
+    }
     if evidence.any_committed {
         return reconcile_committed(conn, sandbox, catalog, bundle_id, &journals);
     }
     if evidence.resumeable {
-        resume_precommit(conn, sandbox, catalog, bundle_id, &journals)?;
-        return Ok(RecoveryAction::ResumedCommitted);
+        return match resume_precommit(conn, sandbox, catalog, bundle_id, &journals)? {
+            None => Ok(RecoveryAction::ResumedCommitted),
+            Some(reason) => {
+                flag_attention(conn, &JournalStore::new(conn).bundle(bundle_id)?)?;
+                Ok(RecoveryAction::NeedsAttention(reason))
+            }
+        };
     }
-    compensate_bundle(conn, sandbox, &journals)?;
-    Ok(RecoveryAction::Compensated)
+    Ok(match compensate_bundle(conn, sandbox, &journals)? {
+        None => RecoveryAction::Compensated,
+        Some(reason) => RecoveryAction::NeedsAttention(reason),
+    })
 }
 
 /// Filesystem truth for one bundle, by fingerprint comparison only.
@@ -260,7 +287,10 @@ fn inspect_bundle(
                 journal.id
             )));
         }
-        if staged_match && dest_match {
+        // One file under both names is a link-then-unlink placement that
+        // stopped halfway; resume removes the hidden name. Two files with
+        // the same bytes cannot be told apart from a user's copy.
+        if staged_match && dest_match && !paths::same_file(staged, &dest) {
             return Ok(BundleEvidence::Ambiguous(format!(
                 "journal {} has duplicate staged locations",
                 journal.id
@@ -319,14 +349,16 @@ fn flag_attention(conn: &Connection, journals: &[FileJournal]) -> Result<(), Pub
 /// Finish a pre-commit bundle: complete any missing renames, then run
 /// the pinned catalog transaction. Journals already past their rename
 /// (destination holds staged bytes while the row still says staged)
-/// transition forward without a second rename.
+/// transition forward without a second rename. `Some(reason)` when a file
+/// has no safe way onto its name: nothing more is moved and the caller
+/// flags the bundle.
 fn resume_precommit<C: Catalog>(
     conn: &mut Connection,
     sandbox: &Sandbox,
     catalog: &C,
     bundle_id: &str,
     journals: &[FileJournal],
-) -> Result<(), PublishError> {
+) -> Result<Option<String>, PublishError> {
     for journal in journals {
         if journal.state.is_terminal()
             || matches!(
@@ -336,7 +368,9 @@ fn resume_precommit<C: Catalog>(
         {
             continue;
         }
-        resume_rename(conn, sandbox, journal)?;
+        if let Some(reason) = resume_rename(conn, sandbox, journal)? {
+            return Ok(Some(reason));
+        }
     }
     let refreshed = JournalStore::new(conn).bundle(bundle_id)?;
     let mut tracks = Vec::new();
@@ -406,7 +440,13 @@ fn resume_precommit<C: Catalog>(
         .map_err(PublishError::from)?;
     if let Err(err) = catalog.commit_bundle(&tx, &commit) {
         drop(tx);
-        compensate_bundle(conn, sandbox, &refreshed)?;
+        if let Some(reason) = compensate_bundle(conn, sandbox, &refreshed)? {
+            tracing::warn!(
+                bundle_id,
+                reason,
+                "publish bundle needs attention after its unwind"
+            );
+        }
         return Err(err);
     }
     let store = JournalStore::new(&tx);
@@ -425,26 +465,27 @@ fn resume_precommit<C: Catalog>(
     }
     tx.commit().map_err(PublishError::from)?;
     finish_cleanup(conn, sandbox, bundle_id)?;
-    Ok(())
+    Ok(None)
 }
 
-/// Complete one journal's rename during resume, honoring the same
+/// Complete one journal's placement during resume, honoring the same
 /// rules as publish: occupied foreign destinations block, same-path
-/// originals are retained under a hidden backup first.
+/// originals are retained under a hidden backup first. `Some(reason)`
+/// when the file has no safe way onto its name; it is left alone.
 fn resume_rename(
     conn: &Connection,
     sandbox: &Sandbox,
     journal: &FileJournal,
-) -> Result<(), PublishError> {
+) -> Result<Option<String>, PublishError> {
     if journal.state == JournalState::Published {
-        return Ok(());
+        return Ok(None);
     }
     let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
     let staged = Path::new(&journal.staged);
     if journal.kind == JournalKind::Delete {
         super::generated::set_aside(&dest, staged, &journal.staged_sha256)?;
         JournalStore::new(conn).transition(&journal.id, journal.state, JournalState::Published)?;
-        return Ok(());
+        return Ok(None);
     }
     if let Ok(bytes) = paths::read_regular_file(&dest) {
         if sha256_hex(&bytes) == journal.staged_sha256 {
@@ -454,63 +495,83 @@ fn resume_rename(
                     journal.state,
                     JournalState::Published,
                 )?;
-                return Ok(());
+                return Ok(None);
             }
-            return Err(PublishError::Journal(format!(
-                "journal {} has duplicate staged locations",
+            // The staged file is also still under its hidden name. As one
+            // file, the placement below finishes it; as two, it is not
+            // ours to pick between.
+            if !paths::same_file(staged, &dest) {
+                return Err(PublishError::Journal(format!(
+                    "journal {} has duplicate staged locations",
+                    journal.id
+                )));
+            }
+        } else {
+            let source_match = journal
+                .source_sha256
+                .as_deref()
+                .map(|sha| sha256_hex(&bytes) == sha)
+                .unwrap_or(false);
+            let replaced_here = journal
+                .replaces
+                .as_ref()
+                .is_some_and(|replaced| sha256_hex(&bytes) == replaced.sha256);
+            if !source_match && !replaced_here {
+                return Err(PublishError::Collision(format!(
+                    "late occupier at {}:{}",
+                    journal.dest_root, journal.dest_rel
+                )));
+            }
+            // The original at the destination: a same-path write, or a
+            // case-only rename on a filesystem that folds case. Either way
+            // it is set aside under a journaled backup, as the publisher
+            // does.
+            let same_path = journal
+                .source
+                .as_ref()
+                .map(|(root, rel)| {
+                    sandbox
+                        .resolve_no_symlink(root, rel)
+                        .map(|source| source == dest)
+                        .unwrap_or(false)
+                        || paths::case_alias(
+                            sandbox,
+                            (root, rel),
+                            (&journal.dest_root, &journal.dest_rel),
+                        )
+                })
+                .unwrap_or(false);
+            if !same_path && !replaced_here {
+                return Err(PublishError::Collision(format!(
+                    "late occupier at {}:{}",
+                    journal.dest_root, journal.dest_rel
+                )));
+            }
+            let backup = sandbox.backup_path_for(&dest, &journal.id)?;
+            sandbox.ensure_under_roots(&backup)?;
+            JournalStore::new(conn).set_backup(&journal.id, &backup.to_string_lossy())?;
+            // An unwind that linked the original home and stopped left it
+            // under both names. Renaming a file onto its own link does
+            // nothing, so the hidden name goes first.
+            if paths::same_file(&dest, &backup) {
+                std::fs::remove_file(&backup).map_err(PublishError::from)?;
+            }
+            std::fs::rename(&dest, &backup).map_err(PublishError::from)?;
+            if let Some(parent) = dest.parent() {
+                super::journal::fsync_dir(parent)?;
+            }
+        }
+    }
+    let mode = sandbox.placement_mode(&journal.dest_root);
+    match place_from_hidden(mode, staged, &dest) {
+        Ok(_) => {}
+        Err(PlaceError::Unavailable(_) | PlaceError::CrossDevice) => {
+            return Ok(Some(format!(
+                "journal {} has no safe way onto its destination",
                 journal.id
             )));
         }
-        let source_match = journal
-            .source_sha256
-            .as_deref()
-            .map(|sha| sha256_hex(&bytes) == sha)
-            .unwrap_or(false);
-        let replaced_here = journal
-            .replaces
-            .as_ref()
-            .is_some_and(|replaced| sha256_hex(&bytes) == replaced.sha256);
-        if !source_match && !replaced_here {
-            return Err(PublishError::Collision(format!(
-                "late occupier at {}:{}",
-                journal.dest_root, journal.dest_rel
-            )));
-        }
-        // The original at the destination: a same-path write, or a
-        // case-only rename on a filesystem that folds case. Either way it
-        // is set aside under a journaled backup, as the publisher does.
-        let same_path = journal
-            .source
-            .as_ref()
-            .map(|(root, rel)| {
-                sandbox
-                    .resolve_no_symlink(root, rel)
-                    .map(|source| source == dest)
-                    .unwrap_or(false)
-                    || paths::case_alias(
-                        sandbox,
-                        (root, rel),
-                        (&journal.dest_root, &journal.dest_rel),
-                    )
-            })
-            .unwrap_or(false);
-        if !same_path && !replaced_here {
-            return Err(PublishError::Collision(format!(
-                "late occupier at {}:{}",
-                journal.dest_root, journal.dest_rel
-            )));
-        }
-        let backup = sandbox.backup_path_for(&dest, &journal.id)?;
-        sandbox.ensure_under_roots(&backup)?;
-        JournalStore::new(conn).set_backup(&journal.id, &backup.to_string_lossy())?;
-        std::fs::rename(&dest, &backup).map_err(PublishError::from)?;
-        if let Some(parent) = dest.parent() {
-            super::journal::fsync_dir(parent)?;
-        }
-    }
-    std::fs::rename(staged, &dest).map_err(PublishError::from)?;
-    if let Some(parent) = dest.parent() {
-        super::journal::fsync_dir(parent)?;
+        Err(error) => return Err(error.into_publish(&journal.dest_root, &journal.dest_rel)),
     }
     let current = JournalStore::new(conn)
         .get(&journal.id)?
@@ -528,13 +589,15 @@ fn resume_rename(
             )));
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 /// Reconcile a bundle with committed journals: never roll back.
 /// Verifies the catalog still names each journaled destination with
 /// matching bytes, restores an exact remaining staged copy when the
-/// destination went missing, and retries pinned cleanup.
+/// destination went missing, and retries pinned cleanup. The staged copy
+/// only ever goes onto a free name: a destination holding anything else
+/// keeps it, and the staged copy stays beside it as evidence.
 fn reconcile_committed<C: Catalog>(
     conn: &mut Connection,
     sandbox: &Sandbox,
@@ -564,24 +627,54 @@ fn reconcile_committed<C: Catalog>(
             continue;
         }
         let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
-        match paths::read_regular_file(&dest) {
-            Ok(bytes) if sha256_hex(&bytes) == journal.staged_sha256 => {}
-            _ => {
-                let staged = Path::new(&journal.staged);
-                match paths::read_regular_file(staged) {
-                    Ok(bytes) if sha256_hex(&bytes) == journal.staged_sha256 => {
-                        std::fs::copy(staged, &dest).map_err(PublishError::from)?;
-                    }
-                    _ => {
-                        if let Some(track_id) = journal.track_id.as_deref() {
-                            catalog.mark_missing(conn, track_id)?;
-                        }
-                        flag_attention(conn, journals)?;
-                        return Ok(RecoveryAction::NeedsAttention(format!(
-                            "committed output missing for journal {}",
-                            journal.id
-                        )));
-                    }
+        let staged = Path::new(&journal.staged);
+        let holds = |path: &Path| {
+            paths::read_regular_file(path)
+                .is_ok_and(|bytes| sha256_hex(&bytes) == journal.staged_sha256)
+        };
+        let staged_holds = sandbox.ensure_under_roots(staged).is_ok() && holds(staged);
+        let mode = sandbox.placement_mode(&journal.dest_root);
+        let dest_free = matches!(
+            std::fs::symlink_metadata(&dest),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+        );
+        if holds(&dest) {
+            // Still under its hidden name too, as the same file: a
+            // placement that linked and stopped. The hidden name goes.
+            if staged_holds && paths::same_file(staged, &dest) {
+                place_from_hidden(mode, staged, &dest)
+                    .map_err(|error| error.into_publish(&journal.dest_root, &journal.dest_rel))?;
+            }
+        } else if !staged_holds {
+            if let Some(track_id) = journal.track_id.as_deref() {
+                catalog.mark_missing(conn, track_id)?;
+            }
+            flag_attention(conn, journals)?;
+            return Ok(RecoveryAction::NeedsAttention(format!(
+                "committed output missing for journal {}",
+                journal.id
+            )));
+        } else if !dest_free {
+            flag_attention(conn, journals)?;
+            return Ok(RecoveryAction::NeedsAttention(format!(
+                "another file holds the committed destination of journal {}",
+                journal.id
+            )));
+        } else {
+            match place_from_hidden(mode, staged, &dest) {
+                Ok(_) => {}
+                Err(
+                    PlaceError::Collision | PlaceError::Unavailable(_) | PlaceError::CrossDevice,
+                ) => {
+                    flag_attention(conn, journals)?;
+                    return Ok(RecoveryAction::NeedsAttention(format!(
+                        "committed output for journal {} could not be restored without \
+                         risking an overwrite",
+                        journal.id
+                    )));
+                }
+                Err(error) => {
+                    return Err(error.into_publish(&journal.dest_root, &journal.dest_rel));
                 }
             }
         }
@@ -700,12 +793,20 @@ fn finish_cleanup(
 /// Compensate a pre-commit bundle, for the publisher after a failed
 /// publish and for recovery: unwind every journal by byte comparison and
 /// mark it compensated.
+///
+/// A row whose set-aside original is still under its backup name after
+/// the unwind is never compensated: it goes to `needs_attention` with the
+/// backup kept, and the reason is returned. When the original has no safe
+/// way home at all, it stays under its backup name, nothing more is moved
+/// and every row still active goes with it.
 pub(super) fn compensate_bundle(
     conn: &Connection,
     sandbox: &Sandbox,
     journals: &[FileJournal],
-) -> Result<(), PublishError> {
-    for journal in journals {
+) -> Result<Option<String>, PublishError> {
+    let store = JournalStore::new(conn);
+    let mut attention = None;
+    for (index, journal) in journals.iter().enumerate() {
         if journal.state.is_terminal()
             || matches!(
                 journal.state,
@@ -714,52 +815,145 @@ pub(super) fn compensate_bundle(
         {
             continue;
         }
-        unwind_row(sandbox, journal)?;
-        if !JournalStore::new(conn).transition(
-            &journal.id,
-            journal.state,
-            JournalState::Compensated,
-        )? {
-            tracing::warn!(journal_id = %journal.id, "compensation not recorded: state moved");
+        let next = match unwind_row(sandbox, journal)? {
+            Unwound::Clean => JournalState::Compensated,
+            Unwound::BackupKept(reason) => {
+                tracing::warn!(
+                    journal_id = %journal.id,
+                    reason,
+                    "set-aside original kept under its backup name"
+                );
+                attention.get_or_insert(reason);
+                JournalState::NeedsAttention
+            }
+            Unwound::NoSafeMethod(reason) => {
+                flag_attention(conn, &journals[index..])?;
+                return Ok(Some(reason));
+            }
+        };
+        if !store.transition(&journal.id, journal.state, next)? {
+            tracing::warn!(journal_id = %journal.id, "unwind not recorded: state moved");
         }
     }
-    Ok(())
+    Ok(attention)
+}
+
+/// How one journal's unwind ended.
+enum Unwound {
+    /// Everything of the user's is back under its own name.
+    Clean,
+    /// The set-aside original is still under its backup name, and why.
+    BackupKept(String),
+    /// The original has no safe way back onto its name and stays under
+    /// its backup name. A placed copy that held the name is already gone.
+    NoSafeMethod(String),
 }
 
 /// Unwind one pre-commit journal by byte comparison only: remove a
 /// published destination that still holds the staged bytes, put a
 /// set-aside original back on an empty name, and delete the staged temp.
-fn unwind_row(sandbox: &Sandbox, journal: &FileJournal) -> Result<(), PublishError> {
+/// A backup whose bytes changed or whose home is taken is decided before
+/// anything is removed.
+fn unwind_row(sandbox: &Sandbox, journal: &FileJournal) -> Result<Unwound, PublishError> {
     let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
     if journal.kind == JournalKind::Delete {
         // A delete journal's staged copy is the generated file itself.
-        return super::generated::put_back(
-            &dest,
-            Path::new(&journal.staged),
-            &journal.staged_sha256,
-        );
-    }
-    if let Ok(bytes) = paths::read_regular_file(&dest)
-        && sha256_hex(&bytes) == journal.staged_sha256
-    {
-        std::fs::remove_file(&dest).map_err(PublishError::from)?;
-    }
-    if let Some(backup_text) = journal.backup.as_deref()
-        && std::fs::symlink_metadata(&dest).is_err()
-        && let Ok(bytes) = paths::read_regular_file(Path::new(backup_text))
-    {
-        let expected = journal.backup_sha256().unwrap_or_default();
-        if expected.is_empty() || sha256_hex(&bytes) == expected {
-            let home = paths::backup_home(
-                sandbox,
-                journal.source.as_ref(),
-                &journal.dest_root,
-                &journal.dest_rel,
-            )?;
-            std::fs::rename(Path::new(backup_text), &home).map_err(PublishError::from)?;
-        }
+        super::generated::put_back(&dest, Path::new(&journal.staged), &journal.staged_sha256)?;
+        return Ok(Unwound::Clean);
     }
     let staged = Path::new(&journal.staged);
+    // Matching bytes do not make the destination the placed copy: a row
+    // with no tag change stages the original's own bytes. It is ours only
+    // when the staged temp went there (it is gone, or is this same file)
+    // and, for a file written in place, the original was set aside first.
+    let staged_bytes_at_dest = paths::read_regular_file(&dest)
+        .is_ok_and(|bytes| sha256_hex(&bytes) == journal.staged_sha256);
+    let temp_went_there =
+        std::fs::symlink_metadata(staged).is_err() || paths::same_file(staged, &dest);
+    let in_place = journal.source.as_ref().is_some_and(|(root, rel)| {
+        sandbox
+            .resolve_no_symlink(root, rel)
+            .is_ok_and(|source| source == dest)
+            || paths::case_alias(
+                sandbox,
+                (root, rel),
+                (&journal.dest_root, &journal.dest_rel),
+            )
+    });
+    let placed_at_dest = |original_aside: bool| {
+        staged_bytes_at_dest && temp_went_there && (original_aside || !in_place)
+    };
+    // A journaled backup path with no file is normal: the original never
+    // moved, or it is already home.
+    let backup = journal
+        .backup
+        .as_deref()
+        .map(Path::new)
+        .filter(|backup| std::fs::symlink_metadata(backup).is_ok());
+    let mut put_back = None;
+    if let Some(backup) = backup {
+        if sandbox.ensure_under_roots(backup).is_err() {
+            return Ok(Unwound::BackupKept(format!(
+                "journal {} backup escapes sandbox",
+                journal.id
+            )));
+        }
+        let home = paths::backup_home(
+            sandbox,
+            journal.source.as_ref(),
+            &journal.dest_root,
+            &journal.dest_rel,
+        )?;
+        if paths::same_file(backup, &home) {
+            // An earlier put-back linked the original home and stopped:
+            // only the hidden name is left to remove.
+            std::fs::remove_file(backup).map_err(PublishError::from)?;
+        } else {
+            let expected = journal.backup_sha256().unwrap_or_default();
+            let intact = paths::read_regular_file(backup)
+                .is_ok_and(|bytes| expected.is_empty() || sha256_hex(&bytes) == expected);
+            if !intact {
+                return Ok(Unwound::BackupKept(format!(
+                    "journal {} backup bytes changed",
+                    journal.id
+                )));
+            }
+            if std::fs::symlink_metadata(&dest).is_ok() && !placed_at_dest(true) {
+                return Ok(Unwound::BackupKept(format!(
+                    "another file holds the name journal {} set its original aside from",
+                    journal.id
+                )));
+            }
+            put_back = Some((backup, home));
+        }
+    }
+    if placed_at_dest(put_back.is_some()) {
+        std::fs::remove_file(&dest).map_err(PublishError::from)?;
+    }
+    if let Some((backup, home)) = put_back {
+        let mode = sandbox.placement_mode(&journal.dest_root);
+        match place_from_hidden(mode, backup, &home) {
+            Ok(_) => {}
+            // The original is home; a folder sync that failed does not
+            // stop the rest of the unwind.
+            Err(PlaceError::Unsynced(error)) => {
+                tracing::warn!(journal_id = %journal.id, %error, "directory sync failed");
+            }
+            Err(PlaceError::Collision) => {
+                return Ok(Unwound::BackupKept(format!(
+                    "another file took the name journal {} set its original aside from",
+                    journal.id
+                )));
+            }
+            Err(PlaceError::Unavailable(_) | PlaceError::CrossDevice) => {
+                return Ok(Unwound::NoSafeMethod(format!(
+                    "journal {} has no safe way to put its original back",
+                    journal.id
+                )));
+            }
+            Err(error) => return Err(error.into_publish(&journal.dest_root, &journal.dest_rel)),
+        }
+    }
     if let Ok(bytes) = paths::read_regular_file(staged)
         && sha256_hex(&bytes) == journal.staged_sha256
     {
@@ -770,7 +964,7 @@ fn unwind_row(sandbox: &Sandbox, journal: &FileJournal) -> Result<(), PublishErr
     {
         tracing::warn!(dir = %parent.display(), %error, "directory sync failed");
     }
-    Ok(())
+    Ok(Unwound::Clean)
 }
 
 fn now_secs() -> f64 {

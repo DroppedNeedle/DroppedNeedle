@@ -47,8 +47,10 @@
 //!
 //! Failure before commit compensates: published destinations whose bytes
 //! still match the staged copy are removed, same-path backups are
-//! restored, and unpublished temps are deleted. Committed journals are
-//! never rolled back. Anything ambiguous (duplicate staged locations,
+//! restored, and unpublished temps are deleted. A backup that cannot go
+//! home (its name was taken meanwhile, or its bytes changed) is kept, and
+//! its row needs attention instead. Committed journals are never rolled
+//! back. Anything ambiguous (duplicate staged locations,
 //! changed bytes, unsafe paths, mixed commit states, catalog/destination
 //! disagreement) moves the whole bundle to `needs_attention` with
 //! structured evidence and deletes nothing.

@@ -724,6 +724,7 @@ fn late_occupier_survives_placement() {
                 // name, untouched.
                 let backup = journals[0].backup.as_deref().expect("backup journaled");
                 assert_eq!(std::fs::read(backup).unwrap(), original, "{case}");
+                assert_eq!(journals[0].state, JournalState::NeedsAttention, "{case}");
                 let other = fix.sandbox.resolve("music", "staging/b.flac").unwrap();
                 assert_eq!(std::fs::read(other).unwrap(), original, "{case}");
             }
@@ -734,6 +735,274 @@ fn late_occupier_survives_placement() {
             "{case}"
         );
     }
+}
+
+/// A placement that stopped between the link and the unlink leaves the
+/// staged file under two names. Recovery, taking whichever step the disk
+/// offers, sees one file, drops the hidden name and finishes the bundle.
+#[test]
+fn interrupted_link_is_finished_by_recovery() {
+    use std::os::unix::fs::MetadataExt as _;
+    for kind in [PlanKind::Move, PlanKind::SamePath] {
+        let fix = fixture("link-interrupted");
+        let (bundle, docs) = two_track_bundle(&fix, kind);
+        let (sealed, live) = seal(&bundle);
+        let mut publisher = open_publisher(&fix);
+        publisher.set_place_seams(Seams {
+            skip_rename: true,
+            stop_after_link: true,
+            ..Seams::default()
+        });
+        let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+        assert!(
+            matches!(err, PublishError::InjectedCrash(_)),
+            "{kind:?}: got {err:?}"
+        );
+        drop(publisher);
+
+        let mut conn = open_db(&fix);
+        let first = JournalStore::new(&conn)
+            .bundle("bundle-1")
+            .unwrap()
+            .remove(0);
+        assert_eq!(first.state, JournalState::Staged);
+        let dest = fix
+            .sandbox
+            .resolve(&first.dest_root, &first.dest_rel)
+            .unwrap();
+        assert_eq!(
+            std::fs::metadata(&first.staged).unwrap().ino(),
+            std::fs::metadata(&dest).unwrap().ino(),
+            "{kind:?}: linked, not yet unlinked"
+        );
+
+        let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+        assert_eq!(
+            results[0].action,
+            publish::RecoveryAction::ResumedCommitted,
+            "{kind:?}"
+        );
+        for item in bundle.items.iter() {
+            let dest = fix
+                .sandbox
+                .resolve(&item.dest_root, &item.dest_rel)
+                .unwrap();
+            assert_staged(&dest, &item.track_id);
+            assert_eq!(std::fs::metadata(&dest).unwrap().nlink(), 1, "{kind:?}");
+        }
+        assert!(hidden_leftovers(&fix.dir).is_empty(), "{kind:?}");
+        let journals = JournalStore::new(&conn).bundle("bundle-1").unwrap();
+        assert!(
+            journals
+                .iter()
+                .all(|journal| journal.state == JournalState::Cleaned),
+            "{kind:?}"
+        );
+        assert_eq!(SqliteCatalog.revision(&conn).unwrap(), start_revision() + 1);
+    }
+}
+
+/// After the commit, recovery restores a missing output from a staged
+/// copy that is still there, but only onto a free name. A destination
+/// holding anything else is the user's: both files stay and the bundle
+/// waits for an administrator.
+#[test]
+fn committed_output_is_restored_only_onto_a_free_name() {
+    for occupied in [true, false] {
+        let fix = fixture("committed-restore");
+        let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+        let (sealed, live) = seal(&bundle);
+        let mut publisher = open_publisher(&fix);
+        publisher.set_crash_point(Some(CrashPoint::AfterCatalogCommit));
+        assert!(matches!(
+            publisher.publish(&sealed, &live, &docs),
+            Err(PublishError::InjectedCrash(_))
+        ));
+        drop(publisher);
+
+        let mut conn = open_db(&fix);
+        let first = JournalStore::new(&conn)
+            .bundle("bundle-1")
+            .unwrap()
+            .remove(0);
+        assert_eq!(first.state, JournalState::Committed);
+        let dest = fix
+            .sandbox
+            .resolve(&first.dest_root, &first.dest_rel)
+            .unwrap();
+        let staged_bytes = std::fs::read(&dest).unwrap();
+        std::fs::write(&first.staged, &staged_bytes).unwrap();
+        std::fs::remove_file(&dest).unwrap();
+        if occupied {
+            std::fs::write(&dest, b"users-newer-file").unwrap();
+        }
+
+        let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+        if occupied {
+            assert!(
+                matches!(
+                    results[0].action,
+                    publish::RecoveryAction::NeedsAttention(_)
+                ),
+                "got {:?}",
+                results[0].action
+            );
+            assert_eq!(std::fs::read(&dest).unwrap(), b"users-newer-file");
+            assert_eq!(std::fs::read(&first.staged).unwrap(), staged_bytes);
+        } else {
+            assert_eq!(results[0].action, publish::RecoveryAction::CleanupFinished);
+            assert_eq!(std::fs::read(&dest).unwrap(), staged_bytes);
+            assert!(hidden_leftovers(&fix.dir).is_empty());
+        }
+    }
+}
+
+/// An unwind never calls a row compensated while its set-aside original
+/// is still under the hidden backup name: a backup whose bytes changed
+/// stays where it is, with the published file, for an administrator.
+#[test]
+fn unwind_keeps_a_backup_it_cannot_restore() {
+    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
+    let fix = fixture("unwind-backup-changed");
+    let (bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
+    let (sealed, live) = seal(&bundle);
+    let first_dest = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+    let second_dest = fix.sandbox.resolve("music", "staging/b.flac").unwrap();
+    let mut publisher = open_publisher(&fix);
+    let late = second_dest.clone();
+    let folder = fix.dir.join("music/staging");
+    publisher.set_before_place(Some(Box::new(move |dest| {
+        if dest != late {
+            return;
+        }
+        // The first file is published by now. Its backup is tampered with,
+        // then a late occupier fails the second file and so the bundle.
+        for entry in std::fs::read_dir(&folder).unwrap().flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.contains("-000-audio") && name.ends_with(".bak") {
+                std::fs::write(entry.path(), b"tampered").unwrap();
+            }
+        }
+        std::fs::write(dest, b"arrived-late").unwrap();
+    })));
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+    assert!(matches!(err, PublishError::Collision(_)), "got {err:?}");
+
+    let journals = JournalStore::new(publisher.connection())
+        .bundle("bundle-1")
+        .unwrap();
+    let first_backup = journals[0].backup.as_deref().expect("backup journaled");
+    assert_eq!(journals[0].state, JournalState::NeedsAttention);
+    assert_eq!(std::fs::read(first_backup).unwrap(), b"tampered");
+    assert_staged(&first_dest, "track-a");
+    let second_backup = journals[1].backup.as_deref().expect("backup journaled");
+    assert_eq!(journals[1].state, JournalState::NeedsAttention);
+    assert_eq!(std::fs::read(second_backup).unwrap(), original);
+    assert_eq!(std::fs::read(&second_dest).unwrap(), b"arrived-late");
+}
+
+/// The two unwinds that do finish. A backup path that was journaled but
+/// never used leaves nothing to restore. A put-back that linked the
+/// original home and stopped before the unlink is finished by removing
+/// the hidden name. Both end compensated with every original in place.
+#[test]
+fn unwind_finishes_when_no_backup_is_left() {
+    use std::os::unix::fs::MetadataExt as _;
+    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
+    for put_back_interrupted in [false, true] {
+        let case = format!("put_back_interrupted={put_back_interrupted}");
+        let fix = fixture("unwind-finishes");
+        let (bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
+        let (sealed, live) = seal(&bundle);
+        let mut publisher = open_publisher(&fix);
+        publisher.set_crash_point(Some(if put_back_interrupted {
+            CrashPoint::BeforeCatalogCommit
+        } else {
+            CrashPoint::AfterBackupJournaled
+        }));
+        assert!(matches!(
+            publisher.publish(&sealed, &live, &docs),
+            Err(PublishError::InjectedCrash(_))
+        ));
+        drop(publisher);
+
+        let mut conn = open_db(&fix);
+        let first = JournalStore::new(&conn)
+            .bundle("bundle-1")
+            .unwrap()
+            .remove(0);
+        let backup = first.backup.as_deref().expect("backup journaled");
+        let dest = fix
+            .sandbox
+            .resolve(&first.dest_root, &first.dest_rel)
+            .unwrap();
+        if put_back_interrupted {
+            // An unwind removed the published copy and linked the original
+            // home, then stopped.
+            std::fs::remove_file(&dest).unwrap();
+            std::fs::hard_link(backup, &dest).unwrap();
+        } else {
+            // With the staged copy gone the bundle cannot resume.
+            assert!(std::fs::symlink_metadata(backup).is_err());
+            std::fs::remove_file(&first.staged).unwrap();
+        }
+
+        let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+        assert_eq!(
+            results[0].action,
+            publish::RecoveryAction::Compensated,
+            "{case}"
+        );
+        for rel in ["staging/a.flac", "staging/b.flac"] {
+            let path = fix.sandbox.resolve("music", rel).unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), original, "{case}");
+            assert_eq!(std::fs::metadata(&path).unwrap().nlink(), 1, "{case}");
+        }
+        assert!(hidden_leftovers(&fix.dir).is_empty(), "{case}");
+        let journals = JournalStore::new(&conn).bundle("bundle-1").unwrap();
+        assert!(
+            journals
+                .iter()
+                .all(|journal| journal.state == JournalState::Compensated),
+            "{case}"
+        );
+        assert_eq!(SqliteCatalog.revision(&conn).unwrap(), start_revision());
+    }
+}
+
+/// A same-path row with no tag change stages the file's own bytes. When
+/// an earlier row fails the bundle before that row is placed, the unwind
+/// must not take the user's untouched file for the staged copy.
+#[test]
+fn unwind_keeps_an_original_that_was_never_set_aside() {
+    use std::os::unix::fs::MetadataExt as _;
+    let original = std::fs::read(fixtures_dir().join("management_full.flac")).unwrap();
+    let fix = fixture("unwind-unchanged");
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
+    for item in bundle.items.iter_mut() {
+        item.managed_updates.clear();
+    }
+    let (sealed, live) = seal(&bundle);
+    let first = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+    let second = fix.sandbox.resolve("music", "staging/b.flac").unwrap();
+    let inode = std::fs::metadata(&second).unwrap().ino();
+    let mut publisher = open_publisher(&fix);
+    let late = first.clone();
+    publisher.set_before_place(Some(Box::new(move |dest| {
+        if dest == late {
+            std::fs::write(dest, b"arrived-late").unwrap();
+        }
+    })));
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+    assert!(matches!(err, PublishError::Collision(_)), "got {err:?}");
+
+    assert_eq!(std::fs::read(&second).unwrap(), original);
+    assert_eq!(std::fs::metadata(&second).unwrap().ino(), inode);
+    let journals = JournalStore::new(publisher.connection())
+        .bundle("bundle-1")
+        .unwrap();
+    assert_eq!(journals[1].state, JournalState::Compensated);
+    assert!(std::fs::symlink_metadata(&journals[1].staged).is_err());
 }
 
 /// The placement probe writes only under a root a bundle targets, and
