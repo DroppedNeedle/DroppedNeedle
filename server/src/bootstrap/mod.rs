@@ -55,7 +55,10 @@ use crate::{
         services::SqliteImpactBuckets,
         wiring::SettingsSetup,
     },
-    tooling::datalock::{DataLock, DataLockError},
+    tooling::{
+        datalock::{DataLock, DataLockError},
+        upgrade::{BootRefusal, DataDirs, check_bootable},
+    },
     web::{WebError, WebUi},
 };
 
@@ -77,6 +80,10 @@ pub enum BootError {
     /// The offline tool holds the database.
     #[error("data lock: {0}")]
     DataLock(#[from] DataLockError),
+    /// The data directory is not a v3 one: v2 data, or an upgrade that
+    /// stopped halfway.
+    #[error(transparent)]
+    DataDir(#[from] BootRefusal),
     /// The settings file could not be opened.
     #[error("settings: {0}")]
     Settings(#[from] crate::runtime_config::ConfigError),
@@ -102,6 +109,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
     // restore refuse to run while it is held, and a running one keeps the
     // server from starting.
     let data_lock = DataLock::shared(&config.library_db_path)?;
+    refuse_foreign_data_dir(&config).await?;
     let runtime = open_runtime(&DbConfig::new(&config.library_db_path)).await?;
     let web = prepare_web(&config).await?;
 
@@ -615,6 +623,21 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
             .with_runtime(runtime)
             .with_data_lock(data_lock),
     ))
+}
+
+/// Refuse a v2 data directory, or one an upgrade left halfway, before the
+/// database is opened, backed up or migrated: migrating would run v3's
+/// schema over the v2 database. Runs under the data lock, so the upgrade
+/// tool cannot be moving files while this looks.
+async fn refuse_foreign_data_dir(config: &AppConfig) -> Result<(), BootError> {
+    let dirs = DataDirs::from_config(config);
+    tokio::task::spawn_blocking(move || check_bootable(&dirs))
+        .await
+        .map_err(|error| BootError::Stage {
+            stage: "data directory check",
+            message: error.to_string(),
+        })?
+        .map_err(BootError::from)
 }
 
 /// Stamp the shipped web UI into the cache, off the async workers.
