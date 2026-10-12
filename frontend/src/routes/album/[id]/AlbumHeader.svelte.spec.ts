@@ -42,7 +42,9 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 }));
 
 vi.mock('$lib/queries/library/LibraryMutations.svelte', () => ({
-	rescanAlbum: () => ({ mutateAsync: vi.fn(), isPending: false })
+	rescanAlbum: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	removeLibraryAlbum: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
+	removeLibraryTrack: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false })
 }));
 
 const localAlbum: LibraryAlbumDetail = {
@@ -93,11 +95,31 @@ vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 		data: localAlbum,
 		isLoading: false,
 		isError: false
-	})
+	}),
+	getLibraryMembershipQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryAlbumsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryArtistsInfiniteQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryArtistThumbsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryStatsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryRecentlyAddedQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryAlbumCopiesQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryAlbumTracksQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryArtistDetailQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryArtistAlbumsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryArtistAppearancesQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryScanScheduleQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryAlbumStatusQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibrarySearchQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getAlbumSearchQuery: () => ({ data: undefined, isLoading: false, isError: false })
 }));
 
 vi.mock('$lib/queries/library/LibraryOperationQueries.svelte', () => ({
-	getLibraryOperationQuery: () => ({ data: undefined, isError: false })
+	getLibraryOperationQuery: () => ({ data: undefined, isError: false }),
+	getCurrentLibraryRunsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryRunQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryRunHistoryQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryRunFailuresQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryRunEstimateQuery: () => ({ data: undefined, isLoading: false, isError: false })
 }));
 
 vi.mock('$lib/queries/library/LibraryEditionQueries.svelte', () => ({
@@ -121,11 +143,14 @@ vi.mock('$lib/queries/library/LibraryCatalogMutations.svelte', () => ({
 }));
 
 vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', () => ({
-	controlLibraryOperation: () => ({ mutateAsync: vi.fn() })
+	controlLibraryOperation: () => ({ mutateAsync: vi.fn() }),
+	controlLibraryRun: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
+	controlIdentification: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false })
 }));
 
 vi.mock('$lib/queries/downloads/UpgradeQueries.svelte', () => ({
-	requestUpgradeAlbum: () => ({ mutateAsync: vi.fn(), isPending: false })
+	requestUpgradeAlbum: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	getCutoffUnmetQuery: () => ({ data: undefined, isLoading: false, isError: false })
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({

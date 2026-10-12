@@ -89,11 +89,26 @@ vi.mock('$lib/queries/library/LibraryPolicyQueries.svelte', () => ({
 		isSuccess: true,
 		isLoading: false,
 		isError: false
-	})
+	}),
+	getLibraryRestorableRootsQuery: () => ({ data: undefined, isLoading: false, isError: false })
 }));
 vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 	getLibrarySearchQuery: () => ({ data: { artists: [], albums: [], tracks: [] } }),
-	getLibraryAlbumDetailQuery: () => ({ data: undefined, isLoading: false, isError: false })
+	getLibraryAlbumDetailQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryMembershipQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryAlbumsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryArtistsInfiniteQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryArtistThumbsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryStatsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryRecentlyAddedQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryAlbumCopiesQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryAlbumTracksQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryArtistDetailQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryArtistAlbumsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryArtistAppearancesQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryScanScheduleQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryAlbumStatusQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getAlbumSearchQuery: () => ({ data: undefined, isLoading: false, isError: false })
 }));
 vi.mock('$lib/queries/library-management/LibraryManagementEvents', () => ({
 	createLibraryManagementEvents: () => ({ start: vi.fn(), stop: vi.fn() })
@@ -155,6 +170,86 @@ vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () 
 	createLibraryManagementBaselineRestorePreviewMutation: () => ({
 		mutateAsync: vi.fn(),
 		isPending: false
+	}),
+	updateLibraryManagementSettingsMutation: () => ({
+		mutateAsync: vi.fn(),
+		mutate: vi.fn(),
+		isPending: false
+	}),
+	previewLibraryManagementSettingsImpactMutation: () => ({
+		mutateAsync: vi.fn(),
+		mutate: vi.fn(),
+		isPending: false
+	}),
+	validateLibraryManagementSettingsMutation: () => ({
+		mutateAsync: vi.fn(),
+		mutate: vi.fn(),
+		isPending: false
+	}),
+	copyLibraryManagementProfileMutation: () => ({
+		mutateAsync: vi.fn(),
+		mutate: vi.fn(),
+		isPending: false
+	}),
+	deleteLibraryManagementProfileMutation: () => ({
+		mutateAsync: vi.fn(),
+		mutate: vi.fn(),
+		isPending: false
+	}),
+	exportLibraryManagementProfileMutation: () => ({
+		mutateAsync: vi.fn(),
+		mutate: vi.fn(),
+		isPending: false
+	}),
+	previewLibraryManagementProfileImportMutation: () => ({
+		mutateAsync: vi.fn(),
+		mutate: vi.fn(),
+		isPending: false
+	}),
+	importLibraryManagementProfileMutation: () => ({
+		mutateAsync: vi.fn(),
+		mutate: vi.fn(),
+		isPending: false
+	}),
+	createLibraryManagementActivationPreviewMutation: () => ({
+		mutateAsync: vi.fn(),
+		mutate: vi.fn(),
+		isPending: false
+	}),
+	confirmLibraryManagementActivationMutation: () => ({
+		mutateAsync: vi.fn(),
+		mutate: vi.fn(),
+		isPending: false
+	}),
+	createLibraryManagementTagEditPreviewMutation: () => ({
+		mutateAsync: vi.fn(),
+		mutate: vi.fn(),
+		isPending: false
+	}),
+	applyLibraryManagementPreviewMutation: () => ({
+		mutateAsync: vi.fn(),
+		mutate: vi.fn(),
+		isPending: false
+	}),
+	createLibraryManagementUndoPreviewMutation: () => ({
+		mutateAsync: vi.fn(),
+		mutate: vi.fn(),
+		isPending: false
+	}),
+	createLibraryManagementDuplicateResolutionMutation: () => ({
+		mutateAsync: vi.fn(),
+		mutate: vi.fn(),
+		isPending: false
+	}),
+	previewLibraryManagementBaselinePurgeMutation: () => ({
+		mutateAsync: vi.fn(),
+		mutate: vi.fn(),
+		isPending: false
+	}),
+	purgeLibraryManagementBaselinesMutation: () => ({
+		mutateAsync: vi.fn(),
+		mutate: vi.fn(),
+		isPending: false
 	})
 }));
 vi.mock('$lib/queries/library/LibraryIdentityPreparationQueries.svelte', () => ({
@@ -173,7 +268,9 @@ vi.mock('$lib/queries/library/LibraryIdentityPreparationMutations.svelte', () =>
 	undoLibraryAutomaticEdition: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', () => ({
-	controlLibraryOperation: () => ({ mutateAsync: vi.fn(), isPending: false })
+	controlLibraryOperation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	controlLibraryRun: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
+	controlIdentification: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false })
 }));
 vi.mock('$lib/queries/library/LibraryRepairQueries.svelte', () => ({
 	getLibraryRepairsQuery: () => ({ data: { pages: [{ items: [] }] }, isLoading: false }),
@@ -250,7 +347,8 @@ beforeEach(() => {
 		bundle_id: 'bundle-1',
 		state: 'resolved',
 		verified_files: 4,
-		total_files: 4
+		total_files: 4,
+		note: 'Import bundle marked as handled (4/4 files verified).'
 	});
 	h.apiPost.mockResolvedValue({});
 	h.reissue.mockResolvedValue({ job_id: 'reissued-1', preview_token: 'token-1' });
@@ -391,7 +489,7 @@ describe('LibraryManagementControlRoom', () => {
 		});
 		await render(LibraryManagementControlRoom);
 
-		await expect.element(page.getByText('Recovery needs attention')).toBeVisible();
+		await expect.element(page.getByText('Some file writes need you')).toBeVisible();
 		await page.getByRole('button', { name: 'Mark bundle-1 as handled' }).click();
 
 		await vi.waitFor(() => expect(h.resolveImportBundle).toHaveBeenCalledTimes(1));
@@ -411,7 +509,7 @@ describe('LibraryManagementControlRoom', () => {
 		});
 		await render(LibraryManagementControlRoom);
 
-		await expect.element(page.getByText('Recovery needs attention')).toBeVisible();
+		await expect.element(page.getByText('Some file writes need you')).toBeVisible();
 		await expect
 			.element(page.getByRole('button', { name: 'Mark bundle-1 as handled' }))
 			.not.toBeInTheDocument();

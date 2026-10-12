@@ -605,6 +605,7 @@
 									><button
 										type="button"
 										class="btn btn-warning btn-sm"
+										aria-label={`Mark ${bundle.bundle_id} as handled`}
 										disabled={resolvingBundleId !== null}
 										onclick={() => void resolveNeedsAttentionBundle(bundle.bundle_id)}
 										>Mark as handled</button

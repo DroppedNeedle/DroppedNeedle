@@ -111,7 +111,12 @@ vi.mock('$lib/utils/albumDetailCache', () => ({
 	albumLastFmCache: mockAlbumLastFmCache,
 	albumYouTubeCache: mockAlbumYouTubeCache,
 	albumSourceMatchCache: mockAlbumSourceMatchCache,
-	albumSourceMatchCacheKey: (id: string) => `key:${id}`
+	albumSourceMatchCacheKey: (id: string) => `key:${id}`,
+	clearMusicBrainzProviderCaches: () => ({
+		mutateAsync: vi.fn(),
+		mutate: vi.fn(),
+		isPending: false
+	})
 }));
 
 vi.mock('$lib/utils/serviceStatus', () => ({
@@ -153,12 +158,25 @@ vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 		data: { items: [], total: 0 },
 		isLoading: false
 	}),
-	getLibraryAlbumsQuery: () => ({ data: { items: [] }, isLoading: false })
+	getLibraryAlbumsQuery: () => ({ data: { items: [] }, isLoading: false }),
+	getLibraryMembershipQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryArtistsInfiniteQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryArtistThumbsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryStatsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryRecentlyAddedQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryArtistDetailQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryArtistAlbumsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryArtistAppearancesQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibraryScanScheduleQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getLibrarySearchQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getAlbumSearchQuery: () => ({ data: undefined, isLoading: false, isError: false })
 }));
 
 // Where-to-buy section (Get it): stub so the page renders without a QueryClientProvider
 vi.mock('$lib/queries/albums/GetItQueries.svelte', () => ({
-	getPurchaseOptionsQuery: () => ({ data: undefined, isLoading: false })
+	getPurchaseOptionsQuery: () => ({ data: undefined, isLoading: false }),
+	getArtistPurchaseOptionsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getAlbumPluginDetailsQuery: () => ({ data: undefined, isLoading: false, isError: false })
 }));
 
 // album-scoped downloads query: feed it per-test via mockDownloadsData so the page renders without
@@ -169,7 +187,9 @@ vi.mock('$lib/queries/downloads/DownloadQueries.svelte', () => ({
 			return mockDownloadsData.value;
 		},
 		refetch: vi.fn()
-	})
+	}),
+	getDownloadActivitySummaryQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getDownloadsQuery: () => ({ data: undefined, isLoading: false, isError: false })
 }));
 
 vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
@@ -184,7 +204,8 @@ vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
 	requestAlbum: () => ({
 		mutateAsync: vi.fn().mockResolvedValue({ success: true }),
 		isPending: false
-	})
+	}),
+	clearFinished: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false })
 }));
 
 vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
@@ -242,7 +263,8 @@ vi.mock('$lib/queries/library/LibraryMutations.svelte', () => ({
 	rescanAlbum: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	// the orphan-review section (P5) creates its removal mutation at init - stub it
 	// so the page renders without a QueryClientProvider
-	removeLibraryTrack: () => mockRemoveTrack
+	removeLibraryTrack: () => mockRemoveTrack,
+	removeLibraryAlbum: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false })
 }));
 vi.mock('$lib/components/AlbumImage.svelte', () => {
 	const Comp = function () {};
