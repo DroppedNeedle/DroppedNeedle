@@ -443,10 +443,9 @@ async fn request_waits_for_a_download_source() {
         Arc::new(QuotaLedger::unlimited(db.clone())),
         Arc::new(dispatch_over(journal)),
     );
-    let (any_source, queue_source) = (worker.clone(), worker.clone());
+    let any_source = worker.clone();
     let readiness = AcquireReadiness {
         sources_ready: Arc::new(move || !any_source.sources_now().is_empty()),
-        queue_ready: Arc::new(move || !queue_source.sources_now().is_empty()),
         staging_root: staging,
     };
     assert!(state.readiness.set(readiness).is_ok());

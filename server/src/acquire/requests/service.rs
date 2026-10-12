@@ -2148,7 +2148,7 @@ impl RequestsService {
                     .map(|total| (total - snapshot.downloaded_bytes).max(0) as f64);
                 if snapshot.status == "queued"
                     && let Some(readiness) = self.readiness.get()
-                    && !(readiness.queue_ready)()
+                    && !(readiness.sources_ready)()
                 {
                     item.waiting_reason = Some(WAITING_NO_SOURCE.to_owned());
                 }

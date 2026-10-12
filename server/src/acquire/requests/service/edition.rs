@@ -108,8 +108,7 @@ impl RequestsService {
         {
             return Err(RequestsError::InvalidInput {
                 message: "No download source is set up, so nothing can be fetched. Set up \
-                          Soulseek, Usenet or a plugin source, or turn on Free Music under \
-                          Settings > Downloads, then try again."
+                          Soulseek, Usenet or a plugin source in Settings, then try again."
                     .to_owned(),
             });
         }

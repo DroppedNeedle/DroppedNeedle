@@ -812,10 +812,9 @@ impl AcquireSetup {
             events.clone(),
         ));
         let drops = drop_imports(&db, &landing, &staging_root, &events, &core.flows);
-        let (ready_worker, queue_worker) = (worker.clone(), worker.clone());
+        let ready_worker = worker.clone();
         let readiness = super::requests::state::AcquireReadiness {
             sources_ready: Arc::new(move || !ready_worker.sources_now().is_empty()),
-            queue_ready: Arc::new(move || !queue_worker.sources_now().is_empty()),
             staging_root: staging_root.clone(),
         };
         if core.requests.readiness.set(readiness).is_err() {
