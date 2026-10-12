@@ -53,12 +53,6 @@ pub struct LibraryWrites {
 }
 
 impl LibraryWrites {
-    /// The last refused write for this plugin, cleared by the next write
-    /// that lands.
-    pub fn last_refusal(&self, plugin: &str) -> Option<String> {
-        self.refusals.lock().ok()?.get(plugin).cloned()
-    }
-
     fn refuse(&self, plugin: &str, reason: String) -> String {
         tracing::warn!(plugin, %reason, "plugin library write refused");
         if let Ok(mut refusals) = self.refusals.lock() {

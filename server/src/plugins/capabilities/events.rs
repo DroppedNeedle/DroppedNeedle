@@ -82,11 +82,6 @@ impl PluginHost {
             .unwrap_or_default()
     }
 
-    /// Accepted publishes since start.
-    pub fn published_count(&self) -> u64 {
-        self.events.published.load(Ordering::Relaxed)
-    }
-
     /// The most recent accepted publishes, oldest first.
     pub fn recent_published(&self) -> Vec<PublishedRecord> {
         self.events

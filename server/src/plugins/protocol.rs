@@ -81,10 +81,6 @@ pub mod methods {
 
 /// Standard and application error codes.
 pub mod codes {
-    /// The message was not JSON.
-    pub const PARSE_ERROR: i64 = -32700;
-    /// The message was not a JSON-RPC request.
-    pub const INVALID_REQUEST: i64 = -32600;
     /// The receiver does not implement the method.
     pub const METHOD_NOT_FOUND: i64 = -32601;
     /// The params did not decode.

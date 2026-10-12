@@ -224,11 +224,6 @@ pub struct PluginEvent {
     pub causation_id: String,
 }
 
-/// Kinds a `publisher` plugin may publish: `indexer_invalidate` (a hint
-/// to search a source again), `download_note` (a note on a download) and
-/// `plugin_notice` (a message for the other subscribers).
-pub const PUBLISH_KINDS: &[&str] = &["indexer_invalidate", "download_note", "plugin_notice"];
-
 /// Required fields per publish kind: references must arrive non-empty,
 /// while `note` and `body` default to empty.
 pub fn publish_fields(kind: &str) -> Option<&'static [&'static str]> {
