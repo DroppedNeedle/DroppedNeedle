@@ -17,8 +17,13 @@ const HOSTILE_PARTS = [
 	'<svg><a xlink:href="javascript:window.__xss = \'svg\'"><text>svg link</text></a></svg>'
 ].join('');
 
+// A well-formed remote image: allowed in our own release notes, never in
+// third-party notes.
+const REMOTE_IMAGE = '<img src="https://example.invalid/cover.png" alt="remote image">';
+
 const HOSTILE_HTML =
 	'<p>Kept paragraph with <strong>bold</strong> and <a href="https://example.org/kept">a kept link</a>.</p>' +
+	REMOTE_IMAGE +
 	HOSTILE_PARTS;
 
 const HOSTILE_MARKDOWN = [
@@ -27,6 +32,8 @@ const HOSTILE_MARKDOWN = [
 	'Kept paragraph with **bold** and [a kept link](https://example.org/kept).',
 	'',
 	"[markdown link](javascript:window.__xss='mdlink')",
+	'',
+	REMOTE_IMAGE,
 	'',
 	HOSTILE_PARTS
 ].join('\n');
@@ -77,15 +84,16 @@ describe('third-party HTML', () => {
 		localStorage.clear();
 	});
 
-	it('renders provider HTML with nothing able to run', async () => {
+	it('renders provider HTML with nothing able to run and no images', async () => {
 		await render(MetadataPanel, {
 			props: { open: true, title: 'Blue Lines', notes: HOSTILE_HTML, onclose: () => {} }
 		});
 
 		await expectNothingRunnable();
+		expect(document.body.querySelectorAll('img').length).toBe(0);
 	});
 
-	it('renders remote markdown with nothing able to run', async () => {
+	it('renders remote markdown with nothing able to run, keeping its images', async () => {
 		await render(WhatsNewModal, {
 			props: {
 				currentVersion: 'v3.0.0',
@@ -105,5 +113,8 @@ describe('third-party HTML', () => {
 
 		await expect.element(page.getByRole('heading', { name: 'Kept heading' })).toBeVisible();
 		await expectNothingRunnable();
+		await expect
+			.element(page.getByRole('img', { name: 'remote image' }))
+			.toHaveAttribute('src', 'https://example.invalid/cover.png');
 	});
 });

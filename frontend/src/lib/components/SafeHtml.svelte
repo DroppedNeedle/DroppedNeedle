@@ -6,18 +6,17 @@
 
 	// The only place a string becomes markup. Everything not written in this
 	// codebase (provider notes, release notes, plugin text) is rendered here.
-	// The allowlist is explicit: text formatting, lists, tables, links and
-	// images. No scripts, frames, forms, SVG, MathML, styles, classes, ids or
-	// event handlers.
-	const ALLOWED_TAGS = [
+	// The allowlist is explicit: text formatting, lists, tables and links,
+	// plus images in DroppedNeedle's own release notes. No scripts, frames,
+	// forms, SVG, MathML, styles, classes, ids or event handlers.
+	const TEXT_TAGS = [
 		...['p', 'br', 'hr', 'div', 'span', 'blockquote', 'pre', 'code', 'kbd'],
 		...['h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
 		...['b', 'strong', 'i', 'em', 'u', 's', 'del', 'ins', 'sub', 'sup'],
 		...['ul', 'ol', 'li', 'dl', 'dt', 'dd'],
 		...['table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'caption'],
-		...['details', 'summary', 'a', 'img']
+		...['details', 'summary', 'a']
 	];
-	const URL_ATTR = ['href', 'src'];
 	// DOMPurify holds every attribute value to the URL pattern unless the
 	// attribute is declared as not carrying a URL.
 	const PLAIN_ATTR = ['alt', 'title', 'width', 'height', 'align', 'start', 'colspan', 'rowspan'];
@@ -51,10 +50,12 @@
 		return purifier;
 	}
 
-	function sanitize(html: string): string {
+	// Third-party notes get no images: one would make every reader's browser
+	// fetch an address of the author's choosing.
+	function sanitize(html: string, images: boolean): string {
 		return getPurifier().sanitize(html, {
-			ALLOWED_TAGS,
-			ALLOWED_ATTR: [...URL_ATTR, ...PLAIN_ATTR],
+			ALLOWED_TAGS: images ? [...TEXT_TAGS, 'img'] : TEXT_TAGS,
+			ALLOWED_ATTR: [...(images ? ['href', 'src'] : ['href']), ...PLAIN_ATTR],
 			ADD_URI_SAFE_ATTR: PLAIN_ATTR,
 			ALLOWED_URI_REGEXP: PROSE_LINK_URL,
 			ALLOWED_NAMESPACES: ['http://www.w3.org/1999/xhtml'],
@@ -79,9 +80,9 @@
 	// that fails to parse renders as nothing instead of breaking the page.
 	const safe = $derived.by(() => {
 		try {
-			return sanitize(
-				markdown !== undefined ? marked.parse(markdown, { async: false }) : (html ?? '')
-			);
+			return markdown !== undefined
+				? sanitize(marked.parse(markdown, { async: false }), true)
+				: sanitize(html ?? '', false);
 		} catch {
 			return '';
 		}
