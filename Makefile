@@ -9,11 +9,14 @@ FRONTEND_DIR := $(ROOT_DIR)/frontend
 CARGO ?= cargo
 PNPM  ?= pnpm
 
+# Compose file that rebuild recreates the container from. Relative paths resolve from the repo root.
+COMPOSE_FILE ?= docker-compose.yml
+
 .PHONY: help check \
 	server-run server-test server-lint server-fmt server-fmt-check contract-check contract-write \
 	frontend-install frontend-browser-install frontend-dev frontend-build frontend-check \
 	frontend-lint frontend-format-check frontend-test frontend-test-server frontend-test-client \
-	image
+	image rebuild
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "} {printf "  %-24s %s\n", $$1, $$2}'
@@ -73,3 +76,6 @@ frontend-test-client: ## Run the browser vitest project (needs Playwright Chromi
 
 image: ## Build the container image as droppedneedle:local
 	docker build -t droppedneedle:local "$(ROOT_DIR)"
+
+rebuild: image ## Build droppedneedle:local and recreate the container from COMPOSE_FILE
+	cd "$(ROOT_DIR)" && docker compose -f "$(COMPOSE_FILE)" up -d
