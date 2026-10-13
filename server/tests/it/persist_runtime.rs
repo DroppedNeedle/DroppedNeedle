@@ -134,6 +134,21 @@ fn labels(lane: &WriteLane) -> Vec<String> {
     rows.map(Result::unwrap).collect()
 }
 
+/// Wait until `count` writes are queued on the lane, and fail if they never
+/// are.
+fn wait_queued(lane: &WriteLane, count: usize) {
+    let waiting = lane.idle_state();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while waiting.queued() < count {
+        assert!(
+            Instant::now() < deadline,
+            "{count} writes must be waiting, found {}",
+            waiting.queued()
+        );
+        std::thread::yield_now();
+    }
+}
+
 fn current_thread_runtime() -> tokio::runtime::Runtime {
     tokio::runtime::Builder::new_current_thread()
         .build()
@@ -954,10 +969,7 @@ async fn foreground_wait_past_its_limit_is_refused() {
             insert_label(tx, "durable")
         })
     });
-    let waiting = lane.idle_state();
-    while waiting.queued() < 1 {
-        std::thread::yield_now();
-    }
+    wait_queued(&lane, 1);
     let parked = lane.clone();
     let (answered, answer) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -1083,10 +1095,7 @@ fn shutdown_gives_up_on_a_holder_that_does_not_return() {
             insert_label(tx, "parked")
         })
     });
-    let waiting = lane.idle_state();
-    while waiting.queued() < 2 {
-        std::thread::yield_now();
-    }
+    wait_queued(&lane, 2);
 
     let (down_tx, down) = std::sync::mpsc::channel();
     let closing = lane.clone();

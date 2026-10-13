@@ -754,11 +754,13 @@ impl Turn {
         };
         let outcome = connection.transact(budget, name, durable, op);
         // `elapsed` runs from before `BEGIN`, so it includes the wait for
-        // the file lock, which the abort budget does not count.
+        // the file lock, which the abort budget does not count, and for a
+        // durable write the sync at commit.
         if outcome.elapsed > budget.warn {
             tracing::warn!(
                 operation = name,
                 lane = lane.label(),
+                durable,
                 elapsed_ms = outcome.elapsed.as_millis() as u64,
                 changes = outcome.changes,
                 "write exceeded its soft budget"
@@ -973,9 +975,13 @@ impl WriteLane {
     ///
     /// A durable write is never answered `Busy` for waiting too long: it
     /// waits for its turn like a background write, in the queue `lane`
-    /// names. At shutdown a parked one does hear `LaneClosed`; a caller
-    /// between two journal steps treats that as "stop here and recover at
-    /// the next start".
+    /// names. The turn is never refused, but the write can still hear
+    /// `Busy`: from the file lock at `BEGIN` while another connection
+    /// writes, and past 4,096 durable writes waiting. Once shutdown starts,
+    /// every new durable call is refused `LaneClosed` at once, and one
+    /// still parked when shutdown gives up hears the same; a caller between
+    /// two journal steps treats either as "stop here and recover at the
+    /// next start".
     ///
     /// The time budget covers less of this write than of an ordinary one.
     /// Setting the pragma and `BEGIN` run before the abort clock starts. The
@@ -1249,6 +1255,14 @@ impl WriterConnection {
         }
         let Err(error) = self.connection.execute_batch("ROLLBACK") else {
             tracing::warn!("write connection held an open transaction; rolled it back");
+            // A durable turn whose rollback failed could not leave full sync
+            // either. A durable turn sets it again right after this.
+            if let Err(error) = self.connection.execute_batch("PRAGMA synchronous=NORMAL") {
+                tracing::error!(
+                    cause = short_cause(&error),
+                    "write connection could not leave full sync; every commit syncs until it does"
+                );
+            }
             return Ok(());
         };
         tracing::error!(
@@ -1262,8 +1276,8 @@ impl WriterConnection {
 
 /// The write connection at `synchronous=FULL` for one durable transaction.
 /// Dropping it puts `NORMAL` back. SQLite refuses to change the level
-/// inside a transaction, so both changes happen outside the lane's `BEGIN`
-/// and commit.
+/// inside a transaction (verified against SQLite 3.46.0), so both changes
+/// happen outside the lane's `BEGIN` and commit.
 struct FullSync<'a> {
     connection: &'a mut Connection,
     operation: &'static str,
