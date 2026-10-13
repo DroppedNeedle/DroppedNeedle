@@ -16,10 +16,11 @@ use super::error::ContribError;
 use super::models::*;
 use super::rules::*;
 use super::seams::*;
+use super::sqlite::SqliteContributions;
 
 pub struct ContributionService {
-    store: Arc<dyn ContributionStore>,
-    identity: Arc<dyn ContributionIdentity>,
+    store: Arc<SqliteContributions>,
+    identity: Arc<SqliteContributions>,
     discogs: Option<Arc<dyn DiscogsContrib>>,
     musicbrainz: Option<Arc<dyn MusicBrainzContrib>>,
     catalog: Option<Arc<dyn ContributionCatalog>>,
@@ -29,8 +30,8 @@ pub struct ContributionService {
 
 impl ContributionService {
     pub fn new(
-        store: Arc<dyn ContributionStore>,
-        identity: Arc<dyn ContributionIdentity>,
+        store: Arc<SqliteContributions>,
+        identity: Arc<SqliteContributions>,
         evidence: Arc<dyn AttachmentEvidence>,
         clock: Arc<dyn ContributionClock>,
     ) -> Self {
@@ -60,7 +61,7 @@ impl ContributionService {
         self
     }
 
-    pub fn store(&self) -> &Arc<dyn ContributionStore> {
+    pub fn store(&self) -> &Arc<SqliteContributions> {
         &self.store
     }
 

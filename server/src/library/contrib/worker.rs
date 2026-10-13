@@ -17,6 +17,7 @@ use super::models::*;
 use super::rules::verification_retry_delay_seconds;
 use super::seams::*;
 use super::service::ContributionService;
+use super::sqlite::SqliteContributions;
 
 pub const LEASE_SECONDS: f64 = 90.0;
 pub const MAX_AUTOMATIC_WINDOW_SECONDS: f64 = 2.0 * 60.0 * 60.0;
@@ -43,8 +44,8 @@ impl Default for VerificationWorkerConfig {
 pub struct VerificationWorker {
     service: Arc<ContributionService>,
     musicbrainz: Arc<dyn MusicBrainzContrib>,
-    identity: Arc<dyn ContributionIdentity>,
-    store: Arc<dyn ContributionStore>,
+    identity: Arc<SqliteContributions>,
+    store: Arc<SqliteContributions>,
     config: VerificationWorkerConfig,
     next_cleanup_at: Mutex<f64>,
 }
@@ -53,7 +54,7 @@ impl VerificationWorker {
     pub fn new(
         service: Arc<ContributionService>,
         musicbrainz: Arc<dyn MusicBrainzContrib>,
-        identity: Arc<dyn ContributionIdentity>,
+        identity: Arc<SqliteContributions>,
         config: VerificationWorkerConfig,
     ) -> Self {
         let store = service.store().clone();

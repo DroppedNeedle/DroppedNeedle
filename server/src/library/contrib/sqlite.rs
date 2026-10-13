@@ -1172,8 +1172,11 @@ fn clear_duplicates(row: &mut ContributionRow) {
     row.duplicate_input_revision = None;
 }
 
-impl ContributionStore for SqliteContributions {
-    fn create_or_get<'a>(
+impl SqliteContributions {
+    // The arguments mirror the v2 persistence signatures one for one so
+    // guards stay comparable; bundling them would hide the mapping.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_or_get<'a>(
         &'a self,
         local_album_id: &'a str,
         actor_user_id: &'a str,
@@ -1215,7 +1218,7 @@ impl ContributionStore for SqliteContributions {
         }))
     }
 
-    fn get<'a>(
+    pub fn get<'a>(
         &'a self,
         contribution_id: &'a str,
     ) -> BoxFuture<'a, Result<Option<ContributionRow>, ContribError>> {
@@ -1223,7 +1226,7 @@ impl ContributionStore for SqliteContributions {
         Box::pin(self.read("get contribution", move |conn| load_row(conn, &id)))
     }
 
-    fn get_active_for_album<'a>(
+    pub fn get_active_for_album<'a>(
         &'a self,
         album_id: &'a str,
     ) -> BoxFuture<'a, Result<Option<ContributionRow>, ContribError>> {
@@ -1237,7 +1240,9 @@ impl ContributionStore for SqliteContributions {
         ))
     }
 
-    fn compare_and_set<'a>(
+    /// Optimistic-lock helper: runs `update` against the current row; the
+    /// store rejects stale `expected_row_revision` reads.
+    pub fn compare_and_set<'a>(
         &'a self,
         contribution_id: &'a str,
         expected_row_revision: i64,
@@ -1254,7 +1259,7 @@ impl ContributionStore for SqliteContributions {
         }))
     }
 
-    fn mark_stale<'a>(
+    pub fn mark_stale<'a>(
         &'a self,
         contribution_id: &'a str,
         expected_row_revision: i64,
@@ -1287,7 +1292,11 @@ impl ContributionStore for SqliteContributions {
         }))
     }
 
-    fn consume_callback_token<'a>(
+    /// Returns the contribution id plus the verification job id when one
+    /// was (re)queued; `None` means the token is unknown, consumed, or
+    /// expired (v2 `ResourceNotFoundError`). State conflicts surface as
+    /// `Err` so they keep their own message.
+    pub fn consume_callback_token<'a>(
         &'a self,
         token_hash: &'a str,
         release_mbid: &'a str,
@@ -1356,7 +1365,7 @@ impl ContributionStore for SqliteContributions {
         }))
     }
 
-    fn list_for_provider_purge<'a>(
+    pub fn list_for_provider_purge<'a>(
         &'a self,
         now: f64,
         limit: usize,
@@ -1391,7 +1400,7 @@ impl ContributionStore for SqliteContributions {
         })
     }
 
-    fn claim_verification<'a>(
+    pub fn claim_verification<'a>(
         &'a self,
         worker_id: &'a str,
         now: f64,
@@ -1427,7 +1436,10 @@ impl ContributionStore for SqliteContributions {
         })
     }
 
-    fn rebuild<'a>(
+    /// Rebuild retires the stale row and inserts a fresh row (new id,
+    /// state draft); returns the new row (v2 `rebuild_library_contribution`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn rebuild<'a>(
         &'a self,
         contribution_id: &'a str,
         expected_row_revision: i64,
@@ -1487,7 +1499,7 @@ impl ContributionStore for SqliteContributions {
         }))
     }
 
-    fn heartbeat_verification<'a>(
+    pub fn heartbeat_verification<'a>(
         &'a self,
         job_id: &'a str,
         worker_id: &'a str,
@@ -1512,7 +1524,7 @@ impl ContributionStore for SqliteContributions {
         }))
     }
 
-    fn retry_verification<'a>(
+    pub fn retry_verification<'a>(
         &'a self,
         job_id: &'a str,
         worker_id: &'a str,
@@ -1545,7 +1557,8 @@ impl ContributionStore for SqliteContributions {
         }))
     }
 
-    fn finish_verification<'a>(
+    #[allow(clippy::too_many_arguments)]
+    pub fn finish_verification<'a>(
         &'a self,
         job_id: &'a str,
         worker_id: &'a str,
@@ -1719,7 +1732,7 @@ impl ContributionStore for SqliteContributions {
         }))
     }
 
-    fn recover_verification_leases<'a>(&'a self, now: f64) -> BoxFuture<'a, u64> {
+    pub fn recover_verification_leases<'a>(&'a self, now: f64) -> BoxFuture<'a, u64> {
         Box::pin(async move {
             self.write("recover verification leases", move |conn| {
                 Ok(conn
@@ -1736,7 +1749,7 @@ impl ContributionStore for SqliteContributions {
         })
     }
 
-    fn clean_records<'a>(&'a self, now: f64) -> BoxFuture<'a, ()> {
+    pub fn clean_records<'a>(&'a self, now: f64) -> BoxFuture<'a, ()> {
         Box::pin(async move {
             let _ = self
                 .write("clean contribution records", move |conn| {
@@ -1861,8 +1874,10 @@ fn album_context(
     }))
 }
 
-impl ContributionIdentity for SqliteContributions {
-    fn album_context<'a>(
+/// The album identification context contributions read.
+impl SqliteContributions {
+    /// `Ok(None)` when the album is gone; `Err` when it could not be read.
+    pub fn album_context<'a>(
         &'a self,
         album_id: &'a str,
     ) -> BoxFuture<'a, Result<Option<AlbumIdentificationContext>, ContribError>> {
@@ -1872,7 +1887,10 @@ impl ContributionIdentity for SqliteContributions {
         }))
     }
 
-    fn input_revisions(&self, tracks: &[IdentityTrack]) -> (String, String, String) {
+    /// Input revisions owned by scan and identify (v2 `album_input_revisions`):
+    /// tag, file, policy. The contribution input revision is the
+    /// colon-joined triple.
+    pub fn input_revisions(&self, tracks: &[IdentityTrack]) -> (String, String, String) {
         album_input_revisions(tracks.iter().map(|t| (t.id.as_str(), &t.input)))
     }
 }

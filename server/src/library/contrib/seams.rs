@@ -1,9 +1,7 @@
 //! Local seams: the narrow traits contributions need from code they do not
-//! own, plus the store and clock they run against.
+//! own, plus the clock they run against and the types their store takes.
 //!
 //! Owned elsewhere (implemented in `library::adapters`):
-//! - [`ContributionIdentity`] - album identification context, from scan and
-//!   identify (v2 `NativeLibraryStore.get_album_identification_context`).
 //! - [`AttachmentEvidence`] - the identification evidence decision for
 //!   attach/verify, from identify (v2 `AlbumEvidenceEngine`).
 //! - [`ContributionCatalog`] - catalog invalidation + identified hook, from
@@ -105,21 +103,6 @@ pub struct AlbumIdentificationContext {
     pub identity: IdentityAlbumIds,
     pub artist: IdentityArtist,
     pub tracks: Vec<IdentityTrack>,
-}
-
-/// Reads the album identification context. Implemented against the real
-/// library store; contributions only consume it.
-pub trait ContributionIdentity: Send + Sync {
-    /// `Ok(None)` when the album is gone; `Err` when it could not be read.
-    fn album_context<'a>(
-        &'a self,
-        album_id: &'a str,
-    ) -> BoxFuture<'a, Result<Option<AlbumIdentificationContext>, ContribError>>;
-
-    /// Input revisions owned by scan and identify (v2 `album_input_revisions`):
-    /// tag, file, policy. The contribution input revision is the
-    /// colon-joined triple.
-    fn input_revisions(&self, tracks: &[IdentityTrack]) -> (String, String, String);
 }
 
 // ---------------------------------------------------------------------------
@@ -370,133 +353,6 @@ pub struct ContributionVerificationAttempt {
     pub candidate_keys: Vec<String>,
     pub started_at: f64,
     pub completed_at: f64,
-}
-
-// ---------------------------------------------------------------------------
-// Store
-// ---------------------------------------------------------------------------
-
-pub trait ContributionStore: Send + Sync {
-    // Store seam mirrors the v2 persistence signatures argument-for-argument
-    // so guards stay comparable; bundling them would hide the mapping.
-    #[allow(clippy::too_many_arguments)]
-    fn create_or_get<'a>(
-        &'a self,
-        local_album_id: &'a str,
-        actor_user_id: &'a str,
-        album_row_revision: i64,
-        input_revision: &'a str,
-        snapshot: &'a LocalReleaseSnapshot,
-        draft: &'a ReleaseDraft,
-        selection: &'a ContributionSourceSelection,
-        now: f64,
-    ) -> BoxFuture<'a, Result<ContributionRow, ContribError>>;
-
-    fn get<'a>(
-        &'a self,
-        contribution_id: &'a str,
-    ) -> BoxFuture<'a, Result<Option<ContributionRow>, ContribError>>;
-
-    fn get_active_for_album<'a>(
-        &'a self,
-        album_id: &'a str,
-    ) -> BoxFuture<'a, Result<Option<ContributionRow>, ContribError>>;
-
-    /// Optimistic-lock helper: runs `update` against the current row; the
-    /// store rejects stale `expected_row_revision` reads.
-    fn compare_and_set<'a>(
-        &'a self,
-        contribution_id: &'a str,
-        expected_row_revision: i64,
-        actor_user_id: &'a str,
-        now: f64,
-        update: ContributionUpdate,
-    ) -> BoxFuture<'a, Result<ContributionRow, ContribError>>;
-
-    fn mark_stale<'a>(
-        &'a self,
-        contribution_id: &'a str,
-        expected_row_revision: i64,
-        now: f64,
-    ) -> BoxFuture<'a, Result<ContributionRow, ContribError>>;
-
-    /// Returns the contribution id plus the verification job id when one
-    /// was (re)queued; `None` means the token is unknown, consumed, or
-    /// expired (v2 `ResourceNotFoundError`). State conflicts surface as
-    /// `Err` so they keep their own message.
-    fn consume_callback_token<'a>(
-        &'a self,
-        token_hash: &'a str,
-        release_mbid: &'a str,
-        now: f64,
-    ) -> BoxFuture<'a, Result<CallbackConsumption, ContribError>>;
-
-    fn list_for_provider_purge<'a>(
-        &'a self,
-        now: f64,
-        limit: usize,
-    ) -> BoxFuture<'a, Vec<ContributionRow>>;
-
-    fn claim_verification<'a>(
-        &'a self,
-        worker_id: &'a str,
-        now: f64,
-        lease_seconds: f64,
-    ) -> BoxFuture<'a, Option<VerificationJobRow>>;
-
-    /// Rebuild retires the stale row and inserts a fresh row (new id,
-    /// state draft); returns the new row (v2 `rebuild_library_contribution`).
-    #[allow(clippy::too_many_arguments)]
-    fn rebuild<'a>(
-        &'a self,
-        contribution_id: &'a str,
-        expected_row_revision: i64,
-        actor_user_id: &'a str,
-        album_row_revision: i64,
-        input_revision: &'a str,
-        snapshot: &'a LocalReleaseSnapshot,
-        draft: &'a ReleaseDraft,
-        selection: &'a ContributionSourceSelection,
-        now: f64,
-    ) -> BoxFuture<'a, Result<ContributionRow, ContribError>>;
-
-    fn heartbeat_verification<'a>(
-        &'a self,
-        job_id: &'a str,
-        worker_id: &'a str,
-        expected_row_revision: i64,
-        now: f64,
-        lease_seconds: f64,
-    ) -> BoxFuture<'a, Result<i64, ContribError>>;
-
-    fn retry_verification<'a>(
-        &'a self,
-        job_id: &'a str,
-        worker_id: &'a str,
-        expected_row_revision: i64,
-        failure_code: &'a str,
-        not_before: f64,
-        now: f64,
-    ) -> BoxFuture<'a, Result<(), ContribError>>;
-
-    #[allow(clippy::too_many_arguments)]
-    fn finish_verification<'a>(
-        &'a self,
-        job_id: &'a str,
-        worker_id: &'a str,
-        expected_job_revision: i64,
-        expected_contribution_revision: i64,
-        expected_album_revision: i64,
-        attempt: &'a ContributionVerificationAttempt,
-        outcome: VerificationOutcome,
-        failure_code: Option<&'a str>,
-        identities: &'a FinishIdentities,
-        now: f64,
-    ) -> BoxFuture<'a, Result<VerificationOutcome, ContribError>>;
-
-    fn recover_verification_leases<'a>(&'a self, now: f64) -> BoxFuture<'a, u64>;
-
-    fn clean_records<'a>(&'a self, now: f64) -> BoxFuture<'a, ()>;
 }
 
 /// Identity the worker asks the store to commit on a linked finish
