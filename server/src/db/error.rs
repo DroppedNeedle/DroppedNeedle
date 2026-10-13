@@ -52,6 +52,14 @@ pub enum DbError {
         /// Operation name for the log line. Never SQL text or a path.
         operation: String,
     },
+    /// A write was issued from inside a write closure on the same database.
+    /// It could only wait behind the closure that issued it, so it is
+    /// refused at once.
+    #[error("write {operation} was issued inside a write closure on the same database")]
+    NestedWrite {
+        /// Name of the refused write. Never SQL text or a path.
+        operation: String,
+    },
     /// Cooperative cancellation stopped a chunked background write.
     #[error("chunked write {operation} cancelled after {chunks} chunks")]
     Cancelled {

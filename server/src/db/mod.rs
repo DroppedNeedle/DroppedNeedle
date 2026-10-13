@@ -9,7 +9,8 @@
 //! Writes take turns on the lane's one connection. Async code calls
 //! `write`, whose closure runs on the lane's own thread; synchronous code on
 //! a blocking thread calls `write_blocking` and runs its closure itself, so
-//! it may borrow. Neither needs a runtime to make progress.
+//! it may borrow. Neither needs a runtime to make progress. A closure that
+//! writes to its own lane is refused with `NestedWrite`.
 //!
 //! Layout: [`factory`] builds the runtime, [`checkpoint`] runs the GH-293
 //! checkpoint policy with TRUNCATE reclaim, [`writer`] serializes writes with
@@ -27,6 +28,7 @@ pub mod error;
 pub mod factory;
 pub mod fold;
 pub mod fs;
+mod scope;
 pub mod writer;
 
 pub use analyze::AnalyzeService;

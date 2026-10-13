@@ -58,6 +58,7 @@ use tokio::sync::oneshot;
 use super::{
     error::{DbError, rusqlite_is_busy},
     fold::register_fold,
+    scope::{self, LaneId},
 };
 
 /// Foreground admissions granted before one background admission while both
@@ -251,6 +252,7 @@ impl std::fmt::Debug for WriteLane {
 }
 
 struct Shared {
+    id: LaneId,
     db_path: PathBuf,
     state: Mutex<State>,
     /// Signalled when no turn is out and nobody waits.
@@ -306,6 +308,13 @@ impl Shared {
         name: &'static str,
         grantee: Grantee,
     ) -> Result<(), DbError> {
+        // A write issued inside a closure on this lane would wait behind
+        // that closure's turn, which cannot end until the write returns.
+        if scope::inside_write_on(self.id) {
+            return Err(DbError::NestedWrite {
+                operation: name.to_owned(),
+            });
+        }
         // A refused closure is dropped by the caller, after the lock.
         let mut state = self.state();
         if state.closed {
@@ -459,7 +468,8 @@ impl WriteLane {
     /// with its pragmas set, and the thread that runs async writes. Needs no
     /// runtime.
     pub fn open(db_path: &Path) -> Result<Self, DbError> {
-        let connection = WriterConnection::open(db_path)?;
+        let id = LaneId::next();
+        let connection = WriterConnection::open(db_path, id)?;
         let (runner, granted) = mpsc::channel();
         let runner_thread = std::thread::Builder::new()
             .name("droppedneedle-writer".to_owned())
@@ -467,6 +477,7 @@ impl WriteLane {
             .map_err(DbError::Io)?;
         Ok(Self {
             shared: Arc::new(Shared {
+                id,
                 db_path: db_path.to_owned(),
                 state: Mutex::new(State {
                     foreground: VecDeque::new(),
@@ -543,7 +554,9 @@ impl WriteLane {
     /// continues up the caller's thread.
     ///
     /// This parks the calling thread until its turn. Call it from a blocking
-    /// thread, not from async code, and never from inside a write closure.
+    /// thread, not from async code. Inside a write closure on this lane it
+    /// is refused with `NestedWrite`; a closure that hands the write to
+    /// another thread and waits for it is not seen, and hangs the lane.
     pub fn write_blocking<F, R>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, DbError>
     where
         F: FnOnce(&Transaction) -> Result<R, OpError>,
@@ -702,6 +715,7 @@ pub fn apply_connection_pragmas(connection: &Connection) -> Result<(), DbError> 
 /// The write connection, the abort clock its progress handler reads and
 /// the watch its commit and rollback hooks report to.
 struct WriterConnection {
+    lane: LaneId,
     path: PathBuf,
     connection: Connection,
     clock: Arc<AbortClock>,
@@ -709,7 +723,7 @@ struct WriterConnection {
 }
 
 impl WriterConnection {
-    fn open(path: &Path) -> Result<Self, DbError> {
+    fn open(path: &Path, lane: LaneId) -> Result<Self, DbError> {
         let connection = open_connection(path)?;
         register_fold(&connection)?;
         let clock = Arc::new(AbortClock::new());
@@ -721,6 +735,7 @@ impl WriterConnection {
         let rollback_watch = Arc::clone(&watch);
         connection.rollback_hook(Some(move || rollback_watch.note_rollback()));
         Ok(Self {
+            lane,
             path: path.to_owned(),
             connection,
             clock,
@@ -742,7 +757,7 @@ impl WriterConnection {
         }
         let before = self.connection.total_changes();
         let armed = self.clock.arm(WRITE_HARD_BUDGET);
-        let value = run_transaction(&mut self.connection, &armed, &self.watch, op);
+        let value = run_transaction(&mut self.connection, &armed, &self.watch, self.lane, op);
         drop(armed);
         Outcome {
             value,
@@ -766,7 +781,7 @@ impl WriterConnection {
             cause = short_cause(&error),
             "write connection could not roll back; opening a new one"
         );
-        *self = Self::open(&self.path)?;
+        *self = Self::open(&self.path, self.lane)?;
         Ok(())
     }
 }
@@ -778,13 +793,17 @@ fn run_transaction<R>(
     connection: &mut Connection,
     armed: &Armed<'_>,
     watch: &TxWatch,
+    lane: LaneId,
     op: impl FnOnce(&Transaction) -> Result<R, OpError>,
 ) -> Result<R, Failure> {
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| Failure::Op(error.into()))?;
     watch.begin();
-    let value = op(&transaction);
+    let value = {
+        let _inside = scope::enter_write(lane);
+        op(&transaction)
+    };
     if armed.fired() {
         return Err(Failure::TimedOut);
     }

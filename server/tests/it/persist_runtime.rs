@@ -1246,6 +1246,54 @@ fn raw_commit_in_a_closure_commits_nothing() {
     assert_eq!(labels(&lane), ["next"]);
 }
 
+/// A closure that writes to its own lane is refused at once, on the
+/// caller's thread and on the lane's, because it could only wait behind
+/// itself. A write to another database from inside a closure goes through.
+#[tokio::test]
+async fn nested_write_is_refused_on_the_same_lane_only() {
+    let (lane, _dir) = scratch_lane("nested");
+    let (other, _other_dir) = scratch_lane("nested-other");
+    let nested = lane
+        .write_blocking(Lane::Foreground, "brief-outer", |tx| {
+            insert_label(tx, "outer")?;
+            other
+                .write_blocking(Lane::Foreground, "brief-other", |tx| {
+                    insert_label(tx, "other")
+                })
+                .map_err(|error| OpError::Abort(error.to_string()))?;
+            Ok(lane.write_blocking(Lane::Foreground, "brief-nested", |tx| {
+                insert_label(tx, "nested")
+            }))
+        })
+        .unwrap();
+    assert!(
+        matches!(&nested, Err(DbError::NestedWrite { operation }) if operation == "brief-nested"),
+        "a nested blocking write is refused, got {nested:?}"
+    );
+
+    let inner = lane.clone();
+    let nested = lane
+        .write(Lane::Foreground, "brief-outer-async", move |tx| {
+            insert_label(tx, "outer-async")?;
+            Ok(
+                inner.write_blocking(Lane::Foreground, "brief-nested", |tx| {
+                    insert_label(tx, "nested")
+                }),
+            )
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(nested, Err(DbError::NestedWrite { .. })),
+        "a nested write on the lane's thread is refused, got {nested:?}"
+    );
+
+    assert_eq!(labels(&lane), ["outer", "outer-async"]);
+    assert_eq!(labels(&other), ["other"]);
+    lane.shutdown().await;
+    other.shutdown().await;
+}
+
 /// Savepoints inside a write closure work as they do on any transaction:
 /// a released one is kept, one rolled back to is not, and the write commits.
 #[test]
