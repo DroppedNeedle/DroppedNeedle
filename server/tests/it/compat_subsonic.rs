@@ -482,7 +482,7 @@ async fn response_shapes() {
             &["<artistInfo"],
             &["apiKey"],
         ),
-        ("getAlbumInfo2", &[("id", "al-rg-1")], &["<albumInfo2"], &[]),
+        ("getAlbumInfo2", &[("id", "al-rg-1")], &["<albumInfo "], &[]),
         ("getAlbumInfo", &[("id", "al-rg-1")], &["<albumInfo"], &[]),
         (
             "getLyricsBySongId",

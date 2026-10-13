@@ -1007,13 +1007,8 @@ pub async fn album_info<P: Principal, S: Store, B: AudioBackend>(
     } else {
         Some(album.rg_mbid.clone())
     };
-    let key = if ctx.endpoint_name == "getalbuminfo" {
-        "albumInfo"
-    } else {
-        "albumInfo2"
-    };
     Ok(Outcome::keyed(
-        key,
+        "albumInfo",
         SAlbumInfo {
             notes: None,
             musicBrainzId: music_brainz_id,

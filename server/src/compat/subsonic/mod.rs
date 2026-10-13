@@ -40,7 +40,7 @@
 //! | getPlayQueue/savePlayQueue | playQueue/ok | yes | <=500; current consistency |
 //! | getPlayQueueByIndex/savePlayQueueByIndex | playQueueByIndex/ok | yes | extension indexBasedQueue:1 |
 //! | getBookmarks/createBookmark/deleteBookmark | bookmarks/ok | yes | pinned bookmark fields |
-//! | getArtistInfo[2]/getAlbumInfo[2] | artistInfo[2]/albumInfo[2] | yes | projected MBIDs + sized cover URLs |
+//! | getArtistInfo[2]/getAlbumInfo[2] | artistInfo[2]/albumInfo | yes | projected MBIDs + sized cover URLs |
 //! | getAvatar | bytes | yes, self-only | non-self -> 403-as-text |
 //! | getLyricsBySongId | lyricsList | yes | extension songLyrics:1 |
 //! | getLyrics | lyrics | yes | exact title (+artist) match; miss -> empty value |
