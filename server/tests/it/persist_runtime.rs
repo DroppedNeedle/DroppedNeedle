@@ -2122,11 +2122,22 @@ const PATIENT: Duration = Duration::from_secs(60);
 /// request read hears `Busy` after `read_wait`, and the pools' pass runs
 /// every 10 ms.
 async fn read_runtime(name: &str, readers: u32, read_wait: Duration) -> (DbRuntime, ScratchDir) {
+    read_runtime_with(name, readers, read_wait, DRAIN).await
+}
+
+/// [`read_runtime`] with the grace its shutdown gives writes and reads.
+async fn read_runtime_with(
+    name: &str,
+    readers: u32,
+    read_wait: Duration,
+    grace: Duration,
+) -> (DbRuntime, ScratchDir) {
     let dir = scratch_dir(name);
     let db = dir.join("library.db");
     common::migrated_db(&db);
     let mut config = DbConfig::new(&db)
         .with_read_wait(read_wait)
+        .with_shutdown_grace(grace)
         .with_lane_limits(LaneLimits {
             watch_tick: Duration::from_millis(10),
             ..LaneLimits::default()
@@ -2232,22 +2243,28 @@ async fn pooled_reads_refuse_writes() {
 }
 
 /// Once `write` has returned, a read on any connection of either pool sees
-/// the row.
+/// the row, although every one of them has read the table before it.
 #[tokio::test]
 async fn every_pooled_connection_sees_a_returned_write() {
     let (runtime, _dir) = read_runtime("read-your-writes", 7, PATIENT).await;
     let db = runtime.db();
-    db.write(Lane::Foreground, "brief-row", |tx| insert_label(tx, "row"))
-        .await
-        .unwrap();
-    for (long, connections) in [(false, 7), (true, LONG_READERS)] {
-        // Held all at once, so each connection of the pool serves one.
+    // Held all at once, so each connection of the pool serves one.
+    let on_every_connection = |long, connections| -> Vec<i64> {
         let held = hold_reads(db, long, connections, |connection| {
             count_labels(connection).unwrap()
         });
         assert_eq!(runtime.read_activity().out(), connections);
-        let seen: Vec<i64> = held.into_iter().map(HeldRead::release).collect();
-        assert_eq!(seen, vec![1; connections]);
+        held.into_iter().map(HeldRead::release).collect()
+    };
+    let pools = [(false, 7), (true, LONG_READERS)];
+    for (long, connections) in pools {
+        assert_eq!(on_every_connection(long, connections), vec![0; connections]);
+    }
+    db.write(Lane::Foreground, "brief-row", |tx| insert_label(tx, "row"))
+        .await
+        .unwrap();
+    for (long, connections) in pools {
+        assert_eq!(on_every_connection(long, connections), vec![1; connections]);
     }
     runtime.shutdown().await;
 }
@@ -2351,7 +2368,8 @@ async fn waiting_reads_are_served_in_arrival_order() {
 #[test]
 fn waiting_read_past_its_limit_hears_busy() {
     let opener = runtime_with_clock();
-    let (runtime, _dir) = opener.block_on(read_runtime("read-busy", 7, Duration::from_millis(50)));
+    let limit = Duration::from_millis(50);
+    let (runtime, _dir) = opener.block_on(read_runtime("read-busy", 7, limit));
     let db = runtime.db();
     let held = hold_reads(db, false, 7, |_| ());
 
@@ -2364,7 +2382,7 @@ fn waiting_read_past_its_limit_hears_busy() {
         "a parked reader hears Busy, got {refused:?}"
     );
     let awaiting = db.clone();
-    let refused = within(
+    let (refused, waited) = within(
         "an awaiting read past its limit must be answered",
         move || {
             let paused = tokio::runtime::Builder::new_current_thread()
@@ -2372,12 +2390,20 @@ fn waiting_read_past_its_limit_hears_busy() {
                 .start_paused(true)
                 .build()
                 .unwrap();
-            paused.block_on(awaiting.read("brief-awaiting", count_labels))
+            let asked = Instant::now();
+            let refused = paused.block_on(awaiting.read("brief-awaiting", count_labels));
+            (refused, asked.elapsed())
         },
     );
     assert!(
         matches!(&refused, Err(DbError::Busy { operation }) if operation == "brief-awaiting"),
         "an awaiting reader hears Busy, got {refused:?}"
+    );
+    // A timer on the paused clock would have fired at once. The answer came
+    // from the pools' pass, which counts real time.
+    assert!(
+        waited >= limit,
+        "the limit is counted on real time, answered after {waited:?}"
     );
     let activity = runtime.read_activity();
     assert_eq!((activity.out(), activity.waiting()), (7, 0));
@@ -2636,4 +2662,136 @@ async fn shutdown_after_pooled_reads_leaves_no_wal() {
         matches!(late, Err(DbError::LaneClosed)),
         "a read after shutdown is refused, got {late:?}"
     );
+}
+
+/// A closure that leaks a cursor it has stepped leaves a read transaction
+/// that the pool's own commit cannot end. That connection is replaced, not
+/// handed on: afterwards every connection of the pool sees a later write.
+#[tokio::test]
+async fn leaked_cursor_does_not_pin_its_connection() {
+    let (runtime, _dir) = read_runtime("read-leaked-cursor", 7, PATIENT).await;
+    let db = runtime.db();
+    db.write(Lane::Foreground, "brief-first", |tx| {
+        insert_label(tx, "first")
+    })
+    .await
+    .unwrap();
+    db.read_blocking("brief-leak", |connection| -> Result<(), DbError> {
+        let mut statement = connection.prepare_cached("SELECT label FROM scratch_turns")?;
+        let mut rows = statement.query([])?;
+        rows.next()?;
+        std::mem::forget(rows);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(runtime.read_activity().out(), 0);
+
+    db.write(Lane::Foreground, "brief-second", |tx| {
+        insert_label(tx, "second")
+    })
+    .await
+    .unwrap();
+    let held = hold_reads(db, false, 7, |connection| count_labels(connection).unwrap());
+    let seen: Vec<i64> = held.into_iter().map(HeldRead::release).collect();
+    assert_eq!(seen, vec![2; 7]);
+    assert_eq!(runtime.read_activity().out(), 0);
+    runtime.shutdown().await;
+}
+
+/// A waiting read whose future is dropped loses its place: the connection
+/// that comes back goes to the read behind it and is not lost.
+#[tokio::test]
+async fn dropped_waiting_read_gives_its_place_to_the_next() {
+    let (runtime, _dir) = read_runtime("read-dropped-waiter", 1, PATIENT).await;
+    let db = runtime.db();
+    let activity = runtime.read_activity();
+    let mut held = hold_reads(db, false, 1, |_| ());
+
+    let mut gone = Box::pin(db.read("brief-gone", count_labels));
+    let pending = std::future::poll_fn(|cx| Poll::Ready(gone.as_mut().poll(cx).is_pending())).await;
+    assert!(pending, "a read behind a held connection cannot finish");
+    let reader = db.clone();
+    let behind = tokio::spawn(async move { reader.read("brief-behind", count_labels).await });
+    until("two reads wait", || async { activity.waiting() == 2 }).await;
+
+    drop(gone);
+    held.pop().unwrap().release();
+    let seen = tokio::time::timeout(Duration::from_secs(10), behind)
+        .await
+        .expect("the read behind the dropped one is served")
+        .unwrap()
+        .unwrap();
+    assert_eq!(seen, 0);
+    assert_eq!((activity.out(), activity.waiting()), (0, 0));
+    runtime.shutdown().await;
+}
+
+/// Shutdown waits for a read that is still running, returns once it has
+/// ended without waiting out the grace, and leaves no `-wal` or `-shm`.
+#[tokio::test]
+async fn shutdown_waits_for_a_read_in_flight() {
+    let (runtime, _dir) = read_runtime_with("read-in-flight", 7, PATIENT, PATIENT).await;
+    let path = runtime.path().to_owned();
+    let db = runtime.db().clone();
+    db.write(Lane::Foreground, "brief-row", |tx| insert_label(tx, "row"))
+        .await
+        .unwrap();
+    let mut held = hold_reads(&db, false, 1, |connection| {
+        count_labels(connection).unwrap()
+    });
+
+    let asked = Instant::now();
+    let shutting = tokio::spawn(runtime.shutdown());
+    until("shutdown closes the read pools", || async {
+        matches!(
+            db.read_blocking("brief-late", count_labels),
+            Err(DbError::LaneClosed)
+        )
+    })
+    .await;
+    assert!(!shutting.is_finished(), "shutdown waits for the open read");
+
+    assert_eq!(held.pop().unwrap().release(), 1);
+    tokio::time::timeout(Duration::from_secs(10), shutting)
+        .await
+        .expect("shutdown returns once the read has ended")
+        .unwrap();
+    assert!(asked.elapsed() < PATIENT, "the grace was not waited out");
+    assert_eq!(file_len(&sidecar(&path, "-wal")), None);
+    assert_eq!(file_len(&sidecar(&path, "-shm")), None);
+}
+
+/// Shutdown gives up on a read that is still running when the grace ends.
+/// Its connection is closed by its own thread later, and the next start
+/// finds what was committed.
+#[tokio::test]
+async fn shutdown_gives_up_on_a_read_that_does_not_return() {
+    let grace = Duration::from_millis(200);
+    let (runtime, _dir) = read_runtime_with("read-stuck", 7, PATIENT, grace).await;
+    let path = runtime.path().to_owned();
+    let db = runtime.db().clone();
+    let activity = runtime.read_activity().clone();
+    db.write(Lane::Foreground, "brief-row", |tx| insert_label(tx, "row"))
+        .await
+        .unwrap();
+    let mut held = hold_reads(&db, false, 1, |connection| {
+        count_labels(connection).unwrap()
+    });
+
+    let asked = Instant::now();
+    tokio::time::timeout(Duration::from_secs(10), runtime.shutdown())
+        .await
+        .expect("shutdown returns at the grace with a read still out");
+    assert!(
+        asked.elapsed() >= grace,
+        "the read had the whole grace to end"
+    );
+    assert_eq!(activity.out(), 1);
+
+    assert_eq!(held.pop().unwrap().release(), 1);
+    assert_eq!(activity.out(), 0);
+    let next = open_runtime(&DbConfig::new(&path)).await.unwrap();
+    assert_eq!(next.db().read("brief-next", count_labels).await.unwrap(), 1);
+    next.shutdown().await;
+    assert_eq!(file_len(&sidecar(&path, "-wal")), None);
 }
