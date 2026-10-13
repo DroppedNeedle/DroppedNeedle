@@ -407,3 +407,315 @@ async fn unrecorded_scan_request_is_an_error() {
     // No such user in this database: the auth_users reference fails.
     assert!(library.request_scan(None, "no-such-user").is_err());
 }
+
+/// Tag reader for the regroup briefs: every file reads as a track of the
+/// album `albums` names for its path, and one nominated read first runs
+/// a statement against the catalog, the way a listener acts mid-scan.
+struct RetagReader {
+    store: Arc<SqliteScanStore>,
+    albums: std::sync::Mutex<HashMap<String, String>>,
+    /// File name, and what happens just before it is read.
+    meanwhile: std::sync::Mutex<Option<(String, String)>>,
+}
+
+impl RetagReader {
+    fn retag(&self, relative: &str, album: &str) {
+        self.albums
+            .lock()
+            .expect("albums")
+            .insert(relative.to_owned(), album.to_owned());
+    }
+}
+
+impl TagReader for RetagReader {
+    fn read_tags(&self, path: &Path) -> Result<ScannedTags, TagReadError> {
+        let name = path.file_name().expect("name").to_string_lossy();
+        let folder = path.parent().and_then(Path::file_name).expect("folder");
+        let relative = format!("{}/{name}", folder.to_string_lossy());
+        let due = {
+            let mut meanwhile = self.meanwhile.lock().expect("meanwhile");
+            match meanwhile.as_ref() {
+                Some((at, _)) if *at == name => meanwhile.take(),
+                _ => None,
+            }
+        };
+        if let Some((_, sql)) = due {
+            self.store
+                .execute_batch_for_tests(&sql)
+                .expect("mid-scan statement runs");
+        }
+        let mut read = ScannedTags::default();
+        read.tag.title = name.into_owned();
+        read.tag.artist = "Artist".to_owned();
+        read.tag.album_artist = Some("Artist".to_owned());
+        read.tag.album = self.albums.lock().expect("albums")[&relative].clone();
+        Ok(read)
+    }
+}
+
+struct RegroupRig {
+    _scratch: ScratchDir,
+    root: PathBuf,
+    reader: Arc<RetagReader>,
+    coordinator: LibraryScanCoordinator<RetagReader>,
+    rewrites: usize,
+}
+
+impl RegroupRig {
+    fn new(name: &str) -> Self {
+        let scratch = ScratchDir::new(name);
+        let root = scratch.join("music");
+        std::fs::create_dir_all(&root).expect("root");
+        let store = Arc::new(SqliteScanStore::scratch().expect("scan store opens"));
+        let reader = Arc::new(RetagReader {
+            store: Arc::clone(&store),
+            albums: std::sync::Mutex::default(),
+            meanwhile: std::sync::Mutex::default(),
+        });
+        let registry = RootRegistry::new(
+            vec![LibraryRoot::new(
+                "music",
+                root.clone(),
+                EffectivePolicy::Automatic,
+            )],
+            true,
+            "rev-1",
+        );
+        let coordinator = LibraryScanCoordinator::new(
+            store,
+            BlockingPool::new(4),
+            Arc::clone(&reader),
+            Arc::new(StaticResolver::new(registry)),
+        )
+        .with_wakeups(WorkWakeups::new());
+        Self {
+            _scratch: scratch,
+            root,
+            reader,
+            coordinator,
+            rewrites: 0,
+        }
+    }
+
+    /// Write (or rewrite, so the scan sees a changed file) every file and
+    /// tag it with the album.
+    fn tag(&mut self, files: &[String], album: &str) {
+        self.rewrites += 1;
+        for relative in files {
+            let path = self.root.join(relative);
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+            std::fs::write(path, vec![b'x'; self.rewrites]).expect("plant");
+            self.reader.retag(relative, album);
+        }
+    }
+
+    async fn scan(&self) {
+        self.coordinator
+            .request_run(&request(&self.root))
+            .expect("requested");
+        let paths = HashMap::from([("music".to_owned(), self.root.clone())]);
+        let run = self.coordinator.run_once(&paths).await.expect("scan runs");
+        assert_eq!(run.state, ScanState::Completed);
+    }
+
+    fn album_of(&self, relative: &str) -> String {
+        let store = self.coordinator.store();
+        let track = store.track_at("music", relative).expect("track indexed");
+        store.album_for_track(&track).expect("album")
+    }
+
+    fn accept_match(&self, album: &str) {
+        self.run(&format!(
+            "INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, decision_source, selected_at) \
+             VALUES ('{album}', 'musicbrainz', 'rg-1', 'manual', 0);"
+        ));
+    }
+
+    fn run(&self, sql: &str) {
+        self.coordinator
+            .store()
+            .execute_batch_for_tests(sql)
+            .expect("statement runs");
+    }
+
+    fn count(&self, sql: &str) -> i64 {
+        self.coordinator
+            .store()
+            .query_i64_for_tests(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error}"))
+    }
+
+    /// Plays, favorites and playlist entries that name the album (a play
+    /// only when its track is on that album too), and how many exist.
+    fn listener_rows(&self, album: &str) -> (i64, i64) {
+        let naming = self.count(&format!(
+            "SELECT (SELECT COUNT(*) FROM library_play_history h JOIN local_tracks t \
+             ON t.id = h.local_track_id AND t.local_album_id = h.local_album_id \
+             WHERE h.local_album_id = '{album}') \
+             + (SELECT COUNT(*) FROM library_user_favorites WHERE item_id = '{album}') \
+             + (SELECT COUNT(*) FROM playlist_tracks WHERE album_id = '{album}')"
+        ));
+        let all = self.count(
+            "SELECT (SELECT COUNT(*) FROM library_play_history) \
+             + (SELECT COUNT(*) FROM library_user_favorites) \
+             + (SELECT COUNT(*) FROM playlist_tracks)",
+        );
+        (naming, all)
+    }
+}
+
+/// What a listener does with a track of the retagged album once the scan
+/// has moved it: plays it (filed, as playback files it, under the album
+/// the track is on right then), favorites that album and adds the track
+/// to a playlist. Nothing is written unless the track has left `album`.
+fn listener_acts(album: &str) -> String {
+    let moved = format!(
+        "FROM local_tracks WHERE relative_path = 'a/t000.flac' AND local_album_id != '{album}'"
+    );
+    format!(
+        "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+         track_name, artist_name, played_at) SELECT 'play-1', 'listener', id, local_album_id, \
+         'Song', 'Artist', '2026-01-01T00:00:00Z' {moved}; \
+         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         SELECT 'listener', 'album', local_album_id, 0 {moved}; \
+         INSERT INTO playlists (id, name, created_at, updated_at) VALUES ('list', 'List', '', ''); \
+         INSERT INTO playlist_tracks (id, playlist_id, position, track_name, artist_name, \
+         album_name, album_id, track_source_id, source_type, created_at) \
+         SELECT 'entry', 'list', 0, 'Song', 'Artist', 'After', local_album_id, id, 'local', '' \
+         {moved};"
+    )
+}
+
+/// An album with an accepted match, big enough that a retag of all of it
+/// commits in two windows. `meanwhile` runs between the two.
+async fn retag_across_two_windows(
+    name: &str,
+    meanwhile: impl Fn(&str) -> String,
+) -> (RegroupRig, String) {
+    let mut rig = RegroupRig::new(name);
+    let files: Vec<String> = (0..300).map(|n| format!("a/t{n:03}.flac")).collect();
+    rig.tag(&files, "Before");
+    rig.scan().await;
+    let album = rig.album_of("a/t000.flac");
+    rig.accept_match(&album);
+
+    rig.tag(&files, "After");
+    *rig.reader.meanwhile.lock().expect("meanwhile") =
+        Some(("t299.flac".to_owned(), meanwhile(&album)));
+    rig.scan().await;
+    (rig, album)
+}
+
+/// A retagged album keeps its row and its accepted match when someone
+/// plays, favorites and playlists it while the scan is half way through
+/// it, and what they made lands on the kept row.
+#[tokio::test]
+async fn retagged_album_keeps_its_match_when_played_mid_scan() {
+    let (rig, album) = retag_across_two_windows("scan-regroup-played", listener_acts).await;
+
+    assert_eq!(rig.album_of("a/t000.flac"), album);
+    assert_eq!(rig.album_of("a/t299.flac"), album);
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM local_albums a JOIN local_album_external_identities i \
+             ON i.local_album_id = a.id WHERE a.id = '{album}' AND a.title = 'After'"
+        )),
+        1,
+        "the kept row has the new name and the match"
+    );
+    assert_eq!(
+        rig.count("SELECT COUNT(*) FROM local_albums"),
+        1,
+        "the new row is gone"
+    );
+    assert_eq!(
+        rig.listener_rows(&album),
+        (3, 3),
+        "the play, the favorite and the playlist entry name the kept row"
+    );
+}
+
+/// A retag that cannot be followed (here an alias someone gave the new
+/// row) leaves both rows, and every play and favorite where it was.
+#[tokio::test]
+async fn unfollowed_retag_leaves_plays_and_favorites_alone() {
+    let (rig, album) = retag_across_two_windows("scan-regroup-held", |album| {
+        format!(
+            "{} INSERT INTO local_album_aliases (alias, local_album_id, kind, created_at) \
+             SELECT 'held', local_album_id, 'merged_album', 0 FROM local_tracks \
+             WHERE relative_path = 'a/t000.flac' AND local_album_id != '{album}';",
+            listener_acts(album)
+        )
+    })
+    .await;
+
+    let new_row = rig.album_of("a/t000.flac");
+    assert_ne!(new_row, album, "the retag was not followed");
+    assert_eq!(rig.count("SELECT COUNT(*) FROM local_album_aliases"), 1);
+    assert_eq!(
+        rig.listener_rows(&new_row),
+        (3, 3),
+        "the play, the favorite and the playlist entry still name the new row"
+    );
+}
+
+/// An emptied album row that old plays keep is never filled again: an
+/// album later retagged to its names keeps its own row and match, and
+/// the old plays stay where they were instead of passing to it.
+#[tokio::test]
+async fn played_empty_album_row_is_not_reused_by_a_retag() {
+    let mut rig = RegroupRig::new("scan-regroup-kept-row");
+    let played = ["k/t1.flac".to_owned(), "k/t2.flac".to_owned()];
+    let other = ["a/t1.flac".to_owned(), "a/t2.flac".to_owned()];
+    rig.tag(&played, "Kept");
+    rig.tag(&other, "Other");
+    rig.scan().await;
+    let kept = rig.album_of("k/t1.flac");
+    let album = rig.album_of("a/t1.flac");
+    rig.accept_match(&album);
+    rig.run(
+        "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+         track_name, artist_name, played_at) SELECT 'play-1', 'listener', id, local_album_id, \
+         'Song', 'Artist', '2026-01-01T00:00:00Z' FROM local_tracks \
+         WHERE relative_path = 'k/t1.flac';",
+    );
+
+    // Its two tracks go to two albums, so nothing takes the row over.
+    rig.tag(&played[..1], "Left");
+    rig.tag(&played[1..], "Right");
+    rig.scan().await;
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT (SELECT COUNT(*) FROM local_albums WHERE id = '{kept}') \
+             + (SELECT COUNT(*) FROM local_tracks WHERE local_album_id = '{kept}')"
+        )),
+        1,
+        "the played row is kept, empty"
+    );
+
+    rig.tag(&other, "Kept");
+    rig.scan().await;
+    assert_eq!(rig.album_of("a/t1.flac"), album);
+    assert_eq!(rig.album_of("a/t2.flac"), album);
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM local_albums a JOIN local_album_external_identities i \
+             ON i.local_album_id = a.id WHERE a.id = '{album}' AND a.title = 'Kept'"
+        )),
+        1,
+        "the retagged album keeps its row and match"
+    );
+    assert_eq!(
+        rig.count("SELECT COUNT(*) FROM local_albums WHERE title = 'Kept'"),
+        2,
+        "no third row"
+    );
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM library_play_history WHERE local_album_id = '{kept}'"
+        )),
+        1,
+        "the old play is not handed to the retagged album"
+    );
+}

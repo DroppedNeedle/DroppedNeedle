@@ -21,7 +21,7 @@
 //! the new name instead of being left behind.
 
 use super::*;
-use crate::library::identify::sqlite::offer_album;
+use crate::library::identify::sqlite::{offer_album, retarget_references};
 use crate::library::scan::naming::{
     album_grouping_key, album_name_key, grouping_directory, parse_names_for_row,
 };
@@ -944,7 +944,8 @@ fn write_item(
 /// and that album holds nothing but those tracks and nothing of its own
 /// (identity, reviews), the whole album was retagged together. The old
 /// row then takes over the new name and key, keeping its id, identity,
-/// reviews and pins, and the new row goes. Returns the album that went.
+/// reviews and pins, and the new row goes, its plays, favorites and
+/// playlist entries passing to the old one. Returns the album that went.
 fn follow_regrouped(
     tx: &Connection,
     run_id: &str,
@@ -1016,6 +1017,21 @@ fn follow_regrouped(
             "DELETE FROM library_identify_jobs WHERE local_album_id = ?1",
             params![target],
         )?;
+        // What people made of the new row since an earlier window of this
+        // run created it. A play goes with its track, which is not always
+        // one of the tracks moved above.
+        tx.execute(
+            "UPDATE library_play_history SET local_album_id = COALESCE( \
+             (SELECT t.local_album_id FROM local_tracks t \
+              WHERE t.id = library_play_history.local_track_id), ?1) \
+             WHERE local_album_id = ?2",
+            params![album_id, target],
+        )?;
+        retarget_references(tx, "album", target, album_id)?;
+        tx.execute(
+            "UPDATE playlist_tracks SET album_id = ?1 WHERE album_id = ?2",
+            params![album_id, target],
+        )?;
         tx.execute("DELETE FROM local_albums WHERE id = ?1", params![target])
     })();
     match followed {
@@ -1024,7 +1040,12 @@ fn follow_regrouped(
             Ok(Some(target.clone()))
         }
         Err(error) => {
-            tracing::debug!(%error, album_id, target, "regrouped album still referenced; kept both");
+            tracing::warn!(
+                %error,
+                album_id,
+                target,
+                "retagged album could not take over its new row; both kept"
+            );
             tx.execute("ROLLBACK TO follow_album", [])?;
             tx.execute("RELEASE follow_album", [])?;
             Ok(None)
