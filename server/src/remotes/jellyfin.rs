@@ -23,7 +23,9 @@ use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 
-use super::adapter::{AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse};
+use super::adapter::{
+    AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse, read_image,
+};
 use super::jellyfin_models::{
     AuthenticationResult, Item, ItemPage, Lyrics, NamedPage, PlaybackReport, QueryFilters,
     SearchHints, Session, SystemInfo,
@@ -1122,8 +1124,9 @@ impl JellyfinAdapter {
         Ok(())
     }
 
-    /// GET raw bytes (images, audio). Any non-200 is an API error; a
-    /// missing content type falls back to `fallback_content_type`.
+    /// GET image bytes, read under the image size cap. Any non-200 is an
+    /// API error; a missing content type falls back to
+    /// `fallback_content_type`.
     async fn get_bytes(
         &self,
         endpoint: &str,
@@ -1157,11 +1160,8 @@ impl JellyfinAdapter {
             .and_then(|value| value.to_str().ok())
             .unwrap_or(fallback_content_type)
             .to_owned();
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
-        Ok((bytes.to_vec(), content_type))
+        let bytes = read_image(SourceName::Jellyfin, endpoint, response).await?;
+        Ok((bytes, content_type))
     }
 
     fn auth_header(&self) -> String {

@@ -19,6 +19,7 @@ use super::models::{
 };
 use super::navidrome::NavidromeAdapter;
 use super::plex::PlexAdapter;
+use crate::http_client::{BodyError, read_capped};
 
 /// Boxed future for object-safe async ports. Hand-boxed because `async fn`
 /// is not `dyn`-compatible; mirrors the other store traits.
@@ -54,6 +55,35 @@ impl std::fmt::Display for AdapterError {
             Self::Unsupported(detail) => write!(f, "unsupported: {detail}"),
             Self::Transport(detail) => write!(f, "remote transport failed: {detail}"),
         }
+    }
+}
+
+/// The most one remote image may weigh, the same 20 MiB as the cover-art
+/// fetch (`providers::coverart::TRANSPORT_MAX_BODY_BYTES`). Jellyfin and
+/// Navidrome resize to the size asked for, a few megabytes at most. Plex
+/// may send the stored picture, so a very large scan can pass the cap and
+/// then shows as a missing cover.
+pub const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+
+/// Read one image body under [`MAX_IMAGE_BYTES`]. An oversized image is
+/// no image: the caller answers as it does for a missing one.
+pub(crate) async fn read_image(
+    source: SourceName,
+    endpoint: &str,
+    response: reqwest::Response,
+) -> Result<Vec<u8>, AdapterError> {
+    match read_capped(response, MAX_IMAGE_BYTES).await {
+        Ok(bytes) => Ok(bytes),
+        Err(BodyError::TooLarge) => {
+            tracing::warn!(
+                source = source.as_str(),
+                endpoint,
+                cap_bytes = MAX_IMAGE_BYTES,
+                "remote image is over the size cap, treating it as missing"
+            );
+            Err(AdapterError::NotFound)
+        }
+        Err(BodyError::Transport(detail)) => Err(AdapterError::Transport(detail)),
     }
 }
 

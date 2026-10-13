@@ -29,7 +29,9 @@ use std::collections::HashSet;
 use std::sync::RwLock;
 use std::time::Duration;
 
-use super::adapter::{AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse};
+use super::adapter::{
+    AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse, read_image,
+};
 use super::connections::{PlexServerTokens, ServerSettings};
 use super::models::{
     AlbumView, ArtistIndexEntry, ArtistView, DiscoveryHubView, DiscoveryView, FavoritesView,
@@ -1124,8 +1126,8 @@ impl PlexAdapter {
         Ok(envelope.container)
     }
 
-    /// GET raw bytes (thumbs, composites, audio). A missing content type
-    /// falls back to `fallback_content_type`.
+    /// GET image bytes (thumbs, composites), read under the image size
+    /// cap. A missing content type falls back to `fallback_content_type`.
     async fn get_bytes(
         &self,
         endpoint: &str,
@@ -1167,11 +1169,8 @@ impl PlexAdapter {
             .and_then(|value| value.to_str().ok())
             .unwrap_or(fallback_content_type)
             .to_owned();
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
-        Ok((bytes.to_vec(), content_type))
+        let bytes = read_image(SourceName::Plex, endpoint, response).await?;
+        Ok((bytes, content_type))
     }
 
     /// Persist an http->https base upgrade when the redirect swapped only

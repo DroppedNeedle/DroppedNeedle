@@ -23,7 +23,9 @@
 
 use std::time::Duration;
 
-use super::adapter::{AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse};
+use super::adapter::{
+    AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse, read_image,
+};
 use super::models::{
     AlbumView, ArtistIndexEntry, ArtistView, FavoritesView, HistoryPage, HubView, InfoView,
     LyricLine, LyricsView, MatchView, PlaylistDetail, PlaylistSummary, SearchResults, SessionView,
@@ -538,7 +540,7 @@ impl NavidromeAdapter {
             biography: info.biography.clone().unwrap_or_default(),
             musicbrainz_id: info.music_brainz_id.clone().unwrap_or_default(),
             image_url: info.best_image(),
-            lastfm_url: info.last_fm_url.clone().unwrap_or_default(),
+            lastfm_url: web_link(info.last_fm_url.as_deref()),
             similar_artists: info.similar_artist.iter().map(artist_view).collect(),
         })
     }
@@ -558,7 +560,7 @@ impl NavidromeAdapter {
             biography: info.notes.clone().unwrap_or_default(),
             musicbrainz_id: info.music_brainz_id.clone().unwrap_or_default(),
             image_url: info.best_image(),
-            lastfm_url: info.last_fm_url.clone().unwrap_or_default(),
+            lastfm_url: web_link(info.last_fm_url.as_deref()),
             similar_artists: Vec::new(),
         })
     }
@@ -1025,8 +1027,9 @@ impl NavidromeAdapter {
         Ok(body)
     }
 
-    /// Raw-bytes call for cover art and audio. Auth rides the same token
-    /// params; a missing content type falls back to `fallback_content_type`.
+    /// Cover-art bytes, read under the image size cap. Auth rides the same
+    /// token params; a missing content type falls back to
+    /// `fallback_content_type`.
     async fn get_bytes(
         &self,
         endpoint: &str,
@@ -1061,11 +1064,20 @@ impl NavidromeAdapter {
             .and_then(|value| value.to_str().ok())
             .unwrap_or(fallback_content_type)
             .to_owned();
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
-        Ok((bytes.to_vec(), content_type))
+        let bytes = read_image(SourceName::Navidrome, endpoint, response).await?;
+        Ok((bytes, content_type))
+    }
+}
+
+/// A link the server supplied, kept only when it is a web address. The
+/// browser gets it as a link target, so any other scheme comes out empty.
+/// What is passed on is the parsed address, always `scheme://host/...`,
+/// never the server's own spelling: the parser accepts forms such as
+/// `https:/path` that a browser would resolve against this app's address.
+fn web_link(link: Option<&str>) -> String {
+    match reqwest::Url::parse(link.unwrap_or_default()) {
+        Ok(url) if matches!(url.scheme(), "http" | "https") => url.into(),
+        _ => String::new(),
     }
 }
 

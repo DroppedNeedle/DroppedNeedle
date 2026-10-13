@@ -1104,3 +1104,135 @@ async fn presence_poll_merges_a_remote_session() {
     assert_eq!(entry.progress_ms, Some(45_000));
     assert!(!entry.redacted);
 }
+
+// ---------------------------------------------------------------------------
+// Hostile servers
+// ---------------------------------------------------------------------------
+
+/// Bind a scripted fake that answers every path the same way.
+async fn serve_fake(app: Router) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("fake binds");
+    let address = listener.local_addr().expect("fake has an address");
+    let task = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (format!("http://{address}"), task)
+}
+
+fn every_source(base_url: &str) -> [(&'static str, RemoteHandle); 3] {
+    [
+        ("jellyfin", jellyfin_handle(base_url)),
+        ("navidrome", navidrome_handle(base_url, None)),
+        ("plex", plex_handle(base_url, Vec::new())),
+    ]
+}
+
+/// An image that declares a length over the cap is no image, on every
+/// source, and one exactly at the cap still loads.
+#[tokio::test]
+async fn images_over_the_cap_by_declared_length_are_refused() {
+    use axum::http::header::CONTENT_TYPE;
+    let serve = |bytes: usize| {
+        Router::new()
+            .fallback(move || async move { ([(CONTENT_TYPE, "image/jpeg")], vec![0u8; bytes]) })
+    };
+    let (too_big, big_task) = serve_fake(serve(remotes::adapter::MAX_IMAGE_BYTES + 1)).await;
+    for (source, handle) in every_source(&too_big) {
+        let outcome = handle.image_bytes("any", 300).await;
+        assert!(
+            matches!(outcome, Err(AdapterError::NotFound)),
+            "{source} kept an oversized image: {:?}",
+            outcome.map(|(bytes, _)| bytes.len())
+        );
+    }
+    big_task.abort();
+
+    let (at_cap, cap_task) = serve_fake(serve(remotes::adapter::MAX_IMAGE_BYTES)).await;
+    for (_, handle) in every_source(&at_cap) {
+        let (bytes, content_type) = handle.image_bytes("any", 300).await.expect("image loads");
+        assert_eq!(bytes.len(), remotes::adapter::MAX_IMAGE_BYTES);
+        assert_eq!(content_type, "image/jpeg");
+    }
+    cap_task.abort();
+}
+
+/// An image with no declared length that streams past the cap is refused
+/// as soon as it crosses it: most of the body is never read.
+#[tokio::test]
+async fn images_streaming_past_the_cap_are_cut_off() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    const CHUNK: usize = 64 * 1024;
+    const TOTAL: usize = remotes::adapter::MAX_IMAGE_BYTES * 4;
+
+    use futures_util::StreamExt as _;
+    let sent = Arc::new(AtomicUsize::new(0));
+    let counter = sent.clone();
+    let app = Router::new().fallback(move || {
+        let counter = counter.clone();
+        async move {
+            let chunks = futures_util::stream::iter(0..TOTAL / CHUNK).map(move |_| {
+                counter.fetch_add(CHUNK, Ordering::SeqCst);
+                Ok::<_, std::io::Error>(vec![0u8; CHUNK])
+            });
+            Body::from_stream(chunks)
+        }
+    });
+    let (base_url, task) = serve_fake(app).await;
+    for (source, handle) in every_source(&base_url) {
+        sent.store(0, Ordering::SeqCst);
+        let outcome = handle.image_bytes("any", 300).await;
+        assert!(
+            matches!(outcome, Err(AdapterError::NotFound)),
+            "{source} kept an endless image: {:?}",
+            outcome.map(|(bytes, _)| bytes.len())
+        );
+        assert!(
+            sent.load(Ordering::SeqCst) < TOTAL / 2,
+            "{source} read most of the oversized body"
+        );
+    }
+    task.abort();
+}
+
+/// Navidrome's Last.fm link reaches the browser as a link address, so
+/// anything that is not a web address comes out absent.
+#[tokio::test]
+async fn navidrome_last_fm_link_is_dropped_unless_it_is_a_web_address() {
+    let info_with = |link: &'static str| {
+        Router::new().fallback(move || async move {
+            axum::Json(serde_json::json!({"subsonic-response": {
+                "status": "ok",
+                "version": "1.16.1",
+                "artistInfo2": {"biography": "bio", "lastFmUrl": link},
+                "albumInfo": {"notes": "notes", "lastFmUrl": link},
+            }}))
+        })
+    };
+    for (link, expected) in [
+        ("javascript:alert(1)", ""),
+        ("  JavaScript:alert(1)", ""),
+        ("data:text/html,<script>alert(1)</script>", ""),
+        ("/music/Artist", ""),
+        ("//www.last.fm/music/Artist", ""),
+        ("https:/music/Artist", "https://music/Artist"),
+        (
+            "ht\ttps:\\\\www.last.fm\\music",
+            "https://www.last.fm/music",
+        ),
+        (
+            "https://www.last.fm/music/Artist",
+            "https://www.last.fm/music/Artist",
+        ),
+    ] {
+        let (base_url, task) = serve_fake(info_with(link)).await;
+        let handle = navidrome_handle(&base_url, None);
+        let artist = handle.artist_info("ar-1").await.expect("artist info");
+        let album = handle.album_info("al-1").await.expect("album info");
+        assert_eq!(artist.lastfm_url, expected, "artist link {link:?}");
+        assert_eq!(album.lastfm_url, expected, "album link {link:?}");
+        assert_eq!(artist.biography, "bio");
+        task.abort();
+    }
+}
