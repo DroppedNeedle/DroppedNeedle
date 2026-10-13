@@ -77,8 +77,10 @@ async fn enable(rig: &Rig, name: &str, settings: &[(&str, &str)]) {
     wait_for(rig, name, RuntimeState::Running).await;
 }
 
+/// The host gives a plugin 15 seconds to answer its handshake, so the wait
+/// runs a little past that: a slow start on a busy machine is not a failure.
 async fn wait_for(rig: &Rig, name: &str, state: RuntimeState) {
-    for _ in 0..200 {
+    for _ in 0..800 {
         let status = rig
             .host
             .get(name)
