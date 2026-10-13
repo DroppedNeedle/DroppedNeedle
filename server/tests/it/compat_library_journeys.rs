@@ -397,6 +397,76 @@ fn header_str(map: &HeaderMap, name: &str) -> String {
         .to_owned()
 }
 
+/// A song's `path` is where its file sits under its own library folder,
+/// and says nothing of where on the host that folder is. A second folder
+/// is added so a path that carried its folder would show.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn subsonic_song_path_never_carries_the_host_path() {
+    let rig = CompatApp::start("compat-song-path").await;
+    let auth = rig.subsonic_auth("path-check");
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let extra = "Second Folder/Extra/01 Extra.flac";
+    let second = rig.app.config.root_app_dir.join("second");
+    let planted = second.join(extra);
+    std::fs::create_dir_all(planted.parent().expect("album folder")).expect("mkdir");
+    std::fs::copy(
+        manifest.join("tests/fixtures/library/management_full.flac"),
+        &planted,
+    )
+    .expect("fixture copies");
+    rig.app.add_library_folder("second", &second).await;
+
+    let layout: Value = serde_json::from_slice(
+        &std::fs::read(manifest.join("tests/reference/compat/library.json")).expect("layout"),
+    )
+    .expect("layout parses");
+    let mut expected: Vec<String> = layout["tracks"]
+        .as_array()
+        .expect("tracks")
+        .iter()
+        .map(|track| track["path"].as_str().expect("planted path").to_owned())
+        .collect();
+    expected.push(extra.to_owned());
+    expected.sort();
+
+    let (status, all) = rig
+        .app
+        .call(
+            "GET",
+            &rest("search3?query=&songCount=500", &auth),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{all}");
+    let mut paths = Vec::new();
+    for found in all["subsonic-response"]["searchResult3"]["song"]
+        .as_array()
+        .expect("songs")
+    {
+        let id = found["id"].as_str().expect("song id");
+        let (status, song) = rig
+            .app
+            .call("GET", &rest(&format!("getSong?id={id}"), &auth), &[], None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{song}");
+        let path = song["subsonic-response"]["song"]["path"]
+            .as_str()
+            .unwrap_or_else(|| panic!("no path on {song}"))
+            .to_owned();
+        assert_eq!(found["path"], json!(path), "search and getSong agree");
+        paths.push(path);
+    }
+    paths.sort();
+    assert_eq!(paths, expected);
+    let host = rig.app.config.root_app_dir.to_string_lossy().into_owned();
+    for path in &paths {
+        assert!(!path.starts_with('/'), "{path} is absolute");
+        assert!(!path.contains(&host), "{path} carries the host path");
+    }
+    rig.stop().await;
+}
+
 /// Identity, Range and HEAD semantics on the scanned files, identical on
 /// both protocols: HEAD answers exactly what GET would, minus the body.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
