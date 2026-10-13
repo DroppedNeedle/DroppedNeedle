@@ -511,15 +511,6 @@ impl RunStore for SqliteScanStore {
             };
             let page = limit.max(1) as i64;
             guard.conn.execute(
-                "DELETE FROM library_scan_failures WHERE rowid IN ( \
-                 SELECT rowid FROM library_scan_failures \
-                 WHERE run_id = ?1 AND failure_code != ?2 LIMIT ?3)",
-                params![target, failure_codes::TAG_READ_DEFERRED, page],
-            )?;
-            if guard.conn.changes() > 0 {
-                return Ok(true);
-            }
-            guard.conn.execute(
                 "DELETE FROM library_scan_album_moves WHERE rowid IN ( \
                  SELECT rowid FROM library_scan_album_moves WHERE run_id = ?1 LIMIT ?2)",
                 params![target, page],

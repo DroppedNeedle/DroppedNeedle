@@ -193,8 +193,9 @@ pub trait RunStore: Send + Sync {
     fn recover_stopping(&self, now: f64) -> Vec<ScanRun>;
 
     /// Delete one page (at most `limit` rows) of a finished run's
-    /// inventory or failures, or prune old history when none is left.
-    /// Returns true while more cleanup is pending.
+    /// inventory, or prune old history when none is left. A run's failure
+    /// rows stay until the run itself is pruned, so its history can list
+    /// them. Returns true while more cleanup is pending.
     fn cleanup_terminal_inventory(&self, limit: usize) -> bool;
 }
 

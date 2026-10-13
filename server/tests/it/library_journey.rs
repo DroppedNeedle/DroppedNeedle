@@ -1032,8 +1032,9 @@ async fn library_roots_survive_a_restart() {
 
 /// Scan controls and the activity feed through the HTTP API: the policy
 /// guard, scan kinds, history, estimates, and pausing identification. The
-/// app scans as soon as it is asked, so a run is never caught waiting, and
-/// it clears a finished run's file and failure lists on its next pass.
+/// app scans as soon as it is asked, so a run is never caught waiting. It
+/// clears a finished run's file list on its next pass and keeps the list
+/// of files the run could not read.
 #[tokio::test]
 async fn library_journey_scan_controls_and_activity() {
     let rig = Rig::start("lib-controls").await;
@@ -1128,8 +1129,31 @@ async fn library_journey_scan_controls_and_activity() {
     let (status, body) = get(format!("/api/v3/library/scan/runs/{first_scan}")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["run"]["counters"]["errored_count"], json!(1), "{body}");
+    // Once the app has cleared the rescan's working file list, the file
+    // it could not read is still listed with its code, a plain reason and
+    // an action.
+    app.until("the finished scan's file list is cleared", || async {
+        let (status, body) = get(format!("/api/v3/library/scan/runs/{run_id}")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["files"].as_array()?.is_empty().then_some(())
+    })
+    .await;
     let (status, body) = get(format!("/api/v3/library/scan/runs/{run_id}/failures")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    let failures = body["items"].as_array().expect("failures");
+    assert_eq!(failures.len(), 1, "{body}");
+    assert_eq!(failures[0]["relative_path"], json!("album-a/03.flac"));
+    assert_eq!(failures[0]["failure_code"], json!("TAG_READ_FAILED"));
+    assert!(
+        failures[0]["message"]
+            .as_str()
+            .is_some_and(|message| message.starts_with("Can't read this file's tags"))
+    );
+    assert!(
+        failures[0]["action"]
+            .as_str()
+            .is_some_and(|action| !action.is_empty())
+    );
     let (status, _) = get("/api/v3/library/scan/runs/nope/failures".into()).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     let (status, body) = get("/api/v3/library/scan/runs/estimate?scope_ids=music".into()).await;
