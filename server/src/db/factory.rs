@@ -40,7 +40,7 @@ use sqlx::{
 use super::{
     analyze::AnalyzeService,
     backup::BackupService,
-    checkpoint::CheckpointService,
+    checkpoint::{ACTIVE_HIGH_WATER_BYTES, ACTIVE_LOW_WATER_BYTES, CheckpointService},
     durable::DurableWorkWakeups,
     error::DbError,
     fs::{reject_remote_filesystem, reject_symlink},
@@ -82,6 +82,9 @@ pub struct DbConfig {
     pub shutdown_grace: Duration,
     /// The lane's time limits. Not a setting: only a test changes them.
     lane_limits: LaneLimits,
+    /// The WAL sizes, high then low, at which bulk writes are held and let
+    /// go. Not a setting: only a test changes them.
+    wal_water: (i64, i64),
 }
 
 impl DbConfig {
@@ -93,6 +96,7 @@ impl DbConfig {
             busy_timeout: BUSY_TIMEOUT,
             shutdown_grace: crate::config::DEFAULT_SHUTDOWN_GRACE,
             lane_limits: LaneLimits::default(),
+            wal_water: (ACTIVE_HIGH_WATER_BYTES, ACTIVE_LOW_WATER_BYTES),
         }
     }
 
@@ -109,6 +113,14 @@ impl DbConfig {
         self.lane_limits = limits;
         self
     }
+
+    /// Lower water marks for the WAL hold, so a test fills the WAL with
+    /// kilobytes.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_wal_water(mut self, high: i64, low: i64) -> Self {
+        self.wal_water = (high, low);
+        self
+    }
 }
 
 /// The serving database: pool, writer lane, and services in one handle.
@@ -117,8 +129,9 @@ pub struct DbRuntime {
     path: PathBuf,
     pool: SqlitePool,
     lane: WriteLane,
-    /// The lane's watch thread. It ends with this handle, so a runtime that
-    /// is dropped without [`DbRuntime::shutdown`] leaves no thread behind.
+    /// The lane's watch and relief threads. They end with this handle, so a
+    /// runtime that is dropped without [`DbRuntime::shutdown`] leaves no
+    /// thread behind.
     watch: LaneWatch,
     shutdown_grace: Duration,
     checkpoint: CheckpointService,
@@ -158,9 +171,15 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
     reads_frozen.store(true, Ordering::Release);
 
     let lane = WriteLane::open_limited(&path, config.lane_limits)?;
-    let watch = lane.watch()?;
-    let checkpoint = CheckpointService::new(&path, pool.clone(), lane.idle_state())
-        .with_analyze(AnalyzeService::new(lane.clone(), pool.clone()));
+    let (high_water, low_water) = config.wal_water;
+    let checkpoint =
+        CheckpointService::new(&path, pool.clone(), lane.idle_state(), lane.wal_hold())
+            .with_water(high_water, low_water)
+            .with_analyze(AnalyzeService::new(lane.clone(), pool.clone()));
+    let relief = checkpoint.clone();
+    let watch = lane.watch(move || {
+        relief.run_relief();
+    })?;
     let wakeups = DurableWorkWakeups::new(pool.clone());
 
     Ok(DbRuntime {
@@ -252,16 +271,24 @@ impl DbRuntime {
     }
 
     /// Clean shutdown in order: drain the writer lane, stop its watch
-    /// thread, reclaim the WAL, then close the pool. Draining first means no
-    /// write lands after the reclaim; the reclaim itself is best effort (a
-    /// held lock leaves the WAL in place), so a quiet shutdown leaves no
+    /// threads, reclaim the WAL, then close the pool. Draining first means
+    /// no write lands after the reclaim; the reclaim itself is best effort
+    /// (a held lock leaves the WAL in place), so a quiet shutdown leaves no
     /// `-wal` or `-shm` behind. The drain is bounded by the configured
     /// grace: a write that has not returned by then is logged and left.
+    /// Closing the lane lifts the WAL hold, so a held bulk write runs in the
+    /// drain like any other and does not use up the grace.
     pub async fn shutdown(self) {
         self.lane.shutdown(self.shutdown_grace).await;
-        self.watch.stop();
-        let checkpoint = self.checkpoint.clone();
-        let _ = tokio::task::spawn_blocking(move || checkpoint.shutdown_truncate()).await;
+        let (watch, checkpoint) = (self.watch, self.checkpoint.clone());
+        // Stopping the watch can wait out a relief pass in flight, so it
+        // happens off the runtime, and before the reclaim that pass would
+        // otherwise block.
+        let _ = tokio::task::spawn_blocking(move || {
+            watch.stop();
+            checkpoint.shutdown_truncate()
+        })
+        .await;
         self.pool.close().await;
     }
 }

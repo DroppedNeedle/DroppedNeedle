@@ -23,12 +23,13 @@ use axum::{
 };
 use droppedneedle::{
     db::{
-        BACKUP_KEEP, Budget, CancelFlag, CheckpointMode, DbConfig, DbError, DbRuntime,
-        FOREGROUND_QUEUE_CAPACITY, Lane, LaneLimits, OpError, WakeupChannel, WriteLane, block_on,
-        filesystem_is_local, map_sqlx_busy, open_runtime, sqlx_is_busy,
+        BACKGROUND_QUEUE_CAPACITY, BACKUP_KEEP, Budget, CancelFlag, CheckpointMode, DbConfig,
+        DbError, DbRuntime, FOREGROUND_QUEUE_CAPACITY, Lane, LaneLimits, OpError, WakeupChannel,
+        WriteLane, block_on, filesystem_is_local, map_sqlx_busy, open_runtime, sqlx_is_busy,
     },
     error::{FIXED_INTERNAL_MESSAGE, INTERNAL_ERROR, busy_response},
     ids::{REQUEST_ID_HEADER, RequestId},
+    jobs::{JobRegistry, checkpoint, registry::DurableRegistryStore},
     middleware::request_scope,
     schema::latest_version,
     state::AppState,
@@ -146,6 +147,32 @@ fn wait_queued(lane: &WriteLane, count: usize) {
             waiting.queued()
         );
         std::thread::yield_now();
+    }
+}
+
+/// Run `work` on its own thread and fail if it has not finished in ten
+/// seconds, so a write that is wrongly kept waiting fails its brief instead
+/// of hanging it.
+fn within<T: Send + 'static>(what: &str, work: impl FnOnce() -> T + Send + 'static) -> T {
+    let (done, result) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = done.send(work());
+    });
+    result
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap_or_else(|_| panic!("{what}"))
+}
+
+/// Poll `ready` until it holds, and fail if it does not within ten seconds.
+async fn until<F, Fut>(what: &str, mut ready: F)
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = bool>,
+{
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ready().await {
+        assert!(Instant::now() < deadline, "{what}");
+        tokio::time::sleep(Duration::from_millis(5)).await;
     }
 }
 
@@ -1595,6 +1622,313 @@ async fn chunked_write_commits_and_cancels() {
 
     runtime.shutdown().await;
     std::fs::remove_dir_all(dir).ok();
+}
+
+/// The blocking chunked write commits whole chunks, stops after the chunk
+/// in which its flag tripped, and waits at a chunk boundary while the WAL
+/// hold is on.
+#[test]
+fn blocking_chunked_write_stops_at_chunk_boundaries() {
+    let (lane, _dir) = scratch_lane("chunked-blocking");
+    let rows: Vec<String> = (0..5).map(|row| format!("row-{row}")).collect();
+    let write_rows = |rows: &[String], tx: &rusqlite::Transaction| {
+        rows.iter().try_for_each(|row| insert_label(tx, row))
+    };
+
+    let committed = lane
+        .write_chunked_blocking("brief-chunks", &rows, 2, &CancelFlag::never(), write_rows)
+        .unwrap();
+    assert_eq!(committed, 5);
+    assert_eq!(labels(&lane), rows);
+
+    let cancel = CancelFlag::never();
+    let stopped = lane.write_chunked_blocking("brief-cancelled", &rows, 2, &cancel, |rows, tx| {
+        cancel.cancel();
+        write_rows(rows, tx)
+    });
+    assert!(
+        matches!(stopped, Err(DbError::Cancelled { chunks: 1, .. })),
+        "the chunk that was running commits and the write stops, got {stopped:?}"
+    );
+    assert_eq!(labels(&lane).len(), 7);
+
+    let hold = lane.wal_hold();
+    let (chunked, bulk) = (lane.clone(), rows.clone());
+    let (done, result) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let raised = chunked.wal_hold();
+        let outcome = chunked.write_chunked_blocking(
+            "brief-held",
+            &bulk,
+            2,
+            &CancelFlag::never(),
+            |rows, tx| {
+                raised.force(true);
+                write_rows(rows, tx)
+            },
+        );
+        let _ = done.send(outcome);
+    });
+    // The first chunk commits whole, and the second then waits its turn.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while labels(&lane).len() < 9 {
+        assert!(Instant::now() < deadline, "the first chunk must commit");
+        std::thread::yield_now();
+    }
+    wait_queued(&lane, 1);
+    assert_eq!(labels(&lane).len(), 9, "the second chunk has not started");
+    assert!(result.try_recv().is_err());
+
+    // A scratch lane has no relief thread. The end of any turn starts the
+    // next write, and each chunk that runs raises the hold again.
+    for whole in [11, 12] {
+        hold.force(false);
+        lane.write_blocking(Lane::Foreground, "brief-nudge", |_tx| Ok(()))
+            .unwrap();
+        if whole < 12 {
+            wait_queued(&lane, 1);
+            assert_eq!(labels(&lane).len(), whole);
+        }
+    }
+    let committed = result
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the chunked write finishes once the hold is off");
+    assert_eq!(committed.unwrap(), 5);
+    assert_eq!(labels(&lane).len(), 12);
+}
+
+/// With the WAL hold on, a bulk write waits and every other class goes past
+/// it: a durable write queued behind it (also one that names the bulk
+/// class), a job write and a request's write. A full backlog of held bulk
+/// writes refuses more bulk writes and nothing else. Shutdown lifts the hold
+/// and the held writes commit.
+#[test]
+fn held_bulk_write_lets_every_other_class_past_until_shutdown() {
+    let (lane, _dir) = scratch_lane("bulk-held");
+    lane.wal_hold().force(true);
+    let parked = lane.clone();
+    let (bulk_done, bulk) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let outcome =
+            parked.write_blocking(Lane::Bulk, "brief-bulk", |tx| insert_label(tx, "bulk"));
+        let _ = bulk_done.send(outcome);
+    });
+    wait_queued(&lane, 1);
+
+    let others = lane.clone();
+    within("only a bulk write is held", move || {
+        others
+            .write_durable(Lane::Background, "brief-durable", |tx| {
+                insert_label(tx, "durable")
+            })
+            .unwrap();
+        others
+            .write_durable(Lane::Bulk, "brief-durable-bulk", |tx| {
+                insert_label(tx, "durable-bulk")
+            })
+            .unwrap();
+        others
+            .write_blocking(Lane::Background, "brief-job", |tx| insert_label(tx, "job"))
+            .unwrap();
+        others
+            .write_blocking(Lane::Foreground, "brief-request", |tx| {
+                insert_label(tx, "request")
+            })
+            .unwrap();
+    });
+    assert_eq!(labels(&lane), ["durable", "durable-bulk", "job", "request"]);
+    assert!(bulk.try_recv().is_err(), "the bulk write is still held");
+    assert!(
+        !lane.idle_state().is_idle(),
+        "a held write keeps the WAL reclaim gate shut"
+    );
+
+    let mut cx = Context::from_waker(Waker::noop());
+    let mut backlog: Vec<_> = (1..BACKGROUND_QUEUE_CAPACITY)
+        .map(|_| Box::pin(lane.write(Lane::Bulk, "brief-backlog", |_tx| Ok(()))))
+        .collect();
+    for write in &mut backlog {
+        assert!(write.as_mut().poll(&mut cx).is_pending());
+    }
+    let mut over = Box::pin(lane.write(Lane::Bulk, "brief-over", |_tx| Ok(())));
+    let refused = over.as_mut().poll(&mut cx);
+    assert!(
+        matches!(refused, Poll::Ready(Err(DbError::Busy { .. }))),
+        "one bulk write too many is refused, got {refused:?}"
+    );
+    let job = lane.clone();
+    within(
+        "a bulk backlog does not refuse or hold a job write",
+        move || {
+            job.write_blocking(Lane::Background, "brief-job-late", |tx| {
+                insert_label(tx, "job-late")
+            })
+        },
+    )
+    .unwrap();
+
+    let closing = lane.clone();
+    within("shutdown lifts the hold", move || {
+        current_thread_runtime().block_on(closing.shutdown(DRAIN));
+    });
+    let held = bulk
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the held bulk write is answered at shutdown");
+    assert!(held.is_ok(), "shutdown lets a held write run, got {held:?}");
+    for write in &mut backlog {
+        assert!(matches!(write.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
+    }
+    assert_eq!(
+        labels(&lane),
+        [
+            "durable",
+            "durable-bulk",
+            "job",
+            "request",
+            "job-late",
+            "bulk"
+        ]
+    );
+}
+
+/// Under the runtime the app opens, with the checkpoint loop on its 30 s
+/// cadence: once a pinned reader has let the WAL grow past the high water, a
+/// bulk write waits while a job heartbeat and a request's write commit. When
+/// the reader lets go the bulk write commits within seconds, long before the
+/// loop's next pass.
+#[tokio::test]
+async fn full_wal_holds_bulk_writes_only_until_it_can_shrink() {
+    let dir = scratch_dir("wal-hold");
+    let db = dir.join("library.db");
+    common::migrated_db(&db);
+    let config = DbConfig::new(&db)
+        .with_wal_water(64 * 1024, 16 * 1024)
+        .with_lane_limits(LaneLimits {
+            watch_tick: Duration::from_millis(20),
+            ..LaneLimits::default()
+        });
+    let runtime = open_runtime(&config).await.unwrap();
+    let lane = runtime.lane().clone();
+    let registry = JobRegistry::new(DurableRegistryStore::new(
+        runtime.wakeups().clone(),
+        lane.clone(),
+    ));
+    checkpoint::spawn_on(
+        &registry,
+        runtime.checkpoint().clone(),
+        checkpoint::default_schedule(),
+    )
+    .await
+    .unwrap();
+    // The loop passes once at start and beats its heart. Its next pass is
+    // most of a minute away, so nothing below can be its doing.
+    until("the checkpoint loop finishes its first pass", || async {
+        runtime
+            .wakeups()
+            .get_job(checkpoint::JOB_NAME)
+            .await
+            .unwrap()
+            .is_some_and(|job| job.last_heartbeat_at.is_some())
+    })
+    .await;
+
+    lane.write(Lane::Foreground, "brief-tables", |tx| {
+        tx.execute_batch(
+            "CREATE TABLE scratch_turns (label TEXT); CREATE TABLE scratch_fill (payload TEXT);",
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let reader =
+        rusqlite::Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
+    reader.execute_batch("BEGIN").unwrap();
+    let pinned: i64 = reader
+        .query_row("SELECT count(*) FROM scratch_fill", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(pinned, 0);
+    lane.write(Lane::Background, "brief-fill", |tx| {
+        let payload = "x".repeat(1024);
+        for _ in 0..256 {
+            tx.execute("INSERT INTO scratch_fill (payload) VALUES (?1)", [&payload])?;
+        }
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let service = runtime.checkpoint().clone();
+    let full = tokio::task::spawn_blocking(move || service.run_once())
+        .await
+        .unwrap();
+    assert!(
+        full.suspended,
+        "a WAL past the high water holds bulk writes, got {full:?}"
+    );
+
+    let mut bulk = Box::pin(lane.write(Lane::Bulk, "brief-bulk", |tx| insert_label(tx, "bulk")));
+    std::future::poll_fn(|cx| {
+        assert!(bulk.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+    let limit = Duration::from_secs(10);
+    tokio::time::timeout(
+        limit,
+        runtime.wakeups().heartbeat(&lane, checkpoint::JOB_NAME),
+    )
+    .await
+    .expect("a job heartbeat is not held")
+    .unwrap();
+    tokio::time::timeout(
+        limit,
+        lane.write(Lane::Foreground, "brief-request", |tx| {
+            insert_label(tx, "request")
+        }),
+    )
+    .await
+    .expect("a request's write is not held")
+    .unwrap();
+    until(
+        "a relief pass runs while the reader pins the WAL",
+        || async {
+            let latest = runtime.checkpoint().latest().await;
+            latest.is_some_and(|pass| pass.at > full.at)
+        },
+    )
+    .await;
+    assert!(
+        runtime.checkpoint().bulk_held(),
+        "a pass that cannot shrink the WAL leaves the hold on"
+    );
+    assert_eq!(labels(&lane), ["request"]);
+
+    drop(reader);
+    tokio::time::timeout(Duration::from_secs(5), bulk)
+        .await
+        .expect("the hold ends once the WAL can shrink, without the loop's next pass")
+        .unwrap();
+    assert_eq!(labels(&lane), ["request", "bulk"]);
+    registry.cancel_all(Duration::from_secs(5)).await;
+    runtime.shutdown().await;
+}
+
+/// Planner statistics do not run while the WAL hold is on, and the skipped
+/// run does not use up the ten-minute check interval.
+#[tokio::test]
+async fn planner_statistics_wait_out_the_wal_hold() {
+    let (runtime, _dir) = open_scratch("analyze-held").await;
+    let analyze = runtime.checkpoint().analyze().unwrap().clone();
+    let hold = runtime.lane().wal_hold();
+
+    hold.force(true);
+    assert!(!analyze.run_if_due().await.unwrap());
+    hold.force(false);
+    assert!(
+        analyze.run_if_due().await.unwrap(),
+        "the first check after the hold runs the refresh"
+    );
+    runtime.shutdown().await;
 }
 
 /// The writer connection's `fold()` SQL function folds like v2.

@@ -89,7 +89,14 @@ impl AnalyzeService {
 
     /// Run `ANALYZE` when the statistics are stale. Checks at most every
     /// [`CHECK_INTERVAL`]; returns whether a run happened.
+    ///
+    /// Does nothing while the WAL hold is on: a refresh is a burst of writes
+    /// into a WAL that cannot shrink. The skipped call does not count as a
+    /// check, so the refresh comes with the first pass after the hold.
     pub async fn run_if_due(&self) -> Result<bool, DbError> {
+        if self.lane.wal_hold().is_on() {
+            return Ok(false);
+        }
         {
             let mut last = self
                 .last_check

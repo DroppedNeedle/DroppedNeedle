@@ -40,6 +40,14 @@
 //! write waits for its turn however long that takes; it is refused only past
 //! 4,096 waiting, which means a producer is not awaiting its writes.
 //!
+//! A bulk write ([`Lane::Bulk`]) is a background write for fairness and
+//! budget, and the one class the WAL can hold: while the checkpoint service
+//! says the WAL is too large or stalled ([`WalHold`]), no bulk turn is
+//! granted. Requests, job writes and durable writes carry on, including the
+//! job loop's own heartbeats. The hold ends by itself: while a bulk write is
+//! held, a relief thread runs a checkpoint pass every second, and the pass
+//! that clears the state starts the held writes. Shutdown lifts the hold.
+//!
 //! A durable write ([`WriteLane::write_durable`]) is a blocking write whose
 //! commit is synced to disk before it returns. It keeps its place in the
 //! queue it names but waits like a background write: neither the 128 bound
@@ -51,9 +59,9 @@
 //! fires inside SQLite. For a closure stuck anywhere else there is the
 //! [`LaneWatch`] thread, which the database runtime starts: once a second it
 //! answers the foreground writes that have waited too long and names in the
-//! log a write that has held the lane past twice its budget. Chunked
-//! background work commits at most 500 rows at a time with a cancellation
-//! check between chunks.
+//! log a write that has held the lane past twice its budget. Chunked bulk
+//! work commits at most 500 rows at a time, each chunk its own turn, with a
+//! cancellation check between chunks.
 
 use std::{
     collections::VecDeque,
@@ -84,10 +92,13 @@ pub const FOREGROUND_BURST: u32 = 8;
 /// with `Busy` (HTTP 503 with `Retry-After` at the handler layer): a request
 /// is better told to retry than parked behind 128 others.
 pub const FOREGROUND_QUEUE_CAPACITY: usize = 128;
-/// Background writes that may wait at once. A producer that awaits its
-/// writes has one outstanding, so this is only reached by one that spawns
-/// writes without awaiting them; it then fails loudly instead of growing
-/// memory without bound.
+/// Writes that may wait at once in each class that waits for its turn: job
+/// writes, bulk writes and durable writes, each counted on its own. A
+/// producer that awaits its writes has one outstanding, so this is only
+/// reached by one that spawns writes without awaiting them; it then fails
+/// loudly instead of growing memory without bound. Counting per class means
+/// a backlog of held bulk writes cannot get a job's state write or a journal
+/// write refused.
 pub const BACKGROUND_QUEUE_CAPACITY: usize = 4_096;
 /// Foreground transactions slower than this log a warning with their name.
 /// A request-path write is a handful of rows; a quarter of a second means
@@ -122,13 +133,18 @@ pub const BACKGROUND_CHUNK_ROWS: usize = 500;
 /// 250 ms is the wait the architecture's trip condition is stated against.
 pub const WAIT_BUCKET_BOUNDS_MS: [u64; 7] = [1, 5, 25, 100, 250, 1_000, 5_000];
 
-/// Which queue a write admission waits in.
+/// The class of a write: which queue it waits in and what may hold it back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lane {
-    /// Request path. Never gated by backpressure, never starved by jobs.
+    /// Request path. Never held by the WAL, never starved by jobs.
     Foreground,
-    /// Background jobs. Yields to foreground bursts and to WAL backpressure.
+    /// Job state: heartbeats, transitions, outbox rows, the download
+    /// journal. Yields to foreground bursts and is never held by the WAL.
     Background,
+    /// Many rows at once: the chunked writes. Shares the background side of
+    /// the fairness rule and the background budget, and is the one class
+    /// that waits while the WAL is too large or stalled.
+    Bulk,
 }
 
 impl Lane {
@@ -136,6 +152,65 @@ impl Lane {
         match self {
             Self::Foreground => "foreground",
             Self::Background => "background",
+            Self::Bulk => "bulk",
+        }
+    }
+}
+
+/// Whether bulk writes are held back because the WAL cannot shrink. The
+/// checkpoint service sets it after every pass; the lane reads it each time
+/// it picks the next write.
+#[derive(Debug, Default)]
+pub struct WalHold {
+    on: AtomicBool,
+}
+
+impl WalHold {
+    /// True while bulk writes must wait.
+    pub fn is_on(&self) -> bool {
+        self.on.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn set(&self, on: bool) {
+        self.on.store(on, Ordering::Release);
+    }
+
+    /// Set the hold by hand, where a test has no full WAL to show.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn force(&self, on: bool) {
+        self.set(on);
+    }
+}
+
+/// What a waiting write counts as against the queue bounds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Class {
+    /// An ordinary foreground write: the only class refused at 128.
+    Request,
+    /// An ordinary background write.
+    Job,
+    /// A bulk write.
+    Bulk,
+    /// A durable write, in either queue.
+    Durable,
+}
+
+impl Class {
+    const COUNT: usize = 4;
+
+    fn of(lane: Lane, durable: bool) -> Self {
+        match lane {
+            _ if durable => Self::Durable,
+            Lane::Foreground => Self::Request,
+            Lane::Background => Self::Job,
+            Lane::Bulk => Self::Bulk,
+        }
+    }
+
+    fn capacity(self) -> usize {
+        match self {
+            Self::Request => FOREGROUND_QUEUE_CAPACITY,
+            Self::Job | Self::Bulk | Self::Durable => BACKGROUND_QUEUE_CAPACITY,
         }
     }
 }
@@ -184,7 +259,7 @@ impl LaneLimits {
     fn budget(&self, lane: Lane) -> Budget {
         match lane {
             Lane::Foreground => self.foreground,
-            Lane::Background => self.background,
+            Lane::Background | Lane::Bulk => self.background,
         }
     }
 }
@@ -341,6 +416,10 @@ struct Waiter {
 }
 
 impl Waiter {
+    fn class(&self) -> Class {
+        Class::of(self.lane, self.durable)
+    }
+
     /// Answer the caller without a turn. Runs the caller's own code (it
     /// drops the write closure), so never call it with the lane's mutex held.
     fn refuse(self, why: Refused) {
@@ -416,12 +495,17 @@ struct Shared {
     /// Signalled when no turn is out and nobody waits.
     drained: Condvar,
     idle: Arc<LaneIdle>,
+    hold: Arc<WalHold>,
 }
 
 /// The lane's bookkeeping. Locked briefly, never while a closure runs.
 struct State {
     foreground: VecDeque<Waiter>,
+    /// Background and bulk writes in one queue, in arrival order, so
+    /// neither starves the other.
     background: VecDeque<Waiter>,
+    /// Waiters per [`Class`], across both queues.
+    waiting: [usize; Class::COUNT],
     /// The write connection while no turn is out. Gone after shutdown.
     connection: Option<WriterConnection>,
     /// The write a turn is out to.
@@ -439,10 +523,18 @@ struct State {
 }
 
 impl State {
-    /// Take the next waiter in fairness order.
-    fn next_waiter(&mut self) -> Option<Waiter> {
+    /// Take the next waiter in fairness order. While `bulk_held`, a bulk
+    /// write is stepped over where it stands: it keeps its place, and it
+    /// does not count as pending, or the background side could be picked
+    /// with nothing in it that may run. A job write or a durable write
+    /// behind it is reached all the same.
+    fn next_waiter(&mut self, bulk_held: bool) -> Option<Waiter> {
         let fg_pending = !self.foreground.is_empty();
-        let bg_pending = !self.background.is_empty();
+        let bg_at = self
+            .background
+            .iter()
+            .position(|waiter| !(bulk_held && waiter.class() == Class::Bulk));
+        let bg_pending = bg_at.is_some();
         let (choice, grants) = decide_lane(
             fg_pending,
             bg_pending,
@@ -451,10 +543,12 @@ impl State {
         );
         self.bg_was_pending = bg_pending;
         self.grants = grants;
-        match choice? {
+        let waiter = match choice? {
             Lane::Foreground => self.foreground.pop_front(),
-            Lane::Background => self.background.pop_front(),
-        }
+            Lane::Background | Lane::Bulk => self.background.remove(bg_at?),
+        }?;
+        self.waiting[waiter.class() as usize] -= 1;
+        Some(waiter)
     }
 }
 
@@ -484,19 +578,18 @@ impl Shared {
             drop(state);
             return Err(DbError::LaneClosed);
         }
-        let (queue, capacity) = match lane {
-            // A durable write is not a request to turn away at 128: it gets
-            // the bound that only a producer not awaiting its writes reaches.
-            Lane::Foreground if durable => (&mut state.foreground, BACKGROUND_QUEUE_CAPACITY),
-            Lane::Foreground => (&mut state.foreground, FOREGROUND_QUEUE_CAPACITY),
-            Lane::Background => (&mut state.background, BACKGROUND_QUEUE_CAPACITY),
-        };
-        if queue.len() >= capacity {
+        // Each class is counted on its own. A durable write is not a
+        // request to turn away at 128, and writes of one class, held bulk
+        // writes above all, cannot fill the bound of another.
+        let class = Class::of(lane, durable);
+        let capacity = class.capacity();
+        if state.waiting[class as usize] >= capacity {
             drop(state);
-            if capacity == BACKGROUND_QUEUE_CAPACITY {
+            if class != Class::Request {
                 tracing::error!(
                     operation = name,
                     lane = lane.label(),
+                    durable,
                     waiting = capacity,
                     "write queue is full; a producer is not awaiting its writes"
                 );
@@ -505,6 +598,11 @@ impl Shared {
                 operation: name.to_owned(),
             });
         }
+        state.waiting[class as usize] += 1;
+        let queue = match lane {
+            Lane::Foreground => &mut state.foreground,
+            Lane::Background | Lane::Bulk => &mut state.background,
+        };
         queue.push_back(Waiter {
             name,
             lane,
@@ -531,7 +629,9 @@ impl Shared {
                 let Some(connection) = state.connection.take() else {
                     return;
                 };
-                let Some(waiter) = state.next_waiter() else {
+                // A closed lane holds nothing back: shutdown lifts the hold.
+                let bulk_held = !state.closed && self.hold.is_on();
+                let Some(waiter) = state.next_waiter(bulk_held) else {
                     state.connection = Some(connection);
                     self.idle.active.store(false, Ordering::Release);
                     self.drained.notify_all();
@@ -604,12 +704,16 @@ impl Shared {
     /// still queued are answered `LaneClosed` and the write holding the turn
     /// is left to end by itself. False if the lane's thread did not stop
     /// cleanly.
-    fn close(&self, grace: Duration) -> bool {
+    fn close(self: &Arc<Self>, grace: Duration) -> bool {
         // A grace too long to add to the clock is no bound at all.
         let deadline = Instant::now().checked_add(grace);
+        self.state().closed = true;
+        // Closing lifted the WAL hold. A bulk write it held on an idle lane
+        // is started here, before the wait below, which would otherwise sit
+        // out the whole grace for it.
+        self.grant_next();
         let (connection, runner, runner_thread, unserved, stuck) = {
             let mut state = self.state();
-            state.closed = true;
             while state.holder.is_some()
                 || !state.foreground.is_empty()
                 || !state.background.is_empty()
@@ -633,6 +737,7 @@ impl Shared {
             }
             let mut unserved: Vec<Waiter> = state.foreground.drain(..).collect();
             unserved.extend(state.background.drain(..));
+            state.waiting = [0; Class::COUNT];
             self.idle.queued.fetch_sub(unserved.len(), Ordering::AcqRel);
             let stuck = state
                 .holder
@@ -689,6 +794,7 @@ impl Shared {
                 }
             }
             self.idle.queued.fetch_sub(overdue.len(), Ordering::AcqRel);
+            state.waiting[Class::Request as usize] -= overdue.len();
             let waiting = (state.foreground.len(), state.background.len());
             let stuck = state.holder.as_mut().and_then(|holder| {
                 let held = holder.since.elapsed();
@@ -720,6 +826,27 @@ impl Shared {
                 background_waiting = background,
                 "a write has held the lane well past its budget"
             );
+        }
+    }
+
+    /// One pass of the relief thread. While a bulk write waits behind the
+    /// WAL hold, run a checkpoint pass, which is what can end the hold; once
+    /// the hold is off, whoever ended it, start the writes it kept waiting.
+    /// The pass needs nothing from the lane: it has its own connection, and
+    /// a held write is waiting for a turn, not inside a transaction.
+    fn relief_tick(self: &Arc<Self>, checkpoint: &dyn Fn()) {
+        let waiting = {
+            let state = self.state();
+            !state.closed && state.waiting[Class::Bulk as usize] > 0
+        };
+        if !waiting {
+            return;
+        }
+        if self.hold.is_on() {
+            checkpoint();
+        }
+        if !self.hold.is_on() {
+            self.grant_next();
         }
     }
 }
@@ -794,7 +921,8 @@ impl WriteLane {
     /// A lane opened here has no watch thread: until [`WriteLane::watch`] is
     /// started, a foreground write waits for its turn without limit and a
     /// stuck holder is not logged. The database runtime starts one for its
-    /// lane, which is the only lane production opens.
+    /// lane, which is the only lane production opens. Nothing sets the WAL
+    /// hold on a lane without a checkpoint service either.
     pub fn open(db_path: &Path) -> Result<Self, DbError> {
         Self::open_limited(db_path, LaneLimits::default())
     }
@@ -823,6 +951,7 @@ impl WriteLane {
                 state: Mutex::new(State {
                     foreground: VecDeque::new(),
                     background: VecDeque::new(),
+                    waiting: [0; Class::COUNT],
                     connection: Some(connection),
                     holder: None,
                     grants: 0,
@@ -835,6 +964,7 @@ impl WriteLane {
                 }),
                 drained: Condvar::new(),
                 idle: Arc::new(LaneIdle::default()),
+                hold: Arc::new(WalHold::default()),
             }),
         })
     }
@@ -849,38 +979,43 @@ impl WriteLane {
         Arc::clone(&self.shared.idle)
     }
 
+    /// The hold on this lane's bulk writes, for the checkpoint service to
+    /// set.
+    pub fn wal_hold(&self) -> Arc<WalHold> {
+        Arc::clone(&self.shared.hold)
+    }
+
     /// How long admissions have waited for their turn so far.
     pub fn wait_times(&self) -> WaitTimes {
         self.shared.state().waits
     }
 
-    /// Start the watch thread for this lane. It wakes on real time, not a
-    /// runtime's clock, so paused time in a test neither trips nor stalls
-    /// it. It stops when the returned handle is stopped or dropped, or when
-    /// the lane is gone.
-    pub fn watch(&self) -> Result<LaneWatch, DbError> {
-        let shared = Arc::downgrade(&self.shared);
+    /// Start the watch for this lane: two threads that wake on real time,
+    /// not a runtime's clock, so paused time in a test neither trips nor
+    /// stalls them. They stop when the returned handle is stopped or
+    /// dropped, or when the lane is gone.
+    ///
+    /// The watch thread answers the foreground writes that have waited too
+    /// long and names a stuck holder. The relief thread calls `checkpoint`,
+    /// one blocking checkpoint pass, once a tick while a bulk write is held
+    /// by the WAL, and starts the held writes when the hold is off. A pass
+    /// takes as long as the checkpoint takes, which is why it has a thread
+    /// of its own: it never delays the watch thread's answers.
+    pub fn watch(&self, checkpoint: impl Fn() + Send + 'static) -> Result<LaneWatch, DbError> {
         let tick = self.shared.limits.watch_tick;
-        let (stop, stopped) = mpsc::channel::<()>();
-        let thread = std::thread::Builder::new()
-            .name("droppedneedle-db-watch".to_owned())
-            .spawn(move || {
-                while let Err(mpsc::RecvTimeoutError::Timeout) = stopped.recv_timeout(tick) {
-                    let Some(shared) = shared.upgrade() else {
-                        return;
-                    };
-                    // A tick drops the closures of the writes it refuses,
-                    // which is the caller's code. One that panics must not
-                    // end the watch.
-                    if catch_unwind(AssertUnwindSafe(|| shared.watch_tick())).is_err() {
-                        tracing::error!("database watch tick panicked; the watch carries on");
-                    }
-                }
-            })
-            .map_err(DbError::Io)?;
+        let watch = Ticker::start("droppedneedle-db-watch", tick, &self.shared, |shared| {
+            shared.watch_tick();
+        })?;
+        let relief = Ticker::start(
+            "droppedneedle-db-relief",
+            tick,
+            &self.shared,
+            move |shared| {
+                shared.relief_tick(&checkpoint);
+            },
+        )?;
         Ok(LaneWatch {
-            stop,
-            thread: Some(thread),
+            tickers: vec![watch, relief],
         })
     }
 
@@ -983,6 +1118,9 @@ impl WriteLane {
     /// two journal steps treats either as "stop here and recover at the
     /// next start".
     ///
+    /// A durable write is never held by the WAL: `Lane::Bulk` here means
+    /// `Lane::Background`.
+    ///
     /// The time budget covers less of this write than of an ordinary one.
     /// Setting the pragma and `BEGIN` run before the abort clock starts. The
     /// sync at `COMMIT` runs inside it but cannot be interrupted, so a write
@@ -993,6 +1131,11 @@ impl WriteLane {
     where
         F: FnOnce(&Transaction) -> Result<R, OpError>,
     {
+        // A durable write is never held, so it cannot be a bulk write.
+        let lane = match lane {
+            Lane::Bulk => Lane::Background,
+            other => other,
+        };
         self.write_parked(lane, name, true, op)
     }
 
@@ -1021,9 +1164,14 @@ impl WriteLane {
         finish(name, outcome)
     }
 
-    /// Commit `items` in chunks of at most 500 rows with a cancellation
-    /// check between chunks. Each chunk is one background admission; returns
-    /// the rows committed. A tripped flag stops after the current chunk.
+    /// Commit `items` in chunks of at most 500 rows. Each chunk is one bulk
+    /// turn, so requests and job writes get in between, and while the WAL
+    /// hold is on the next chunk waits: a long bulk job stops at a chunk
+    /// boundary, never inside a transaction. Returns the rows committed.
+    ///
+    /// The flag is read before each chunk is queued and again when its turn
+    /// comes, which may be after a long hold. A tripped flag lets the chunk
+    /// that is running commit and stops the write there with `Cancelled`.
     pub async fn write_chunked<T, F>(
         &self,
         name: &'static str,
@@ -1042,22 +1190,62 @@ impl WriteLane {
         let mut chunks = 0;
         while !items.is_empty() {
             if cancel.is_cancelled() {
-                return Err(DbError::Cancelled {
-                    operation: name.to_owned(),
-                    chunks,
-                });
+                return Err(cancelled(name, chunks));
             }
             let take = width.min(items.len());
             let owned: Vec<T> = items.drain(..take).collect();
             let total = owned.len();
             let writer = Arc::clone(&chunk);
-            self.write(Lane::Background, name, move |tx| {
-                writer(&owned, tx)?;
-                Ok(())
-            })
-            .await?;
+            let stop = cancel.clone();
+            let ran = self
+                .write(Lane::Bulk, name, move |tx| {
+                    if stop.is_cancelled() {
+                        return Ok(false);
+                    }
+                    writer(&owned, tx)?;
+                    Ok(true)
+                })
+                .await?;
+            if !ran {
+                return Err(cancelled(name, chunks));
+            }
             committed += total;
             chunks += 1;
+        }
+        Ok(committed)
+    }
+
+    /// [`WriteLane::write_chunked`] for synchronous code: each chunk waits
+    /// for its turn on the calling thread and runs there, so `items` and the
+    /// closure may borrow from the caller. Call it from a blocking thread.
+    pub fn write_chunked_blocking<T, F>(
+        &self,
+        name: &'static str,
+        items: &[T],
+        chunk_rows: usize,
+        cancel: &CancelFlag,
+        mut chunk: F,
+    ) -> Result<usize, DbError>
+    where
+        F: FnMut(&[T], &Transaction) -> Result<(), OpError>,
+    {
+        let width = chunk_rows.clamp(1, BACKGROUND_CHUNK_ROWS);
+        let mut committed = 0;
+        for (chunks, rows) in items.chunks(width).enumerate() {
+            if cancel.is_cancelled() {
+                return Err(cancelled(name, chunks));
+            }
+            let ran = self.write_blocking(Lane::Bulk, name, |tx| {
+                if cancel.is_cancelled() {
+                    return Ok(false);
+                }
+                chunk(rows, tx)?;
+                Ok(true)
+            })?;
+            if !ran {
+                return Err(cancelled(name, chunks));
+            }
+            committed += rows.len();
         }
         Ok(committed)
     }
@@ -1078,24 +1266,69 @@ impl WriteLane {
     }
 }
 
-/// The handle of a lane's watch thread. Stopping or dropping it ends the
-/// thread.
+/// The handle of a lane's watch and relief threads. Stopping or dropping it
+/// ends them.
 #[derive(Debug)]
 pub struct LaneWatch {
-    /// Never sent on: the thread ends when this is dropped.
-    stop: mpsc::Sender<()>,
-    thread: Option<JoinHandle<()>>,
+    tickers: Vec<Ticker>,
 }
 
 impl LaneWatch {
-    /// Stop the thread and wait for it. It is at most one pass of
-    /// bookkeeping away from noticing.
+    /// Stop the threads and wait for them. The watch thread is at most one
+    /// pass of bookkeeping away from noticing, the relief thread at most one
+    /// checkpoint pass, so call this from a thread that may block.
     pub fn stop(self) {
-        let Self { stop, thread } = self;
-        drop(stop);
-        if thread.is_some_and(|thread| thread.join().is_err()) {
-            tracing::error!("database watch thread did not stop cleanly");
+        let (stops, threads): (Vec<_>, Vec<_>) = self
+            .tickers
+            .into_iter()
+            .map(|ticker| (ticker.stop, ticker.thread))
+            .unzip();
+        drop(stops);
+        for thread in threads {
+            if thread.join().is_err() {
+                tracing::error!("database watch thread did not stop cleanly");
+            }
         }
+    }
+}
+
+/// A thread that runs one pass over the lane every tick.
+#[derive(Debug)]
+struct Ticker {
+    /// Never sent on: the thread ends when this is dropped.
+    stop: mpsc::Sender<()>,
+    thread: JoinHandle<()>,
+}
+
+impl Ticker {
+    fn start(
+        name: &'static str,
+        tick: Duration,
+        shared: &Arc<Shared>,
+        pass: impl Fn(&Arc<Shared>) + Send + 'static,
+    ) -> Result<Self, DbError> {
+        let shared = Arc::downgrade(shared);
+        let (stop, stopped) = mpsc::channel::<()>();
+        let thread = std::thread::Builder::new()
+            .name(name.to_owned())
+            .spawn(move || {
+                while let Err(mpsc::RecvTimeoutError::Timeout) = stopped.recv_timeout(tick) {
+                    let Some(shared) = shared.upgrade() else {
+                        return;
+                    };
+                    // A pass can run a caller's code: it drops the closures
+                    // of the writes it refuses. One that panics must not end
+                    // the thread.
+                    if catch_unwind(AssertUnwindSafe(|| pass(&shared))).is_err() {
+                        tracing::error!(
+                            thread = name,
+                            "database watch pass panicked; it carries on"
+                        );
+                    }
+                }
+            })
+            .map_err(DbError::Io)?;
+        Ok(Self { stop, thread })
     }
 }
 
@@ -1104,6 +1337,14 @@ impl LaneWatch {
 fn run_async_writes(granted: mpsc::Receiver<Granted>) {
     for Granted { write, turn } in granted {
         write(Ok(turn));
+    }
+}
+
+/// A chunked write stopped by its flag after `chunks` chunks committed.
+fn cancelled(name: &'static str, chunks: usize) -> DbError {
+    DbError::Cancelled {
+        operation: name.to_owned(),
+        chunks,
     }
 }
 

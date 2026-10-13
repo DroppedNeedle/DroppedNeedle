@@ -24,6 +24,11 @@
 //! it returns, at the cost of one sync a call. It is for rows that must
 //! outlive a power cut, and it waits for its turn without the 5 s limit.
 //!
+//! Many rows go through `write_chunked` or `write_chunked_blocking`, one
+//! `Lane::Bulk` turn per chunk. Bulk writes are the only ones that wait
+//! while the checkpoint service reports the WAL too large or stalled, and
+//! the runtime's relief thread checkpoints every second until they can go.
+//!
 //! Layout: [`factory`] builds the runtime, [`checkpoint`] runs the GH-293
 //! checkpoint policy with TRUNCATE reclaim, [`writer`] serializes writes with
 //! foreground-burst-8 fairness, [`backup`] copies the live database out with
@@ -68,5 +73,6 @@ pub use writer::{
     BACKGROUND_SOFT_BUDGET, Budget, CancelFlag, FOREGROUND_BURST, FOREGROUND_HARD_BUDGET,
     FOREGROUND_QUEUE_CAPACITY, FOREGROUND_SOFT_BUDGET, FOREGROUND_WAIT_LIMIT, HOLDER_LOG_EVERY,
     Lane, LaneIdle, LaneLimits, LaneWatch, OpError, WAIT_BUCKET_BOUNDS_MS, WATCH_TICK, WaitTimes,
-    WriteLane, apply_connection_pragmas, decide_lane, open_connection, open_journal_connection,
+    WalHold, WriteLane, apply_connection_pragmas, decide_lane, open_connection,
+    open_journal_connection,
 };

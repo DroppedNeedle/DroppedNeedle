@@ -4,9 +4,13 @@
 //! connection that fails fast (`busy_timeout=0`): lock contention becomes a
 //! `busy` pass that keeps its progress baseline (as in v2), while
 //! non-lock errors are recorded distinctly and leave backpressure alone.
-//! Backpressure suspends background producers only, never foreground writes,
-//! when active WAL crosses 64 MiB or a checkpoint makes no measurable
-//! progress for 60 s.
+//! Backpressure holds bulk writes only, never a request's write or a job's
+//! state write, when active WAL crosses 64 MiB or a checkpoint makes no
+//! measurable progress for 60 s. The service sets the lane's
+//! [`WalHold`] after every pass. While a bulk write waits behind it, the
+//! lane's relief thread runs [`CheckpointService::run_relief`] once a
+//! second, so the hold ends within a second of the WAL being able to
+//! shrink and does not wait for the 30 s loop.
 //!
 //! v2 never reclaimed: `PASSIVE` leaves checkpointed frames allocated, so a
 //! dead `-wal` of several MB survived graceful restarts. v3 adds `TRUNCATE`
@@ -26,9 +30,9 @@ use std::{
 
 use serde::Serialize;
 use sqlx::SqlitePool;
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::RwLock;
 
-use super::writer::LaneIdle;
+use super::writer::{LaneIdle, WalHold};
 
 /// `PASSIVE` checkpoint cadence. The GH-293 owner calibration, unchanged.
 pub const CHECKPOINT_CADENCE: Duration = Duration::from_secs(30);
@@ -94,6 +98,8 @@ pub struct BackpressurePolicy {
     busy_since: Option<Instant>,
     last_log_frames: Option<i64>,
     last_checkpointed_frames: Option<i64>,
+    high_water: i64,
+    low_water: i64,
 }
 
 /// What one observation changed.
@@ -110,11 +116,19 @@ pub struct Observation {
 impl BackpressurePolicy {
     /// A fresh machine: producers running, no baseline, no stall.
     pub fn new() -> Self {
+        Self::with_water(ACTIVE_HIGH_WATER_BYTES, ACTIVE_LOW_WATER_BYTES)
+    }
+
+    /// A fresh machine with other water marks. Production runs on the
+    /// constants; a test lowers them to fill the WAL with kilobytes.
+    pub(crate) fn with_water(high_water: i64, low_water: i64) -> Self {
         Self {
             suspended: false,
             busy_since: None,
             last_log_frames: None,
             last_checkpointed_frames: None,
+            high_water,
+            low_water,
         }
     }
 
@@ -151,7 +165,7 @@ impl BackpressurePolicy {
             self.busy_since = None;
             Duration::ZERO
         };
-        if active_bytes > ACTIVE_HIGH_WATER_BYTES
+        if active_bytes > self.high_water
             || (self.busy_since.is_some() && reader_blocked >= CHECKPOINT_READER_BLOCKED_BOUND)
         {
             if !self.suspended {
@@ -163,9 +177,7 @@ impl BackpressurePolicy {
                 );
             }
             self.suspended = true;
-        } else if self.suspended
-            && ((0..=ACTIVE_LOW_WATER_BYTES).contains(&active_bytes) || progress)
-        {
+        } else if self.suspended && ((0..=self.low_water).contains(&active_bytes) || progress) {
             tracing::info!(
                 active_bytes,
                 "WAL backpressure cleared: resuming background producers"
@@ -196,14 +208,20 @@ pub struct CheckpointService {
     policy: Arc<Mutex<BackpressurePolicy>>,
     latest: Arc<RwLock<Option<CheckpointOutcome>>>,
     last_truncate: Arc<Mutex<Option<Instant>>>,
-    resume: Arc<Notify>,
+    hold: Arc<WalHold>,
     analyze: Option<super::analyze::AnalyzeService>,
 }
 
 impl CheckpointService {
     /// Wire the service. The pool is read for reader-idle checks only; the
-    /// lane handle feeds the writer-idle half of the `TRUNCATE` gate.
-    pub fn new(db_path: &Path, pool: SqlitePool, lane_idle: Arc<LaneIdle>) -> Self {
+    /// lane handle feeds the writer-idle half of the `TRUNCATE` gate, and
+    /// `hold` is the lane's hold on bulk writes, which every pass sets.
+    pub fn new(
+        db_path: &Path,
+        pool: SqlitePool,
+        lane_idle: Arc<LaneIdle>,
+        hold: Arc<WalHold>,
+    ) -> Self {
         Self {
             db_path: db_path.to_owned(),
             pool,
@@ -211,9 +229,18 @@ impl CheckpointService {
             policy: Arc::new(Mutex::new(BackpressurePolicy::new())),
             latest: Arc::new(RwLock::new(None)),
             last_truncate: Arc::new(Mutex::new(None)),
-            resume: Arc::new(Notify::new()),
+            hold,
             analyze: None,
         }
+    }
+
+    /// Other water marks for the backpressure rule.
+    #[must_use]
+    pub(crate) fn with_water(mut self, high_water: i64, low_water: i64) -> Self {
+        self.policy = Arc::new(Mutex::new(BackpressurePolicy::with_water(
+            high_water, low_water,
+        )));
+        self
     }
 
     /// Refresh planner statistics from the checkpoint loop (see
@@ -229,12 +256,9 @@ impl CheckpointService {
         self.analyze.as_ref()
     }
 
-    /// True when background producers must yield. Never gates foreground.
-    pub fn background_suspended(&self) -> bool {
-        self.policy
-            .lock()
-            .map(|policy| policy.suspended())
-            .unwrap_or(false)
+    /// True while bulk writes are held. Nothing else ever is.
+    pub fn bulk_held(&self) -> bool {
+        self.hold.is_on()
     }
 
     /// Latest recorded pass, for the admin health endpoint.
@@ -250,7 +274,15 @@ impl CheckpointService {
     /// One bounded `PASSIVE` pass on a dedicated fail-fast connection.
     /// Blocking; callers offload it with `spawn_blocking`.
     pub fn run_once(&self) -> CheckpointOutcome {
-        self.run_pass(CheckpointMode::Passive)
+        self.run_pass(CheckpointMode::Passive, false)
+    }
+
+    /// [`CheckpointService::run_once`] for the lane's relief thread, which
+    /// calls it once a second while a bulk write is held. Only the pass that
+    /// ends the hold is logged at info; the rest would be a line a second
+    /// for as long as a reader pins the WAL.
+    pub fn run_relief(&self) -> CheckpointOutcome {
+        self.run_pass(CheckpointMode::Passive, true)
     }
 
     /// Reclaim dead `-wal` allocation when the three gates hold: the last
@@ -278,7 +310,7 @@ impl CheckpointService {
         if !due {
             return None;
         }
-        let outcome = self.run_pass(CheckpointMode::Truncate);
+        let outcome = self.run_pass(CheckpointMode::Truncate, false);
         if outcome.error.is_none()
             && !outcome.busy
             && let Ok(mut guard) = self.last_truncate.lock()
@@ -291,7 +323,7 @@ impl CheckpointService {
     /// Final reclaim at clean shutdown. Best effort: a busy lock is recorded
     /// and the shutdown proceeds. Blocking like `run_once`.
     pub fn shutdown_truncate(&self) -> CheckpointOutcome {
-        let outcome = self.run_pass(CheckpointMode::Truncate);
+        let outcome = self.run_pass(CheckpointMode::Truncate, false);
         if outcome.error.is_none() && !outcome.busy {
             tracing::info!("shutdown checkpoint reclaimed the WAL file");
         } else {
@@ -309,8 +341,9 @@ impl CheckpointService {
         self.pool.num_idle() as u32 == self.pool.size()
     }
 
-    /// Run one pass in the given mode and record its outcome.
-    fn run_pass(&self, mode: CheckpointMode) -> CheckpointOutcome {
+    /// Run one pass in the given mode and record its outcome. A relief pass
+    /// that leaves the hold on is logged at debug.
+    fn run_pass(&self, mode: CheckpointMode, relief: bool) -> CheckpointOutcome {
         let started = Instant::now();
         let at = SystemTime::now();
         let pragma = match mode {
@@ -318,18 +351,27 @@ impl CheckpointService {
             CheckpointMode::Truncate => "PRAGMA wal_checkpoint(TRUNCATE)",
         };
         let outcome = self.checkpoint_once(pragma, mode, at, started);
-        tracing::info!(
-            mode = ?mode,
-            busy = outcome.busy,
-            log_frames = outcome.log_frames,
-            checkpointed_frames = outcome.checkpointed_frames,
-            active_bytes = outcome.active_bytes,
-            wal_file_bytes = outcome.wal_file_bytes,
-            duration_ms = outcome.duration.as_millis() as u64,
-            error = outcome.error.as_deref().unwrap_or("none"),
-            suspended = outcome.suspended,
-            "checkpoint pass recorded"
-        );
+        macro_rules! recorded {
+            ($level:ident) => {
+                tracing::$level!(
+                    mode = ?mode,
+                    busy = outcome.busy,
+                    log_frames = outcome.log_frames,
+                    checkpointed_frames = outcome.checkpointed_frames,
+                    active_bytes = outcome.active_bytes,
+                    wal_file_bytes = outcome.wal_file_bytes,
+                    duration_ms = outcome.duration.as_millis() as u64,
+                    error = outcome.error.as_deref().unwrap_or("none"),
+                    suspended = outcome.suspended,
+                    "checkpoint pass recorded"
+                )
+            };
+        }
+        if relief && outcome.suspended {
+            recorded!(debug);
+        } else {
+            recorded!(info);
+        }
         outcome
     }
 
@@ -421,16 +463,19 @@ impl CheckpointService {
             -1
         };
         let wal_file_bytes = wal_allocation(&self.db_path);
-        let was_suspended = self.background_suspended();
         let observation = self.policy.lock().map(|mut policy| {
-            policy.observe(
+            let observation = policy.observe(
                 busy,
                 log_frames,
                 checkpointed_frames,
                 active_bytes,
                 Instant::now(),
                 measured,
-            )
+            );
+            // Set under the policy's lock, so of two passes at once the
+            // later answer is the one the lane is left with.
+            self.hold.set(observation.suspended);
+            observation
         });
         let (suspended, reader_blocked, progress) = match observation {
             Ok(observation) => (
@@ -438,11 +483,8 @@ impl CheckpointService {
                 observation.reader_blocked,
                 observation.progress,
             ),
-            Err(_) => (was_suspended, Duration::ZERO, false),
+            Err(_) => (self.bulk_held(), Duration::ZERO, false),
         };
-        if was_suspended && !suspended {
-            self.resume.notify_waiters();
-        }
         let outcome = CheckpointOutcome {
             at,
             mode,
@@ -485,7 +527,7 @@ impl CheckpointService {
             wal_file_bytes: wal_allocation(&self.db_path),
             duration: started.elapsed(),
             error,
-            suspended: self.background_suspended(),
+            suspended: self.bulk_held(),
             reader_blocked: Duration::ZERO,
             progress,
         };
