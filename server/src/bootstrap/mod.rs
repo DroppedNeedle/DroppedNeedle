@@ -517,10 +517,11 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     {
         tracing::warn!("scan completion hook was already set");
     }
-    let effects: Arc<dyn SaveEffects> = Arc::new(LiveSaveEffects::new(
-        provider_cache.clone(),
-        jobs.events_kick(),
-    ));
+    let download_worker = acquire.worker.clone();
+    let effects: Arc<dyn SaveEffects> = Arc::new(
+        LiveSaveEffects::new(provider_cache.clone(), jobs.events_kick())
+            .with_download_wake(Arc::new(move || download_worker.wake())),
+    );
     let settings = SettingsSetup::build(
         config_store.clone(),
         effects,
