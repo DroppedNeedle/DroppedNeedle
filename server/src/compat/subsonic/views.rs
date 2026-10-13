@@ -53,15 +53,16 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
     (y, m, d)
 }
 
-/// Normalize an ISO timestamp to UTC `...Z` (v2 `played_iso`); garbage
-/// becomes `None` rather than failing the whole response.
+/// A UTC timestamp cut to whole seconds, as `...Z` (v2 `played_iso`). It
+/// reads the `YYYY-MM-DDTHH:MM:SSZ` form the store hands over and drops a
+/// fraction. It does not apply an offset: a time that is not UTC would
+/// keep its local clock. Garbage becomes `None` rather than failing the
+/// whole response.
 pub fn played_iso(value: Option<&str>) -> Option<String> {
     let value = value?;
     let upper = value.trim().to_uppercase().replace(' ', "T");
-    let core = upper.strip_suffix('Z').unwrap_or(&upper);
-    let date_time = core.split(['+', '-']).next().unwrap_or(core);
-    let (date, time) = date_time.split_once('T')?;
-    if date.len() == 10 && time.len() >= 8 {
+    let (date, time) = upper.split_once('T')?;
+    if date.len() == 10 && time.len() >= 8 && time.is_char_boundary(8) {
         Some(format!("{date}T{}Z", &time[..8]))
     } else {
         None
