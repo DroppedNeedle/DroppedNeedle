@@ -4,6 +4,8 @@
 //! These are minimal local shapes carrying exactly the fields the wire
 //! needs; the store fills them from the real library.
 
+use std::path::{Component, Path};
+
 use super::ids::{IdKind, encode};
 use super::models::{
     SAlbumID3, SArtist, SArtistID3, SChild, SDiscTitle, SGenre, SItemDate, SItemGenre, SReplayGain,
@@ -104,6 +106,22 @@ pub fn item_date(value: Option<&str>) -> Option<SItemDate> {
     Some(SItemDate { year, month, day })
 }
 
+/// A song's `path`: the file's path under its own library folder, with `/`
+/// between the parts. The folder's location on the host is never part of
+/// it, and a stored value that is not made of plain names (a leading `/`,
+/// a `..`) is not sent at all.
+pub fn song_path(relative: &str) -> Option<String> {
+    let mut parts = Vec::new();
+    for component in Path::new(relative).components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_str()?),
+            Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
 /// Artist row seen by the converters.
 #[derive(Debug, Clone, Default)]
 pub struct ViewArtist {
@@ -197,6 +215,8 @@ pub struct ViewTrack {
     pub file_size_bytes: i64,
     /// File format suffix.
     pub file_format: Option<String>,
+    /// Path under the track's own library folder.
+    pub relative_path: Option<String>,
     /// Duration seconds.
     pub duration_seconds: f64,
     /// Bitrate kbps.
@@ -277,10 +297,9 @@ pub fn to_artist_file(view: &ViewArtist) -> SArtist {
     }
 }
 
-/// Album -> ID3 album (v2 `to_album_id3`).
-pub fn to_album_id3(view: &ViewAlbum) -> SAlbumID3 {
-    let alid = encode(IdKind::Album, &view.rg_mbid);
-    let artists = view.artist_mbid.as_ref().map(|mbid| {
+/// The album artist as the one-entry list `artists` carries.
+fn album_artists(view: &ViewAlbum) -> Option<Vec<SArtistID3>> {
+    view.artist_mbid.as_ref().map(|mbid| {
         vec![SArtistID3 {
             id: encode(IdKind::Artist, mbid),
             name: view
@@ -293,7 +312,22 @@ pub fn to_album_id3(view: &ViewAlbum) -> SAlbumID3 {
                 .or_else(|| (!view.provider_identity_projected).then(|| mbid.clone())),
             ..SArtistID3::default()
         }]
-    });
+    })
+}
+
+fn album_genres(view: &ViewAlbum) -> Vec<SItemGenre> {
+    view.genre
+        .iter()
+        .map(|genre| SItemGenre {
+            name: genre.clone(),
+        })
+        .collect()
+}
+
+/// Album -> ID3 album (v2 `to_album_id3`).
+pub fn to_album_id3(view: &ViewAlbum) -> SAlbumID3 {
+    let alid = encode(IdKind::Album, &view.rg_mbid);
+    let artists = album_artists(view);
     let release_types = view.release_types.clone().unwrap_or_else(|| {
         if view.is_compilation == Some(true) {
             vec!["compilation".to_owned()]
@@ -323,29 +357,21 @@ pub fn to_album_id3(view: &ViewAlbum) -> SAlbumID3 {
             .clone()
             .or_else(|| (!view.provider_identity_projected).then(|| view.rg_mbid.clone())),
         played: played_iso(view.played_at.as_deref()),
-        genres: view
-            .genre
-            .as_ref()
-            .map(|g| vec![SItemGenre { name: g.clone() }]),
+        genres: album_genres(view),
         artists,
         displayArtist: view.artist_name.clone(),
         releaseTypes: Some(release_types),
         sortName: Some(view.sort_name.clone().unwrap_or_else(|| view.title.clone())),
         originalReleaseDate: item_date(view.original_release_date.as_deref()),
-        discTitles: if view.disc_titles.is_empty() {
-            None
-        } else {
-            Some(
-                view.disc_titles
-                    .iter()
-                    .map(|(disc, title)| SDiscTitle {
-                        disc: *disc,
-                        title: title.clone(),
-                        coverArt: None,
-                    })
-                    .collect(),
-            )
-        },
+        discTitles: view
+            .disc_titles
+            .iter()
+            .map(|(disc, title)| SDiscTitle {
+                disc: *disc,
+                title: title.clone(),
+                coverArt: None,
+            })
+            .collect(),
         song: None,
     }
 }
@@ -405,7 +431,7 @@ pub fn to_child(view: &ViewTrack, transcode_hint: Option<(&str, &str)>) -> SChil
         transcodedSuffix: transcode_hint.map(|(_, suffix)| suffix.to_owned()),
         duration: Some(view.duration_seconds.round() as i64),
         bitRate: view.bitrate,
-        path: None,
+        path: view.relative_path.as_deref().and_then(song_path),
         discNumber: (view.disc_number != 0).then_some(view.disc_number),
         created: iso(view.created_at),
         starred: iso(view.starred_at),
@@ -417,7 +443,7 @@ pub fn to_child(view: &ViewTrack, transcode_hint: Option<(&str, &str)>) -> SChil
         type_: Some("music".to_owned()),
         playCount: view.play_count,
         mediaType: Some("song".to_owned()),
-        bitDepth: view.bit_depth,
+        bitDepth: Some(view.bit_depth.unwrap_or(0)),
         samplingRate: view.sample_rate,
         channelCount: Some(view.channels.unwrap_or(2)),
         musicBrainzId: view.musicbrainz_recording_id.clone().or_else(|| {
@@ -427,7 +453,7 @@ pub fn to_child(view: &ViewTrack, transcode_hint: Option<(&str, &str)>) -> SChil
         }),
         played: played_iso(view.played_at.as_deref()),
         sortName: Some(view.sort_name.clone().unwrap_or_else(|| view.title.clone())),
-        genres: (!genres.is_empty()).then_some(genres),
+        genres: Some(genres),
         artists: track_artist.map(|artist| vec![artist]),
         displayArtist: (!view.artist_name.is_empty()).then(|| view.artist_name.clone()),
         albumArtists: album_artist.map(|artist| vec![artist]),
@@ -438,28 +464,50 @@ pub fn to_child(view: &ViewTrack, transcode_hint: Option<(&str, &str)>) -> SChil
             trackPeak: view.replaygain_track_peak,
             albumPeak: view.replaygain_album_peak,
         }),
+        name: None,
+        songCount: None,
+        unreadTags: true,
     }
 }
 
-/// Album -> file-structure child (v2 `to_album_child`).
+/// Album -> file-structure child (v2 `to_album_child`): an album as the
+/// older folder-style lists show it. The audio facts are a song's, so an
+/// album carries Navidrome's zero for each and an empty replay gain.
 pub fn to_album_child(view: &ViewAlbum) -> SChild {
     let alid = encode(IdKind::Album, &view.rg_mbid);
+    let artist_id = view
+        .artist_mbid
+        .as_ref()
+        .map(|mbid| encode(IdKind::Artist, mbid));
+    let artists = album_artists(view);
     SChild {
         id: alid.clone(),
         isDir: true,
         title: view.title.clone(),
+        parent: artist_id.clone(),
         album: Some(view.title.clone()),
         artist: view.artist_name.clone(),
-        artistId: view
-            .artist_mbid
-            .as_ref()
-            .map(|mbid| encode(IdKind::Artist, mbid)),
+        artistId: artist_id,
         coverArt: Some(alid),
         year: view.year,
         genre: view.genre.clone(),
         created: iso(view.date_added),
         starred: iso(view.starred_at),
         duration: view.total_duration_seconds.map(|d| d.round() as i64),
+        mediaType: Some("album".to_owned()),
+        bitDepth: Some(0),
+        samplingRate: Some(0),
+        channelCount: Some(0),
+        sortName: Some(view.sort_name.clone().unwrap_or_else(|| view.title.clone())),
+        genres: Some(album_genres(view)),
+        artists: artists.clone(),
+        displayArtist: view.artist_name.clone(),
+        albumArtists: artists,
+        displayAlbumArtist: view.artist_name.clone(),
+        replayGain: Some(SReplayGain::default()),
+        name: Some(view.title.clone()),
+        songCount: view.track_count,
+        unreadTags: true,
         ..SChild::default()
     }
 }

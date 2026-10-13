@@ -61,6 +61,8 @@ pub struct PlayerTrack {
     pub channels: Option<i64>,
     /// File size, bytes.
     pub file_size_bytes: i64,
+    /// Path under the track's own library folder.
+    pub relative_path: String,
     /// Import time, unix seconds.
     pub date_added: Option<f64>,
     /// Title sort tag.
@@ -339,6 +341,7 @@ const TRACK_SELECT: &str = "SELECT t.id AS id, t.title AS title, t.local_album_i
     t.genre AS tag_genre, t.duration_seconds AS duration_seconds, \
     LOWER(t.file_format) AS format, t.bit_rate AS bit_rate, t.sample_rate AS sample_rate, \
     t.bit_depth AS bit_depth, t.channels AS channels, t.file_size_bytes AS file_size_bytes, \
+    t.relative_path AS relative_path, \
     t.imported_at AS date_added, t.title_sort AS sort_name, t.disc_subtitle AS disc_subtitle, \
     COALESCE(te.recording_mbid, t.embedded_recording_mbid) AS recording_mbid, \
     tae.provider_artist_id AS artist_mbid, aae.provider_artist_id AS album_artist_mbid, \
@@ -390,6 +393,7 @@ fn map_track(row: &sqlx::sqlite::SqliteRow) -> Result<PlayerTrack, sqlx::Error> 
         bit_depth: row.try_get("bit_depth")?,
         channels: row.try_get("channels")?,
         file_size_bytes: row.try_get("file_size_bytes")?,
+        relative_path: row.try_get("relative_path")?,
         date_added: row.try_get("date_added")?,
         sort_name: row.try_get("sort_name")?,
         disc_subtitle: row.try_get("disc_subtitle")?,

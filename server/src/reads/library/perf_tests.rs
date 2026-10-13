@@ -2766,6 +2766,7 @@ fn player_track_cells(cells: &Cells<'_, '_>) -> rusqlite::Result<PlayerTrack> {
         bit_depth: cells.get("bit_depth")?,
         channels: cells.get("channels")?,
         file_size_bytes: cells.get("file_size_bytes")?,
+        relative_path: cells.get("relative_path")?,
         date_added: cells.get("date_added")?,
         sort_name: cells.get("sort_name")?,
         disc_subtitle: cells.get("disc_subtitle")?,

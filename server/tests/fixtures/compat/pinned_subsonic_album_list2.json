@@ -14,8 +14,10 @@
           ],
           "coverArt": "al-rg-2",
           "created": "2023-11-14T22:11:40Z",
+          "discTitles": [],
           "displayArtist": "The Testers",
           "duration": 180,
+          "explicitStatus": "",
           "genre": "Rock",
           "genres": [
             {
@@ -23,13 +25,19 @@
             }
           ],
           "id": "al-rg-2",
+          "moods": [],
           "musicBrainzId": "rg-2",
           "name": "Second Sounds",
+          "originalReleaseDate": {},
+          "recordLabels": [],
+          "releaseDate": {},
           "releaseTypes": [
             "album"
           ],
           "songCount": 1,
           "sortName": "Second Sounds",
+          "userRating": 0,
+          "version": "",
           "year": 2021
         },
         {
@@ -44,8 +52,10 @@
           ],
           "coverArt": "al-rg-1",
           "created": "2023-11-13T22:13:20Z",
+          "discTitles": [],
           "displayArtist": "The Testers",
           "duration": 400,
+          "explicitStatus": "",
           "genre": "Rock",
           "genres": [
             {
@@ -53,13 +63,19 @@
             }
           ],
           "id": "al-rg-1",
+          "moods": [],
           "musicBrainzId": "rg-1",
           "name": "First Album",
+          "originalReleaseDate": {},
+          "recordLabels": [],
+          "releaseDate": {},
           "releaseTypes": [
             "album"
           ],
           "songCount": 2,
           "sortName": "First Album",
+          "userRating": 0,
+          "version": "",
           "year": 2020
         }
       ]

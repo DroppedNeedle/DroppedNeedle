@@ -33,8 +33,10 @@
                 ],
                 "coverArt": "al-rg-2",
                 "created": "2023-11-14T22:11:40Z",
+                "discTitles": [],
                 "displayArtist": "The Testers",
                 "duration": 180,
+                "explicitStatus": "",
                 "genre": "Rock",
                 "genres": [
                   {
@@ -42,13 +44,19 @@
                   }
                 ],
                 "id": "al-rg-2",
+                "moods": [],
                 "musicBrainzId": "rg-2",
                 "name": "Second Sounds",
+                "originalReleaseDate": {},
+                "recordLabels": [],
+                "releaseDate": {},
                 "releaseTypes": [
                   "album"
                 ],
                 "songCount": 1,
                 "sortName": "Second Sounds",
+                "userRating": 0,
+                "version": "",
                 "year": 2021
               },
               {
@@ -63,8 +71,10 @@
                 ],
                 "coverArt": "al-rg-1",
                 "created": "2023-11-13T22:13:20Z",
+                "discTitles": [],
                 "displayArtist": "The Testers",
                 "duration": 400,
+                "explicitStatus": "",
                 "genre": "Rock",
                 "genres": [
                   {
@@ -72,13 +82,19 @@
                   }
                 ],
                 "id": "al-rg-1",
+                "moods": [],
                 "musicBrainzId": "rg-1",
                 "name": "First Album",
+                "originalReleaseDate": {},
+                "recordLabels": [],
+                "releaseDate": {},
                 "releaseTypes": [
                   "album"
                 ],
                 "songCount": 2,
                 "sortName": "First Album",
+                "userRating": 0,
+                "version": "",
                 "year": 2020
               }
             ]
@@ -111,8 +127,10 @@
             ],
             "coverArt": "al-rg-1",
             "created": "2023-11-13T22:13:20Z",
+            "discTitles": [],
             "displayArtist": "The Testers",
             "duration": 400,
+            "explicitStatus": "",
             "genre": "Rock",
             "genres": [
               {
@@ -120,8 +138,12 @@
               }
             ],
             "id": "al-rg-1",
+            "moods": [],
             "musicBrainzId": "rg-1",
             "name": "First Album",
+            "originalReleaseDate": {},
+            "recordLabels": [],
+            "releaseDate": {},
             "releaseTypes": [
               "album"
             ],
@@ -147,24 +169,33 @@
                 ],
                 "bitDepth": 16,
                 "bitRate": 320,
+                "bpm": 0,
                 "channelCount": 2,
+                "comment": "",
                 "contentType": "audio/mpeg",
+                "contributors": [],
                 "coverArt": "al-rg-1",
                 "created": "2023-11-13T22:13:20Z",
                 "discNumber": 1,
                 "displayAlbumArtist": "The Testers",
                 "displayArtist": "The Testers",
+                "displayComposer": "",
                 "duration": 200,
+                "explicitStatus": "",
                 "genre": "Rock",
                 "genres": [
                   {
                     "name": "Rock"
                   }
                 ],
+                "groupings": [],
                 "id": "tr-f1",
                 "isDir": false,
+                "isrc": [],
                 "mediaType": "song",
+                "moods": [],
                 "parent": "al-rg-1",
+                "path": "The Testers/First Album/01 Song One.mp3",
                 "replayGain": {},
                 "samplingRate": 44100,
                 "size": 100,
@@ -189,12 +220,18 @@
                     "name": "The Testers"
                   }
                 ],
+                "bitDepth": 0,
                 "bitRate": 900,
+                "bpm": 0,
                 "channelCount": 2,
+                "comment": "",
                 "contentType": "audio/flac",
+                "contributors": [],
                 "coverArt": "al-rg-1",
                 "displayArtist": "The Testers",
+                "displayComposer": "",
                 "duration": 200,
+                "explicitStatus": "",
                 "genre": "Rock;Indie",
                 "genres": [
                   {
@@ -204,9 +241,12 @@
                     "name": "Indie"
                   }
                 ],
+                "groupings": [],
                 "id": "tr-f2",
                 "isDir": false,
+                "isrc": [],
                 "mediaType": "song",
+                "moods": [],
                 "parent": "al-rg-1",
                 "replayGain": {},
                 "size": 64,
@@ -222,6 +262,8 @@
             ],
             "songCount": 2,
             "sortName": "First Album",
+            "userRating": 0,
+            "version": "",
             "year": 2020
           },
           "openSubsonic": true,
@@ -328,24 +370,33 @@
                 ],
                 "bitDepth": 16,
                 "bitRate": 320,
+                "bpm": 0,
                 "channelCount": 2,
+                "comment": "",
                 "contentType": "audio/mpeg",
+                "contributors": [],
                 "coverArt": "al-rg-1",
                 "created": "2023-11-13T22:13:20Z",
                 "discNumber": 1,
                 "displayAlbumArtist": "The Testers",
                 "displayArtist": "The Testers",
+                "displayComposer": "",
                 "duration": 200,
+                "explicitStatus": "",
                 "genre": "Rock",
                 "genres": [
                   {
                     "name": "Rock"
                   }
                 ],
+                "groupings": [],
                 "id": "tr-f1",
                 "isDir": false,
+                "isrc": [],
                 "mediaType": "song",
+                "moods": [],
                 "parent": "al-rg-1",
+                "path": "The Testers/First Album/01 Song One.mp3",
                 "replayGain": {},
                 "samplingRate": 44100,
                 "size": 100,
@@ -401,24 +452,33 @@
                 ],
                 "bitDepth": 16,
                 "bitRate": 320,
+                "bpm": 0,
                 "channelCount": 2,
+                "comment": "",
                 "contentType": "audio/mpeg",
+                "contributors": [],
                 "coverArt": "al-rg-1",
                 "created": "2023-11-13T22:13:20Z",
                 "discNumber": 1,
                 "displayAlbumArtist": "The Testers",
                 "displayArtist": "The Testers",
+                "displayComposer": "",
                 "duration": 200,
+                "explicitStatus": "",
                 "genre": "Rock",
                 "genres": [
                   {
                     "name": "Rock"
                   }
                 ],
+                "groupings": [],
                 "id": "tr-f1",
                 "isDir": false,
+                "isrc": [],
                 "mediaType": "song",
+                "moods": [],
                 "parent": "al-rg-1",
+                "path": "The Testers/First Album/01 Song One.mp3",
                 "replayGain": {},
                 "samplingRate": 44100,
                 "size": 100,
@@ -480,24 +540,33 @@
                 ],
                 "bitDepth": 16,
                 "bitRate": 320,
+                "bpm": 0,
                 "channelCount": 2,
+                "comment": "",
                 "contentType": "audio/mpeg",
+                "contributors": [],
                 "coverArt": "al-rg-1",
                 "created": "2023-11-13T22:13:20Z",
                 "discNumber": 1,
                 "displayAlbumArtist": "The Testers",
                 "displayArtist": "The Testers",
+                "displayComposer": "",
                 "duration": 200,
+                "explicitStatus": "",
                 "genre": "Rock",
                 "genres": [
                   {
                     "name": "Rock"
                   }
                 ],
+                "groupings": [],
                 "id": "tr-f1",
                 "isDir": false,
+                "isrc": [],
                 "mediaType": "song",
+                "moods": [],
                 "parent": "al-rg-1",
+                "path": "The Testers/First Album/01 Song One.mp3",
                 "replayGain": {},
                 "samplingRate": 44100,
                 "size": 100,
@@ -562,12 +631,18 @@
                     "name": "The Testers"
                   }
                 ],
+                "bitDepth": 0,
                 "bitRate": 900,
+                "bpm": 0,
                 "channelCount": 2,
+                "comment": "",
                 "contentType": "audio/flac",
+                "contributors": [],
                 "coverArt": "al-rg-1",
                 "displayArtist": "The Testers",
+                "displayComposer": "",
                 "duration": 200,
+                "explicitStatus": "",
                 "genre": "Rock;Indie",
                 "genres": [
                   {
@@ -577,10 +652,13 @@
                     "name": "Indie"
                   }
                 ],
+                "groupings": [],
                 "id": "tr-f2",
                 "isDir": false,
+                "isrc": [],
                 "mediaType": "song",
                 "minutesAgo": "__MINUTES_AGO__",
+                "moods": [],
                 "parent": "al-rg-1",
                 "playerId": 0,
                 "playerName": "Symfonium",

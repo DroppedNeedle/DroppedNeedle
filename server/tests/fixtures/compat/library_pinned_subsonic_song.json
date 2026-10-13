@@ -19,26 +19,36 @@
           "name": "U2"
         }
       ],
+      "bitDepth": 0,
       "bitRate": 344,
+      "bpm": 0,
       "channelCount": 2,
+      "comment": "",
       "contentType": "audio/mpeg",
+      "contributors": [],
       "coverArt": "al-<id-6>",
       "created": "0000-00-00T00:00:00Z",
       "discNumber": 1,
       "displayAlbumArtist": "U2",
       "displayArtist": "U2",
+      "displayComposer": "",
       "duration": 0,
+      "explicitStatus": "",
       "genre": "Rock",
       "genres": [
         {
           "name": "Rock"
         }
       ],
+      "groupings": [],
       "id": "tr-<id-11>",
       "isDir": false,
+      "isrc": [],
       "mediaType": "song",
+      "moods": [],
       "musicBrainzId": "rec-one-0003",
       "parent": "al-<id-6>",
+      "path": "U2/Achtung Baby/03 One.mp3",
       "replayGain": {},
       "samplingRate": 44100,
       "size": 16008,

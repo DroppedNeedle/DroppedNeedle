@@ -62,6 +62,7 @@ fn view_track(track: PlayerTrack) -> ViewTrack {
         genre: (!track.genres.is_empty()).then(|| track.genres.join(";")),
         file_size_bytes: track.file_size_bytes,
         file_format: Some(track.format),
+        relative_path: Some(track.relative_path),
         duration_seconds: track.duration_seconds.unwrap_or(0.0),
         bitrate: track.bit_rate,
         created_at: whole(track.date_added),

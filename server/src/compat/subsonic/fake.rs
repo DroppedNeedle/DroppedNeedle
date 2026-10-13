@@ -267,6 +267,7 @@ impl FakeStore {
                 genre: Some("Rock".to_owned()),
                 file_size_bytes: 100,
                 file_format: Some("mp3".to_owned()),
+                relative_path: Some("The Testers/First Album/01 Song One.mp3".to_owned()),
                 duration_seconds: 200.0,
                 bitrate: Some(320),
                 created_at: Some(NOW_UNIX as i64 - 86_400),

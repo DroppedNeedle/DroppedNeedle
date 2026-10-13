@@ -81,6 +81,12 @@ impl Render for SArtist {
 }
 
 /// ID3 album.
+///
+/// The keys after `discTitles` are ones Navidrome 0.62.0 sends on every
+/// album and the app holds nothing for: no rating is stored, and no
+/// edition date, label, mood, explicit flag or version is read from the
+/// tags. Each carries what Navidrome sends for "none" (checked against its
+/// recorded `getAlbum` answer).
 #[derive(Debug, Clone, Default)]
 pub struct SAlbumID3 {
     /// Prefixed album id.
@@ -113,8 +119,8 @@ pub struct SAlbumID3 {
     pub musicBrainzId: Option<String>,
     /// Last-played timestamp ISO.
     pub played: Option<String>,
-    /// Genre list.
-    pub genres: Option<Vec<SItemGenre>>,
+    /// Genre list, empty when the album has no genre.
+    pub genres: Vec<SItemGenre>,
     /// Contributing artists.
     pub artists: Option<Vec<SArtistID3>>,
     /// Display artist.
@@ -123,10 +129,10 @@ pub struct SAlbumID3 {
     pub releaseTypes: Option<Vec<String>>,
     /// Sort name.
     pub sortName: Option<String>,
-    /// Original release date.
+    /// Original release date, an empty object when unknown.
     pub originalReleaseDate: Option<SItemDate>,
-    /// Per-disc titles.
-    pub discTitles: Option<Vec<SDiscTitle>>,
+    /// Per-disc titles, empty when no disc has one.
+    pub discTitles: Vec<SDiscTitle>,
     /// Populated by getAlbum only.
     pub song: Option<Vec<SChild>>,
 }
@@ -151,10 +157,7 @@ impl Render for SAlbumID3 {
             ("played", self.played.clone().into_val()),
             (
                 "genres",
-                self.genres
-                    .as_ref()
-                    .map(|genres| Val::List(genres.iter().map(Render::render).collect()))
-                    .into_val(),
+                Val::List(self.genres.iter().map(Render::render).collect()),
             ),
             (
                 "artists",
@@ -176,16 +179,18 @@ impl Render for SAlbumID3 {
                 "originalReleaseDate",
                 self.originalReleaseDate
                     .as_ref()
-                    .map(Render::render)
-                    .into_val(),
+                    .map_or_else(|| obj(Vec::new()), Render::render),
             ),
             (
                 "discTitles",
-                self.discTitles
-                    .as_ref()
-                    .map(|titles| Val::List(titles.iter().map(Render::render).collect()))
-                    .into_val(),
+                Val::List(self.discTitles.iter().map(Render::render).collect()),
             ),
+            ("userRating", Val::Int(0)),
+            ("releaseDate", obj(Vec::new())),
+            ("recordLabels", Val::List(Vec::new())),
+            ("moods", Val::List(Vec::new())),
+            ("explicitStatus", "".into_val()),
+            ("version", "".into_val()),
             (
                 "song",
                 self.song
@@ -313,7 +318,7 @@ pub struct SChild {
     pub duration: Option<i64>,
     /// Bitrate kbps.
     pub bitRate: Option<i64>,
-    /// Filesystem path (v2 leaves this unset).
+    /// The file's path under its library folder, never the host's path.
     pub path: Option<String>,
     /// Disc number.
     pub discNumber: Option<i64>,
@@ -355,11 +360,36 @@ pub struct SChild {
     pub displayAlbumArtist: Option<String>,
     /// Replay gain (always present on songs).
     pub replayGain: Option<SReplayGain>,
+    /// Album title again, on an album's folder entry.
+    pub name: Option<String>,
+    /// Track count, on an album's folder entry.
+    pub songCount: Option<i64>,
+    /// True on songs and albums: send the keys for tags the app does not
+    /// read (see [`unread_tags`]).
+    pub unreadTags: bool,
+}
+
+/// Keys Navidrome 0.62.0 sends on every song and album entry for tags the
+/// app does not read: tempo, comment, ISRC, mood, credits beyond the
+/// artists, composer, explicit flag and grouping. Each carries what
+/// Navidrome sends for "none" (checked against its recorded `getSong` and
+/// `getAlbumList` answers).
+fn unread_tags() -> Vec<(&'static str, Val)> {
+    vec![
+        ("bpm", Val::Int(0)),
+        ("comment", "".into_val()),
+        ("isrc", Val::List(Vec::new())),
+        ("moods", Val::List(Vec::new())),
+        ("contributors", Val::List(Vec::new())),
+        ("displayComposer", "".into_val()),
+        ("explicitStatus", "".into_val()),
+        ("groupings", Val::List(Vec::new())),
+    ]
 }
 
 impl Render for SChild {
     fn render(&self) -> Val {
-        obj(vec![
+        let mut entries = vec![
             ("id", self.id.as_str().into_val()),
             ("isDir", self.isDir.into_val()),
             ("title", self.title.as_str().into_val()),
@@ -425,7 +455,13 @@ impl Render for SChild {
                 "replayGain",
                 self.replayGain.as_ref().map(Render::render).into_val(),
             ),
-        ])
+            ("name", self.name.clone().into_val()),
+            ("songCount", self.songCount.into_val()),
+        ];
+        if self.unreadTags {
+            entries.extend(unread_tags());
+        }
+        obj(entries)
     }
 }
 

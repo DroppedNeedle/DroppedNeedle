@@ -500,6 +500,7 @@ pub async fn music_directory<P: Principal, S: Store, B: AudioBackend>(
                 obj(vec![
                     ("id", sid.into_val()),
                     ("name", artist.name.into_val()),
+                    ("albumCount", albums.len().into_val()),
                     ("child", Val::List(children)),
                 ]),
             ))
@@ -528,9 +529,11 @@ pub async fn music_directory<P: Principal, S: Store, B: AudioBackend>(
             Ok(Outcome::keyed(
                 "directory",
                 obj(vec![
-                    ("id", sid.into_val()),
+                    ("id", sid.clone().into_val()),
                     ("parent", parent),
                     ("name", album.title.into_val()),
+                    ("coverArt", sid.into_val()),
+                    ("songCount", tracks.len().into_val()),
                     ("child", Val::List(children)),
                 ]),
             ))

@@ -32,16 +32,25 @@
                 ],
                 "coverArt": "al-<id-2>",
                 "created": "0000-00-00T00:00:00Z",
+                "discTitles": [],
                 "displayArtist": "ユキ",
                 "duration": 0,
+                "explicitStatus": "",
+                "genres": [],
                 "id": "al-<id-2>",
                 "isCompilation": false,
+                "moods": [],
                 "name": "望厚",
+                "originalReleaseDate": {},
+                "recordLabels": [],
+                "releaseDate": {},
                 "releaseTypes": [
                   "album"
                 ],
                 "songCount": 1,
                 "sortName": "望厚",
+                "userRating": 0,
+                "version": "",
                 "year": 2015
               },
               {
@@ -55,16 +64,25 @@
                 ],
                 "coverArt": "al-<id-4>",
                 "created": "0000-00-00T00:00:00Z",
+                "discTitles": [],
                 "displayArtist": "Various Artists",
                 "duration": 0,
+                "explicitStatus": "",
+                "genres": [],
                 "id": "al-<id-4>",
                 "isCompilation": true,
+                "moods": [],
                 "name": "Now Thats Music",
+                "originalReleaseDate": {},
+                "recordLabels": [],
+                "releaseDate": {},
                 "releaseTypes": [
                   "compilation"
                 ],
                 "songCount": 1,
                 "sortName": "Now Thats Music",
+                "userRating": 0,
+                "version": "",
                 "year": 2001
               },
               {
@@ -78,8 +96,10 @@
                 ],
                 "coverArt": "al-<id-6>",
                 "created": "0000-00-00T00:00:00Z",
+                "discTitles": [],
                 "displayArtist": "U2",
                 "duration": 0,
+                "explicitStatus": "",
                 "genre": "Rock",
                 "genres": [
                   {
@@ -88,12 +108,18 @@
                 ],
                 "id": "al-<id-6>",
                 "isCompilation": false,
+                "moods": [],
                 "name": "Achtung Baby",
+                "originalReleaseDate": {},
+                "recordLabels": [],
+                "releaseDate": {},
                 "releaseTypes": [
                   "album"
                 ],
                 "songCount": 1,
                 "sortName": "Achtung Baby",
+                "userRating": 0,
+                "version": "",
                 "year": 1991
               },
               {
@@ -107,8 +133,10 @@
                 ],
                 "coverArt": "al-<id-8>",
                 "created": "0000-00-00T00:00:00Z",
+                "discTitles": [],
                 "displayArtist": "Radiohead",
                 "duration": 1,
+                "explicitStatus": "",
                 "genre": "Alternative Rock",
                 "genres": [
                   {
@@ -117,12 +145,18 @@
                 ],
                 "id": "al-<id-8>",
                 "isCompilation": false,
+                "moods": [],
                 "name": "OK Computer",
+                "originalReleaseDate": {},
+                "recordLabels": [],
+                "releaseDate": {},
                 "releaseTypes": [
                   "album"
                 ],
                 "songCount": 2,
                 "sortName": "OK Computer",
+                "userRating": 0,
+                "version": "",
                 "year": 1997
               },
               {
@@ -136,16 +170,25 @@
                 ],
                 "coverArt": "al-<id-10>",
                 "created": "0000-00-00T00:00:00Z",
+                "discTitles": [],
                 "displayArtist": "Massive Attack",
                 "duration": 0,
+                "explicitStatus": "",
+                "genres": [],
                 "id": "al-<id-10>",
                 "isCompilation": false,
+                "moods": [],
                 "name": "Mezzanine",
+                "originalReleaseDate": {},
+                "recordLabels": [],
+                "releaseDate": {},
                 "releaseTypes": [
                   "album"
                 ],
                 "songCount": 1,
                 "sortName": "Mezzanine",
+                "userRating": 0,
+                "version": "",
                 "year": 1998
               }
             ]
@@ -177,8 +220,10 @@
             ],
             "coverArt": "al-<id-6>",
             "created": "0000-00-00T00:00:00Z",
+            "discTitles": [],
             "displayArtist": "U2",
             "duration": 0,
+            "explicitStatus": "",
             "genre": "Rock",
             "genres": [
               {
@@ -187,7 +232,11 @@
             ],
             "id": "al-<id-6>",
             "isCompilation": false,
+            "moods": [],
             "name": "Achtung Baby",
+            "originalReleaseDate": {},
+            "recordLabels": [],
+            "releaseDate": {},
             "releaseTypes": [
               "album"
             ],
@@ -209,26 +258,36 @@
                     "name": "U2"
                   }
                 ],
+                "bitDepth": 0,
                 "bitRate": 344,
+                "bpm": 0,
                 "channelCount": 2,
+                "comment": "",
                 "contentType": "audio/mpeg",
+                "contributors": [],
                 "coverArt": "al-<id-6>",
                 "created": "0000-00-00T00:00:00Z",
                 "discNumber": 1,
                 "displayAlbumArtist": "U2",
                 "displayArtist": "U2",
+                "displayComposer": "",
                 "duration": 0,
+                "explicitStatus": "",
                 "genre": "Rock",
                 "genres": [
                   {
                     "name": "Rock"
                   }
                 ],
+                "groupings": [],
                 "id": "tr-<id-11>",
                 "isDir": false,
+                "isrc": [],
                 "mediaType": "song",
+                "moods": [],
                 "musicBrainzId": "rec-one-0003",
                 "parent": "al-<id-6>",
+                "path": "U2/Achtung Baby/03 One.mp3",
                 "replayGain": {},
                 "samplingRate": 44100,
                 "size": 16008,
@@ -242,6 +301,8 @@
             ],
             "songCount": 1,
             "sortName": "Achtung Baby",
+            "userRating": 0,
+            "version": "",
             "year": 1991
           },
           "openSubsonic": true,
@@ -344,26 +405,36 @@
                     "name": "U2"
                   }
                 ],
+                "bitDepth": 0,
                 "bitRate": 344,
+                "bpm": 0,
                 "channelCount": 2,
+                "comment": "",
                 "contentType": "audio/mpeg",
+                "contributors": [],
                 "coverArt": "al-<id-6>",
                 "created": "0000-00-00T00:00:00Z",
                 "discNumber": 1,
                 "displayAlbumArtist": "U2",
                 "displayArtist": "U2",
+                "displayComposer": "",
                 "duration": 0,
+                "explicitStatus": "",
                 "genre": "Rock",
                 "genres": [
                   {
                     "name": "Rock"
                   }
                 ],
+                "groupings": [],
                 "id": "tr-<id-11>",
                 "isDir": false,
+                "isrc": [],
                 "mediaType": "song",
+                "moods": [],
                 "musicBrainzId": "rec-one-0003",
                 "parent": "al-<id-6>",
+                "path": "U2/Achtung Baby/03 One.mp3",
                 "replayGain": {},
                 "samplingRate": 44100,
                 "size": 16008,
@@ -414,26 +485,36 @@
                     "name": "U2"
                   }
                 ],
+                "bitDepth": 0,
                 "bitRate": 344,
+                "bpm": 0,
                 "channelCount": 2,
+                "comment": "",
                 "contentType": "audio/mpeg",
+                "contributors": [],
                 "coverArt": "al-<id-6>",
                 "created": "0000-00-00T00:00:00Z",
                 "discNumber": 1,
                 "displayAlbumArtist": "U2",
                 "displayArtist": "U2",
+                "displayComposer": "",
                 "duration": 0,
+                "explicitStatus": "",
                 "genre": "Rock",
                 "genres": [
                   {
                     "name": "Rock"
                   }
                 ],
+                "groupings": [],
                 "id": "tr-<id-11>",
                 "isDir": false,
+                "isrc": [],
                 "mediaType": "song",
+                "moods": [],
                 "musicBrainzId": "rec-one-0003",
                 "parent": "al-<id-6>",
+                "path": "U2/Achtung Baby/03 One.mp3",
                 "replayGain": {},
                 "samplingRate": 44100,
                 "size": 16008,
@@ -490,26 +571,36 @@
                     "name": "U2"
                   }
                 ],
+                "bitDepth": 0,
                 "bitRate": 344,
+                "bpm": 0,
                 "channelCount": 2,
+                "comment": "",
                 "contentType": "audio/mpeg",
+                "contributors": [],
                 "coverArt": "al-<id-6>",
                 "created": "0000-00-00T00:00:00Z",
                 "discNumber": 1,
                 "displayAlbumArtist": "U2",
                 "displayArtist": "U2",
+                "displayComposer": "",
                 "duration": 0,
+                "explicitStatus": "",
                 "genre": "Rock",
                 "genres": [
                   {
                     "name": "Rock"
                   }
                 ],
+                "groupings": [],
                 "id": "tr-<id-11>",
                 "isDir": false,
+                "isrc": [],
                 "mediaType": "song",
+                "moods": [],
                 "musicBrainzId": "rec-one-0003",
                 "parent": "al-<id-6>",
+                "path": "U2/Achtung Baby/03 One.mp3",
                 "replayGain": {},
                 "samplingRate": 44100,
                 "size": 16008,
@@ -578,27 +669,37 @@
                     "name": "U2"
                   }
                 ],
+                "bitDepth": 0,
                 "bitRate": 344,
+                "bpm": 0,
                 "channelCount": 2,
+                "comment": "",
                 "contentType": "audio/mpeg",
+                "contributors": [],
                 "coverArt": "al-<id-6>",
                 "created": "0000-00-00T00:00:00Z",
                 "discNumber": 1,
                 "displayAlbumArtist": "U2",
                 "displayArtist": "U2",
+                "displayComposer": "",
                 "duration": 0,
+                "explicitStatus": "",
                 "genre": "Rock",
                 "genres": [
                   {
                     "name": "Rock"
                   }
                 ],
+                "groupings": [],
                 "id": "tr-<id-11>",
                 "isDir": false,
+                "isrc": [],
                 "mediaType": "song",
                 "minutesAgo": "__MINUTES_AGO__",
+                "moods": [],
                 "musicBrainzId": "rec-one-0003",
                 "parent": "al-<id-6>",
+                "path": "U2/Achtung Baby/03 One.mp3",
                 "playerId": 0,
                 "playerName": "symfonium",
                 "replayGain": {},
