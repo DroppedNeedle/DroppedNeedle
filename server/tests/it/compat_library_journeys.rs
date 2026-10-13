@@ -651,6 +651,62 @@ async fn media_path_auth_lockout_blocks_brute_force() {
     rig.stop().await;
 }
 
+/// A player trusts `IsAdministrator`: only the admin role is reported as
+/// one, at sign-in and on "who am I".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn jellyfin_reports_an_administrator_only_for_an_admin() {
+    let rig = CompatApp::start("compat-jellyfin-admin").await;
+    let app = &rig.app;
+    let admin = app.login_admin().await;
+    let (status, created) = app
+        .call(
+            "POST",
+            "/api/v3/me/app-passwords",
+            &[("authorization", admin.as_str())],
+            Some(json!({"name": "Owner"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let owner = created["secret"].as_str().expect("secret").to_owned();
+
+    for (name, secret, is_admin) in [
+        (PLAYER, rig.secret.as_str(), false),
+        ("admin", &owner, true),
+    ] {
+        let (status, echo) = app
+            .call(
+                "POST",
+                "/jellyfin/Users/AuthenticateByName",
+                &[],
+                Some(json!({"Username": name, "Pw": secret})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{name}");
+        assert_eq!(echo["User"]["Name"], json!(name));
+        assert_eq!(
+            echo["User"]["Policy"]["IsAdministrator"],
+            json!(is_admin),
+            "{name} at sign-in"
+        );
+        let token = format!("MediaBrowser Client=\"Journey\", Token=\"{secret}\"");
+        let (status, me) = app
+            .call(
+                "GET",
+                "/jellyfin/Users/Me",
+                &[("X-Emby-Authorization", token.as_str())],
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{name}");
+        assert_eq!(
+            me["Policy"]["IsAdministrator"],
+            json!(is_admin),
+            "{name} on who am I"
+        );
+    }
+    rig.stop().await;
+}
+
 /// Tripwire: no golden recorded from the library carries a credential.
 #[test]
 fn library_goldens_carry_no_credentials() {
