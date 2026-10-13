@@ -9,10 +9,12 @@
 //! `error.code`. Audio and image answers compare the status, the content
 //! type and which framing headers are present.
 //!
-//! A difference passes only while it is listed, with a reason, in
-//! `tests/fixtures/compat/known_differences.json`. Listed means known, not
-//! approved. An entry that matches no difference fails too, as does an
-//! entry that names the wrong requests.
+//! A difference passes only while it is listed, with a reason, in one of the
+//! files of `tests/fixtures/compat/known_differences/`, read in name order.
+//! Listed means known, not approved. `accepted.json` holds the differences
+//! the owner accepted as they are: streaming needs a token, and the
+//! transcoder is off in these tests. An entry that matches no difference
+//! fails too, as does an entry that names the wrong requests.
 //!
 //! The recordings are read-only: one test recomputes their checksums and
 //! repeats the recorder's sweep for anything private.
@@ -31,8 +33,33 @@ fn reference_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/reference/compat")
 }
 
-fn known_differences_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/compat/known_differences.json")
+fn known_differences_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/compat/known_differences")
+}
+
+/// Every `*.json` file in the known differences folder, in name order, with
+/// the entries each one lists. A folder with no such file is an error, so a
+/// wrong path cannot pass as "nothing is known".
+fn known_differences() -> Vec<(String, Vec<Known>)> {
+    let dir = known_differences_dir();
+    let listing = std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+    let mut names: Vec<String> = listing
+        .map(|entry| {
+            let entry = entry.unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+            entry.file_name().to_string_lossy().into_owned()
+        })
+        .filter(|name| name.ends_with(".json"))
+        .collect();
+    assert!(!names.is_empty(), "{} has no .json file", dir.display());
+    names.sort();
+    names
+        .into_iter()
+        .map(|name| {
+            let known: KnownDifferences = serde_json::from_value(read_json(&dir.join(&name)))
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            (name, known.differences)
+        })
+        .collect()
 }
 
 fn read_json(path: &Path) -> Value {
@@ -449,35 +476,34 @@ impl<'a> Comparison<'a> {
     /// Fail on every difference that is not listed and every listed one
     /// that was not found.
     fn settle(self) {
-        let known: KnownDifferences =
-            serde_json::from_value(read_json(&known_differences_path())).expect("list parses");
-        let mut listed: BTreeMap<Place, BTreeSet<String>> = BTreeMap::new();
-        for entry in known.differences {
-            assert!(
-                ["navidrome", "jellyfin"].contains(&entry.server.as_str()),
-                "known_differences.json names an unknown server: {}",
-                entry.server
-            );
-            assert!(
-                entry.reason.trim().len() > 20,
-                "known_differences.json: {}.{} has no reason",
-                entry.object,
-                entry.key
-            );
-            if entry.server != self.server {
-                continue;
+        let mut listed: BTreeMap<Place, (String, BTreeSet<String>)> = BTreeMap::new();
+        for (file, differences) in known_differences() {
+            for entry in differences {
+                assert!(
+                    ["navidrome", "jellyfin"].contains(&entry.server.as_str()),
+                    "known_differences/{file} names an unknown server: {}",
+                    entry.server
+                );
+                assert!(
+                    entry.reason.trim().len() > 20,
+                    "known_differences/{file}: {}.{} has no reason",
+                    entry.object,
+                    entry.key
+                );
+                if entry.server != self.server {
+                    continue;
+                }
+                let place = (entry.object, entry.key, entry.kind);
+                if let Some((first, _)) = listed.get(&place) {
+                    panic!("known_differences/ lists {place:?} twice, in {first} and {file}");
+                }
+                listed.insert(place, (file.clone(), entry.rows));
             }
-            let place = (entry.object, entry.key, entry.kind);
-            assert!(
-                !listed.contains_key(&place),
-                "known_differences.json lists {place:?} twice"
-            );
-            listed.insert(place, entry.rows);
         }
 
         let mut unlisted = Vec::new();
         for (place, rows) in &self.found {
-            let known = listed.get(place);
+            let known = listed.get(place).map(|(_, rows)| rows);
             // One line per pair of answers, so a status of 404 on one
             // request is not hidden behind a 500 on another.
             let mut new: BTreeMap<&(String, String), Vec<&String>> = BTreeMap::new();
@@ -502,7 +528,7 @@ impl<'a> Comparison<'a> {
             }
         }
         let mut stale = Vec::new();
-        for (place, rows) in &listed {
+        for (place, (file, rows)) in &listed {
             let found = self.found.get(place);
             let gone: Vec<&String> = rows
                 .iter()
@@ -511,6 +537,7 @@ impl<'a> Comparison<'a> {
             if !gone.is_empty() {
                 stale.push(
                     json!({
+                        "file": file,
                         "server": self.server,
                         "object": place.0,
                         "key": place.1,
@@ -523,7 +550,7 @@ impl<'a> Comparison<'a> {
         }
         assert!(
             unlisted.is_empty() && stale.is_empty(),
-            "{} differences from the real {server} are not in known_differences.json:\n{}\n\n{} listed differences were not found (fix the entry or remove it):\n{}\n",
+            "{} differences from the real {server} are not in known_differences/:\n{}\n\n{} listed differences were not found (fix the entry or remove it):\n{}\n",
             unlisted.len(),
             unlisted.join("\n"),
             stale.len(),

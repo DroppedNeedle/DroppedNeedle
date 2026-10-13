@@ -1,0 +1,6 @@
+{
+  "differences": [
+    {"server": "jellyfin", "object": "stream.no-credentials", "key": "status", "kind": "value", "rows": ["stream.no-credentials"], "reason": "The app refuses to stream a track to a request that carries no credentials. Jellyfin streams it."},
+    {"server": "jellyfin", "object": "universal.mp3", "key": "headers.content-type", "kind": "value", "rows": ["universal.mp3"], "reason": "Transcoding is switched off in these tests, so a request for MP3 gets the FLAC file as it is. Jellyfin converts it."}
+  ]
+}
