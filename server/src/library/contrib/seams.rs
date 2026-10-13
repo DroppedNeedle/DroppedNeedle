@@ -110,6 +110,8 @@ pub struct AlbumIdentificationContext {
 // ---------------------------------------------------------------------------
 
 /// Catalog invalidation plus the post-identify hook.
+/// A trait because it cuts the dependency from contributions on
+/// identification; `library::adapters` implements it.
 pub trait ContributionCatalog: Send + Sync {
     /// Delete exactly the touched identity-bearing keys before the
     /// commit path returns; lists still sweep.
