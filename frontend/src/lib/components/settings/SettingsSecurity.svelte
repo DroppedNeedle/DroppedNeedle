@@ -18,6 +18,7 @@
 	} from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import type { OIDCConnectionSettings } from '$lib/types';
+	import SettingsPublicAddress from './SettingsPublicAddress.svelte';
 
 	interface SecuritySettingsForm {
 		hibp_check: boolean;
@@ -430,6 +431,8 @@
 				{/if}
 			</div>
 		</div>
+
+		<SettingsPublicAddress />
 
 		<!-- OIDC / SSO -->
 		<div class="card bg-base-200">

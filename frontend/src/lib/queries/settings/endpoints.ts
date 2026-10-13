@@ -20,6 +20,7 @@ export const SETTINGS_ENDPOINTS = {
 	oidcVerify: () => v3('/api/v3/settings/oidc/verify'),
 	preferences: () => v3('/api/v3/settings/preferences'),
 	primarySource: () => v3('/api/v3/settings/primary-source'),
+	publicAddress: () => v3('/api/v3/settings/public-address'),
 	security: () => v3('/api/v3/settings/security'),
 	securityVerifyHibp: () => v3('/api/v3/settings/security/verify-hibp'),
 	wrapped: () => v3('/api/v3/settings/wrapped'),
