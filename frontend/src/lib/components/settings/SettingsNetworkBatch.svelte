@@ -31,6 +31,13 @@
 		max={500}
 		step={10}
 	/>
+	<SettingsNumberField
+		label="Subsonic Search Page Limit"
+		description="Per artist, album, or song result page (default: 1000)"
+		bind:value={data.subsonic_search_page_limit}
+		min={1}
+		max={2147483647}
+	/>
 </div>
 <div class="divider my-4"></div>
 <h4 class="font-medium text-sm text-base-content/70 mb-3">Batch Processing</h4>

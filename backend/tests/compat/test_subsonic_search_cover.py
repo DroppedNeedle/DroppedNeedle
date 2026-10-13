@@ -4,6 +4,9 @@ import json
 
 import pytest
 
+from api.v1.schemas.advanced_settings import AdvancedSettings
+from services.compat.view_models import ViewAlbum, ViewArtist, ViewTrack
+
 pytestmark = pytest.mark.asyncio
 
 
@@ -68,6 +71,158 @@ async def test_search3_counts_respected(compat_env):
     assert "artist" not in res or res["artist"] == []
     assert "album" not in res or res["album"] == []
     assert len(res["song"]) == 2
+
+
+def _large_search_library(size: int = 2_000):
+    """Independent collections make each search count/offset contract observable."""
+    artists = [
+        ViewArtist(artist_mbid=f"artist-{index:04d}", name=f"Artist {index:04d}")
+        for index in range(size)
+    ]
+    albums = [
+        ViewAlbum(
+            rg_mbid=f"album-{index:04d}",
+            title=f"Album {index:04d}",
+            artist_name=f"Artist {index:04d}",
+        )
+        for index in range(size)
+    ]
+    tracks = [
+        ViewTrack(
+            file_id=f"track-{index:04d}",
+            title=f"Track {index:04d}",
+            album_title=f"Album {index:04d}",
+            artist_name=f"Artist {index:04d}",
+        )
+        for index in range(size)
+    ]
+    return artists, albums, tracks
+
+
+async def _paged(items, *, limit: int, offset: int, **_kwargs):
+    return items[offset : offset + limit], len(items)
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "result_key"),
+    [("search3", "searchResult3"), ("search2", "searchResult2")],
+)
+async def test_search_honors_1000_item_pages_without_overlap(
+    compat_env, endpoint: str, result_key: str
+):
+    """Advancing each offset by 1000 must not skip or repeat any records."""
+    artists, albums, tracks = _large_search_library()
+
+    async def get_artists(**kwargs):
+        return await _paged(artists, **kwargs)
+
+    async def get_albums_offset(**kwargs):
+        return await _paged(albums, **kwargs)
+
+    async def get_tracks_page(**kwargs):
+        return await _paged(tracks, **kwargs)
+
+    compat_env.view.get_artists = get_artists
+    compat_env.view.get_albums_offset = get_albums_offset
+    compat_env.view.get_tracks_page = get_tracks_page
+
+    pages = []
+    for offset in (0, 1_000):
+        pages.append(
+            _sub(
+                _get(
+                    compat_env,
+                    endpoint,
+                    query="",
+                    artistCount="1000",
+                    artistOffset=str(offset),
+                    albumCount="1000",
+                    albumOffset=str(offset),
+                    songCount="1000",
+                    songOffset=str(offset),
+                )
+            )[result_key]
+        )
+
+    for collection, prefix in (
+        ("artist", "ar-artist-"),
+        ("album", "al-album-"),
+        ("song", "tr-track-"),
+    ):
+        ids = [item["id"] for page in pages for item in page[collection]]
+        assert ids == [f"{prefix}{index:04d}" for index in range(2_000)]
+
+
+@pytest.mark.parametrize("field", ["artistCount", "albumCount", "songCount"])
+@pytest.mark.parametrize("value", ["1001", "-1", "not-an-integer"])
+async def test_search_rejects_counts_outside_configured_ceiling(
+    compat_env, field: str, value: str
+):
+    body = _sub(_get(compat_env, "search3", query="", **{field: value}))
+    assert body["error"]["code"] == 10
+    assert body["error"]["message"] == f"Invalid parameter '{field}'"
+
+
+async def test_search_uses_persisted_custom_page_ceiling(compat_env):
+    artists, _albums, _tracks = _large_search_library()
+
+    async def get_artists(**kwargs):
+        return await _paged(artists, **kwargs)
+
+    compat_env.view.get_artists = get_artists
+    compat_env.preferences.save_advanced_settings(
+        AdvancedSettings(subsonic_search_page_limit=1_200)
+    )
+
+    result = _sub(
+        _get(
+            compat_env,
+            "search3",
+            query="",
+            artistCount="1200",
+            albumCount="0",
+            songCount="0",
+        )
+    )["searchResult3"]
+    assert [artist["id"] for artist in result["artist"]] == [
+        f"ar-artist-{index:04d}" for index in range(1_200)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "result_key"),
+    [("search3", "searchResult3"), ("search2", "searchResult2")],
+)
+async def test_search_omitted_counts_respect_small_persisted_ceiling(
+    compat_env, endpoint: str, result_key: str
+):
+    artists, albums, tracks = _large_search_library()
+
+    async def get_artists(**kwargs):
+        return await _paged(artists, **kwargs)
+
+    async def get_albums_offset(**kwargs):
+        return await _paged(albums, **kwargs)
+
+    async def get_tracks_page(**kwargs):
+        return await _paged(tracks, **kwargs)
+
+    compat_env.view.get_artists = get_artists
+    compat_env.view.get_albums_offset = get_albums_offset
+    compat_env.view.get_tracks_page = get_tracks_page
+    compat_env.preferences.save_advanced_settings(
+        AdvancedSettings(subsonic_search_page_limit=5)
+    )
+
+    result = _sub(_get(compat_env, endpoint, query=""))[result_key]
+    for collection, prefix in (
+        ("artist", "ar-artist-"),
+        ("album", "al-album-"),
+        ("song", "tr-track-"),
+    ):
+        assert [item["id"] for item in result[collection]] == [
+            f"{prefix}{index:04d}" for index in range(5)
+        ]
 
 
 async def test_get_cover_art_album_returns_image(compat_env):

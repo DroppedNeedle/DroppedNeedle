@@ -219,6 +219,29 @@ class TestSyncSettingsRoundTrip:
         assert getattr(frontend, field) == default_val
 
 
+class TestSubsonicSearchPageLimit:
+    def test_default_is_arpeggi_compatible(self) -> None:
+        assert AdvancedSettings().subsonic_search_page_limit == 1000
+        assert AdvancedSettingsFrontend().subsonic_search_page_limit == 1000
+
+    def test_roundtrip_preserves_custom_limit(self) -> None:
+        frontend = AdvancedSettingsFrontend.from_backend(
+            AdvancedSettings(subsonic_search_page_limit=25_000)
+        )
+        assert frontend.subsonic_search_page_limit == 25_000
+        assert frontend.to_backend().subsonic_search_page_limit == 25_000
+
+    @pytest.mark.parametrize("value", [0, -1, 2_147_483_648])
+    def test_rejects_invalid_backend_limit(self, value: int) -> None:
+        with pytest.raises(msgspec.ValidationError):
+            AdvancedSettings(subsonic_search_page_limit=value)
+
+    @pytest.mark.parametrize("value", [0, -1, 2_147_483_648])
+    def test_rejects_invalid_frontend_limit(self, value: int) -> None:
+        with pytest.raises(msgspec.ValidationError):
+            AdvancedSettingsFrontend(subsonic_search_page_limit=value)
+
+
 class TestPreferLocalCoverArtRoundTrip:
     def test_default_value_is_true(self) -> None:
         settings = AdvancedSettings()
