@@ -11,6 +11,7 @@ use crate::auth::session::login::{
 };
 use crate::auth::session::middleware::TrustedProxies;
 use crate::auth::session::rate_limit::{LOGIN_USERNAME_CLASS, RateLimiter, rate_limited_response};
+use crate::auth::session::stated::StatedAddresses;
 use crate::auth::session::store::{SessionKind, SessionRecord, SessionStore, now_unix};
 use crate::auth::session::tokens;
 use crate::auth::users::UsersDeps;
@@ -64,6 +65,9 @@ pub struct NativeAuthState<S, V, C> {
     /// Proxies trusted to set `X-Forwarded-*`; loopback by default (v2
     /// parity). Gates `Secure` marking from `X-Forwarded-Proto`.
     pub trusted_proxies: TrustedProxies,
+    /// The saved public addresses: a sign-in from a stated `https` one gets
+    /// a `Secure` cookie. None is stated by default.
+    pub stated: StatedAddresses,
     /// Request limiter; login also takes a per-username token from it.
     pub limits: Arc<RateLimiter>,
 }
@@ -89,6 +93,7 @@ where
             users,
             base_path: base_path.to_owned(),
             trusted_proxies: TrustedProxies::default(),
+            stated: StatedAddresses::default(),
             limits: Arc::new(RateLimiter::new()),
         }
     }
@@ -103,6 +108,12 @@ where
     /// config at wiring.
     pub fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
         self.trusted_proxies = trusted;
+        self
+    }
+
+    /// Mark the cookie `Secure` for a sign-in from a stated `https` address.
+    pub fn with_stated_addresses(mut self, stated: StatedAddresses) -> Self {
+        self.stated = stated;
         self
     }
 }
@@ -149,10 +160,11 @@ where
     V: crate::auth::session::login::PasswordVerifier,
     C: crate::auth::session::login::CredentialLookup,
 {
-    let secure = cookies::is_secure_trusted(
+    let secure = cookies::secure_for_sign_in(
         uri.scheme_str().unwrap_or("http"),
         &headers,
         state.trusted_proxies.is_trusted(peer.0),
+        &state.stated,
     );
     let budget = state.limits.check_login(&body.username);
     if !budget.allowed {
@@ -302,10 +314,11 @@ where
         .touch_login(&user.id, now)
         .await
         .map_err(|error| AuthRouteError::from(store_failure(&error, state.users.ids.as_ref())))?;
-    let secure = cookies::is_secure_trusted(
+    let secure = cookies::secure_for_sign_in(
         uri.scheme_str().unwrap_or("http"),
         &headers,
         state.trusted_proxies.is_trusted(peer.0),
+        &state.stated,
     );
     let mut rendered = login_handoff(
         &state.base_path,

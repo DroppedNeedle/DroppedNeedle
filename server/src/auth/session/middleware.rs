@@ -48,7 +48,10 @@
 //! each cookie-authenticated write and hands it to the origin check, which
 //! compares it with the browser's `Origin` or `Referer` only. A list that
 //! cannot be read counts as empty, which is the strict check, and the log
-//! says so once ([`StatedAddresses`]).
+//! says so once ([`StatedAddresses`]). The sign-in routes read the same
+//! list for one thing: a sign-in from a stated `https` address gets a
+//! `Secure` cookie (`cookies::secure_for_sign_in`). How a request arrived,
+//! and so HSTS, never depends on it.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;

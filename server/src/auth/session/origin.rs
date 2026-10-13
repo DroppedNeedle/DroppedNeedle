@@ -152,6 +152,11 @@ impl Origin {
         &self.host
     }
 
+    /// True for an `https` origin.
+    pub fn is_https(&self) -> bool {
+        self.scheme == Scheme::HTTPS.as_str()
+    }
+
     /// True when both are on the same host, whatever the scheme and port.
     pub fn same_host(&self, other: &Self) -> bool {
         self.host == other.host

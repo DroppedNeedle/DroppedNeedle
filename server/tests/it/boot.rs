@@ -235,6 +235,65 @@ async fn login_behind_a_trusted_tls_proxy_sets_a_secure_cookie() {
     running.shut_down().await;
 }
 
+/// A proxy that hides HTTPS sends no `X-Forwarded-Proto`, so the server
+/// takes every sign-in for plain HTTP. Once the admin states the `https`
+/// address, the answer to a sign-in from a page there sets a `Secure`
+/// cookie, and the answer to a sign-in from anywhere else sets the cookie
+/// it always did.
+///
+/// This is the server's side only. The two addresses share a host name, so
+/// they share a cookie, and a browser that holds the `Secure` one drops the
+/// plain cookie the http address is answered with: it cannot sign in there
+/// until it signs out at the https address.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_answer_to_a_login_from_a_stated_https_address_sets_a_secure_cookie() {
+    const HTTPS_PAGE: &str = "https://music.test";
+    const HTTP_PAGE: &str = "http://music.test:8080";
+    let dir = scratch("stated-https");
+    let (router, background) = build(config_in(&dir)).await.unwrap();
+    let running = start(router, background).await;
+    let admin = admin_cookie(running.address).await;
+    let direct = format!("http://{}", running.address);
+    let client = reqwest::Client::new();
+    let secure_from = |origin: Option<&'static str>| {
+        let mut login = client
+            .post(format!("{direct}/api/v3/auth/login"))
+            .header("content-type", "application/json")
+            .body(r#"{"username": "admin", "password": "correct horse battery"}"#);
+        if let Some(origin) = origin {
+            login = login.header("origin", origin);
+        }
+        async move {
+            let login = login.send().await.unwrap();
+            assert_eq!(login.status(), 200, "{origin:?}");
+            let cookie = login.headers()["set-cookie"].to_str().unwrap().to_owned();
+            assert!(cookie.contains("HttpOnly; SameSite=Lax"), "{cookie}");
+            cookie.contains("; Secure")
+        }
+    };
+
+    assert!(!secure_from(Some(HTTPS_PAGE)).await, "nothing stated yet");
+
+    let stated = client
+        .put(format!("{direct}/api/v3/settings/public-address"))
+        .header("origin", &direct)
+        .header("cookie", &admin)
+        .header("content-type", "application/json")
+        .body(serde_json::json!({"origins": [HTTPS_PAGE, HTTP_PAGE]}).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stated.status(), 200);
+
+    assert!(secure_from(Some(HTTPS_PAGE)).await);
+    // A browser on a plain-HTTP page would throw a `Secure` cookie away, so
+    // the answer never carries one there.
+    assert!(!secure_from(Some(HTTP_PAGE)).await);
+    assert!(!secure_from(Some("https://other.test")).await);
+    assert!(!secure_from(None).await);
+    running.shut_down().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn held_open_stream_does_not_keep_background_loops_running() {
     let dir = scratch("shutdown");

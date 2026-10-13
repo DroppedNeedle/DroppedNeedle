@@ -10,7 +10,9 @@
 //!
 //! - Cookie sessions are the browser mechanism: `droppedneedle_session`,
 //!   httpOnly, `SameSite=Lax`, `Secure` auto-marked on HTTPS (direct or via
-//!   `X-Forwarded-Proto`), `Path=<base>/api/v3`, 30-day max-age. Bearer tokens are
+//!   `X-Forwarded-Proto`) and for a sign-in whose `Origin` is an `https`
+//!   address saved in the `public_address` setting, never for any other
+//!   sign-in, `Path=<base>/api/v3`, 30-day max-age. Bearer tokens are
 //!   scoped to device sessions and scripts. Login takes
 //!   `transport: "cookie" (default) | "bearer"`; cookie mode returns no token
 //!   in the body (the v2 leak is closed), Bearer mode returns the token once and

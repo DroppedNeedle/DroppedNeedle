@@ -338,6 +338,9 @@ impl AuthSetup {
         };
         let links = sign_in_links(rows, crypto, config_store.clone());
         let limits = Arc::new(RateLimiter::new());
+        // One handle for the gate and every sign-in route: they read the
+        // same saved list and share its one warning.
+        let stated = StatedAddresses::from_config(config_store.clone());
         let native = NativeAuthState::new(
             auth.sessions.clone(),
             auth.hasher.clone(),
@@ -345,7 +348,8 @@ impl AuthSetup {
             users.clone(),
             base_path,
         )
-        .with_limits(limits.clone());
+        .with_limits(limits.clone())
+        .with_stated_addresses(stated.clone());
         let oidc = OidcRouteState::new(
             OidcLogin::new(
                 auth.federated.clone(),
@@ -357,7 +361,8 @@ impl AuthSetup {
             StoreOidcConfig(config_store.clone()),
             ids.clone(),
             base_path,
-        );
+        )
+        .with_stated_addresses(stated.clone());
         let jellyfin = JellyfinRouteState::new(
             auth.federated.clone(),
             jellyfin_http,
@@ -366,7 +371,8 @@ impl AuthSetup {
             ids.clone(),
             base_path,
         )
-        .with_limits(limits.clone());
+        .with_limits(limits.clone())
+        .with_stated_addresses(stated.clone());
         let plex = PlexRouteState::new(
             auth.federated.clone(),
             plex_tv,
@@ -374,12 +380,13 @@ impl AuthSetup {
             auth.issuer.clone(),
             ids,
             base_path,
-        );
+        )
+        .with_stated_addresses(stated.clone());
         Ok(Self {
             users,
             session_auth: SessionAuth::new(auth.sessions.clone(), base_path)
                 .with_limits(limits.clone())
-                .with_stated_addresses(StatedAddresses::from_config(config_store.clone())),
+                .with_stated_addresses(stated),
             limits,
             native,
             oidc,

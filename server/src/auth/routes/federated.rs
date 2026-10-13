@@ -27,6 +27,7 @@ use crate::auth::routes::native::PeerAddr;
 use crate::auth::session::cookies;
 use crate::auth::session::middleware::{CurrentSession, TrustedProxies};
 use crate::auth::session::rate_limit::{LOGIN_CLASS, RateLimiter, rate_limited_response};
+use crate::auth::session::stated::StatedAddresses;
 use crate::auth::session::tokens::{constant_time_eq, hash_token};
 use crate::auth::users::handlers::ValidJson;
 use crate::ids::IdGenerator;
@@ -137,6 +138,9 @@ pub struct OidcRouteState<S, I, T, E, N, F> {
     /// Proxies trusted to set `X-Forwarded-Proto` for the cookie `Secure`
     /// flag; loopback by default.
     pub trusted_proxies: TrustedProxies,
+    /// The saved public addresses: a sign-in from a stated `https` one gets
+    /// a `Secure` cookie. None is stated by default.
+    pub stated: StatedAddresses,
 }
 
 impl<S, I, T, E, N, F> OidcRouteState<S, I, T, E, N, F>
@@ -161,12 +165,19 @@ where
             ids,
             base_path: base_path.to_owned(),
             trusted_proxies: TrustedProxies::default(),
+            stated: StatedAddresses::default(),
         }
     }
 
     /// Trust the given proxies for the forwarded proto.
     pub fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
         self.trusted_proxies = trusted;
+        self
+    }
+
+    /// Mark the cookie `Secure` for a sign-in from a stated `https` address.
+    pub fn with_stated_addresses(mut self, stated: StatedAddresses) -> Self {
+        self.stated = stated;
         self
     }
 }
@@ -247,10 +258,11 @@ where
     let config = state.config.current().await;
     match state.login.build_authorize_url(&config).await {
         Ok((url, login_state)) => {
-            let secure = cookies::is_secure_trusted(
+            let secure = cookies::secure_for_sign_in(
                 uri.scheme_str().unwrap_or("http"),
                 &headers,
                 state.trusted_proxies.is_trusted(peer.0),
+                &state.stated,
             );
             let mut response = Json(OidcAuthorizeBody { authorize_url: url }).into_response();
             cookies::push_set_cookie(
@@ -372,10 +384,11 @@ where
             Ok(federated_login_response(
                 &Handoff {
                     base_path: &state.base_path,
-                    secure: cookies::is_secure_trusted(
+                    secure: cookies::secure_for_sign_in(
                         uri.scheme_str().unwrap_or("http"),
                         &headers,
                         state.trusted_proxies.is_trusted(peer.0),
+                        &state.stated,
                     ),
                     transport: body.transport,
                 },
@@ -403,6 +416,9 @@ pub struct JellyfinRouteState<S, I, L, N> {
     /// Proxies trusted to set `X-Forwarded-Proto` for the cookie `Secure`
     /// flag; loopback by default.
     pub trusted_proxies: TrustedProxies,
+    /// The saved public addresses: a sign-in from a stated `https` one gets
+    /// a `Secure` cookie. None is stated by default.
+    pub stated: StatedAddresses,
     /// Request limiter; each login also takes a per-username token, like
     /// local login, so one Jellyfin account cannot be guessed at full rate.
     pub limits: Arc<RateLimiter>,
@@ -429,6 +445,7 @@ where
             ids,
             base_path: base_path.to_owned(),
             trusted_proxies: TrustedProxies::default(),
+            stated: StatedAddresses::default(),
             limits: Arc::new(RateLimiter::new()),
         }
     }
@@ -436,6 +453,12 @@ where
     /// Trust the given proxies for the forwarded proto.
     pub fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
         self.trusted_proxies = trusted;
+        self
+    }
+
+    /// Mark the cookie `Secure` for a sign-in from a stated `https` address.
+    pub fn with_stated_addresses(mut self, stated: StatedAddresses) -> Self {
+        self.stated = stated;
         self
     }
 
@@ -503,10 +526,11 @@ where
             Ok(federated_login_response(
                 &Handoff {
                     base_path: &state.base_path,
-                    secure: cookies::is_secure_trusted(
+                    secure: cookies::secure_for_sign_in(
                         uri.scheme_str().unwrap_or("http"),
                         &headers,
                         state.trusted_proxies.is_trusted(peer.0),
+                        &state.stated,
                     ),
                     transport: body.transport,
                 },
@@ -534,6 +558,9 @@ pub struct PlexRouteState<S, C, L, N> {
     /// Proxies trusted to set `X-Forwarded-Proto` for the cookie `Secure`
     /// flag; loopback by default.
     pub trusted_proxies: TrustedProxies,
+    /// The saved public addresses: a sign-in from a stated `https` one gets
+    /// a `Secure` cookie. None is stated by default.
+    pub stated: StatedAddresses,
 }
 
 impl<S, C, L, N> PlexRouteState<S, C, L, N>
@@ -557,12 +584,19 @@ where
             ids,
             base_path: base_path.to_owned(),
             trusted_proxies: TrustedProxies::default(),
+            stated: StatedAddresses::default(),
         }
     }
 
     /// Trust the given proxies for the forwarded proto.
     pub fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
         self.trusted_proxies = trusted;
+        self
+    }
+
+    /// Mark the cookie `Secure` for a sign-in from a stated `https` address.
+    pub fn with_stated_addresses(mut self, stated: StatedAddresses) -> Self {
+        self.stated = stated;
         self
     }
 }
@@ -748,10 +782,11 @@ where
             .map_err(|cause| AuthRouteError::internal(&cause, state.ids.as_ref()))?;
             let handoff = Handoff {
                 base_path: &state.base_path,
-                secure: cookies::is_secure_trusted(
+                secure: cookies::secure_for_sign_in(
                     uri.scheme_str().unwrap_or("http"),
                     &headers,
                     state.trusted_proxies.is_trusted(peer.0),
+                    &state.stated,
                 ),
                 transport: body.transport,
             };
@@ -883,7 +918,7 @@ fn federated_unavailable(error: &FederatedError, ids: &dyn IdGenerator) -> AuthR
 /// How one login-shaped response hands the session over.
 struct Handoff<'a> {
     base_path: &'a str,
-    /// Mark the cookie `Secure`: direct TLS, or HTTPS at a trusted proxy.
+    /// Mark the cookie `Secure`, as `cookies::secure_for_sign_in` decided.
     secure: bool,
     transport: TransportDto,
 }
