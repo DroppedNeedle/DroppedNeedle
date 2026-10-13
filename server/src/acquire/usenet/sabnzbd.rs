@@ -18,8 +18,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 
 use super::policy::UsenetPolicy;
-use super::{BodyError, read_capped};
-use crate::http_client::transport_error;
+use crate::http_client::{BodyError, read_capped, transport_error};
 
 pub use super::sabnzbd_models::{
     AddResponse, Category, Config, History, HistorySlot, Misc, Queue, QueueSlot,

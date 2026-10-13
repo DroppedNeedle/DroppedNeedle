@@ -28,6 +28,8 @@ pub mod sabnzbd;
 pub mod sabnzbd_models;
 pub mod xml;
 
+use crate::http_client::{BodyError, read_capped};
+
 /// The most an indexer response may weigh before it is refused. A search
 /// page is at most a few megabytes even from an indexer that allows 1000
 /// results a page (about 3 KB an item with extended attributes), and a
@@ -35,41 +37,7 @@ pub mod xml;
 /// still stops an indexer from filling memory.
 pub const MAX_INDEXER_BODY_BYTES: usize = 10 * 1024 * 1024;
 
-/// Why a response body could not be read.
-pub(crate) enum BodyError {
-    /// The body is larger than the cap it was read under.
-    TooLarge,
-    /// The connection broke part-way. Never holds the request URL.
-    Transport(String),
-}
-
 /// Read an indexer body under [`MAX_INDEXER_BODY_BYTES`].
 pub(crate) async fn read_indexer_body(response: reqwest::Response) -> Result<Vec<u8>, BodyError> {
     read_capped(response, MAX_INDEXER_BODY_BYTES).await
-}
-
-/// Read a body, giving up as soon as it passes `cap` bytes, whether or
-/// not the server declared its length.
-pub(crate) async fn read_capped(
-    mut response: reqwest::Response,
-    cap: usize,
-) -> Result<Vec<u8>, BodyError> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > cap as u64)
-    {
-        return Err(BodyError::TooLarge);
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|error| BodyError::Transport(crate::http_client::transport_error(error)))?
-    {
-        if body.len() + chunk.len() > cap {
-            return Err(BodyError::TooLarge);
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
 }
