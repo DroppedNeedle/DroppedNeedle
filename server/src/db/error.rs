@@ -71,7 +71,7 @@ pub enum DbError {
         /// What the wait was for. Never SQL text, a host or a path.
         operation: String,
     },
-    /// Cooperative cancellation stopped a chunked background write.
+    /// Cooperative cancellation stopped a chunked bulk write.
     #[error("chunked write {operation} cancelled after {chunks} chunks")]
     Cancelled {
         /// Operation name for the log line.

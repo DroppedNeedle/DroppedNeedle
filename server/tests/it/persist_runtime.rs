@@ -1939,14 +1939,26 @@ async fn checkpoint_pass_that_loses_the_lock_leaves_the_hold_on() {
     let reader = fill_wal_behind_a_reader(&runtime).await;
 
     // A blocking checkpoint that waits for the reader keeps the checkpoint
-    // lock for as long as it waits.
+    // lock for as long as it waits. An attempt that lands while a pass
+    // below has the lock is itself answered with a log count of -1 and
+    // holds nothing, so it is made again until it gets the lock.
     let db = runtime.path().to_owned();
     let (done, finished) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let connection = rusqlite::Connection::open(&db).unwrap();
         connection.busy_timeout(Duration::from_secs(20)).unwrap();
-        let ran = connection.query_row("PRAGMA wal_checkpoint(RESTART)", [], |_row| Ok(()));
-        let _ = done.send(ran.is_ok());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let held_the_lock = loop {
+            let log_frames = connection
+                .query_row("PRAGMA wal_checkpoint(RESTART)", [], |row| {
+                    row.get::<_, i64>(1)
+                })
+                .unwrap();
+            if log_frames >= 0 || Instant::now() >= deadline {
+                break log_frames >= 0;
+            }
+        };
+        let _ = done.send(held_the_lock);
     });
     let service = runtime.checkpoint().clone();
     let lost = tokio::task::spawn_blocking(move || {
@@ -1973,7 +1985,7 @@ async fn checkpoint_pass_that_loses_the_lock_leaves_the_hold_on() {
     let checkpointed = finished
         .recv_timeout(Duration::from_secs(20))
         .expect("the blocking checkpoint ends once the reader is gone");
-    assert!(checkpointed);
+    assert!(checkpointed, "the blocking checkpoint never got the lock");
     runtime.shutdown().await;
 }
 
