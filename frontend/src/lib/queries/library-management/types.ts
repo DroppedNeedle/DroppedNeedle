@@ -449,9 +449,10 @@ export interface LibraryManagementRecoveryDiagnosticsResponse {
 
 export interface LibraryManagementLeftoverFile {
 	root_id: string;
+	// The library folder the file is in.
+	root_path: string;
 	// Path under the library folder.
 	rel_path: string;
-	modified_at: number;
 }
 
 export interface LibraryManagementNeedsAttentionBundle {

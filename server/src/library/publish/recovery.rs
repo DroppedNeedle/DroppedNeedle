@@ -96,10 +96,10 @@ pub fn open_recovery_connection(db_path: &Path) -> Result<Connection, PublishErr
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Leftover {
     pub root_id: String,
+    /// The root's folder.
+    pub root_path: String,
     /// Path under the root.
     pub rel_path: String,
-    /// When the file was last written, unix seconds.
-    pub modified_at: i64,
 }
 
 /// What one leftover pass found.
@@ -111,7 +111,8 @@ pub struct LeftoverReport {
     pub files: Vec<Leftover>,
 }
 
-/// A hidden name younger than this may belong to a publish in flight.
+/// A hidden name written, renamed or linked more recently than this may
+/// belong to a publish in flight.
 const LEFTOVER_MIN_AGE: Duration = Duration::from_secs(86_400);
 
 /// Hidden names one pass holds while it checks them against the journal.
@@ -133,6 +134,10 @@ pub fn find_leftovers(
     now: SystemTime,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<Option<LeftoverReport>, PublishError> {
+    use std::os::unix::fs::MetadataExt as _;
+    let now_secs = now
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs() as i64);
     let import_dir = format!("{}import", super::HIDDEN_PREFIX);
     let plugin_temp = format!("{}{}", super::HIDDEN_PREFIX, super::plugin_files::TEMP_TAG);
     // Keyed by the absolute path as the journal writes it.
@@ -159,8 +164,12 @@ pub fn find_leftovers(
                     }
                 };
                 // Neither call follows a symlink.
-                let Ok(kind) = entry.file_type() else {
-                    continue;
+                let kind = match entry.file_type() {
+                    Ok(kind) => kind,
+                    Err(error) => {
+                        tracing::warn!(path = %entry.path().display(), %error, "leftover pass could not tell what an entry is");
+                        continue;
+                    }
                 };
                 let name = entry.file_name();
                 let name = name.to_string_lossy();
@@ -177,13 +186,17 @@ pub fn find_leftovers(
                 {
                     continue;
                 }
-                let Ok(modified) = entry.metadata().and_then(|meta| meta.modified()) else {
-                    continue;
+                let meta = match entry.metadata() {
+                    Ok(meta) => meta,
+                    Err(error) => {
+                        tracing::warn!(path = %entry.path().display(), %error, "leftover pass could not read a hidden file's times");
+                        continue;
+                    }
                 };
-                if now
-                    .duration_since(modified)
-                    .is_ok_and(|age| age > LEFTOVER_MIN_AGE)
-                {
+                // A set-aside original keeps its old modified time; the
+                // change time moves when it is renamed or linked.
+                let touched = meta.mtime().max(meta.ctime());
+                if now_secs.saturating_sub(touched) > LEFTOVER_MIN_AGE.as_secs() as i64 {
                     let path = entry.path();
                     let rel_path = path
                         .strip_prefix(&root.dir)
@@ -194,10 +207,8 @@ pub fn find_leftovers(
                         path.to_string_lossy().into_owned(),
                         Leftover {
                             root_id: root.id.clone(),
+                            root_path: root.dir.to_string_lossy().into_owned(),
                             rel_path,
-                            modified_at: modified
-                                .duration_since(SystemTime::UNIX_EPOCH)
-                                .map_or(0, |since| since.as_secs() as i64),
                         },
                     );
                     if found.len() >= LEFTOVER_SCAN_MAX {
@@ -277,6 +288,14 @@ fn reconcile_with<C: Catalog>(
     catalog: &C,
     seams: Seams,
 ) -> Result<Vec<BundleRecovery>, PublishError> {
+    // Recovery commits a row and then moves the file it describes, so the
+    // row has to be on disk first.
+    let synchronous: i64 = conn.query_row("PRAGMA synchronous", [], |row| row.get(0))?;
+    if synchronous < 2 {
+        return Err(PublishError::Journal(
+            "recovery needs a connection from open_recovery_connection".into(),
+        ));
+    }
     startup_gate(conn)?;
     let bundles = JournalStore::new(conn).active_bundles()?;
     let mut results = Vec::new();

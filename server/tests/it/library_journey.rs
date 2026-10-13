@@ -1918,38 +1918,6 @@ async fn journal_on_a_removed_root_waits() {
         library.held_publish_bundles().expect("held reads"),
         vec!["bundle-1".to_owned()]
     );
-
-    // A write still retrying more than 24 hours after it was made is shown
-    // to the administrator, and goes on being retried. The journal keeps
-    // the day only, so yesterday's write is not yet provably that old.
-    let today = (std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_secs()
-        / 86_400) as i64;
-    let retrying = |created_day: i64| {
-        library
-            .scan_store
-            .execute_batch_for_tests(&format!(
-                "INSERT OR REPLACE INTO library_publish_operations (bundle_id, bundle_json, \
-                 created_day) VALUES ('bundle-1', '{{}}', {created_day});"
-            ))
-            .expect("operation seed");
-        droppedneedle::library::management::service::Management::new(&library)
-            .recovery_diagnostics()
-            .expect("diagnostics")
-            .retrying_bundles
-            .into_iter()
-            .map(|bundle| bundle.bundle_id)
-            .collect::<Vec<_>>()
-    };
-    assert!(retrying(today - 1).is_empty());
-    assert_eq!(retrying(today - 2), vec!["bundle-1".to_owned()]);
-    library.publish_tick().expect("maintenance still retries");
-    assert_eq!(
-        library.held_publish_bundles().expect("held reads"),
-        vec!["bundle-1".to_owned()]
-    );
 }
 
 /// Identification state is durable: a job the scan queued survives a

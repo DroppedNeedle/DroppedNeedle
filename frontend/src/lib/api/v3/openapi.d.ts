@@ -16545,14 +16545,11 @@ export interface components {
         };
         /** @description A hidden temporary file no write accounts for. */
         ManagementLeftoverFileView: {
-            /**
-             * Format: int64
-             * @description When the file was last written, unix seconds.
-             */
-            modified_at: number;
             /** @description Path under the library folder. */
             rel_path: string;
             root_id: string;
+            /** @description The library folder it is in. */
+            root_path: string;
         };
         /** @description One page of planned files. */
         ManagementPlanItemPage: {

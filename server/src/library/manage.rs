@@ -273,7 +273,7 @@ impl PublishCell {
             &self.db_path,
             SqliteCatalog,
             FsSpaceProbe::new(space_roots.clone()),
-            today_day(),
+            today_day,
         )?;
         self.cell = Some(OpenPublish {
             sandbox,

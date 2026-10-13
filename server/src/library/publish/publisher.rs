@@ -400,6 +400,9 @@ pub struct Publisher<C: Catalog, P: SpaceProbe> {
     place_seams: super::place::Seams,
     before_place: Option<BeforePlace>,
     before_set_aside: Option<BeforePlace>,
+    /// The unix day, read at the start of each publish: a publisher stays
+    /// open for as long as the root set does.
+    clock: Box<dyn Fn() -> i64 + Send>,
     today_day: i64,
     undo_retention_days: i64,
 }
@@ -422,7 +425,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         db_path: &Path,
         catalog: C,
         space: P,
-        today_day: i64,
+        clock: impl Fn() -> i64 + Send + 'static,
     ) -> Result<Self, PublishError> {
         let conn = crate::db::open_journal_connection(db_path)
             .map_err(|error| PublishError::Store(error.to_string()))?;
@@ -436,7 +439,8 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             place_seams: super::place::Seams::default(),
             before_place: None,
             before_set_aside: None,
-            today_day,
+            today_day: clock(),
+            clock: Box::new(clock),
             undo_retention_days: super::DEFAULT_UNDO_RETENTION_DAYS as i64,
         })
     }
@@ -492,6 +496,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         docs: &BTreeMap<String, TagDocument>,
     ) -> Result<PublishOutcome, PublishError> {
         let bundle = &sealed.bundle;
+        self.today_day = (self.clock)();
         self.run_pregates(sealed, live)?;
         // Durable source operation for undo: recorded after the gates
         // pass, before the first byte stages. Rows for operations that

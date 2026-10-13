@@ -545,10 +545,10 @@ pub struct ManagementRecoveryView {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ManagementLeftoverFileView {
     pub root_id: String,
+    /// The library folder it is in.
+    pub root_path: String,
     /// Path under the library folder.
     pub rel_path: String,
-    /// When the file was last written, unix seconds.
-    pub modified_at: i64,
 }
 
 impl From<AttentionBundle> for ManagementAttentionBundleView {
@@ -586,8 +586,8 @@ impl From<Diagnostics> for ManagementRecoveryView {
                 .into_iter()
                 .map(|file| ManagementLeftoverFileView {
                     root_id: file.root_id,
+                    root_path: file.root_path,
                     rel_path: file.rel_path,
-                    modified_at: file.modified_at,
                 })
                 .collect(),
         }

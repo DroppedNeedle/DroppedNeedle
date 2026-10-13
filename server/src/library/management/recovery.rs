@@ -84,6 +84,30 @@ const RESOLVED_NOTE: &str = "Marked as handled: every file was checked in place.
      or in the library catalog was changed. If the library does not list these files, rescan \
      their folder; leftover temporary copies stay where they are until you remove them.";
 
+/// Writes made at least [`RETRYING_AFTER_DAYS`] before `today` that
+/// recovery has still neither finished nor undone. Each has been through
+/// recovery at startup and on every maintenance tick since. A committed
+/// write whose cleanup is pending is finished and counted elsewhere, so
+/// it is left out.
+pub fn retrying_bundles(
+    conn: &rusqlite::Connection,
+    today: i64,
+) -> rusqlite::Result<Vec<AttentionBundle>> {
+    let mut retrying = conn.prepare(
+        "SELECT bundle_id, COUNT(*), GROUP_CONCAT(dest_rel, char(10)) \
+         FROM library_publish_journal \
+         WHERE state IN ('prepared', 'staged', 'published', 'committed') AND bundle_id IN \
+         (SELECT bundle_id FROM library_publish_operations WHERE created_day <= ?1) \
+         GROUP BY bundle_id ORDER BY bundle_id LIMIT ?2",
+    )?;
+    retrying
+        .query_map(
+            params![today - RETRYING_AFTER_DAYS, ATTENTION_LIST_MAX],
+            attention_bundle,
+        )?
+        .collect()
+}
+
 impl Management {
     /// What the publish journal holds. Blocking.
     pub fn recovery_diagnostics(&self) -> Result<Diagnostics, ManagementError> {
@@ -131,20 +155,7 @@ impl Management {
             for row in bundles.query_map(params![ATTENTION_LIST_MAX], attention_bundle)? {
                 diagnostics.needs_attention_bundles.push(row?);
             }
-            // An open write this old has been through recovery at startup
-            // and on every maintenance tick since, and none settled it.
-            let mut retrying = conn.prepare(&format!(
-                "SELECT bundle_id, COUNT(*), GROUP_CONCAT(dest_rel, char(10)) \
-                 FROM library_publish_journal WHERE {open} AND bundle_id IN \
-                 (SELECT bundle_id FROM library_publish_operations WHERE created_day <= ?1) \
-                 GROUP BY bundle_id ORDER BY bundle_id LIMIT ?2"
-            ))?;
-            for row in retrying.query_map(
-                params![today_day() - RETRYING_AFTER_DAYS, ATTENTION_LIST_MAX],
-                attention_bundle,
-            )? {
-                diagnostics.retrying_bundles.push(row?);
-            }
+            diagnostics.retrying_bundles = retrying_bundles(conn, today_day())?;
             Ok(diagnostics)
         })
         .map(|mut diagnostics| {

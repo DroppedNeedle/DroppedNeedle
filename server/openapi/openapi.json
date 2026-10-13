@@ -38419,21 +38419,20 @@
         "description": "A hidden temporary file no write accounts for.",
         "required": [
           "root_id",
-          "rel_path",
-          "modified_at"
+          "root_path",
+          "rel_path"
         ],
         "properties": {
-          "modified_at": {
-            "type": "integer",
-            "format": "int64",
-            "description": "When the file was last written, unix seconds."
-          },
           "rel_path": {
             "type": "string",
             "description": "Path under the library folder."
           },
           "root_id": {
             "type": "string"
+          },
+          "root_path": {
+            "type": "string",
+            "description": "The library folder it is in."
           }
         }
       },

@@ -94,7 +94,7 @@ fn scratch_db(dir: &std::path::Path) -> PathBuf {
 }
 
 fn open_db(fix: &Fixture) -> Connection {
-    droppedneedle::db::open_connection(&fix.db_path).unwrap()
+    publish::recovery::open_recovery_connection(&fix.db_path).unwrap()
 }
 
 /// Fixed free-space probe so disk preflight pins exact values.
@@ -271,7 +271,7 @@ fn open_publisher(fix: &Fixture) -> Publisher<SqliteCatalog, FixedSpace> {
         &fix.db_path,
         SqliteCatalog,
         FixedSpace(u64::MAX),
-        50,
+        || 50,
     )
     .unwrap()
 }
@@ -612,18 +612,63 @@ fn same_path_crash_keeps_original_until_commit() {
     );
 }
 
-/// Journal rows are synced to disk before the file moves they describe,
-/// on the publisher's connection and on recovery's.
+/// Journal rows are synced to disk before the file moves they describe:
+/// the publisher's connection syncs every commit, and recovery refuses a
+/// connection that does not.
 #[test]
 fn journal_connections_sync_every_commit() {
     let fix = fixture("journal-full-sync");
-    let synchronous = |conn: &Connection| -> i64 {
-        conn.query_row("PRAGMA synchronous", [], |row| row.get(0))
+    let synchronous: i64 = open_publisher(&fix)
+        .connection()
+        .query_row("PRAGMA synchronous", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(synchronous, 2);
+    let mut unsynced = droppedneedle::db::open_connection(&fix.db_path).unwrap();
+    assert!(reconcile(&mut unsynced, &fix.sandbox, &SqliteCatalog).is_err());
+}
+
+/// A publisher stays open for days. Each write is dated the day it is
+/// made, so one made today is never listed as retried for more than a
+/// day; one still unsettled two days on is. A committed write whose
+/// cleanup is pending is finished and is not listed.
+#[test]
+fn a_write_counts_as_stuck_from_the_day_it_was_made() {
+    use droppedneedle::library::management::recovery::retrying_bundles;
+    use std::sync::atomic::{AtomicI64, Ordering};
+
+    let fix = fixture("stuck-from-its-own-day");
+    let day = std::sync::Arc::new(AtomicI64::new(50));
+    let clock = std::sync::Arc::clone(&day);
+    let mut publisher = Publisher::open(
+        fix.sandbox.clone(),
+        &fix.db_path,
+        SqliteCatalog,
+        FixedSpace(u64::MAX),
+        move || clock.load(Ordering::Relaxed),
+    )
+    .unwrap();
+    day.store(53, Ordering::Relaxed);
+    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let (sealed, live) = seal(&bundle);
+    publisher.set_crash_point(Some(CrashPoint::AfterStage));
+    publisher.publish(&sealed, &live, &docs).unwrap_err();
+
+    let conn = open_db(&fix);
+    let stuck = |today: i64| -> Vec<String> {
+        retrying_bundles(&conn, today)
             .unwrap()
+            .into_iter()
+            .map(|bundle| bundle.bundle_id)
+            .collect()
     };
-    assert_eq!(synchronous(open_publisher(&fix).connection()), 2);
-    let recovery = publish::recovery::open_recovery_connection(&fix.db_path).unwrap();
-    assert_eq!(synchronous(&recovery), 2);
+    assert!(stuck(54).is_empty(), "made yesterday: not yet a day old");
+    assert_eq!(stuck(55), vec!["bundle-1".to_string()]);
+    conn.execute(
+        "UPDATE library_publish_journal SET state = 'cleanup_pending'",
+        [],
+    )
+    .unwrap();
+    assert!(stuck(55).is_empty(), "a committed write is finished");
 }
 
 /// A set-aside original whose journal rows are gone is reported once it
@@ -640,6 +685,14 @@ fn leftover_pass_reports_old_unjournaled_hidden_files_and_keeps_them() {
     drop(publisher);
     let hidden = hidden_leftovers(&fix.dir);
     assert!(!hidden.is_empty(), "the crash left set-aside originals");
+    // Names other cleanups own are never reported.
+    let music = fix.dir.join("music");
+    let import = music.join(format!("{}import/task", publish::HIDDEN_PREFIX));
+    std::fs::create_dir_all(&import).unwrap();
+    std::fs::write(import.join("01.flac"), b"staged").unwrap();
+    std::fs::create_dir_all(music.join(publish::place::PROBE_DIR)).unwrap();
+    let plugin_temp = format!("{}plugin-1", publish::HIDDEN_PREFIX);
+    std::fs::write(music.join("staging").join(plugin_temp), b"temp").unwrap();
 
     let conn = open_db(&fix);
     let roots = [Root {
