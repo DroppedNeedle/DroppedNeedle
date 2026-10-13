@@ -947,3 +947,846 @@ async fn plays_from_every_player_are_filed_under_the_track() {
 
     rig.stop().await;
 }
+
+// ---------------------------------------------------------------------------
+// Older plays: rows that name no track, album or artist
+// ---------------------------------------------------------------------------
+
+/// One play row as an older version stored it: names, and no catalog id.
+#[derive(Default)]
+struct OldPlay<'a> {
+    id: &'a str,
+    user: &'a str,
+    track: &'a str,
+    artist: &'a str,
+    album: Option<&'a str>,
+    recording: Option<&'a str>,
+    group: Option<&'a str>,
+    length_ms: Option<i64>,
+    source: Option<&'a str>,
+    at: &'a str,
+}
+
+fn store_old_play(db: &rusqlite::Connection, play: &OldPlay<'_>) {
+    db.execute(
+        "INSERT INTO library_play_history (id, user_id, track_name, artist_name, album_name, \
+         recording_mbid, release_group_mbid, duration_ms, source, played_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        rusqlite::params![
+            play.id,
+            play.user,
+            play.track,
+            play.artist,
+            play.album,
+            play.recording,
+            play.group,
+            play.length_ms,
+            play.source,
+            play.at,
+        ],
+    )
+    .expect("the old play is stored");
+}
+
+/// The track, album and artist a play row is filed under, empty when not.
+fn filed(db: &rusqlite::Connection, play_id: &str) -> (String, String, String) {
+    db.query_row(
+        "SELECT COALESCE(local_track_id, ''), COALESCE(local_album_id, ''), \
+         COALESCE(local_artist_id, '') FROM library_play_history WHERE id = ?1",
+        [play_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )
+    .expect("the play row is there")
+}
+
+/// Plays stored without a track are filed by the next repair after a scan
+/// and then count in player apps: by names when they were plays of this
+/// library, by recording id when they came through a connected server. A
+/// play of the library with a recording id and names the catalog lacks,
+/// and a connected server's play with no recording id, stay as they were.
+/// Each
+/// row stays with its listener, and the report an administrator reads
+/// counts every row once.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn older_plays_are_filed_and_count_in_player_apps() {
+    const ONE: &str = "0a8e8d55-4b83-4f8a-9732-fbb5ded9f344";
+    const TEARDROP: &str = "9f9cf187-d6f9-437f-9d98-d59cdbd52757";
+    let rig = CompatApp::start("playback-older-plays").await;
+    let app = &rig.app;
+    let subsonic = rig.subsonic_auth("symfonium");
+    let jellyfin_value = rig.jellyfin_auth();
+    let jellyfin = [("X-Emby-Authorization", jellyfin_value.as_str())];
+    let user_id = |name: &str| -> String {
+        app.db()
+            .query_row(
+                "SELECT id FROM auth_users WHERE username = ?1",
+                [name],
+                |row| row.get(0),
+            )
+            .expect("the user's id")
+    };
+    let alice = user_id(PLAYER);
+    app.login_user("bob").await;
+    let bob = user_id("bob");
+
+    let one = catalog_ids(app, "One");
+    let airbag = catalog_ids(app, "Airbag");
+    let teardrop = catalog_ids(app, "Teardrop");
+    let db = app.db();
+    for (track, recording) in [(&one.0, ONE), (&teardrop.0, TEARDROP)] {
+        db.execute(
+            "INSERT INTO local_track_external_identities \
+             (local_track_id, recording_mbid, decision_source, selected_at) \
+             VALUES (?1, ?2, 'manual', 1)",
+            [track.as_str(), recording],
+        )
+        .expect("the track has an accepted recording");
+    }
+    let airbag_ms: i64 = db
+        .query_row(
+            "SELECT CAST(duration_seconds * 1000 AS INTEGER) FROM local_tracks WHERE id = ?1",
+            [airbag.0.as_str()],
+            |row| row.get(0),
+        )
+        .expect("the track has a length");
+    let old = [
+        // A recording id held by one track, under a title the catalog
+        // does not have: the recording files no play of the library.
+        OldPlay {
+            id: "old-recording",
+            user: &alice,
+            track: "One (Remastered)",
+            artist: "U2",
+            recording: Some(ONE),
+            source: Some("local"),
+            at: "2026-01-01T10:00:00+00:00",
+            ..OldPlay::default()
+        },
+        // Names and a length, no source.
+        OldPlay {
+            id: "old-names",
+            user: &alice,
+            track: "AIRBAG",
+            artist: "Radiohead",
+            album: Some("OK Computer"),
+            length_ms: Some(airbag_ms + 900),
+            at: "2026-01-02T10:00:00+00:00",
+            ..OldPlay::default()
+        },
+        // The same names from a connected server: not a clear match.
+        OldPlay {
+            id: "old-remote-names",
+            user: &alice,
+            track: "Airbag",
+            artist: "Radiohead",
+            album: Some("OK Computer"),
+            length_ms: Some(airbag_ms),
+            source: Some("jellyfin"),
+            at: "2026-01-03T10:00:00+00:00",
+            ..OldPlay::default()
+        },
+        // A connected server's play of a recording the library holds once.
+        OldPlay {
+            id: "old-remote-recording",
+            user: &alice,
+            track: "Teardrop",
+            artist: "Massive Attack",
+            recording: Some(TEARDROP),
+            source: Some("plex"),
+            at: "2026-01-04T10:00:00+00:00",
+            ..OldPlay::default()
+        },
+        // Another listener's play of a track the first also played.
+        OldPlay {
+            id: "old-other-listener",
+            user: &bob,
+            track: "One",
+            artist: "U2",
+            album: Some("Achtung Baby"),
+            recording: Some(ONE),
+            at: "2026-01-05T10:00:00+00:00",
+            ..OldPlay::default()
+        },
+    ];
+    for play in &old {
+        store_old_play(&db, play);
+    }
+    drop(db);
+
+    app.scan_library().await;
+    let job: String = app
+        .until("the older plays are filed", || async {
+            app.db()
+                .query_row(
+                    "SELECT j.id FROM library_operation_jobs j \
+                     JOIN library_repair_snapshots s ON s.job_id = j.id \
+                     WHERE json_extract(s.scope_json, '$.purpose') = 'play_history_filing' \
+                     AND j.state = 'succeeded'",
+                    [],
+                    |row| row.get(0),
+                )
+                .ok()
+        })
+        .await;
+
+    let db = app.db();
+    assert_eq!(filed(&db, "old-names"), airbag);
+    assert_eq!(filed(&db, "old-remote-recording"), teardrop);
+    assert_eq!(filed(&db, "old-other-listener"), one);
+    let empty = (String::new(), String::new(), String::new());
+    assert_eq!(filed(&db, "old-remote-names"), empty);
+    assert_eq!(filed(&db, "old-recording"), empty);
+    let untouched: Vec<(String, String, String)> = db
+        .prepare(
+            "SELECT id, user_id, track_name || '|' || played_at FROM library_play_history \
+             ORDER BY id",
+        )
+        .expect("history query")
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .expect("history reads")
+        .collect::<Result<_, _>>()
+        .expect("history rows");
+    let stored: Vec<(String, String, String)> = {
+        let mut rows: Vec<_> = old
+            .iter()
+            .map(|play| {
+                (
+                    play.id.to_owned(),
+                    play.user.to_owned(),
+                    format!("{}|{}", play.track, play.at),
+                )
+            })
+            .collect();
+        rows.sort();
+        rows
+    };
+    assert_eq!(untouched, stored, "no row is added, renamed or moved");
+    drop(db);
+
+    // An album whose only plays are older rows is in the app lists.
+    let (status, recent) = app
+        .call(
+            "GET",
+            &rest("getAlbumList2?type=recent", &subsonic),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{recent}");
+    let names: Vec<&str> = recent["subsonic-response"]["albumList2"]["album"]
+        .as_array()
+        .expect("recent albums")
+        .iter()
+        .map(|album| album["name"].as_str().expect("album name"))
+        .collect();
+    assert_eq!(names, ["Mezzanine", "OK Computer"]);
+    let (status, sorted) = app
+        .call(
+            "GET",
+            "/jellyfin/Items?IncludeItemTypes=MusicAlbum&SortBy=DatePlayed&SortOrder=Descending",
+            &jellyfin,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{sorted}");
+    let first: Vec<&str> = sorted["Items"]
+        .as_array()
+        .expect("albums")
+        .iter()
+        .take(2)
+        .map(|album| album["Name"].as_str().expect("album name"))
+        .collect();
+    assert_eq!(first, ["Mezzanine", "OK Computer"]);
+    let (_, song) = app
+        .call(
+            "GET",
+            &rest(&format!("getSong?id=tr-{}", one.0), &subsonic),
+            &[],
+            None,
+        )
+        .await;
+    assert!(
+        song["subsonic-response"]["song"].get("playCount").is_none(),
+        "the other listener's play is not counted: {song}"
+    );
+
+    // What an administrator reads about the job.
+    let admin = app.login_admin().await;
+    let (status, report) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/operations/{job}"),
+            &[("authorization", admin.as_str())],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    let summary = &report["repair_summary"];
+    assert_eq!(summary["purpose"], "play_history_filing", "{report}");
+    assert_eq!(
+        summary["counts_by_finding"],
+        json!({"filed": 3, "left": 2}),
+        "{report}"
+    );
+    assert_eq!(
+        summary["counts_by_reason"],
+        json!({
+            "RECORDING": 1,
+            "NAMES": 2,
+            "REMOTE_WITHOUT_RECORDING": 1,
+            "NAMES_WITHOUT_ALBUM_OR_LENGTH": 1,
+        }),
+        "{report}"
+    );
+
+    // A play made now through a connected server or as a preview follows
+    // the same rule as it is written: filed by a recording the library
+    // holds once, and kept by name otherwise.
+    let (status, signed_in) = app
+        .call(
+            "POST",
+            "/api/v3/auth/login",
+            &[],
+            Some(json!({
+                "username": PLAYER,
+                "password": format!("{PLAYER}-password-1234"),
+                "transport": "bearer",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{signed_in}");
+    let web_value = format!("Bearer {}", signed_in["token"].as_str().expect("token"));
+    let web = [("authorization", web_value.as_str())];
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
+    for play in [
+        json!({
+            "track_name": "Teardrop (Live)",
+            "artist_name": "Massive Attack",
+            "timestamp": now - 120,
+            "mbid": TEARDROP,
+            "source": "Plex",
+        }),
+        json!({
+            "track_name": "Paranoid Android",
+            "artist_name": "Radiohead",
+            "album_name": "OK Computer",
+            "timestamp": now - 60,
+            "source": "youtube",
+        }),
+    ] {
+        let (status, body) = app
+            .call("POST", "/api/v3/scrobble/submit", &web, Some(play))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    assert_eq!(
+        filed_under(app, &alice, "Teardrop (Live)"),
+        vec![teardrop.clone()]
+    );
+    assert_eq!(
+        filed_under(app, &alice, "Paranoid Android"),
+        vec![empty.clone()]
+    );
+
+    rig.stop().await;
+}
+
+/// A small catalog for the filing rules: one artist with two albums, each
+/// matched to a release group, and a guest artist.
+const FILING_CATALOG: &str = "
+    INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at)
+    VALUES ('a1', 'Artist', 'artist', 'group', 1, 1), ('a2', 'Guest', 'guest', 'group', 1, 1);
+    INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, album_artist_id,
+        grouping_source, created_at, updated_at)
+    VALUES ('al1', 'r1', 'g1', 'First', 'first', 'a1', 'automatic', 1, 1),
+           ('al2', 'r1', 'g2', 'Second', 'second', 'a1', 'automatic', 1, 1);
+    INSERT INTO local_album_external_identities
+        (local_album_id, release_group_mbid, decision_source, selected_at)
+    VALUES ('al1', '00000000-0000-4000-8000-0000000000a1', 'manual', 1),
+           ('al2', '00000000-0000-4000-8000-0000000000a2', 'manual', 1);
+    INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, path_hash,
+        file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, artist_name,
+        artist_name_folded, album_title, album_title_folded, duration_seconds,
+        embedded_recording_mbid, availability, file_format, ingest_source, imported_at,
+        membership_source)
+    VALUES
+      ('t1', 'al1', 'r1', '/m/1', '1', 'h1', 1, 1, 's', 'Alpha', 'alpha', 'Artist', 'artist',
+       'First', 'first', 200.0, NULL, 'indexed', 'flac', 'scan', 1, 'automatic'),
+      ('t2', 'al1', 'r1', '/m/2', '2', 'h2', 1, 1, 's', 'Beta', 'beta', 'Artist', 'artist',
+       'First', 'first', 180.0, '00000000-0000-4000-8000-000000000002', 'indexed', 'flac',
+       'scan', 1, 'automatic'),
+      ('t3', 'al1', 'r1', '/m/3', '3', 'h3', 1, 1, 's', 'Gamma', 'gamma', 'Artist', 'artist',
+       'First', 'first', 190.0, '00000000-0000-4000-8000-000000000003', 'indexed', 'flac',
+       'scan', 1, 'automatic'),
+      ('t4', 'al1', 'r1', '/m/4', '4', 'h4', 1, 1, 's', 'Shared', 'shared', 'Artist', 'artist',
+       'First', 'first', 210.0, '00000000-0000-4000-8000-000000000005', 'indexed', 'flac',
+       'scan', 1, 'automatic'),
+      ('t5', 'al2', 'r1', '/m/5', '5', 'h5', 1, 1, 's', 'Shared', 'shared', 'Artist', 'artist',
+       'Second', 'second', 210.0, '00000000-0000-4000-8000-000000000005', 'indexed', 'flac',
+       'scan', 1, 'automatic'),
+      ('t6', 'al2', 'r1', '/m/6', '6', 'h6', 1, 1, 's', 'Twin', 'twin', 'Artist', 'artist',
+       'Second', 'second', 100.0, NULL, 'indexed', 'flac', 'scan', 1, 'automatic'),
+      ('t7', 'al2', 'r1', '/m/7', '7', 'h7', 1, 1, 's', 'Twin', 'twin', 'Artist', 'artist',
+       'Second', 'second', 100.0, NULL, 'indexed', 'flac', 'scan', 1, 'automatic'),
+      ('t8', 'al2', 'r1', '/m/8', '8', 'h8', 1, 1, 's', 'Lost', 'lost', 'Artist', 'artist',
+       'Second', 'second', 120.0, '00000000-0000-4000-8000-000000000008', 'missing', 'flac',
+       'scan', 1, 'automatic'),
+      ('t9', 'al2', 'r1', '/m/9', '9', 'h9', 1, 1, 's', 'Other Take', 'other take', 'Artist',
+       'artist', 'Second', 'second', 130.0, '00000000-0000-4000-8000-000000000009', 'indexed',
+       'flac', 'scan', 1, 'automatic'),
+      ('t10', 'al1', 'r1', '/m/10', '10', 'h10', 1, 1, 's', 'Song', 'song', 'Artist', 'artist',
+       'First', 'first', 215.0, NULL, 'indexed', 'flac', 'scan', 1, 'automatic'),
+      ('t11', 'al2', 'r1', '/m/11', '11', 'h11', 1, 1, 's', 'Song', 'song', 'Artist', 'artist',
+       'Second', 'second', 215.0, '00000000-0000-4000-8000-000000000010', 'indexed', 'flac',
+       'scan', 1, 'automatic'),
+      ('t12', 'al1', 'r1', '/m/12', '12', 'h12', 1, 1, 's', 'Tune', 'tune', 'Artist', 'artist',
+       'First', 'first', 215.0, '00000000-0000-4000-8000-000000000012', 'indexed', 'flac',
+       'scan', 1, 'automatic'),
+      ('t13', 'al2', 'r1', '/m/13', '13', 'h13', 1, 1, 's', 'Tune', 'tune', 'Artist', 'artist',
+       'Second', 'second', 215.0, '00000000-0000-4000-8000-000000000012', 'indexed', 'flac',
+       'scan', 1, 'automatic'),
+      ('t14', 'al1', 'r1', '/m/14', '14', 'h14', 1, 1, 's', 'Dup', 'dup', 'Artist', 'artist',
+       'First', 'first', 90.0, '00000000-0000-4000-8000-000000000014', 'indexed', 'flac',
+       'scan', 1, 'automatic'),
+      ('t15', 'al1', 'r1', '/m/15', '15', 'h15', 1, 1, 's', 'Dup', 'dup', 'Artist', 'artist',
+       'First', 'first', 90.0, '00000000-0000-4000-8000-000000000014', 'indexed', 'flac',
+       'scan', 1, 'automatic'),
+      ('t16', 'al1', 'r1', '/m/16', '16', 'h16', 1, 1, 's', 'Hidden', 'hidden', 'Artist',
+       'artist', 'First', 'first', 95.0, '00000000-0000-4000-8000-000000000016', 'excluded',
+       'flac', 'scan', 1, 'automatic');
+    INSERT INTO local_track_external_identities
+        (local_track_id, recording_mbid, decision_source, selected_at)
+    VALUES ('t1', '00000000-0000-4000-8000-000000000001', 'manual', 1),
+           ('t3', '00000000-0000-4000-8000-000000000004', 'manual', 1),
+           ('t12', '00000000-0000-4000-8000-000000000013', 'manual', 1);
+    INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role)
+    VALUES ('t1', 0, 'a2', 'primary'), ('t1', 1, 'a1', 'primary');
+";
+
+/// The filing rules, one row each, and the job that applies them in
+/// batches. A play of the library is filed by its names and never by its
+/// recording id, a play through another server by its recording id and
+/// never by its names. A row is filed only when it fits exactly one
+/// playable track,
+/// under that track, its album and its artist together; every other row
+/// is left as it was. The job is stopped after every batch and picked up
+/// on a new connection: it still looks at each row once, and its report
+/// counts every row it changed and every row it left.
+#[test]
+fn older_plays_are_filed_only_on_a_clear_match() {
+    use droppedneedle::library::repairs::plays;
+
+    let recording = |n: u8| format!("00000000-0000-4000-8000-{n:012}");
+    let (r1, r2, r3, r5, r8) = (
+        recording(1),
+        recording(2),
+        recording(3),
+        recording(5),
+        recording(8),
+    );
+    let (r10, r12, r14, r16) = (recording(10), recording(12), recording(14), recording(16));
+    let r1_upper = r1.to_uppercase();
+    let other = recording(99);
+    let group2 = "00000000-0000-4000-8000-0000000000a2";
+    let named = |id, track, album, length_ms| OldPlay {
+        id,
+        user: "u1",
+        track,
+        artist: "Artist",
+        album,
+        length_ms,
+        at: "2026-01-01T00:00:00+00:00",
+        ..OldPlay::default()
+    };
+    let recorded = |id, recording| OldPlay {
+        recording: Some(recording),
+        ..named(id, "Some title", None, None)
+    };
+    // Each row with the track it must be filed under, and the reason the
+    // report gives.
+    let cases: Vec<(OldPlay<'_>, &str, &str)> = vec![
+        // A recording id alone files no play of the library: not one a
+        // single track holds as its accepted recording,
+        (recorded("p01", &r1), "", "NAMES_WITHOUT_ALBUM_OR_LENGTH"),
+        // nor one from a tag,
+        (recorded("p02", &r2), "", "NAMES_WITHOUT_ALBUM_OR_LENGTH"),
+        (recorded("p29", &r3), "", "NAMES_WITHOUT_ALBUM_OR_LENGTH"),
+        // nor with an album name beside a title the catalog lacks,
+        (
+            OldPlay {
+                album: Some("First"),
+                ..recorded("p03", &r3)
+            },
+            "",
+            "NO_MATCH",
+        ),
+        (
+            OldPlay {
+                album: Some("First"),
+                ..recorded("p05", &r5)
+            },
+            "",
+            "NO_MATCH",
+        ),
+        (
+            OldPlay {
+                album: Some("First"),
+                ..recorded("p25", &r14)
+            },
+            "",
+            "NO_MATCH",
+        ),
+        // nor with a release group.
+        (
+            OldPlay {
+                group: Some(group2),
+                ..recorded("p04", &r5)
+            },
+            "",
+            "NAMES_WITHOUT_ALBUM_OR_LENGTH",
+        ),
+        (
+            OldPlay {
+                group: Some(group2),
+                album: Some("First"),
+                ..recorded("p24", &r5)
+            },
+            "",
+            "NO_MATCH",
+        ),
+        (recorded("p06", &r5), "", "NAMES_WITHOUT_ALBUM_OR_LENGTH"),
+        // The album is spelled as no album in the catalog is, and another
+        // album holds the recording.
+        (
+            OldPlay {
+                recording: Some(&r10),
+                ..named("p30", "Song", Some("Elsewhere"), None)
+            },
+            "",
+            "NO_MATCH",
+        ),
+        // The row names a deluxe edition by name and release group; the
+        // plain edition, matched to that group, holds the recording.
+        (
+            OldPlay {
+                recording: Some(&r10),
+                group: Some(group2),
+                ..named("p31", "Song", Some("Second (Deluxe Edition)"), None)
+            },
+            "",
+            "NO_MATCH",
+        ),
+        // The row names a remaster of the song on the album whose track
+        // holds the recording.
+        (
+            OldPlay {
+                recording: Some(&r10),
+                ..named("p32", "Song (2011 Remaster)", Some("Second"), None)
+            },
+            "",
+            "NO_MATCH",
+        ),
+        // Names that fit two tracks, with or without a recording id that
+        // a third track holds.
+        (
+            named("p08", "Twin", Some("Second"), None),
+            "",
+            "SEVERAL_MATCHES",
+        ),
+        (
+            OldPlay {
+                recording: Some(&r10),
+                ..named("p28", "Twin", Some("Second"), None)
+            },
+            "",
+            "SEVERAL_MATCHES",
+        ),
+        // Names that fit one track, with a length within two seconds,
+        (
+            named("p09", "Beta", Some("First"), Some(181_500)),
+            "t2",
+            "NAMES",
+        ),
+        // and with a length further off.
+        (
+            named("p10", "Beta", Some("First"), Some(190_000)),
+            "",
+            "LENGTH_DISAGREES",
+        ),
+        // No album name: the length has to agree,
+        (named("p11", "Alpha", None, Some(200_000)), "t1", "NAMES"),
+        // and a row with neither is left.
+        (
+            named("p12", "Alpha", None, None),
+            "",
+            "NAMES_WITHOUT_ALBUM_OR_LENGTH",
+        ),
+        // The same song on two albums: the names say which, whichever
+        // track is known to hold the row's recording.
+        (
+            OldPlay {
+                recording: Some(&r10),
+                ..named("p20", "Song", Some("First"), Some(215_000))
+            },
+            "t10",
+            "NAMES",
+        ),
+        (
+            OldPlay {
+                recording: Some(&r10),
+                ..named("p21", "Song", Some("Second"), None)
+            },
+            "t11",
+            "NAMES",
+        ),
+        // The row's recording is the track's tag, beside a different
+        // accepted one: the track is not known only as other recordings.
+        (
+            OldPlay {
+                recording: Some(&r12),
+                ..named("p22", "Tune", Some("First"), Some(215_000))
+            },
+            "t12",
+            "NAMES",
+        ),
+        // The names fit a track known only as another recording.
+        (
+            OldPlay {
+                recording: Some(&other),
+                ..named("p16", "Other Take", Some("Second"), None)
+            },
+            "",
+            "RECORDING_DISAGREES",
+        ),
+        // A track that is gone from disk is never a match,
+        (
+            OldPlay {
+                recording: Some(&r8),
+                ..named("p15", "Lost", Some("Second"), None)
+            },
+            "",
+            "NO_MATCH",
+        ),
+        // nor one kept out of the library.
+        (
+            OldPlay {
+                recording: Some(&r16),
+                ..named("p26", "Hidden", Some("First"), None)
+            },
+            "",
+            "NO_MATCH",
+        ),
+        // Another listener's play stays that listener's.
+        (
+            OldPlay {
+                user: "u2",
+                ..named("p17", "Alpha", Some("First"), None)
+            },
+            "t1",
+            "NAMES",
+        ),
+        // Names are compared the way the catalog folds them.
+        (
+            named("p18", "  \u{c1}LPHA ", Some("first"), None),
+            "t1",
+            "NAMES",
+        ),
+        // A length an older version stored with a fraction.
+        (
+            named("p27", "Beta", Some("First"), Some(181_500)),
+            "t2",
+            "NAMES",
+        ),
+        // A connected server's play is not filed by names,
+        (
+            OldPlay {
+                source: Some("plex"),
+                ..named("p13", "Alpha", Some("First"), Some(200_000))
+            },
+            "",
+            "REMOTE_WITHOUT_RECORDING",
+        ),
+        // but is by a recording the library holds once,
+        (
+            OldPlay {
+                source: Some("youtube"),
+                ..recorded("p14", &r1_upper)
+            },
+            "t1",
+            "RECORDING",
+        ),
+        // unless that track's accepted recording says otherwise,
+        (
+            OldPlay {
+                source: Some("plex"),
+                ..recorded("p19", &r3)
+            },
+            "",
+            "NO_MATCH",
+        ),
+        // or two tracks hold it, whatever album the row names.
+        (
+            OldPlay {
+                album: Some("First"),
+                source: Some("jellyfin"),
+                ..recorded("p07", &r5)
+            },
+            "",
+            "SEVERAL_MATCHES",
+        ),
+        (
+            OldPlay {
+                source: Some("jellyfin"),
+                ..recorded("p23", &r12)
+            },
+            "",
+            "SEVERAL_MATCHES",
+        ),
+    ];
+
+    let dir = crate::common::ScratchDir::new("older-plays");
+    let path = dir.join("app.db");
+    crate::common::migrated_db(&path);
+    let open = || {
+        let conn = rusqlite::Connection::open(&path).expect("database opens");
+        conn.pragma_update(None, "foreign_keys", true)
+            .expect("foreign keys on");
+        conn
+    };
+    let mut conn = open();
+    conn.execute_batch(FILING_CATALOG).expect("catalog seeds");
+    for (play, _, _) in &cases {
+        store_old_play(&conn, play);
+    }
+    // A row that already names an album is not the repair's to touch.
+    conn.execute(
+        "INSERT INTO library_play_history (id, user_id, local_album_id, track_name, \
+         artist_name, album_name, played_at) \
+         VALUES ('p00', 'u1', 'al2', 'Alpha', 'Artist', 'First', '2026-01-01T00:00:00+00:00')",
+        [],
+    )
+    .expect("the filed row is stored");
+    conn.execute(
+        "UPDATE library_play_history SET duration_ms = 181500.5 WHERE id = 'p27'",
+        [],
+    )
+    .expect("the length is stored with a fraction");
+
+    let tx = conn.transaction().expect("transaction");
+    assert!(plays::queue(&tx, "job-1", None, 1.0).expect("queues"));
+    assert!(
+        !plays::queue(&tx, "job-2", None, 2.0).expect("queues"),
+        "a second start with nothing new queues nothing"
+    );
+    tx.commit().expect("commit");
+
+    let mut batches = 0;
+    loop {
+        // A stop between batches: nothing is kept but the database.
+        drop(conn);
+        conn = open();
+        let tx = conn.transaction().expect("transaction");
+        let done = plays::step(&tx, "job-1", 4, 3.0).expect("batch runs");
+        tx.commit().expect("commit");
+        batches += 1;
+        let looked_at: i64 = conn
+            .query_row(
+                "SELECT completed_count FROM library_operation_jobs WHERE id = 'job-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("job reads");
+        assert_eq!(looked_at, (batches * 4).min(cases.len() as i64));
+        if done {
+            break;
+        }
+        // A restart while the job is half way queues no second job.
+        let tx = conn.transaction().expect("transaction");
+        assert!(
+            !plays::queue(&tx, "job-3", None, 3.0).expect("queues"),
+            "a job is already at work"
+        );
+        tx.commit().expect("commit");
+    }
+    assert_eq!(batches, cases.len() as i64 / 4 + 1);
+
+    let mut wrong = Vec::new();
+    for (play, track, _) in &cases {
+        let want = match *track {
+            "" => (String::new(), String::new(), String::new()),
+            "t1" => ("t1".to_owned(), "al1".to_owned(), "a2".to_owned()),
+            "t2" | "t10" | "t12" => ((*track).to_owned(), "al1".to_owned(), "a1".to_owned()),
+            _ => ((*track).to_owned(), "al2".to_owned(), "a1".to_owned()),
+        };
+        let got = filed(&conn, play.id);
+        if got != want {
+            wrong.push(format!("{}: {got:?}, not {want:?}", play.id));
+        }
+        let listener: String = conn
+            .query_row(
+                "SELECT user_id FROM library_play_history WHERE id = ?1",
+                [play.id],
+                |row| row.get(0),
+            )
+            .expect("listener reads");
+        assert_eq!(listener, play.user, "{}", play.id);
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    assert_eq!(
+        filed(&conn, "p00"),
+        (String::new(), "al2".to_owned(), String::new())
+    );
+
+    let mut reasons = std::collections::BTreeMap::new();
+    for (_, _, reason) in &cases {
+        *reasons.entry((*reason).to_owned()).or_insert(0_i64) += 1;
+    }
+    let filed_rows = cases.iter().filter(|case| !case.1.is_empty()).count() as i64;
+    let left_rows = cases.len() as i64 - filed_rows;
+    let report = |conn: &rusqlite::Connection| -> (Value, (i64, i64, i64)) {
+        let summary: String = conn
+            .query_row(
+                "SELECT result_json FROM library_repair_snapshots WHERE job_id = 'job-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("summary reads");
+        let counts = conn
+            .query_row(
+                "SELECT completed_count, succeeded_count, skipped_count \
+                 FROM library_operation_jobs WHERE id = 'job-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("job reads");
+        (
+            serde_json::from_str(&summary).expect("summary parses"),
+            counts,
+        )
+    };
+    let (summary, counts) = report(&conn);
+    assert_eq!(summary["counts_by_reason"], json!(reasons));
+    assert_eq!(
+        summary["counts_by_finding"],
+        json!({"filed": filed_rows, "left": left_rows})
+    );
+    assert_eq!(summary["total_identities"], cases.len() as i64);
+    assert_eq!(counts, (cases.len() as i64, filed_rows, left_rows));
+    let changed: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM library_play_history WHERE local_track_id IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count reads");
+    assert_eq!(changed, filed_rows, "the report counts the rows changed");
+
+    // One more turn after the end looks at nothing.
+    let tx = conn.transaction().expect("transaction");
+    assert!(plays::step(&tx, "job-1", 4, 4.0).expect("batch runs"));
+    tx.commit().expect("commit");
+    assert_eq!(report(&conn), (summary, counts));
+}

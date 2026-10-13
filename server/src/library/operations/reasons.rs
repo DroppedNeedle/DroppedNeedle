@@ -433,6 +433,11 @@ pub fn terminal(code: &str) -> Reason {
             "The catalog cleanup finished.",
             "Nothing to do.",
         ),
+        "PLAY_HISTORY_FILED" => reason(
+            "PLAY_HISTORY_FILED",
+            "Plays that named no song were matched to the songs in the library.",
+            "Nothing to do; a play that fits no single song stays in history by name.",
+        ),
         "PROVIDER_DEFERRED" => reason(
             "PROVIDER_DEFERRED",
             "MusicBrainz did not answer, so this album waits for another try.",

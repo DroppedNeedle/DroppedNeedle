@@ -19,6 +19,7 @@ use super::models::{
     EditionSummary, FindingPage, HYGIENE_VERSION, MANAGEMENT_MAPPING_VERSION, NewRepair,
     PreparationEstimate, Purpose, RepairEstimate, Summary, Verdict,
 };
+use super::plays;
 use super::reasons;
 use super::store::{self, Phase, RepairSnapshot};
 use crate::ids::IdGenerator;
@@ -76,6 +77,9 @@ pub struct Repairs {
     /// queued. Starts at the worker's start: earlier ones are covered by
     /// the one-time cleanup.
     hygiene_identified: Arc<Mutex<i64>>,
+    /// The latest ended scan when play filing was last queued or skipped.
+    /// `None` until the first look after a server start.
+    plays_scan: Arc<Mutex<Option<Option<String>>>>,
     config: Arc<ConfigStore>,
 }
 
@@ -90,6 +94,7 @@ impl Repairs {
             hygiene_checked: Arc::new(AtomicBool::new(false)),
             hygiene_scan: Arc::new(Mutex::new(None)),
             hygiene_identified: Arc::new(Mutex::new(crate::library::clock::now_ms() as i64)),
+            plays_scan: Arc::new(Mutex::new(None)),
             config: setup.config.clone(),
         }
     }
@@ -351,6 +356,92 @@ impl Repairs {
         })
     }
 
+    /// Queue a filing of the plays that name no track: once at a server
+    /// start, then after each scan that ends, since a scan is what brings
+    /// the tracks older plays can be matched to. Nothing is queued when
+    /// every play is filed.
+    fn queue_play_filing(&self) -> Result<(), OperationError> {
+        let run = self.read(|conn| Ok(store::latest_ended_scan(conn)?))?;
+        let after_scan = {
+            let mut seen = self
+                .plays_scan
+                .lock()
+                .map_err(|_| OperationError::Store("play filing marker poisoned".to_owned()))?;
+            let first = seen.is_none();
+            if seen.as_ref() == Some(&run) {
+                return Ok(());
+            }
+            *seen = Some(run.clone());
+            run.filter(|_| !first)
+        };
+        self.write(|tx| {
+            plays::queue(tx, &self.ids.new_id(), after_scan.as_deref(), now_unix())?;
+            Ok(())
+        })
+    }
+
+    /// One turn of a play filing job: batch after batch until no row is
+    /// left, the turn is used up, a scan starts, or the job is paused or
+    /// stopped. Each batch is one transaction that also saves where the
+    /// job is, so the next turn (or the next server start) goes on from
+    /// there.
+    fn file_plays(
+        &self,
+        job_id: &str,
+        worker: &str,
+        started: Instant,
+    ) -> Result<Option<OperationJob>, OperationError> {
+        loop {
+            let scanning = !self.coordinator.current().is_empty();
+            let halted = self.write(|tx| {
+                let now = now_unix();
+                if scanning {
+                    return Ok(Some(jobs::requeue_for_scan(tx, job_id, worker, now)?));
+                }
+                if let Some(left) = jobs::checkpoint(tx, job_id, worker, now)? {
+                    return Ok(Some(Some(left)));
+                }
+                if started.elapsed() >= TURN {
+                    return Ok(Some(store::yield_job(tx, job_id, worker, None, None, now)?));
+                }
+                if !jobs::extend_lease(tx, job_id, worker, now)? {
+                    return Ok(Some(jobs::job(tx, job_id)?));
+                }
+                if !plays::step(tx, job_id, plays::BATCH, now)? {
+                    return Ok(None);
+                }
+                Ok(Some(store::end(
+                    tx,
+                    job_id,
+                    worker,
+                    "succeeded",
+                    plays::FILED,
+                    now,
+                )?))
+            })?;
+            let Some(left) = halted else {
+                continue;
+            };
+            let filed = left
+                .as_ref()
+                .is_some_and(|job| job.terminal_code.as_deref() == Some(plays::FILED));
+            if filed
+                && let Some(summary) = self
+                    .read(|conn| Ok(store::snapshot(conn, job_id)?))?
+                    .and_then(|snap| snap.summary)
+            {
+                tracing::info!(
+                    job_id,
+                    rows = summary.total_identities,
+                    outcomes = ?summary.counts_by_finding,
+                    reasons = ?summary.counts_by_reason,
+                    "plays that named no track were looked at"
+                );
+            }
+            return Ok(left);
+        }
+    }
+
     /// Whether the album's root has automatic edition acceptance on: the
     /// root's Library Management profile with its overrides, or the
     /// default profile for a root without an assignment.
@@ -386,6 +477,7 @@ impl Repairs {
         self.queue_hygiene_once()?;
         self.queue_hygiene_after_scan()?;
         self.queue_hygiene_after_identification()?;
+        self.queue_play_filing()?;
         let now = now_unix();
         let claimed = self.write(|tx| {
             jobs::recover_expired(tx, now)?;
@@ -408,6 +500,9 @@ impl Repairs {
         };
         let actor = job.requested_by_user_id.clone();
         let started = Instant::now();
+        if snap.purpose == Purpose::PlayHistoryFiling {
+            return self.file_plays(&job.id, worker, started);
+        }
         loop {
             let scanning = !self.coordinator.current().is_empty();
             let halted = self.write(|tx| {

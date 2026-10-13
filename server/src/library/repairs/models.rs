@@ -21,6 +21,8 @@ pub enum Purpose {
     /// Catalog cleanup after an upgrade: retire empty album shells and
     /// fold albums an imported identity split off back together.
     CatalogIdentityHygiene,
+    /// File plays that name no track under the track they were plays of.
+    PlayHistoryFiling,
 }
 
 impl Purpose {
@@ -29,6 +31,7 @@ impl Purpose {
             Self::ExistingMatches => "existing_matches",
             Self::ManagementReadiness => "management_readiness",
             Self::CatalogIdentityHygiene => "catalog_identity_hygiene",
+            Self::PlayHistoryFiling => "play_history_filing",
         }
     }
 
@@ -38,6 +41,7 @@ impl Purpose {
             "existing_matches" => Some(Self::ExistingMatches),
             "management_readiness" => Some(Self::ManagementReadiness),
             "catalog_identity_hygiene" => Some(Self::CatalogIdentityHygiene),
+            "play_history_filing" => Some(Self::PlayHistoryFiling),
             _ => None,
         }
     }

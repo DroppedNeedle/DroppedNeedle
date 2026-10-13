@@ -155,6 +155,11 @@ fn scope_sql(
                  AND {HYGIENE_CANDIDATE} {roots} {albums} {run}"
             )
         }
+        // Play filing works through play rows, not a list of albums.
+        Purpose::PlayHistoryFiling => {
+            values.clear();
+            "FROM local_albums a WHERE 0".to_owned()
+        }
     };
     (sql, values)
 }

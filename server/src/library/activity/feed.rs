@@ -376,7 +376,12 @@ fn operation_item(job: &OperationWork) -> WorkItem {
         ("bulk_review_apply", _) => WorkKind::IdentityReview,
         _ => WorkKind::Maintenance,
     };
-    let mut work = WorkItem::new(&job.id, kind, &job.state, WorkUnit::Albums);
+    // Play filing counts play rows; every other job here counts albums.
+    let unit = match job.purpose.as_deref() {
+        Some("play_history_filing") => WorkUnit::Items,
+        _ => WorkUnit::Albums,
+    };
+    let mut work = WorkItem::new(&job.id, kind, &job.state, unit);
     work.phase = job.phase.as_deref().map(|phase| {
         if phase == "apply" {
             "applying".to_owned()

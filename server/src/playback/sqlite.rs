@@ -20,6 +20,7 @@ use std::time::Duration;
 
 use crate::auth::times::to_iso;
 use crate::ids::IdGenerator;
+use crate::library::repairs::plays::{Matched, PlayKeys, match_play};
 
 use super::ports::{
     DisplayNames, ListeningPrefs, PlayHistory, PlayRecord, ProviderFailure, ScrobbleLinks,
@@ -128,6 +129,10 @@ impl PlaybackDb {
     /// its first credited artist (the album artist when the track credits
     /// none), all read from the catalog in the insert itself. A track that
     /// is gone leaves the three ids empty and the play is kept by name.
+    ///
+    /// A play made on a connected server or as a preview names no library
+    /// track. It is filed the same way when it clearly matches one: see
+    /// [`remote_match`].
     fn write_play(&self, user_id: &str, record: &PlayRecord) {
         let id = self.ids.new_id();
         let mut attempt = 1;
@@ -135,6 +140,10 @@ impl PlaybackDb {
             let Some(guard) = self.lock() else {
                 break Err("playback db lock poisoned".to_owned());
             };
+            let track_id = record
+                .track_id
+                .clone()
+                .or_else(|| remote_match(&guard, record));
             let result = guard.execute(
                 "INSERT INTO library_play_history \
                  (id, user_id, local_track_id, local_album_id, local_artist_id, track_name, \
@@ -151,7 +160,7 @@ impl PlaybackDb {
                 rusqlite::params![
                     id,
                     user_id,
-                    record.track_id,
+                    track_id,
                     record.track_name,
                     record.artist_name,
                     record.album_name,
@@ -184,6 +193,36 @@ impl PlaybackDb {
                 played_at = record.played_at,
                 "play history write failed; the play is not recorded"
             );
+        }
+    }
+}
+
+/// The library track a play made on a connected server or as a preview
+/// is filed under: the one playable track that holds the play's recording
+/// id. Names alone never file such a play, and neither does a recording
+/// several tracks share. The rule is the one the repair of older plays
+/// applies to such a play, so it is filed the same way then and now. A
+/// play of the library that names no track is not matched here: the
+/// repair files it by its names after the next scan or start.
+fn remote_match(conn: &rusqlite::Connection, record: &PlayRecord) -> Option<String> {
+    let keys = PlayKeys {
+        track_name: record.track_name.clone(),
+        artist_name: record.artist_name.clone(),
+        album_name: record.album_name.clone(),
+        recording_mbid: record.recording_mbid.clone(),
+        release_group_mbid: record.release_group_mbid.clone(),
+        duration_ms: record.duration_ms,
+        source: record.source.clone(),
+    };
+    if keys.is_local() {
+        return None;
+    }
+    match match_play(conn, &keys) {
+        Ok(Matched::Track { id, .. }) => Some(id),
+        Ok(Matched::Left(_)) => None,
+        Err(error) => {
+            tracing::warn!(%error, "play could not be matched to a track; kept by name");
+            None
         }
     }
 }

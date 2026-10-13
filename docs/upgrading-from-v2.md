@@ -154,6 +154,13 @@ identify queue, so v3 asks again with its own candidates.
 A song that points at something v2 itself no longer had (say a queued song
 you deleted in v2) keeps its title and is left as it is.
 
+Plays that name no song in the library (older ones, or all of them if you
+scan your music again instead of carrying the v2 library) are matched to
+your songs in the background after the first start and after each scan, and
+then count in "recently played", "most played" and the play counts of your
+apps. A play is matched only when it fits exactly one song; the rest stay in
+your history by name.
+
 ## What stays behind
 
 The upgrade prints everything it leaves behind with a count, and the saved

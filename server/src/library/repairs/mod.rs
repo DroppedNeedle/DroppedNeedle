@@ -14,8 +14,11 @@
 //! - Catalog cleanup tidies album rows: once after an upgrade from v2,
 //!   then after each scan that ends (for the albums it touched) and after
 //!   identification finishes with an album.
+//! - Play filing gives plays that name no track the track, album and
+//!   artist they were plays of, when exactly one track fits: at a server
+//!   start and after each scan that ends.
 //!
-//! All three are operation jobs (`library_operation_jobs`, kind `repair`)
+//! All four are operation jobs (`library_operation_jobs`, kind `repair`)
 //! run by the operations loop in short turns, never during a scan, and
 //! controlled like any other job. A repair check changes nothing; Apply
 //! and automatic acceptance do, and each edition they change can be
@@ -25,14 +28,15 @@
 //!
 //! Layout: `models` and `reasons` hold the types and the wording,
 //! `classify` the per-album verdicts, `store` the SQL, `apply` and
-//! `hygiene` the catalog changes, `service` the entry points, and
-//! `diagnostics` the scan run export.
+//! `hygiene` the catalog changes, `plays` the play filing, `service` the
+//! entry points, and `diagnostics` the scan run export.
 
 pub mod apply;
 pub mod classify;
 pub mod diagnostics;
 pub mod hygiene;
 pub mod models;
+pub mod plays;
 pub mod reasons;
 pub mod service;
 pub mod store;

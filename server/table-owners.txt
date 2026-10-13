@@ -15,6 +15,12 @@
 #   playlist_tracks               catalog   album_id set to the surviving
 #                                           album (a followed retag only)
 #
+# One more, also by library code in its own transaction: the repair that
+# files plays naming no track, album or artist under the one track they
+# fit. It fills those three columns of such a row and changes nothing
+# else:
+#   library_play_history          media     track, album and artist set
+#
 # Add a table here in the commit that creates it and remove it in the
 # commit that drops it: the schema tests fail when this list and the
 # migrated schema disagree.
