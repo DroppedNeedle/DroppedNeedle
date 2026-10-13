@@ -979,3 +979,24 @@ async fn token_transports_and_bad_tokens() {
         .await;
     assert_eq!(by_query.status, 200);
 }
+
+/// One item at the older address, the one with a user id in the path. The
+/// id is not read, as on the other `/Users/{id}/...` routes: the token
+/// decides whose library answers.
+#[tokio::test]
+async fn item_at_the_older_address_is_the_same_item() {
+    let fx = fixture().await;
+    let auth = finamp(ALICE);
+    let newer = fx
+        .get(&format!("/jellyfin/Items/{}", fx.track1), Some(&auth))
+        .await;
+    assert_eq!(newer.status, 200);
+    for user in ["user-alice", "user-bob"] {
+        let uri = format!("/jellyfin/Users/{user}/Items/{}", fx.track1);
+        let older = fx.get(&uri, Some(&auth)).await;
+        assert_eq!(older.status, 200, "{user}");
+        assert_eq!(older.json(), newer.json(), "{user}");
+        let anonymous = fx.get(&uri, None).await;
+        assert_eq!((anonymous.status, anonymous.body.len()), (401, 0));
+    }
+}

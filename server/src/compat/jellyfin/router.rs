@@ -131,7 +131,7 @@ where
         )
         .route(
             "/Users/{user_id}/Items/{item_id}",
-            get(single_item::<S, L, E, P, I>),
+            get(single_item_legacy::<S, L, E, P, I>),
         )
         .route("/Items/{item_id}", get(single_item::<S, L, E, P, I>))
         .route(

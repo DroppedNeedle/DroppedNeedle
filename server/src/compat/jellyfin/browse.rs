@@ -725,6 +725,24 @@ where
     }
 }
 
+/// The older address, with a user id in the path. The id is not read: the
+/// token decides whose library answers, as on the other `/Users/{id}/...`
+/// routes.
+pub(super) async fn single_item_legacy<S, L, E, P, I>(
+    state: State<JellyfinState<S, L, E, P, I>>,
+    Path((_user_id, item_id)): Path<(String, String)>,
+    request: Request<Body>,
+) -> Response
+where
+    S: JellyfinPasswordStore,
+    L: LibraryRead,
+    E: StreamEngine,
+    P: PlaybackSessions,
+    I: IdMap,
+{
+    single_item(state, Path(item_id), request).await
+}
+
 // ===== Discovery (owned-only) =====
 
 /// Similar + both InstantMix routes share one handler (v2 `_similar`):
