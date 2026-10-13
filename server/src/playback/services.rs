@@ -1056,7 +1056,7 @@ pub fn submit_session_scrobble(
         source: source.map(str::to_owned),
         played_at: Some(played_at.unwrap_or(now)),
     };
-    let response = submit_counted_play(deps, user_id, &report, now);
+    let response = submit_counted_play(deps, user_id, &report, Some(&track.track_id), now);
     if played_at.is_none() {
         deps.mixed.record(key.clone(), now);
     }
@@ -1076,6 +1076,26 @@ pub fn submit_scrobble(
     user_id: &str,
     request: &ScrobbleSubmitRequest,
 ) -> Result<ScrobbleResponse, ServiceError> {
+    submit_named(deps, user_id, request, None)
+}
+
+/// [`submit_scrobble`] for a play of a library track the server looked up
+/// itself (the player-app paths): history files the play under that track.
+pub fn submit_track_scrobble(
+    deps: &PlaybackDeps,
+    user_id: &str,
+    track_id: &str,
+    request: &ScrobbleSubmitRequest,
+) -> Result<ScrobbleResponse, ServiceError> {
+    submit_named(deps, user_id, request, Some(track_id))
+}
+
+fn submit_named(
+    deps: &PlaybackDeps,
+    user_id: &str,
+    request: &ScrobbleSubmitRequest,
+    track_id: Option<&str>,
+) -> Result<ScrobbleResponse, ServiceError> {
     let now = deps.clock.now_unix();
     validate_timestamp(request.timestamp, now)?;
     let duration_ms = request.duration_ms.unwrap_or(0);
@@ -1094,7 +1114,7 @@ pub fn submit_scrobble(
         source: normalize_client(request.source.as_deref()),
         played_at: Some(request.timestamp),
     };
-    Ok(submit_counted_play(deps, user_id, &report, now))
+    Ok(submit_counted_play(deps, user_id, &report, track_id, now))
 }
 
 /// Forward one native now-playing report (v2
@@ -1155,11 +1175,13 @@ fn targets(prefs: &ScrobblePrefs) -> ScrobbleTargets {
 }
 
 /// Shared submit core: name-dedup, history, short-track gate, delegation,
-/// forward. `played_at` is always set on this path.
+/// forward. `played_at` is always set on this path. `track_id` is the
+/// library track when the caller resolved one.
 fn submit_counted_play(
     deps: &PlaybackDeps,
     user_id: &str,
     report: &ReportTrack,
+    track_id: Option<&str>,
     now: i64,
 ) -> ScrobbleResponse {
     let played_at = report.played_at.unwrap_or(now);
@@ -1173,6 +1195,7 @@ fn submit_counted_play(
     deps.history.record(
         user_id,
         &PlayRecord {
+            track_id: track_id.map(str::to_owned),
             track_name: report.track_name.clone(),
             artist_name: report.artist_name.clone(),
             album_name: report.album_name.clone(),

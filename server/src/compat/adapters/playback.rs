@@ -2,8 +2,9 @@
 //! services.
 //!
 //! Both protocols share one adapter. Scrobbles go through
-//! [`submit_scrobble`](crate::playback::services::submit_scrobble) (history
-//! records, sinks forward per prefs); presence goes through
+//! [`submit_track_scrobble`](crate::playback::services::submit_track_scrobble)
+//! (history files the play under the track, sinks forward per prefs);
+//! presence goes through
 //! [`heartbeat`](crate::playback::services::heartbeat) /
 //! [`clear_presence`](crate::playback::services::clear_presence); the
 //! now-playing list reads
@@ -22,7 +23,7 @@ use crate::playback::models::{
 };
 use crate::playback::services::{
     PlaybackDeps, clear_presence, compat_heartbeat, forward_sink_now_playing, normalize_client,
-    submit_scrobble,
+    presence_cover_url, submit_track_scrobble,
 };
 
 /// Reporting adapter shared by both compat protocols.
@@ -63,7 +64,7 @@ impl CompatPlayback {
                 track_name: track.title.clone(),
                 artist_name: track.artist_name.clone(),
                 album_name: Some(track.album_title.clone()).filter(|name| !name.is_empty()),
-                cover_url: String::new(),
+                cover_url: presence_cover_url(&track),
                 source: Self::source(client),
                 device: "compat".to_owned(),
                 is_paused: false,
@@ -95,9 +96,10 @@ impl CompatPlayback {
         };
         let now = self.deps.clock.now_unix();
         let timestamp = played_at.map(|at| at as i64).unwrap_or(now);
-        submit_scrobble(
+        submit_track_scrobble(
             &self.deps,
             user_id,
+            &track.track_id,
             &ScrobbleSubmitRequest {
                 track_name: track.title,
                 artist_name: track.artist_name,

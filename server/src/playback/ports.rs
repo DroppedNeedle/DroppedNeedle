@@ -175,6 +175,10 @@ pub trait RemoteReporters: Send + Sync {
 /// with the played-at instant as unix seconds instead of ISO text).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlayRecord {
+    /// The library track that was played, when the server resolved it
+    /// itself. Never taken from a request body: a client must not name the
+    /// row a play is filed under.
+    pub track_id: Option<String>,
     /// Track title.
     pub track_name: String,
     /// Artist name.

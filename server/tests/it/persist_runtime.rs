@@ -865,6 +865,7 @@ async fn a_play_outlasting_the_busy_timeout_is_still_recorded() {
     history.record(
         "user-1",
         &PlayRecord {
+            track_id: None,
             track_name: "Roads".to_owned(),
             artist_name: "Portishead".to_owned(),
             album_name: None,

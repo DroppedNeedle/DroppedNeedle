@@ -77,7 +77,10 @@ impl PlaybackDb {
         let mut query = guard
             .prepare(
                 "SELECT id, title, artist_name, album_title, duration_seconds, \
-                 embedded_recording_mbid FROM local_tracks WHERE id = ?1",
+                 embedded_recording_mbid, \
+                 (SELECT e.release_group_mbid FROM local_album_external_identities e \
+                  WHERE e.local_album_id = local_tracks.local_album_id) AS rg_mbid \
+                 FROM local_tracks WHERE id = ?1",
             )
             .ok()?;
         let mut rows = query.query([track_id]).ok()?;
@@ -100,9 +103,13 @@ impl PlaybackDb {
                 .get::<_, Option<String>>("embedded_recording_mbid")
                 .ok()?
                 .filter(|mbid| !mbid.is_empty()),
-            // Release-group MBIDs live in the library identity tables, which
-            // this store does not read yet, so presence covers stay empty.
-            rg_mbid: None,
+            // The release group the album was matched to, never an id from
+            // the file's tags: an unmatched album has none, and no cover
+            // address.
+            rg_mbid: row
+                .get::<_, Option<String>>("rg_mbid")
+                .ok()?
+                .filter(|mbid| !mbid.is_empty()),
         })
     }
 }
@@ -116,6 +123,11 @@ impl PlayHistory for PlaybackDb {
 impl PlaybackDb {
     /// Insert one play, retrying while SQLite reports busy. A play that
     /// still fails is logged with what it was, never dropped silently.
+    ///
+    /// A play of a library track is filed under the track, its album and
+    /// its first credited artist (the album artist when the track credits
+    /// none), all read from the catalog in the insert itself. A track that
+    /// is gone leaves the three ids empty and the play is kept by name.
     fn write_play(&self, user_id: &str, record: &PlayRecord) {
         let id = self.ids.new_id();
         let mut attempt = 1;
@@ -125,12 +137,21 @@ impl PlaybackDb {
             };
             let result = guard.execute(
                 "INSERT INTO library_play_history \
-                 (id, user_id, track_name, artist_name, album_name, recording_mbid, \
-                  release_group_mbid, duration_ms, source, played_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                 (id, user_id, local_track_id, local_album_id, local_artist_id, track_name, \
+                  artist_name, album_name, recording_mbid, release_group_mbid, duration_ms, \
+                  source, played_at) \
+                 SELECT ?1, ?2, t.id, t.local_album_id, \
+                  COALESCE((SELECT x.local_artist_id FROM local_track_artists x \
+                            WHERE x.local_track_id = t.id ORDER BY x.position LIMIT 1), \
+                           a.album_artist_id), \
+                  ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11 \
+                 FROM (SELECT 1) \
+                 LEFT JOIN local_tracks t ON t.id = ?3 \
+                 LEFT JOIN local_albums a ON a.id = t.local_album_id",
                 rusqlite::params![
                     id,
                     user_id,
+                    record.track_id,
                     record.track_name,
                     record.artist_name,
                     record.album_name,
