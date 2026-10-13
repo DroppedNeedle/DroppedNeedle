@@ -691,6 +691,115 @@ async fn empty_tables_drop_and_aliases_survive() {
     assert!(orphaned.is_empty(), "{orphaned:?}");
 }
 
+/// Migration 0042 adds the index over a listener, a track and the play
+/// time, and a small one over the plays that name an album and no track.
+/// Every play row is still there afterwards, filed or not. A listener's
+/// plays of one track are read from the first index alone, and their
+/// plays of one album with no track are found through the second.
+#[tokio::test]
+async fn play_history_gains_the_listener_and_track_index() {
+    const INDEX: &str = "idx_play_history_user_track";
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 42)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) \
+         VALUES ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         album_title, album_title_folded, file_format, ingest_source, imported_at, \
+         membership_source) VALUES ('t1', 'al1', 'r1', '/m/t1', 't1', 'h1', 1, 1, 's1', \
+         'One', 'one', 'T', 't', 'flac', 'scan', 1, 'automatic'); \
+         INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+         local_artist_id, track_name, artist_name, played_at) VALUES \
+         ('p1', 'u1', 't1', 'al1', 'a1', 'One', 'A', '2026-01-01T00:00:00+00:00'), \
+         ('p2', 'u1', NULL, NULL, NULL, 'By name', 'A', '2026-01-02T00:00:00+00:00'), \
+         ('p3', 'u2', 't1', 'al1', 'a1', 'One', 'A', '2026-01-03T00:00:00+00:00'), \
+         ('p4', 'u1', NULL, 'al1', 'a1', 'Gone', 'A', '2026-01-04T00:00:00+00:00');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let rows = "SELECT id, user_id, COALESCE(local_track_id, ''), track_name, played_at \
+                FROM library_play_history ORDER BY id";
+    let kept: Vec<(String, String, String, String, String)> =
+        sqlx::query_as(rows).fetch_all(&pool).await.unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let columns: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM pragma_index_info(?) ORDER BY seqno")
+            .bind(INDEX)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(columns, ["user_id", "local_track_id", "played_at"]);
+    let after: Vec<(String, String, String, String, String)> =
+        sqlx::query_as(rows).fetch_all(&pool).await.unwrap();
+    assert_eq!(after, kept);
+    let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+        "EXPLAIN QUERY PLAN SELECT COUNT(*), MAX(played_at) FROM library_play_history \
+         WHERE user_id = 'u1' AND local_track_id = 't1'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(
+        plan.iter()
+            .any(|step| step.3.contains(&format!("COVERING INDEX {INDEX}"))),
+        "{plan:?}"
+    );
+    const BY_ALBUM: &str = "idx_play_history_user_album_no_track";
+    let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+        "EXPLAIN QUERY PLAN SELECT COUNT(*), MAX(played_at) FROM library_play_history \
+         WHERE user_id = 'u1' AND local_track_id IS NULL AND local_album_id IN ('al1')",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(
+        plan.iter().any(|step| step
+            .3
+            .contains(&format!("USING INDEX {BY_ALBUM} (user_id=?"))),
+        "{plan:?}"
+    );
+    let partial: String =
+        sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?")
+            .bind(BY_ALBUM)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        partial.contains("WHERE local_track_id IS NULL AND local_album_id IS NOT NULL"),
+        "{partial}"
+    );
+    // The older indexes stay: other reads and the merges use them.
+    let older: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' \
+         AND name LIKE 'idx_target_history_%'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(older, 4);
+}
+
 /// Every table in the migrated schema is listed once in
 /// `server/table-owners.txt` under a known area, and the list names no
 /// table the schema lacks.

@@ -1309,19 +1309,22 @@ async fn assert_hot_plans(pool: &SqlitePool) {
 
 /// Plays on the small fixture: `u1` has ties in both the last play (t2 and
 /// t4) and the play count (t1 and t6), a play of a track that is gone
-/// (t3), and `u2` has a play of its own.
+/// (t3), a play of t4 from when it was on another album (al1), and a play
+/// filed under an album (al5) with no track. `u2` has a play of its own.
 async fn seed_small_plays(fixture: &Fixture) {
     let plays = [
-        ("u1", "t1", "al1", "2026-01-01T00:00:00+00:00"),
-        ("u1", "t1", "al1", "2026-01-02T00:00:00+00:00"),
-        ("u1", "t1", "al1", "2026-01-03T00:00:00+00:00"),
-        ("u1", "t2", "al1", "2026-01-05T00:00:00+00:00"),
-        ("u1", "t3", "al1", "2026-01-09T00:00:00+00:00"),
-        ("u1", "t4", "al2", "2026-01-05T00:00:00+00:00"),
-        ("u1", "t6", "al3", "2026-01-04T00:00:00+00:00"),
-        ("u1", "t6", "al3", "2026-01-04T01:00:00+00:00"),
-        ("u1", "t6", "al3", "2026-01-04T02:00:00+00:00"),
-        ("u2", "t8", "al5", "2026-01-08T00:00:00+00:00"),
+        ("u1", "'t1'", "al1", "2026-01-01T00:00:00+00:00"),
+        ("u1", "'t1'", "al1", "2026-01-02T00:00:00+00:00"),
+        ("u1", "'t1'", "al1", "2026-01-03T00:00:00+00:00"),
+        ("u1", "'t2'", "al1", "2026-01-05T00:00:00+00:00"),
+        ("u1", "'t3'", "al1", "2026-01-09T00:00:00+00:00"),
+        ("u1", "'t4'", "al2", "2026-01-05T00:00:00+00:00"),
+        ("u1", "'t4'", "al1", "2025-12-31T00:00:00+00:00"),
+        ("u1", "'t6'", "al3", "2026-01-04T00:00:00+00:00"),
+        ("u1", "'t6'", "al3", "2026-01-04T01:00:00+00:00"),
+        ("u1", "'t6'", "al3", "2026-01-04T02:00:00+00:00"),
+        ("u1", "NULL", "al5", "2026-01-06T00:00:00+00:00"),
+        ("u2", "'t8'", "al5", "2026-01-08T00:00:00+00:00"),
     ];
     let mut sql = String::from(
         "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
@@ -1332,7 +1335,7 @@ async fn seed_small_plays(fixture: &Fixture) {
             sql.push_str(", ");
         }
         sql.push_str(&format!(
-            "('play-{index}', '{user}', '{track}', '{album}', 'x', 'x', '{at}')"
+            "('play-{index}', '{user}', {track}, '{album}', 'x', 'x', '{at}')"
         ));
     }
     write_batch(fixture, "small plays", sql).await;
@@ -1341,7 +1344,9 @@ async fn seed_small_plays(fixture: &Fixture) {
 /// A play-history order pages exactly as one sort of the whole catalog
 /// would, with the never played at zero: no row repeated or skipped
 /// across pages, ties in a fixed order, in both directions, for tracks
-/// and albums, for a user with plays and a user with none.
+/// and albums, for a user with plays and a user with none. An album's
+/// plays are those of the tracks on it now, and those filed under it with
+/// no track.
 #[tokio::test]
 async fn history_orders_page_like_one_sort() {
     use library::player::{
@@ -1360,16 +1365,16 @@ async fn history_orders_page_like_one_sort() {
             for descending in [true, false] {
                 let direction = if descending { "DESC" } else { "ASC" };
                 let what = format!("{user} {key:?} {direction}");
-                let one_sort = |from: &str, column: &str| {
+                let one_sort = |from: &str, counts_for: &str| {
                     format!(
                         "SELECT r.id FROM {from} ORDER BY (SELECT {aggregate} \
                          FROM library_play_history h WHERE h.user_id = '{user}' \
-                         AND h.{column} = r.id) {direction}, r.id {direction}"
+                         AND {counts_for} = r.id) {direction}, r.id {direction}"
                     )
                 };
                 let expected: Vec<String> = sqlx::query_scalar(&one_sort(
                     "local_tracks r WHERE r.availability = 'indexed'",
-                    "local_track_id",
+                    "h.local_track_id",
                 ))
                 .fetch_all(&fixture.pool)
                 .await
@@ -1393,7 +1398,8 @@ async fn history_orders_page_like_one_sort() {
                     "local_albums r WHERE r.retired_into_album_id IS NULL AND EXISTS \
                      (SELECT 1 FROM local_tracks t WHERE t.local_album_id = r.id \
                       AND t.availability = 'indexed')",
-                    "local_album_id",
+                    "COALESCE((SELECT pt.local_album_id FROM local_tracks pt \
+                      WHERE pt.id = h.local_track_id), h.local_album_id)",
                 ))
                 .fetch_all(&fixture.pool)
                 .await
@@ -1438,21 +1444,57 @@ async fn history_orders_page_like_one_sort() {
     unplayed.sort();
     assert_eq!(unplayed, ["t7", "t8", "t9"]);
     assert_eq!(unplayed_total, 3);
+
+    // A track that moved to another album took its plays along, and a
+    // play with no track still counts for its album.
+    let albums = ["al1", "al2", "al5"].map(str::to_owned);
+    let stats = player
+        .play_stats("u1", "album", &albums)
+        .await
+        .expect("album plays");
+    let plays = |album: &str| stats.get(album).map(|stat| stat.0);
+    assert_eq!(
+        (plays("al1"), plays("al2"), plays("al5")),
+        (Some(5), Some(2), Some(1))
+    );
+    let frequent = player
+        .history_albums("u1", true, 10, 0)
+        .await
+        .expect("most played albums");
+    assert_eq!(frequent, ["al1", "al3", "al2", "al5"]);
+    let recent = player
+        .history_albums("u1", false, 10, 0)
+        .await
+        .expect("recently played albums");
+    assert_eq!(recent, ["al1", "al5", "al2", "al3"]);
 }
 
 /// The played half of a play-history order reads the listener's plays
-/// through the per-user index and looks each row up by id. It never walks
-/// the catalog, whether the planner has statistics on the history table
-/// or not (a fresh install has none until the daily ANALYZE after the
-/// first plays).
+/// through a per-user index and looks each row up by id: for tracks from
+/// the index over listener, track and time alone, for albums through each
+/// play's track. It never walks the catalog, whether the planner has
+/// statistics on the history table or not (a fresh install has none until
+/// the daily ANALYZE after the first plays). The play counts of a page of
+/// tracks or albums probe that index once per track.
 async fn assert_history_plans(pool: &SqlitePool, state: &str) {
     use library::player::{
-        HISTORY_ALBUMS, HISTORY_TRACKS, history_played_sql, history_unplayed_sql,
+        HISTORY_ALBUMS, HISTORY_TRACKS, history_played_sql, history_unplayed_sql, play_stats_sql,
     };
+    const BY_TRACK: &str = "SEARCH h USING COVERING INDEX idx_play_history_user_track";
 
-    for (rows, filters, catalog) in [
-        (&HISTORY_TRACKS, "+t.availability = 'indexed'", "t"),
-        (&HISTORY_ALBUMS, "+a.retired_into_album_id IS NULL", "a"),
+    for (rows, filters, catalog, plays) in [
+        (
+            &HISTORY_TRACKS,
+            "+t.availability = 'indexed'",
+            "t",
+            BY_TRACK,
+        ),
+        (
+            &HISTORY_ALBUMS,
+            "+a.retired_into_album_id IS NULL",
+            "a",
+            "SEARCH h USING INDEX",
+        ),
     ] {
         for aggregate in ["MAX(h.played_at)", "COUNT(*)"] {
             let sql = history_played_sql(rows, filters, aggregate, true);
@@ -1468,8 +1510,8 @@ async fn assert_history_plans(pool: &SqlitePool, state: &str) {
             .await;
             let what = format!("{catalog} by {aggregate}, {state}: {plan:?}");
             assert!(
-                plan.iter().any(|line| line.starts_with("SEARCH h USING")
-                    && line.contains("idx_target_history_user_played")),
+                plan.iter()
+                    .any(|line| line.starts_with(plays) && line.contains("(user_id=?)")),
                 "the played half reads the listener's plays by index: {what}"
             );
             assert!(
@@ -1503,6 +1545,49 @@ async fn assert_history_plans(pool: &SqlitePool, state: &str) {
              {state}: {plan:?}"
         );
     }
+
+    let probe = "(user_id=? AND local_track_id=?)";
+    let sql = play_stats_sql("track", 1).expect("track counts");
+    let binds = [ExplainBind::Text(Some("u1")), ExplainBind::Text(Some("t1"))];
+    let plan = explain(pool, &sql, &binds).await;
+    assert!(
+        plan.len() == 1 && plan[0].contains("COVERING INDEX idx_play_history_user_track"),
+        "track counts come from the index alone, {state}: {plan:?}"
+    );
+    // A page of albums, as a list asks for them: the planner weighs the
+    // indexes differently for one id and for many.
+    let page = 50;
+    let sql = play_stats_sql("album", page).expect("album counts");
+    let mut half = vec![ExplainBind::Text(Some("u1"))];
+    half.resize(page + 1, ExplainBind::Text(Some("al1")));
+    let binds = half.repeat(2);
+    let plan = explain(pool, &sql, &binds).await;
+    assert!(
+        plan.iter()
+            .any(|line| line.starts_with(BY_TRACK) && line.contains(probe))
+            && plan.iter().any(|line| line.starts_with("SEARCH pt USING"))
+            && !plan
+                .iter()
+                .any(|line| line.starts_with("SCAN ") && !line.contains("subquery")),
+        "album counts probe the index once per track of the album, {state}: {plan:?}"
+    );
+    // The plays with no track come from the small index that holds only
+    // those filed under an album, never from a walk of every play the
+    // listener has that names no track.
+    let trackless: Vec<&String> = plan
+        .iter()
+        .skip_while(|line| !line.starts_with("UNION ALL"))
+        .skip(1)
+        .take_while(|line| line.starts_with("SEARCH "))
+        .collect();
+    assert!(
+        matches!(trackless.as_slice(), [only]
+        if only.starts_with(
+            "SEARCH h USING INDEX idx_play_history_user_album_no_track \
+             (user_id=? AND local_album_id=?)"
+        )),
+        "album counts read the plays with no track from their own index, {state}: {plan:?}"
+    );
 }
 
 #[tokio::test]
@@ -1531,6 +1616,26 @@ async fn history_plans_read_the_listeners_plays_first() {
         }
     }
     write_batch(&fixture, "plan plays", plays).await;
+    // What an upgrade leaves: for a quarter of the listeners, hundreds of
+    // plays that name no track, some of them filed under one album, so
+    // the statistics cover both indexes the track-less half could use.
+    let mut trackless = String::from(
+        "INSERT INTO library_play_history (id, user_id, local_album_id, track_name, \
+         artist_name, played_at) VALUES ",
+    );
+    for user in 0..50 {
+        for index in 0..300 {
+            if user + index > 0 {
+                trackless.push_str(", ");
+            }
+            let album = if index < 40 { "'al1'" } else { "NULL" };
+            trackless.push_str(&format!(
+                "('plan-none-{user}-{index}', 'u{user}', {album}, 'x', 'x', \
+                 '2025-12-01T00:00:00+00:00')"
+            ));
+        }
+    }
+    write_batch(&fixture, "plan plays with no track", trackless).await;
     write_batch(&fixture, "plan statistics", "ANALYZE".to_owned()).await;
     let path = fixture._dir.join("app.db");
     let analyzed = SqlitePoolOptions::new()
@@ -1646,8 +1751,36 @@ async fn seed_100k(fixture: &Fixture) {
 
 /// Plays over the 100k catalog: `p-u1` has played every 50th track one to
 /// three times (2,000 tracks), and twenty other listeners have a thousand
-/// plays each, so the history table is shared as a real one is.
+/// plays each, so the history table is shared as a real one is. `p-u1`
+/// also has 40,000 plays that name no track, one in eight of them filed
+/// under an album: what an upgrade leaves when plays fit no single song.
 async fn seed_100k_plays(fixture: &Fixture) {
+    for chunk in 0..8 {
+        let mut sql = String::from(
+            "INSERT INTO library_play_history (id, user_id, local_album_id, track_name, \
+             artist_name, played_at) VALUES ",
+        );
+        for index in 0..5000 {
+            if index > 0 {
+                sql.push_str(", ");
+            }
+            let album = if index % 8 == 0 {
+                // An album the listener has played a track of, so the
+                // number of played albums stays what the pages expect.
+                format!("'p-al{:05}'", (index % 2000) * 5)
+            } else {
+                "NULL".to_owned()
+            };
+            sql.push_str(&format!(
+                "('p-n{chunk}-{index}', 'p-u1', {album}, 'x', 'x', \
+                 '2025-12-{:02}T{:02}:{:02}:00+00:00')",
+                chunk + 1,
+                index / 60 % 24,
+                index % 60,
+            ));
+        }
+        write_batch(fixture, "perf plays with no track", sql).await;
+    }
     let mut rows = Vec::new();
     for step in 0..2000 {
         let track = step * 50;
@@ -1878,6 +2011,14 @@ async fn perf_100k_player_pages_hold_p95() {
         q: Some("perf artist 01".to_owned()),
         ..TrackQuery::default()
     };
+    // A page of 100 tracks, half of them played, and a page of 100 albums
+    // that each hold a played track.
+    let stat_tracks: Vec<String> = (0..100)
+        .map(|step| format!("p-t{:06}", step * 25))
+        .collect();
+    let stat_albums: Vec<String> = (0..100)
+        .map(|step| format!("p-al{:05}", step * 5))
+        .collect();
     let mut report = Vec::new();
     let mut over = Vec::new();
     for (name, read) in [
@@ -1900,6 +2041,9 @@ async fn perf_100k_player_pages_hold_p95() {
         ("player_tracks_unplayed_only", 16),
         ("player_albums_last_played", 17),
         ("player_albums_play_count_across_halves_1950", 18),
+        ("player_albums_recently_played", 19),
+        ("player_track_play_counts_page", 20),
+        ("player_album_play_counts_page", 21),
     ] {
         let mut samples = Vec::new();
         for round in 0..53 {
@@ -2007,7 +2151,7 @@ async fn perf_100k_player_pages_hold_p95() {
                     )
                     .await
                     .map(|page| page.0.len()),
-                _ => player
+                18 => player
                     .albums(
                         &album_listener,
                         AlbumOrder::By(OrderKey::PlayCount, true),
@@ -2016,6 +2160,18 @@ async fn perf_100k_player_pages_hold_p95() {
                     )
                     .await
                     .map(|page| page.0.len()),
+                19 => player
+                    .history_albums("p-u1", false, 100, 0)
+                    .await
+                    .map(|page| page.len()),
+                20 => player
+                    .play_stats("p-u1", "track", &stat_tracks)
+                    .await
+                    .map(|stats| stats.len()),
+                _ => player
+                    .play_stats("p-u1", "album", &stat_albums)
+                    .await
+                    .map(|stats| stats.len()),
             };
             rows.expect("page reads");
             // The first rounds warm the page cache.

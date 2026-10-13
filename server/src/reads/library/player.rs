@@ -634,6 +634,44 @@ fn keyed_order(
     format!("{expression} {direction}, {alias}.id {direction}")
 }
 
+/// One listener's play count and last play for `count` items of `kind`.
+/// Binds: the listener, then the ids; for albums, both a second time.
+///
+/// An album's plays are the plays of the tracks on it now, found through
+/// the index over listener and track, and the plays filed under the album
+/// with no track. Those have a small index of their own (listener, album,
+/// time, only rows with an album and no track), and the statement names
+/// it: with statistics the planner otherwise walks every play of the
+/// listener that names no track, and an upgraded history can hold very
+/// many.
+pub(super) fn play_stats_sql(kind: &str, count: usize) -> Option<String> {
+    let ids = placeholders(count);
+    let plays = match kind {
+        "artist" => format!(
+            "SELECT local_artist_id AS id, played_at FROM library_play_history \
+             WHERE user_id = ? AND local_artist_id IN ({ids})"
+        ),
+        "track" => format!(
+            "SELECT local_track_id AS id, played_at FROM library_play_history \
+             WHERE user_id = ? AND local_track_id IN ({ids})"
+        ),
+        "album" => format!(
+            "SELECT pt.local_album_id AS id, h.played_at AS played_at \
+             FROM local_tracks pt CROSS JOIN library_play_history h \
+             WHERE h.user_id = ? AND h.local_track_id = pt.id AND pt.local_album_id IN ({ids}) \
+             UNION ALL \
+             SELECT h.local_album_id, h.played_at \
+             FROM library_play_history h INDEXED BY idx_play_history_user_album_no_track \
+             WHERE h.user_id = ? AND h.local_track_id IS NULL AND h.local_album_id IN ({ids})"
+        ),
+        _ => return None,
+    };
+    Some(format!(
+        "SELECT id, COUNT(*) AS plays, \
+         CAST(strftime('%s', MAX(played_at)) AS REAL) AS last_played FROM ({plays}) GROUP BY id"
+    ))
+}
+
 /// The aggregate over one item's plays that a play-history key orders by.
 fn history_aggregate(key: OrderKey) -> Option<&'static str> {
     match key {
@@ -647,8 +685,10 @@ fn history_aggregate(key: OrderKey) -> Option<&'static str> {
 pub(super) struct HistoryRows<'a> {
     /// The row alias, `t` or `a`.
     pub(super) alias: &'a str,
-    /// The history column that names the row.
-    pub(super) column: &'a str,
+    /// The plays, as `h`, with whatever `key` reads beside them.
+    pub(super) plays: &'a str,
+    /// The id of the row a play counts for.
+    pub(super) key: &'a str,
     /// The tables the filters read, starting with the aliased one.
     pub(super) from: &'a str,
 }
@@ -656,14 +696,20 @@ pub(super) struct HistoryRows<'a> {
 /// The tracks a play-history order pages over.
 pub(super) const HISTORY_TRACKS: HistoryRows<'static> = HistoryRows {
     alias: "t",
-    column: "local_track_id",
+    plays: "library_play_history h",
+    key: "h.local_track_id",
     from: "local_tracks t",
 };
 
-/// The albums a play-history order pages over.
+/// The albums a play-history order pages over. A play counts for the
+/// album its track is on now, so a track that moved takes its plays with
+/// it; a play that names an album and no track counts for that album.
+/// The album id stored on the play is what it was filed under at the
+/// time and is not rewritten.
 pub(super) const HISTORY_ALBUMS: HistoryRows<'static> = HistoryRows {
     alias: "a",
-    column: "local_album_id",
+    plays: "library_play_history h LEFT JOIN local_tracks pt ON pt.id = h.local_track_id",
+    key: "COALESCE(pt.local_album_id, h.local_album_id)",
     from: "local_albums a",
 };
 
@@ -674,12 +720,13 @@ pub(super) const HISTORY_ALBUMS: HistoryRows<'static> = HistoryRows {
 fn history_played_from(rows: &HistoryRows<'_>, filters: &str) -> String {
     let HistoryRows {
         alias,
-        column,
+        plays,
+        key,
         from,
     } = rows;
     format!(
-        "FROM library_play_history h CROSS JOIN {from} \
-         WHERE {alias}.id = h.{column} AND {filters} AND h.user_id = ?"
+        "FROM {plays} CROSS JOIN {from} \
+         WHERE {alias}.id = {key} AND {filters} AND h.user_id = ?"
     )
 }
 
@@ -692,11 +739,11 @@ pub(super) fn history_played_sql(
     aggregate: &str,
     descending: bool,
 ) -> String {
-    let column = rows.column;
+    let key = rows.key;
     let direction = if descending { "DESC" } else { "ASC" };
     format!(
-        "SELECT h.{column} {} GROUP BY h.{column} \
-         ORDER BY {aggregate} {direction}, h.{column} {direction} LIMIT ? OFFSET ?",
+        "SELECT {key} {} GROUP BY {key} \
+         ORDER BY {aggregate} {direction}, {key} {direction} LIMIT ? OFFSET ?",
         history_played_from(rows, filters)
     )
 }
@@ -706,13 +753,13 @@ pub(super) fn history_played_sql(
 fn history_unplayed_from(rows: &HistoryRows<'_>, filters: &str) -> String {
     let HistoryRows {
         alias,
-        column,
+        plays,
+        key,
         from,
     } = rows;
     format!(
         "FROM {from} WHERE {filters} AND {alias}.id NOT IN \
-         (SELECT h.{column} FROM library_play_history h \
-          WHERE h.user_id = ? AND h.{column} IS NOT NULL)"
+         (SELECT {key} FROM {plays} WHERE h.user_id = ? AND {key} IS NOT NULL)"
     )
 }
 
@@ -785,8 +832,8 @@ async fn history_page(
     } else {
         let count_sql = if descending {
             format!(
-                "SELECT COUNT(DISTINCT h.{}) {}",
-                rows.column,
+                "SELECT COUNT(DISTINCT {}) {}",
+                rows.key,
                 history_played_from(rows, &filters)
             )
         } else {
@@ -1437,13 +1484,13 @@ impl PlayerCatalog for SqlitePlayerCatalog {
             } else {
                 "MAX(h.played_at) DESC"
             };
+            let HistoryRows { plays, key, .. } = HISTORY_ALBUMS;
             let sql = format!(
-                "SELECT h.local_album_id FROM library_play_history h \
-                 JOIN local_albums a ON a.id = h.local_album_id \
-                 WHERE h.user_id = ? GROUP BY h.local_album_id \
+                "SELECT a.id FROM {plays} CROSS JOIN local_albums a \
+                 WHERE a.id = {key} AND h.user_id = ? GROUP BY a.id \
                  HAVING EXISTS (SELECT 1 FROM local_tracks t \
-                 WHERE t.local_album_id = h.local_album_id AND t.availability = 'indexed') \
-                 ORDER BY {order}, h.local_album_id LIMIT ? OFFSET ?"
+                 WHERE t.local_album_id = a.id AND t.availability = 'indexed') \
+                 ORDER BY {order}, a.id LIMIT ? OFFSET ?"
             );
             sqlx::query_scalar(&sql)
                 .bind(user_id)
@@ -1463,24 +1510,19 @@ impl PlayerCatalog for SqlitePlayerCatalog {
     ) -> BoxFuture<'a, Result<HashMap<String, PlayStat>, StoreError>> {
         Box::pin(async move {
             let pool = self.pool()?;
-            let column = match kind {
-                "artist" => "local_artist_id",
-                "album" => "local_album_id",
-                "track" => "local_track_id",
-                _ => return Ok(HashMap::new()),
-            };
             let mut out = HashMap::new();
             for chunk in ids.chunks(500) {
-                let sql = format!(
-                    "SELECT {column} AS id, COUNT(*) AS plays, \
-                     CAST(strftime('%s', MAX(played_at)) AS REAL) AS last_played \
-                     FROM library_play_history WHERE user_id = ? AND {column} IN ({}) \
-                     GROUP BY {column}",
-                    placeholders(chunk.len())
-                );
-                let mut query = sqlx::query(&sql).bind(user_id);
-                for id in chunk {
-                    query = query.bind(id);
+                let Some(sql) = play_stats_sql(kind, chunk.len()) else {
+                    return Ok(HashMap::new());
+                };
+                let mut query = sqlx::query(&sql);
+                // An album's plays are read in two parts, each with its
+                // own listener and ids.
+                for _ in 0..if kind == "album" { 2 } else { 1 } {
+                    query = query.bind(user_id);
+                    for id in chunk {
+                        query = query.bind(id);
+                    }
                 }
                 let rows = query
                     .fetch_all(pool)
