@@ -711,8 +711,8 @@ async fn sab_materialization_and_mount() {
 }
 
 /// Addurl errors scrub echoed enclosure credentials (`apikey=`,
-/// `api_key=`, DrunkenSlug `r=`); identifiers and innocent words pass
-/// through untouched.
+/// `api_key=`, DrunkenSlug `r=`, Prowlarr `link=`); identifiers and
+/// innocent words pass through untouched.
 #[tokio::test]
 async fn sab_addurl_redaction() {
     assert_eq!(
@@ -728,8 +728,12 @@ async fn sab_addurl_redaction() {
         "error=oops&apikey=***"
     );
     assert_eq!(
-        redact_query_secrets("nothing secret here"),
-        "nothing secret here"
+        redact_query_secrets("https://prowlarr/9/download?apikey=K&link=ezQxYw&file=a"),
+        "https://prowlarr/9/download?apikey=***&link=***&file=a"
+    );
+    assert_eq!(
+        redact_query_secrets("nothing secret here, hyperlink=kept"),
+        "nothing secret here, hyperlink=kept"
     );
 
     let mock = SabnzbdMock::new();
@@ -1297,6 +1301,30 @@ async fn oversized_nzbs_and_sabnzbd_answers_are_refused() {
         .await
         .expect_err("too large");
     assert!(matches!(err, SabnzbdError::ResponseTooLarge), "{err:?}");
+}
+
+/// If SABnzbd's failure text for a job quotes the URL it was given, the
+/// indexer key in it never reaches the task error.
+#[tokio::test]
+async fn sab_failure_text_is_stored_without_the_indexer_key() {
+    let mock = SabnzbdMock::new();
+    mock.history_job(
+        "nzo-f",
+        "job-f",
+        "Failed",
+        "",
+        0,
+        "URL Fetching failed; https://idx.test/getnzb?id=1&apikey=SECRETKEY",
+    );
+    let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
+    let mount = temp_dir("fail-text");
+    let queue = queue_for(&mock, &base, mount.to_path_buf());
+    let status = status_for(&mock, &queue, "job-f", "nzo-f").await;
+    assert_eq!(
+        status.error.as_deref(),
+        Some("URL Fetching failed; https://idx.test/getnzb?id=1&apikey=***")
+    );
+    std::fs::remove_dir_all(&mount).ok();
 }
 
 // ---------------------------------------------------------------------------

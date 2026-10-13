@@ -136,11 +136,29 @@ pub enum NzbFetchError {
     TooLarge,
 }
 
-/// Scrub credential-looking query values from addurl errors: the Newznab
-/// enclosure URL carries the indexer's key and SABnzbd may echo it back.
-/// Covers `apikey=`/`api_key=` and DrunkenSlug-style `r=` (anchored so
-/// innocent words like `error=` don't match); `i=` stays visible.
-/// Ported from v2 `_QUERY_SECRET_RE` (without a regex dependency).
+/// Query keys whose value is scrubbed, with whether the key must start a
+/// word. Each is one a client here sends or a recorded response shows:
+/// - `apikey`: the Newznab client's own parameter, SABnzbd's, and the
+///   download URL Prowlarr returns (`?apikey=...&link=...`);
+/// - `api_key`: the spelling v2 scrubbed, kept;
+/// - `r`: DrunkenSlug's per-user key in the recorded feed's enclosures
+///   (`...nzb&i=1&r=KEY`), anchored so `error=` and the like pass;
+/// - `link`: the other value in Prowlarr's download URL, an opaque
+///   per-download token. What it encodes is not verified, so it is
+///   scrubbed with the key. Anchored like `r`.
+///
+/// `i=` (DrunkenSlug's user id) stays visible.
+const SECRET_QUERY_KEYS: [(&str, bool); 4] = [
+    ("api_key", false),
+    ("apikey", false),
+    ("link", true),
+    ("r", true),
+];
+
+/// Scrub credential-looking query values from text SABnzbd or an indexer
+/// sent back: the Newznab enclosure URL carries the indexer's key and
+/// either may echo it. The keys are [`SECRET_QUERY_KEYS`]. Ported from v2
+/// `_QUERY_SECRET_RE` (without a regex dependency).
 pub fn redact_query_secrets(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
@@ -167,25 +185,21 @@ pub fn redact_query_secrets(text: &str) -> String {
     out
 }
 
-/// Length of `apikey=`/`api_key=`/`r=` at `index`, case-insensitive; `r`
-/// must not follow an identifier char (the v2 anchor).
+/// Length of a secret `key=` at `index`, case-insensitive. A key that
+/// must start a word does not match after an identifier char (the v2
+/// anchor).
 fn match_secret_key(bytes: &[u8], index: usize) -> Option<usize> {
     let rest = &bytes[index..];
-    if rest.len() >= 7 && rest[..7].eq_ignore_ascii_case(b"api_key") && rest.get(7) == Some(&b'=') {
-        return Some(8);
-    }
-    if rest.len() >= 6 && rest[..6].eq_ignore_ascii_case(b"apikey") && rest.get(6) == Some(&b'=') {
-        return Some(7);
-    }
-    if rest.len() >= 2
-        && (rest[0] == b'r' || rest[0] == b'R')
-        && rest[1] == b'='
-        && (index == 0
-            || !matches!(bytes[index - 1], b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_'))
-    {
-        return Some(2);
-    }
-    None
+    let starts_word =
+        index == 0 || !matches!(bytes[index - 1], b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_');
+    SECRET_QUERY_KEYS.iter().find_map(|(key, anchored)| {
+        let key = key.as_bytes();
+        let matches = rest.len() > key.len()
+            && rest[..key.len()].eq_ignore_ascii_case(key)
+            && rest[key.len()] == b'='
+            && (!anchored || starts_word);
+        matches.then_some(key.len() + 1)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1463,10 +1477,14 @@ fn history_status(slot: &HistorySlot) -> TaskStatus {
     if state == "failed" {
         return TaskStatus {
             status: "failed".to_owned(),
+            // Not verified: whether SABnzbd quotes the URL of a failed
+            // addurl here. No recorded history has such a job (the mock
+            // is shaped on 5.0.4) and checking needs a live failed add,
+            // so the text is scrubbed either way.
             error: Some(if slot.fail_message.is_empty() {
                 "download failed".to_owned()
             } else {
-                slot.fail_message.clone()
+                redact_query_secrets(&slot.fail_message)
             }),
             bytes_total: slot.bytes,
             matched_transfers: 1,
