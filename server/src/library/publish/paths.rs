@@ -7,6 +7,7 @@
 //! that is a security boundary, not a profile toggle.
 
 use std::collections::BTreeMap;
+use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -156,30 +157,14 @@ impl Sandbox {
     /// filesystems, and carries the reserved prefix so scan
     /// discovery prunes it.
     pub fn temp_path_for(&self, dest: &Path, journal_id: &str) -> Result<PathBuf, PublishError> {
-        let parent = dest.parent().ok_or_else(|| {
-            PublishError::UnsafePath("destination has no parent directory".into())
-        })?;
-        let file_name = dest
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| PublishError::UnsafePath("destination name is not UTF-8".into()))?;
-        assert_no_symlink_component(journal_id)?;
-        Ok(parent.join(format!("{HIDDEN_PREFIX}{journal_id}.{file_name}.tmp")))
+        hidden_path(dest, journal_id, "tmp")
     }
 
     /// Hidden same-directory backup for a same-path write. The original
     /// is retained here across the publish/catalog window and restored
     /// from it on compensation.
     pub fn backup_path_for(&self, dest: &Path, journal_id: &str) -> Result<PathBuf, PublishError> {
-        let parent = dest.parent().ok_or_else(|| {
-            PublishError::UnsafePath("destination has no parent directory".into())
-        })?;
-        let file_name = dest
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| PublishError::UnsafePath("destination name is not UTF-8".into()))?;
-        assert_no_symlink_component(journal_id)?;
-        Ok(parent.join(format!("{HIDDEN_PREFIX}{journal_id}.{file_name}.bak")))
+        hidden_path(dest, journal_id, "bak")
     }
 
     /// Prove that an absolute path is under one of the sandbox roots.
@@ -385,13 +370,10 @@ pub fn recycle_backup(
         Err(PlaceError::CrossDevice) => {
             let temp = parent.join(format!(
                 "{HIDDEN_PREFIX}incoming-{}",
-                recycle_to
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_default()
+                short_hash(&recycle_to.to_string_lossy())
             ));
-            std::fs::write(&temp, &bytes).map_err(PublishError::from)?;
-            let file = std::fs::File::open(&temp).map_err(PublishError::from)?;
+            let mut file = create_hidden(&temp).map_err(PublishError::from)?;
+            file.write_all(&bytes).map_err(PublishError::from)?;
             super::journal::fsync_file(&file)?;
             drop(file);
             place::place_from_hidden(mode, &temp, recycle_to).map_err(refused)?;
@@ -416,11 +398,60 @@ pub fn collision_key(root_id: &str, relative: &str) -> CollisionKey {
     CollisionKey(format!("{root_id}\u{1f}{folded}"))
 }
 
-fn assert_no_symlink_component(journal_id: &str) -> Result<(), PublishError> {
-    if journal_id.contains('/') || journal_id.contains('\\') || journal_id.contains('\0') {
-        return Err(PublishError::UnsafePath(
-            "journal id is not a file-name part".into(),
-        ));
+/// Bytes of a file's own name a hidden name carries.
+const KEPT_NAME_MAX: usize = 64;
+
+/// A hidden name beside `dest` for one journal: the reserved prefix, 16
+/// hex characters hashed from the journal id, the start of the file's own
+/// name, and the ending. The kept part lets a person tell which file a
+/// leftover belongs to; it is cut at [`KEPT_NAME_MAX`] bytes, so a file
+/// name near the 255-byte limit still has room. A name that is not UTF-8
+/// is carried lossily. A retry of the same journal finds the same name. A
+/// plugin temp keeps its tag in front of the hash, which the plugin sweep
+/// matches on.
+fn hidden_path(dest: &Path, journal_id: &str, ending: &str) -> Result<PathBuf, PublishError> {
+    use super::plugin_files::TEMP_TAG;
+    let parent = dest
+        .parent()
+        .ok_or_else(|| PublishError::UnsafePath("destination has no parent directory".into()))?;
+    let tag = if journal_id.starts_with(TEMP_TAG) {
+        TEMP_TAG
+    } else {
+        ""
+    };
+    let name = dest
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_default();
+    let mut cut = name.len().min(KEPT_NAME_MAX);
+    while !name.is_char_boundary(cut) {
+        cut -= 1;
     }
-    Ok(())
+    Ok(parent.join(format!(
+        "{HIDDEN_PREFIX}{tag}{}.{}.{ending}",
+        short_hash(journal_id),
+        &name[..cut]
+    )))
+}
+
+/// The first 16 hex characters of a SHA-256, for a hidden name.
+fn short_hash(text: &str) -> String {
+    let mut hash = super::snapshots::sha256_hex(text.as_bytes());
+    hash.truncate(16);
+    hash
+}
+
+/// Create a hidden working file that must be new. Whatever an earlier
+/// attempt left under the name is removed first, by name: a symlink put
+/// there is unlinked, never written through.
+pub fn create_hidden(path: &Path) -> std::io::Result<std::fs::File> {
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
 }

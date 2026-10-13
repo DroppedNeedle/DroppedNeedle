@@ -844,7 +844,12 @@ fn resume_rename(
             if !same_path && !replaced_here {
                 return occupied();
             }
-            let backup = sandbox.backup_path_for(&dest, &journal.id)?;
+            // A backup name an earlier attempt journaled is kept: a link
+            // an interrupted put-back left there is then found and removed.
+            let backup = match &journal.backup {
+                Some(journaled) => PathBuf::from(journaled),
+                None => sandbox.backup_path_for(&dest, &journal.id)?,
+            };
             sandbox.ensure_under_roots(&backup)?;
             JournalStore::new(conn).set_backup(&journal.id, &backup.to_string_lossy())?;
             let home = paths::backup_home(

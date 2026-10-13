@@ -117,8 +117,8 @@ fn staged_extension(format: &str) -> Result<&'static str, PublishError> {
 
 /// Hidden work copy for tag staging: the journal temp with its `.tmp`
 /// suffix swapped for `.staging.<ext>` so the tag router sees the
-/// real container. The hidden prefix and journal id survive, so the
-/// work copy stays pruned and unique.
+/// real container. The rest of the name survives, so the work copy stays
+/// pruned and unique.
 fn work_path_for(temp: &Path, extension: &str) -> Result<PathBuf, PublishError> {
     let file_name = temp
         .file_name()
@@ -149,7 +149,11 @@ pub fn render_staged_bytes(
     let edits = check_managed_updates(managed_updates)?;
     let extension = staged_extension(format)?;
     let work = work_path_for(temp, extension)?;
-    if let Err(error) = std::fs::write(&work, source) {
+    if let Err(error) = super::paths::create_hidden(&work).and_then(|mut file| {
+        use std::io::Write as _;
+        file.write_all(source)
+    }) {
+        let _ = std::fs::remove_file(&work);
         return Err(PublishError::Io(error.to_string()));
     }
     let staged = match super::super::tags::save::save_tags_with_pictures(&work, &edits, pictures) {

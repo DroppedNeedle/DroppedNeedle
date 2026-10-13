@@ -987,19 +987,17 @@ fn unwind_keeps_a_backup_it_cannot_restore() {
     let second_dest = fix.sandbox.resolve("music", "staging/b.flac").unwrap();
     let mut publisher = open_publisher(&fix);
     let late = second_dest.clone();
-    let folder = fix.dir.join("music/staging");
+    let first_backup = fix
+        .sandbox
+        .backup_path_for(&first_dest, "bundle-1-000-audio")
+        .unwrap();
     publisher.set_before_place(Some(Box::new(move |dest| {
         if dest != late {
             return;
         }
         // The first file is published by now. Its backup is tampered with,
         // then a late occupier fails the second file and so the bundle.
-        for entry in std::fs::read_dir(&folder).unwrap().flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.contains("-000-audio") && name.ends_with(".bak") {
-                std::fs::write(entry.path(), b"tampered").unwrap();
-            }
-        }
+        std::fs::write(&first_backup, b"tampered").unwrap();
         std::fs::write(dest, b"arrived-late").unwrap();
     })));
     let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
@@ -2473,6 +2471,177 @@ fn same_path_after_stage_resume_retains_backup() {
         );
     }
     assert_eq!(SqliteCatalog.revision(&conn).unwrap(), start_revision() + 1);
+}
+
+/// One same-path retag of `rel`, which holds the committed FLAC fixture.
+fn retag_bundle(
+    fix: &Fixture,
+    id: &str,
+    rel: &str,
+    title: &str,
+) -> (PlanBundle, BTreeMap<String, TagDocument>) {
+    let bytes = std::fs::read(fix.sandbox.resolve("music", rel).unwrap()).unwrap();
+    let fingerprint = FileFingerprint {
+        size: bytes.len() as u64,
+        sha256: sha256_hex(&bytes),
+    };
+    let mut item = plan_item("track-s", rel, rel, fingerprint, PlanKind::SamePath);
+    item.managed_updates
+        .insert("title".to_string(), vec![title.to_string()]);
+    let bundle = PlanBundle {
+        id: id.to_string(),
+        items: vec![item],
+        profile_revision: 7,
+        naming_revision: 3,
+        policy_revision: 5,
+        catalog_revision: db_catalog_revision(fix),
+    };
+    let mut docs = BTreeMap::new();
+    docs.insert("track-s".to_string(), TagDocument::empty());
+    (bundle, docs)
+}
+
+/// A file name close to the 255-byte limit leaves no room for a hidden
+/// name built around it: the track is still published and retagged.
+#[test]
+fn a_240_byte_file_name_is_published_and_retagged() {
+    let fix = fixture("long-name");
+    // Two-byte letters after one plain one: the cut falls inside a letter.
+    let long_rel = format!("organized/n{}.flac", "\u{e9}".repeat(117));
+    assert_eq!(long_rel.len() - "organized/".len(), 240);
+    let fp = write_fixture_source(&fix, "music", "staging/s.flac", "management_full.flac");
+    let item = plan_item("track-s", "staging/s.flac", &long_rel, fp, PlanKind::Move);
+    let bundle = PlanBundle {
+        id: "bundle-long-move".to_string(),
+        items: vec![item],
+        profile_revision: 7,
+        naming_revision: 3,
+        policy_revision: 5,
+        catalog_revision: db_catalog_revision(&fix),
+    };
+    let mut docs = BTreeMap::new();
+    docs.insert("track-s".to_string(), TagDocument::empty());
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.publish(&sealed, &live, &docs).unwrap();
+
+    let (bundle, docs) = retag_bundle(&fix, "bundle-long-retag", &long_rel, "Retagged");
+    let (sealed, live) = seal(&bundle);
+    publisher.publish(&sealed, &live, &docs).unwrap();
+
+    let dest = fix.sandbox.resolve("music", &long_rel).unwrap();
+    let tag = tags::read::read_tag_only(&dest, tags::AudioFormat::Flac).unwrap();
+    assert_eq!(tag.title, "Retagged");
+    tags::probe(&dest).unwrap();
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+
+    // The longest hidden name is the tag work copy: the temp's name with a
+    // longer ending. It keeps the start of the file's name and stays short.
+    let temp = fix
+        .sandbox
+        .temp_path_for(&dest, "bundle-long-retag-000-audio")
+        .unwrap();
+    let temp = temp.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(temp.contains(".n\u{e9}"), "{temp}");
+    let work = temp.replace(".tmp", ".staging.flac");
+    assert!(work.len() <= 128, "{} bytes", work.len());
+}
+
+/// A hidden working name that someone turned into a symlink is unlinked,
+/// never written through: the files the links point at keep their bytes.
+#[test]
+fn a_symlink_at_a_hidden_working_name_is_never_written_through() {
+    let fix = fixture("temp-symlink");
+    write_fixture_source(&fix, "music", "staging/s.flac", "management_full.flac");
+    let (bundle, docs) = retag_bundle(&fix, "bundle-link", "staging/s.flac", "Retagged");
+    let dest = fix.sandbox.resolve("music", "staging/s.flac").unwrap();
+    let temp = fix
+        .sandbox
+        .temp_path_for(&dest, "bundle-link-000-audio")
+        .unwrap();
+    let work = temp.with_file_name(
+        temp.file_name()
+            .unwrap()
+            .to_string_lossy()
+            .replace(".tmp", ".staging.flac"),
+    );
+    let victims = [fix.dir.join("victim-temp"), fix.dir.join("victim-work")];
+    for (victim, link) in victims.iter().zip([&temp, &work]) {
+        std::fs::write(victim, b"theirs").unwrap();
+        std::os::unix::fs::symlink(victim, link).unwrap();
+    }
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.publish(&sealed, &live, &docs).unwrap();
+
+    for victim in &victims {
+        assert_eq!(std::fs::read(victim).unwrap(), b"theirs");
+    }
+    let tag = tags::read::read_tag_only(&dest, tags::AudioFormat::Flac).unwrap();
+    assert_eq!(tag.title, "Retagged");
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// A bundle journaled before hidden names changed still resumes: recovery
+/// keeps the backup name its row holds, so a link an interrupted put-back
+/// left under that name is recognised and removed, not stranded.
+#[test]
+fn rows_with_old_style_hidden_names_resume() {
+    let fix = fixture("old-names");
+    let (bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::AfterBackupJournaled));
+    assert!(matches!(
+        publisher.publish(&sealed, &live, &docs),
+        Err(PublishError::InjectedCrash(_))
+    ));
+    drop(publisher);
+
+    let mut conn = open_db(&fix);
+    let mut backups = 0;
+    for journal in JournalStore::new(&conn).bundle("bundle-1").unwrap() {
+        let dest = fix
+            .sandbox
+            .resolve(&journal.dest_root, &journal.dest_rel)
+            .unwrap();
+        let old_name = |ending: &str| {
+            dest.with_file_name(format!(
+                "{}{}.{}.{ending}",
+                publish::HIDDEN_PREFIX,
+                journal.id,
+                dest.file_name().unwrap().to_string_lossy()
+            ))
+        };
+        let staged = old_name("tmp");
+        std::fs::rename(&journal.staged, &staged).unwrap();
+        conn.execute(
+            "UPDATE library_publish_journal SET staged = ?1 WHERE id = ?2",
+            rusqlite::params![staged.to_string_lossy(), journal.id],
+        )
+        .unwrap();
+        if journal.backup.is_some() {
+            let backup = old_name("bak");
+            std::fs::hard_link(&dest, &backup).unwrap();
+            conn.execute(
+                "UPDATE library_publish_journal SET backup = ?1 WHERE id = ?2",
+                rusqlite::params![backup.to_string_lossy(), journal.id],
+            )
+            .unwrap();
+            backups += 1;
+        }
+    }
+    assert_eq!(backups, 1);
+    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    assert_eq!(results[0].action, publish::RecoveryAction::ResumedCommitted);
+    for item in bundle.items.iter() {
+        let dest = fix
+            .sandbox
+            .resolve(&item.dest_root, &item.dest_rel)
+            .unwrap();
+        assert_staged(&dest, &item.track_id);
+    }
+    assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
 /// Splice raw ID3v2.4 frames ahead of the existing tag, fixing the

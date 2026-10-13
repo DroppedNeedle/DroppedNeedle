@@ -3406,10 +3406,6 @@ impl TempCopy {
             .extension()
             .and_then(|ext| ext.to_str())
             .unwrap_or("tmp");
-        let stem = original
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or("audio");
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|span| span.as_nanos())
@@ -3417,7 +3413,7 @@ impl TempCopy {
         for _ in 0..100 {
             let count = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
             let name = format!(
-                ".{stem}.dn-tagtmp-{}-{nanos}-{count}.{extension}",
+                ".dn-tagtmp-{}-{nanos}-{count}.{extension}",
                 std::process::id()
             );
             let temp = dir.join(name);

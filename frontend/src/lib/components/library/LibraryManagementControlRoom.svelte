@@ -648,14 +648,16 @@
 						{leftoverFileCount === 1 ? 'file' : 'files'} in your library folders
 						{leftoverFileCount === 1 ? 'was' : 'were'} left by a file write that was interrupted, and
 						no record says which write. DroppedNeedle has not deleted or moved any of them and will not.
-						Each name is a normal file name with <code>.droppedneedle-management-</code> and an id
-						in front, and an ending that says what it is: <code>.bak</code> is a file as it was
-						before the write and is complete; <code>.tmp</code>, or <code>.staging</code> before the file
-						type, is a copy that was still being made and may be cut short. Look in the same folder for
-						the file with the normal name. If it is there and plays, the hidden file is spare: delete
-						it. If it is missing, copy the hidden file to the normal name and check the copy plays before
-						you delete the hidden one. If the normal file is there but broken, keep both until one of
-						them plays. This list is from the last server start and is checked again at the next one.</span
+						Each name starts with <code>.droppedneedle-management-</code> and an id, then the file's
+						own name (cut short if it is long), and an ending that says what it is:
+						<code>.bak</code>
+						is a file as it was before the write and is complete; <code>.tmp</code>, or
+						<code>.staging</code> before the file type, is a copy that was still being made and may be
+						cut short. Look in the same folder for the file with the normal name. If it is there and plays,
+						the hidden file is spare: delete it. If it is missing, copy the hidden file to the normal
+						name and check the copy plays before you delete the hidden one. If the normal file is there
+						but broken, keep both until one of them plays. This list is from the last server start and
+						is checked again at the next one.</span
 					>
 					<ul class="flex w-full flex-col gap-1">
 						{#each leftoverFiles as file (`${file.root_id}/${file.rel_path}`)}<li

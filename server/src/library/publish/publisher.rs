@@ -1353,8 +1353,10 @@ fn journal_id(bundle_id: &str, ordinal: usize, kind: &str) -> String {
 /// Write a staged temp atomically: create, write, fsync, re-read, and
 /// fsync the directory. An existing temp with identical bytes is
 /// reused so crashed attempts retry idempotently; mismatched bytes
-/// fail closed.
+/// fail closed. Anything else under the name (a symlink) is unlinked and
+/// the temp created new.
 fn write_staged_temp(temp: &Path, bytes: &[u8]) -> Result<(), PublishError> {
+    use std::io::Write as _;
     if let Ok(current) = paths::read_regular_file(temp) {
         if current == bytes {
             return Ok(());
@@ -1368,8 +1370,8 @@ fn write_staged_temp(temp: &Path, bytes: &[u8]) -> Result<(), PublishError> {
         )));
     }
     let written = (|| {
-        std::fs::write(temp, bytes).map_err(PublishError::from)?;
-        let file = std::fs::File::open(temp).map_err(PublishError::from)?;
+        let mut file = paths::create_hidden(temp).map_err(PublishError::from)?;
+        file.write_all(bytes).map_err(PublishError::from)?;
         super::journal::fsync_file(&file)?;
         drop(file);
         let reread = paths::read_regular_file(temp)?;
