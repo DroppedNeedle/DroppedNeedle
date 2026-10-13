@@ -241,13 +241,22 @@ impl ArchiveUnpacker for ZipUnpacker {
     }
 }
 
-/// Every way an install can fail. All but `Io` are user-facing 400s with
-/// the message below; `Io` is a 500 with a fixed body.
+/// Every way an install can fail. `Denied`, `RateLimited` and `Download`
+/// are GitHub's fault and `Io` is ours; the rest are user-facing 400s with
+/// the message below.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InstallError {
     /// Not a public GitHub repository URL.
     InvalidUrl,
-    /// GitHub did not answer, or the download failed.
+    /// GitHub refused the request (401, or a 403 that is not a rate limit).
+    Denied,
+    /// GitHub is rate limiting this server.
+    RateLimited {
+        /// Seconds until GitHub takes requests again, when it said.
+        retry_after: Option<u64>,
+    },
+    /// GitHub did not answer, answered with a failure, or sent something
+    /// unreadable.
     Download,
     /// The repository has no such release, tag, branch or commit.
     RefNotFound(String),
@@ -282,9 +291,11 @@ impl std::fmt::Display for InstallError {
             Self::InvalidUrl => f.write_str(
                 "Enter a public GitHub repository URL, e.g. https://github.com/owner/repo",
             ),
-            Self::Download => f.write_str(
-                "Could not reach GitHub or download that repository. Check the URL is public and try again",
-            ),
+            Self::Denied => f.write_str("GitHub refused the request"),
+            Self::RateLimited { .. } => {
+                f.write_str("GitHub is rate limiting this server, try again later")
+            }
+            Self::Download => f.write_str("GitHub could not be reached"),
             Self::RefNotFound(what) => write!(f, "GitHub has no {what} in that repository"),
             Self::TooLarge => f.write_str("That repository is too large to install as a plugin"),
             Self::TooManyFiles => f.write_str("That repository has too many files"),
@@ -472,14 +483,19 @@ struct CommitInfo {
     sha: String,
 }
 
-/// The body behind one URL, or `None` when GitHub has nothing there.
-async fn fetch_body(
-    fetcher: &dyn ArchiveFetcher,
-    url: &str,
-) -> Result<Option<Vec<u8>>, InstallError> {
-    match fetcher.fetch(url).await {
+/// The body behind one URL, or `None` when GitHub has nothing there. Only
+/// a 404 is "nothing there": a refusal, a rate limit or a failure is an
+/// error, so it can never be mistaken for a repository with no releases.
+fn body_of(answer: Result<Fetched, FetchError>) -> Result<Option<Vec<u8>>, InstallError> {
+    match answer {
         Ok(Fetched::Found(body)) => Ok(Some(body)),
-        Ok(_) => Ok(None),
+        Ok(Fetched::NotFound) => Ok(None),
+        Ok(Fetched::Denied) => Err(InstallError::Denied),
+        Ok(Fetched::RateLimited { retry_after }) => Err(InstallError::RateLimited { retry_after }),
+        Ok(Fetched::Failed(status)) => {
+            tracing::warn!(status, "GitHub failed a plugin request");
+            Err(InstallError::Download)
+        }
         Err(FetchError::TooLarge) => Err(InstallError::TooLarge),
         Err(FetchError::Transport(reason)) => {
             tracing::warn!(%reason, "plugin download failed");
@@ -498,7 +514,15 @@ async fn commit_for(
         "{API_BASE}/repos/{}/{}/commits/{reference}",
         source.owner, source.repo
     );
-    let Some(body) = fetch_body(fetcher, &url).await? else {
+    let answer = fetcher.fetch(&url).await;
+    // This endpoint answers 422, not 404, for a tag, branch or commit the
+    // repository does not have (probed 2026-10-13 against the public API),
+    // and 409 for a repository with no commits (GitHub's "Get a commit"
+    // page). Both mean "no such ref" here and nowhere else.
+    if matches!(answer, Ok(Fetched::Failed(409 | 422))) {
+        return Ok(None);
+    }
+    let Some(body) = body_of(answer)? else {
         return Ok(None);
     };
     let info: CommitInfo = serde_json::from_slice(&body).map_err(|_| InstallError::Download)?;
@@ -519,7 +543,7 @@ pub async fn resolve(
                 "{API_BASE}/repos/{}/{}/releases/latest",
                 source.owner, source.repo
             );
-            match fetch_body(fetcher, &url).await? {
+            match body_of(fetcher.fetch(&url).await)? {
                 Some(body) => {
                     let release: LatestRelease =
                         serde_json::from_slice(&body).map_err(|_| InstallError::Download)?;
@@ -563,8 +587,7 @@ pub async fn stage(
         "{CODELOAD_BASE}/{}/{}/zip/{}",
         resolved.source.owner, resolved.source.repo, resolved.commit
     );
-    let archive = fetch_body(fetcher, &url)
-        .await?
+    let archive = body_of(fetcher.fetch(&url).await)?
         .ok_or_else(|| InstallError::RefNotFound(format!("commit {}", resolved.commit)))?;
     if archive.len() > MAX_PLUGIN_ZIP_BYTES {
         return Err(InstallError::TooLarge);

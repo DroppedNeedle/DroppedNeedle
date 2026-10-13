@@ -15449,6 +15449,12 @@
           },
           "409": {
             "description": "The repository moved since the preview"
+          },
+          "502": {
+            "description": "GitHub refused the request or could not be reached"
+          },
+          "503": {
+            "description": "GitHub is rate limiting this server"
           }
         }
       }
@@ -15489,6 +15495,12 @@
           },
           "403": {
             "description": "Admin access required"
+          },
+          "502": {
+            "description": "GitHub refused the request or could not be reached"
+          },
+          "503": {
+            "description": "GitHub is rate limiting this server"
           }
         }
       }
@@ -15700,6 +15712,12 @@
           },
           "409": {
             "description": "The repository moved since the preview"
+          },
+          "502": {
+            "description": "GitHub refused the request or could not be reached"
+          },
+          "503": {
+            "description": "GitHub is rate limiting this server"
           }
         }
       }

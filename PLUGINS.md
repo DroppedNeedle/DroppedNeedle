@@ -53,6 +53,8 @@ In **Settings > Plugins**, paste the repository URL and press **Preview**.
 
 - `https://github.com/owner/repo` installs the latest release. If the
   repository has no releases, it installs the default branch as it is now.
+  If GitHub refuses the request, rate limits your server or cannot be
+  reached, the install stops with an error and nothing is installed.
 - `https://github.com/owner/repo/releases/tag/v1.2.0` installs that release.
 - `https://github.com/owner/repo/tree/some-branch` installs that branch (or
   tag) as it is now.

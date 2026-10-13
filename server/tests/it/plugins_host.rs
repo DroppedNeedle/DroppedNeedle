@@ -25,11 +25,14 @@ use droppedneedle::jobs::plugin_ticks::{
     MemoryTickStore, TickHost as JobsTickHost, TickPlugin as JobsTickPlugin,
 };
 use droppedneedle::jobs::registry::{JobRegistry, MemoryRegistryStore};
+use droppedneedle::middleware::request_scope;
 use droppedneedle::plugins::fakes::{
     FakeConnection, FakeFetcher, FakeLauncher, FakeRoles, FakeUnpacker, scrobble_plugin_event,
 };
 use droppedneedle::plugins::handlers::{ExtRateLimiter, PluginsDeps, plugins_router};
 use droppedneedle::plugins::host::PluginHost;
+use droppedneedle::plugins::install::{Fetched, InstallError, parse_source, resolve};
+use droppedneedle::plugins::models::PluginRefKind;
 use droppedneedle::plugins::protocol::methods;
 use droppedneedle::plugins::runtime::{PublishPayload, ScrobbleEvent};
 use droppedneedle::plugins::ticks::{
@@ -330,6 +333,161 @@ async fn install_previews_permissions_then_pins_the_previewed_commit() {
     let (status, update) = send(admin, "POST", "/plugins/toy/update", Some(json!({}))).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(update["updated"], false);
+}
+
+const LATEST_RELEASE: &str = "https://api.github.com/repos/acme/toy/releases/latest";
+const DEFAULT_BRANCH: &str = "https://api.github.com/repos/acme/toy/commits/HEAD";
+const BRANCH_SHA: &str = "89abcdef0123456789abcdef0123456789abcdef";
+
+/// The default branch holds unreleased code that would install fine.
+fn default_branch(fetcher: &FakeFetcher) {
+    fetcher.insert(
+        DEFAULT_BRANCH,
+        format!(r#"{{"sha": "{BRANCH_SHA}"}}"#).as_bytes(),
+    );
+    fetcher.insert(
+        &format!("https://codeload.github.com/acme/toy/zip/{BRANCH_SHA}"),
+        b"zip",
+    );
+}
+
+fn toy_archive() -> Arc<FakeUnpacker> {
+    Arc::new(FakeUnpacker::new(vec![
+        FakeUnpacker::file("toy-0123456/plugin.toml", TOY_MANIFEST.as_bytes()),
+        FakeUnpacker::file("toy-0123456/plugin.py", b"# code"),
+    ]))
+}
+
+/// The admin's router behind the request wrapper production mounts it
+/// under, which replaces every 5xx body with the fixed one.
+fn admin_app(deps: PluginsDeps) -> axum::Router {
+    with_test_principal(plugins_router(deps), session("admin-1")).layer(
+        axum::middleware::from_fn_with_state(crate::common::hooked_state(), request_scope),
+    )
+}
+
+async fn post_for_status(
+    router: axum::Router,
+    uri: &str,
+    body: serde_json::Value,
+) -> (StatusCode, Option<String>) {
+    let request = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let response = router.oneshot(request).await.unwrap();
+    let retry_after = response
+        .headers()
+        .get("retry-after")
+        .map(|value| value.to_str().unwrap().to_owned());
+    (response.status(), retry_after)
+}
+
+#[tokio::test]
+async fn a_github_refusal_never_falls_back_to_the_default_branch() {
+    let cases = [
+        (
+            Fetched::Denied,
+            InstallError::Denied,
+            StatusCode::BAD_GATEWAY,
+            None,
+        ),
+        (
+            Fetched::RateLimited {
+                retry_after: Some(90),
+            },
+            InstallError::RateLimited {
+                retry_after: Some(90),
+            },
+            StatusCode::SERVICE_UNAVAILABLE,
+            Some("90".to_owned()),
+        ),
+        (
+            Fetched::Failed(502),
+            InstallError::Download,
+            StatusCode::BAD_GATEWAY,
+            None,
+        ),
+    ];
+    for (index, (answer, kind, status, retry_after)) in cases.into_iter().enumerate() {
+        let rig = rig(&format!("refused-{index}"));
+        let fetcher = Arc::new(FakeFetcher::new());
+        github(&fetcher);
+        default_branch(&fetcher);
+        fetcher.answer(LATEST_RELEASE, answer.clone());
+        let source = parse_source("https://github.com/acme/toy", None).unwrap();
+        assert_eq!(resolve(fetcher.as_ref(), source).await, Err(kind));
+
+        let admin = admin_app(deps_for(&rig, Arc::clone(&fetcher), toy_archive()));
+        let body = json!({"repository_url": "https://github.com/acme/toy"});
+        for uri in ["/plugins/install/preview", "/plugins/install"] {
+            let got = post_for_status(admin.clone(), uri, body.clone()).await;
+            assert_eq!(got, (status, retry_after.clone()), "{uri}");
+        }
+        assert!(!rig.dir.join("plugins").join("toy").exists());
+
+        // An installed release must not start following the branch either.
+        github(&fetcher);
+        let (got, _) = post_for_status(admin.clone(), "/plugins/install", body).await;
+        assert_eq!(got, StatusCode::CREATED);
+        fetcher.answer(LATEST_RELEASE, answer);
+        let got = post_for_status(admin, "/plugins/toy/update", json!({})).await;
+        assert_eq!(got, (status, retry_after), "update");
+        let record = rig.host.install_record("toy").unwrap();
+        assert_eq!(
+            (record.ref_kind, record.commit.as_str()),
+            (PluginRefKind::Release, SHA)
+        );
+
+        let requested = fetcher.requested.lock().unwrap();
+        assert!(!requested.iter().any(|url| url == DEFAULT_BRANCH));
+    }
+}
+
+#[tokio::test]
+async fn a_repository_without_releases_installs_its_default_branch() {
+    let rig = rig("no-releases");
+    let fetcher = Arc::new(FakeFetcher::new());
+    fetcher.answer(LATEST_RELEASE, Fetched::NotFound);
+    default_branch(&fetcher);
+    let admin = admin_app(deps_for(&rig, fetcher, toy_archive()));
+    let (status, installed) = send(
+        admin,
+        "POST",
+        "/plugins/install",
+        Some(json!({"repository_url": "https://github.com/acme/toy"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(installed["install"]["ref_kind"], "branch");
+    assert_eq!(installed["install"]["reference"], "HEAD");
+    assert_eq!(installed["install"]["commit"], BRANCH_SHA);
+}
+
+#[tokio::test]
+async fn a_ref_github_does_not_know_is_the_admins_mistake_not_an_outage() {
+    let rig = rig("unknown-ref");
+    let fetcher = Arc::new(FakeFetcher::new());
+    fetcher.answer(
+        "https://api.github.com/repos/acme/toy/commits/mian",
+        Fetched::Failed(422),
+    );
+    let admin = admin_app(deps_for(&rig, fetcher, toy_archive()));
+    let (status, error) = send(
+        admin,
+        "POST",
+        "/plugins/install",
+        Some(json!({"repository_url": "https://github.com/acme/toy/tree/mian"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        error["error"]["message"],
+        "GitHub has no release, tag or branch named mian in that repository"
+    );
+    assert!(!rig.dir.join("plugins").join("toy").exists());
 }
 
 #[tokio::test]

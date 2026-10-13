@@ -37909,6 +37909,20 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description GitHub refused the request or could not be reached */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description GitHub is rate limiting this server */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     preview_plugin_install: {
@@ -37949,6 +37963,20 @@ export interface operations {
             };
             /** @description Admin access required */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description GitHub refused the request or could not be reached */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description GitHub is rate limiting this server */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -38186,6 +38214,20 @@ export interface operations {
             };
             /** @description The repository moved since the preview */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description GitHub refused the request or could not be reached */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description GitHub is rate limiting this server */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -31,6 +31,10 @@ pub const CONFLICT: &str = "CONFLICT";
 pub const PAYLOAD_TOO_LARGE: &str = "PAYLOAD_TOO_LARGE";
 /// The caller is over the route's per-minute budget.
 pub const RATE_LIMITED: &str = "RATE_LIMITED";
+/// GitHub refused a plugin install or update request.
+pub const UPSTREAM_REFUSED: &str = "UPSTREAM_REFUSED";
+/// GitHub is rate limiting plugin installs from this server.
+pub const UPSTREAM_RATE_LIMITED: &str = "UPSTREAM_RATE_LIMITED";
 /// A plugin route failed. Fixed body, like v2.
 pub const ROUTE_FAILED: &str = "EXTERNAL_SERVICE_UNAVAILABLE";
 
@@ -43,6 +47,20 @@ pub const FIXED_RATE_LIMITED_MESSAGE: &str = "Too many requests";
 
 /// Challenge sent on every 401.
 pub const WWW_AUTHENTICATE_BEARER: &str = "Bearer";
+
+/// How GitHub let an install or update down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceFault {
+    /// It refused the request.
+    Refused,
+    /// It is rate limiting this server.
+    RateLimited {
+        /// Seconds until it takes requests again, when it said.
+        retry_after: Option<u64>,
+    },
+    /// It did not answer, or answered with a failure.
+    Unreachable,
+}
 
 /// Every failure the plugin routes can return to a caller.
 #[derive(Debug)]
@@ -77,6 +95,17 @@ pub enum PluginError {
         /// Seconds the caller should wait.
         retry_after: u64,
     },
+    /// GitHub got in the way of an install or update. The message is one of
+    /// the installer's fixed sentences, never GitHub's text. A rate limit's
+    /// wait goes in `details.retry_after` and the `Retry-After` header.
+    Source {
+        /// What GitHub did.
+        fault: SourceFault,
+        /// The installer's sentence for it.
+        message: String,
+        /// Ties the wire response to the server log line.
+        error_id: String,
+    },
     /// A plugin route failed. Fixed body, never the plugin's error text.
     RouteFailed,
     /// Server fault. Fixed body plus the request-tied id.
@@ -103,7 +132,11 @@ impl PluginError {
             Self::Conflict { .. } => StatusCode::CONFLICT,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
-            Self::RouteFailed => StatusCode::BAD_GATEWAY,
+            Self::Source {
+                fault: SourceFault::RateLimited { .. },
+                ..
+            } => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Source { .. } | Self::RouteFailed => StatusCode::BAD_GATEWAY,
             Self::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -136,6 +169,25 @@ impl PluginError {
                 FIXED_RATE_LIMITED_MESSAGE.to_owned(),
                 None,
             ),
+            Self::Source {
+                fault,
+                message,
+                error_id,
+            } => (
+                match fault {
+                    SourceFault::Refused => UPSTREAM_REFUSED,
+                    SourceFault::RateLimited { .. } => UPSTREAM_RATE_LIMITED,
+                    SourceFault::Unreachable => crate::error::UPSTREAM_ERROR,
+                }
+                .to_owned(),
+                message.clone(),
+                Some(match fault {
+                    SourceFault::RateLimited {
+                        retry_after: Some(seconds),
+                    } => json!({ "error_id": error_id, "retry_after": seconds }),
+                    _ => json!({ "error_id": error_id }),
+                }),
+            ),
             Self::RouteFailed => (
                 ROUTE_FAILED.to_owned(),
                 FIXED_ROUTE_FAILED_MESSAGE.to_owned(),
@@ -162,6 +214,10 @@ impl IntoResponse for PluginError {
         let status = self.status();
         let retry_after = match &self {
             Self::RateLimited { retry_after } => Some(*retry_after),
+            Self::Source {
+                fault: SourceFault::RateLimited { retry_after },
+                ..
+            } => *retry_after,
             _ => None,
         };
         let mut response = (status, Json(self.envelope())).into_response();

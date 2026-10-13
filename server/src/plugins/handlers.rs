@@ -28,7 +28,7 @@ use crate::ids::IdGenerator;
 use crate::runtime_config::ConfigStore;
 
 use super::capabilities::routes::ROUTE_BODY_MAX_BYTES;
-use super::error::PluginError;
+use super::error::{PluginError, SourceFault};
 use super::host::{PluginHost, UninstallError, UpdateError};
 use super::install::{
     ArchiveFetcher, ArchiveUnpacker, InstallError, StagedPlugin, TRUST_WARNING, parse_source,
@@ -205,11 +205,25 @@ impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidJson<T> {
 }
 
 fn map_install(error: InstallError, ids: &dyn IdGenerator) -> PluginError {
-    match error {
-        InstallError::Io(reason) => PluginError::internal(&reason, ids),
-        other => PluginError::InvalidInput {
-            message: other.to_string(),
+    let fault = match &error {
+        InstallError::Io(reason) => return PluginError::internal(reason, ids),
+        InstallError::Denied => SourceFault::Refused,
+        InstallError::RateLimited { retry_after } => SourceFault::RateLimited {
+            retry_after: *retry_after,
         },
+        InstallError::Download => SourceFault::Unreachable,
+        _ => {
+            return PluginError::InvalidInput {
+                message: error.to_string(),
+            };
+        }
+    };
+    let error_id = ids.new_id();
+    tracing::warn!(error_id, ?fault, "GitHub stopped a plugin install");
+    PluginError::Source {
+        fault,
+        message: error.to_string(),
+        error_id,
     }
 }
 
@@ -363,6 +377,8 @@ async fn install_staged(deps: &PluginsDeps, staged: StagedPlugin) -> Result<Stri
         (status = 400, description = "Not a usable plugin repository"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin access required"),
+        (status = 502, description = "GitHub refused the request or could not be reached"),
+        (status = 503, description = "GitHub is rate limiting this server"),
     )
 )]
 pub async fn preview_plugin_install(
@@ -412,6 +428,8 @@ pub async fn preview_plugin_install(
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin access required"),
         (status = 409, description = "The repository moved since the preview"),
+        (status = 502, description = "GitHub refused the request or could not be reached"),
+        (status = 503, description = "GitHub is rate limiting this server"),
     )
 )]
 pub async fn install_plugin(
@@ -456,6 +474,8 @@ pub async fn install_plugin(
         (status = 403, description = "Admin access required"),
         (status = 404, description = "Unknown plugin"),
         (status = 409, description = "The repository moved since the preview"),
+        (status = 502, description = "GitHub refused the request or could not be reached"),
+        (status = 503, description = "GitHub is rate limiting this server"),
     )
 )]
 pub async fn update_plugin_from_source(
