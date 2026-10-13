@@ -103,12 +103,12 @@ impl SqliteScanStore {
         Ok(Self::wrap(connection))
     }
 
-    /// In-memory store with every migration applied, for unit tests.
+    /// In-memory store loaded from the migrated template, for unit tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn open_ephemeral() -> Result<Self, String> {
-        let connection = Connection::open_in_memory().map_err(|error| error.to_string())?;
+        let mut connection = Connection::open_in_memory().map_err(|error| error.to_string())?;
         crate::db::apply_connection_pragmas(&connection).map_err(|error| error.to_string())?;
-        crate::schema::apply_migrations_blocking(&connection).map_err(|error| error.to_string())?;
+        crate::schema::template::load_into(&mut connection)?;
         Ok(Self::wrap(connection))
     }
 

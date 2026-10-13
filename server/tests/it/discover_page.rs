@@ -16,7 +16,7 @@ use droppedneedle::auth::session::extract::Transport;
 use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::session::store::SessionKind;
 use droppedneedle::auth::users::memory::with_test_principal;
-use droppedneedle::db::{DbConfig, DbRuntime, Lane, open_runtime};
+use droppedneedle::db::{DbRuntime, Lane};
 use droppedneedle::ids::UuidGenerator;
 use droppedneedle::reads::discover::adapters::content::LiveContent;
 use droppedneedle::reads::discover::adapters::page::sources::{
@@ -462,9 +462,7 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
 #[tokio::test]
 async fn page_builds_in_the_background_is_saved_and_records_activity() {
     let dir = crate::common::ScratchDir::new("discover-page");
-    let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
-        .await
-        .expect("runtime opens");
+    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
     runtime
         .lane()
         .write(Lane::Foreground, "test.seed", |tx| {

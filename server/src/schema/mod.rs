@@ -9,6 +9,8 @@
 //! serve when the database stamp differs from the binary.
 
 pub mod boot;
+#[cfg(any(test, feature = "test-support"))]
+pub mod template;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use boot::apply_migrations_blocking;

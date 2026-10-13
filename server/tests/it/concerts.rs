@@ -17,7 +17,7 @@ use droppedneedle::auth::session::extract::Transport;
 use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::session::store::SessionKind;
 use droppedneedle::concerts::{ConcertsEvents, ConcertsNew, ConcertsSetup, Endpoints};
-use droppedneedle::db::{DbConfig, Lane, open_runtime};
+use droppedneedle::db::Lane;
 use droppedneedle::runtime_config::secret_sections::EventsSettings;
 use droppedneedle::runtime_config::{ConfigStore, Crypto, Secret};
 
@@ -157,9 +157,7 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
 #[tokio::test]
 async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
     let scratch = ScratchDir::new("concerts");
-    let runtime = open_runtime(&DbConfig::new(&scratch.join("app.db")))
-        .await
-        .unwrap();
+    let runtime = crate::common::scratch_runtime(&scratch.join("app.db")).await;
     let config = Arc::new(
         ConfigStore::open(
             &scratch.join("config.json"),

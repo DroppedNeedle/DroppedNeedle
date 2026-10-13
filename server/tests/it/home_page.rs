@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use droppedneedle::db::{DbConfig, Lane, OpError, open_runtime};
+use droppedneedle::db::{Lane, OpError};
 use droppedneedle::reads::discover::adapters::home::LiveHome;
 use droppedneedle::reads::discover::adapters::home::artwork::GenreArt;
 use droppedneedle::reads::discover::adapters::home::genre::GenrePages;
@@ -161,9 +161,7 @@ async fn home_and_genre_pages_build_from_library_and_listening() {
     let dir = crate::common::ScratchDir::new("home-page");
     let cover = dir.join("cover.png");
     std::fs::write(&cover, b"\x89PNG\r\n\x1a\nnot really").expect("cover written");
-    let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
-        .await
-        .expect("runtime opens");
+    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
     let seed = format!(
         "INSERT INTO auth_users (id, display_name, role, created_at) \
          VALUES ('user-1', 'Ada', 'user', '2026-01-01T00:00:00Z'); \

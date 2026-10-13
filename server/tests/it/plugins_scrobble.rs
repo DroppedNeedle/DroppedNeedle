@@ -323,9 +323,7 @@ async fn mirror_user(runtime: &DbRuntime, user_id: &str) {
 async fn sqlite_prefs_partial_upsert_survives_reopen() {
     let scratch = ScratchDir::new("scrobble-prefs");
     let db_path = scratch.join("app.db");
-    let runtime = open_runtime(&DbConfig::new(&db_path))
-        .await
-        .expect("runtime opens");
+    let runtime = crate::common::scratch_runtime(&db_path).await;
     mirror_user(&runtime, "user-1").await;
     let store = SqliteScrobblePrefsStore::new(runtime.pool().clone(), runtime.lane().clone());
 
@@ -382,9 +380,7 @@ async fn sqlite_prefs_partial_upsert_survives_reopen() {
 async fn sqlite_links_round_trip_sealed_and_survive_reopen() {
     let scratch = ScratchDir::new("scrobble-links");
     let db_path = scratch.join("app.db");
-    let runtime = open_runtime(&DbConfig::new(&db_path))
-        .await
-        .expect("runtime opens");
+    let runtime = crate::common::scratch_runtime(&db_path).await;
     mirror_user(&runtime, "user-1").await;
     let store = SqliteListenBrainzLinkStore::new(
         runtime.pool().clone(),

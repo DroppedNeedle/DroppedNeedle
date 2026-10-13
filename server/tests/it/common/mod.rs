@@ -279,6 +279,34 @@ impl Drop for ScratchDir {
     }
 }
 
+/// Write a private copy of the migrated database to `path`, which must not
+/// exist yet. The migrations run once per test binary, not once per test.
+pub fn migrated_db(path: &Path) {
+    droppedneedle::schema::template::copy_to(path).expect("migrated database copies");
+}
+
+/// A one-connection pool on a private migrated database. Hold the guard:
+/// dropping it removes the file.
+pub async fn migrated_pool(tag: &str) -> (sqlx::SqlitePool, ScratchDir) {
+    let dir = ScratchDir::new(tag);
+    let path = dir.join("app.db");
+    migrated_db(&path);
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&path))
+        .await
+        .expect("migrated pool opens");
+    (pool, dir)
+}
+
+/// The production runtime on a fresh migrated database at `path`.
+pub async fn scratch_runtime(path: &Path) -> droppedneedle::db::DbRuntime {
+    migrated_db(path);
+    droppedneedle::db::open_runtime(&droppedneedle::db::DbConfig::new(path))
+        .await
+        .expect("scratch runtime opens")
+}
+
 /// Reads inputs for production-shaped rigs: covers and the YouTube quota
 /// under `dir`, settings from `config`, no linked ListenBrainz accounts and
 /// no instance Last.fm key.

@@ -30,10 +30,8 @@ use droppedneedle::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle::runtime_config::sections::{
     MbSourceMode, MusicBrainzSettings, MusicSource, UserPreferences,
 };
-use droppedneedle::schema::apply_migrations;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
-use sqlx::sqlite::SqlitePoolOptions;
 use tower::ServiceExt as _;
 
 use crate::common;
@@ -293,16 +291,6 @@ impl CatalogSettings for TestSettings {
     }
 }
 
-async fn migrated_pool() -> SqlitePool {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
-        .await
-        .unwrap();
-    apply_migrations(&pool).await.unwrap();
-    pool
-}
-
 /// The library: Radiohead with OK Computer (identified as the CD edition,
 /// one indexed track), an unidentified bootleg, and an open request for
 /// Kid A.
@@ -380,7 +368,7 @@ async fn session_auth() -> SessionAuth<MemorySessionStore> {
 /// The catalog and search routes behind the session gate and request
 /// scope, with MusicBrainz at `mb_url`. The test user has a Last.fm key.
 async fn app_with(fixtures: &Fixtures, mb_url: String) -> axum::Router {
-    let pool = migrated_pool().await;
+    let (pool, _dir) = crate::common::migrated_pool("reads-catalog").await;
     seed_library(&pool).await;
     let rig = TestRig::new().unwrap();
     let sealed = rig.deps.crypto.encrypt("test-lastfm-key").unwrap();
@@ -880,7 +868,7 @@ impl EditionChoices for RecordedPins {
 
 #[tokio::test]
 async fn clearing_a_pin_names_the_copy_and_never_calls_musicbrainz() {
-    let pool = migrated_pool().await;
+    let (pool, _dir) = crate::common::migrated_pool("reads-catalog").await;
     seed_library(&pool).await;
     // A second copy of OK Computer makes the group ambiguous.
     for statement in [

@@ -58,7 +58,5 @@ pub use sources::{
     DownloadSource, Materialization, OrphanOwnership, SourceError, SourceHandle, TransferProgress,
 };
 pub use state::{AttemptState, TaskStatus, can_transition, is_terminal};
-#[cfg(any(test, feature = "test-support"))]
-pub use store::apply_test_schema;
 pub use store::{DownloadStore, StoreError, TaskDetails};
 pub use watchdog::{PollSample, RetryPolicy, Watchdog, WatchdogConfig, WatchdogOutcome};

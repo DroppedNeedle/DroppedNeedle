@@ -30,7 +30,7 @@ use droppedneedle::acquire::requests::{
     sqlite::{RequestStore, WantedStore},
 };
 use droppedneedle::acquire::search_jobs::store::JobStore;
-use droppedneedle::db::{DbConfig, DbRuntime, JobState, open_runtime};
+use droppedneedle::db::{DbRuntime, JobState};
 use droppedneedle::runtime_config::sections::UserPreferences;
 
 const NOW: i64 = 1_700_000_000;
@@ -42,9 +42,7 @@ fn scratch_dir(name: &str) -> crate::common::ScratchDir {
 /// A served runtime for the tests that need the job registry.
 async fn runtime(name: &str) -> (DbRuntime, AcquireDb, crate::common::ScratchDir) {
     let dir = scratch_dir(name);
-    let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
-        .await
-        .unwrap();
+    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
     let db = AcquireDb::from_runtime(&runtime);
     (runtime, db, dir)
 }

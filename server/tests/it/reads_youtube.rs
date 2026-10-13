@@ -13,7 +13,6 @@ use droppedneedle::auth::session::extract::Transport;
 use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::session::store::SessionKind;
 use droppedneedle::auth::users::memory::with_test_principal;
-use droppedneedle::db::{DbConfig, open_runtime};
 use droppedneedle::reads::collections::db::CollectionsDb;
 use droppedneedle::reads::discover::fakes::FakeYouTube;
 use droppedneedle::reads::youtube::{self, YouTubeLinks, store::LinkStore};
@@ -47,9 +46,7 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
 #[tokio::test]
 async fn youtube_links_journey() {
     let dir = ScratchDir::new("youtube");
-    let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
-        .await
-        .unwrap();
+    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
     let links = YouTubeLinks::new(
         LinkStore::new(CollectionsDb::new(
             runtime.pool().clone(),

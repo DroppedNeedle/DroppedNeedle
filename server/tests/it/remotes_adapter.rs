@@ -621,7 +621,7 @@ async fn linked_connections_survive_a_restart() {
     };
     let coder = || Arc::new(CredentialCoder::new(Arc::new(test_crypto())));
     {
-        let runtime = open_runtime(&DbConfig::new(&db)).await.expect("db opens");
+        let runtime = crate::common::scratch_runtime(&db).await;
         runtime
             .lane()
             .write(droppedneedle::db::Lane::Foreground, "seed", |tx| {

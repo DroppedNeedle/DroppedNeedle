@@ -13,7 +13,7 @@ use droppedneedle::compat::jellyfin::seams::{
 use droppedneedle::compat::subsonic::fake::{FakeAudio, FakeVerifier, NOW_UNIX, USER_ID};
 use droppedneedle::compat::subsonic::params::SubsonicParameters;
 use droppedneedle::compat::subsonic::{Request, Settings, dispatch};
-use droppedneedle::db::{DbConfig, DbRuntime, Lane, open_runtime};
+use droppedneedle::db::{DbRuntime, Lane};
 use droppedneedle::ids::UuidGenerator;
 use droppedneedle::reads::ReadsSetup;
 use droppedneedle::reads::collections::db::CollectionsDb;
@@ -52,9 +52,7 @@ struct Rig {
 impl Rig {
     async fn open() -> Self {
         let dir = ScratchDir::new("compat-catalog");
-        let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
-            .await
-            .unwrap();
+        let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
         runtime
             .lane()
             .write(Lane::Foreground, "seed", |tx| {

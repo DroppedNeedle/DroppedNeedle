@@ -9,7 +9,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use droppedneedle::db::{DbConfig, DbRuntime, Lane, OpError, open_runtime};
+use droppedneedle::db::{DbRuntime, Lane, OpError};
 use droppedneedle::library::scan::SqliteScanStore;
 use droppedneedle::providers::coverart::{CaaRequest, CaaTransport, RawResponse, TransportError};
 use droppedneedle::reads::platform::artwork::{
@@ -77,7 +77,7 @@ struct Rig {
 async fn rig(seed_track: Option<&Path>) -> Rig {
     let dir = ScratchDir::new("reads-artwork");
     let db_path = dir.join("app.db");
-    let runtime = open_runtime(&DbConfig::new(&db_path)).await.unwrap();
+    let runtime = crate::common::scratch_runtime(&db_path).await;
     let mut seed = format!(
         "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
          VALUES ('a1', 'Aurora', 'aurora', 'group', 1, 1); \

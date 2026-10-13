@@ -8,7 +8,7 @@ use crate::common::{FIXED_ID, FixedIdGenerator, ScratchDir};
 use std::sync::Arc;
 
 use droppedneedle::auth::users::memory::TestRig;
-use droppedneedle::db::{DbConfig, Lane, OpError, open_runtime};
+use droppedneedle::db::{Lane, OpError};
 use droppedneedle::runtime_config::secret_sections::IdentificationPolicy;
 use droppedneedle::settings::error::SettingsError;
 use droppedneedle::settings::library_catalog::SqliteLibraryPolicyCatalog;
@@ -23,9 +23,7 @@ async fn removed_root_restores_and_previews_count_the_catalog() {
     let scratch = ScratchDir::new("settings-library-policy");
     let music = scratch.join("music");
     std::fs::create_dir_all(music.join("A")).expect("music dir builds");
-    let runtime = open_runtime(&DbConfig::new(&scratch.join("app.db")))
-        .await
-        .expect("runtime opens");
+    let runtime = crate::common::scratch_runtime(&scratch.join("app.db")).await;
     // Two catalog rows under a root the settings no longer list; one of
     // them went missing on disk.
     let seed = format!(

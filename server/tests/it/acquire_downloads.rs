@@ -16,12 +16,12 @@ use downloads::recovery::{
     FAILOVER_CLAIM_LIMIT, FAILOVER_LEASE_SECONDS, StartupAction, StartupCtx,
 };
 use downloads::state::{AttemptState, can_transition};
-use downloads::store::{NewTask, apply_test_schema as apply_schema_again};
+use downloads::store::NewTask;
 use downloads::{
     DownloadManifest, DownloadStore, ExpectedFile, ManifestCodec, OrphanDecision, OrphanEvidence,
     OrphanPolicy, PollSample, QuarantineDir, RecycleBin, RetryPolicy, TaskStatus, Watchdog,
-    WatchdogConfig, WatchdogOutcome, apply_test_schema, canonical_soulseek_identity,
-    classify_startup, is_terminal, plan_retry,
+    WatchdogConfig, WatchdogOutcome, canonical_soulseek_identity, classify_startup, is_terminal,
+    plan_retry,
 };
 use rusqlite::Connection;
 
@@ -30,14 +30,11 @@ fn scratch_dir(tag: &str) -> crate::common::ScratchDir {
     crate::common::ScratchDir::new(tag)
 }
 
-/// Scratch journal: a temp-file database with the real migrations applied.
+/// Scratch journal: a temp-file copy of the migrated database.
 fn scratch_store(dir: &std::path::Path) -> Connection {
+    crate::common::migrated_db(&dir.join("brief.db"));
     let conn = Connection::open(dir.join("brief.db")).unwrap();
     conn.execute_batch("PRAGMA foreign_keys = ON").unwrap();
-    apply_test_schema(&conn).unwrap();
-    // The harness path and the re-exported path run the same SQL; both
-    // stay idempotent so a double apply never corrupts a scratch db.
-    apply_schema_again(&conn).unwrap();
     conn.execute(
         "INSERT INTO auth_users (id, display_name, role, created_at) VALUES ('u1', 'brief', 'user', 'now')",
         [],

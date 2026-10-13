@@ -15,7 +15,7 @@ use droppedneedle::auth::session::extract::Transport;
 use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::session::store::SessionKind;
 use droppedneedle::auth::users::memory::with_test_principal;
-use droppedneedle::db::{DbConfig, DbRuntime, open_runtime};
+use droppedneedle::db::DbRuntime;
 use droppedneedle::ids::UuidGenerator;
 use droppedneedle::providers::Providers;
 use droppedneedle::reads::discover::adapters::queue::sources::{
@@ -355,9 +355,7 @@ fn deck_ids(body: &Value) -> Vec<String> {
 #[tokio::test]
 async fn queue_builds_honours_ignores_and_survives_restart() {
     let dir = crate::common::ScratchDir::new("discover-queue");
-    let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
-        .await
-        .expect("runtime opens");
+    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
     let app = queue_app(&runtime);
 
     let (_, idle) = call(&app, "GET", "/api/v3/discover/queue/status", None).await;

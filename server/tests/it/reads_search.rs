@@ -18,7 +18,6 @@ use droppedneedle::auth::session::middleware::{SessionAuth, require_session};
 use droppedneedle::auth::session::store::{MemorySessionStore, SessionRecord, SessionStore};
 use droppedneedle::auth::session::tokens::hash_token;
 use droppedneedle::middleware::request_scope;
-use droppedneedle::schema::apply_migrations;
 use search::SearchDeps;
 use search::models::{EnrichmentBatchRequest, EnrichmentResponse};
 use search::ports::{EnrichmentPort, EnrichmentPortError};
@@ -46,17 +45,6 @@ impl EnrichmentPort for FailingEnrichment {
             ))
         })
     }
-}
-
-/// One-connection in-memory pool, migrated to the 0001 baseline.
-async fn migrated_pool() -> SqlitePool {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
-        .await
-        .unwrap();
-    apply_migrations(&pool).await.unwrap();
-    pool
 }
 
 /// Fixture catalog: two artists plus an album each plus one track.
@@ -187,7 +175,7 @@ async fn app(pool: SqlitePool, enrichment: Arc<dyn EnrichmentPort>) -> axum::Rou
 }
 
 async fn authed_app() -> (axum::Router, SqlitePool) {
-    let pool = migrated_pool().await;
+    let (pool, _dir) = crate::common::migrated_pool("reads-search").await;
     seed_catalog(&pool).await;
     let app = app(
         pool.clone(),
@@ -392,7 +380,7 @@ async fn bucket_drilldown_pages_with_top_only_on_first_page() {
 
 #[tokio::test]
 async fn enrich_failure_degrades_inside_a_200() {
-    let pool = migrated_pool().await;
+    let (pool, _dir) = crate::common::migrated_pool("reads-search").await;
     let app = app(pool, Arc::new(FailingEnrichment)).await;
     let (status, _, bytes) = call(
         app,

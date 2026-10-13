@@ -72,8 +72,8 @@ impl AcquireDb {
         self.lane.write(Lane::Background, name, op).await
     }
 
-    /// Scratch database for tests: a fresh file in the temp dir with every
-    /// migration applied, a lazy reader pool and a writer lane. The
+    /// Scratch database for tests: a private copy of the migrated template
+    /// in the temp dir, a lazy reader pool and a writer lane. The
     /// directory is removed when the last clone drops. Call from inside a
     /// tokio runtime (the lane spawns its scheduler there).
     #[cfg(any(test, feature = "test-support"))]
@@ -84,12 +84,7 @@ impl AcquireDb {
         );
         let dir = scratch.to_path_buf();
         let path = dir.join("app.db");
-        let conn = rusqlite::Connection::open(&path).map_err(|error| error.to_string())?;
-        conn.execute_batch("PRAGMA journal_mode=WAL;")
-            .map_err(|error| error.to_string())?;
-        crate::schema::apply_migrations_blocking(&conn)
-            .map_err(|error| format!("migrations: {error}"))?;
-        drop(conn);
+        crate::schema::template::copy_to(&path)?;
         let options = sqlx::sqlite::SqliteConnectOptions::new()
             .filename(&path)
             .busy_timeout(std::time::Duration::from_secs(5))

@@ -22,7 +22,7 @@ use crate::common::ScratchDir;
 use droppedneedle::auth::prod::ProdAuth;
 use droppedneedle::auth::users::stores::SystemClock;
 use droppedneedle::auth::wiring::AuthSetup;
-use droppedneedle::db::{DbConfig, DbRuntime, open_runtime};
+use droppedneedle::db::DbRuntime;
 use droppedneedle::http_client::HttpClientFactory;
 use droppedneedle::ids::{IdGenerator, UuidGenerator};
 use droppedneedle::library::identify::models::{
@@ -131,9 +131,7 @@ impl Lib {
     async fn open(tag: &str, providers: Arc<dyn IdentifyProviders>) -> Self {
         let scratch = ScratchDir::new(&format!("lib-ident-shutdown-{tag}"));
         let dir = scratch.to_path_buf();
-        let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
-            .await
-            .expect("scratch runtime opens");
+        let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
         let crypto = Arc::new(Crypto::from_key_bytes(&[7u8; 32]).expect("test key"));
         let store = Arc::new(
             ConfigStore::open(

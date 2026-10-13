@@ -42,7 +42,7 @@ fn scratch_dir(name: &str) -> ScratchDir {
 async fn open_scratch(name: &str) -> (DbRuntime, ScratchDir) {
     let dir = scratch_dir(name);
     let db = dir.join("library.db");
-    let runtime = open_runtime(&DbConfig::new(&db)).await.unwrap();
+    let runtime = crate::common::scratch_runtime(&db).await;
     (runtime, dir)
 }
 
@@ -61,7 +61,10 @@ fn file_len(path: &std::path::Path) -> Option<u64> {
 /// Boot migrates to the binary version and applies the pragma set.
 #[tokio::test]
 async fn boot_migrates_and_applies_pragmas() {
-    let (runtime, dir) = open_scratch("boot").await;
+    let dir = scratch_dir("boot");
+    let runtime = open_runtime(&DbConfig::new(&dir.join("library.db")))
+        .await
+        .unwrap();
 
     let version: i64 = sqlx::query_scalar("PRAGMA user_version")
         .fetch_one(runtime.pool())

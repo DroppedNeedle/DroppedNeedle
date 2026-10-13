@@ -39,6 +39,7 @@ struct Rig {
 impl Rig {
     async fn open() -> Self {
         let dir = ScratchDir::new("collections");
+        crate::common::migrated_db(&dir.join("app.db"));
         let runtime = Self::boot(&dir).await;
         let rows = [
             ("u-ada", "Ada", "user"),

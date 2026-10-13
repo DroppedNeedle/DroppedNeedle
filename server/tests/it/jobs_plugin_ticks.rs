@@ -267,9 +267,7 @@ async fn sqlite_tick_state_survives_a_full_restart() {
     let db_path = dir.join("app.db");
 
     // First boot: register, write, shut everything down.
-    let runtime = open_runtime(&DbConfig::new(&db_path))
-        .await
-        .expect("runtime opens");
+    let runtime = crate::common::scratch_runtime(&db_path).await;
     let store = SqliteTickStore::new(runtime.pool().clone(), runtime.lane().clone());
     store.add_plugin("tick-toy");
     store

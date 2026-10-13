@@ -527,12 +527,8 @@ struct SqliteFixture {
 }
 
 async fn sqlite_fixture() -> SqliteFixture {
-    use droppedneedle::db::{DbConfig, open_runtime};
-
     let dir = ScratchDir::new("reads-library");
-    let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
-        .await
-        .expect("scratch runtime opens");
+    let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
     let pool = runtime.pool();
     let seed = [
         "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) VALUES \

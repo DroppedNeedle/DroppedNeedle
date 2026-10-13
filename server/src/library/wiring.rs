@@ -40,15 +40,14 @@ use crate::auth::users::UsersDeps;
 use crate::ids::IdGenerator;
 use crate::runtime_config::ConfigStore;
 
-/// Scratch database (every migration applied) plus config store in a
+/// Scratch database (a copy of the migrated template) plus config store in a
 /// directory that goes away when the last bundle clone drops.
 #[cfg(any(test, feature = "test-support"))]
 fn scratch_state() -> Result<(Arc<crate::tooling::scratch::ScratchDir>, Arc<ConfigStore>), String> {
     let dir =
         crate::tooling::scratch::ScratchDir::new("library").map_err(|error| error.to_string())?;
     let db_path = dir.path().join("app.db");
-    let connection = crate::db::open_connection(&db_path).map_err(|error| error.to_string())?;
-    crate::schema::apply_migrations_blocking(&connection).map_err(|error| error.to_string())?;
+    crate::schema::template::copy_to(&db_path)?;
     let crypto = crate::runtime_config::Crypto::from_key_bytes(&[7u8; 32])
         .map_err(|error| error.to_string())?;
     let config = ConfigStore::open(&dir.path().join("config.json"), crypto)

@@ -4,9 +4,7 @@
 //! the orchestrator leans on: task transitions, the attempt journal with
 //! revision-CAS and leases, idempotency keys, quarantine rows, held-import
 //! retry, the newest-per-target retryable sweep, and the stale-task query.
-//! Table shapes mirror migrations 0001/0002; production boots through the
-//! sqlx migrator while tests build scratch databases with
-//! [`apply_test_schema`], which runs the same SQL files.
+//! Table shapes mirror migrations 0001/0002.
 
 use rusqlite::{Connection, OptionalExtension, Row};
 
@@ -25,16 +23,6 @@ pub enum StoreError {
     /// finalizing into a non-terminal one.
     #[error("invalid download transition: {0}")]
     InvalidTransition(String),
-}
-
-/// Run every embedded migration against a scratch connection.
-///
-/// Tests only: production applies migrations at boot through the sqlx
-/// migrator. Running the same SQL here keeps the tests on the real schema.
-#[cfg(any(test, feature = "test-support"))]
-pub fn apply_test_schema(conn: &Connection) -> Result<(), StoreError> {
-    crate::schema::apply_migrations_blocking(conn)?;
-    Ok(())
 }
 
 /// Task row fields the durable core reads and writes.

@@ -71,8 +71,8 @@ fn start_revision() -> u64 {
 
 fn scratch_db(dir: &std::path::Path) -> PathBuf {
     let db_path = dir.join("app.db");
+    crate::common::migrated_db(&db_path);
     let conn = droppedneedle::db::open_connection(&db_path).unwrap();
-    droppedneedle::schema::apply_migrations_blocking(&conn).unwrap();
     conn.execute_batch(
         "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
          album_artist_id, grouping_source, created_at, updated_at) VALUES ('album', 'music', \

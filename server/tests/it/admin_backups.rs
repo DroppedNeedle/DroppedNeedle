@@ -16,7 +16,7 @@ use droppedneedle::auth::session::extract::Transport;
 use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::users::memory::TestRig;
 use droppedneedle::auth::users::roles::{Role, SessionKind};
-use droppedneedle::db::{BACKUP_KEEP, DbConfig, DbRuntime, open_runtime};
+use droppedneedle::db::{BACKUP_KEEP, DbRuntime};
 use serde_json::Value;
 use tower::ServiceExt as _;
 
@@ -36,9 +36,7 @@ impl Rig {
     async fn open(tag: &str) -> Self {
         let scratch = crate::common::ScratchDir::new(&format!("admin-backups-{tag}"));
         let dir = scratch.to_path_buf();
-        let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
-            .await
-            .expect("scratch runtime opens");
+        let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
         let rig = TestRig::new().expect("rig builds");
         let admin_user = rig.seed_user("brenda", Role::Admin).await;
         let quota = Arc::new(

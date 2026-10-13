@@ -39,7 +39,7 @@ use droppedneedle::auth::users::stores::{
     AppPasswordStore as _, BoxFuture, Clock, HibpPolicy, RoleChange, SessionManager as _,
     UserDeletion, UserStore as _,
 };
-use droppedneedle::db::{DbConfig, DbRuntime, Lane, open_runtime};
+use droppedneedle::db::{DbRuntime, Lane};
 use droppedneedle::ids::IdGenerator;
 use droppedneedle::runtime_config::crypto::Crypto;
 use rusqlite::params;
@@ -62,9 +62,7 @@ struct Fixture {
 async fn fixture(name: &str) -> Fixture {
     let scratch = crate::common::ScratchDir::new(&format!("auth-stores-{name}"));
     let dir = scratch.to_path_buf();
-    let runtime = open_runtime(&DbConfig::new(&dir.join("auth.db")))
-        .await
-        .unwrap();
+    let runtime = crate::common::scratch_runtime(&dir.join("auth.db")).await;
     let crypto = Arc::new(Crypto::from_key_bytes(&[7u8; 32]).unwrap());
     let ids: Arc<dyn IdGenerator> = Arc::new(CounterIdGenerator::new("id-"));
     let clock = Arc::new(ManualClock::new(TEST_NOW));

@@ -15,7 +15,7 @@ use droppedneedle::auth::session::extract::Transport;
 use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::users::memory::TestRig;
 use droppedneedle::auth::users::roles::{Role, SessionKind};
-use droppedneedle::db::{DbConfig, DbRuntime, Lane, open_runtime};
+use droppedneedle::db::{DbRuntime, Lane};
 use droppedneedle::providers::ProviderCache as _;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -47,9 +47,7 @@ impl Rig {
     ) -> Self {
         let scratch = crate::common::ScratchDir::new(&format!("admin-routes-{tag}"));
         let dir = scratch.to_path_buf();
-        let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
-            .await
-            .expect("scratch runtime opens");
+        let runtime = crate::common::scratch_runtime(&dir.join("app.db")).await;
         let rig = TestRig::new().expect("rig builds");
         let admin_user = rig.seed_user("brenda", Role::Admin).await;
         let plain_user = rig.seed_user("molly", Role::User).await;
