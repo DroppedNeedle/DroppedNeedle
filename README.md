@@ -264,7 +264,19 @@ Everything user-editable lives in the web UI and lands in `config/config.json`. 
 
 The app answers on IPv4 and IPv6, but Docker still has to publish the port on both. `docker port droppedneedle` should list `0.0.0.0:8688` and `[::]:8688`; if only the first appears, turn on IPv6 for the daemon (`"ipv6"` and `"ip6tables"` in `/etc/docker/daemon.json`). Pinning `BIND_HOST` to one interface IP answers only there, but the container `HEALTHCHECK` still uses localhost, so keep a wildcard or loopback value unless you check that address yourself.
 
-Behind a reverse proxy, list the proxy in `TRUSTED_PROXY_IPS` and have it send `X-Forwarded-Proto` and the `Host` header exactly as the browser sent it, port included (or the same value as `X-Forwarded-Host`). In nginx that is `proxy_set_header Host $http_host;`, not `$host`, which drops the port. The web UI's changes are only accepted from the address DroppedNeedle believes it is served at, so a proxy that drops the port or hides HTTPS can cause `403 Origin not allowed` on plain-HTTP sites and in older browsers. The first time that happens the log names both addresses. If the proxy is on a private address and not listed, the log says so once, naming the address to add.
+Behind a reverse proxy, list the proxy in `TRUSTED_PROXY_IPS` and have it send `X-Forwarded-Proto` and the `Host` header exactly as the browser sent it, port included (or the same value as `X-Forwarded-Host`). In nginx that is `proxy_set_header Host $http_host;`, not `$host`, which drops the port. The `Secure` cookie, HSTS and per-client rate limits all depend on the proxy being listed and sending those headers. If the proxy is on a private address and not listed, the log says so once, naming the address to add.
+
+The web UI's changes are only accepted from the address DroppedNeedle believes it is served at. A proxy that drops the port, hides HTTPS or replaces `Host` makes that address wrong: signing in works, and every save answers `403 Origin not allowed`, mostly on plain-HTTP sites and in older browsers. The first time it happens the log names both addresses. If you cannot change the proxy, or saving is still refused, tell DroppedNeedle its address under Settings > Security > Public address. Write it as the browser's address bar shows it, up to the host and port: `https://music.example.com` or `http://192.168.1.5:8688`, with no path, not even the base path. You can list up to eight. Only list addresses at which this DroppedNeedle opens, because a page at a listed address can make changes as whoever is signed in.
+
+That save is refused like any other from the address that is not accepted yet. Open DroppedNeedle directly at its own address and port (`http://your-server:8688`) and save it there. If you can only reach it through the proxy, set it on the host with the server stopped:
+
+```bash
+docker compose stop droppedneedle
+docker compose run --rm droppedneedle droppedneedle-tool public-address https://music.example.com
+docker compose up -d droppedneedle
+```
+
+Several addresses in one command replace the saved list, `--show` prints it and `--clear` empties it.
 
 HSTS is off by default and set under Settings > Security: a max-age in seconds (0 is off, 63072000, two years, is the most it accepts), plus optional "include subdomains" and "preload", which needs "include subdomains". If your reverse proxy already adds `Strict-Transport-Security`, leave this at 0, or browsers get two headers and use the first. While it is on, every response to a request that arrived over HTTPS carries `Strict-Transport-Security` with those values, and a change applies from the next request. DroppedNeedle does not terminate TLS itself, so "arrived over HTTPS" means a proxy listed in `TRUSTED_PROXY_IPS` sent `X-Forwarded-Proto: https`. Plain-HTTP requests never get the header, and neither does a request whose `X-Forwarded-Proto` comes from an address that is not listed. A browser that has seen the header refuses plain HTTP to that hostname, on every port, until the max-age runs out, so only turn it on when nobody reaches this hostname over `http://`, and only tick "include subdomains" when everything under the domain has HTTPS.
 
@@ -386,6 +398,8 @@ docker compose up -d droppedneedle
 ```
 
 `droppedneedle` is the service name in your compose file; use yours if it differs. The code works once, for 15 minutes. `USERNAME` is the DroppedNeedle username, which can differ from the name the account has with an OIDC provider; `droppedneedle-tool recovery-code --list-admins` prints the admin usernames. An account that only signs in through OIDC, Plex or Jellyfin gets its first password this way and keeps its other sign-in. Only the host command can do that: a code made by an admin under Settings > Users is for accounts that already have a password. It is still simpler to keep one admin with a username and password.
+
+Signed in, but every save answers `403 Origin not allowed`? That is the reverse proxy, not the account: see the reverse proxy paragraphs under Configuration, which end with `droppedneedle-tool public-address`, the host command for it.
 
 <details>
 <summary>Setting up OIDC</summary>

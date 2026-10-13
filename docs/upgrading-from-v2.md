@@ -300,11 +300,13 @@ machine and its data folders can run it.
   `Host` header as the browser sent it, port included: in nginx,
   `proxy_set_header Host $http_host;` rather than `$host`. If saving
   anything in the web UI answers `403 Origin not allowed` after the
-  upgrade, this is why. When only the port or the scheme differ, the log
-  names both addresses; a proxy that replaces `Host` with another name
-  leaves no log line. Either way the fix is the same: pass the browser's
-  `Host` (or send it as `X-Forwarded-Host`) and `X-Forwarded-Proto`
-  through.
+  upgrade, this is why, and the log names both addresses the first time.
+  The fix is to pass the browser's `Host` (or send it as
+  `X-Forwarded-Host`) and `X-Forwarded-Proto` through. If you cannot
+  change the proxy, state the address under Settings > Security > Public
+  address, or on the host with `droppedneedle-tool public-address`: the
+  reverse proxy paragraphs in the [README](../README.md#configuration)
+  have the steps.
 
 ### Moved
 
