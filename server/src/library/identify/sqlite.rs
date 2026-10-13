@@ -1171,27 +1171,76 @@ pub(crate) fn retarget_references(
     Ok(())
 }
 
+/// An album's match, as far as settling two rows of one album reads it.
+struct AlbumMatch {
+    release_group: String,
+    /// `None` for a match that names only the release group.
+    release: Option<String>,
+    source: String,
+}
+
+impl AlbumMatch {
+    fn of(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Self>> {
+        conn.query_row(
+            "SELECT lower(release_group_mbid), lower(NULLIF(trim(release_mbid), '')), \
+             decision_source FROM local_album_external_identities \
+             WHERE local_album_id = ?1 AND provider = ?2",
+            params![album_id, PROVIDER],
+            |row| {
+                Ok(Self {
+                    release_group: row.get(0)?,
+                    release: row.get(1)?,
+                    source: row.get(2)?,
+                })
+            },
+        )
+        .optional()
+    }
+
+    /// Automatic and embedded matches stay revisable. A person's is one
+    /// made by hand or one carried over from v2.
+    fn revisable(&self) -> bool {
+        matches!(self.source.as_str(), "automatic" | "embedded")
+    }
+
+    /// Whether this match and `other`, both a person's, are two different
+    /// choices.
+    ///
+    /// A match carried over from v2 may name only the release group: a
+    /// release of that group on the other row is the same album, said more
+    /// exactly. A match a person made with no release is "leave unmanaged"
+    /// or a custom edition, a decision of its own: a release on the other
+    /// row is a different choice even within the group. Otherwise the two
+    /// are the same when they name the same group and the same release.
+    fn differs_from(&self, other: &Self) -> bool {
+        if self.release_group != other.release_group {
+            return true;
+        }
+        let imported = |chosen: &Self| chosen.source == "legacy_import";
+        match (&self.release, &other.release) {
+            (None, Some(_)) => !imported(self),
+            (Some(_), None) => !imported(other),
+            (mine, theirs) => mine != theirs,
+        }
+    }
+}
+
 /// Whether two rows of one album each hold a match a person chose (or an
-/// imported one) and the two name different releases. Nothing automatic
-/// picks between two people's choices.
+/// imported one) and the two are different choices
+/// ([`AlbumMatch::differs_from`]). Nothing automatic picks between two
+/// people's choices.
 pub(crate) fn chosen_matches_differ(
     conn: &Connection,
     album_id: &str,
     other_album_id: &str,
 ) -> rusqlite::Result<bool> {
-    conn.query_row(
-        &format!(
-            "SELECT EXISTS(SELECT 1 FROM local_album_external_identities a \
-             JOIN local_album_external_identities b ON b.provider = a.provider \
-             WHERE a.local_album_id = ?1 AND b.local_album_id = ?2 AND a.provider = ?3 \
-             AND a.decision_source NOT IN {REVISABLE} \
-             AND b.decision_source NOT IN {REVISABLE} \
-             AND (lower(a.release_group_mbid) <> lower(b.release_group_mbid) \
-             OR lower(COALESCE(a.release_mbid, '')) <> lower(COALESCE(b.release_mbid, ''))))"
-        ),
-        params![album_id, other_album_id, PROVIDER],
-        |row| row.get(0),
-    )
+    let (Some(one), Some(other)) = (
+        AlbumMatch::of(conn, album_id)?,
+        AlbumMatch::of(conn, other_album_id)?,
+    ) else {
+        return Ok(false);
+    };
+    Ok(!one.revisable() && !other.revisable() && one.differs_from(&other))
 }
 
 /// Settle the matches of two rows of one album before `gone` is deleted
@@ -1202,10 +1251,12 @@ pub(crate) fn chosen_matches_differ(
 /// before anything is written: the caller keeps both rows.
 ///
 /// - A person's match on `kept` stays, untouched. The match on `gone`
-///   (automatic, or the same release chosen again) goes with its row.
+///   (automatic, or the same choice made again) goes with its row.
 /// - Otherwise the match on `gone` becomes the match of `kept`, with its
-///   source and its "unsure" flag, replacing an automatic one. It is the
-///   later verdict on the files as they are now tagged, or a person's.
+///   source and its "unsure" flag. It replaces an automatic one, as the
+///   later verdict on the files as they are now tagged or a person's. It
+///   also replaces an imported one that names only the release group,
+///   when a person chose a release of that group for `gone`.
 /// - A review still waiting on `gone` goes with it. One a person closed
 ///   moves to `kept`.
 ///
@@ -1222,23 +1273,26 @@ pub(crate) fn settle_followed_match(
     kept: &str,
     now: f64,
 ) -> rusqlite::Result<()> {
-    if chosen_matches_differ(tx, gone, kept)? {
+    let arriving = AlbumMatch::of(tx, gone)?;
+    let staying = AlbumMatch::of(tx, kept)?;
+    if let (Some(arriving), Some(staying)) = (&arriving, &staying)
+        && !arriving.revisable()
+        && !staying.revisable()
+        && arriving.differs_from(staying)
+    {
         return Err(rusqlite::Error::InvalidParameterName(
             "the two rows hold different chosen matches".to_owned(),
         ));
     }
-    let source = |album: &str| -> rusqlite::Result<Option<String>> {
-        tx.query_row(
-            "SELECT decision_source FROM local_album_external_identities \
-             WHERE local_album_id = ?1 AND provider = ?2",
-            params![album, PROVIDER],
-            |row| row.get(0),
-        )
-        .optional()
-    };
-    let revisable = |source: &str| matches!(source, "automatic" | "embedded");
-    let arriving = source(gone)?;
-    let kept_is_chosen = source(kept)?.is_some_and(|source| !revisable(&source));
+    // Of two equal choices the one that names the release is kept: the
+    // one on `kept`, unless it names only the group and the other one
+    // names the release.
+    let arriving_names_release = arriving
+        .as_ref()
+        .is_some_and(|arriving| !arriving.revisable() && arriving.release.is_some());
+    let kept_stays = staying.as_ref().is_some_and(|staying| {
+        !staying.revisable() && (staying.release.is_some() || !arriving_names_release)
+    });
     let managed: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM library_management_automatic_queue \
          WHERE local_album_id = ?1)",
@@ -1256,7 +1310,7 @@ pub(crate) fn settle_followed_match(
     )?;
     let moved = match arriving {
         None => false,
-        Some(_) if kept_is_chosen => {
+        Some(_) if kept_stays => {
             tx.execute(
                 "DELETE FROM local_album_external_identities WHERE local_album_id = ?1",
                 params![gone],
@@ -1272,7 +1326,7 @@ pub(crate) fn settle_followed_match(
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
                 .optional()?
-                .filter(|_| !revisable(&arriving));
+                .filter(|_| !arriving.revisable());
             let revision: i64 = tx.query_row(
                 "SELECT MAX(row_revision) + 1 FROM local_album_external_identities \
                  WHERE local_album_id IN (?1, ?2)",

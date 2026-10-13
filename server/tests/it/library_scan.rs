@@ -1530,3 +1530,24 @@ async fn returned_file_keeps_its_track_and_is_filed_by_its_tags() {
     assert_ne!(rig.album_of("a/t011.flac"), album);
     assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
 }
+
+/// A match carried over from v2 that names only the release group, and a
+/// release of that group a person chose for the new row mid-scan, are one
+/// album. It is followed, and the match that names the release is kept.
+#[tokio::test]
+async fn imported_group_match_and_a_chosen_release_of_it_are_one_album() {
+    let (mut rig, files, album) = big_album("scan-regroup-imported-group").await;
+    rig.run(&format!(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, decision_source, selected_at, row_revision) \
+         VALUES ('{album}', 'musicbrainz', 'rg-rel-1', 'legacy_import', 0, 4);"
+    ));
+    let after = rig.after.clone();
+    rig.tag(&files, &after);
+    rig.meanwhile_sql(match_sql(&new_row(&album), "manual", "rel-1"));
+    rig.scan().await;
+
+    assert_eq!(rig.album_of("a/t000.flac"), album, "followed");
+    assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1);
+    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
+}
