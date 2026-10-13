@@ -1,25 +1,22 @@
-//! Stage-8 identify briefs: proofs decide, curators overrule, names never merge.
+//! Identify briefs: proofs decide, curators overrule, names never merge.
 //!
-//! Brief-first: every behavior reads as one identity brief — the album,
-//! what the library believes about it, and why. Memory fakes stand in
-//! for the durable adapters; scripted transports stand in for the wire.
-//! Nothing here touches the network or the production database.
+//! Every behavior reads as one identity brief: the album, what the library
+//! believes about it, and why. The store is the SQLite one, on a private
+//! copy of the migrated database; albums, tracks and artists are catalog
+//! rows a test seeds. MusicBrainz is scripted (`FakeProviders`): nothing
+//! here touches the network.
 
 use droppedneedle::library::identify;
 
 use std::sync::Arc;
 
 use droppedneedle::library::matching::{CreditedArtist, Release, ReleaseTrack};
-use identify::memory::{
-    MemoryAliasStore, MemoryIdentityStore, MemoryProofStore, MemoryQueueStore, MemoryReleaseStore,
-    MemoryReviewStore,
-};
 use identify::models::IdentifyJob;
 use identify::models::JobState;
 use identify::models::{
-    AlbumIdentity, AliasKind, ArtistCredit, ArtistIdentity, CreditProof, DecisionSource,
-    IdentificationOutcome, IdentifyKind, IdentityBrief, LocalAlbumFacts, LocalTrackFacts,
-    RecallResult, ReviewState, TrackIdentity,
+    AlbumIdentity, AliasKind, ArtistCredit, ArtistIdentity, AutomaticSeal, CreditProof,
+    DecisionSource, IdentificationOutcome, IdentifyKind, IdentityBrief, LocalAlbumFacts,
+    LocalTrackFacts, RecallResult, ReviewState, TrackIdentity,
 };
 use identify::providers::FakeProviders;
 use identify::queue::{
@@ -31,9 +28,13 @@ use identify::rules::{
     SubstitutionVerdict, evaluate_overwrite, evaluate_reconciliation, evaluate_substitution,
 };
 use identify::service::{IdentifyDeps, IdentifyService};
+use identify::sqlite::SqliteIdentifyStore;
 use identify::stores::{
     AliasStore, AttemptLanding, IdentityStore, ProofStore, QueueStore, ReviewStore, land_job,
 };
+use rusqlite::params;
+
+use crate::common::{ScratchDir, migrated_db};
 
 const GROUP_A: &str = "fc97b087-221c-4ea4-9dd9-5277a52eb84a";
 const RELEASE_A1: &str = "aff0622e-7bd3-4fb6-9ca3-0fa19dd2340b";
@@ -45,42 +46,128 @@ const OTHER_ARTIST_MBID: &str = "9cb4af06-1c2d-4e5f-8a7b-6c5d4e3f2a10";
 const RECORDING_1: &str = "beaf82cd-24f9-4163-b1a9-022339a30f77";
 const RECORDING_2: &str = "5224cfc7-b3bb-4008-a41b-21b168dc631f";
 
+/// The artist every seeded album belongs to.
+const ALBUM_ARTIST: &str = "artist-1";
+
 struct Rig {
     service: IdentifyService,
-    identities: Arc<MemoryIdentityStore>,
-    proofs: Arc<MemoryProofStore>,
-    aliases: Arc<MemoryAliasStore>,
-    queue: Arc<MemoryQueueStore>,
-    reviews: Arc<MemoryReviewStore>,
+    store: Arc<SqliteIdentifyStore>,
+    /// A second connection, for seeding catalog rows and reading them back.
+    db: rusqlite::Connection,
     providers: Arc<FakeProviders>,
+    _dir: ScratchDir,
 }
 
 fn rig_with_recall(recall: RecallResult) -> Rig {
-    let identities = Arc::new(MemoryIdentityStore::default());
-    let proofs = Arc::new(MemoryProofStore::default());
-    let aliases = Arc::new(MemoryAliasStore::default());
-    let queue = Arc::new(MemoryQueueStore::default());
-    let reviews = Arc::new(MemoryReviewStore::linked(identities.clone()));
+    let dir = ScratchDir::new("lib-identify");
+    let path = dir.join("app.db");
+    migrated_db(&path);
+    let db = droppedneedle::db::open_connection(&path).expect("side connection opens");
+    let store = Arc::new(SqliteIdentifyStore::open(&path).expect("store opens"));
     let providers = Arc::new(FakeProviders::with_recall(recall));
-    let releases = Arc::new(MemoryReleaseStore::default());
     let service = IdentifyService::new(IdentifyDeps {
-        identities: identities.clone(),
-        facts: identities.clone(),
-        proofs: proofs.clone(),
-        aliases: aliases.clone(),
-        queue: queue.clone(),
-        reviews: reviews.clone(),
-        releases: releases.clone(),
+        identities: store.clone(),
+        facts: store.clone(),
+        proofs: store.clone(),
+        aliases: store.clone(),
+        queue: store.clone(),
+        reviews: store.clone(),
+        releases: store.clone(),
         providers: providers.clone(),
     });
-    Rig {
+    let rig = Rig {
         service,
-        identities,
-        proofs,
-        aliases,
-        queue,
-        reviews,
+        store,
+        db,
         providers,
+        _dir: dir,
+    };
+    rig.seed_artist(ALBUM_ARTIST);
+    rig
+}
+
+impl Rig {
+    fn seed_artist(&self, artist: &str) {
+        self.db
+            .execute(
+                "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+                 updated_at) VALUES (?1, ?1, ?1, 'person', 0, 0)",
+                params![artist],
+            )
+            .expect("artist seeds");
+    }
+
+    /// The album and its indexed files as a scan leaves them: the store
+    /// reads the album's facts back from these rows.
+    fn seed_album(&self, facts: &LocalAlbumFacts) {
+        let album = facts.local_album_id.as_str();
+        self.db
+            .execute(
+                "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+                 album_artist_name, album_artist_id, grouping_source, created_at, updated_at) \
+                 VALUES (?1, 'root-1', ?1, ?2, lower(?2), ?3, ?4, 'automatic', 0, 0)",
+                params![album, facts.title, facts.album_artist_name, ALBUM_ARTIST],
+            )
+            .expect("album seeds");
+        for track in &facts.tracks {
+            self.db
+                .execute(
+                    "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, \
+                     relative_path, path_hash, file_size_bytes, file_mtime_ns, stat_revision, \
+                     tag_revision, title, title_folded, artist_name, album_title, \
+                     album_title_folded, disc_number, track_number, duration_seconds, \
+                     embedded_recording_mbid, file_format, ingest_source, imported_at, \
+                     membership_source) \
+                     VALUES (?1, ?2, 'root-1', '/music/' || ?1 || '.flac', ?1 || '.flac', ?1, 1, \
+                     1, 'stat-1', 'tag-1', ?3, lower(?3), ?4, ?5, lower(?5), ?6, ?7, ?8, ?9, \
+                     'flac', 'scan', 0, 'automatic')",
+                    params![
+                        track.local_track_id,
+                        album,
+                        track.title,
+                        track.artist_name,
+                        facts.title,
+                        track.disc_number,
+                        track.track_number,
+                        track.duration_secs.map(|seconds| seconds as f64),
+                        track.recording_mbid,
+                    ],
+                )
+                .expect("track seeds");
+        }
+    }
+
+    /// A rescan found the album's files changed on disk.
+    fn rescan(&self, album: &str) {
+        self.db
+            .execute(
+                "UPDATE local_tracks SET stat_revision = 'stat-2' WHERE local_album_id = ?1",
+                params![album],
+            )
+            .expect("rescan lands");
+    }
+
+    /// `album-1` with its one track `t1`, both automatically identified,
+    /// the album row at `album_revision` and the track row at 1: what a
+    /// credit proof row is checked against.
+    fn seed_identified_album(&self, album_revision: u64) {
+        self.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+        self.store.save_album_identity(AlbumIdentity {
+            local_album_id: "album-1".to_owned(),
+            provider: "musicbrainz".to_owned(),
+            release_group_mbid: Some(GROUP_A.to_owned()),
+            release_mbid: Some(RELEASE_A1.to_owned()),
+            decision_source: DecisionSource::Automatic,
+            row_revision: album_revision,
+        });
+        self.store.save_track_identity(TrackIdentity {
+            local_track_id: "t1".to_owned(),
+            provider: "musicbrainz".to_owned(),
+            recording_mbid: Some(RECORDING_1.to_owned()),
+            release_track_mbid: None,
+            decision_source: DecisionSource::Automatic,
+            row_revision: 1,
+        });
     }
 }
 
@@ -179,8 +266,7 @@ fn proof_row(album: &str, track: &str, source: &str, mbid: &str, release: &str) 
 async fn automatic_identity_is_revisable() {
     let first = recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_1])]);
     let rig = rig_with_recall(first);
-    rig.identities
-        .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
     rig.service.enqueue_album(
         "job-1",
         "album-1",
@@ -189,7 +275,7 @@ async fn automatic_identity_is_revisable() {
         None,
         0,
     );
-    rig.queue.claim(0, 60_000);
+    rig.store.claim(0, 60_000);
     let report = rig
         .service
         .run_claimed_job("job-1", 0)
@@ -198,7 +284,7 @@ async fn automatic_identity_is_revisable() {
     assert_eq!(report.outcome, IdentificationOutcome::Identified);
     assert_eq!(report.job.state, JobState::Succeeded);
     assert_eq!(
-        rig.identities
+        rig.store
             .album_identity("album-1")
             .expect("identity")
             .release_group_mbid
@@ -220,14 +306,14 @@ async fn automatic_identity_is_revisable() {
         None,
         0,
     );
-    rig.queue.claim(0, 60_000);
+    rig.store.claim(0, 60_000);
     let report = rig
         .service
         .run_claimed_job("job-2", 0)
         .await
         .expect("report");
     assert_eq!(report.outcome, IdentificationOutcome::Identified);
-    let identity = rig.identities.album_identity("album-1").expect("identity");
+    let identity = rig.store.album_identity("album-1").expect("identity");
     assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP_B));
     assert_eq!(identity.decision_source, DecisionSource::Automatic);
     let brief = rig.service.identity_brief("album-1");
@@ -238,9 +324,8 @@ async fn automatic_identity_is_revisable() {
 #[tokio::test]
 async fn automatic_retracts_on_contradiction() {
     let rig = rig_with_recall(recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_2])]));
-    rig.identities
-        .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
-    rig.identities.save_album_identity(AlbumIdentity {
+    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    rig.store.save_album_identity(AlbumIdentity {
         local_album_id: "album-1".to_owned(),
         provider: "musicbrainz".to_owned(),
         release_group_mbid: Some(GROUP_A.to_owned()),
@@ -256,14 +341,14 @@ async fn automatic_retracts_on_contradiction() {
         None,
         0,
     );
-    rig.queue.claim(0, 60_000);
+    rig.store.claim(0, 60_000);
     let report = rig
         .service
         .run_claimed_job("job-1", 0)
         .await
         .expect("report");
     assert_eq!(report.outcome, IdentificationOutcome::Contradictory);
-    assert!(rig.identities.album_identity("album-1").is_none());
+    assert!(rig.store.album_identity("album-1").is_none());
     // Nothing waits in a blocking review: the album keeps its own tags.
     assert_eq!(report.review_id, None);
 }
@@ -271,9 +356,8 @@ async fn automatic_retracts_on_contradiction() {
 #[tokio::test]
 async fn manual_survives_rescan() {
     let rig = rig_with_recall(recall(vec![release(GROUP_B, RELEASE_B1, &[RECORDING_1])]));
-    rig.identities
-        .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
-    rig.identities.save_album_identity(AlbumIdentity {
+    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    rig.store.save_album_identity(AlbumIdentity {
         local_album_id: "album-1".to_owned(),
         provider: "musicbrainz".to_owned(),
         release_group_mbid: Some(GROUP_A.to_owned()),
@@ -282,8 +366,7 @@ async fn manual_survives_rescan() {
         row_revision: 3,
     });
     // A rescan re-reads the files, then a fresh automatic pass disagrees.
-    rig.identities
-        .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    rig.rescan("album-1");
     rig.service.enqueue_album(
         "job-1",
         "album-1",
@@ -292,14 +375,14 @@ async fn manual_survives_rescan() {
         None,
         0,
     );
-    rig.queue.claim(0, 60_000);
+    rig.store.claim(0, 60_000);
     let report = rig
         .service
         .run_claimed_job("job-1", 0)
         .await
         .expect("report");
     assert_eq!(report.reason_code, "CHOSEN_EDITION_KEPT");
-    let identity = rig.identities.album_identity("album-1").expect("identity");
+    let identity = rig.store.album_identity("album-1").expect("identity");
     assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP_A));
     assert_eq!(identity.decision_source, DecisionSource::Manual);
     assert_eq!(identity.row_revision, 3);
@@ -309,12 +392,48 @@ async fn manual_survives_rescan() {
     assert_eq!(brief.protected_source, Some(DecisionSource::Manual));
 }
 
+/// A curator's row can land after an automatic attempt read the album and
+/// found nothing there. The store refuses the automatic write by itself,
+/// so the attempt's own check is not the only guard.
+#[test]
+fn automatic_writes_never_replace_a_curators_row() {
+    let rig = rig_with_recall(RecallResult::default());
+    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    let chosen = AlbumIdentity {
+        local_album_id: "album-1".to_owned(),
+        provider: "musicbrainz".to_owned(),
+        release_group_mbid: Some(GROUP_A.to_owned()),
+        release_mbid: Some(RELEASE_A1.to_owned()),
+        decision_source: DecisionSource::Manual,
+        row_revision: 3,
+    };
+    rig.store.save_album_identity(chosen.clone());
+
+    let sealed = rig.store.seal_automatic(&AutomaticSeal {
+        local_album_id: "album-1".to_owned(),
+        release_group_mbid: GROUP_B.to_owned(),
+        release_mbid: Some(RELEASE_B1.to_owned()),
+        tracks: Vec::new(),
+        flag: None,
+    });
+    assert!(!sealed);
+    rig.store.save_album_identity(AlbumIdentity {
+        release_group_mbid: Some(GROUP_B.to_owned()),
+        release_mbid: Some(RELEASE_B1.to_owned()),
+        decision_source: DecisionSource::Automatic,
+        row_revision: 1,
+        ..chosen.clone()
+    });
+    rig.store.clear_album_identity("album-1");
+
+    assert_eq!(rig.store.album_identity("album-1"), Some(chosen));
+}
+
 #[tokio::test]
 async fn legacy_import_survives_rescan() {
     let rig = rig_with_recall(recall(vec![release(GROUP_B, RELEASE_B1, &[RECORDING_1])]));
-    rig.identities
-        .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
-    rig.identities.save_album_identity(AlbumIdentity {
+    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    rig.store.save_album_identity(AlbumIdentity {
         local_album_id: "album-1".to_owned(),
         provider: "musicbrainz".to_owned(),
         release_group_mbid: Some(GROUP_A.to_owned()),
@@ -322,8 +441,7 @@ async fn legacy_import_survives_rescan() {
         decision_source: DecisionSource::LegacyImport,
         row_revision: 1,
     });
-    rig.identities
-        .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    rig.rescan("album-1");
     rig.service.enqueue_album(
         "job-1",
         "album-1",
@@ -332,12 +450,12 @@ async fn legacy_import_survives_rescan() {
         None,
         0,
     );
-    rig.queue.claim(0, 60_000);
+    rig.store.claim(0, 60_000);
     rig.service
         .run_claimed_job("job-1", 0)
         .await
         .expect("report");
-    let identity = rig.identities.album_identity("album-1").expect("identity");
+    let identity = rig.store.album_identity("album-1").expect("identity");
     assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP_A));
     assert_eq!(identity.decision_source, DecisionSource::LegacyImport);
 }
@@ -349,11 +467,11 @@ async fn automatic_pass_skips_protected_track_rows() {
         RELEASE_A1,
         &[RECORDING_1, RECORDING_2],
     )]));
-    rig.identities.save_album_facts(album_facts(
+    rig.seed_album(&album_facts(
         "album-1",
         &[("t1", Some(RECORDING_1)), ("t2", Some(RECORDING_2))],
     ));
-    rig.identities.save_track_identity(TrackIdentity {
+    rig.store.save_track_identity(TrackIdentity {
         local_track_id: "t2".to_owned(),
         provider: "musicbrainz".to_owned(),
         recording_mbid: Some(RECORDING_2.to_owned()),
@@ -369,20 +487,17 @@ async fn automatic_pass_skips_protected_track_rows() {
         None,
         0,
     );
-    rig.queue.claim(0, 60_000);
+    rig.store.claim(0, 60_000);
     rig.service
         .run_claimed_job("job-1", 0)
         .await
         .expect("report");
     // The automatic track sealed; the manual track kept its own row.
     assert_eq!(
-        rig.identities
-            .track_identity("t1")
-            .expect("t1")
-            .decision_source,
+        rig.store.track_identity("t1").expect("t1").decision_source,
         DecisionSource::Automatic
     );
-    let kept = rig.identities.track_identity("t2").expect("t2");
+    let kept = rig.store.track_identity("t2").expect("t2");
     assert_eq!(kept.decision_source, DecisionSource::Manual);
     assert_eq!(kept.row_revision, 7);
 }
@@ -546,19 +661,28 @@ fn substitution_conflicting_direct_identity_refuses() {
     );
 }
 
+/// Two local artists a folded name nominated for merging, and `album-1`
+/// identified with its album row at `album_revision`.
+fn retirement_rig(album_revision: u64) -> Rig {
+    let rig = rig_with_recall(RecallResult::default());
+    rig.seed_artist("artist-old");
+    rig.seed_artist("artist-new");
+    rig.seed_identified_album(album_revision);
+    rig
+}
+
 #[test]
 fn stale_proof_rows_do_not_count() {
-    let rig = rig_with_recall(RecallResult::default());
-    rig.proofs.save_proof(proof_row(
+    // The album's identity row moved on to revision 2 after the proof was
+    // banked at revision 1, so the stored row is stale.
+    let rig = retirement_rig(2);
+    rig.store.save_proof(proof_row(
         "album-1",
         "t1",
         "artist-old",
         ARTIST_MBID,
         RELEASE_A1,
     ));
-    // The live revisions moved on, so the stored row is stale.
-    rig.proofs.set_album_revision("album-1", 2);
-    rig.proofs.set_track_revision("t1", 1);
     let verdict = rig
         .service
         .retire_artist("artist-old", "artist-new", ARTIST_MBID, true, None);
@@ -566,60 +690,61 @@ fn stale_proof_rows_do_not_count() {
         verdict,
         SubstitutionVerdict::Refused(SubstitutionRefusal::NameOnly)
     );
-    assert_eq!(rig.aliases.resolve("artist-old"), "artist-old");
+    assert_eq!(rig.store.resolve("artist-old"), "artist-old");
 }
 
 #[test]
 fn retire_artist_through_each_gate() {
     // Accepted release: allowed.
-    let rig = rig_with_recall(RecallResult::default());
-    rig.identities
-        .seed_accepted_release("artist-old", RELEASE_A1);
+    let rig = retirement_rig(1);
+    rig.db
+        .execute(
+            "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role) \
+             VALUES ('album-1', 0, 'artist-old', 'primary')",
+            [],
+        )
+        .expect("album credit seeds");
     let verdict = rig
         .service
         .retire_artist("artist-old", "artist-new", ARTIST_MBID, true, None);
     assert_eq!(verdict, SubstitutionVerdict::Allowed);
-    assert_eq!(rig.aliases.resolve("artist-old"), "artist-new");
+    assert_eq!(rig.store.resolve("artist-old"), "artist-new");
 
     // Durable proof row: allowed.
-    let rig = rig_with_recall(RecallResult::default());
-    rig.proofs.save_proof(proof_row(
+    let rig = retirement_rig(1);
+    rig.store.save_proof(proof_row(
         "album-1",
         "t1",
         "artist-old",
         ARTIST_MBID,
         RELEASE_A1,
     ));
-    rig.proofs.set_album_revision("album-1", 1);
-    rig.proofs.set_track_revision("t1", 1);
     let verdict = rig
         .service
         .retire_artist("artist-old", "artist-new", ARTIST_MBID, true, None);
     assert_eq!(verdict, SubstitutionVerdict::Allowed);
 
     // Conflicting proof: a curator decides, nothing retargets.
-    let rig = rig_with_recall(RecallResult::default());
-    rig.proofs.save_proof(proof_row(
+    let rig = retirement_rig(1);
+    rig.store.save_proof(proof_row(
         "album-1",
         "t1",
         "artist-old",
         ARTIST_MBID,
         RELEASE_A1,
     ));
-    rig.proofs.save_proof(proof_row(
+    rig.store.save_proof(proof_row(
         "album-1",
         "t1",
         "artist-old",
         OTHER_ARTIST_MBID,
         RELEASE_A1,
     ));
-    rig.proofs.set_album_revision("album-1", 1);
-    rig.proofs.set_track_revision("t1", 1);
     let verdict = rig
         .service
         .retire_artist("artist-old", "artist-new", ARTIST_MBID, true, None);
     assert_eq!(verdict, SubstitutionVerdict::NeedsReview);
-    assert_eq!(rig.aliases.resolve("artist-old"), "artist-old");
+    assert_eq!(rig.store.resolve("artist-old"), "artist-old");
 }
 
 #[test]
@@ -664,47 +789,53 @@ fn name_only_merge_refused() {
 
 #[test]
 fn retired_ids_keep_resolving() {
-    let rig = rig_with_recall(RecallResult::default());
-    rig.proofs.save_proof(proof_row(
+    let rig = retirement_rig(1);
+    rig.store.save_proof(proof_row(
         "album-1",
         "t1",
         "artist-old",
         ARTIST_MBID,
         RELEASE_A1,
     ));
-    rig.proofs.set_album_revision("album-1", 1);
-    rig.proofs.set_track_revision("t1", 1);
-    rig.aliases.add_favorite("user-1", "artist", "artist-old");
-    rig.aliases.add_playlist_ref("playlist-1", "artist-old");
-    rig.aliases.add_history_ref("row-1", "artist-old");
+    rig.store.add_favorite("user-1", "artist", "artist-old");
+    rig.db
+        .execute(
+            "INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
+             artist_name, played_at) VALUES ('play-1', 'user-1', 'artist-old', 'Song', \
+             'Old Name', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .expect("play seeds");
     let verdict = rig
         .service
         .retire_artist("artist-old", "artist-new", ARTIST_MBID, true, None);
     assert_eq!(verdict, SubstitutionVerdict::Allowed);
     // Compat lookups resolve through the alias.
-    assert_eq!(rig.aliases.resolve("artist-old"), "artist-new");
-    let aliases = rig.aliases.aliases_for("artist-new");
+    assert_eq!(rig.store.resolve("artist-old"), "artist-new");
+    let aliases = rig.store.aliases_for("artist-new");
     assert_eq!(aliases.len(), 1);
     assert_eq!(aliases[0].kind, AliasKind::MergedArtist);
     // Live references followed the survivor.
-    assert!(rig.aliases.favorite_holds("user-1", "artist", "artist-new"));
-    assert!(!rig.aliases.favorite_holds("user-1", "artist", "artist-old"));
-    assert_eq!(
-        rig.aliases.playlist_ref("playlist-1").as_deref(),
-        Some("artist-new")
-    );
-    assert_eq!(
-        rig.aliases.history_ref("row-1").as_deref(),
-        Some("artist-new")
-    );
+    assert!(rig.store.favorite_holds("user-1", "artist", "artist-new"));
+    assert!(!rig.store.favorite_holds("user-1", "artist", "artist-old"));
+    let played: String = rig
+        .db
+        .query_row(
+            "SELECT local_artist_id FROM library_play_history WHERE id = 'play-1'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("play reads");
+    assert_eq!(played, "artist-new");
 }
 
 #[test]
 fn exact_contributors_become_appearances() {
     let rig = rig_with_recall(RecallResult::default());
-    rig.identities
-        .save_owned_artist(ARTIST_MBID, "artist-owned");
-    rig.identities.save_track_credits(
+    rig.seed_artist("artist-owned");
+    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    rig.store.save_owned_artist(ARTIST_MBID, "artist-owned");
+    rig.store.save_track_credits(
         "t1",
         vec![
             ArtistCredit {
@@ -726,9 +857,9 @@ fn exact_contributors_become_appearances() {
     assert_eq!(appearances[0].artist_mbid, OTHER_ARTIST_MBID);
     assert_eq!(appearances[0].credited_name, "Guest Star");
     // The guest never became an owned artist.
-    assert_eq!(rig.identities.owned_artist_by_mbid(OTHER_ARTIST_MBID), None);
+    assert_eq!(rig.store.owned_artist_by_mbid(OTHER_ARTIST_MBID), None);
     assert_eq!(
-        rig.identities.owned_artist_by_mbid(ARTIST_MBID).as_deref(),
+        rig.store.owned_artist_by_mbid(ARTIST_MBID).as_deref(),
         Some("artist-owned")
     );
 }
@@ -750,7 +881,7 @@ fn file_edition_review(rig: &Rig, review_id: &str, album: &str) {
         penalties: Vec::new(),
     };
     identify::review::file_review(
-        rig.reviews.as_ref(),
+        rig.store.as_ref(),
         review_id,
         album,
         "EDITION_FILES_CHANGED",
@@ -764,8 +895,7 @@ fn file_edition_review(rig: &Rig, review_id: &str, album: &str) {
 #[tokio::test]
 async fn review_approve_seals_manual_and_holds() {
     let rig = rig_with_recall(recall(vec![release(GROUP_B, RELEASE_B1, &[RECORDING_1])]));
-    rig.identities
-        .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
     file_edition_review(&rig, "rev-1", "album-1");
     let review = "rev-1";
     // Unknown candidate keys never approve.
@@ -784,9 +914,9 @@ async fn review_approve_seals_manual_and_holds() {
             .approve_candidate(review, "curator-1", &key(GROUP_B, RELEASE_B1)),
         Ok(false)
     );
-    let stored = rig.reviews.get(review).expect("review");
+    let stored = rig.store.get(review).expect("review");
     assert_eq!(stored.state, ReviewState::Approved);
-    let identity = rig.identities.album_identity("album-1").expect("identity");
+    let identity = rig.store.album_identity("album-1").expect("identity");
     assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP_A));
     assert_eq!(identity.decision_source, DecisionSource::Manual);
 
@@ -800,12 +930,12 @@ async fn review_approve_seals_manual_and_holds() {
         None,
         0,
     );
-    rig.queue.claim(0, 60_000);
+    rig.store.claim(0, 60_000);
     rig.service
         .run_claimed_job("job-2", 0)
         .await
         .expect("report");
-    let held = rig.identities.album_identity("album-1").expect("identity");
+    let held = rig.store.album_identity("album-1").expect("identity");
     assert_eq!(held.release_group_mbid.as_deref(), Some(GROUP_A));
     assert_eq!(held.decision_source, DecisionSource::Manual);
 }
@@ -813,8 +943,7 @@ async fn review_approve_seals_manual_and_holds() {
 #[test]
 fn review_reject_keeps_tagged() {
     let rig = rig_with_recall(RecallResult::default());
-    rig.identities
-        .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
     file_edition_review(&rig, "rev-1", "album-1");
     let review = "rev-1";
     assert!(rig.service.reject_candidates(review, "curator-1"));
@@ -825,10 +954,10 @@ fn review_reject_keeps_tagged() {
         Ok(false)
     );
     assert_eq!(
-        rig.reviews.get(review).expect("review").state,
+        rig.store.get(review).expect("review").state,
         ReviewState::Rejected
     );
-    assert!(rig.identities.album_identity("album-1").is_none());
+    assert!(rig.store.album_identity("album-1").is_none());
     assert!(!rig.service.review_is_pending(review));
     assert!(rig.service.pending_reviews("album-1").is_empty());
 }
@@ -842,8 +971,7 @@ async fn edition_uncertain_keeps_the_best_guess() {
         live(release(GROUP_A, RELEASE_A1, &[RECORDING_1, RECORDING_2])),
         live(release(GROUP_A, RELEASE_A2, &[RECORDING_1, RECORDING_2])),
     ]));
-    rig.identities
-        .save_album_facts(album_facts("album-1", &[("t1", None), ("t2", None)]));
+    rig.seed_album(&album_facts("album-1", &[("t1", None), ("t2", None)]));
     rig.service.enqueue_album(
         "job-1",
         "album-1",
@@ -852,14 +980,14 @@ async fn edition_uncertain_keeps_the_best_guess() {
         None,
         0,
     );
-    rig.queue.claim(0, 60_000);
+    rig.store.claim(0, 60_000);
     let report = rig
         .service
         .run_claimed_job("job-1", 0)
         .await
         .expect("report");
     assert_eq!(report.outcome, IdentificationOutcome::EditionUncertain);
-    let identity = rig.identities.album_identity("album-1").expect("identity");
+    let identity = rig.store.album_identity("album-1").expect("identity");
     assert_eq!(identity.release_group_mbid.as_deref(), Some(GROUP_A));
     assert!(identity.release_mbid.is_some());
     assert_eq!(identity.decision_source, DecisionSource::Automatic);
@@ -871,9 +999,8 @@ async fn held_exact_survives_weaker_tier() {
         live(release(GROUP_A, RELEASE_A1, &[RECORDING_1, RECORDING_2])),
         live(release(GROUP_A, RELEASE_A2, &[RECORDING_1, RECORDING_2])),
     ]));
-    rig.identities
-        .save_album_facts(album_facts("album-1", &[("t1", None), ("t2", None)]));
-    rig.identities.save_album_identity(AlbumIdentity {
+    rig.seed_album(&album_facts("album-1", &[("t1", None), ("t2", None)]));
+    rig.store.save_album_identity(AlbumIdentity {
         local_album_id: "album-1".to_owned(),
         provider: "musicbrainz".to_owned(),
         release_group_mbid: Some(GROUP_A.to_owned()),
@@ -889,13 +1016,13 @@ async fn held_exact_survives_weaker_tier() {
         None,
         0,
     );
-    rig.queue.claim(0, 60_000);
+    rig.store.claim(0, 60_000);
     rig.service
         .run_claimed_job("job-1", 0)
         .await
         .expect("report");
     // Same-group weaker evidence must not demote the sealed exact.
-    let identity = rig.identities.album_identity("album-1").expect("identity");
+    let identity = rig.store.album_identity("album-1").expect("identity");
     assert_eq!(identity.release_mbid.as_deref(), Some(RELEASE_A1));
 }
 
@@ -919,6 +1046,9 @@ fn queue_claims_by_priority_then_backs_off() {
         ]
     );
     let rig = rig_with_recall(RecallResult::default());
+    for album in ["album-b", "album-m", "album-a"] {
+        rig.seed_album(&album_facts(album, &[]));
+    }
     rig.service.enqueue_album(
         "job-backlog",
         "album-b",
@@ -931,8 +1061,8 @@ fn queue_claims_by_priority_then_backs_off() {
         .enqueue_album("job-manual", "album-m", IdentifyKind::Manual, "r", None, 0);
     rig.service
         .enqueue_album("job-auto", "album-a", IdentifyKind::Automatic, "r", None, 0);
-    assert_eq!(rig.queue.jobs_for_album("album-a").len(), 1);
-    let first = rig.queue.claim(0, LEASE_SECONDS * 1000).expect("claim");
+    assert_eq!(rig.store.jobs_for_album("album-a").len(), 1);
+    let first = rig.store.claim(0, LEASE_SECONDS * 1000).expect("claim");
     assert_eq!(first.id, "job-auto");
     assert_eq!(first.priority, PRIORITY_NEW_OR_CHANGED);
     // Backoff ladder matches the owner-signed F-IDENT-04 sequence.
@@ -951,8 +1081,7 @@ async fn provider_deferred_job_waits_then_terminals() {
         failure_code: Some("musicbrainz_unavailable".to_owned()),
         ..RecallResult::default()
     });
-    rig.identities
-        .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
     rig.service.enqueue_album(
         "job-1",
         "album-1",
@@ -961,25 +1090,22 @@ async fn provider_deferred_job_waits_then_terminals() {
         None,
         0,
     );
-    rig.queue.claim(0, 60_000);
+    rig.store.claim(0, 60_000);
     let report = rig
         .service
         .run_claimed_job("job-1", 1_000)
         .await
         .expect("report");
     assert_eq!(report.outcome, IdentificationOutcome::ProviderDeferred);
-    let job = rig.queue.job("job-1").expect("job");
+    let job = rig.store.job("job-1").expect("job");
     assert_eq!(job.state, identify::models::JobState::Deferred);
     assert_eq!(job.not_before_ms, 1_000 + 30_000);
     // No identity was written on a deferred attempt.
-    assert!(rig.identities.album_identity("album-1").is_none());
+    assert!(rig.store.album_identity("album-1").is_none());
 }
 
 #[test]
 fn brief_carries_the_whole_case() {
-    assert_eq!(DecisionSource::Automatic.as_str(), "automatic");
-    assert_eq!(DecisionSource::Manual.as_str(), "manual");
-    assert_eq!(DecisionSource::LegacyImport.as_str(), "legacy_import");
     let rig = rig_with_recall(RecallResult::default());
     let empty = rig.service.identity_brief("album-1");
     assert!(empty.revisable);
@@ -1021,15 +1147,15 @@ fn job_landings_cover_done_fail_attention_defer() {
 #[test]
 fn artist_identity_rows_round_trip() {
     let rig = rig_with_recall(RecallResult::default());
-    assert_eq!(rig.identities.artist_identity("artist-1"), None);
-    rig.identities.save_artist_identity(ArtistIdentity {
+    assert_eq!(rig.store.artist_identity("artist-1"), None);
+    rig.store.save_artist_identity(ArtistIdentity {
         local_artist_id: "artist-1".to_owned(),
         provider: "musicbrainz".to_owned(),
         provider_artist_mbid: Some(ARTIST_MBID.to_owned()),
         decision_source: DecisionSource::Manual,
         row_revision: 1,
     });
-    let stored = rig.identities.artist_identity("artist-1").expect("artist");
+    let stored = rig.store.artist_identity("artist-1").expect("artist");
     assert_eq!(stored.provider_artist_mbid.as_deref(), Some(ARTIST_MBID));
     assert!(!stored.decision_source.automatic_may_overwrite());
 }
