@@ -14,6 +14,7 @@ use super::ports::{
 };
 use crate::library::identify::sources::{EditionQuery, ReleaseHit, ReleaseSource, SourceError};
 use crate::library::import::{DownloadImport, ImportError, ImportSource};
+use crate::library::management::service::Management;
 use crate::library::matching::Release;
 use crate::library::mutations::{MutationError, Mutations};
 use crate::library::wiring::LibrarySetup;
@@ -379,6 +380,17 @@ impl LandingLibrary for LibraryLanding {
                 Err(ImportError::LocalFault(detail)) => Err(ImportFailure::LocalFault(detail)),
                 Err(ImportError::Occupied(detail)) => Err(ImportFailure::Occupied(detail)),
             }
+        })
+    }
+
+    fn publish_settled<'a>(&'a self, task_id: &'a str) -> BoxFuture<'a, Result<bool, String>> {
+        Box::pin(async move {
+            let management = Management::new(&self.library);
+            let task_id = task_id.to_owned();
+            tokio::task::spawn_blocking(move || management.download_publish_settled(&task_id))
+                .await
+                .map_err(|error| format!("publish journal read did not run: {error}"))?
+                .map_err(|error| error.to_string())
         })
     }
 }

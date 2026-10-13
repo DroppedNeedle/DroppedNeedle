@@ -109,6 +109,29 @@ pub fn retrying_bundles(
 }
 
 impl Management {
+    /// Whether every write that took files from a download task's import
+    /// folder is over: cleaned up, undone, committed with only its own
+    /// cleanup left, or closed by an administrator after needing
+    /// attention. A write still on its way, one that needs attention and
+    /// a state this does not know all answer no. No such write answers
+    /// yes. Blocking.
+    pub fn download_publish_settled(&self, task_id: &str) -> Result<bool, ManagementError> {
+        let folder = format!("{}/", crate::library::import::staging_rel(task_id));
+        self.read(|conn| {
+            let unsettled: bool = conn.query_row(
+                "SELECT EXISTS (SELECT 1 FROM library_publish_journal \
+                 WHERE bundle_id IN (SELECT bundle_id FROM library_publish_journal \
+                 WHERE substr(source_rel, 1, length(?1)) = ?1) \
+                 AND state NOT IN ('cleaned', 'compensated', 'cleanup_pending') \
+                 AND NOT (state = 'needs_attention' AND bundle_id IN \
+                 (SELECT bundle_id FROM library_publish_resolutions)))",
+                params![folder],
+                |row| row.get(0),
+            )?;
+            Ok(!unsettled)
+        })
+    }
+
     /// What the publish journal holds. Blocking.
     pub fn recovery_diagnostics(&self) -> Result<Diagnostics, ManagementError> {
         self.read(|conn| {

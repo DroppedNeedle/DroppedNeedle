@@ -889,3 +889,168 @@ async fn a_plugin_download_is_confined_to_the_plugins_folders() {
         Some("local_fault")
     );
 }
+
+/// The hourly cleanup of finished download folders asks the publisher
+/// first: a folder stays while the write putting its files into the
+/// library is unfinished or needs an administrator, and goes once that
+/// write is done.
+#[tokio::test]
+async fn orphan_cleanup_waits_for_the_publish_to_finish() {
+    use droppedneedle::acquire::landing::ports::{
+        ImportFile, ImportOrigin, ImportRequest, LandingLibrary,
+    };
+    use droppedneedle::acquire::sources::SabnzbdSource;
+    use droppedneedle::acquire::usenet::mocks::{SabnzbdMock, serve_loopback};
+    use droppedneedle::acquire::usenet::newznab::NewznabIndexer;
+    use droppedneedle::acquire::usenet::policy::UsenetPolicy;
+    use droppedneedle::acquire::usenet::prowlarr::ProwlarrIndexer;
+    use droppedneedle::acquire::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
+    use droppedneedle::runtime_config::sections::UsenetBackendSetting;
+    use std::time::{Duration, SystemTime};
+
+    const TASK: &str = "0123456789abcdef0123456789abcdef";
+
+    let auth = droppedneedle::auth::wiring::AuthSetup::for_tests().expect("test auth");
+    let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
+    let mut reads = droppedneedle::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
+        .expect("reads bundle");
+    let acquire = droppedneedle::acquire::AcquireSetup::for_tests(
+        auth.users.clone(),
+        ids.clone(),
+        &mut reads.collections,
+    )
+    .expect("acquire bundle");
+    let dir = acquire
+        .db
+        .path()
+        .parent()
+        .expect("scratch dir")
+        .to_path_buf();
+    let config = Arc::new(
+        ConfigStore::open(
+            &dir.join("config.json"),
+            Crypto::from_key_bytes(&[7u8; 32]).expect("key"),
+        )
+        .expect("config"),
+    );
+    let library = LibrarySetup::for_tests_at(auth.users.clone(), ids, acquire.db.path(), config)
+        .expect("library bundle");
+    let music = dir.join("music");
+    std::fs::create_dir_all(&music).expect("music root");
+    library
+        .add_root(
+            Some("music".to_owned()),
+            music.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+
+    // A finished job's folder, old enough to be cleaned up.
+    let complete = dir.join("complete");
+    let folder = complete.join(format!("droppedneedle-{TASK}-0"));
+    let file = land_file(&folder, "01.flac", "flac_full_01.flac", "Mysterons", 1);
+    let release = release(
+        GOOD_RELEASE,
+        GOOD_GROUP,
+        &["Mysterons"],
+        &[length_ms(&file)],
+    );
+    std::fs::File::open(&folder)
+        .and_then(|dir| dir.set_modified(SystemTime::now() - Duration::from_secs(7 * 3600)))
+        .expect("folder aged");
+
+    let port: Arc<dyn LandingLibrary> = Arc::new(LibraryLanding::new(
+        library.clone(),
+        Arc::new(Releases(vec![release.clone()])),
+        acquire.db.pool().clone(),
+    ));
+    let acquire = acquire.with_library(port.clone());
+    let receipt = port
+        .import(ImportRequest {
+            task_id: TASK.to_owned(),
+            origin: ImportOrigin::Download,
+            staging: None,
+            release,
+            files: vec![ImportFile {
+                path: file,
+                track: 0,
+            }],
+            extras: Vec::new(),
+        })
+        .await
+        .expect("import publishes");
+    assert!(music.join("Portishead/Dummy/0101 Mysterons.flac").is_file());
+
+    // SABnzbd no longer knows the job.
+    let mock = SabnzbdMock::new();
+    let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
+    let policy = UsenetPolicy::v2_defaults();
+    let wait = Duration::from_secs(5);
+    let source = SabnzbdSource::new(
+        Arc::new(SabnzbdQueue::new(
+            SabnzbdClient::new(
+                reqwest::Client::new(),
+                &base,
+                "SABKEY",
+                3,
+                Duration::from_millis(1),
+            ),
+            &base,
+            "SABKEY",
+            complete.clone(),
+            policy.clone(),
+        )),
+        Arc::new(NewznabIndexer::new(Vec::new(), wait, wait, wait, wait)),
+        Arc::new(ProwlarrIndexer::new(
+            None,
+            Vec::new(),
+            false,
+            wait,
+            wait,
+            wait,
+        )),
+        UsenetBackendSetting::default(),
+        policy,
+        acquire.journal.clone(),
+        None,
+        wait,
+    );
+    let worker = Arc::new(
+        DownloadWorker::fixed(
+            acquire.journal.clone(),
+            vec![Source::Sab(Arc::new(source))],
+            WorkerConfig {
+                staging_root: acquire.staging_root.clone(),
+                orphan_roots: vec![("usenet".to_owned(), complete.clone())],
+                ..WorkerConfig::default()
+            },
+        )
+        .with_landing(acquire.landing.clone()),
+    );
+
+    // The publish journal as a stopped server leaves it at each step.
+    for (state, kept) in [
+        ("prepared", true),
+        ("staged", true),
+        ("published", true),
+        ("committed", true),
+        ("needs_attention", true),
+        ("cleaned", false),
+    ] {
+        let bundle = receipt.bundle_id.clone();
+        let changed = acquire
+            .db
+            .write("test.journal_state", move |tx| {
+                Ok(tx.execute(
+                    "UPDATE library_publish_journal SET state = ?1 WHERE bundle_id = ?2",
+                    [state, bundle.as_str()],
+                )?)
+            })
+            .await
+            .expect("journal state set");
+        assert_eq!(changed, 1, "the import wrote one journal row");
+        // Pass 0 is one of the passes the cleanup runs on.
+        worker.run_once(0).await;
+        assert_eq!(folder.is_dir(), kept, "publish {state}");
+    }
+}

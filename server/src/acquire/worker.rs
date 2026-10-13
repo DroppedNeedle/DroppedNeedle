@@ -579,6 +579,7 @@ impl DownloadWorker {
     /// Import finished downloads through the landing instead of settling
     /// them as completed unseen.
     pub fn with_landing(mut self, landing: Arc<LandingService>) -> Self {
+        self.ownership = self.ownership.with_library(landing.library_slot().clone());
         self.landing = Some(landing);
         self
     }

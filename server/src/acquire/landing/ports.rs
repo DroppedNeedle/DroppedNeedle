@@ -179,4 +179,9 @@ pub trait LandingLibrary: Send + Sync {
     /// Publish verified files into the library.
     fn import(&self, request: ImportRequest)
     -> BoxFuture<'_, Result<ImportReceipt, ImportFailure>>;
+
+    /// Whether every write putting this download task's files into the
+    /// library is over. An error means the publish journal could not be
+    /// read, which is not an answer.
+    fn publish_settled<'a>(&'a self, task_id: &'a str) -> BoxFuture<'a, Result<bool, String>>;
 }

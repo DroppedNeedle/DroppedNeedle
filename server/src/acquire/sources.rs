@@ -31,6 +31,7 @@ use super::downloads::sources::{
     DownloadSource, Materialization, OrphanOwnership, SourceError, SourceHandle, TransferProgress,
 };
 use super::downloads::store::TaskRow;
+use super::landing::LibrarySlot;
 use super::search_jobs::candidates::{Candidate, MAX_PER_SOURCE, Pin};
 use super::search_jobs::pinned;
 use super::slskd::folders::{RankRequest, rank_folders};
@@ -852,17 +853,27 @@ impl DownloadSource for SabnzbdSource {
     }
 }
 
-/// Orphan ownership over the journal. Publisher bundles do not exist in v3
-/// yet (the library importer will own them), so "none exist" reads as settled
-/// and the remaining evidence keeps the verdict fail-closed.
+/// Orphan ownership over the download journal, plus the library for the
+/// state of the writes that put a task's files in place.
 pub struct JournalOwnership {
     journal: Arc<Journal>,
+    library: LibrarySlot,
 }
 
 impl JournalOwnership {
-    /// Ownership lookups over the shared journal.
+    /// Ownership lookups over the shared journal. Until a library is
+    /// given, no task's writes count as settled.
     pub fn new(journal: Arc<Journal>) -> Self {
-        Self { journal }
+        Self {
+            journal,
+            library: LibrarySlot::default(),
+        }
+    }
+
+    /// Ask this library about the writes behind a task.
+    pub fn with_library(mut self, library: LibrarySlot) -> Self {
+        self.library = library;
+        self
     }
 }
 
@@ -898,7 +909,25 @@ impl OrphanOwnership for JournalOwnership {
             .map(|row| row.map(|task| task.status.as_str().to_owned()))
     }
 
-    async fn bundles_settled(&self, _task_id: &str) -> Result<bool, SourceError> {
-        Ok(true)
+    /// A journal that cannot be asked is not settled: the folder stays.
+    async fn bundles_settled(&self, task_id: &str) -> Result<bool, SourceError> {
+        let Some(library) = self.library.get() else {
+            tracing::warn!(
+                task_id,
+                "no library to ask about this download's writes; its folder is kept"
+            );
+            return Ok(false);
+        };
+        match library.publish_settled(task_id).await {
+            Ok(settled) => Ok(settled),
+            Err(error) => {
+                tracing::warn!(
+                    task_id,
+                    %error,
+                    "publish journal unreadable; the download folder is kept"
+                );
+                Ok(false)
+            }
+        }
     }
 }
