@@ -1385,3 +1385,92 @@ async fn plex_cover_path_cannot_point_at_another_host() {
     assert_eq!(hits.load(Ordering::SeqCst), 0, "another host was asked");
     other_task.abort();
 }
+
+/// A Plex part key comes from the listener's stream address and a cover
+/// path from the server. Neither may walk out of its own folder to
+/// another Plex path, however the dots are spelled: nothing is sent for
+/// such a value, and an ordinary key still goes to its part.
+#[tokio::test]
+async fn plex_keys_cannot_walk_to_other_paths() {
+    use axum::response::IntoResponse as _;
+    let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let log = seen.clone();
+    let listed = Arc::new(std::sync::Mutex::new(String::new()));
+    let composite = listed.clone();
+    let (base_url, task) = serve_fake(Router::new().fallback(move |request: Request<Body>| {
+        let path = request.uri().path().to_owned();
+        let composite = composite.lock().expect("lock").clone();
+        log.lock().expect("lock").push(path.clone());
+        async move {
+            if path == "/playlists" {
+                axum::Json(serde_json::json!({"MediaContainer": {"Metadata": [{
+                    "ratingKey": "pl-1", "title": "Mix", "playlistType": "audio",
+                    "composite": composite,
+                }]}}))
+                .into_response()
+            } else {
+                (
+                    [(axum::http::header::CONTENT_TYPE, "image/jpeg")],
+                    vec![0xFFu8, 0xD8],
+                )
+                    .into_response()
+            }
+        }
+    }))
+    .await;
+    let handle = plex_handle(&base_url, Vec::new());
+    let client = http_client();
+    let take_seen = || std::mem::take(&mut *seen.lock().expect("lock"));
+
+    let request = handle
+        .audio_request("library/parts/7/1700000000/file.flac")
+        .expect("an ordinary key builds");
+    client.execute(request).await.expect("fake answers");
+    assert_eq!(take_seen(), ["/library/parts/7/1700000000/file.flac"]);
+
+    let long_key = format!("library/parts/{}/file.flac", "7".repeat(4000));
+    for key in [
+        "library/parts/%2e%2e/%2e%2e/status/sessions",
+        "library/parts/.%2E/%2e./status/sessions",
+        "library/parts/%252e%252e/%252e%252e/status/sessions",
+        "library/parts/..%2f..%2fstatus/sessions",
+        "library/parts/..\\..\\status/sessions",
+        "library/parts/7/file.flac?X-Plex-Token=other",
+        "library/parts/7/file.flac#x",
+        long_key.as_str(),
+    ] {
+        match handle.audio_request(key) {
+            Err(AdapterError::Unsupported(_)) => {}
+            Err(other) => panic!("{key:?} failed as {other:?}"),
+            Ok(request) => {
+                let sent_to = request.url().path().to_owned();
+                panic!("{key:?} would be sent to {sent_to}");
+            }
+        }
+    }
+
+    "/playlists/pl-1/composite/1700000000".clone_into(&mut listed.lock().expect("lock"));
+    handle
+        .playlist_cover_bytes("pl-1", 300)
+        .await
+        .expect("an ordinary cover loads");
+    assert_eq!(
+        take_seen(),
+        ["/playlists", "/playlists/pl-1/composite/1700000000"]
+    );
+    for path in [
+        "/playlists/%2e%2e/%2e%2e/status/sessions",
+        "/playlists/%252e%252e/%252e%252e/status/sessions",
+        "/playlists/pl-1/composite?X-Plex-Token=other",
+    ] {
+        path.clone_into(&mut listed.lock().expect("lock"));
+        let outcome = handle.playlist_cover_bytes("pl-1", 300).await;
+        assert!(
+            matches!(outcome, Err(AdapterError::NotFound)),
+            "{path:?} was fetched: {:?}",
+            outcome.map(|(bytes, kind)| (bytes.len(), kind))
+        );
+        assert_eq!(take_seen(), ["/playlists"], "{path:?} reached Plex");
+    }
+    task.abort();
+}

@@ -112,6 +112,21 @@ impl PlexAdapter {
         !self.base_url().is_empty() && !self.token.is_empty()
     }
 
+    /// The address a validated path is sent to, checked on what was built
+    /// and not on the text: the same server as the base address, and
+    /// exactly the path asked for under it.
+    fn checked_url(&self, path: &str) -> Option<reqwest::Url> {
+        let base = self.base_url();
+        let url = reqwest::Url::parse(&format!("{base}{path}")).ok()?;
+        let base = reqwest::Url::parse(&base).ok()?;
+        let expected = format!("{}{path}", base.path().trim_end_matches('/'));
+        let same_server = url.origin() == base.origin()
+            && url.username() == base.username()
+            && url.password() == base.password();
+        (same_server && url.path() == expected && url.query().is_none() && url.fragment().is_none())
+            .then_some(url)
+    }
+
     /// Current base URL; an https upgrade rewrites it in place.
     fn base_url(&self) -> String {
         self.base_url
@@ -784,14 +799,17 @@ impl PlexAdapter {
     }
 
     /// The direct audio request for one part key (v2 `proxy_get_stream`
-    /// target). Keys are validated exactly as in v2: a leading slash is
-    /// added, `..` segments and non-part paths are rejected without any
-    /// request. The caller sends it, by range when it seeks.
+    /// target). A leading slash is added, and a key that is not a plain
+    /// path under `/library/parts/` is rejected without any request. The
+    /// caller sends it, by range when it seeks.
     pub fn audio_request(&self, part_key: &str) -> Result<reqwest::Request, AdapterError> {
         self.require_configured()?;
         let key = validated_part_key(part_key)?;
+        let url = self
+            .checked_url(&key)
+            .ok_or_else(|| AdapterError::Unsupported("Invalid Plex part key".to_owned()))?;
         self.client
-            .get(format!("{}{key}", self.base_url()))
+            .get(url)
             .headers(self.headers())
             .build()
             .map_err(|cause| AdapterError::Transport(trim_cause(cause)))
@@ -841,6 +859,9 @@ impl PlexAdapter {
             .filter(|path| !path.is_empty())
             .unwrap_or_else(|| format!("/playlists/{id}/composite"));
         let composite = validated_cover_path(&composite)?;
+        if self.checked_url(composite).is_none() {
+            return Err(AdapterError::NotFound);
+        }
         let size = size.to_string();
         self.get_bytes(
             composite,
@@ -1426,18 +1447,39 @@ impl PlexServerTokens for PlexTokenProbe {
     }
 }
 
+/// The longest part key or cover path accepted. Real ones are well under
+/// a hundred characters.
+const MAX_PLEX_PATH_BYTES: usize = 512;
+
+/// True for a plain path on the Plex server: a leading slash, then
+/// segments of ASCII letters, digits, `.`, `-` and `_`, none of them
+/// empty, `.` or `..`. A part key is `/library/parts/{id}/{time}/file.{ext}`
+/// and a playlist cover is `/playlists/{id}/composite/{time}`, both
+/// numeric apart from the words (the shapes v2 handled and the in-repo
+/// Plex mock serves; not probed against a live server here). Neither has
+/// a `%`, so none is allowed: the address parser reads `%2e%2e` as `..`
+/// and would walk the request up to another Plex path. A query, a
+/// fragment and a backslash are refused the same way.
+fn plain_plex_path(path: &str) -> bool {
+    let Some(rest) = path.strip_prefix('/') else {
+        return false;
+    };
+    path.len() <= MAX_PLEX_PATH_BYTES
+        && rest.split('/').all(|segment| {
+            !matches!(segment, "" | "." | "..")
+                && segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+        })
+}
+
 /// A playlist cover path as the server listed it, kept only when it is a
 /// plain path on that server. It is joined onto the server's address, so
 /// `@host/x` would make the real host a username and send the request,
 /// Plex token and all, to `host`. Anything else is no image, without any
 /// request.
 fn validated_cover_path(raw: &str) -> Result<&str, AdapterError> {
-    let plain = raw.starts_with('/')
-        && !raw.starts_with("//")
-        && !raw.contains('\\')
-        && !raw.chars().any(|c| c.is_control() || c.is_whitespace())
-        && !raw.split(['/', '?', '#']).any(|segment| segment == "..");
-    if !plain {
+    if !plain_plex_path(raw) {
         tracing::warn!(
             "plex listed a playlist cover path that is not a path, treating it as missing"
         );
@@ -1446,16 +1488,16 @@ fn validated_cover_path(raw: &str) -> Result<&str, AdapterError> {
     Ok(raw)
 }
 
-/// Validate a Plex part key exactly as v2 `proxy_get_stream` does: a
-/// leading slash is added, `..` segments and anything outside
-/// `/library/parts/` are rejected without any request.
+/// Validate a Plex part key, which comes from the listener's stream
+/// address: a leading slash is added, and anything that is not a plain
+/// path under `/library/parts/` is rejected without any request.
 fn validated_part_key(raw: &str) -> Result<String, AdapterError> {
     let key = if raw.starts_with('/') {
         raw.to_owned()
     } else {
         format!("/{raw}")
     };
-    if key.split('/').any(|segment| segment == "..") || !key.starts_with("/library/parts/") {
+    if !plain_plex_path(&key) || !key.starts_with("/library/parts/") {
         return Err(AdapterError::Unsupported(
             "Invalid Plex part key".to_owned(),
         ));
