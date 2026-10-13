@@ -1,6 +1,10 @@
 //! Shared test doubles: a fixed-id generator proving the trait seam, state
-//! builders for hooked and production-like apps, and a scratch directory
-//! that removes itself.
+//! builders for hooked and production-like apps, the whole app for
+//! journeys, and a scratch directory that removes itself.
+
+mod app;
+
+pub use app::TestApp;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -340,24 +344,47 @@ pub fn reads_inputs(
     }
 }
 
-/// Every catalog upstream on the discard port (nothing listens there).
+/// Every catalog upstream on a closed port.
 pub fn closed_endpoints() -> droppedneedle::reads::catalog::upstream::Endpoints {
-    let closed = "http://127.0.0.1:9".to_owned();
-    droppedneedle::reads::catalog::upstream::Endpoints {
-        listenbrainz: closed.clone(),
-        lastfm: format!("{closed}/"),
-        audiodb: closed.clone(),
-        wikidata: closed.clone(),
-        wikipedia: closed.clone(),
-        commons: closed.clone(),
-        itunes: closed.clone(),
-        deezer: closed.clone(),
-        cover_art_archive: closed.clone(),
-        lrclib: closed.clone(),
-        github_releases: closed.clone(),
-        youtube: closed.clone(),
-        musicbrainz: closed.clone(),
-        brainzmash: closed,
+    closed_outbound().catalog()
+}
+
+/// Every outside service with a fixed address on the discard port, where
+/// nothing listens.
+pub fn closed_outbound() -> droppedneedle::bootstrap::Outbound {
+    outbound_at("http://127.0.0.1:9")
+}
+
+/// Every outside service with a fixed address at its own path under one
+/// origin.
+pub fn outbound_at(origin: &str) -> droppedneedle::bootstrap::Outbound {
+    let at = |path: &str| format!("{origin}/{path}");
+    droppedneedle::bootstrap::Outbound {
+        listenbrainz: at("listenbrainz"),
+        lastfm: at("lastfm/"),
+        audiodb: at("audiodb"),
+        wikidata: at("wikidata"),
+        wikipedia: at("wikipedia-{lang}"),
+        commons: at("commons"),
+        itunes: at("itunes/search"),
+        deezer: at("deezer"),
+        cover_art_archive: at("coverart"),
+        discogs: at("discogs"),
+        lrclib: at("lrclib"),
+        github_releases: at("releases"),
+        github_api: at("github"),
+        github_codeload: at("codeload"),
+        youtube: at("youtube"),
+        acoustid: at("acoustid"),
+        pwned_passwords: at("pwned/range/"),
+        plex_tv: at("plex"),
+        spotify_api: at("spotify"),
+        spotify_accounts: at("spotify-accounts"),
+        ticketmaster: at("ticketmaster"),
+        skiddle: at("skiddle"),
+        geocoding: at("geocoding"),
+        musicbrainz: at("musicbrainz"),
+        brainzmash: at("brainzmash"),
     }
 }
 

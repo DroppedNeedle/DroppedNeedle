@@ -1,5 +1,6 @@
-//! The production graph: `bootstrap::build` on an empty data directory,
-//! served over real TCP, then stopped through `bootstrap::serve`.
+//! The production graph: `bootstrap::build_with` on an empty data
+//! directory, served over real TCP, then stopped through
+//! `bootstrap::serve`. Every outside address is closed or a local listener.
 
 use std::{
     convert::Infallible,
@@ -17,7 +18,7 @@ use droppedneedle::{
 use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
 use tower::ServiceExt as _;
 
-use crate::common::ScratchDir;
+use crate::common::{ScratchDir, closed_outbound, outbound_at};
 
 fn scratch(name: &str) -> ScratchDir {
     ScratchDir::new(&format!("boot-{name}"))
@@ -38,6 +39,14 @@ fn config_in(dir: &Path) -> AppConfig {
     security.hibp_check = false;
     store.save(security).unwrap();
     config
+}
+
+/// The production graph with nothing listening at any outside address.
+async fn build(
+    config: AppConfig,
+) -> Result<(axum::Router, bootstrap::Background), bootstrap::BootError> {
+    let built = bootstrap::build_with(config, closed_outbound()).await?;
+    Ok((built.router, built.background))
 }
 
 struct Running {
@@ -74,7 +83,7 @@ impl Running {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn production_graph_boots_on_an_empty_dir_and_answers() {
     let dir = scratch("graph");
-    let (router, background) = bootstrap::build(config_in(&dir)).await.unwrap();
+    let (router, background) = build(config_in(&dir)).await.unwrap();
     let running = start(router, background).await;
     let client = reqwest::Client::new();
 
@@ -146,7 +155,7 @@ async fn boot_refuses_while_the_offline_tool_holds_the_database() {
     let config = config_in(&dir);
     let db_path = config.library_db_path.clone();
     let _import = droppedneedle::tooling::datalock::DataLock::exclusive(&db_path).unwrap();
-    let refused = bootstrap::build(config).await;
+    let refused = build(config).await;
     assert!(
         matches!(refused, Err(bootstrap::BootError::DataLock(_))),
         "boot must refuse a held database"
@@ -166,7 +175,7 @@ async fn boot_refuses_a_v2_data_directory_and_leaves_it_alone() {
     let database = std::fs::read(&db_path).unwrap();
     let settings = std::fs::read(&config_path).unwrap();
 
-    let Err(refused) = bootstrap::build(AppConfig::with_root(0, &dir)).await else {
+    let Err(refused) = build(AppConfig::with_root(0, &dir)).await else {
         panic!("boot must refuse a v2 data directory");
     };
     assert!(
@@ -195,7 +204,7 @@ async fn boot_refuses_a_v2_data_directory_and_leaves_it_alone() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn login_behind_a_trusted_tls_proxy_sets_a_secure_cookie() {
     let dir = scratch("proxy");
-    let (router, background) = bootstrap::build(config_in(&dir)).await.unwrap();
+    let (router, background) = build(config_in(&dir)).await.unwrap();
     let running = start(router, background).await;
     let client = reqwest::Client::new();
     let credentials = serde_json::json!({"username": "admin", "password": "correct horse battery"});
@@ -231,7 +240,7 @@ async fn held_open_stream_does_not_keep_background_loops_running() {
     let dir = scratch("shutdown");
     let mut config = config_in(&dir);
     config.shutdown_grace = Duration::from_secs(2);
-    let (router, mut background) = bootstrap::build(config).await.unwrap();
+    let (router, mut background) = build(config).await.unwrap();
     let mut stop = background.stop_signal();
     let (stopped_tx, stopped_rx) = oneshot::channel();
     background.push(
@@ -347,7 +356,7 @@ async fn hsts_is_sent_only_over_https_and_only_while_the_setting_is_on() {
     std::fs::create_dir_all(config.static_dir.join("_app")).unwrap();
     std::fs::write(config.static_dir.join("index.html"), "<html></html>").unwrap();
     std::fs::write(config.static_dir.join("_app/app.js"), "console.log(1);").unwrap();
-    let (router, background) = bootstrap::build(config).await.unwrap();
+    let (router, background) = build(config).await.unwrap();
     let running = start(router.clone(), background).await;
 
     let setup = reqwest::Client::new()
@@ -438,39 +447,9 @@ async fn hsts_is_sent_only_over_https_and_only_while_the_setting_is_on() {
             "off again: {uri}"
         );
     }
+    // A live clone would hold shutdown for its whole grace period.
+    drop(router);
     running.shut_down().await;
-}
-
-/// Every outside service at its own path under one origin.
-fn outbound_at(origin: &str) -> bootstrap::Outbound {
-    let at = |path: &str| format!("{origin}/{path}");
-    bootstrap::Outbound {
-        listenbrainz: at("listenbrainz"),
-        lastfm: at("lastfm/"),
-        audiodb: at("audiodb"),
-        wikidata: at("wikidata"),
-        wikipedia: at("wikipedia-{lang}"),
-        commons: at("commons"),
-        itunes: at("itunes/search"),
-        deezer: at("deezer"),
-        cover_art_archive: at("coverart"),
-        discogs: at("discogs"),
-        lrclib: at("lrclib"),
-        github_releases: at("releases"),
-        github_api: at("github"),
-        github_codeload: at("codeload"),
-        youtube: at("youtube"),
-        acoustid: at("acoustid"),
-        pwned_passwords: at("pwned/range/"),
-        plex_tv: at("plex"),
-        spotify_api: at("spotify"),
-        spotify_accounts: at("spotify-accounts"),
-        ticketmaster: at("ticketmaster"),
-        skiddle: at("skiddle"),
-        geocoding: at("geocoding"),
-        musicbrainz: at("musicbrainz"),
-        brainzmash: at("brainzmash"),
-    }
 }
 
 async fn set_up(address: SocketAddr) -> reqwest::StatusCode {
@@ -518,16 +497,13 @@ async fn outside_calls_go_where_outbound_points() {
     running.shut_down().await;
     stand_in.abort();
 
-    // Nothing listens on the discard port.
+    // Nothing listens anywhere.
     let dir = scratch("outbound-closed");
     let bootstrap::Built {
         router, background, ..
-    } = bootstrap::build_with(
-        AppConfig::with_root(0, &dir),
-        outbound_at("http://127.0.0.1:9"),
-    )
-    .await
-    .unwrap();
+    } = bootstrap::build_with(AppConfig::with_root(0, &dir), closed_outbound())
+        .await
+        .unwrap();
     let running = start(router, background).await;
     assert_eq!(set_up(running.address).await, 201);
     let health = reqwest::get(format!("http://{}/health", running.address))
