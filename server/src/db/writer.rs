@@ -40,6 +40,11 @@
 //! write waits for its turn however long that takes; it is refused only past
 //! 4,096 waiting, which means a producer is not awaiting its writes.
 //!
+//! A durable write ([`WriteLane::write_durable`]) is a blocking write whose
+//! commit is synced to disk before it returns. It keeps its place in the
+//! queue it names but waits like a background write: neither the 128 bound
+//! nor the 5 s limit applies to it.
+//!
 //! Each class has a time budget, enforced through the SQLite progress
 //! handler: a foreground transaction is logged past 250 ms and aborted at
 //! 2 s, a background one logged past 1 s and aborted at 5 s. The abort only
@@ -329,6 +334,9 @@ struct Waiter {
     name: &'static str,
     lane: Lane,
     queued_at: Instant,
+    /// A durable write. It is never answered `Busy` for waiting too long:
+    /// its caller may be between two steps of a publish.
+    durable: bool,
     grantee: Grantee,
 }
 
@@ -460,6 +468,7 @@ impl Shared {
         self: &Arc<Self>,
         lane: Lane,
         name: &'static str,
+        durable: bool,
         grantee: Grantee,
     ) -> Result<(), DbError> {
         // A write issued inside a closure on this lane would wait behind
@@ -476,16 +485,20 @@ impl Shared {
             return Err(DbError::LaneClosed);
         }
         let (queue, capacity) = match lane {
+            // A durable write is not a request to turn away at 128: it gets
+            // the bound that only a producer not awaiting its writes reaches.
+            Lane::Foreground if durable => (&mut state.foreground, BACKGROUND_QUEUE_CAPACITY),
             Lane::Foreground => (&mut state.foreground, FOREGROUND_QUEUE_CAPACITY),
             Lane::Background => (&mut state.background, BACKGROUND_QUEUE_CAPACITY),
         };
         if queue.len() >= capacity {
             drop(state);
-            if lane == Lane::Background {
+            if capacity == BACKGROUND_QUEUE_CAPACITY {
                 tracing::error!(
                     operation = name,
+                    lane = lane.label(),
                     waiting = capacity,
-                    "background write queue is full; a producer is not awaiting its writes"
+                    "write queue is full; a producer is not awaiting its writes"
                 );
             }
             return Err(DbError::Busy {
@@ -496,6 +509,7 @@ impl Shared {
             name,
             lane,
             queued_at: Instant::now(),
+            durable,
             grantee,
         });
         self.idle.queued.fetch_add(1, Ordering::AcqRel);
@@ -662,13 +676,17 @@ impl Shared {
         let (overdue, stuck) = {
             let mut state = self.state();
             let mut overdue = Vec::new();
-            // Arrival order is age order, so the overdue ones are in front.
-            while state
-                .foreground
-                .front()
-                .is_some_and(|waiter| waiter.queued_at.elapsed() >= self.limits.foreground_wait)
-            {
-                overdue.extend(state.foreground.pop_front());
+            // Arrival order is age order, so the overdue ones are in front,
+            // with the durable writes among them left where they are.
+            let mut at = 0;
+            while let Some(waiter) = state.foreground.get(at) {
+                if waiter.durable {
+                    at += 1;
+                } else if waiter.queued_at.elapsed() >= self.limits.foreground_wait {
+                    overdue.extend(state.foreground.remove(at));
+                } else {
+                    break;
+                }
             }
             self.idle.queued.fetch_sub(overdue.len(), Ordering::AcqRel);
             let waiting = (state.foreground.len(), state.background.len());
@@ -722,6 +740,7 @@ impl Turn {
         lane: Lane,
         budget: Budget,
         name: &'static str,
+        durable: bool,
         op: impl FnOnce(&Transaction) -> Result<R, OpError>,
     ) -> Outcome<R> {
         let Some(connection) = self.connection.as_mut() else {
@@ -733,7 +752,7 @@ impl Turn {
                 elapsed: Duration::ZERO,
             };
         };
-        let outcome = connection.transact(budget, op);
+        let outcome = connection.transact(budget, name, durable, op);
         // `elapsed` runs from before `BEGIN`, so it includes the wait for
         // the file lock, which the abort budget does not count.
         if outcome.elapsed > budget.warn {
@@ -886,8 +905,9 @@ impl WriteLane {
         let write: AsyncWrite = Box::new(move |granted| {
             let answer = match granted {
                 Ok(mut turn) => {
-                    let outcome =
-                        catch_unwind(AssertUnwindSafe(|| turn.transact(lane, budget, name, op)));
+                    let outcome = catch_unwind(AssertUnwindSafe(|| {
+                        turn.transact(lane, budget, name, false, op)
+                    }));
                     // The turn goes back before the caller hears, so a
                     // caller that was just answered finds the lane idle.
                     drop(turn);
@@ -906,7 +926,8 @@ impl WriteLane {
             };
             let _ = reply.send(answer);
         });
-        self.shared.enqueue(lane, name, Grantee::Async(write))?;
+        self.shared
+            .enqueue(lane, name, false, Grantee::Async(write))?;
         match answer.await {
             Ok(Answer::Ran(outcome)) => finish(name, outcome),
             Ok(Answer::Panicked) => Err(DbError::WriteFailed {
@@ -931,15 +952,65 @@ impl WriteLane {
     where
         F: FnOnce(&Transaction) -> Result<R, OpError>,
     {
+        self.write_parked(lane, name, false, op)
+    }
+
+    /// [`WriteLane::write_blocking`] whose commit is on disk before it
+    /// returns. The connection runs at `synchronous=FULL` for this one
+    /// transaction and goes back to `NORMAL` before the turn passes on, also
+    /// when the closure fails or panics.
+    ///
+    /// The guarantee: when this returns `Ok` after changing at least one
+    /// row, that commit and every commit before it have been synced to the
+    /// WAL. It has two edges. A call that changes nothing writes no frame
+    /// and syncs nothing, so it is not a barrier for earlier commits. And if
+    /// the connection cannot be put back to `NORMAL`, it stays at `FULL`,
+    /// which is the safe side, and the failure is logged.
+    ///
+    /// Each call costs one sync while the lane is held, so this is for rows
+    /// that must outlive a power cut (a journal row before the file move it
+    /// describes) and nothing else.
+    ///
+    /// A durable write is never answered `Busy` for waiting too long: it
+    /// waits for its turn like a background write, in the queue `lane`
+    /// names. At shutdown a parked one does hear `LaneClosed`; a caller
+    /// between two journal steps treats that as "stop here and recover at
+    /// the next start".
+    ///
+    /// The time budget covers less of this write than of an ordinary one.
+    /// Setting the pragma and `BEGIN` run before the abort clock starts. The
+    /// sync at `COMMIT` runs inside it but cannot be interrupted, so a write
+    /// stuck on a disk that does not answer is not aborted: it shows only in
+    /// the log line that names a write holding the lane past twice its
+    /// budget.
+    pub fn write_durable<F, R>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, DbError>
+    where
+        F: FnOnce(&Transaction) -> Result<R, OpError>,
+    {
+        self.write_parked(lane, name, true, op)
+    }
+
+    /// Wait for the turn on the calling thread and run the closure there.
+    fn write_parked<F, R>(
+        &self,
+        lane: Lane,
+        name: &'static str,
+        durable: bool,
+        op: F,
+    ) -> Result<R, DbError>
+    where
+        F: FnOnce(&Transaction) -> Result<R, OpError>,
+    {
         let budget = self.shared.limits.budget(lane);
         let (parked, granted) = mpsc::channel();
-        self.shared.enqueue(lane, name, Grantee::Blocking(parked))?;
+        self.shared
+            .enqueue(lane, name, durable, Grantee::Blocking(parked))?;
         let mut turn = match granted.recv() {
             Ok(Ok(turn)) => turn,
             Ok(Err(refused)) => return Err(refused.into_error(name)),
             Err(_) => return Err(DbError::LaneClosed),
         };
-        let outcome = turn.transact(lane, budget, name, op);
+        let outcome = turn.transact(lane, budget, name, durable, op);
         drop(turn);
         finish(name, outcome)
     }
@@ -1136,6 +1207,8 @@ impl WriterConnection {
     fn transact<R>(
         &mut self,
         budget: Budget,
+        name: &'static str,
+        durable: bool,
         op: impl FnOnce(&Transaction) -> Result<R, OpError>,
     ) -> Outcome<R> {
         let started = Instant::now();
@@ -1147,14 +1220,19 @@ impl WriterConnection {
             };
         }
         let before = self.connection.total_changes();
-        let value = run_transaction(
-            &mut self.connection,
-            &self.clock,
-            budget.abort,
-            &self.watch,
-            self.lane,
-            op,
-        );
+        let (clock, watch, lane) = (&self.clock, &self.watch, self.lane);
+        let value = if durable {
+            // The guard is dropped when this arm ends or unwinds, after the
+            // transaction inside it has committed or rolled back.
+            match FullSync::set(&mut self.connection, name) {
+                Ok(full) => {
+                    run_transaction(&mut *full.connection, clock, budget.abort, watch, lane, op)
+                }
+                Err(error) => Err(Failure::Op(error.into())),
+            }
+        } else {
+            run_transaction(&mut self.connection, clock, budget.abort, watch, lane, op)
+        };
         Outcome {
             value,
             changes: self.connection.total_changes().saturating_sub(before),
@@ -1179,6 +1257,37 @@ impl WriterConnection {
         );
         *self = Self::open(&self.path, self.lane)?;
         Ok(())
+    }
+}
+
+/// The write connection at `synchronous=FULL` for one durable transaction.
+/// Dropping it puts `NORMAL` back. SQLite refuses to change the level
+/// inside a transaction, so both changes happen outside the lane's `BEGIN`
+/// and commit.
+struct FullSync<'a> {
+    connection: &'a mut Connection,
+    operation: &'static str,
+}
+
+impl<'a> FullSync<'a> {
+    fn set(connection: &'a mut Connection, operation: &'static str) -> rusqlite::Result<Self> {
+        connection.execute_batch("PRAGMA synchronous=FULL")?;
+        Ok(Self {
+            connection,
+            operation,
+        })
+    }
+}
+
+impl Drop for FullSync<'_> {
+    fn drop(&mut self) {
+        if let Err(error) = self.connection.execute_batch("PRAGMA synchronous=NORMAL") {
+            tracing::error!(
+                operation = self.operation,
+                cause = short_cause(&error),
+                "write connection could not leave full sync; every commit syncs until it does"
+            );
+        }
     }
 }
 

@@ -20,6 +20,10 @@
 //! budget, and the lane's watch thread, which the runtime starts and stops,
 //! names in the log a write that holds the lane past it.
 //!
+//! `write_durable` is `write_blocking` with the commit synced to disk before
+//! it returns, at the cost of one sync a call. It is for rows that must
+//! outlive a power cut, and it waits for its turn without the 5 s limit.
+//!
 //! Layout: [`factory`] builds the runtime, [`checkpoint`] runs the GH-293
 //! checkpoint policy with TRUNCATE reclaim, [`writer`] serializes writes with
 //! foreground-burst-8 fairness, [`backup`] copies the live database out with

@@ -903,7 +903,8 @@ async fn background_budget_outlasts_the_foreground_one() {
 /// A foreground write that has waited past the limit behind a held lane is
 /// answered `Busy` and never runs, whether its caller is parked on a thread
 /// or awaiting on a runtime whose clock is paused. A background write in the
-/// same position commits once the holder is done.
+/// same position commits once the holder is done, and so does a durable
+/// foreground write that queued before the refused ones.
 #[tokio::test(start_paused = true)]
 async fn foreground_wait_past_its_limit_is_refused() {
     let dir = scratch_dir("foreground-wait");
@@ -947,6 +948,16 @@ async fn foreground_wait_past_its_limit_is_refused() {
     });
     inside.await.unwrap();
 
+    let journal = lane.clone();
+    let durable = std::thread::spawn(move || {
+        journal.write_durable(Lane::Foreground, "brief-durable", |tx| {
+            insert_label(tx, "durable")
+        })
+    });
+    let waiting = lane.idle_state();
+    while waiting.queued() < 1 {
+        std::thread::yield_now();
+    }
     let parked = lane.clone();
     let (answered, answer) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -982,10 +993,67 @@ async fn foreground_wait_past_its_limit_is_refused() {
     let_go.send(()).unwrap();
     holder.await.unwrap();
     job.await.unwrap();
-    assert_eq!(labels(&lane), ["held", "job"]);
+    let waited = durable.join().unwrap();
+    assert!(
+        waited.is_ok(),
+        "a durable write waits out the limit, got {waited:?}"
+    );
+    assert_eq!(labels(&lane), ["held", "durable", "job"]);
     std::thread::spawn(move || unpaused.block_on(runtime.shutdown()))
         .join()
         .unwrap();
+}
+
+fn synchronous(tx: &rusqlite::Transaction) -> Result<i64, OpError> {
+    Ok(tx.query_row("PRAGMA synchronous", [], |row| row.get(0))?)
+}
+
+/// A durable write runs with `synchronous=FULL` (2) and the write after it
+/// is back at `NORMAL` (1), also when the durable closure failed or
+/// panicked.
+#[test]
+fn durable_write_syncs_fully_and_the_next_write_does_not() {
+    let (lane, _dir) = scratch_lane("durable");
+    let ordinary = || {
+        lane.write_blocking(Lane::Foreground, "brief-ordinary", synchronous)
+            .unwrap()
+    };
+    assert_eq!(ordinary(), 1);
+
+    let inside = lane
+        .write_durable(Lane::Background, "brief-durable", |tx| {
+            insert_label(tx, "durable")?;
+            synchronous(tx)
+        })
+        .unwrap();
+    assert_eq!((inside, ordinary()), (2, 1));
+
+    let inside = std::cell::Cell::new(0);
+    let failed = lane.write_durable(
+        Lane::Background,
+        "brief-durable-failed",
+        |tx| -> Result<(), OpError> {
+            inside.set(synchronous(tx)?);
+            Err(OpError::Abort("brief: a durable closure fails".to_owned()))
+        },
+    );
+    assert!(matches!(failed, Err(DbError::WriteFailed { .. })));
+    assert_eq!((inside.get(), ordinary()), (2, 1));
+
+    inside.set(0);
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        lane.write_durable(
+            Lane::Background,
+            "brief-durable-panic",
+            |tx| -> Result<(), OpError> {
+                inside.set(synchronous(tx)?);
+                panic!("brief: a durable closure panics")
+            },
+        )
+    }));
+    assert!(unwound.is_err());
+    assert_eq!((inside.get(), ordinary()), (2, 1));
+    assert_eq!(labels(&lane), ["durable"]);
 }
 
 /// Shutdown behind a write that does not return gives up at its bound: it
