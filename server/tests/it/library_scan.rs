@@ -1390,3 +1390,143 @@ async fn run_cancelled_while_queued_is_not_ended_again_at_startup() {
         "the run row is as the cancel left it"
     );
 }
+
+/// A scanned album of `count` files in one folder, small enough to be
+/// read in one window, with a match a person chose. Returns the rig, the
+/// files and the album.
+async fn chosen_album(name: &str, count: usize) -> (RegroupRig, Vec<String>, String) {
+    let mut rig = RegroupRig::new(name);
+    let files: Vec<String> = (0..count).map(|n| format!("a/t{n:03}.flac")).collect();
+    let before = rig.before.clone();
+    rig.tag(&files, &before);
+    rig.scan().await;
+    let album = rig.album_of("a/t000.flac");
+    rig.accept_match(&album);
+    (rig, files, album)
+}
+
+impl RegroupRig {
+    /// Delete the files and scan, so their tracks have been missing since
+    /// before the next scan begins.
+    async fn lose(&self, files: &[String]) {
+        for relative in files {
+            std::fs::remove_file(self.root.join(relative)).expect("file removed");
+        }
+        self.scan().await;
+    }
+
+    /// Track rows on the album, whatever their state.
+    fn rows_on(&self, album: &str) -> i64 {
+        self.count(&format!(
+            "SELECT COUNT(*) FROM local_tracks WHERE local_album_id = '{album}'"
+        ))
+    }
+}
+
+/// Files deleted long ago leave their track rows on the album for good.
+/// They do not keep the album from being followed when the files that are
+/// left are retagged together: the album keeps its row and its match, the
+/// missing tracks stay on it, and it is offered for identification under
+/// its new name.
+#[tokio::test]
+async fn album_missing_a_few_tracks_is_followed() {
+    let (mut rig, files, album) = chosen_album("scan-regroup-few-missing", 12).await;
+    rig.lose(&files[9..]).await;
+    rig.run("DELETE FROM library_identify_jobs");
+
+    let after = rig.after.clone();
+    rig.tag(&files[..9], &after);
+    rig.scan().await;
+
+    assert_eq!(rig.album_of("a/t000.flac"), album, "followed");
+    assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1);
+    assert_eq!(
+        rig.rows_on(&album),
+        12,
+        "the three missing tracks are on the kept album"
+    );
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM local_albums a JOIN local_album_external_identities i \
+             ON i.local_album_id = a.id WHERE a.id = '{album}' AND a.title = '{after}' \
+             AND i.release_mbid = 'rel-1' AND i.decision_source = 'manual' \
+             AND i.row_revision = 1"
+        )),
+        1,
+        "the kept row has the new name and the very match it had"
+    );
+    assert_eq!(rig.queued_jobs(&album), 1, "offered again");
+}
+
+/// A track a person excluded does not keep its album from being followed
+/// either.
+#[tokio::test]
+async fn excluded_track_does_not_hold_its_album() {
+    let (mut rig, files, album) = chosen_album("scan-regroup-excluded", 10).await;
+    rig.run(
+        "UPDATE local_tracks SET availability = 'excluded', manual_excluded = 1, \
+         excluded_at = 0 WHERE relative_path = 'a/t009.flac'",
+    );
+
+    let after = rig.after.clone();
+    rig.tag(&files[..9], &after);
+    rig.scan().await;
+
+    assert_eq!(rig.album_of("a/t000.flac"), album, "followed");
+    assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1);
+    assert_eq!(rig.rows_on(&album), 10);
+    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
+}
+
+/// Files a scan does not see may only be out of reach for a moment (a
+/// share that dropped out, files taken away to be re-encoded). In the scan
+/// that finds them gone they still hold their album: three bonus tracks
+/// retagged in that same scan do not walk off with the album's row and
+/// its match.
+#[tokio::test]
+async fn files_gone_in_this_very_scan_still_hold_their_album() {
+    let (mut rig, files, album) = chosen_album("scan-regroup-unreachable", 15).await;
+    for relative in &files[3..] {
+        std::fs::remove_file(rig.root.join(relative)).expect("file removed");
+    }
+    let after = rig.after.clone();
+    rig.tag(&files[..3], &after);
+    rig.scan().await;
+
+    let new_row = rig.album_of("a/t000.flac");
+    assert_ne!(new_row, album, "not followed");
+    assert_eq!(rig.rows_on(&album), 12);
+    assert_eq!(rig.rows_on(&new_row), 3);
+    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
+    assert_eq!(match_of(&rig, &new_row), None);
+    assert_eq!(rig.queued_jobs(&new_row), 1, "offered when the scan ended");
+}
+
+/// A file that comes back with the tags it had keeps its track row, and
+/// is filed by what those tags say: not on the album that was retagged
+/// while it was away.
+#[tokio::test]
+async fn returned_file_keeps_its_track_and_is_filed_by_its_tags() {
+    let (mut rig, files, album) = chosen_album("scan-regroup-returned", 12).await;
+    let track = rig
+        .coordinator
+        .store()
+        .track_at("music", "a/t011.flac")
+        .expect("track indexed");
+    rig.lose(&files[9..]).await;
+    let (before, after) = (rig.before.clone(), rig.after.clone());
+    rig.tag(&files[..9], &after);
+    rig.scan().await;
+    assert_eq!(rig.album_of("a/t000.flac"), album, "followed");
+
+    rig.tag(&files[11..], &before);
+    rig.scan().await;
+
+    assert_eq!(
+        rig.coordinator.store().track_at("music", "a/t011.flac"),
+        Some(track),
+        "the same track"
+    );
+    assert_ne!(rig.album_of("a/t011.flac"), album);
+    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
+}

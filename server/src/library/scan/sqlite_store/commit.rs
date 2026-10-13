@@ -942,12 +942,44 @@ fn write_item(
     Ok((track_id, stored_album, moved_from))
 }
 
-/// An album this run emptied: when every track it lost went to one album,
-/// and that album holds nothing but those tracks, the whole album was
-/// retagged together. The old row then takes over the new name and key,
-/// keeping its id, reviews and pins, and the new row goes, its plays,
-/// favorites and playlist entries passing to the old one. Returns the
-/// album that went.
+/// Whether a track row still holds its album, as SQL over the track alias
+/// `track` and the run id `run`. A track row is never deleted, so an
+/// album keeps the rows of files removed years ago; they must not keep it
+/// from being followed when the files that are left are retagged.
+///
+/// A row holds its album while its file is there, and for the one scan
+/// in which the file went away: the row is still `indexed` (the run
+/// walked past its file, or has not reached it), or it was marked
+/// `missing` since this run began. A share that drops out half way must
+/// not hand an album to the few of its files that were retagged, so the
+/// follow waits one scan. The next scan knows the file is still gone: its
+/// row is then `missing` from before that run began.
+///
+/// A row that is `excluded`, or `missing` since before the run began,
+/// holds nothing.
+fn holds(track: &str, run: &str) -> String {
+    format!(
+        "({track}.availability = 'indexed' OR ({track}.availability = 'missing' \
+         AND {track}.missing_since >= (SELECT started_at FROM library_scan_runs \
+         WHERE id = {run})))"
+    )
+}
+
+/// An album a track left in this run. It is followed when the whole album
+/// was retagged together:
+///
+/// - no track row holds it any more ([`holds`]);
+/// - every track that left it in this run sits on one album;
+/// - that album holds no other track row, present or not;
+/// - more of its track rows moved than stayed behind (a tie is not
+///   enough): what is left of an album that lost most of its tracks long
+///   ago may be a new album, not the old one renamed.
+///
+/// The old row then takes over the new name and key, keeping its id,
+/// reviews and pins, and the new row goes, its plays, favorites and
+/// playlist entries passing to the old one. Rows left behind (missing or
+/// excluded tracks) are not written: they stay on the old row with their
+/// ids, plays and track matches. Returns the album that went.
 ///
 /// A match or a review that landed on the new row while the scan was half
 /// way through the album is settled by `settle_followed_match`: a
@@ -963,10 +995,13 @@ fn follow_regrouped(
     album_id: &str,
     now: f64,
 ) -> rusqlite::Result<Option<String>> {
-    let remaining: i64 = tx
-        .prepare_cached("SELECT COUNT(*) FROM local_tracks WHERE local_album_id = ?1")?
-        .query_row(params![album_id], |row| row.get(0))?;
-    if remaining > 0 {
+    let held: bool = tx
+        .prepare_cached(&format!(
+            "SELECT EXISTS(SELECT 1 FROM local_tracks t WHERE t.local_album_id = ?2 AND {})",
+            holds("t", "?1")
+        ))?
+        .query_row(params![run_id, album_id], |row| row.get(0))?;
+    if held {
         return Ok(None);
     }
     let destinations: Vec<String> = tx
@@ -993,6 +1028,17 @@ fn follow_regrouped(
         )?
         .query_row(params![run_id, target, album_id], |row| row.get(0))?;
     if foreign {
+        return Ok(None);
+    }
+    let (moved, stayed): (i64, i64) = tx
+        .prepare_cached(
+            "SELECT (SELECT COUNT(*) FROM local_tracks WHERE local_album_id = ?1), \
+             (SELECT COUNT(*) FROM local_tracks WHERE local_album_id = ?2)",
+        )?
+        .query_row(params![target, album_id], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+    if moved <= stayed {
         return Ok(None);
     }
     if chosen_matches_differ(tx, target, album_id)? {
@@ -1108,59 +1154,65 @@ fn drop_if_empty(tx: &Connection, album_id: &str) -> rusqlite::Result<()> {
     }
 }
 
-/// An album that received tracks in this run from an album that still
-/// holds tracks may be half of a retag the scan has not finished reading.
-/// It is not offered for identification yet: a job would judge half an
-/// album, and a match written on this row keeps the old row from taking
-/// it over. Read from the run's move rows, so a resumed run holds the
-/// same albums.
+/// An album that received tracks in this run from an album a track still
+/// holds ([`holds`]) may be half of a retag the scan has not finished
+/// reading. It is not offered for identification yet: a job would judge
+/// half an album, and a match written on this row keeps the old row from
+/// taking it over. Read from the run's move rows, so a resumed run holds
+/// the same albums.
 fn held_back(tx: &Connection, run_id: &str, album_id: &str) -> rusqlite::Result<bool> {
-    tx.prepare_cached(
+    tx.prepare_cached(&format!(
         "SELECT EXISTS(SELECT 1 FROM local_tracks t \
          CROSS JOIN library_scan_album_moves m ON m.run_id = ?1 AND m.root_id = t.root_id \
            AND m.relative_path = t.relative_path AND m.local_track_id = t.id \
          WHERE t.local_album_id = ?2 AND m.previous_album_id <> ?2 \
          AND EXISTS (SELECT 1 FROM local_tracks left_behind \
-           WHERE left_behind.local_album_id = m.previous_album_id))",
-    )?
+           WHERE left_behind.local_album_id = m.previous_album_id AND {}))",
+        holds("left_behind", "?1")
+    ))?
     .query_row(params![run_id, album_id], |row| row.get(0))
 }
 
 /// Whether a scan that has not ended moved a track onto this album from
-/// another album that still holds tracks: the album may be the new row of
-/// a retag the scan is half way through, which the old row takes over
-/// when the retag has been read to the end. Catalog cleanup asks before
-/// it retires a row into the album, which would stop that. The surviving
-/// row of a retag already followed answers no.
+/// another album that a track still holds ([`holds`]): the album may be
+/// the new row of a retag the scan is half way through, which the old row
+/// takes over when the retag has been read to the end. Catalog cleanup
+/// asks before it retires a row into the album, which would stop that.
+/// The surviving row of a retag already followed answers no.
 pub(crate) fn awaits_retag(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
     conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM library_scan_runs run \
-         CROSS JOIN local_tracks t \
-         CROSS JOIN library_scan_album_moves m ON m.run_id = run.id \
-           AND m.root_id = t.root_id AND m.relative_path = t.relative_path \
-           AND m.local_track_id = t.id \
-         WHERE run.terminal_at IS NULL AND t.local_album_id = ?1 \
-         AND m.previous_album_id <> ?1 \
-         AND EXISTS (SELECT 1 FROM local_tracks left_behind \
-           WHERE left_behind.local_album_id = m.previous_album_id))",
+        &format!(
+            "SELECT EXISTS(SELECT 1 FROM library_scan_runs run \
+             CROSS JOIN local_tracks t \
+             CROSS JOIN library_scan_album_moves m ON m.run_id = run.id \
+               AND m.root_id = t.root_id AND m.relative_path = t.relative_path \
+               AND m.local_track_id = t.id \
+             WHERE run.terminal_at IS NULL AND t.local_album_id = ?1 \
+             AND m.previous_album_id <> ?1 \
+             AND EXISTS (SELECT 1 FROM local_tracks left_behind \
+               WHERE left_behind.local_album_id = m.previous_album_id AND {}))",
+            holds("left_behind", "run.id")
+        ),
         params![album_id],
         |row| row.get(0),
     )
 }
 
 /// The automatic-policy albums this run moved tracks to from one album,
-/// when that album now holds no track: nothing more can arrive from it,
-/// so they are due their offer.
+/// when no track holds that album any more ([`holds`]): nothing more can
+/// arrive from it, so they are due their offer.
 fn released_by(tx: &Connection, run_id: &str, album_id: &str) -> rusqlite::Result<Vec<String>> {
-    tx.prepare_cached(
+    tx.prepare_cached(&format!(
         "SELECT DISTINCT t.local_album_id FROM library_scan_album_moves m \
          JOIN local_tracks t ON t.id = m.local_track_id \
          JOIN library_scan_inventory i ON i.run_id = m.run_id AND i.root_id = m.root_id \
            AND i.relative_path = m.relative_path \
          WHERE m.run_id = ?1 AND m.previous_album_id = ?2 AND t.local_album_id <> ?2 \
          AND i.effective_policy = 'automatic' \
-         AND NOT EXISTS (SELECT 1 FROM local_tracks WHERE local_album_id = ?2)",
-    )?
+         AND NOT EXISTS (SELECT 1 FROM local_tracks left_behind \
+           WHERE left_behind.local_album_id = ?2 AND {})",
+        holds("left_behind", "?1")
+    ))?
     .query_map(params![run_id, album_id], |row| row.get(0))?
     .collect()
 }
