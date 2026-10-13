@@ -1,13 +1,13 @@
 //! SQLite-backed scan store: durable runs, scopes, inventory, failures,
 //! and the track catalog over the 0001 baseline tables.
 //!
-//! [`SqliteScanStore`] implements the scan ports with the v2 disposition,
+//! [`SqliteScanStore`] keeps the v2 disposition,
 //! transition, and verdict semantics: the cover rule, union
 //! normalization, idempotent control answers, the legacy-mtime band with
 //! promotion, and the deferred re-offer. `runs` holds the run lifecycle,
 //! `inventory` the discovery inventory, `catalog` the track catalog.
 //! The catalog lives in `local_tracks` (keyed by `root_id, relative_path`),
-//! so [`commit_indexed`](ScanStore::commit_indexed) also writes the
+//! so [`commit_window`](SqliteScanStore::commit_window) also writes the
 //! `local_*` rows the reads layer shows (`availability = 'indexed'`).
 //!
 //! Two intended simplifications versus the memory store:
@@ -40,8 +40,8 @@ use super::models::{
 };
 use super::revision::{exact_stat_revision, legacy_mtime_eps_seconds};
 use super::store::{
-    CatalogEntry, CatalogStore, ClassifyInput, CommitIndexedItem, IndexWindow, InventoryPage,
-    InventoryStore, RevisionKind, RunStore, ScanStoreError, WindowOutcome,
+    CatalogEntry, ClassifyInput, CommitIndexedItem, IndexWindow, InventoryPage, RevisionKind,
+    ScanStoreError, WindowOutcome,
 };
 use crate::db::fold_text;
 
@@ -89,7 +89,7 @@ struct Inner {
     catalog_cache: HashMap<String, CachedCatalog>,
 }
 
-/// SQLite [`ScanStore`] over the application database file.
+/// The scan store, over the application database file.
 pub struct SqliteScanStore {
     inner: Mutex<Inner>,
     /// Declared after `inner`, so the connection closes before the

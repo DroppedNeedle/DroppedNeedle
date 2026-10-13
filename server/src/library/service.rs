@@ -7,7 +7,6 @@ use super::scan::models::{
     ScanScope, ScanTrigger,
 };
 use super::scan::roots::LibraryRoot;
-use super::scan::store::InventoryStore;
 use super::wiring::LibrarySetup;
 
 /// Inventory rows a run detail view shows: the most recent ones.

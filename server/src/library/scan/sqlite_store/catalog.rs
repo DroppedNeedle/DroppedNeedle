@@ -14,8 +14,13 @@ const IN_SCOPE: &str = "(?2 = '.' OR relative_path = ?2 \
 const IN_SCOPE_T: &str = "(?2 = '.' OR t.relative_path = ?2 \
     OR (t.relative_path > ?2 || '/' AND t.relative_path < ?2 || '0'))";
 
-impl CatalogStore for SqliteScanStore {
-    fn commit_window(&self, window: &IndexWindow) -> Result<WindowOutcome, ScanStoreError> {
+/// The track catalog: classification against it, commits into it, and
+/// missing detection.
+impl SqliteScanStore {
+    /// Commit one index window atomically: catalog rows, inventory
+    /// marks, counters, and identify offers land together or not at all.
+    /// A row the catalog refuses fails alone and is reported back.
+    pub fn commit_window(&self, window: &IndexWindow) -> Result<WindowOutcome, ScanStoreError> {
         let mut guard = self.lock();
         let outcome = super::commit::commit_window(&mut guard.conn, window).map_err(internal)?;
         let failed: HashSet<(&str, &str)> = outcome
@@ -38,7 +43,7 @@ impl CatalogStore for SqliteScanStore {
         Ok(outcome)
     }
 
-    fn mark_deferred(&self, root_id: &str, relative_path: &str, deferred: bool) {
+    pub fn mark_deferred(&self, root_id: &str, relative_path: &str, deferred: bool) {
         let mut guard = self.lock();
         let key = (root_id.to_owned(), relative_path.to_owned());
         if deferred {
@@ -48,7 +53,8 @@ impl CatalogStore for SqliteScanStore {
         }
     }
 
-    fn album_for_track(&self, track_id: &str) -> Option<String> {
+    /// Catalog album of one indexed track: the track-to-album join.
+    pub fn album_for_track(&self, track_id: &str) -> Option<String> {
         let guard = self.lock();
         guard
             .conn
@@ -65,7 +71,8 @@ impl CatalogStore for SqliteScanStore {
             })
     }
 
-    fn track_at(&self, root_id: &str, relative_path: &str) -> Option<String> {
+    /// Indexed track at one path.
+    pub fn track_at(&self, root_id: &str, relative_path: &str) -> Option<String> {
         let guard = self.lock();
         guard
             .conn
@@ -82,7 +89,10 @@ impl CatalogStore for SqliteScanStore {
             })
     }
 
-    fn mark_missing(
+    /// Mark catalog rows missing (never delete: plays, playlists, and
+    /// identities keep pointing at them) and count them on the run.
+    /// Returns rows marked.
+    pub fn mark_missing(
         &self,
         run_id: &str,
         root_id: &str,
@@ -127,7 +137,8 @@ impl CatalogStore for SqliteScanStore {
         Ok(marked)
     }
 
-    fn indexed_count(
+    /// Indexed catalog rows under one scope.
+    pub fn indexed_count(
         &self,
         root_id: &str,
         scope_relative_path: &str,
@@ -147,7 +158,10 @@ impl CatalogStore for SqliteScanStore {
             .map_err(internal)
     }
 
-    fn vanish_counts(
+    /// For one walked scope before indexing: indexed rows the walk did
+    /// not see, and the rows the scope holds once its new files index.
+    /// Feeds the mass-missing guard.
+    pub fn vanish_counts(
         &self,
         run_id: &str,
         root_id: &str,
@@ -179,7 +193,10 @@ impl CatalogStore for SqliteScanStore {
             .map_err(internal)
     }
 
-    fn scope_guarded(&self, run_id: &str, root_id: &str, scope_relative_path: &str) -> bool {
+    /// True when the run held missing detection back for this scope (the
+    /// mass-missing guard). Such a scope counts as not walked: nothing in
+    /// it is missing, moved, or taken over.
+    pub fn scope_guarded(&self, run_id: &str, root_id: &str, scope_relative_path: &str) -> bool {
         let guard = self.lock();
         guard
             .conn
@@ -201,7 +218,11 @@ impl CatalogStore for SqliteScanStore {
             })
     }
 
-    fn missing_catalog_paths(
+    /// Catalog paths under `scope_relative_path` that the run's current
+    /// inventory does not contain: the missing set for one cleanly-walked
+    /// scope. Only indexed catalog rows qualify, and scope matching is the
+    /// exact [`scope_covers_path`] rule, answered in one query.
+    pub fn missing_catalog_paths(
         &self,
         run_id: &str,
         root_id: &str,
@@ -236,7 +257,7 @@ impl CatalogStore for SqliteScanStore {
         })
     }
 
-    fn classify(
+    pub fn classify(
         &self,
         root_id: &str,
         paths: &[ClassifyInput],
@@ -376,7 +397,10 @@ impl CatalogStore for SqliteScanStore {
         }
         verdicts
     }
-    fn estimate_scopes(&self, scopes: &[ScanScope]) -> Result<u64, ScanStoreError> {
+    /// Catalog tracks under any of the scopes, each counted once, missing
+    /// rows included (v2 `estimate_scan_scope`). An approximate size for
+    /// the scan a caller is about to request.
+    pub fn estimate_scopes(&self, scopes: &[ScanScope]) -> Result<u64, ScanStoreError> {
         if scopes.is_empty() {
             return Ok(0);
         }

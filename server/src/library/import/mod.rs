@@ -41,7 +41,6 @@ use super::publish::publisher::{Catalog as _, SqliteCatalog};
 use super::publish::snapshots::sha256_hex;
 use super::publish::{HIDDEN_PREFIX, PublishError};
 use super::scan::models::EffectivePolicy;
-use super::scan::store::CatalogStore as _;
 use super::wiring::LibrarySetup;
 use crate::runtime_config::secret_sections::TypedLibrary;
 use crate::runtime_config::sections::DEFAULT_NAMING_TEMPLATE;

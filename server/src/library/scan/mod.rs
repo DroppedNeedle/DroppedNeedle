@@ -74,8 +74,8 @@ pub use seams::{ArmableDeferTagReader, NullTagReader};
 pub use seams::{Checkpoint, ScannedTags, TagReadError, TagReader};
 pub use sqlite_store::SqliteScanStore;
 pub use store::{
-    CatalogEntry, CatalogStore, ClassifyInput, CommitIndexedItem, IndexWindow, InventoryPage,
-    InventoryStore, RevisionKind, RunStore, ScanStore, ScanStoreError, WindowOutcome,
+    CatalogEntry, ClassifyInput, CommitIndexedItem, IndexWindow, InventoryPage, RevisionKind,
+    ScanStoreError, WindowOutcome,
 };
 pub use supervisor::SupervisorInputs;
 pub use walk::{InventoryScanner, inventory_key, is_audio_file, relativize, text_safe_posix};

@@ -18,7 +18,6 @@ use super::models::{Disposition, ScanKind, ScanRequest, ScanScope, ScanTrigger};
 use super::roots::RootRegistry;
 use super::scheduler::{InclusionRule, ScheduleSettings, scheduled_scopes, tick};
 use super::seams::TagReader;
-use super::store::ScanStore;
 use super::watcher::{DirtyScopes, WorkWakeups};
 
 /// Supervisor loop inputs. Getters are re-read every iteration.
@@ -78,11 +77,8 @@ pub fn scopes_for_dirty_ids(
 /// enabled, not manual, nothing resumable or current, non-empty scopes.
 /// Every request disposition is acceptable; failures log and the loop
 /// below still runs.
-pub async fn startup_recovery<S, T>(
-    coordinator: &LibraryScanCoordinator<S, T>,
-    inputs: &SupervisorInputs,
-) where
-    S: ScanStore,
+pub async fn startup_recovery<T>(coordinator: &LibraryScanCoordinator<T>, inputs: &SupervisorInputs)
+where
     T: TagReader + 'static,
 {
     let registry = coordinator.registry();
@@ -116,12 +112,11 @@ pub async fn startup_recovery<S, T>(
 
 /// One supervisor iteration. Returns true when a run was driven (the
 /// caller loops immediately instead of sleeping).
-pub async fn supervise_once<S, T>(
-    coordinator: &LibraryScanCoordinator<S, T>,
+pub async fn supervise_once<T>(
+    coordinator: &LibraryScanCoordinator<T>,
     inputs: &SupervisorInputs,
 ) -> bool
 where
-    S: ScanStore,
     T: TagReader + 'static,
 {
     supervise_once_inner(coordinator, inputs, None).await
@@ -131,25 +126,23 @@ where
 /// exactly like [`supervise_once`], but a signalled shutdown stops the
 /// in-flight run instead of waiting it out. A pre-signalled shutdown
 /// claims no new work. Returns true when a run was driven.
-pub async fn supervise_once_with_shutdown<S, T>(
-    coordinator: &LibraryScanCoordinator<S, T>,
+pub async fn supervise_once_with_shutdown<T>(
+    coordinator: &LibraryScanCoordinator<T>,
     inputs: &SupervisorInputs,
     shutdown: &watch::Receiver<bool>,
 ) -> bool
 where
-    S: ScanStore,
     T: TagReader + 'static,
 {
     supervise_once_inner(coordinator, inputs, Some(shutdown)).await
 }
 
-async fn supervise_once_inner<S, T>(
-    coordinator: &LibraryScanCoordinator<S, T>,
+async fn supervise_once_inner<T>(
+    coordinator: &LibraryScanCoordinator<T>,
     inputs: &SupervisorInputs,
     shutdown: Option<&watch::Receiver<bool>>,
 ) -> bool
 where
-    S: ScanStore,
     T: TagReader + 'static,
 {
     let registry = coordinator.registry();
@@ -229,7 +222,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::Ordering;
 
-    fn coordinator() -> LibraryScanCoordinator<SqliteScanStore, NullTagReader> {
+    fn coordinator() -> LibraryScanCoordinator<NullTagReader> {
         let registry = RootRegistry::new(
             vec![LibraryRoot::new(
                 "r1",

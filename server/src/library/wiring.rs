@@ -57,7 +57,7 @@ fn scratch_state() -> Result<(Arc<crate::tooling::scratch::ScratchDir>, Arc<Conf
 }
 
 /// Scan coordinator over the wired seams.
-pub type ScanCoordinator = LibraryScanCoordinator<SqliteScanStore, LoftyTagReader>;
+pub type ScanCoordinator = LibraryScanCoordinator<LoftyTagReader>;
 
 /// Live root-registry source shared with the stream gateway.
 pub type RootSource = Arc<dyn Fn() -> RootRegistry + Send + Sync>;

@@ -29,7 +29,8 @@ use super::pool::BlockingPool;
 use super::revision::{exact_stat_revision, mtime_ns_from_metadata};
 use super::roots::PolicyResolver;
 use super::seams::Checkpoint;
-use super::store::{ClassifyInput, ScanStore, ScanStoreError};
+use super::sqlite_store::SqliteScanStore;
+use super::store::{ClassifyInput, ScanStoreError};
 
 /// Bounded discovery queue (v2 `INVENTORY_QUEUE_SIZE`).
 pub const INVENTORY_QUEUE_SIZE: usize = 256;
@@ -270,8 +271,8 @@ fn system_clock() -> f64 {
 }
 
 /// One-walk bounded-queue inventory scanner (v2 `LibraryInventoryScanner`).
-pub struct InventoryScanner<S: ScanStore> {
-    store: Arc<S>,
+pub struct InventoryScanner {
+    store: Arc<SqliteScanStore>,
     pool: BlockingPool,
     fs: Option<FsCoordinator>,
     walk_deadline: Duration,
@@ -284,8 +285,8 @@ pub struct InventoryScanner<S: ScanStore> {
     clock: Clock,
 }
 
-impl<S: ScanStore> InventoryScanner<S> {
-    pub fn new(store: Arc<S>, pool: BlockingPool) -> Self {
+impl InventoryScanner {
+    pub fn new(store: Arc<SqliteScanStore>, pool: BlockingPool) -> Self {
         Self {
             store,
             pool,

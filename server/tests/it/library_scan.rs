@@ -13,9 +13,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::common::ScratchDir;
 use droppedneedle::library::scan::{
     BlockingPool, EffectivePolicy, LibraryRoot, LibraryScanCoordinator, NullTagReader,
-    RootRegistry, RootSeamError, RunStore, ScanKind, ScanRequest, ScanRun, ScanScope, ScanState,
-    ScanTrigger, ScannedTags, SqliteScanStore, StaticResolver, StreamRootSeam, TagReadError,
-    TagReader, WorkWakeups, counter_names, failure_codes,
+    RootRegistry, RootSeamError, ScanKind, ScanRequest, ScanRun, ScanScope, ScanState, ScanTrigger,
+    ScannedTags, SqliteScanStore, StaticResolver, StreamRootSeam, TagReadError, TagReader,
+    WorkWakeups, counter_names, failure_codes,
 };
 use droppedneedle::library::wiring::LibrarySetup;
 use sha2::{Digest, Sha256};
@@ -246,10 +246,7 @@ impl TagReader for ShutdownOnRead {
 fn coordinator<T: TagReader + 'static>(
     root: &Path,
     tags: Arc<T>,
-) -> (
-    LibraryScanCoordinator<SqliteScanStore, T>,
-    HashMap<String, PathBuf>,
-) {
+) -> (LibraryScanCoordinator<T>, HashMap<String, PathBuf>) {
     let registry = RootRegistry::new(
         vec![LibraryRoot::new(
             "music",

@@ -2,8 +2,12 @@
 
 use super::*;
 
-impl RunStore for SqliteScanStore {
-    fn request_run(
+/// Scan runs: requests, claims, state transitions, control, failures,
+/// counters, and boot recovery.
+impl SqliteScanStore {
+    /// Record a scan request. A store failure is `Err`, never a
+    /// conflict answer naming a run that was never written.
+    pub fn request_run(
         &self,
         request: &ScanRequest,
         run_id: &str,
@@ -19,7 +23,10 @@ impl RunStore for SqliteScanStore {
         Ok(result)
     }
 
-    fn get_run(&self, run_id: &str) -> Result<(ScanRun, Vec<ScanScope>, Counters), ScanStoreError> {
+    pub fn get_run(
+        &self,
+        run_id: &str,
+    ) -> Result<(ScanRun, Vec<ScanScope>, Counters), ScanStoreError> {
         let guard = self.lock();
         let run = load_run(&guard.conn, run_id)
             .map_err(internal)?
@@ -30,7 +37,7 @@ impl RunStore for SqliteScanStore {
         Ok((run.clone(), scopes, run.counters.clone()))
     }
 
-    fn list_current(&self) -> Vec<ScanRun> {
+    pub fn list_current(&self) -> Vec<ScanRun> {
         let guard = self.lock();
         let mut stmt = match guard.conn.prepare(&format!(
             "SELECT {RUN_COLUMNS} FROM library_scan_runs \
@@ -51,7 +58,9 @@ impl RunStore for SqliteScanStore {
             })
     }
 
-    fn list_history(&self, limit: usize, before: Option<(f64, &str)>) -> Vec<ScanRun> {
+    /// Terminal runs, newest first. `before` is a `(terminal_at, run id)`
+    /// keyset cursor: only runs strictly older are listed.
+    pub fn list_history(&self, limit: usize, before: Option<(f64, &str)>) -> Vec<ScanRun> {
         let guard = self.lock();
         let (before_at, before_id) = match before {
             Some((terminal_at, run_id)) => (Some(terminal_at), Some(run_id)),
@@ -76,7 +85,7 @@ impl RunStore for SqliteScanStore {
             })
     }
 
-    fn latest_filesystem_terminal(&self) -> Option<ScanRun> {
+    pub fn latest_filesystem_terminal(&self) -> Option<ScanRun> {
         let guard = self.lock();
         let mut stmt = guard
             .conn
@@ -94,7 +103,7 @@ impl RunStore for SqliteScanStore {
             .find(|run| run.kind != ScanKind::PolicyReconcile || run.aggregate_scope == "all")
     }
 
-    fn claim_next(&self, now: f64) -> Option<ScanRun> {
+    pub fn claim_next(&self, now: f64) -> Option<ScanRun> {
         let mut guard = self.lock();
         (|| -> rusqlite::Result<Option<ScanRun>> {
             let tx = guard
@@ -110,7 +119,7 @@ impl RunStore for SqliteScanStore {
         })
     }
 
-    fn resumable(&self) -> Option<ScanRun> {
+    pub fn resumable(&self) -> Option<ScanRun> {
         let guard = self.lock();
         guard
             .conn
@@ -131,7 +140,7 @@ impl RunStore for SqliteScanStore {
             })
     }
 
-    fn transition(
+    pub fn transition(
         &self,
         run_id: &str,
         expected_state: ScanState,
@@ -158,7 +167,7 @@ impl RunStore for SqliteScanStore {
         Ok(run)
     }
 
-    fn request_control(
+    pub fn request_control(
         &self,
         run_id: &str,
         control: ScanControl,
@@ -176,7 +185,7 @@ impl RunStore for SqliteScanStore {
         Ok(outcome)
     }
 
-    fn record_failures(&self, run_id: &str, failures: Vec<ScanFailureRecord>) {
+    pub fn record_failures(&self, run_id: &str, failures: Vec<ScanFailureRecord>) {
         if failures.is_empty() {
             return;
         }
@@ -210,7 +219,7 @@ impl RunStore for SqliteScanStore {
         }
     }
 
-    fn failures(&self, run_id: &str) -> Vec<ScanFailureRecord> {
+    pub fn failures(&self, run_id: &str) -> Vec<ScanFailureRecord> {
         let guard = self.lock();
         let mut stmt = match guard.conn.prepare(
             "SELECT root_id, relative_path, failure_code, recorded_at, failure_detail, phase \
@@ -230,7 +239,11 @@ impl RunStore for SqliteScanStore {
             })
     }
 
-    fn failures_page(
+    /// One keyset page of a run's recorded failures, oldest first.
+    /// `after` is the cursor the previous page handed back; the answer
+    /// carries the next cursor while more rows remain (v2
+    /// `list_scan_run_failures`).
+    pub fn failures_page(
         &self,
         run_id: &str,
         limit: usize,
@@ -262,7 +275,7 @@ impl RunStore for SqliteScanStore {
         Ok((rows.into_iter().map(|(_, failure)| failure).collect(), next))
     }
 
-    fn add_counter(&self, run_id: &str, name: &str, delta: i64) {
+    pub fn add_counter(&self, run_id: &str, name: &str, delta: i64) {
         let Some(column) = counter_column(name) else {
             return;
         };
@@ -275,7 +288,9 @@ impl RunStore for SqliteScanStore {
         }
     }
 
-    fn add_counters(&self, run_id: &str, deltas: &[(&str, i64)]) {
+    /// Add several counter deltas at once. Same per-name semantics as
+    /// [`Self::add_counter`], in one statement.
+    pub fn add_counters(&self, run_id: &str, deltas: &[(&str, i64)]) {
         // Collapse to one UPDATE: duplicate names sum, unknown names drop
         // exactly like repeated add_counter calls.
         let mut summed: HashMap<&'static str, i64> = HashMap::new();
@@ -308,7 +323,7 @@ impl RunStore for SqliteScanStore {
         }
     }
 
-    fn set_counter(&self, run_id: &str, name: &str, value: i64) {
+    pub fn set_counter(&self, run_id: &str, name: &str, value: i64) {
         let Some(column) = counter_column(name) else {
             return;
         };
@@ -321,7 +336,7 @@ impl RunStore for SqliteScanStore {
         }
     }
 
-    fn stream_revision(&self, kind: &str) -> u64 {
+    pub fn stream_revision(&self, kind: &str) -> u64 {
         let guard = self.lock();
         guard
             .conn
@@ -339,7 +354,7 @@ impl RunStore for SqliteScanStore {
             .unwrap_or(0)
     }
 
-    fn checkpoint_terminal(&self) {
+    pub fn checkpoint_terminal(&self) {
         // The bounded inline autocheckpoint wraps the log mid-scan; fold
         // what remains back now, off the batch path and off the observed
         // scan wall. TRUNCATE also resets the log so the file never
@@ -386,7 +401,7 @@ impl RunStore for SqliteScanStore {
         }
     }
 
-    fn flush_invalidation(&self, terminal: bool) {
+    pub fn flush_invalidation(&self, terminal: bool) {
         let mut guard = self.lock();
         if terminal {
             // The classify snapshot is a within-scan accelerator: drop it
@@ -414,7 +429,7 @@ impl RunStore for SqliteScanStore {
         }
     }
 
-    fn recover(&self, now: f64) -> Vec<ScanRun> {
+    pub fn recover(&self, now: f64) -> Vec<ScanRun> {
         let mut guard = self.lock();
         (|| -> rusqlite::Result<Vec<ScanRun>> {
             let tx = guard
@@ -455,7 +470,7 @@ impl RunStore for SqliteScanStore {
         })
     }
 
-    fn recover_stopping(&self, now: f64) -> Vec<ScanRun> {
+    pub fn recover_stopping(&self, now: f64) -> Vec<ScanRun> {
         let mut guard = self.lock();
         (|| -> rusqlite::Result<Vec<ScanRun>> {
             let tx = guard
@@ -485,7 +500,11 @@ impl RunStore for SqliteScanStore {
         })
     }
 
-    fn cleanup_terminal_inventory(&self, limit: usize) -> bool {
+    /// Delete one page (at most `limit` rows) of a finished run's
+    /// inventory, or prune old history when none is left. A run's failure
+    /// rows stay until the run itself is pruned, so its history can list
+    /// them. Returns true while more cleanup is pending.
+    pub fn cleanup_terminal_inventory(&self, limit: usize) -> bool {
         let guard = self.lock();
         let pending = (|| -> rusqlite::Result<bool> {
             let target: Option<String> = guard

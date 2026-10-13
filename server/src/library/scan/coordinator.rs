@@ -28,7 +28,8 @@ use super::models::{
 use super::pool::BlockingPool;
 use super::roots::{PolicyResolver, RootRegistry};
 use super::seams::{Checkpoint, TagReadError, TagReader};
-use super::store::{CommitIndexedItem, IndexWindow, InventoryPage, ScanStore, ScanStoreError};
+use super::sqlite_store::SqliteScanStore;
+use super::store::{CommitIndexedItem, IndexWindow, InventoryPage, ScanStoreError};
 use super::walk::InventoryScanner;
 use super::watcher::WorkWakeups;
 
@@ -258,9 +259,9 @@ fn default_id() -> String {
 }
 
 /// Scan coordinator (v2 `LibraryScanCoordinator`).
-pub struct LibraryScanCoordinator<S: ScanStore, T: TagReader> {
-    store: Arc<S>,
-    inventory: InventoryScanner<S>,
+pub struct LibraryScanCoordinator<T: TagReader> {
+    store: Arc<SqliteScanStore>,
+    inventory: InventoryScanner,
     tags: Arc<T>,
     pool: BlockingPool,
     fs: Option<FsCoordinator>,
@@ -273,10 +274,10 @@ pub struct LibraryScanCoordinator<S: ScanStore, T: TagReader> {
     last_progress_log: Mutex<HashMap<String, f64>>,
 }
 
-impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
+impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        store: Arc<S>,
+        store: Arc<SqliteScanStore>,
         pool: BlockingPool,
         tags: Arc<T>,
         resolvers: Arc<dyn ResolverSource>,
@@ -315,7 +316,7 @@ impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
         self
     }
 
-    pub fn store(&self) -> &Arc<S> {
+    pub fn store(&self) -> &Arc<SqliteScanStore> {
         &self.store
     }
 
@@ -1062,7 +1063,7 @@ impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
     /// async worker.
     async fn on_store<R: Send + 'static>(
         &self,
-        op: impl FnOnce(&S) -> Result<R, ScanStoreError> + Send + 'static,
+        op: impl FnOnce(&SqliteScanStore) -> Result<R, ScanStoreError> + Send + 'static,
     ) -> Result<R, ScanStoreError> {
         let store = Arc::clone(&self.store);
         tokio::task::spawn_blocking(move || op(&store))
@@ -1366,7 +1367,7 @@ impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
     }
 }
 
-impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
+impl<T: TagReader + 'static> LibraryScanCoordinator<T> {
     /// Before indexing, hold back every walked scope that lost most of its
     /// tracks at once. A held-back scope counts as not walked for the
     /// whole run, so an unmounted share neither marks its tracks missing
@@ -1487,7 +1488,7 @@ fn window_failures(window: &IndexWindow, now: f64) -> Vec<ScanFailureRecord> {
         .collect()
 }
 
-impl<S: ScanStore, T: TagReader + 'static> Checkpoint for LibraryScanCoordinator<S, T> {
+impl<T: TagReader + 'static> Checkpoint for LibraryScanCoordinator<T> {
     /// v2 `checkpoint`: fast true while policy matches and no control is
     /// pending, otherwise settle or supersede through the store.
     fn check(&self, run_id: &str, frozen_policy_revision: &str) -> bool {
@@ -1575,11 +1576,10 @@ mod tests {
     use super::super::roots::LibraryRoot;
     use super::super::seams::NullTagReader;
     use super::super::sqlite_store::SqliteScanStore;
-    use super::super::store::RunStore;
     use super::*;
     use std::path::PathBuf;
 
-    fn coordinator() -> LibraryScanCoordinator<SqliteScanStore, NullTagReader> {
+    fn coordinator() -> LibraryScanCoordinator<NullTagReader> {
         let registry = RootRegistry::new(
             vec![LibraryRoot::new(
                 "r1",

@@ -388,7 +388,6 @@ async fn library_journey_scan_identify_review_organize_undo() {
         "exactly the two planted tracks index"
     );
     let (track_a, track_b) = {
-        use droppedneedle::library::scan::CatalogStore as _;
         let track = |path| {
             rig.scan_store
                 .track_at("music", path)
@@ -541,7 +540,6 @@ async fn library_journey_scan_identify_review_organize_undo() {
     app.scan_library().await;
     rig.identified(1).await;
     {
-        use droppedneedle::library::scan::CatalogStore as _;
         for track in [&track_a, &track_b] {
             assert_eq!(
                 rig.scan_store.album_for_track(track).as_deref(),
@@ -592,7 +590,6 @@ async fn library_journey_retag_apply_baseline_restore() {
     let fields_before = droppedneedle::library::tags::read_fields(&file).expect("fields read");
     app.add_library_folder("music", &music).await;
     let track_id = {
-        use droppedneedle::library::scan::CatalogStore as _;
         rig.scan_store
             .track_at("music", "album-b/01.flac")
             .expect("track indexed")
@@ -797,7 +794,6 @@ async fn library_management_placement_read_never_probes() {
 /// no restore. An admin's same calls go through.
 #[tokio::test]
 async fn manage_routes_limit_a_trusted_user_to_a_plain_retag() {
-    use droppedneedle::library::scan::CatalogStore as _;
     use droppedneedle::library::tags::{TagField, read_fields};
 
     let rig = Rig::start("lib-manage-roles").await;
@@ -1299,8 +1295,6 @@ async fn rescan(library: &LibrarySetup) {
 /// favorites and play history that name the track follow the file.
 #[tokio::test]
 async fn moved_file_keeps_its_track() {
-    use droppedneedle::library::scan::CatalogStore as _;
-
     let rig = Rig::start("lib-move").await;
     let music = rig.app.config.root_app_dir.join("music");
     let old = plant(&music, "before/01.flac", "flac_full_01.flac");
@@ -1354,8 +1348,6 @@ async fn moved_file_keeps_its_track() {
 /// duplicate tools compare them), and moving one copy keeps its own ids.
 #[tokio::test]
 async fn copies_stay_apart_and_keep_ids_when_moved() {
-    use droppedneedle::library::scan::CatalogStore as _;
-
     let rig = Rig::start("lib-copies").await;
     let music = rig.app.config.root_app_dir.join("music");
     let copy_a = plant(&music, "flac/01.flac", "flac_full_01.flac");
@@ -1394,7 +1386,6 @@ async fn copies_stay_apart_and_keep_ids_when_moved() {
 /// release, and the old identity stays where it was.
 #[tokio::test]
 async fn long_missing_album_is_not_taken_over() {
-    use droppedneedle::library::scan::CatalogStore as _;
     use droppedneedle::library::tags::TagField;
     use droppedneedle::library::tags::save::{TagEdit, save_tags};
 
@@ -1441,8 +1432,6 @@ async fn long_missing_album_is_not_taken_over() {
 /// A small root that comes up empty is held back the same way.
 #[tokio::test]
 async fn unmounted_share_keeps_its_tracks() {
-    use droppedneedle::library::scan::CatalogStore as _;
-
     let rig = Rig::start("lib-share-guard").await;
     let dir = &rig.app.config.root_app_dir;
     let local = dir.join("music");
@@ -1502,7 +1491,6 @@ async fn unmounted_share_keeps_its_tracks() {
 /// and with it the curator's identity.
 #[tokio::test]
 async fn retagged_album_keeps_its_identity() {
-    use droppedneedle::library::scan::CatalogStore as _;
     use droppedneedle::library::tags::TagField;
     use droppedneedle::library::tags::save::{TagEdit, save_tags};
 
@@ -1565,7 +1553,6 @@ async fn retagged_album_keeps_its_identity() {
 #[tokio::test]
 async fn automatic_write_keeps_a_manual_identity() {
     use droppedneedle::library::identify::models::{AlbumIdentity, DecisionSource, TrackIdentity};
-    use droppedneedle::library::scan::CatalogStore as _;
 
     let (_scratch, library, music) = bare_library("lib-manual-identity");
     plant(&music, "album/01.flac", "flac_full_02.flac");
@@ -1640,7 +1627,6 @@ async fn automatic_write_keeps_a_manual_identity() {
 /// caller gets the error and the review stays pending.
 #[tokio::test]
 async fn failed_approval_leaves_the_review_pending() {
-    use droppedneedle::library::scan::CatalogStore as _;
     use droppedneedle::library::service::ServiceError;
 
     let (_scratch, library, music) = bare_library("lib-approve-fail");
@@ -1732,7 +1718,6 @@ async fn journal_on_a_removed_root_waits() {
 #[tokio::test]
 async fn identification_survives_restarts() {
     use droppedneedle::library::identify::models::DecisionSource;
-    use droppedneedle::library::scan::CatalogStore as _;
 
     let rig = Rig::start("lib-identify-restart").await;
     rig.identify.recall_from(ambiguous_from);
@@ -1829,7 +1814,6 @@ fn publish_one(
 #[tokio::test]
 async fn undo_restores_values_no_new_edit_could_write() {
     use droppedneedle::library::publish::planner::PlanKind;
-    use droppedneedle::library::scan::CatalogStore as _;
     use droppedneedle::library::tags::save::{TagEdit, save_tags};
     use droppedneedle::library::tags::{TagField, read_fields};
 
@@ -1874,7 +1858,6 @@ async fn undo_restores_values_no_new_edit_could_write() {
 #[tokio::test]
 async fn baseline_restore_removes_fields_added_later() {
     use droppedneedle::library::publish::planner::PlanKind;
-    use droppedneedle::library::scan::CatalogStore as _;
     use droppedneedle::library::tags::{TagField, read_fields};
 
     let (_scratch, library, music) = bare_library("lib-baseline-added");
@@ -2326,7 +2309,6 @@ async fn library_journey_undo_edition_then_reidentify() {
     let paused_at = rig.pause_identification().await;
     app.add_library_folder("music", &music).await;
     let track_id = {
-        use droppedneedle::library::scan::CatalogStore as _;
         rig.scan_store
             .track_at("music", "album-r/01.flac")
             .expect("track indexed")
@@ -2638,7 +2620,6 @@ async fn artist_duplicate_groups_list_open_and_dismiss() {
 #[tokio::test]
 async fn removal_recycles_files_and_rescan_targets_the_album() {
     use droppedneedle::library::mutations::Mutations;
-    use droppedneedle::library::scan::CatalogStore as _;
 
     let (scratch, library, music) = bare_library("lib-remove");
     let first = plant(&music, "Band/LP/01.flac", "flac_full_01.flac");
@@ -2710,7 +2691,6 @@ async fn removal_recycles_files_and_rescan_targets_the_album() {
 #[tokio::test]
 async fn put_back_refuses_an_occupied_path() {
     use droppedneedle::library::mutations::{MutationError, Mutations};
-    use droppedneedle::library::scan::CatalogStore as _;
 
     let (scratch, library, music) = bare_library("lib-put-back");
     let original = plant(&music, "Band/LP/01.flac", "flac_full_01.flac");
@@ -2800,7 +2780,6 @@ async fn library_journey_choose_edition() {
     let paused_at = rig.pause_identification().await;
     app.add_library_folder("music", &music).await;
     let track_id = {
-        use droppedneedle::library::scan::CatalogStore as _;
         rig.scan_store
             .track_at("music", "album-e/01.flac")
             .expect("track indexed")
@@ -2944,8 +2923,6 @@ async fn library_journey_choose_edition() {
 /// the first result.
 #[tokio::test]
 async fn library_journey_catalog_corrections() {
-    use droppedneedle::library::scan::CatalogStore as _;
-
     let rig = Rig::start("lib-corrections").await;
     let app = &rig.app;
     let auth = app.login_admin().await;
@@ -3251,7 +3228,6 @@ async fn management_run(
 async fn library_management_preview_apply_undo() {
     use droppedneedle::library::management::models::{ItemFilter, Selection, SelectionKind};
     use droppedneedle::library::management::service::{ApplyRequest, Management, PreviewRequest};
-    use droppedneedle::library::scan::CatalogStore as _;
     use droppedneedle::library::tags::save::{TagEdit, save_tags};
     use droppedneedle::library::tags::{TagField, read_fields};
     use droppedneedle::runtime_config::sections::NamingScript;
@@ -3523,7 +3499,6 @@ async fn library_journey_identity_repair_and_preparation() {
     let run_id = app.add_library_folder("music", &music).await;
     let run_path = format!("/api/v3/library/scan/runs/{run_id}");
     let track_id = {
-        use droppedneedle::library::scan::CatalogStore as _;
         rig.scan_store
             .track_at("music", "album-r/01.flac")
             .expect("track indexed")
@@ -3918,7 +3893,6 @@ async fn library_management_tools_journey() {
     use droppedneedle::library::management::restore::{PurgeRequest, RestoreRequest};
     use droppedneedle::library::management::service::Management;
     use droppedneedle::library::management::tag_edit::TagEditRequest;
-    use droppedneedle::library::scan::CatalogStore as _;
     use droppedneedle::library::tags::{TagField, read_fields};
     use droppedneedle::settings::management as lm;
 
@@ -4640,7 +4614,6 @@ async fn library_management_tools_journey() {
 async fn library_management_custom_edition_journey() {
     use droppedneedle::library::management::models::{Selection, SelectionKind};
     use droppedneedle::library::management::service::{Management, PreviewRequest};
-    use droppedneedle::library::scan::CatalogStore as _;
     use droppedneedle::library::tags::{TagField, read_fields};
     use droppedneedle::settings::management as lm;
 
@@ -4787,7 +4760,6 @@ async fn library_management_artwork_journey() {
     use droppedneedle::library::management::enrich::{Cover, ScriptedEnrichment};
     use droppedneedle::library::management::models::{Selection, SelectionKind};
     use droppedneedle::library::management::service::{Management, PreviewRequest};
-    use droppedneedle::library::scan::CatalogStore as _;
     use droppedneedle::library::tags::save::read_document;
     use droppedneedle::library::tags::{TagEdit, TagField};
     use droppedneedle::runtime_config::sections::LibraryManagement;
@@ -5061,8 +5033,6 @@ fn walk_files(dir: &std::path::Path) -> Vec<PathBuf> {
 /// refuses another decision.
 #[tokio::test]
 async fn library_journey_review_exclude_restore_dismiss() {
-    use droppedneedle::library::scan::CatalogStore as _;
-
     let rig = Rig::start("lib-reviews").await;
     let app = &rig.app;
     let auth = app.login_admin().await;

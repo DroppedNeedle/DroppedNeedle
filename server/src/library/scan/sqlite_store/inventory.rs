@@ -2,8 +2,9 @@
 
 use super::*;
 
-impl InventoryStore for SqliteScanStore {
-    fn scope_discovery_state(
+/// Discovery state and the per-run file inventory.
+impl SqliteScanStore {
+    pub fn scope_discovery_state(
         &self,
         run_id: &str,
         root_id: &str,
@@ -27,7 +28,12 @@ impl InventoryStore for SqliteScanStore {
             .unwrap_or(ScopeDiscoveryState::Pending)
     }
 
-    fn scope_discovery_generation(&self, run_id: &str, root_id: &str, relative_path: &str) -> u64 {
+    pub fn scope_discovery_generation(
+        &self,
+        run_id: &str,
+        root_id: &str,
+        relative_path: &str,
+    ) -> u64 {
         let guard = self.lock();
         guard
             .conn
@@ -46,7 +52,7 @@ impl InventoryStore for SqliteScanStore {
             .unwrap_or(1)
     }
 
-    fn complete_scope_discovery(
+    pub fn complete_scope_discovery(
         &self,
         run_id: &str,
         root_id: &str,
@@ -70,7 +76,7 @@ impl InventoryStore for SqliteScanStore {
         }
     }
 
-    fn restart_scope_discovery(&self, run_id: &str, root_id: &str, relative_path: &str) {
+    pub fn restart_scope_discovery(&self, run_id: &str, root_id: &str, relative_path: &str) {
         let guard = self.lock();
         if let Err(error) = guard.conn.execute(
             "UPDATE library_scan_run_scopes SET discovery_state = 'pending', error_code = NULL, \
@@ -82,7 +88,7 @@ impl InventoryStore for SqliteScanStore {
         }
     }
 
-    fn prepare_discovery_resume(&self, run_id: &str) {
+    pub fn prepare_discovery_resume(&self, run_id: &str) {
         let mut guard = self.lock();
         let outcome = (|| -> rusqlite::Result<()> {
             let tx = guard
@@ -110,7 +116,11 @@ impl InventoryStore for SqliteScanStore {
         }
     }
 
-    fn finalize_discovery(&self, run_id: &str, updated_at: f64) -> Result<ScanRun, ScanStoreError> {
+    pub fn finalize_discovery(
+        &self,
+        run_id: &str,
+        updated_at: f64,
+    ) -> Result<ScanRun, ScanStoreError> {
         let mut guard = self.lock();
         let tx = guard
             .conn
@@ -148,7 +158,9 @@ impl InventoryStore for SqliteScanStore {
         Ok(run)
     }
 
-    fn cleanup_stale_inventory(&self, run_id: &str) -> usize {
+    /// Delete one bounded page of stale-generation inventory. Returns the
+    /// number of rows still pending afterwards.
+    pub fn cleanup_stale_inventory(&self, run_id: &str) -> usize {
         let mut guard = self.lock();
         (|| -> rusqlite::Result<usize> {
             let tx = guard
@@ -184,7 +196,11 @@ impl InventoryStore for SqliteScanStore {
         })
     }
 
-    fn add_inventory_batch(
+    /// Record one inventory page. Returns the run revision after the
+    /// write plus how many rows could not be stored: when the page fails
+    /// as a whole it lands row by row, and each refused row gets a
+    /// `WALK_ERROR` failure naming the store error.
+    pub fn add_inventory_batch(
         &self,
         run_id: &str,
         items: Vec<ScanInventoryItem>,
@@ -238,7 +254,9 @@ impl InventoryStore for SqliteScanStore {
         Ok(outcome)
     }
 
-    fn inventory_for_run(&self, run_id: &str, limit: usize) -> Vec<ScanInventoryItem> {
+    /// The run's last `limit` current-generation inventory rows in
+    /// discovery order, each with the catalog track id its path holds.
+    pub fn inventory_for_run(&self, run_id: &str, limit: usize) -> Vec<ScanInventoryItem> {
         let guard = self.lock();
         // Inventory rows freeze at discovery; the track id lands in the
         // catalog at index time, so it comes from there when missing.
@@ -272,7 +290,16 @@ impl InventoryStore for SqliteScanStore {
         rows
     }
 
-    fn inventory_page(
+    /// One bounded page of the run's unprocessed inventory rows in
+    /// `(root_id, relative_path)` order,
+    /// starting after `after` (none for the first page). Returns the page
+    /// plus the cursor for the next page (none when the page came up
+    /// short). Keyset paging keeps every page O(page): no offset rescan,
+    /// no sort, a seek on the primary key. Processing order is path
+    /// order. A read failure is `Err`, never an empty page: an empty
+    /// page means end-of-run, and the caller must fail the run on `Err`
+    /// instead of completing the run short.
+    pub fn inventory_page(
         &self,
         run_id: &str,
         after: Option<(&str, &str)>,
