@@ -43,7 +43,9 @@ async fn seed_small() -> Fixture {
     let seq = PERF_SEQ.fetch_add(1, Ordering::Relaxed);
     let dir = crate::tooling::scratch::ScratchDir::new(&format!("reads-perf-{seq}"))
         .expect("scratch dir");
-    let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
+    let path = dir.join("app.db");
+    crate::schema::template::copy_to(&path).expect("migrated database copies");
+    let runtime = open_runtime(&DbConfig::new(&path))
         .await
         .expect("scratch runtime opens");
     let pool = runtime.pool().clone();
