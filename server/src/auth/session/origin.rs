@@ -2,7 +2,8 @@
 //!
 //! v2 relied on `SameSite=Lax` alone; this closes the gap without a CSRF-token
 //! round-trip. Rule: a request authenticated via cookie with an unsafe method
-//! must come from the page the server itself serves, else 403.
+//! must come from the page the server itself serves, or from an address an
+//! admin has stated as this server's own, else 403.
 //! Bearer-authenticated requests are exempt (explicit, non-ambient). Safe
 //! methods skip the check.
 //!
@@ -11,8 +12,9 @@
 //! or scheme on the way in. Browsers leave the header out on plain-HTTP
 //! pages (other than localhost) and old ones never send it, so without it
 //! the scheme, host and port of `Origin` (or `Referer` when `Origin` is
-//! absent) must equal the address the request was sent to. A request with
-//! neither header fails closed (scripted callers use Bearer tokens).
+//! absent) must equal the address the request was sent to, or one of the
+//! stated addresses. A request with neither header fails closed (scripted
+//! callers use Bearer tokens).
 //!
 //! The port and scheme count because cookies ignore both and `SameSite`
 //! ignores the port: another app on the same host, one port over, is
@@ -22,8 +24,14 @@
 //! `middleware::effective_origin`: forwarded headers are honored only from
 //! trusted peers. A proxy that drops the port from `Host` or hides HTTPS
 //! makes the server's idea of its own address wrong, and the browser's
-//! honest `Origin` is then refused; [`proxy_mismatch`] spots that case so
-//! the gate can say so in the log.
+//! honest `Origin` is then refused. The gate says so in the log, once.
+//!
+//! The stated addresses are the `public_address` setting, the way out for
+//! an operator who cannot fix the proxy. They add to the address the server
+//! works out and never replace it, so the app opened directly at its own
+//! port always works. They are compared with the browser's `Origin` (or
+//! `Referer`) and nothing else: no `Host`, no forwarded header and no other
+//! part of the request can widen the check.
 
 use std::fmt;
 
@@ -134,6 +142,11 @@ impl Origin {
         }
     }
 
+    /// True when both are on the same host, whatever the scheme and port.
+    pub fn same_host(&self, other: &Self) -> bool {
+        self.host == other.host
+    }
+
     fn new(scheme: &str, authority: &Authority) -> Option<Self> {
         let scheme = scheme.to_ascii_lowercase();
         let default_port = if scheme == Scheme::HTTP.as_str() {
@@ -169,10 +182,13 @@ impl fmt::Display for Origin {
 }
 
 /// Run the check. `target` is the origin the request was addressed to,
-/// `None` when the request carried no usable host.
+/// `None` when the request carried no usable host. `stated` is the saved
+/// `public_address` list. Of `headers`, only `Sec-Fetch-Site`, `Origin` and
+/// `Referer` are read.
 pub fn check_origin(
     headers: &HeaderMap,
     target: Option<&Origin>,
+    stated: &[Origin],
     method: &Method,
     transport: Transport,
 ) -> OriginDecision {
@@ -193,19 +209,20 @@ pub fn check_origin(
     if cfg!(debug_assertions) && super::cors::is_debug_origin(source) {
         return OriginDecision::Allow;
     }
-    match (Origin::from_url(source), target) {
-        (Some(source), Some(target)) if source == *target => OriginDecision::Allow,
-        _ => OriginDecision::Deny,
+    let Some(source) = Origin::from_url(source) else {
+        return OriginDecision::Deny;
+    };
+    if target == Some(&source) || stated.contains(&source) {
+        OriginDecision::Allow
+    } else {
+        OriginDecision::Deny
     }
 }
 
-/// The origin a refused request named, when it is on this server's host
-/// and only the scheme or port differ from `target`. That is what a browser
-/// on this very site sends when a reverse proxy drops the port or hides
-/// HTTPS, and also what another app on the same host sends.
-pub fn proxy_mismatch(headers: &HeaderMap, target: &Origin) -> Option<Origin> {
-    let source = Origin::from_url(source_header(headers)?)?;
-    (source.host == target.host && source != *target).then_some(source)
+/// The origin a request says it came from, parsed. `None` when it named
+/// none, or one that is not `http` or `https`.
+pub fn named_origin(headers: &HeaderMap) -> Option<Origin> {
+    Origin::from_url(source_header(headers)?)
 }
 
 /// Where the request says it came from: `Origin`, else `Referer`.
@@ -237,10 +254,17 @@ mod tests {
         headers
     }
 
-    /// The decision for a cookie request sent to `scheme://host`.
+    /// The decision for a cookie request sent to `scheme://host`, with no
+    /// public address stated.
     fn decide(scheme: &str, host: &str, method: Method, sent: &[(&str, &str)]) -> OriginDecision {
         let target = Origin::from_host(scheme, host);
-        check_origin(&headers(sent), target.as_ref(), &method, Transport::Cookie)
+        check_origin(
+            &headers(sent),
+            target.as_ref(),
+            &[],
+            &method,
+            Transport::Cookie,
+        )
     }
 
     #[test]
@@ -325,20 +349,96 @@ mod tests {
         let foreign = headers(&[("origin", "https://evil.test")]);
         let target = Origin::from_host("http", "music.lan:8688");
         assert_eq!(
-            check_origin(&foreign, target.as_ref(), &Method::POST, Transport::Bearer),
+            check_origin(
+                &foreign,
+                target.as_ref(),
+                &[],
+                &Method::POST,
+                Transport::Bearer
+            ),
             Allow
         );
         assert_eq!(
-            check_origin(&foreign, target.as_ref(), &Method::GET, Transport::Cookie),
+            check_origin(
+                &foreign,
+                target.as_ref(),
+                &[],
+                &Method::GET,
+                Transport::Cookie
+            ),
             Allow
         );
         // No usable host on the request: nothing can match it.
         assert_eq!(
-            check_origin(&foreign, None, &Method::POST, Transport::Cookie),
+            check_origin(&foreign, None, &[], &Method::POST, Transport::Cookie),
             Deny
         );
         assert_eq!(Origin::from_host("http", ""), None);
         assert_eq!(Origin::from_host("ftp", "music.lan"), None);
+
+        // A proxy dropped the port and hid HTTPS, so the server sees itself
+        // at http://music.example. The admin stated the real addresses.
+        let stated: Vec<Origin> = ["https://music.example", "http://music.lan:8080"]
+            .into_iter()
+            .map(|address| Origin::from_stated(address).unwrap())
+            .collect();
+        let behind_proxy = |method: Method, transport, sent: &[(&str, &str)]| {
+            check_origin(
+                &headers(sent),
+                Origin::from_host("http", "music.example").as_ref(),
+                &stated,
+                &method,
+                transport,
+            )
+        };
+        let put = |sent: &[(&str, &str)]| behind_proxy(Method::PUT, Transport::Cookie, sent);
+        assert_eq!(put(&[("origin", "https://music.example")]), Allow);
+        assert_eq!(put(&[("origin", "https://music.example:443")]), Allow);
+        assert_eq!(put(&[("origin", "HTTPS://Music.Example")]), Allow);
+        assert_eq!(put(&[("origin", "http://music.lan:8080")]), Allow);
+        // What the server works out for itself still passes.
+        assert_eq!(put(&[("origin", "http://music.example")]), Allow);
+        // Scheme, host and port all have to match a stated address.
+        assert_eq!(put(&[("origin", "https://music.example:8443")]), Deny);
+        assert_eq!(put(&[("origin", "http://music.lan")]), Deny);
+        assert_eq!(put(&[("origin", "http://music.lan:8096")]), Deny);
+        assert_eq!(put(&[("origin", "https://music.lan:8080")]), Deny);
+        assert_eq!(put(&[("origin", "https://music.example.evil.test")]), Deny);
+        assert_eq!(put(&[("origin", "https://music.example@evil.test")]), Deny);
+        assert_eq!(put(&[("origin", "https://evil.test")]), Deny);
+        assert_eq!(put(&[("origin", "null")]), Deny);
+        assert_eq!(put(&[]), Deny);
+        // Referer stands in only when Origin is absent.
+        assert_eq!(put(&[("referer", "https://music.example/albums")]), Allow);
+        assert_eq!(
+            put(&[
+                ("origin", "https://evil.test"),
+                ("referer", "https://music.example/")
+            ]),
+            Deny
+        );
+        // No other header can name a stated address into the check.
+        assert_eq!(
+            put(&[
+                ("origin", "https://evil.test"),
+                ("host", "music.lan:8080"),
+                ("x-forwarded-host", "music.lan:8080"),
+                ("x-forwarded-proto", "https"),
+                ("forwarded", "host=music.example;proto=https"),
+                ("sec-fetch-site", "same-site"),
+            ]),
+            Deny
+        );
+        assert_eq!(
+            behind_proxy(Method::PUT, Transport::Bearer, &[]),
+            Allow,
+            "bearer stays exempt"
+        );
+        assert_eq!(
+            behind_proxy(Method::GET, Transport::Cookie, &[]),
+            Allow,
+            "safe methods stay exempt"
+        );
     }
 
     #[test]

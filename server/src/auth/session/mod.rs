@@ -23,7 +23,9 @@
 //! - CSRF defence is `Lax` plus the origin check: any cookie-authenticated
 //!   unsafe method (`POST/PUT/PATCH/DELETE`) must carry `Sec-Fetch-Site:
 //!   same-origin`, or an `Origin` (or `Referer` fallback) whose scheme, host
-//!   and port match the request's, else 403. Bearer requests are exempt.
+//!   and port match the request's or an address saved in the
+//!   `public_address` setting, else 403. Bearer requests are exempt. Nothing
+//!   a request sends widens the check, and an empty setting is the default.
 //! - Tokens are opaque 32-byte values (urlsafe-b64), SHA-256 hex at rest,
 //!   constant-time compared, rejected when revoked or expired.
 //! - Login failures run a dummy-hash verify and return one uniform message,

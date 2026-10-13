@@ -452,6 +452,148 @@ async fn hsts_is_sent_only_over_https_and_only_while_the_setting_is_on() {
     running.shut_down().await;
 }
 
+/// Set up the admin over TCP and return the session cookie.
+async fn admin_cookie(address: SocketAddr) -> String {
+    let setup = reqwest::Client::new()
+        .post(format!("http://{address}/api/v3/auth/setup"))
+        .header("content-type", "application/json")
+        .body(r#"{"username": "admin", "password": "correct horse battery"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(setup.status(), 201);
+    let cookie = setup.headers()["set-cookie"].to_str().unwrap();
+    cookie.split(';').next().unwrap().to_owned()
+}
+
+/// A settings save by the signed-in admin as a browser with no
+/// `Sec-Fetch-Site` sends it: to `Host: music.test`, from a page at
+/// `origin`, with any `extra` headers. Returns the status and the body.
+async fn save_as_browser(
+    router: &axum::Router,
+    peer: &str,
+    cookie: &str,
+    origin: &str,
+    extra: &[(&str, &str)],
+    (path, body): (&str, serde_json::Value),
+) -> (u16, serde_json::Value) {
+    let mut request = axum::http::Request::builder()
+        .method("PUT")
+        .uri(format!("/api/v3/settings/{path}"))
+        .header("host", "music.test")
+        .header("origin", origin)
+        .header("cookie", cookie)
+        .header("content-type", "application/json");
+    for (name, value) in extra {
+        request = request.header(*name, *value);
+    }
+    let request = request.body(Body::from(body.to_string())).unwrap();
+    let response = answer_from(router, peer, request).await;
+    let status = response.status().as_u16();
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
+    )
+}
+
+/// An unrelated save, standing in for every write the web UI makes.
+fn any_save() -> (&'static str, serde_json::Value) {
+    ("security", serde_json::json!({"hibp_check": false}))
+}
+
+fn public_address(origins: &[&str]) -> (&'static str, serde_json::Value) {
+    ("public-address", serde_json::json!({"origins": origins}))
+}
+
+/// A proxy drops the port from `Host`: the browser is on
+/// `http://music.test:8080` and the server sees itself at
+/// `http://music.test`. Every save is refused until the admin states the
+/// address, and nothing but that saved address widens the check.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_stated_public_address_is_the_only_thing_that_widens_the_origin_check() {
+    const PAGE: &str = "http://music.test:8080";
+    const OTHER_APP: &str = "http://music.test:8096";
+    let dir = scratch("public-address");
+    let (router, background) = build(config_in(&dir)).await.unwrap();
+    let running = start(router.clone(), background).await;
+    let cookie = admin_cookie(running.address).await;
+    let save = |peer: &'static str,
+                origin: &'static str,
+                extra: &'static [(&'static str, &'static str)],
+                what: (&'static str, serde_json::Value)| {
+        let (router, cookie) = (router.clone(), cookie.clone());
+        async move { save_as_browser(&router, peer, &cookie, origin, extra, what).await }
+    };
+    let status = |peer, origin, extra| {
+        let saved = save(peer, origin, extra, any_save());
+        async move { saved.await.0 }
+    };
+
+    assert_eq!(status(PROXY, PAGE, &[]).await, 403);
+
+    // Refused from the page it would allow: the admin opens the app at the
+    // address the server works out, and saves it there.
+    let stated = public_address(&["HTTP://Music.Test:8080/"]);
+    assert_eq!(save(PROXY, PAGE, &[], stated.clone()).await.0, 403);
+    let (code, body) = save(PROXY, "http://music.test", &[], stated).await;
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(body["origins"], serde_json::json!([PAGE]));
+
+    assert_eq!(status(PROXY, PAGE, &[]).await, 200);
+    assert_eq!(status(PROXY, "http://music.test", &[]).await, 200);
+    // Another app on the same host, another scheme, a look-alike host.
+    assert_eq!(status(PROXY, OTHER_APP, &[]).await, 403);
+    assert_eq!(status(PROXY, "https://music.test:8080", &[]).await, 403);
+    assert_eq!(
+        status(PROXY, "http://music.test.evil.test:8080", &[]).await,
+        403
+    );
+    // Forwarded headers from a peer that is not a trusted proxy change
+    // nothing, and neither does a `Sec-Fetch-Site` short of same-origin.
+    let forged: &[(&str, &str)] = &[
+        ("x-forwarded-host", "music.test:8096"),
+        ("x-forwarded-proto", "https"),
+        ("sec-fetch-site", "same-site"),
+    ];
+    assert_eq!(status(STRANGER, OTHER_APP, forged).await, 403);
+    assert_eq!(
+        status(STRANGER, "https://music.test:8096", forged).await,
+        403
+    );
+    assert_eq!(status(STRANGER, PAGE, forged).await, 200);
+
+    // A bad entry is refused by name and the list stays as it was. The
+    // unrelated saves above did not clear it either.
+    let (code, body) = save(
+        PROXY,
+        PAGE,
+        &[],
+        public_address(&[OTHER_APP, "https://music.test/music"]),
+    )
+    .await;
+    assert_eq!(code, 400, "{body}");
+    let message = body["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("\"https://music.test/music\"") && message.contains("base path"),
+        "{body}"
+    );
+    assert_eq!(status(PROXY, OTHER_APP, &[]).await, 403);
+    assert_eq!(status(PROXY, PAGE, &[]).await, 200);
+
+    // Cleared from the stated page itself, which is then refused again.
+    let (code, body) = save(PROXY, PAGE, &[], public_address(&[])).await;
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(body["origins"], serde_json::json!([]));
+    assert_eq!(status(PROXY, PAGE, &[]).await, 403);
+    assert_eq!(status(PROXY, "http://music.test", &[]).await, 200);
+
+    drop(router);
+    running.shut_down().await;
+}
+
 async fn set_up(address: SocketAddr) -> reqwest::StatusCode {
     reqwest::Client::new()
         .post(format!("http://{address}/api/v3/auth/setup"))

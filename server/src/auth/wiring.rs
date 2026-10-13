@@ -377,7 +377,8 @@ impl AuthSetup {
         Ok(Self {
             users,
             session_auth: SessionAuth::new(auth.sessions.clone(), base_path)
-                .with_limits(limits.clone()),
+                .with_limits(limits.clone())
+                .with_public_address(config_store.clone()),
             limits,
             native,
             oidc,

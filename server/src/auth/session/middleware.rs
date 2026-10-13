@@ -7,7 +7,8 @@
 //! from the caller's auth-failure bucket, and an empty bucket answers 429)
 //! -> origin check on cookie mutations
 //! against the effective origin (forwarded host and scheme only from trusted
-//! proxies) (-> 403). Success stashes [`CurrentSession`] in the request
+//! proxies) and the addresses saved in the `public_address` setting (-> 403).
+//! Success stashes [`CurrentSession`] in the request
 //! extensions for handlers and role extractors; role gating itself is
 //! handler-level, as is the per-resource 403-or-404 choice.
 //!
@@ -39,6 +40,14 @@
 //! client then shares the proxy's address for rate limits and HTTPS goes
 //! unseen, so the session cookie loses `Secure`. The gate logs one warning
 //! per process when it sees the signs (see [`warn_unlisted_proxy`]).
+//!
+//! ## Stated addresses
+//!
+//! A proxy that cannot be fixed leaves the effective origin wrong for good.
+//! The `public_address` setting is the way out: the gate reads its list for
+//! each cookie-authenticated write and hands it to the origin check, which
+//! compares it with the browser's `Origin` or `Referer` only. A list that
+//! cannot be read counts as empty, which is the strict check.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
@@ -51,11 +60,13 @@ use axum::{
 };
 use thiserror::Error;
 
+use crate::runtime_config::{ConfigStore, sections::PublicAddress};
+
 use super::{
     allowlist::is_public,
     cookies::is_secure_trusted,
     extract::{Transport, forbidden_response, unauthorized_response},
-    origin::{Origin, OriginDecision, check_origin, proxy_mismatch},
+    origin::{Origin, OriginDecision, check_origin, is_unsafe_method, named_origin},
     rate_limit::{AUTH_FAILURE_CLASS, RateLimiter, rate_limited_response},
     store::{SessionKind, SessionStore, now_unix},
     tokens::hash_token,
@@ -256,9 +267,14 @@ pub struct SessionAuth<S> {
     /// Shared limiter; failed authentications are charged per client
     /// address, since the request limiter runs after this gate.
     pub limits: Arc<RateLimiter>,
+    /// The runtime settings, read for the stated public addresses. `None`
+    /// means no address is stated.
+    config: Option<Arc<ConfigStore>>,
     /// Spent by the first refused request that looks like a proxy
     /// misreporting this server's address.
     origin_mismatch_warned: WarnOnce,
+    /// Spent by the first refused request from a page on another host.
+    other_host_warned: WarnOnce,
     /// Spent by the first forwarded header from an unlisted private peer.
     unlisted_proxy_warned: WarnOnce,
 }
@@ -272,7 +288,9 @@ impl<S> SessionAuth<S> {
             base_path: base_path.to_owned(),
             trusted_proxies: TrustedProxies::default(),
             limits: Arc::new(RateLimiter::new()),
+            config: None,
             origin_mismatch_warned: WarnOnce::default(),
+            other_host_warned: WarnOnce::default(),
             unlisted_proxy_warned: WarnOnce::default(),
         }
     }
@@ -288,6 +306,28 @@ impl<S> SessionAuth<S> {
     pub fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
         self.trusted_proxies = trusted;
         self
+    }
+
+    /// Read the stated public addresses from `config`. Without it the list
+    /// is empty and only the address the server works out is accepted.
+    pub fn with_public_address(mut self, config: Arc<ConfigStore>) -> Self {
+        self.config = Some(config);
+        self
+    }
+
+    /// The addresses an admin stated as this server's own. Empty when the
+    /// setting cannot be read: an unreadable list never widens the check.
+    fn stated_origins(&self) -> Vec<Origin> {
+        let Some(config) = &self.config else {
+            return Vec::new();
+        };
+        match config.get::<PublicAddress>() {
+            Ok(section) => section.stated(),
+            Err(error) => {
+                tracing::debug!(%error, "public address unreadable; no stated address");
+                Vec::new()
+            }
+        }
     }
 }
 
@@ -333,18 +373,20 @@ where
         return auth_failure(&auth.limits, &request, "Invalid or expired token");
     };
     let target = effective_origin(&request, &auth.trusted_proxies);
+    let stated = if transport == Transport::Cookie && is_unsafe_method(request.method()) {
+        auth.stated_origins()
+    } else {
+        Vec::new()
+    };
     if check_origin(
         request.headers(),
         target.as_ref(),
+        &stated,
         request.method(),
         transport,
     ) == OriginDecision::Deny
     {
-        warn_origin_mismatch(
-            &auth.origin_mismatch_warned,
-            request.headers(),
-            target.as_ref(),
-        );
+        warn_refused_origin(&auth, request.headers(), target.as_ref());
         return forbidden_response("Origin not allowed");
     }
     let mut request = request;
@@ -407,28 +449,37 @@ fn warn_unlisted_proxy(warned: &WarnOnce, request: &Request, trusted: &TrustedPr
     }
 }
 
-/// Log, once per process, a refusal where the page's origin is on this
-/// server's host and only the scheme or port differ. Otherwise a proxy that
-/// drops the port or hides HTTPS shows up as 403s in the browser and
-/// nothing in the log.
-fn warn_origin_mismatch(
-    warned: &WarnOnce,
+/// Log a refused change, once per process for each of two cases, so a
+/// proxy that misreports this server's address shows up as more than 403s
+/// in the browser. On this server's host with another scheme or port, the
+/// proxy drops the port or hides HTTPS. On another host it replaces `Host`,
+/// which is also what a real cross-site attempt looks like. The line names
+/// the parsed origin, never the header's own text.
+fn warn_refused_origin<S>(
+    auth: &SessionAuth<S>,
     headers: &axum::http::HeaderMap,
     target: Option<&Origin>,
 ) {
-    let Some(target) = target else {
+    let (Some(target), Some(source)) = (target, named_origin(headers)) else {
         return;
     };
-    let Some(source) = proxy_mismatch(headers, target) else {
-        return;
+    let (warned, fault) = if source.same_host(target) {
+        (
+            &auth.origin_mismatch_warned,
+            "is dropping the port or hiding HTTPS",
+        )
+    } else {
+        (&auth.other_host_warned, "is replacing the Host header")
     };
     if warned.claim() {
         tracing::warn!(
             %source,
             %target,
             "Refused a change from a page at {source}: this server sees itself at {target}. \
-             If that page is DroppedNeedle, the reverse proxy is dropping the port or hiding \
-             HTTPS; see the reverse proxy paragraph under Configuration in the README."
+             If that page is DroppedNeedle, the reverse proxy {fault}. Fix the proxy (see the \
+             reverse proxy paragraph under Configuration in the README), or state the address \
+             under Settings > Security > Public address or with `droppedneedle-tool \
+             public-address`."
         );
     }
 }
