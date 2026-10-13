@@ -23,9 +23,10 @@ use axum::{
 };
 use droppedneedle::{
     db::{
-        BACKGROUND_QUEUE_CAPACITY, BACKUP_KEEP, Budget, CancelFlag, CheckpointMode, DbConfig,
-        DbError, DbRuntime, FOREGROUND_QUEUE_CAPACITY, Lane, LaneLimits, OpError, WakeupChannel,
-        WriteLane, block_on, filesystem_is_local, map_sqlx_busy, open_runtime, sqlx_is_busy,
+        BACKGROUND_QUEUE_CAPACITY, BACKUP_KEEP, Budget, CancelFlag, CheckpointMode, Db, DbConfig,
+        DbError, DbRuntime, FOREGROUND_QUEUE_CAPACITY, LONG_READERS, Lane, LaneLimits, OpError,
+        WakeupChannel, WriteLane, block_on, filesystem_is_local, map_sqlx_busy, open_runtime,
+        sqlx_is_busy,
     },
     error::{FIXED_INTERNAL_MESSAGE, INTERNAL_ERROR, busy_response},
     ids::{REQUEST_ID_HEADER, RequestId},
@@ -2111,4 +2112,528 @@ async fn a_play_outlasting_the_busy_timeout_is_still_recorded() {
         .await
         .unwrap();
     assert_eq!(plays, 1);
+}
+
+/// A wait for a pooled connection far longer than any brief keeps a reader
+/// waiting.
+const PATIENT: Duration = Duration::from_secs(60);
+
+/// A runtime with one table to read. `readers` sizes the request pool, a
+/// request read hears `Busy` after `read_wait`, and the pools' pass runs
+/// every 10 ms.
+async fn read_runtime(name: &str, readers: u32, read_wait: Duration) -> (DbRuntime, ScratchDir) {
+    let dir = scratch_dir(name);
+    let db = dir.join("library.db");
+    common::migrated_db(&db);
+    let mut config = DbConfig::new(&db)
+        .with_read_wait(read_wait)
+        .with_lane_limits(LaneLimits {
+            watch_tick: Duration::from_millis(10),
+            ..LaneLimits::default()
+        });
+    config.readers = readers;
+    let runtime = open_runtime(&config).await.unwrap();
+    runtime
+        .db()
+        .write(Lane::Foreground, "brief-table", |tx| {
+            tx.execute("CREATE TABLE scratch_turns (label TEXT)", [])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    (runtime, dir)
+}
+
+fn count_labels(connection: &rusqlite::Connection) -> Result<i64, DbError> {
+    Ok(connection.query_row("SELECT count(*) FROM scratch_turns", [], |row| row.get(0))?)
+}
+
+fn runtime_with_clock() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+}
+
+/// A blocking read that keeps its pooled connection until it is released.
+/// A brief that fails first drops it, which releases too.
+struct HeldRead<T> {
+    let_go: std::sync::mpsc::Sender<()>,
+    thread: std::thread::JoinHandle<T>,
+}
+
+impl<T> HeldRead<T> {
+    /// Let the read return, wait until its connection is back and give what
+    /// its probe saw.
+    fn release(self) -> T {
+        drop(self.let_go);
+        self.thread.join().unwrap()
+    }
+}
+
+/// Start `count` reads on the request pool, or the long one, that each run
+/// `probe` and then hold their connection. Returns once every one is inside
+/// its closure, so they hold `count` connections at once.
+fn hold_reads<T: Send + 'static>(
+    db: &Db,
+    long: bool,
+    count: usize,
+    probe: fn(&rusqlite::Connection) -> T,
+) -> Vec<HeldRead<T>> {
+    (0..count)
+        .map(|_| {
+            let db = db.clone();
+            let (entered, inside) = std::sync::mpsc::channel();
+            let (let_go, release) = std::sync::mpsc::channel::<()>();
+            let thread = std::thread::spawn(move || {
+                let read = |connection: &rusqlite::Connection| -> Result<T, DbError> {
+                    let seen = probe(connection);
+                    let _ = entered.send(());
+                    let _ = release.recv();
+                    Ok(seen)
+                };
+                if long {
+                    db.read_long("brief-held", &CancelFlag::never(), read)
+                } else {
+                    db.read_blocking("brief-held", read)
+                }
+                .unwrap()
+            });
+            inside
+                .recv_timeout(Duration::from_secs(10))
+                .expect("a held read must get a connection");
+            HeldRead { let_go, thread }
+        })
+        .collect()
+}
+
+/// A write statement through a pooled connection fails, whichever way the
+/// connection is reached, and changes nothing.
+#[tokio::test]
+async fn pooled_reads_refuse_writes() {
+    fn write(connection: &rusqlite::Connection) -> Result<usize, DbError> {
+        Ok(connection.execute("INSERT INTO scratch_turns (label) VALUES ('nope')", [])?)
+    }
+    let (runtime, _dir) = read_runtime("read-only", 7, PATIENT).await;
+    let db = runtime.db();
+    let refused = [
+        db.read("brief-read", write).await,
+        db.read_blocking("brief-read-blocking", write),
+        db.read_long("brief-read-long", &CancelFlag::never(), write),
+    ];
+    for outcome in refused {
+        assert!(
+            matches!(outcome, Err(DbError::Rusqlite(_))),
+            "SQLite refuses the write, got {outcome:?}"
+        );
+    }
+    assert_eq!(db.read_blocking("brief-count", count_labels).unwrap(), 0);
+    runtime.shutdown().await;
+}
+
+/// Once `write` has returned, a read on any connection of either pool sees
+/// the row.
+#[tokio::test]
+async fn every_pooled_connection_sees_a_returned_write() {
+    let (runtime, _dir) = read_runtime("read-your-writes", 7, PATIENT).await;
+    let db = runtime.db();
+    db.write(Lane::Foreground, "brief-row", |tx| insert_label(tx, "row"))
+        .await
+        .unwrap();
+    for (long, connections) in [(false, 7), (true, LONG_READERS)] {
+        // Held all at once, so each connection of the pool serves one.
+        let held = hold_reads(db, long, connections, |connection| {
+            count_labels(connection).unwrap()
+        });
+        assert_eq!(runtime.read_activity().out(), connections);
+        let seen: Vec<i64> = held.into_iter().map(HeldRead::release).collect();
+        assert_eq!(seen, vec![1; connections]);
+    }
+    runtime.shutdown().await;
+}
+
+/// The statements of one read closure see one state, although a write
+/// commits between them. A read started afterwards sees the new row.
+#[tokio::test]
+async fn read_closure_sees_one_state_across_a_write() {
+    let (runtime, _dir) = read_runtime("read-snapshot", 7, PATIENT).await;
+    let db = runtime.db();
+    let (held, inside, let_go) = hold();
+    let reader = db.clone();
+    let reading = tokio::spawn(async move {
+        reader
+            .read(
+                "brief-two-statements",
+                move |connection| -> Result<(i64, i64), DbError> {
+                    let before = count_labels(connection)?;
+                    held.wait();
+                    Ok((before, count_labels(connection)?))
+                },
+            )
+            .await
+    });
+    inside.await.unwrap();
+    db.write(Lane::Foreground, "brief-between", |tx| {
+        insert_label(tx, "between")
+    })
+    .await
+    .unwrap();
+    let_go.send(()).unwrap();
+    let seen = tokio::time::timeout(Duration::from_secs(10), reading)
+        .await
+        .expect("the read returns once it is let go")
+        .unwrap()
+        .unwrap();
+    assert_eq!(seen, (0, 0), "both statements see the state of the first");
+    assert_eq!(db.read("brief-after", count_labels).await.unwrap(), 1);
+    runtime.shutdown().await;
+}
+
+/// With every request connection out, reads queue in the order they came,
+/// whether they await or park a thread, and each connection that comes back
+/// goes to the one in front.
+#[tokio::test]
+async fn waiting_reads_are_served_in_arrival_order() {
+    let (runtime, _dir) = read_runtime("read-order", 7, PATIENT).await;
+    let db = runtime.db();
+    let activity = runtime.read_activity();
+    let mut held = hold_reads(db, false, 7, |_| ());
+
+    let order = Arc::new(Mutex::new(Vec::new()));
+    // Each queued read reports in and then keeps its connection, so the
+    // next one in line runs only when the brief frees another.
+    let mut let_gos = Vec::new();
+    let mut queued = |label: &'static str| {
+        let (let_go, release) = std::sync::mpsc::channel::<()>();
+        let_gos.push(let_go);
+        let order = Arc::clone(&order);
+        move |_: &rusqlite::Connection| -> Result<(), DbError> {
+            order.lock().unwrap().push(label);
+            let _ = release.recv();
+            Ok(())
+        }
+    };
+    let (reader, op) = (db.clone(), queued("async-1"));
+    let first = tokio::spawn(async move { reader.read("brief-async-1", op).await });
+    until("the first read waits", || async { activity.waiting() == 1 }).await;
+    let (reader, op) = (db.clone(), queued("blocking"));
+    let second = std::thread::spawn(move || reader.read_blocking("brief-blocking", op));
+    until("the second read waits", || async {
+        activity.waiting() == 2
+    })
+    .await;
+    let (reader, op) = (db.clone(), queued("async-2"));
+    let third = tokio::spawn(async move { reader.read("brief-async-2", op).await });
+    until("the third read waits", || async { activity.waiting() == 3 }).await;
+
+    let arrival = ["async-1", "blocking", "async-2"];
+    for served in 1..=arrival.len() {
+        held.pop().unwrap().release();
+        until("the read in front runs", || async {
+            order.lock().unwrap().len() == served
+        })
+        .await;
+        assert_eq!(*order.lock().unwrap(), arrival[..served]);
+        assert_eq!(activity.waiting(), arrival.len() - served);
+    }
+
+    drop(let_gos);
+    first.await.unwrap().unwrap();
+    second.join().unwrap().unwrap();
+    third.await.unwrap().unwrap();
+    held.into_iter().for_each(HeldRead::release);
+    runtime.shutdown().await;
+}
+
+/// With every request connection out, a read that has waited to the limit
+/// hears `Busy`, whether its caller is parked on a thread or awaiting on a
+/// runtime whose clock is paused. Waiting gave neither of them a connection.
+#[test]
+fn waiting_read_past_its_limit_hears_busy() {
+    let opener = runtime_with_clock();
+    let (runtime, _dir) = opener.block_on(read_runtime("read-busy", 7, Duration::from_millis(50)));
+    let db = runtime.db();
+    let held = hold_reads(db, false, 7, |_| ());
+
+    let parked = db.clone();
+    let refused = within("a parked read past its limit must be answered", move || {
+        parked.read_blocking("brief-parked", count_labels)
+    });
+    assert!(
+        matches!(&refused, Err(DbError::Busy { operation }) if operation == "brief-parked"),
+        "a parked reader hears Busy, got {refused:?}"
+    );
+    let awaiting = db.clone();
+    let refused = within(
+        "an awaiting read past its limit must be answered",
+        move || {
+            let paused = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .start_paused(true)
+                .build()
+                .unwrap();
+            paused.block_on(awaiting.read("brief-awaiting", count_labels))
+        },
+    );
+    assert!(
+        matches!(&refused, Err(DbError::Busy { operation }) if operation == "brief-awaiting"),
+        "an awaiting reader hears Busy, got {refused:?}"
+    );
+    let activity = runtime.read_activity();
+    assert_eq!((activity.out(), activity.waiting()), (7, 0));
+
+    held.into_iter().for_each(HeldRead::release);
+    opener.block_on(runtime.shutdown());
+}
+
+/// Long reads have their own connections: with both out, a request read is
+/// served at once, and a third long read waits until its flag trips.
+#[tokio::test]
+async fn full_long_pool_delays_no_request_and_stops_at_its_flag() {
+    let (runtime, _dir) = read_runtime("read-long", 7, PATIENT).await;
+    let db = runtime.db();
+    let activity = runtime.read_activity();
+    let held = hold_reads(db, true, LONG_READERS, |_| ());
+
+    let count = tokio::time::timeout(
+        Duration::from_secs(10),
+        db.read("brief-request", count_labels),
+    )
+    .await
+    .expect("a request read does not wait for the long pool")
+    .unwrap();
+    assert_eq!(count, 0);
+
+    let cancel = CancelFlag::never();
+    let (flag, reader) = (cancel.clone(), db.clone());
+    let third = std::thread::spawn(move || reader.read_long("brief-third", &flag, count_labels));
+    until("the third long read waits", || async {
+        activity.waiting() == 1
+    })
+    .await;
+    cancel.cancel();
+    let stopped = within("a cancelled long read must return", move || {
+        third.join().unwrap()
+    });
+    assert!(
+        matches!(&stopped, Err(DbError::ReadCancelled { operation }) if operation == "brief-third"),
+        "a long read stops at its flag, got {stopped:?}"
+    );
+    assert_eq!(activity.waiting(), 0);
+
+    held.into_iter().for_each(HeldRead::release);
+    runtime.shutdown().await;
+}
+
+/// A closure may not reach back into the database it is running on. A
+/// pooled read inside a write closure is refused, and so are a write,
+/// another pooled read and `db::block_on` inside a read closure. Each is
+/// refused at once: the request pool here has one connection, which the
+/// outer read holds.
+#[test]
+fn closures_may_not_reach_back_into_the_database() {
+    let opener = runtime_with_clock();
+    let (runtime, _dir) = opener.block_on(read_runtime("read-nesting", 1, Duration::from_secs(1)));
+    let db = runtime.db();
+    let handle = opener.handle();
+    let never = CancelFlag::never();
+
+    let in_write = db
+        .write_blocking(Lane::Foreground, "brief-write", |tx| {
+            insert_label(tx, "row")?;
+            Ok([
+                db.read_blocking("brief-read", count_labels),
+                db.read_long("brief-long", &never, count_labels),
+            ])
+        })
+        .unwrap();
+    for refused in in_write {
+        assert!(
+            matches!(refused, Err(DbError::ReadInsideWrite { .. })),
+            "a pooled read inside a write closure is refused, got {refused:?}"
+        );
+    }
+
+    let (write, reads, wait) = db
+        .read_blocking("brief-outer", |_| -> Result<_, DbError> {
+            Ok((
+                db.write_blocking(Lane::Foreground, "brief-nested-write", |tx| {
+                    insert_label(tx, "nested")
+                }),
+                [
+                    db.read_blocking("brief-nested-read", count_labels),
+                    db.read_long("brief-nested-long", &never, count_labels),
+                ],
+                block_on(handle, "brief-nested-wait", async {}),
+            ))
+        })
+        .unwrap();
+    assert!(
+        matches!(&write, Err(DbError::InsideRead { operation }) if operation == "brief-nested-write"),
+        "a write inside a read closure is refused, got {write:?}"
+    );
+    for refused in reads {
+        assert!(
+            matches!(refused, Err(DbError::InsideRead { .. })),
+            "a pooled read inside a read closure is refused, got {refused:?}"
+        );
+    }
+    assert!(
+        matches!(&wait, Err(DbError::InsideRead { operation }) if operation == "brief-nested-wait"),
+        "a wait inside a read closure is refused, got {wait:?}"
+    );
+    assert_eq!(db.read_blocking("brief-count", count_labels).unwrap(), 1);
+    opener.block_on(runtime.shutdown());
+}
+
+/// A read whose closure panics gives its connection back, and one whose
+/// closure leaves a transaction of its own open does not hand it on:
+/// afterwards every connection of the pool sees the current state.
+#[tokio::test]
+async fn failed_read_closure_leaves_its_connection_clean() {
+    let (runtime, _dir) = read_runtime("read-panic", 7, PATIENT).await;
+    let db = runtime.db();
+    let panicked = db
+        .read("brief-panic", |connection| -> Result<i64, DbError> {
+            count_labels(connection)?;
+            panic!("brief: an async read closure panics")
+        })
+        .await;
+    assert!(
+        matches!(&panicked, Err(DbError::ReadPanicked { operation }) if operation == "brief-panic"),
+        "an async caller gets a typed error, got {panicked:?}"
+    );
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        db.read_blocking(
+            "brief-panic-blocking",
+            |connection| -> Result<i64, DbError> {
+                count_labels(connection)?;
+                panic!("brief: a blocking read closure panics")
+            },
+        )
+    }));
+    assert!(unwound.is_err(), "a blocking caller's panic is its own");
+    db.read_blocking(
+        "brief-own-transaction",
+        |connection| -> Result<i64, DbError> {
+            connection.execute_batch("COMMIT; BEGIN")?;
+            count_labels(connection)
+        },
+    )
+    .unwrap();
+    assert_eq!(runtime.read_activity().out(), 0);
+
+    db.write(Lane::Foreground, "brief-row", |tx| insert_label(tx, "row"))
+        .await
+        .unwrap();
+    let held = hold_reads(db, false, 7, |connection| count_labels(connection).unwrap());
+    let seen: Vec<i64> = held.into_iter().map(HeldRead::release).collect();
+    assert_eq!(seen, vec![1; 7]);
+    runtime.shutdown().await;
+}
+
+/// A runtime dropped with one read running and two queued shuts down, and
+/// the pool then serves a reader on another thread.
+#[test]
+fn read_pool_outlives_a_runtime_dropped_with_reads_in_it() {
+    let opener = runtime_with_clock();
+    let (runtime, _dir) = opener.block_on(read_runtime("read-runtime-dropped", 1, PATIENT));
+    let db = runtime.db();
+    let activity = runtime.read_activity();
+
+    let first = runtime_with_clock();
+    let let_go = first.block_on(async {
+        let (held, inside, let_go) = hold();
+        let running = db.clone();
+        tokio::spawn(async move {
+            let _ = running
+                .read("brief-running", move |connection| {
+                    held.wait();
+                    count_labels(connection)
+                })
+                .await;
+        });
+        inside.await.unwrap();
+        for _ in 0..2 {
+            let queued = db.clone();
+            tokio::spawn(async move {
+                let _ = queued.read("brief-queued", count_labels).await;
+            });
+        }
+        until("two reads wait behind the running one", || async {
+            activity.waiting() == 2
+        })
+        .await;
+        let_go
+    });
+
+    let (down_tx, down) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        drop(first);
+        let _ = down_tx.send(());
+    });
+    // A runtime waits for a blocking closure it has started, so the running
+    // read is let go. The two queued ones go down with the runtime.
+    let_go.send(()).unwrap();
+    down.recv_timeout(Duration::from_secs(10))
+        .expect("the runtime must shut down with reads in the pool");
+
+    let reader = db.clone();
+    let seen = within("a blocking read must get a connection", move || {
+        reader.read_blocking("brief-after", count_labels)
+    });
+    assert_eq!(seen.unwrap(), 0);
+    assert_eq!((activity.out(), activity.waiting()), (0, 0));
+    opener.block_on(runtime.shutdown());
+}
+
+/// The `TRUNCATE` reclaim holds back while a pooled read is open, on either
+/// pool, and runs once the reads have ended.
+#[tokio::test]
+async fn truncate_gate_waits_for_pooled_reads() {
+    let (runtime, _dir) = read_runtime("read-gate", 7, PATIENT).await;
+    let db = runtime.db();
+    db.write(Lane::Foreground, "brief-row", |tx| insert_label(tx, "row"))
+        .await
+        .unwrap();
+    let passive = runtime.checkpoint().run_once();
+    assert_eq!(passive.active_bytes, 0);
+
+    let probe = |connection: &rusqlite::Connection| count_labels(connection).unwrap();
+    let request = hold_reads(db, false, 1, probe).remove(0);
+    let long = hold_reads(db, true, 1, probe).remove(0);
+    let gate = || runtime.checkpoint().maybe_truncate(Instant::now());
+    assert!(gate().is_none(), "an open request read holds the reclaim");
+    request.release();
+    assert!(gate().is_none(), "an open long read holds the reclaim");
+    long.release();
+    let reclaimed = gate().expect("the reclaim runs once the reads have ended");
+    assert_eq!(reclaimed.mode, CheckpointMode::Truncate);
+    assert_eq!(file_len(&sidecar(runtime.path(), "-wal")), Some(0));
+    runtime.shutdown().await;
+}
+
+/// A clean shutdown after reads on both pools leaves no `-wal` or `-shm`,
+/// and a handle that outlives it is refused.
+#[tokio::test]
+async fn shutdown_after_pooled_reads_leaves_no_wal() {
+    let (runtime, _dir) = read_runtime("read-shutdown", 7, PATIENT).await;
+    let path = runtime.path().to_owned();
+    let db = runtime.db().clone();
+    db.write(Lane::Foreground, "brief-row", |tx| insert_label(tx, "row"))
+        .await
+        .unwrap();
+    assert_eq!(db.read("brief-read", count_labels).await.unwrap(), 1);
+    assert_eq!(db.read_blocking("brief-blocking", count_labels).unwrap(), 1);
+    let long = db.read_long("brief-long", &CancelFlag::never(), count_labels);
+    assert_eq!(long.unwrap(), 1);
+
+    runtime.shutdown().await;
+    assert_eq!(file_len(&sidecar(&path, "-wal")), None);
+    assert_eq!(file_len(&sidecar(&path, "-shm")), None);
+    let late = db.read_blocking("brief-late", count_labels);
+    assert!(
+        matches!(late, Err(DbError::LaneClosed)),
+        "a read after shutdown is refused, got {late:?}"
+    );
 }
