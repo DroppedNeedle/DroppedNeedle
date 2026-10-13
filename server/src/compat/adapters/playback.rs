@@ -21,7 +21,7 @@ use crate::playback::models::{
     NowPlayingHeartbeat, ScrobbleNowPlayingRequest, ScrobbleSubmitRequest,
 };
 use crate::playback::services::{
-    PlaybackDeps, clear_presence, forward_sink_now_playing, heartbeat, normalize_client,
+    PlaybackDeps, clear_presence, compat_heartbeat, forward_sink_now_playing, normalize_client,
     submit_scrobble,
 };
 
@@ -56,7 +56,7 @@ impl CompatPlayback {
         let Some(track) = self.deps.catalog.get_track(file_id) else {
             return;
         };
-        heartbeat(
+        compat_heartbeat(
             &self.deps,
             user_id,
             &NowPlayingHeartbeat {
@@ -70,6 +70,7 @@ impl CompatPlayback {
                 progress_ms: None,
                 duration_ms: Some(track.duration_ms).filter(|duration| *duration > 0),
             },
+            &track.track_id,
         );
         let _ = forward_sink_now_playing(
             &self.deps,

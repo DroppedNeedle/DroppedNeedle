@@ -85,13 +85,26 @@ async fn symfonium_browse_stream_favorite_playlist_scrobble() {
     trace
         .get(&rest(&format!("getPlaylist?id={playlist_id}"), &auth), &[])
         .await;
-    for call in [
-        format!("scrobble?id={song}&submission=false"),
-        "getNowPlaying".to_owned(),
-        format!("scrobble?id={song}&submission=true"),
-    ] {
-        trace.get(&rest(&call, &auth), &[]).await;
-    }
+    trace
+        .get(
+            &rest(&format!("scrobble?id={song}&submission=false"), &auth),
+            &[],
+        )
+        .await;
+    let playing = trace.get(&rest("getNowPlaying", &auth), &[]).await;
+    let entries = playing["subsonic-response"]["nowPlaying"]["entry"]
+        .as_array()
+        .expect("now playing entries");
+    assert_eq!(entries.len(), 1, "{playing}");
+    assert_eq!(entries[0]["id"], json!(song));
+    assert_eq!(entries[0]["username"], json!("alice"));
+    assert_eq!(entries[0]["playerName"], json!("symfonium"));
+    trace
+        .get(
+            &rest(&format!("scrobble?id={song}&submission=true"), &auth),
+            &[],
+        )
+        .await;
 
     assert_golden("library_symfonium.trace.json", &trace.body());
     rig.stop().await;

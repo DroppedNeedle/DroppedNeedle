@@ -1313,6 +1313,26 @@ pub fn device_label(device: &str) -> String {
 
 /// Record a native heartbeat (v2 `POST /now-playing`).
 pub fn heartbeat(deps: &PlaybackDeps, user_id: &str, request: &NowPlayingHeartbeat) {
+    write_heartbeat(deps, user_id, request, None);
+}
+
+/// Record a compat now-playing report for a catalog track. The track id is
+/// kept so `getNowPlaying` can list the entry.
+pub fn compat_heartbeat(
+    deps: &PlaybackDeps,
+    user_id: &str,
+    request: &NowPlayingHeartbeat,
+    track_file_id: &str,
+) {
+    write_heartbeat(deps, user_id, request, Some(track_file_id.to_owned()));
+}
+
+fn write_heartbeat(
+    deps: &PlaybackDeps,
+    user_id: &str,
+    request: &NowPlayingHeartbeat,
+    track_file_id: Option<String>,
+) {
     let now = deps.clock.now_unix();
     let user_name = deps.names.display_name(user_id);
     deps.presence.update(
@@ -1329,7 +1349,7 @@ pub fn heartbeat(deps: &PlaybackDeps, user_id: &str, request: &NowPlayingHeartbe
             is_paused: request.is_paused,
             progress_ms: request.progress_ms,
             duration_ms: request.duration_ms,
-            track_file_id: None,
+            track_file_id,
         },
         now,
         |owner| deps.prefs.visibility(owner),
