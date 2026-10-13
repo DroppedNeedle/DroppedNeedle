@@ -23356,6 +23356,13 @@ export interface operations {
                     "application/json": components["schemas"]["SpotifyAuthUrlResponse"];
                 };
             };
+            /** @description Spotify is not set up, or no Redirect Origin is set and the request names no address to build one from */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     get_spotify_job: {
@@ -23445,6 +23452,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["SpotifyRedirectUri"];
                 };
+            };
+            /** @description No Redirect Origin is set and the request names no address to build one from */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

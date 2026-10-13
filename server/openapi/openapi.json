@@ -266,6 +266,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Spotify is not set up, or no Redirect Origin is set and the request names no address to build one from"
           }
         }
       }
@@ -382,6 +385,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "No Redirect Origin is set and the request names no address to build one from"
           }
         }
       }

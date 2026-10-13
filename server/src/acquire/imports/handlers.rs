@@ -14,15 +14,14 @@
 use std::sync::Arc;
 
 use crate::auth::session::extract::Transport;
-use crate::auth::session::middleware::CurrentSession;
+use crate::auth::session::middleware::{CurrentSession, TrustedProxies, effective_origin};
 use crate::auth::users::UsersDeps;
 use crate::auth::users::roles::{AuthContext, Role};
 use crate::auth::users::stores::StoreError as UserStoreError;
 use crate::ids::IdGenerator;
 use axum::{
     Json,
-    extract::{FromRequestParts, Path, State},
-    http::HeaderMap,
+    extract::{FromRequestParts, Path, Request, State},
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
     routing::{delete, get, post},
@@ -91,6 +90,8 @@ pub struct ImportsDeps {
     pub ids: Arc<dyn IdGenerator>,
     /// Deployment base path (between origin and callback, exactly once).
     pub base_path: String,
+    /// Reverse proxies whose forwarded headers name this server's address.
+    pub trusted_proxies: TrustedProxies,
 }
 
 impl ImportsDeps {
@@ -404,40 +405,62 @@ pub async fn put_spotify_settings(
 
 /// The computed OAuth redirect URI (v2 admin display endpoint).
 #[utoipa::path(get, path = "/api/v3/acquire/spotify/redirect-uri",
-    responses((status = 200, description = "OAuth redirect URI", body = SpotifyRedirectUri)))]
+    responses(
+        (status = 200, description = "OAuth redirect URI", body = SpotifyRedirectUri),
+        (status = 400, description = "No Redirect Origin is set and the request names no address to build one from"),
+    ))]
 pub async fn get_spotify_redirect_uri(
     State(deps): State<ImportsDeps>,
     ImportsAdmin(_): ImportsAdmin,
-    headers: HeaderMap,
-) -> Json<SpotifyRedirectUri> {
-    Json(SpotifyRedirectUri {
-        redirect_uri: callback_uri(&deps, &headers),
-    })
+    request: Request,
+) -> Result<Json<SpotifyRedirectUri>, ImportsError> {
+    Ok(Json(SpotifyRedirectUri {
+        redirect_uri: callback_uri(&deps, &request)?,
+    }))
 }
+
+/// What a caller reads when the callback address cannot be built.
+const NO_CALLBACK_ADDRESS: &str = "DroppedNeedle could not work out its own address for the \
+     Spotify link. An admin needs to fill in Redirect Origin under Settings > Spotify.";
 
 /// The redirect URI this server sends Spotify: the v2 callback path for an
 /// app the v2 import carried (its dashboard lists that path), else the v3
-/// one.
-fn callback_uri(deps: &ImportsDeps, headers: &HeaderMap) -> String {
+/// one. Without a configured origin it is built on the address the session
+/// origin check works out for this request, so forwarded headers count
+/// only from a trusted proxy. A request that names no address is refused
+/// instead of guessed at.
+fn callback_uri(deps: &ImportsDeps, request: &Request) -> Result<String, ImportsError> {
     let path = if deps.spotify_settings.legacy_callback() {
         SPOTIFY_LEGACY_CALLBACK_PATH
     } else {
         SPOTIFY_CALLBACK_PATH
     };
-    let origin = deps.spotify_settings.get_raw().spotify_redirect_origin;
-    redirect_uri(path, &origin, &request_base(headers), &deps.base_path)
+    let configured = deps.spotify_settings.get_raw().spotify_redirect_origin;
+    let base = if configured.trim().is_empty() {
+        effective_origin(request, &deps.trusted_proxies)
+            .map(|origin| origin.serialized())
+            .ok_or_else(|| ImportsError::InvalidInput {
+                message: NO_CALLBACK_ADDRESS.to_owned(),
+            })?
+    } else {
+        String::new()
+    };
+    Ok(redirect_uri(path, &configured, &base, &deps.base_path))
 }
 
 /// Authorize URL for the caller's Spotify link flow. Requires the admin
 /// app to be enabled and complete (v2 400 text kept).
 #[utoipa::path(get, path = "/api/v3/acquire/spotify/auth/url",
-    responses((status = 200, description = "Authorize URL", body = SpotifyAuthUrlResponse)))]
+    responses(
+        (status = 200, description = "Authorize URL", body = SpotifyAuthUrlResponse),
+        (status = 400, description = "Spotify is not set up, or no Redirect Origin is set and the request names no address to build one from"),
+    ))]
 pub async fn get_spotify_auth_url(
     State(deps): State<ImportsDeps>,
     ImportsUser(ctx): ImportsUser,
-    headers: HeaderMap,
+    request: Request,
 ) -> Result<Json<SpotifyAuthUrlResponse>, ImportsError> {
-    let uri = callback_uri(&deps, &headers);
+    let uri = callback_uri(&deps, &request)?;
     let state = fresh_state(&deps);
     let response = deps
         .spotify_service()
@@ -730,17 +753,6 @@ pub async fn get_sabnzbd_status(
     ImportsAdmin(_): ImportsAdmin,
 ) -> Json<SabnzbdStatusResponse> {
     Json(super::health::sabnzbd_status(deps.probes.sabnzbd.as_ref()))
-}
-
-/// Request-derived base URL for the redirect-URI fallback (v2
-/// `request.base_url`): plain `http` over the Host header. Deployments
-/// behind untrusted proxies set the configured origin instead (GH-298).
-fn request_base(headers: &HeaderMap) -> String {
-    let host = headers
-        .get(axum::http::header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("localhost");
-    format!("http://{host}")
 }
 
 /// Fresh OAuth state token: 32 random bytes, base64url, unpadded (v2

@@ -151,6 +151,7 @@ fn rig_for(rig: &TestRig, lidarr_base: &str, api_base: &str, accounts_base: &str
         auth: rig.deps.clone(),
         ids: Arc::new(FixedIdGenerator),
         base_path: String::new(),
+        trusted_proxies: Default::default(),
     };
     Rig {
         deps,
@@ -679,6 +680,105 @@ async fn spotify_settings_round_trip_and_reject_bad_origin() {
         body["redirect_uri"],
         "http://app.test/api/v3/acquire/spotify/auth/callback"
     );
+}
+
+/// A GET as a reverse proxy at `peer` would forward it: the browser asked
+/// for `https://music.example`, the proxy reached the server as `app.test`.
+fn forwarded_get(path: &str, peer: &str) -> Request<Body> {
+    let peer: std::net::SocketAddr = peer.parse().expect("peer parses");
+    Request::get(path)
+        .header("host", "app.test")
+        .header("x-forwarded-proto", "https")
+        .header("x-forwarded-host", "music.example")
+        .extension(axum::extract::ConnectInfo(peer))
+        .body(Body::empty())
+        .expect("request builds")
+}
+
+/// The callback address the admin page shows and the one the authorize
+/// link carries, which must be the same.
+async fn callback_addresses(deps: &ImportsDeps, admin_id: &str, peer: &str) -> String {
+    let (status, shown) = request_json(
+        authed_app(deps.clone(), admin_id),
+        forwarded_get("/acquire/spotify/redirect-uri", peer),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let shown = shown["redirect_uri"].as_str().expect("address").to_owned();
+    let (status, link) = request_json(
+        authed_app(deps.clone(), admin_id),
+        forwarded_get("/acquire/spotify/auth/url", peer),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let encoded = shown.replace(':', "%3A").replace('/', "%2F");
+    let link = link["auth_url"].as_str().expect("auth url");
+    assert!(
+        link.contains(&format!("redirect_uri={encoded}&")),
+        "authorize names another address than {shown}: {link}"
+    );
+    shown
+}
+
+/// The callback address follows the address the browser used, as a trusted
+/// proxy reports it. Forwarded headers from anyone else count for nothing.
+#[tokio::test]
+async fn spotify_callback_address_follows_a_trusted_proxy_only() {
+    const TRUSTED: &str = "127.0.0.1:4000";
+    const STRANGER: &str = "203.0.113.9:4000";
+    let (rig, admin_id, _) = seed_rig().await;
+    let (lidarr, _) = serve_lidarr().await.expect("mock serves");
+    let (api, accounts, _, _) = serve_spotify().await.expect("mock serves");
+    let bundle = rig_for(&rig, &lidarr.base_url, &api.base_url, &accounts.base_url);
+    seed_spotify_app(bundle.deps.clone(), &admin_id).await;
+
+    assert_eq!(
+        callback_addresses(&bundle.deps, &admin_id, TRUSTED).await,
+        "https://music.example/api/v3/acquire/spotify/auth/callback"
+    );
+    assert_eq!(
+        callback_addresses(&bundle.deps, &admin_id, STRANGER).await,
+        "http://app.test/api/v3/acquire/spotify/auth/callback"
+    );
+
+    let mut mounted = bundle.deps.clone();
+    mounted.base_path = "/needle".to_owned();
+    assert_eq!(
+        callback_addresses(&mounted, &admin_id, TRUSTED).await,
+        "https://music.example/needle/api/v3/acquire/spotify/auth/callback"
+    );
+
+    // No address to work out: an honest 400 that names the field, no guess.
+    for path in ["/acquire/spotify/redirect-uri", "/acquire/spotify/auth/url"] {
+        let (status, body) = request_json(
+            authed_app(bundle.deps.clone(), &admin_id),
+            Request::get(path).body(Body::empty()).expect("builds"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
+        assert_eq!(body["error"]["code"], "INVALID_INPUT");
+        let message = body["error"]["message"].as_str().unwrap_or("");
+        assert!(message.contains("Redirect Origin"), "saw {message}");
+    }
+
+    let (status, _) = put_json(
+        authed_app(bundle.deps.clone(), &admin_id),
+        "/acquire/spotify/settings",
+        json!({
+            "client_id": "test-client",
+            "client_secret": "spotify****",
+            "enabled": true,
+            "spotify_redirect_origin": "https://stated.example",
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    for peer in [TRUSTED, STRANGER] {
+        assert_eq!(
+            callback_addresses(&bundle.deps, &admin_id, peer).await,
+            "https://stated.example/api/v3/acquire/spotify/auth/callback"
+        );
+    }
 }
 
 #[tokio::test]

@@ -30,8 +30,18 @@
 
 	let showSecret = $state(false);
 
-	onMount(async () => {
-		form.load();
+	// The server builds the address from the request when no origin is saved,
+	// so behind a proxy it does not know about it can name the wrong one.
+	const addressIsElsewhere = $derived.by(() => {
+		if (!redirectUri || form.data?.spotify_redirect_origin.trim()) return false;
+		try {
+			return new URL(redirectUri).origin !== window.location.origin;
+		} catch {
+			return false;
+		}
+	});
+
+	async function loadRedirectUri() {
 		try {
 			const data = await api.global.v3.GET(SPOTIFY_ENDPOINTS.redirectUri());
 			redirectUri = data.redirect_uri;
@@ -41,6 +51,15 @@
 				window.location.origin
 			).toString();
 		}
+	}
+
+	async function save() {
+		if (await form.save()) await loadRedirectUri();
+	}
+
+	onMount(() => {
+		form.load();
+		void loadRedirectUri();
 	});
 	onDestroy(() => form.cleanup());
 </script>
@@ -143,8 +162,11 @@
 					autocomplete="off"
 				/>
 				<p class="mt-1 text-xs text-base-content/50">
-					Origin (no path) used to build the redirect URI below. Leave empty to derive it from the
-					incoming request address - set this when a reverse proxy makes that resolve to localhost.
+					Leave this empty and DroppedNeedle uses the address it works out for itself. That is right
+					when you reach it directly, or through a reverse proxy that is listed in
+					<code>TRUSTED_PROXY_IPS</code> and sends <code>X-Forwarded-Proto</code>. Fill it in (no
+					path) when the redirect URI below does not start with the address in your browser's
+					address bar.
 				</p>
 			</label>
 
@@ -175,6 +197,11 @@
 						{/if}
 					</button>
 				</div>
+				{#if addressIsElsewhere}
+					<p class="mt-2 text-xs text-warning">
+						This is not the address you are on. Put {window.location.origin} in Redirect Origin and save.
+					</p>
+				{/if}
 			</div>
 
 			<a
@@ -200,7 +227,7 @@
 				<button
 					type="button"
 					class="btn btn-primary glow-primary-soft gap-2 rounded-full"
-					onclick={() => void form.save()}
+					onclick={() => void save()}
 					disabled={form.saving}
 				>
 					{#if form.saving}

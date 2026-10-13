@@ -748,6 +748,7 @@ impl AcquireSetup {
             auth: users.clone(),
             ids: ids.clone(),
             base_path: config.base_path.clone(),
+            trusted_proxies: config.trusted_proxies.clone(),
         };
 
         let landing_store = config_store.clone();
@@ -998,6 +999,7 @@ impl AcquireSetup {
             auth: users.clone(),
             ids: ids.clone(),
             base_path: String::new(),
+            trusted_proxies: Default::default(),
         };
         let held_dir = db
             .path()
