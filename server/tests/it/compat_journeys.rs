@@ -940,8 +940,7 @@ async fn media_path_auth_lockout_blocks_brute_force() {
 /// Tripwire: no committed fixture may contain the fixture credential.
 #[test]
 fn blessed_fixtures_carry_no_credentials() {
-    for entry in std::fs::read_dir(fixtures_dir()).expect("fixtures list") {
-        let path = entry.expect("entry").path();
+    for path in fixture_files(&fixtures_dir()) {
         let text = std::fs::read_to_string(&path).expect("fixture reads");
         assert!(
             !text.contains(ALICE_SECRET),
@@ -949,4 +948,18 @@ fn blessed_fixtures_carry_no_credentials() {
             path.display()
         );
     }
+}
+
+/// Every file under `dir`, at any depth.
+fn fixture_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir).expect("fixtures list") {
+        let path = entry.expect("entry").path();
+        if path.is_dir() {
+            files.extend(fixture_files(&path));
+        } else {
+            files.push(path);
+        }
+    }
+    files
 }
