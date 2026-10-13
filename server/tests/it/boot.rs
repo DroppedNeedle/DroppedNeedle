@@ -594,6 +594,78 @@ async fn a_stated_public_address_is_the_only_thing_that_widens_the_origin_check(
     running.shut_down().await;
 }
 
+/// An admin who can only reach the app through the proxy states the address
+/// from the host, with the server stopped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn public_address_set_from_the_host_is_honoured_at_the_next_boot() {
+    use droppedneedle::tooling::host_settings::{
+        HostSettingsError, public_address as stored, set_public_address,
+    };
+    const PAGE: &str = "https://music.test";
+    let dir = scratch("public-address-host");
+    let config = config_in(&dir);
+    let dirs = droppedneedle::tooling::upgrade::DataDirs::from_config(&config);
+    let config_file = config.config_file.clone();
+    let typed = || vec!["HTTPS://Music.Test:443/".to_owned()];
+
+    let (router, background) = build(config.clone()).await.unwrap();
+    let running = start(router.clone(), background).await;
+    let cookie = admin_cookie(running.address).await;
+    let (code, _) = save_as_browser(&router, PROXY, &cookie, PAGE, &[], any_save()).await;
+    assert_eq!(code, 403);
+    // A running server holds the settings in memory: refused, nothing read
+    // or written.
+    let before = std::fs::read(&config_file).unwrap();
+    assert!(matches!(
+        set_public_address(&dirs, typed()),
+        Err(HostSettingsError::ServerRunning(_))
+    ));
+    assert!(matches!(
+        stored(&dirs),
+        Err(HostSettingsError::ServerRunning(_))
+    ));
+    assert_eq!(std::fs::read(&config_file).unwrap(), before);
+    drop(router);
+    running.shut_down().await;
+
+    let before = std::fs::read(&config_file).unwrap();
+    let refused = set_public_address(&dirs, vec!["https://music.test/music".to_owned()])
+        .expect_err("a path is refused");
+    assert!(
+        matches!(refused, HostSettingsError::Refused(_))
+            && refused.to_string().contains("\"https://music.test/music\""),
+        "{refused}"
+    );
+    assert_eq!(std::fs::read(&config_file).unwrap(), before);
+    assert_eq!(stored(&dirs).unwrap(), Vec::<String>::new());
+
+    assert_eq!(set_public_address(&dirs, typed()).unwrap(), [PAGE]);
+    assert_eq!(stored(&dirs).unwrap(), [PAGE]);
+
+    let (router, background) = build(config.clone()).await.unwrap();
+    let running = start(router.clone(), background).await;
+    let (code, body) = save_as_browser(&router, PROXY, &cookie, PAGE, &[], any_save()).await;
+    assert_eq!(code, 200, "{body}");
+    let (code, _) = save_as_browser(
+        &router,
+        PROXY,
+        &cookie,
+        "https://music.test:8443",
+        &[],
+        any_save(),
+    )
+    .await;
+    assert_eq!(code, 403);
+    drop(router);
+    running.shut_down().await;
+
+    assert_eq!(
+        set_public_address(&dirs, Vec::new()).unwrap(),
+        Vec::<String>::new()
+    );
+    assert_eq!(stored(&dirs).unwrap(), Vec::<String>::new());
+}
+
 async fn set_up(address: SocketAddr) -> reqwest::StatusCode {
     reqwest::Client::new()
         .post(format!("http://{address}/api/v3/auth/setup"))

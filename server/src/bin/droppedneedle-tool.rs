@@ -1,5 +1,5 @@
 //! Offline tooling: upgrade, export, validate, import, dry-run, restore,
-//! recovery-code.
+//! recovery-code, public-address.
 //!
 //! Thin operator surface over the migration engines:
 //! [`upgrade`](droppedneedle::tooling::upgrade) turns a v2 data directory
@@ -10,6 +10,8 @@
 //! [`recovery-code`](droppedneedle::tooling::recovery_code) lets a
 //! locked-out admin reset a password; its stdout is the code and nothing
 //! else.
+//! [`public-address`](droppedneedle::tooling::host_settings) states the
+//! address the web UI is opened at, for an admin whose saves are refused.
 //! Everything is file plus SQLite; nothing here touches the network.
 //!
 //! The operator passphrase never travels as a CLI argument: it comes from
@@ -33,6 +35,7 @@ use droppedneedle::export::{ExportRequest, export_v2_to_file};
 use droppedneedle::r#import::ExitCode;
 use droppedneedle::runtime_config::Secret;
 use droppedneedle::tooling::datalock::DataLock;
+use droppedneedle::tooling::host_settings;
 use droppedneedle::tooling::recovery_code;
 use droppedneedle::tooling::upgrade::{
     self, DataDirs, Layout, OfflineImport, Step, Summary, UpgradeError, UpgradeRequest, Upgraded,
@@ -56,6 +59,8 @@ Usage:
   droppedneedle-tool restore --backup <file> --target-dir <dir> [--allow-downgrade]
   droppedneedle-tool recovery-code [--] <username>
   droppedneedle-tool recovery-code --list-admins
+  droppedneedle-tool public-address <address>...
+  droppedneedle-tool public-address --show | --clear
 
 upgrade turns the v2 data in the server's config and cache folders into
 v3 data, in place. Stop the server first. The v2 files are kept in a
@@ -72,6 +77,34 @@ together. Import and dry-run print exactly one JSON report to stdout.
 
 recovery-code prints a one-time password recovery code for an account.
 droppedneedle-tool recovery-code --help says how to use it.
+
+public-address states the address the web UI is opened at, for when every
+save is answered \"Origin not allowed\".
+droppedneedle-tool public-address --help says how to use it.
+";
+
+/// Help for `public-address`, printed without touching the data directory.
+const PUBLIC_ADDRESS_HELP: &str = "\
+Usage:
+  droppedneedle-tool public-address <address>...
+  droppedneedle-tool public-address --show
+  droppedneedle-tool public-address --clear
+
+States the address the web UI is opened at, for when a reverse proxy leaves
+the server with the wrong idea of its own address and every save is
+answered \"Origin not allowed\". It is the Public address setting on the
+Security tab, for an admin who cannot save it there. Stop the server first,
+run it, then start the server.
+
+<address> is what the browser's address bar shows, up to the host and port:
+https://music.example.com or http://192.168.1.5:8688. No path, not even the
+base path. Give up to eight; together they replace the saved list. Only list
+addresses at which this DroppedNeedle opens: a page at a listed address can
+make changes as whoever is signed in.
+
+--show prints the saved list, one address a line. --clear empties it.
+
+It finds the data the way upgrade does.
 ";
 
 /// Help for `recovery-code`, printed without touching the data directory.
@@ -113,6 +146,7 @@ fn main() {
         "dry-run" => run_import_cmd(&args[1..], true),
         "restore" => run_restore(&args[1..]),
         "recovery-code" => run_recovery_code(&args[1..]),
+        "public-address" => run_public_address(&args[1..]),
         "help" | "--help" | "-h" => {
             println!("{USAGE}");
             return;
@@ -691,6 +725,52 @@ fn run_list_admins() -> Result<(), String> {
     }
     for name in names {
         println!("{name}");
+    }
+    Ok(())
+}
+
+/// `public-address <address>...`, `public-address --show` or
+/// `public-address --clear`. The saved list is the only thing on stdout.
+fn run_public_address(args: &[String]) -> Result<(), String> {
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let dirs = match args.as_slice() {
+        ["-h" | "--help"] => {
+            println!("{PUBLIC_ADDRESS_HELP}");
+            return Ok(());
+        }
+        [] => {
+            return Err(format!(
+                "public-address needs an address\n{PUBLIC_ADDRESS_HELP}"
+            ));
+        }
+        _ => data_dirs()?,
+    };
+    let saved = match args.as_slice() {
+        ["--show"] => host_settings::public_address(&dirs),
+        ["--clear"] => host_settings::set_public_address(&dirs, Vec::new()),
+        addresses => {
+            if let Some(flag) = addresses.iter().find(|arg| arg.starts_with('-')) {
+                return Err(format!("unknown flag {flag:?}\n{PUBLIC_ADDRESS_HELP}"));
+            }
+            let addresses = addresses
+                .iter()
+                .map(|&address| address.to_owned())
+                .collect();
+            host_settings::set_public_address(&dirs, addresses)
+        }
+    }
+    .map_err(|error| error.to_string())?;
+    for address in &saved {
+        println!("{address}");
+    }
+    match (args.as_slice(), saved.is_empty()) {
+        (["--show"], true) => eprintln!("No public address is saved."),
+        (["--show"], false) => {}
+        (_, true) => eprintln!("Cleared. Start the server."),
+        (_, false) => eprintln!(
+            "Saved. Start the server: changes made from a page at one of these addresses are \
+             now accepted."
+        ),
     }
     Ok(())
 }

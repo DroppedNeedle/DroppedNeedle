@@ -13,6 +13,8 @@
 //!   the tool's `import` and `dry-run` commands run.
 //! - [`recovery_code`] issues a password recovery code from the host, for
 //!   an admin who cannot sign in.
+//! - [`host_settings`] changes a setting from the host, for an admin whose
+//!   saves the web UI refuses.
 //! - [`restore`] wraps the backup mechanism as an offline restore command.
 //!   There is no HTTP route for restore, on purpose.
 //! - [`covers_debug`] serves the covers-debug shape on a dev-only
@@ -26,6 +28,7 @@ pub mod covers_debug;
 pub mod datalock;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fixture;
+pub mod host_settings;
 pub mod recovery_code;
 pub mod restore;
 #[cfg(any(test, feature = "test-support"))]
