@@ -51,11 +51,19 @@ impl Db {
     /// statement; put statements in one closure only when they must agree.
     ///
     /// The read waits for a connection as a future, in arrival order with
-    /// every other request read, and is answered `Busy` after 5 s. The
-    /// closure runs on a blocking thread. Dropped while it waits, the read
-    /// loses its place; dropped after the closure started, the closure
+    /// every other request read, and is answered `Busy` after 5 s. That
+    /// answer comes from a thread the database runtime owns: on a handle
+    /// that has outlived its runtime without a shutdown, a waiting read
+    /// waits for a connection with no limit. Dropped while it waits, the
+    /// read loses its place; dropped after the closure started, the closure
     /// finishes and its result is discarded. A closure that panics answers
     /// `ReadPanicked`.
+    ///
+    /// The closure runs on the tokio runtime's blocking pool. So a runtime
+    /// that is being dropped waits for a read closure that has started, as
+    /// for any `spawn_blocking`, and one that never returns holds that drop
+    /// until it does. Reads still queued, or granted a connection and not
+    /// yet started, go down with the runtime and their connections pass on.
     ///
     /// Inside the closure, call nothing on `Db` and wait on nothing: a
     /// write, another read and [`super::block_on`] are each refused with
@@ -85,7 +93,9 @@ impl Db {
 
     /// A read that may run long (a scan window, an export), on the long
     /// pool. Waits for a connection for as long as it takes, checking
-    /// `cancel`, and answers `ReadCancelled` once the flag trips. The
+    /// `cancel`, and answers `ReadCancelled` once the flag trips. A read
+    /// that is handed a connection in the instant its flag trips still runs
+    /// once, so the closure checks the flag itself if that matters. The
     /// closure collects what it needs and returns: an open read keeps the
     /// WAL from shrinking, so it never waits on anything a writer feeds.
     pub fn read_long<R, E, F>(&self, name: &'static str, cancel: &CancelFlag, op: F) -> Result<R, E>

@@ -94,9 +94,10 @@ impl Drop for Inside {
 ///
 /// Refused on a thread that is inside a write closure, on any database: the
 /// lane would be held for as long as the wait lasts. Do the wait first and
-/// write what it returned. Refused inside a read closure too, where a
-/// connection and its snapshot would be held across the wait. Like `Handle::block_on`, this is for a blocking
-/// thread and panics on a thread that is driving async tasks.
+/// write what it returned. Refused inside a read closure too, on any
+/// database, where a connection and its snapshot would be held across the
+/// wait. Like `Handle::block_on`, this is for a blocking thread and panics
+/// on a thread that is driving async tasks.
 pub fn block_on<T>(
     handle: &Handle,
     what: &'static str,

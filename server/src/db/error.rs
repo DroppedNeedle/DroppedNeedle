@@ -80,10 +80,11 @@ pub enum DbError {
         /// Name of the refused read. Never SQL text or a path.
         operation: String,
     },
-    /// A write, another pooled read or a wait on a future was issued from
-    /// inside a read closure, which holds a connection and pins the WAL for
-    /// as long as it runs. Refused at once.
-    #[error("{operation} was issued inside a read closure on the same database")]
+    /// A write or another pooled read on the same database, or a wait on a
+    /// future, was issued from inside a read closure, which holds a
+    /// connection and pins the WAL for as long as it runs. Refused at once.
+    /// The wait is refused inside a read closure on any database.
+    #[error("{operation} was issued inside a read closure")]
     InsideRead {
         /// Name of the refused call. Never SQL text, a host or a path.
         operation: String,
