@@ -58,8 +58,8 @@ pub enum CheckpointMode {
 /// One recorded checkpoint pass. `active_bytes` counts uncheckpointed frames
 /// times the page size; `wal_file_bytes` is the `-wal` allocation on disk,
 /// which may hold dead frames the next `TRUNCATE` reclaims. A `busy` pass
-/// with `active_bytes == -1` carried no frame evidence and never
-/// moves the progress baseline.
+/// with `active_bytes == -1` lost a lock, carried no frame evidence and
+/// never moves the progress baseline or the hold.
 #[derive(Debug, Clone, Serialize)]
 pub struct CheckpointOutcome {
     /// Wall-clock time of the pass.
@@ -350,7 +350,7 @@ impl CheckpointService {
             CheckpointMode::Passive => "PRAGMA wal_checkpoint(PASSIVE)",
             CheckpointMode::Truncate => "PRAGMA wal_checkpoint(TRUNCATE)",
         };
-        let outcome = self.checkpoint_once(pragma, mode, at, started);
+        let outcome = self.checkpoint_once(pragma, mode, at, started, relief);
         macro_rules! recorded {
             ($level:ident) => {
                 tracing::$level!(
@@ -392,6 +392,7 @@ impl CheckpointService {
         mode: CheckpointMode,
         at: SystemTime,
         started: Instant,
+        relief: bool,
     ) -> CheckpointOutcome {
         let connection = match rusqlite::Connection::open_with_flags(
             &self.db_path,
@@ -433,10 +434,19 @@ impl CheckpointService {
                     row.get::<_, i64>(2)?,
                 ))
             }) {
+                // A pass that cannot take the checkpoint lock, because the
+                // writer's auto-checkpoint or another pass has it, is not an
+                // error: SQLite answers with the row (1, -1, -1). Verified
+                // against SQLite 3.46.0. It measured nothing, so it must not
+                // reach the policy as a WAL with no frames in it.
+                Ok((busy, log, checkpointed)) if busy != 0 && (log < 0 || checkpointed < 0) => {
+                    log_lost_lock(relief);
+                    (true, 0, 0, false)
+                }
                 Ok((busy, log, checkpointed)) => (busy != 0, log, checkpointed, true),
                 Err(error) => {
                     if super::error::rusqlite_is_busy(&error) {
-                        tracing::warn!("WAL checkpoint busy while a lock is held");
+                        log_lost_lock(relief);
                         (true, 0, 0, false)
                     } else {
                         tracing::error!("WAL checkpoint failed with a non-lock error");
@@ -541,6 +551,16 @@ impl CheckpointService {
         if let Ok(mut guard) = self.latest.try_write() {
             *guard = Some(outcome);
         }
+    }
+}
+
+/// A pass that lost a lock is worth a warning from the 30 s loop. From the
+/// relief thread, which tries again within a second, it is not.
+fn log_lost_lock(relief: bool) {
+    if relief {
+        tracing::debug!("WAL checkpoint busy while a lock is held");
+    } else {
+        tracing::warn!("WAL checkpoint busy while a lock is held");
     }
 }
 

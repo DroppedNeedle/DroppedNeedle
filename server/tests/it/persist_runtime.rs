@@ -1791,14 +1791,10 @@ fn held_bulk_write_lets_every_other_class_past_until_shutdown() {
     );
 }
 
-/// Under the runtime the app opens, with the checkpoint loop on its 30 s
-/// cadence: once a pinned reader has let the WAL grow past the high water, a
-/// bulk write waits while a job heartbeat and a request's write commit. When
-/// the reader lets go the bulk write commits within seconds, long before the
-/// loop's next pass.
-#[tokio::test]
-async fn full_wal_holds_bulk_writes_only_until_it_can_shrink() {
-    let dir = scratch_dir("wal-hold");
+/// A runtime that holds bulk writes at 64 KiB of WAL and checks every
+/// 20 ms, so a brief fills the WAL with kilobytes and waits milliseconds.
+async fn small_wal_runtime(name: &str) -> (DbRuntime, ScratchDir) {
+    let dir = scratch_dir(name);
     let db = dir.join("library.db");
     common::migrated_db(&db);
     let config = DbConfig::new(&db)
@@ -1807,7 +1803,60 @@ async fn full_wal_holds_bulk_writes_only_until_it_can_shrink() {
             watch_tick: Duration::from_millis(20),
             ..LaneLimits::default()
         });
-    let runtime = open_runtime(&config).await.unwrap();
+    (open_runtime(&config).await.unwrap(), dir)
+}
+
+/// Pin the WAL with a reader, write past the high water behind it and let
+/// the checkpoint service see it, which puts the hold on. The WAL cannot
+/// shrink until the reader that is returned is dropped.
+async fn fill_wal_behind_a_reader(runtime: &DbRuntime) -> rusqlite::Connection {
+    let lane = runtime.lane();
+    lane.write(Lane::Foreground, "brief-tables", |tx| {
+        tx.execute_batch(
+            "CREATE TABLE scratch_turns (label TEXT); CREATE TABLE scratch_fill (payload TEXT);",
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let reader = rusqlite::Connection::open_with_flags(
+        runtime.path(),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    reader.execute_batch("BEGIN").unwrap();
+    let pinned: i64 = reader
+        .query_row("SELECT count(*) FROM scratch_fill", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(pinned, 0);
+    lane.write(Lane::Background, "brief-fill", |tx| {
+        let payload = "x".repeat(1024);
+        for _ in 0..256 {
+            tx.execute("INSERT INTO scratch_fill (payload) VALUES (?1)", [&payload])?;
+        }
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let service = runtime.checkpoint().clone();
+    let full = tokio::task::spawn_blocking(move || service.run_once())
+        .await
+        .unwrap();
+    assert!(
+        full.suspended,
+        "a WAL past the high water holds bulk writes, got {full:?}"
+    );
+    reader
+}
+
+/// Under the runtime the app opens, with the checkpoint loop on its 30 s
+/// cadence: once a pinned reader has let the WAL grow past the high water, a
+/// bulk write waits while a job heartbeat and a request's write commit. When
+/// the reader lets go the bulk write commits within seconds, long before the
+/// loop's next pass.
+#[tokio::test]
+async fn full_wal_holds_bulk_writes_only_until_it_can_shrink() {
+    let (runtime, _dir) = small_wal_runtime("wal-hold").await;
     let lane = runtime.lane().clone();
     let registry = JobRegistry::new(DurableRegistryStore::new(
         runtime.wakeups().clone(),
@@ -1831,40 +1880,8 @@ async fn full_wal_holds_bulk_writes_only_until_it_can_shrink() {
             .is_some_and(|job| job.last_heartbeat_at.is_some())
     })
     .await;
-
-    lane.write(Lane::Foreground, "brief-tables", |tx| {
-        tx.execute_batch(
-            "CREATE TABLE scratch_turns (label TEXT); CREATE TABLE scratch_fill (payload TEXT);",
-        )?;
-        Ok(())
-    })
-    .await
-    .unwrap();
-    let reader =
-        rusqlite::Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .unwrap();
-    reader.execute_batch("BEGIN").unwrap();
-    let pinned: i64 = reader
-        .query_row("SELECT count(*) FROM scratch_fill", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(pinned, 0);
-    lane.write(Lane::Background, "brief-fill", |tx| {
-        let payload = "x".repeat(1024);
-        for _ in 0..256 {
-            tx.execute("INSERT INTO scratch_fill (payload) VALUES (?1)", [&payload])?;
-        }
-        Ok(())
-    })
-    .await
-    .unwrap();
-    let service = runtime.checkpoint().clone();
-    let full = tokio::task::spawn_blocking(move || service.run_once())
-        .await
-        .unwrap();
-    assert!(
-        full.suspended,
-        "a WAL past the high water holds bulk writes, got {full:?}"
-    );
+    let reader = fill_wal_behind_a_reader(&runtime).await;
+    let full = runtime.checkpoint().latest().await.unwrap();
 
     let mut bulk = Box::pin(lane.write(Lane::Bulk, "brief-bulk", |tx| insert_label(tx, "bulk")));
     std::future::poll_fn(|cx| {
@@ -1910,6 +1927,53 @@ async fn full_wal_holds_bulk_writes_only_until_it_can_shrink() {
         .unwrap();
     assert_eq!(labels(&lane), ["request", "bulk"]);
     registry.cancel_all(Duration::from_secs(5)).await;
+    runtime.shutdown().await;
+}
+
+/// A checkpoint pass that loses the checkpoint lock to another checkpoint
+/// learns nothing about the WAL. It leaves the hold on: the reader still
+/// pins a WAL that is past the high water.
+#[tokio::test]
+async fn checkpoint_pass_that_loses_the_lock_leaves_the_hold_on() {
+    let (runtime, _dir) = small_wal_runtime("wal-hold-busy").await;
+    let reader = fill_wal_behind_a_reader(&runtime).await;
+
+    // A blocking checkpoint that waits for the reader keeps the checkpoint
+    // lock for as long as it waits.
+    let db = runtime.path().to_owned();
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let connection = rusqlite::Connection::open(&db).unwrap();
+        connection.busy_timeout(Duration::from_secs(20)).unwrap();
+        let ran = connection.query_row("PRAGMA wal_checkpoint(RESTART)", [], |_row| Ok(()));
+        let _ = done.send(ran.is_ok());
+    });
+    let service = runtime.checkpoint().clone();
+    let lost = tokio::task::spawn_blocking(move || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let pass = service.run_relief();
+            if pass.busy {
+                return pass;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "a pass must lose the checkpoint lock, got {pass:?}"
+            );
+            std::thread::yield_now();
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(lost.active_bytes, -1, "nothing was measured: {lost:?}");
+    assert!(lost.suspended, "the hold stays on, got {lost:?}");
+    assert!(runtime.checkpoint().bulk_held());
+
+    drop(reader);
+    let checkpointed = finished
+        .recv_timeout(Duration::from_secs(20))
+        .expect("the blocking checkpoint ends once the reader is gone");
+    assert!(checkpointed);
     runtime.shutdown().await;
 }
 
