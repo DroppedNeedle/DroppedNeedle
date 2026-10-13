@@ -40,6 +40,10 @@ pub struct JellyfinUser {
     pub display_name: String,
     /// `user`, `trusted`, or `admin`.
     pub role: String,
+    /// When the app password that proved this user was last used, unix
+    /// seconds, as stored before this request. `None` before its first
+    /// recorded use.
+    pub last_used_at: Option<i64>,
 }
 
 /// Display name rule: display casing, else username, else display name.
@@ -130,6 +134,12 @@ pub fn extract_device(request: &JellyfinRequest) -> (Option<String>, Option<Stri
         find_quoted(header, "Device"),
         find_quoted(header, "DeviceId"),
     )
+}
+
+/// Extract `Version="..."`, the app's own version, from the media-browser
+/// header.
+pub fn extract_version(request: &JellyfinRequest) -> Option<String> {
+    find_quoted(media_browser_header(request), "Version")
 }
 
 /// Store failure. The router maps this to 500 with an empty body, never
@@ -264,11 +274,29 @@ pub struct SessionFacts {
     /// (`2026-09-28T12:00:00.123456+00:00`). The Jellyfin router formats
     /// it; this contract only pins the shape.
     pub last_activity: String,
+    /// The time of this sign-in as Jellyfin writes a date
+    /// (`2026-09-28T12:00:00.1234560Z`): the user's `LastLoginDate` and
+    /// `LastActivityDate`.
+    pub signed_in_at: String,
+    /// `Version` from the auth header, the app's own version.
+    pub application_version: Option<String>,
+    /// The caller's own address as the server resolved it, empty when it
+    /// could not. Never another caller's.
+    pub remote_end_point: String,
 }
+
+/// The date Jellyfin 10.10.6 sends for "never" (.NET's `DateTime.MinValue`).
+const NEVER: &str = "0001-01-01T00:00:00.0000000Z";
 
 /// Render the login echo: full non-null user object, the app password
 /// echoed verbatim as `AccessToken`, fresh `SessionInfo`. Key order and
 /// `None`-stripping match v2 (`msgspec` struct order, `None` dropped).
+///
+/// Every key Jellyfin 10.10.6 sends is here (checked against its recorded
+/// sign-in answer), each with what is true in this app: a permission is
+/// true only when the Jellyfin API here lets this user do it, and a key
+/// naming a part the app lacks (a sign-in provider, a cast receiver) is
+/// empty. The user object stays in step with `UserDto`.
 pub fn login_echo_json(user: &JellyfinUser, access_token: &str, session: &SessionFacts) -> String {
     let server_id = server_id();
     let name = effective_name(user);
@@ -281,8 +309,12 @@ pub fn login_echo_json(user: &JellyfinUser, access_token: &str, session: &Sessio
     push_bool(&mut out, false, "HasPassword", true);
     push_bool(&mut out, false, "HasConfiguredPassword", true);
     push_bool(&mut out, false, "HasConfiguredEasyPassword", false);
+    push_bool(&mut out, false, "EnableAutoLogin", false);
+    push_kv(&mut out, false, "LastLoginDate", &session.signed_in_at);
+    push_kv(&mut out, false, "LastActivityDate", &session.signed_in_at);
     out.push_str(",\"Configuration\":{");
     push_bool(&mut out, true, "PlayDefaultAudioTrack", true);
+    push_kv(&mut out, false, "SubtitleLanguagePreference", "");
     push_bool(&mut out, false, "DisplayMissingEpisodes", false);
     push_raw(&mut out, false, "GroupedFolders", "[]");
     push_kv(&mut out, false, "SubtitleMode", "Default");
@@ -295,6 +327,7 @@ pub fn login_echo_json(user: &JellyfinUser, access_token: &str, session: &Sessio
     push_bool(&mut out, false, "RememberAudioSelections", true);
     push_bool(&mut out, false, "RememberSubtitleSelections", true);
     push_bool(&mut out, false, "EnableNextEpisodeAutoPlay", true);
+    push_kv(&mut out, false, "CastReceiverId", "");
     out.push_str("},\"Policy\":{");
     push_bool(&mut out, true, "IsAdministrator", is_admin);
     push_bool(&mut out, false, "IsHidden", false);
@@ -327,6 +360,17 @@ pub fn login_echo_json(user: &JellyfinUser, access_token: &str, session: &Sessio
     push_raw(&mut out, false, "AllowedTags", "[]");
     push_raw(&mut out, false, "AccessSchedules", "[]");
     push_raw(&mut out, false, "BlockUnratedItems", "[]");
+    push_bool(&mut out, false, "EnableCollectionManagement", false);
+    push_bool(&mut out, false, "EnableSubtitleManagement", false);
+    push_bool(&mut out, false, "EnableLyricManagement", false);
+    push_bool(&mut out, false, "ForceRemoteSourceTranscoding", false);
+    push_raw(&mut out, false, "EnableContentDeletionFromFolders", "[]");
+    push_raw(&mut out, false, "LoginAttemptsBeforeLockout", "-1");
+    push_raw(&mut out, false, "MaxActiveSessions", "0");
+    push_raw(&mut out, false, "BlockedMediaFolders", "[]");
+    push_raw(&mut out, false, "BlockedChannels", "[]");
+    push_kv(&mut out, false, "AuthenticationProviderId", "");
+    push_kv(&mut out, false, "PasswordResetProviderId", "");
     out.push_str("}},");
     push_kv(&mut out, true, "AccessToken", access_token);
     out.push_str(",\"SessionInfo\":{");
@@ -351,6 +395,41 @@ pub fn login_echo_json(user: &JellyfinUser, access_token: &str, session: &Sessio
     push_bool(&mut out, false, "SupportsMediaControl", false);
     push_bool(&mut out, false, "HasCustomDeviceName", false);
     push_kv(&mut out, false, "ServerId", &server_id);
+    out.push_str(",\"PlayState\":{");
+    push_bool(&mut out, true, "CanSeek", false);
+    push_bool(&mut out, false, "IsPaused", false);
+    push_bool(&mut out, false, "IsMuted", false);
+    push_kv(&mut out, false, "RepeatMode", "RepeatNone");
+    push_kv(&mut out, false, "PlaybackOrder", "Default");
+    out.push('}');
+    push_raw(&mut out, false, "AdditionalUsers", "[]");
+    out.push_str(",\"Capabilities\":{");
+    push_raw(&mut out, true, "PlayableMediaTypes", "[]");
+    push_raw(&mut out, false, "SupportedCommands", "[]");
+    push_bool(&mut out, false, "SupportsMediaControl", false);
+    let has_device_id = session
+        .device_id
+        .as_deref()
+        .is_some_and(|id| !id.is_empty());
+    push_bool(
+        &mut out,
+        false,
+        "SupportsPersistentIdentifier",
+        has_device_id,
+    );
+    out.push('}');
+    push_kv(&mut out, false, "RemoteEndPoint", &session.remote_end_point);
+    push_raw(&mut out, false, "PlayableMediaTypes", "[]");
+    push_kv(&mut out, false, "LastPlaybackCheckIn", NEVER);
+    push_kv(
+        &mut out,
+        false,
+        "ApplicationVersion",
+        session.application_version.as_deref().unwrap_or(""),
+    );
+    push_raw(&mut out, false, "NowPlayingQueue", "[]");
+    push_raw(&mut out, false, "NowPlayingQueueFullItems", "[]");
+    push_raw(&mut out, false, "SupportedCommands", "[]");
     out.push_str("},");
     push_kv(&mut out, true, "ServerId", &server_id);
     out.push('}');

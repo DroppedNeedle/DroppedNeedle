@@ -182,5 +182,6 @@ fn jellyfin_user(user: &FakeCompatUser) -> JellyfinUser {
         username_display: Some(user.username_display.clone()),
         display_name: user.display_name.clone(),
         role: user.role.clone(),
+        last_used_at: None,
     }
 }

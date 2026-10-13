@@ -478,6 +478,7 @@ fn jellyfin_effective_name_treats_empty_as_absent() {
         username_display: Some(String::new()),
         display_name: "Alice Liddell".to_owned(),
         role: "user".to_owned(),
+        last_used_at: None,
     };
     assert_eq!(effective_name(&blank_display), "alice");
     let blank_both = JellyfinUser {
@@ -542,6 +543,7 @@ fn jellyfin_user() -> JellyfinUser {
         username_display: Some("Alice".to_owned()),
         display_name: "Alice Liddell".to_owned(),
         role: "admin".to_owned(),
+        last_used_at: None,
     }
 }
 
@@ -552,6 +554,9 @@ fn session_facts() -> SessionFacts {
         device_name: Some("Pixel".to_owned()),
         device_id: Some("dev-1".to_owned()),
         last_activity: "2026-09-28T12:00:00.123456+00:00".to_owned(),
+        signed_in_at: "2026-09-28T12:00:00.1234560Z".to_owned(),
+        application_version: Some("0.9.4".to_owned()),
+        remote_end_point: "203.0.113.7".to_owned(),
     }
 }
 
@@ -561,7 +566,7 @@ fn jellyfin_login_echo_golden() {
     let echo = login_echo_json(&jellyfin_user(), "pw-1", &session_facts());
     assert_eq!(
         echo,
-        "{\"User\":{\"Id\":\"user-7\",\"Name\":\"Alice\",\"ServerId\":\"2f54b621b8fde6d933fab26bd6378f85\",\"HasPassword\":true,\"HasConfiguredPassword\":true,\"HasConfiguredEasyPassword\":false,\"Configuration\":{\"PlayDefaultAudioTrack\":true,\"DisplayMissingEpisodes\":false,\"GroupedFolders\":[],\"SubtitleMode\":\"Default\",\"DisplayCollectionsView\":false,\"EnableLocalPassword\":false,\"OrderedViews\":[],\"LatestItemsExcludes\":[],\"MyMediaExcludes\":[],\"HidePlayedInLatest\":true,\"RememberAudioSelections\":true,\"RememberSubtitleSelections\":true,\"EnableNextEpisodeAutoPlay\":true},\"Policy\":{\"IsAdministrator\":true,\"IsHidden\":false,\"IsDisabled\":false,\"EnableAllFolders\":true,\"EnabledFolders\":[],\"EnableAllChannels\":true,\"EnabledChannels\":[],\"EnableAllDevices\":true,\"EnabledDevices\":[],\"EnableMediaPlayback\":true,\"EnableAudioPlaybackTranscoding\":true,\"EnableVideoPlaybackTranscoding\":true,\"EnablePlaybackRemuxing\":true,\"EnableContentDownloading\":true,\"EnableRemoteAccess\":true,\"EnableSyncTranscoding\":true,\"EnableUserPreferenceAccess\":true,\"EnableLiveTvAccess\":false,\"EnableLiveTvManagement\":false,\"EnableContentDeletion\":false,\"EnableMediaConversion\":false,\"EnablePublicSharing\":false,\"EnableRemoteControlOfOtherUsers\":false,\"EnableSharedDeviceControl\":false,\"InvalidLoginAttemptCount\":0,\"RemoteClientBitrateLimit\":0,\"SyncPlayAccess\":\"CreateAndJoinGroups\",\"BlockedTags\":[],\"AllowedTags\":[],\"AccessSchedules\":[],\"BlockUnratedItems\":[]}},\"AccessToken\":\"pw-1\",\"SessionInfo\":{\"Id\":\"0123456789abcdef0123456789abcdef\",\"UserId\":\"user-7\",\"UserName\":\"Alice\",\"LastActivityDate\":\"2026-09-28T12:00:00.123456+00:00\",\"Client\":\"Finamp\",\"DeviceName\":\"Pixel\",\"DeviceId\":\"dev-1\",\"IsActive\":true,\"SupportsRemoteControl\":false,\"SupportsMediaControl\":false,\"HasCustomDeviceName\":false,\"ServerId\":\"2f54b621b8fde6d933fab26bd6378f85\"},\"ServerId\":\"2f54b621b8fde6d933fab26bd6378f85\"}"
+        "{\"User\":{\"Id\":\"user-7\",\"Name\":\"Alice\",\"ServerId\":\"2f54b621b8fde6d933fab26bd6378f85\",\"HasPassword\":true,\"HasConfiguredPassword\":true,\"HasConfiguredEasyPassword\":false,\"EnableAutoLogin\":false,\"LastLoginDate\":\"2026-09-28T12:00:00.1234560Z\",\"LastActivityDate\":\"2026-09-28T12:00:00.1234560Z\",\"Configuration\":{\"PlayDefaultAudioTrack\":true,\"SubtitleLanguagePreference\":\"\",\"DisplayMissingEpisodes\":false,\"GroupedFolders\":[],\"SubtitleMode\":\"Default\",\"DisplayCollectionsView\":false,\"EnableLocalPassword\":false,\"OrderedViews\":[],\"LatestItemsExcludes\":[],\"MyMediaExcludes\":[],\"HidePlayedInLatest\":true,\"RememberAudioSelections\":true,\"RememberSubtitleSelections\":true,\"EnableNextEpisodeAutoPlay\":true,\"CastReceiverId\":\"\"},\"Policy\":{\"IsAdministrator\":true,\"IsHidden\":false,\"IsDisabled\":false,\"EnableAllFolders\":true,\"EnabledFolders\":[],\"EnableAllChannels\":true,\"EnabledChannels\":[],\"EnableAllDevices\":true,\"EnabledDevices\":[],\"EnableMediaPlayback\":true,\"EnableAudioPlaybackTranscoding\":true,\"EnableVideoPlaybackTranscoding\":true,\"EnablePlaybackRemuxing\":true,\"EnableContentDownloading\":true,\"EnableRemoteAccess\":true,\"EnableSyncTranscoding\":true,\"EnableUserPreferenceAccess\":true,\"EnableLiveTvAccess\":false,\"EnableLiveTvManagement\":false,\"EnableContentDeletion\":false,\"EnableMediaConversion\":false,\"EnablePublicSharing\":false,\"EnableRemoteControlOfOtherUsers\":false,\"EnableSharedDeviceControl\":false,\"InvalidLoginAttemptCount\":0,\"RemoteClientBitrateLimit\":0,\"SyncPlayAccess\":\"CreateAndJoinGroups\",\"BlockedTags\":[],\"AllowedTags\":[],\"AccessSchedules\":[],\"BlockUnratedItems\":[],\"EnableCollectionManagement\":false,\"EnableSubtitleManagement\":false,\"EnableLyricManagement\":false,\"ForceRemoteSourceTranscoding\":false,\"EnableContentDeletionFromFolders\":[],\"LoginAttemptsBeforeLockout\":-1,\"MaxActiveSessions\":0,\"BlockedMediaFolders\":[],\"BlockedChannels\":[],\"AuthenticationProviderId\":\"\",\"PasswordResetProviderId\":\"\"}},\"AccessToken\":\"pw-1\",\"SessionInfo\":{\"Id\":\"0123456789abcdef0123456789abcdef\",\"UserId\":\"user-7\",\"UserName\":\"Alice\",\"LastActivityDate\":\"2026-09-28T12:00:00.123456+00:00\",\"Client\":\"Finamp\",\"DeviceName\":\"Pixel\",\"DeviceId\":\"dev-1\",\"IsActive\":true,\"SupportsRemoteControl\":false,\"SupportsMediaControl\":false,\"HasCustomDeviceName\":false,\"ServerId\":\"2f54b621b8fde6d933fab26bd6378f85\",\"PlayState\":{\"CanSeek\":false,\"IsPaused\":false,\"IsMuted\":false,\"RepeatMode\":\"RepeatNone\",\"PlaybackOrder\":\"Default\"},\"AdditionalUsers\":[],\"Capabilities\":{\"PlayableMediaTypes\":[],\"SupportedCommands\":[],\"SupportsMediaControl\":false,\"SupportsPersistentIdentifier\":true},\"RemoteEndPoint\":\"203.0.113.7\",\"PlayableMediaTypes\":[],\"LastPlaybackCheckIn\":\"0001-01-01T00:00:00.0000000Z\",\"ApplicationVersion\":\"0.9.4\",\"NowPlayingQueue\":[],\"NowPlayingQueueFullItems\":[],\"SupportedCommands\":[]},\"ServerId\":\"2f54b621b8fde6d933fab26bd6378f85\"}"
     );
     let parsed: serde_json::Value = serde_json::from_str(&echo).unwrap();
     assert_eq!(parsed["AccessToken"], "pw-1");
@@ -578,6 +583,10 @@ fn jellyfin_login_echo_strips_missing_session_fields_and_echoes_verbatim() {
         device_name: None,
         device_id: None,
         last_activity: "t".to_owned(),
+        signed_in_at: "t".to_owned(),
+        // A version is the app's own text: it cannot break the answer.
+        application_version: Some("1\"}\\\n\u{1}".to_owned()),
+        remote_end_point: String::new(),
     };
     let echo = login_echo_json(&user, "a\"b\\c", &facts);
     assert!(echo.contains("\"IsAdministrator\":false"));
@@ -587,4 +596,10 @@ fn jellyfin_login_echo_strips_missing_session_fields_and_echoes_verbatim() {
     assert!(echo.contains("\"DeviceName\":\"\""));
     let parsed: serde_json::Value = serde_json::from_str(&echo).unwrap();
     assert_eq!(parsed["AccessToken"], "a\"b\\c");
+    let session = &parsed["SessionInfo"];
+    assert_eq!(session["ApplicationVersion"], "1\"}\\\n\u{1}");
+    assert_eq!(
+        session["Capabilities"]["SupportsPersistentIdentifier"],
+        false
+    );
 }

@@ -49,8 +49,8 @@ pub struct UserConfiguration {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_language_preference: Option<String>,
     pub play_default_audio_track: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub subtitle_language_preference: Option<String>,
+    /// Empty: no subtitle language is stored.
+    pub subtitle_language_preference: String,
     pub display_missing_episodes: bool,
     pub grouped_folders: Vec<String>,
     pub subtitle_mode: String,
@@ -63,6 +63,8 @@ pub struct UserConfiguration {
     pub remember_audio_selections: bool,
     pub remember_subtitle_selections: bool,
     pub enable_next_episode_auto_play: bool,
+    /// Empty: the app has no cast receiver.
+    pub cast_receiver_id: String,
 }
 
 impl Default for UserConfiguration {
@@ -70,7 +72,7 @@ impl Default for UserConfiguration {
         Self {
             audio_language_preference: None,
             play_default_audio_track: true,
-            subtitle_language_preference: None,
+            subtitle_language_preference: String::new(),
             display_missing_episodes: false,
             grouped_folders: Vec::new(),
             subtitle_mode: "Default".to_owned(),
@@ -83,6 +85,7 @@ impl Default for UserConfiguration {
             remember_audio_selections: true,
             remember_subtitle_selections: true,
             enable_next_episode_auto_play: true,
+            cast_receiver_id: String::new(),
         }
     }
 }
@@ -90,6 +93,10 @@ impl Default for UserConfiguration {
 /// User policy. `EnableAllFolders` must be true or strict clients (Manet)
 /// conclude "no libraries" and never call `/UserViews`; every bool must be
 /// present or Finamp's non-nullable casts crash login (v2 issues #144, #376).
+///
+/// A permission is true only when the Jellyfin API here lets the user do
+/// it. Nothing can be deleted through it, it has no collections, and it
+/// takes no lyrics or subtitles, so those are false for everyone.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct UserPolicy {
@@ -124,6 +131,22 @@ pub struct UserPolicy {
     pub allowed_tags: Vec<String>,
     pub access_schedules: Vec<String>,
     pub block_unrated_items: Vec<String>,
+    pub enable_collection_management: bool,
+    pub enable_subtitle_management: bool,
+    pub enable_lyric_management: bool,
+    pub force_remote_source_transcoding: bool,
+    pub enable_content_deletion_from_folders: Vec<String>,
+    /// -1, Jellyfin's "never": no number of failures disables an account
+    /// here. The back-off after failed sign-ins is per address and timed.
+    pub login_attempts_before_lockout: i32,
+    /// 0, Jellyfin's "no limit".
+    pub max_active_sessions: u32,
+    pub blocked_media_folders: Vec<String>,
+    pub blocked_channels: Vec<String>,
+    /// Empty, like the next: Jellyfin names a class of its own here and
+    /// the app has no such part.
+    pub authentication_provider_id: String,
+    pub password_reset_provider_id: String,
 }
 
 impl UserPolicy {
@@ -161,6 +184,17 @@ impl UserPolicy {
             allowed_tags: Vec::new(),
             access_schedules: Vec::new(),
             block_unrated_items: Vec::new(),
+            enable_collection_management: false,
+            enable_subtitle_management: false,
+            enable_lyric_management: false,
+            force_remote_source_transcoding: false,
+            enable_content_deletion_from_folders: Vec::new(),
+            login_attempts_before_lockout: -1,
+            max_active_sessions: 0,
+            blocked_media_folders: Vec::new(),
+            blocked_channels: Vec::new(),
+            authentication_provider_id: String::new(),
+            password_reset_provider_id: String::new(),
         }
     }
 }
@@ -179,6 +213,13 @@ pub struct UserDto {
     pub has_configured_password: bool,
     /// Deprecated upstream but still sent; Finamp requires it non-null.
     pub has_configured_easy_password: bool,
+    /// False: the app has no sign-in without a password.
+    pub enable_auto_login: bool,
+    /// When the app password behind this request was last used; at
+    /// sign-in, now.
+    pub last_login_date: String,
+    /// The time of this request.
+    pub last_activity_date: String,
     pub configuration: UserConfiguration,
     pub policy: UserPolicy,
 }

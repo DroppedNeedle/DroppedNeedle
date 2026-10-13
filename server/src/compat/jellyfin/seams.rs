@@ -71,6 +71,9 @@ pub struct Principal {
     pub name: String,
     pub role: String,
     pub token: String,
+    /// When the presented app password was last used before this request,
+    /// unix seconds.
+    pub last_used_at: Option<i64>,
 }
 
 impl Principal {
@@ -82,12 +85,17 @@ impl Principal {
             name: effective_name(user).to_owned(),
             role: user.role.clone(),
             token: token.to_owned(),
+            last_used_at: user.last_used_at,
         }
     }
 
     /// The full non-null user object strict clients hard-cast on (Finamp
-    /// #144/#376, Manet `EnableAllFolders`).
-    pub fn user_dto(&self, server_id: &str) -> UserDto {
+    /// #144/#376, Manet `EnableAllFolders`). `now` is the time of this
+    /// request in unix seconds. An app password with no recorded use is
+    /// being used for the first time by this request, so its last use is
+    /// `now` as well.
+    pub fn user_dto(&self, server_id: &str, now: f64) -> UserDto {
+        let last_used = self.last_used_at.map_or(now, |at| at as f64);
         UserDto {
             id: self.id.clone(),
             name: self.name.clone(),
@@ -95,6 +103,9 @@ impl Principal {
             has_password: true,
             has_configured_password: true,
             has_configured_easy_password: false,
+            enable_auto_login: false,
+            last_login_date: super::builders::iso_o(Some(last_used)),
+            last_activity_date: super::builders::iso_o(Some(now)),
             configuration: super::models::UserConfiguration::default(),
             policy: super::models::UserPolicy::permissive(self.role == "admin"),
         }

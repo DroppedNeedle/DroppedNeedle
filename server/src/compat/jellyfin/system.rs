@@ -2,8 +2,9 @@
 
 use crate::auth::compat_auth::jellyfin::{
     JellyfinPasswordStore, JellyfinRequest, SessionFacts, authenticate_by_name, extract_client,
-    extract_device, login_echo_json, server_id,
+    extract_device, extract_version, login_echo_json, server_id,
 };
+use crate::client_ip::ClientIp;
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{Request, StatusCode};
@@ -159,6 +160,14 @@ where
     };
     let client = extract_client(&probe);
     let (device_name, device_id) = extract_device(&probe);
+    let application_version = extract_version(&probe);
+    // The address the limits layer resolved for this request through the
+    // trusted-proxy rule: the caller's own, sent back only to the caller.
+    let remote_end_point = parts
+        .extensions
+        .get::<ClientIp>()
+        .map(|client| client.0.to_string())
+        .unwrap_or_default();
     let user = match authenticate_by_name(
         &state.passwords,
         &login.username,
@@ -180,8 +189,18 @@ where
         device_name,
         device_id,
         last_activity: builders::utc_now_iso(),
+        signed_in_at: builders::iso_o(Some(unix_now())),
+        application_version,
+        remote_end_point,
     };
     raw_json(StatusCode::OK, &login_echo_json(&user, &login.pw, &facts))
+}
+
+fn unix_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_secs_f64())
+        .unwrap_or(0.0)
 }
 
 pub(super) async fn users_me<S, L, E, P, I>(
@@ -201,7 +220,10 @@ where
     let query = request.uri().query().map(str::to_owned);
     let headers = request.headers().clone();
     match authed(&state.passwords, &headers, query.as_deref()).await {
-        Ok(authed) => json(StatusCode::OK, &authed.principal.user_dto(&server_id())),
+        Ok(authed) => json(
+            StatusCode::OK,
+            &authed.principal.user_dto(&server_id(), unix_now()),
+        ),
         Err(denied) => denied,
     }
 }

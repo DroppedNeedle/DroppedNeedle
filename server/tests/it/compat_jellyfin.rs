@@ -155,9 +155,16 @@ fn finamp(secret: &str) -> String {
     )
 }
 
-/// Exact-key-set JSON comparison; `__UUID__` and `__ISO_PY__` match by shape.
+/// Exact-key-set JSON comparison; `__UUID__`, `__ISO_PY__` and `__ISO_NET__`
+/// match by shape.
 fn assert_shape(actual: &Value, expected: &Value, path: &str) {
     match (actual, expected) {
+        (Value::String(got), Value::String(exp)) if exp == "__ISO_NET__" => {
+            // `2026-09-28T12:00:00.1234560Z`, as Jellyfin writes a date
+            let shape =
+                regex::Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z$").expect("regex");
+            assert!(shape.is_match(got), "{path}: {got} is not a Jellyfin date");
+        }
         (Value::String(got), Value::String(exp)) if exp == "__UUID__" => {
             assert!(
                 got.len() == 32 && got.bytes().all(|b| b.is_ascii_hexdigit()),
@@ -190,15 +197,19 @@ fn assert_shape(actual: &Value, expected: &Value, path: &str) {
 /// The user DTO every Jellyfin client parses at login; Finamp rejects the
 /// session when any of these keys is missing.
 fn expected_user(name: &str, id: &str, is_admin: bool) -> Value {
-    json!({
+    let mut user = json!({
         "Id": id,
         "Name": name,
         "ServerId": server_id(),
         "HasPassword": true,
         "HasConfiguredPassword": true,
         "HasConfiguredEasyPassword": false,
+        "EnableAutoLogin": false,
+        "LastLoginDate": "__ISO_NET__",
+        "LastActivityDate": "__ISO_NET__",
         "Configuration": {
             "PlayDefaultAudioTrack": true,
+            "SubtitleLanguagePreference": "",
             "DisplayMissingEpisodes": false,
             "GroupedFolders": [],
             "SubtitleMode": "Default",
@@ -211,41 +222,60 @@ fn expected_user(name: &str, id: &str, is_admin: bool) -> Value {
             "RememberAudioSelections": true,
             "RememberSubtitleSelections": true,
             "EnableNextEpisodeAutoPlay": true,
+            "CastReceiverId": "",
         },
-        "Policy": {
-            "IsAdministrator": is_admin,
-            "IsHidden": false,
-            "IsDisabled": false,
-            "EnableAllFolders": true,
-            "EnabledFolders": [],
-            "EnableAllChannels": true,
-            "EnabledChannels": [],
-            "EnableAllDevices": true,
-            "EnabledDevices": [],
-            "EnableMediaPlayback": true,
-            "EnableAudioPlaybackTranscoding": true,
-            "EnableVideoPlaybackTranscoding": true,
-            "EnablePlaybackRemuxing": true,
-            "EnableContentDownloading": true,
-            "EnableRemoteAccess": true,
-            "EnableSyncTranscoding": true,
-            "EnableUserPreferenceAccess": true,
-            "EnableLiveTvAccess": false,
-            "EnableLiveTvManagement": false,
-            "EnableContentDeletion": false,
-            "EnableMediaConversion": false,
-            "EnablePublicSharing": false,
-            "EnableRemoteControlOfOtherUsers": false,
-            "EnableSharedDeviceControl": false,
-            "InvalidLoginAttemptCount": 0,
-            "RemoteClientBitrateLimit": 0,
-            "SyncPlayAccess": "CreateAndJoinGroups",
-            "BlockedTags": [],
-            "AllowedTags": [],
-            "AccessSchedules": [],
-            "BlockUnratedItems": [],
-        },
-    })
+    });
+    user["Policy"] = json!({
+        "IsAdministrator": is_admin,
+        "IsHidden": false,
+        "IsDisabled": false,
+        "EnableAllFolders": true,
+        "EnabledFolders": [],
+        "EnableAllChannels": true,
+        "EnabledChannels": [],
+        "EnableAllDevices": true,
+        "EnabledDevices": [],
+        "EnableMediaPlayback": true,
+        "EnableAudioPlaybackTranscoding": true,
+        "EnableVideoPlaybackTranscoding": true,
+        "EnablePlaybackRemuxing": true,
+        "EnableContentDownloading": true,
+        "EnableRemoteAccess": true,
+        "EnableSyncTranscoding": true,
+        "EnableUserPreferenceAccess": true,
+        "EnableLiveTvAccess": false,
+        "EnableLiveTvManagement": false,
+        "EnableContentDeletion": false,
+        "EnableMediaConversion": false,
+        "EnablePublicSharing": false,
+        "EnableRemoteControlOfOtherUsers": false,
+        "EnableSharedDeviceControl": false,
+        "InvalidLoginAttemptCount": 0,
+        "RemoteClientBitrateLimit": 0,
+        "SyncPlayAccess": "CreateAndJoinGroups",
+        "BlockedTags": [],
+        "AllowedTags": [],
+        "AccessSchedules": [],
+        "BlockUnratedItems": [],
+    });
+    // In parts: one `json!` this long passes the macro's recursion limit.
+    let more = json!({
+        "EnableCollectionManagement": false,
+        "EnableSubtitleManagement": false,
+        "EnableLyricManagement": false,
+        "ForceRemoteSourceTranscoding": false,
+        "EnableContentDeletionFromFolders": [],
+        "LoginAttemptsBeforeLockout": -1,
+        "MaxActiveSessions": 0,
+        "BlockedMediaFolders": [],
+        "BlockedChannels": [],
+        "AuthenticationProviderId": "",
+        "PasswordResetProviderId": "",
+    });
+    for (key, value) in more.as_object().expect("object") {
+        user["Policy"][key] = value.clone();
+    }
+    user
 }
 
 #[tokio::test]
@@ -316,24 +346,54 @@ async fn login_echoes_the_app_password_and_users_me_matches() {
                 "SupportsMediaControl": false,
                 "HasCustomDeviceName": false,
                 "ServerId": server_id(),
+                "PlayState": {
+                    "CanSeek": false,
+                    "IsPaused": false,
+                    "IsMuted": false,
+                    "RepeatMode": "RepeatNone",
+                    "PlaybackOrder": "Default",
+                },
+                "AdditionalUsers": [],
+                "Capabilities": {
+                    "PlayableMediaTypes": [],
+                    "SupportedCommands": [],
+                    "SupportsMediaControl": false,
+                    "SupportsPersistentIdentifier": false,
+                },
+                "RemoteEndPoint": "",
+                "PlayableMediaTypes": [],
+                "LastPlaybackCheckIn": "0001-01-01T00:00:00.0000000Z",
+                "ApplicationVersion": "",
+                "NowPlayingQueue": [],
+                "NowPlayingQueueFullItems": [],
+                "SupportedCommands": [],
             },
             "ServerId": server_id(),
         }),
         "$",
     );
 
-    // Client and device facts from the header land in SessionInfo.
-    let header =
-        "MediaBrowser Client=\"Jellify\", Device=\"Pixel\", DeviceId=\"abc\", Token=\"unused\"";
+    // Client, device and version facts from the header land in SessionInfo.
+    let header = "MediaBrowser Client=\"Jellify\", Device=\"Pixel\", DeviceId=\"abc\", \
+                  Version=\"1.2.3\", Token=\"unused\"";
     let body = json!({"Username": "bob", "Pw": BOB}).to_string();
     let bob = fx
         .send("POST", login, Some(header), body.as_bytes())
         .await
         .json();
-    assert_eq!(bob["User"], expected_user("bob", "user-bob", true));
+    assert_shape(
+        &bob["User"],
+        &expected_user("bob", "user-bob", true),
+        "$.User",
+    );
     assert_eq!(bob["SessionInfo"]["Client"], "Jellify");
     assert_eq!(bob["SessionInfo"]["DeviceName"], "Pixel");
     assert_eq!(bob["SessionInfo"]["DeviceId"], "abc");
+    assert_eq!(bob["SessionInfo"]["ApplicationVersion"], "1.2.3");
+    assert_eq!(
+        bob["SessionInfo"]["Capabilities"]["SupportsPersistentIdentifier"],
+        true
+    );
 
     // Wrong app password and the account password both fail; no body is 400.
     for pw in ["nope", "alice-account-pw"] {
@@ -344,10 +404,14 @@ async fn login_echoes_the_app_password_and_users_me_matches() {
     assert_eq!(fx.send("POST", login, None, b"").await.status, 400);
 
     // `/Users/Me` and `/Users/{any id}` both return the caller, equal to
-    // the login echo's User.
+    // the login echo's User but for the two dates, which move.
     let auth = finamp(ALICE);
+    let mut signed_in = echo["User"].clone();
+    for date in ["LastLoginDate", "LastActivityDate"] {
+        signed_in[date] = json!("__ISO_NET__");
+    }
     for uri in ["/jellyfin/Users/Me", "/jellyfin/Users/someone-else"] {
-        assert_eq!(fx.json(uri, Some(&auth)).await, echo["User"], "{uri}");
+        assert_shape(&fx.json(uri, Some(&auth)).await, &signed_in, uri);
     }
 }
 

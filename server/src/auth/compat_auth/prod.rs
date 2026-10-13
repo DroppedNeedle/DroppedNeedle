@@ -44,13 +44,14 @@ impl ProdCompatPasswords {
         self.users.users.get_by_username(username_lower).await
     }
 
-    fn jellyfin_user(row: &UserRecord) -> JellyfinUser {
+    fn jellyfin_user(row: &UserRecord, last_used_at: Option<i64>) -> JellyfinUser {
         JellyfinUser {
             id: row.id.clone(),
             username: row.username.clone(),
             username_display: row.username_display.clone(),
             display_name: row.display_name.clone(),
             role: row.role.as_str().to_owned(),
+            last_used_at,
         }
     }
 
@@ -157,7 +158,9 @@ impl JellyfinPasswordStore for ProdCompatPasswords {
             .get_by_id(&secret.user_id)
             .await
             .map_err(|_| JellyfinStoreError)?;
-        Ok(user.as_ref().map(Self::jellyfin_user))
+        Ok(user
+            .as_ref()
+            .map(|user| Self::jellyfin_user(user, secret.last_used_at)))
     }
 
     async fn user_for_credentials(
@@ -186,7 +189,7 @@ impl JellyfinPasswordStore for ProdCompatPasswords {
         Ok(user
             .filter(|row| row.username.as_deref() == Some(wanted.as_str()))
             .as_ref()
-            .map(Self::jellyfin_user))
+            .map(|user| Self::jellyfin_user(user, secret.last_used_at)))
     }
 
     async fn note_use(&self, secret_plaintext: &str, client: Option<&str>) {
