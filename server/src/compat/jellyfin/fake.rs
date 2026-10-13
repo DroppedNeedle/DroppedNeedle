@@ -296,6 +296,9 @@ impl LibraryRead for FakeLibrary {
                                 || t.album_artist_mbid
                                     .as_ref()
                                     .is_some_and(|m| filter.album_artists.contains(m)))
+                            && filter
+                                .played
+                                .is_none_or(|played| (t.play_count > 0) == played)
                             && filter.search.as_deref().is_none_or(|needle| {
                                 matches(
                                     &[
@@ -325,15 +328,7 @@ impl LibraryRead for FakeLibrary {
                         &b.file_id,
                     ))
             }),
-            ItemSort::By(key, desc) => {
-                // History sorts page from play history: unplayed drop out.
-                if key == SortKey::DatePlayed {
-                    tracks.retain(|t| t.last_played.is_some());
-                } else if key == SortKey::PlayCount {
-                    tracks.retain(|t| t.play_count > 0);
-                }
-                sort_tracks(&mut tracks, key, desc);
-            }
+            ItemSort::By(key, desc) => sort_tracks(&mut tracks, key, desc),
         }
         slice(tracks, start, limit)
     }
@@ -398,11 +393,6 @@ impl LibraryRead for FakeLibrary {
             })
             .unwrap_or_default();
         if let ItemSort::By(key, desc) = sort {
-            if key == SortKey::DatePlayed {
-                albums.retain(|a| a.last_played.is_some());
-            } else if key == SortKey::PlayCount {
-                albums.retain(|a| a.play_count > 0);
-            }
             sort_albums(&mut albums, key, desc);
         }
         slice(albums, start, limit)

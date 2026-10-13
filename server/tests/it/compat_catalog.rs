@@ -175,7 +175,7 @@ async fn subsonic_and_jellyfin_read_the_scanned_library() {
             10,
         )
         .await;
-    assert_eq!((played.len(), total), (0, 0), "history sorts skip unplayed");
+    assert_eq!((played.len(), total), (1, 1), "history sorts keep unplayed");
 }
 
 /// One more streamable track on the seeded album, by Portishead.

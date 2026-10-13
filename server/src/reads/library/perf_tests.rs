@@ -1307,6 +1307,247 @@ async fn assert_hot_plans(pool: &SqlitePool) {
     );
 }
 
+/// Plays on the small fixture: `u1` has ties in both the last play (t2 and
+/// t4) and the play count (t1 and t6), a play of a track that is gone
+/// (t3), and `u2` has a play of its own.
+async fn seed_small_plays(fixture: &Fixture) {
+    let plays = [
+        ("u1", "t1", "al1", "2026-01-01T00:00:00+00:00"),
+        ("u1", "t1", "al1", "2026-01-02T00:00:00+00:00"),
+        ("u1", "t1", "al1", "2026-01-03T00:00:00+00:00"),
+        ("u1", "t2", "al1", "2026-01-05T00:00:00+00:00"),
+        ("u1", "t3", "al1", "2026-01-09T00:00:00+00:00"),
+        ("u1", "t4", "al2", "2026-01-05T00:00:00+00:00"),
+        ("u1", "t6", "al3", "2026-01-04T00:00:00+00:00"),
+        ("u1", "t6", "al3", "2026-01-04T01:00:00+00:00"),
+        ("u1", "t6", "al3", "2026-01-04T02:00:00+00:00"),
+        ("u2", "t8", "al5", "2026-01-08T00:00:00+00:00"),
+    ];
+    let mut sql = String::from(
+        "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+         track_name, artist_name, played_at) VALUES ",
+    );
+    for (index, (user, track, album, at)) in plays.iter().enumerate() {
+        if index > 0 {
+            sql.push_str(", ");
+        }
+        sql.push_str(&format!(
+            "('play-{index}', '{user}', '{track}', '{album}', 'x', 'x', '{at}')"
+        ));
+    }
+    write_batch(fixture, "small plays", sql).await;
+}
+
+/// A play-history order pages exactly as one sort of the whole catalog
+/// would, with the never played at zero: no row repeated or skipped
+/// across pages, ties in a fixed order, in both directions, for tracks
+/// and albums, for a user with plays and a user with none.
+#[tokio::test]
+async fn history_orders_page_like_one_sort() {
+    use library::player::{
+        AlbumOrder, AlbumQuery, OrderKey, PlayerCatalog, SqlitePlayerCatalog, TrackOrder,
+        TrackQuery,
+    };
+
+    let fixture = seed_small().await;
+    seed_small_plays(&fixture).await;
+    let player = SqlitePlayerCatalog::new(&LibraryDb::new(&fixture.pool));
+    for user in ["u1", "nobody"] {
+        for (key, aggregate) in [
+            (OrderKey::LastPlayed, "MAX(h.played_at)"),
+            (OrderKey::PlayCount, "COUNT(*)"),
+        ] {
+            for descending in [true, false] {
+                let direction = if descending { "DESC" } else { "ASC" };
+                let what = format!("{user} {key:?} {direction}");
+                let one_sort = |from: &str, column: &str| {
+                    format!(
+                        "SELECT r.id FROM {from} ORDER BY (SELECT {aggregate} \
+                         FROM library_play_history h WHERE h.user_id = '{user}' \
+                         AND h.{column} = r.id) {direction}, r.id {direction}"
+                    )
+                };
+                let expected: Vec<String> = sqlx::query_scalar(&one_sort(
+                    "local_tracks r WHERE r.availability = 'indexed'",
+                    "local_track_id",
+                ))
+                .fetch_all(&fixture.pool)
+                .await
+                .expect("tracks in one sort");
+                let query = TrackQuery {
+                    listener: Some(user.to_owned()),
+                    ..TrackQuery::default()
+                };
+                let mut paged = Vec::new();
+                for page in 0..4 {
+                    let (tracks, total) = player
+                        .tracks(&query, TrackOrder::By(key, descending), 2, page * 2)
+                        .await
+                        .expect("track page");
+                    assert_eq!(total, expected.len() as u64, "{what}");
+                    paged.extend(tracks.into_iter().map(|track| track.id));
+                }
+                assert_eq!(paged, expected, "tracks, {what}");
+
+                let expected: Vec<String> = sqlx::query_scalar(&one_sort(
+                    "local_albums r WHERE r.retired_into_album_id IS NULL AND EXISTS \
+                     (SELECT 1 FROM local_tracks t WHERE t.local_album_id = r.id \
+                      AND t.availability = 'indexed')",
+                    "local_album_id",
+                ))
+                .fetch_all(&fixture.pool)
+                .await
+                .expect("albums in one sort");
+                let query = AlbumQuery {
+                    listener: Some(user.to_owned()),
+                    ..AlbumQuery::default()
+                };
+                let mut paged = Vec::new();
+                for page in 0..3 {
+                    let (albums, total) = player
+                        .albums(&query, AlbumOrder::By(key, descending), 2, page * 2)
+                        .await
+                        .expect("album page");
+                    assert_eq!(total, expected.len() as u64, "{what}");
+                    paged.extend(albums.into_iter().map(|album| album.record.id));
+                }
+                assert_eq!(paged, expected, "albums, {what}");
+            }
+        }
+    }
+
+    // The played filter splits the catalog in two, and its totals agree.
+    let filtered = |played: bool| TrackQuery {
+        listener: Some("u1".to_owned()),
+        played: Some(played),
+        ..TrackQuery::default()
+    };
+    let (played, played_total) = player
+        .tracks(&filtered(true), TrackOrder::Title, 100, 0)
+        .await
+        .expect("played tracks");
+    let mut played: Vec<String> = played.into_iter().map(|track| track.id).collect();
+    played.sort();
+    assert_eq!(played, ["t1", "t2", "t4", "t6"]);
+    assert_eq!(played_total, 4);
+    let (unplayed, unplayed_total) = player
+        .tracks(&filtered(false), TrackOrder::Title, 100, 0)
+        .await
+        .expect("unplayed tracks");
+    let mut unplayed: Vec<String> = unplayed.into_iter().map(|track| track.id).collect();
+    unplayed.sort();
+    assert_eq!(unplayed, ["t7", "t8", "t9"]);
+    assert_eq!(unplayed_total, 3);
+}
+
+/// The played half of a play-history order reads the listener's plays
+/// through the per-user index and looks each row up by id. It never walks
+/// the catalog, whether the planner has statistics on the history table
+/// or not (a fresh install has none until the daily ANALYZE after the
+/// first plays).
+async fn assert_history_plans(pool: &SqlitePool, state: &str) {
+    use library::player::{
+        HISTORY_ALBUMS, HISTORY_TRACKS, history_played_sql, history_unplayed_sql,
+    };
+
+    for (rows, filters, catalog) in [
+        (&HISTORY_TRACKS, "+t.availability = 'indexed'", "t"),
+        (&HISTORY_ALBUMS, "+a.retired_into_album_id IS NULL", "a"),
+    ] {
+        for aggregate in ["MAX(h.played_at)", "COUNT(*)"] {
+            let sql = history_played_sql(rows, filters, aggregate, true);
+            let plan = explain(
+                pool,
+                &sql,
+                &[
+                    ExplainBind::Text(Some("u1")),
+                    ExplainBind::Int(100),
+                    ExplainBind::Int(0),
+                ],
+            )
+            .await;
+            let what = format!("{catalog} by {aggregate}, {state}: {plan:?}");
+            assert!(
+                plan.iter().any(|line| line.starts_with("SEARCH h USING")
+                    && line.contains("idx_target_history_user_played")),
+                "the played half reads the listener's plays by index: {what}"
+            );
+            assert!(
+                plan.iter()
+                    .any(|line| line.starts_with(&format!("SEARCH {catalog} USING"))),
+                "each played row is looked up by id: {what}"
+            );
+            assert!(
+                !plan.iter().any(|line| line.starts_with("SCAN ")),
+                "nothing is scanned: {what}"
+            );
+        }
+        // The unplayed half walks the ids and stops at the page: the
+        // listener's plays are one list built once, and nothing is sorted.
+        let sql = history_unplayed_sql(rows, filters, true);
+        let plan = explain(
+            pool,
+            &sql,
+            &[
+                ExplainBind::Text(Some("u1")),
+                ExplainBind::Int(100),
+                ExplainBind::Int(0),
+            ],
+        )
+        .await;
+        assert!(
+            !plan.iter().any(
+                |line| line.contains("TEMP B-TREE FOR ORDER BY") || line.contains("CORRELATED")
+            ),
+            "the unplayed half of {catalog} is neither sorted nor probed per row, \
+             {state}: {plan:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn history_plans_read_the_listeners_plays_first() {
+    let fixture = seed_small().await;
+    assert_history_plans(&fixture.pool, "no statistics").await;
+
+    // Statistics over a history shared by many listeners. A connection
+    // loads them when it opens, so the plans are read on a new one.
+    let mut plays = String::from(
+        "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+         track_name, artist_name, played_at) VALUES ",
+    );
+    for user in 0..200 {
+        for (index, (track, album)) in [("t1", "al1"), ("t4", "al2"), ("t6", "al3"), ("t8", "al5")]
+            .iter()
+            .enumerate()
+        {
+            if user + index > 0 {
+                plays.push_str(", ");
+            }
+            plays.push_str(&format!(
+                "('plan-{user}-{index}', 'u{user}', '{track}', '{album}', 'x', 'x', \
+                 '2026-01-01T00:00:{index:02}+00:00')"
+            ));
+        }
+    }
+    write_batch(&fixture, "plan plays", plays).await;
+    write_batch(&fixture, "plan statistics", "ANALYZE".to_owned()).await;
+    let path = fixture._dir.join("app.db");
+    let analyzed = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&format!("sqlite://{}", path.display()))
+        .await
+        .expect("a new connection opens");
+    let statistics: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl = 'library_play_history'")
+            .fetch_one(&analyzed)
+            .await
+            .expect("statistics read");
+    assert!(statistics > 0, "the history table has statistics");
+    assert_history_plans(&analyzed, "with statistics").await;
+    analyzed.close().await;
+}
+
 /// Seed 500 artists, 10,000 albums, and 100,000 tracks through the writer
 /// lane, so the FTS oracle and format totals populate exactly like
 /// production writes. Deterministic names; the miss query hits nothing.
@@ -1400,6 +1641,48 @@ async fn seed_100k(fixture: &Fixture) {
         credits.push(';');
         write_batch(fixture, "perf tracks", tracks).await;
         write_batch(fixture, "perf track credits", credits).await;
+    }
+}
+
+/// Plays over the 100k catalog: `p-u1` has played every 50th track one to
+/// three times (2,000 tracks), and twenty other listeners have a thousand
+/// plays each, so the history table is shared as a real one is.
+async fn seed_100k_plays(fixture: &Fixture) {
+    let mut rows = Vec::new();
+    for step in 0..2000 {
+        let track = step * 50;
+        for play in 0..=(step % 3) {
+            rows.push(("p-u1".to_owned(), track, step * 3 + play));
+        }
+    }
+    for user in 0..20 {
+        for step in 0..1000 {
+            rows.push((
+                format!("p-o{user:02}"),
+                (step * 97 + user * 13) % 100_000,
+                step,
+            ));
+        }
+    }
+    for (chunk_index, chunk) in rows.chunks(5000).enumerate() {
+        let mut sql = String::from(
+            "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+             track_name, artist_name, played_at) VALUES ",
+        );
+        for (index, (user, track, minute)) in chunk.iter().enumerate() {
+            if index > 0 {
+                sql.push_str(", ");
+            }
+            sql.push_str(&format!(
+                "('p-h{chunk_index}-{index}', '{user}', 'p-t{track:06}', 'p-al{:05}', 'x', 'x', \
+                 '2026-01-{:02}T{:02}:{:02}:00+00:00')",
+                track / 10,
+                minute / 1440 + 1,
+                (minute / 60) % 24,
+                minute % 60,
+            ));
+        }
+        write_batch(fixture, "perf plays", sql).await;
     }
 }
 
@@ -1561,6 +1844,7 @@ async fn perf_100k_player_pages_hold_p95() {
 
     let fixture = seed_small().await;
     seed_100k(&fixture).await;
+    seed_100k_plays(&fixture).await;
     // Production statistics: the maintenance ANALYZE, then the hot plans
     // must still walk their indexes.
     crate::db::AnalyzeService::new(fixture.runtime.lane().clone(), fixture.pool.clone())
@@ -1568,7 +1852,20 @@ async fn perf_100k_player_pages_hold_p95() {
         .await
         .expect("analyze runs");
     assert_hot_plans(&fixture.pool).await;
+    assert_history_plans(&fixture.pool, "100k with statistics").await;
     let player = SqlitePlayerCatalog::new(&LibraryDb::new(&fixture.pool));
+    let listener = TrackQuery {
+        listener: Some("p-u1".to_owned()),
+        ..TrackQuery::default()
+    };
+    let played = |played: bool| TrackQuery {
+        played: Some(played),
+        ..listener.clone()
+    };
+    let album_listener = AlbumQuery {
+        listener: Some("p-u1".to_owned()),
+        ..AlbumQuery::default()
+    };
     let miss = TrackQuery {
         q: Some("zzz-no-such-thing-zzz".to_owned()),
         ..TrackQuery::default()
@@ -1595,6 +1892,14 @@ async fn perf_100k_player_pages_hold_p95() {
         ("player_tracks_shuffle_page", 8),
         ("player_albums_shuffle_page_9000", 9),
         ("player_tracks_year_page", 10),
+        ("player_tracks_last_played", 11),
+        ("player_tracks_play_count", 12),
+        ("player_tracks_last_played_ascending", 13),
+        ("player_tracks_last_played_across_halves_1950", 14),
+        ("player_tracks_played_only", 15),
+        ("player_tracks_unplayed_only", 16),
+        ("player_albums_last_played", 17),
+        ("player_albums_play_count_across_halves_1950", 18),
     ] {
         let mut samples = Vec::new();
         for round in 0..53 {
@@ -1645,12 +1950,69 @@ async fn perf_100k_player_pages_hold_p95() {
                     .album_page(&AlbumQuery::default(), AlbumOrder::Shuffle(7), 50, 9_000)
                     .await
                     .map(|page| page.len()),
-                _ => player
+                10 => player
                     .tracks(
                         &TrackQuery::default(),
                         TrackOrder::By(OrderKey::Year, false),
                         100,
                         0,
+                    )
+                    .await
+                    .map(|page| page.0.len()),
+                11 => player
+                    .tracks(
+                        &listener,
+                        TrackOrder::By(OrderKey::LastPlayed, true),
+                        100,
+                        0,
+                    )
+                    .await
+                    .map(|page| page.0.len()),
+                12 => player
+                    .tracks(&listener, TrackOrder::By(OrderKey::PlayCount, true), 100, 0)
+                    .await
+                    .map(|page| page.0.len()),
+                13 => player
+                    .tracks(
+                        &listener,
+                        TrackOrder::By(OrderKey::LastPlayed, false),
+                        100,
+                        0,
+                    )
+                    .await
+                    .map(|page| page.0.len()),
+                14 => player
+                    .tracks(
+                        &listener,
+                        TrackOrder::By(OrderKey::LastPlayed, true),
+                        100,
+                        1_950,
+                    )
+                    .await
+                    .map(|page| page.0.len()),
+                15 => player
+                    .tracks(&played(true), TrackOrder::Title, 100, 0)
+                    .await
+                    .map(|page| page.0.len()),
+                16 => player
+                    .tracks(&played(false), TrackOrder::Title, 100, 0)
+                    .await
+                    .map(|page| page.0.len()),
+                17 => player
+                    .albums(
+                        &album_listener,
+                        AlbumOrder::By(OrderKey::LastPlayed, true),
+                        100,
+                        0,
+                    )
+                    .await
+                    .map(|page| page.0.len()),
+                _ => player
+                    .albums(
+                        &album_listener,
+                        AlbumOrder::By(OrderKey::PlayCount, true),
+                        100,
+                        1_950,
                     )
                     .await
                     .map(|page| page.0.len()),

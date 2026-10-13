@@ -1,7 +1,8 @@
 //! Playback reporting over the port fakes: the start, progress and stop
 //! lifecycle, the scrobble threshold rules, dedup across duplicate and
 //! mixed reports, presence visibility, the session gate, hidden faults,
-//! and the MBID warmup loop cadence.
+//! and the MBID warmup loop cadence. One journey runs the whole app on its
+//! own database: what a play from each kind of player leaves in history.
 
 use droppedneedle::playback;
 
@@ -32,6 +33,9 @@ use playback::services::{
 use playback::warmup::{ManualSleeper, WarmupRegistry, WarmupScope, run_warmup_loop};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
+
+use crate::common::TestApp;
+use crate::common::compat::{CompatApp, PLAYER, named, rest};
 
 /// Fixed id generator so error ids assert stably.
 #[derive(Debug, Clone)]
@@ -705,4 +709,241 @@ async fn a_scrobble_reaches_listenbrainz_once() {
         body["payload"][0]["track_metadata"]["release_name"],
         "Dummy"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Play history on the real database
+// ---------------------------------------------------------------------------
+
+/// The ids each of the user's plays of `title` is filed under: track,
+/// album, artist. An id that was not stored reads as empty.
+fn filed_under(app: &TestApp, user_id: &str, title: &str) -> Vec<(String, String, String)> {
+    let db = app.db();
+    let mut plays = db
+        .prepare(
+            "SELECT COALESCE(local_track_id, ''), COALESCE(local_album_id, ''), \
+             COALESCE(local_artist_id, '') FROM library_play_history \
+             WHERE user_id = ?1 AND track_name = ?2",
+        )
+        .expect("history query");
+    plays
+        .query_map([user_id, title], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .expect("history reads")
+        .collect::<Result<_, _>>()
+        .expect("history rows")
+}
+
+/// What the catalog holds for the track `title`: its id, its album and its
+/// first credited artist.
+fn catalog_ids(app: &TestApp, title: &str) -> (String, String, String) {
+    app.db()
+        .query_row(
+            "SELECT t.id, t.local_album_id, x.local_artist_id FROM local_tracks t \
+             JOIN local_track_artists x ON x.local_track_id = t.id AND x.position = 0 \
+             WHERE t.title = ?1",
+            [title],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("the track is in the catalog")
+}
+
+/// The titles a Jellyfin track list answers with.
+async fn jellyfin_titles(rig: &CompatApp, query: &str, auth: &[(&str, &str)]) -> Vec<String> {
+    let uri = format!("/jellyfin/Items?IncludeItemTypes=Audio&{query}");
+    let (status, body) = rig.app.call("GET", &uri, auth, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["Items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|item| item["Name"].as_str().expect("name").to_owned())
+        .collect()
+}
+
+/// A play from a Subsonic app, a Jellyfin app and the web player is each
+/// filed under the track, its album and its artist, for the listener
+/// alone. An app's now-playing entry carries the cover the web player's
+/// entry carries.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn plays_from_every_player_are_filed_under_the_track() {
+    const GROUP: &str = "744c0a9e-5a4e-3b0e-8f0f-6a1f1b2c3d4e";
+    let rig = CompatApp::start("playback-history").await;
+    let app = &rig.app;
+    let subsonic = rig.subsonic_auth("symfonium");
+    let jellyfin_value = rig.jellyfin_auth();
+    let jellyfin = [("X-Emby-Authorization", jellyfin_value.as_str())];
+    let (status, signed_in) = app
+        .call(
+            "POST",
+            "/api/v3/auth/login",
+            &[],
+            Some(json!({
+                "username": PLAYER,
+                "password": format!("{PLAYER}-password-1234"),
+                "transport": "bearer",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{signed_in}");
+    let web_value = format!("Bearer {}", signed_in["token"].as_str().expect("token"));
+    let web = [("authorization", web_value.as_str())];
+    let alice: String = app
+        .db()
+        .query_row(
+            "SELECT id FROM auth_users WHERE username = ?1",
+            [PLAYER],
+            |row| row.get(0),
+        )
+        .expect("the player's id");
+
+    let one = catalog_ids(app, "One");
+    let airbag = catalog_ids(app, "Airbag");
+    let teardrop = catalog_ids(app, "Teardrop");
+    // The album of "One" is matched to a release group; the others are not.
+    app.db()
+        .execute(
+            "INSERT INTO local_album_external_identities \
+             (local_album_id, release_group_mbid, decision_source, selected_at) \
+             VALUES (?1, ?2, 'manual', 1)",
+            [one.1.as_str(), GROUP],
+        )
+        .expect("the album is matched");
+
+    // Now playing: the app's entry and the web player's carry one cover.
+    let now_playing = rest(
+        &format!("scrobble?id=tr-{}&submission=false", one.0),
+        &subsonic,
+    );
+    let (status, body) = app.call("GET", &now_playing, &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/playback/start",
+            &web,
+            Some(json!({"track_id": one.0, "source": "local", "device": "web"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, feed) = app.call("GET", "/api/v3/now-playing", &web, None).await;
+    assert_eq!(status, StatusCode::OK, "{feed}");
+    let cover = |device: &str| {
+        let id = format!("{alice}:{device}");
+        named(&feed["sessions"], "id", &id)["cover_url"].clone()
+    };
+    assert_eq!(
+        cover("compat"),
+        json!(format!("/api/v3/covers/release-group/{GROUP}"))
+    );
+    assert_eq!(cover("compat"), cover("web"));
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/playback/stop",
+            &web,
+            Some(json!({
+                "track_id": one.0,
+                "source": "local",
+                "device": "web",
+                "ignore_scrobble": true,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // One play from each kind of player, each of another track.
+    let scrobble = rest(
+        &format!("scrobble?id=tr-{}&submission=true", one.0),
+        &subsonic,
+    );
+    let (status, body) = app.call("GET", &scrobble, &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let (_, listed) = app
+        .call(
+            "GET",
+            "/jellyfin/Items?IncludeItemTypes=Audio",
+            &jellyfin,
+            None,
+        )
+        .await;
+    let airbag_item = named(&listed["Items"], "Name", "Airbag")["Id"].clone();
+    let (status, _) = app
+        .call(
+            "POST",
+            "/jellyfin/Sessions/Playing/Stopped",
+            &jellyfin,
+            Some(json!({ "ItemId": airbag_item })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    for uri in ["/api/v3/playback/start", "/api/v3/playback/stop"] {
+        let body = json!({"track_id": teardrop.0, "source": "local", "device": "web"});
+        let (status, answer) = app.call("POST", uri, &web, Some(body)).await;
+        assert_eq!(status, StatusCode::OK, "{uri}: {answer}");
+    }
+
+    for (title, ids) in [("One", &one), ("Airbag", &airbag), ("Teardrop", &teardrop)] {
+        let plays = app
+            .until(&format!("the play of {title} is in history"), || async {
+                Some(filed_under(app, &alice, title)).filter(|plays| !plays.is_empty())
+            })
+            .await;
+        assert_eq!(plays, vec![ids.clone()], "{title}");
+    }
+
+    // Jellyfin narrows a track list by the listener's own plays.
+    let mut played = jellyfin_titles(&rig, "Filters=IsPlayed", &jellyfin).await;
+    played.sort();
+    assert_eq!(played, ["Airbag", "One", "Teardrop"]);
+    let unplayed = jellyfin_titles(&rig, "IsPlayed=false", &jellyfin).await;
+    assert_eq!(unplayed.len(), 3, "{unplayed:?}");
+    assert!(!unplayed.iter().any(|title| played.contains(title)));
+
+    // Another user has none of these plays.
+    let bob = app.login_user("bob").await;
+    let (status, created) = app
+        .call(
+            "POST",
+            "/api/v3/me/app-passwords",
+            &[("authorization", bob.authorization.as_str())],
+            Some(json!({"name": "Journey"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let bob_secret = created["secret"].as_str().expect("secret");
+    let bob_value = format!("MediaBrowser Client=\"Journey\", Token=\"{bob_secret}\"");
+    let bob_jellyfin = [("X-Emby-Authorization", bob_value.as_str())];
+    let bobs = jellyfin_titles(&rig, "Filters=IsPlayed", &bob_jellyfin).await;
+    assert!(bobs.is_empty(), "{bobs:?}");
+    let bob_subsonic = format!("u=bob&p={bob_secret}&v=1.16.1&c=symfonium&f=json");
+    let (status, recent) = app
+        .call(
+            "GET",
+            &rest("getAlbumList2?type=recent", &bob_subsonic),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{recent}");
+    let albums = recent["subsonic-response"]["albumList2"]["album"]
+        .as_array()
+        .map_or(0, Vec::len);
+    assert_eq!(albums, 0, "{recent}");
+    let (_, song) = app
+        .call(
+            "GET",
+            &rest(&format!("getSong?id=tr-{}", one.0), &bob_subsonic),
+            &[],
+            None,
+        )
+        .await;
+    let song = &song["subsonic-response"]["song"];
+    assert_eq!(song["title"], "One", "{song}");
+    assert!(song.get("playCount").is_none(), "{song}");
+
+    rig.stop().await;
 }

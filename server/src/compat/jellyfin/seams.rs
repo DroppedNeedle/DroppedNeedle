@@ -269,6 +269,9 @@ pub struct TrackFilter {
     pub album_artists: Vec<String>,
     /// Title, artist or album substring, case-insensitive.
     pub search: Option<String>,
+    /// Only tracks the caller has played (`true`) or never played
+    /// (`false`).
+    pub played: Option<bool>,
 }
 
 /// Album filters for one page; every set field narrows.
@@ -283,8 +286,9 @@ pub struct AlbumFilter {
     pub search: Option<String>,
 }
 
-/// Page order. The play-history keys (`DatePlayed`, `PlayCount`) also
-/// drop items the caller never played (v2 history paging).
+/// Page order. The play-history keys (`DatePlayed`, `PlayCount`) keep
+/// every item, as Jellyfin does: what the caller never played sorts last
+/// when descending.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemSort {
     /// The library's own order: title for tracks and albums.

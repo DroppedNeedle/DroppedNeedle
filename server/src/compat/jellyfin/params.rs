@@ -76,6 +76,31 @@ pub fn wants_favorites(params: &CiParams) -> bool {
         .any(|f| f.eq_ignore_ascii_case("isfavorite"))
 }
 
+/// The played filter: `?IsPlayed=true|false`, or `Filters` containing
+/// `IsPlayed` or `IsUnplayed`. `Some(true)` asks for played items only,
+/// `Some(false)` for unplayed ones. Verified against the Jellyfin 10.10.6
+/// recording: `Filters=IsPlayed` only. The parameter, `IsUnplayed`, and
+/// which of the two a server follows when a request sends both and they
+/// disagree are not verified; here the parameter is read first.
+pub fn played_filter(params: &CiParams) -> Option<bool> {
+    match params
+        .get("isPlayed")
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("true") => return Some(true),
+        Some("false") => return Some(false),
+        _ => {}
+    }
+    csv_param(params, "Filters").iter().find_map(|filter| {
+        match filter.to_ascii_lowercase().as_str() {
+            "isplayed" => Some(true),
+            "isunplayed" => Some(false),
+            _ => None,
+        }
+    })
+}
+
 /// Lenient int query: missing/empty/unparseable falls back (v2 `_qint`).
 pub fn qint(params: &CiParams, key: &str, default: i64) -> i64 {
     match params.get(key) {
@@ -141,7 +166,7 @@ impl SortKey {
         }
     }
 
-    /// History sorts page from play history rather than the catalog.
+    /// History sorts order by the caller's plays.
     pub fn is_history(self) -> bool {
         matches!(self, Self::DatePlayed | Self::PlayCount)
     }

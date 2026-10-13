@@ -401,10 +401,10 @@ async fn browse_query_dialects() {
             ),
             vec!["Second Dawn"],
         ),
-        // Ids skips unknown ids; the PlayCount history sort drops unplayed.
+        // Ids skips unknown ids; the played filter keeps what was played.
         (format!("/jellyfin/Items?Ids={},{none}", fx.track1), vec!["Opener"]),
         (
-            "/jellyfin/Items?IncludeItemTypes=Audio&SortBy=PlayCount".to_owned(),
+            "/jellyfin/Items?IncludeItemTypes=Audio&Filters=IsPlayed".to_owned(),
             vec!["Opener"],
         ),
         // Latest is a bare newest-first array; a non-library ParentId is empty.
@@ -543,6 +543,12 @@ async fn favorite_dialects_and_played_markers() {
         let page = fx.json(uri, Some(&auth)).await;
         assert_eq!(page["TotalRecordCount"], 1, "{uri}");
         assert_eq!(page["Items"][0]["UserData"]["IsFavorite"], true, "{uri}");
+    }
+    // The played filter narrows favourites too: the one favourite is played.
+    for (filters, total) in [("IsFavorite,IsPlayed", 1), ("IsFavorite,IsUnplayed", 0)] {
+        let uri = format!("/jellyfin/Items?IncludeItemTypes=Audio&Filters={filters}");
+        let page = fx.json(&uri, Some(&auth)).await;
+        assert_eq!(page["TotalRecordCount"], total, "{uri}");
     }
     // Jellify removes through the modern path.
     let removed = fx

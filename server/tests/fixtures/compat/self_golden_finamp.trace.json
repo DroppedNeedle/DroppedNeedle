@@ -108,6 +108,7 @@
               "IsFavorite": false,
               "ItemId": "2dcdb5c8d11e199ad036df869476ad2e",
               "Key": "2dcdb5c8d11e199ad036df869476ad2e",
+              "LastPlayedDate": "1970-01-01T01:23:20.0000000Z",
               "PlayCount": 5,
               "PlaybackPositionTicks": 0,
               "Played": true
@@ -219,7 +220,7 @@
         "TotalRecordCount": 3
       },
       "headers": {
-        "content-length": "2986",
+        "content-length": "3034",
         "content-type": "application/json"
       },
       "request": "GET /jellyfin/Users/user-alice/Items?includeItemTypes=Audio",
@@ -393,6 +394,7 @@
               "IsFavorite": true,
               "ItemId": "2dcdb5c8d11e199ad036df869476ad2e",
               "Key": "2dcdb5c8d11e199ad036df869476ad2e",
+              "LastPlayedDate": "1970-01-01T01:23:20.0000000Z",
               "PlayCount": 5,
               "PlaybackPositionTicks": 0,
               "Played": true
@@ -403,7 +405,7 @@
         "TotalRecordCount": 1
       },
       "headers": {
-        "content-length": "1066",
+        "content-length": "1114",
         "content-type": "application/json"
       },
       "request": "GET /jellyfin/Users/user-alice/Items?includeItemTypes=Audio&IsFavorite=true",
@@ -474,6 +476,7 @@
               "IsFavorite": true,
               "ItemId": "2dcdb5c8d11e199ad036df869476ad2e",
               "Key": "2dcdb5c8d11e199ad036df869476ad2e",
+              "LastPlayedDate": "1970-01-01T01:23:20.0000000Z",
               "PlayCount": 5,
               "PlaybackPositionTicks": 0,
               "Played": true
@@ -484,7 +487,7 @@
         "TotalRecordCount": 1
       },
       "headers": {
-        "content-length": "1088",
+        "content-length": "1136",
         "content-type": "application/json"
       },
       "request": "GET /jellyfin/Playlists/0a9350aa48863de03a0040cd77209f02/Items",

@@ -219,6 +219,7 @@ where
     let artist_ids = params::csv_param(&q, "ArtistIds");
     let contributing_ids = params::csv_param(&q, "ContributingArtistIds");
     let (sort_key, sort_desc) = params::browse_sort(&q);
+    let played = params::played_filter(&q);
 
     if !ids.is_empty() {
         let mut built = Vec::new();
@@ -247,12 +248,13 @@ where
     }
 
     if params::wants_favorites(&q) {
-        return favorites_browse(&state, &user_id, &types, start, limit).await;
+        return favorites_browse(&state, &user_id, &types, played, start, limit).await;
     }
 
     if parent_kind.as_deref() == Some("album") {
         let filter = TrackFilter {
             album: Some(parent_internal),
+            played,
             ..TrackFilter::default()
         };
         let (tracks, total) = state
@@ -296,6 +298,7 @@ where
                 search.as_deref(),
                 &album_artist_ids,
                 &artist_ids,
+                played,
                 sort_key,
                 sort_desc,
                 start,
@@ -322,11 +325,13 @@ where
 }
 
 /// Favorite listing for browse (v2 `_favorite_items`): one batch read per
-/// kind, DTOs for the page only.
+/// kind, DTOs for the page only. `played` narrows favourite tracks to the
+/// ones the caller has or has not played.
 pub(super) async fn favorites_browse<S, L, E, P, I>(
     state: &JellyfinState<S, L, E, P, I>,
     user_id: &str,
     types: &[String],
+    played: Option<bool>,
     start: usize,
     limit: usize,
 ) -> Response
@@ -346,7 +351,10 @@ where
     let ids = state.library.favorites(user_id, kind).await;
     match kind {
         "track" => {
-            let tracks = state.library.tracks_by_ids(user_id, &ids).await;
+            let mut tracks = state.library.tracks_by_ids(user_id, &ids).await;
+            if let Some(played) = played {
+                tracks.retain(|track| (track.play_count > 0) == played);
+            }
             let (tracks, total) = page(&tracks, start, limit);
             result(build_tracks(&b, &tracks).await, total, start)
         }
@@ -376,6 +384,7 @@ pub(super) async fn audio_browse<S, L, E, P, I>(
     search: Option<&str>,
     album_artist_ids: &[String],
     artist_ids: &[String],
+    played: Option<bool>,
     sort_key: Option<SortKey>,
     sort_desc: bool,
     start: usize,
@@ -390,7 +399,7 @@ where
 {
     let b = builder(state);
     let sort = sort_or(sort_key, sort_desc, ItemSort::Catalog);
-    let (filter, size) = if !album_artist_ids.is_empty() {
+    let (mut filter, size) = if !album_artist_ids.is_empty() {
         let album_artists = decode_artists(state, album_artist_ids).await;
         if album_artists.is_empty() {
             return nothing(start);
@@ -417,6 +426,7 @@ where
         };
         (filter, if limit == 0 { 100 } else { limit })
     };
+    filter.played = played;
     let (tracks, total) = state
         .library
         .track_page(user_id, &filter, sort, start, size)

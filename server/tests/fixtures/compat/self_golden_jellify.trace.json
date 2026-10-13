@@ -93,6 +93,7 @@
             "IsFavorite": false,
             "ItemId": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
             "Key": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
+            "LastPlayedDate": "1970-01-01T01:23:20.0000000Z",
             "PlayCount": 5,
             "PlaybackPositionTicks": 0,
             "Played": true
@@ -100,7 +101,7 @@
         }
       ],
       "headers": {
-        "content-length": "1690",
+        "content-length": "1738",
         "content-type": "application/json"
       },
       "request": "GET /jellyfin/UserItems/Latest",

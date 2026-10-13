@@ -44,6 +44,7 @@
         "IsFavorite": false,
         "ItemId": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
         "Key": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
+        "LastPlayedDate": "1970-01-01T01:23:20.0000000Z",
         "PlayCount": 5,
         "PlaybackPositionTicks": 0,
         "Played": true

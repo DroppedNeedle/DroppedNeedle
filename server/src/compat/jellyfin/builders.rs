@@ -90,8 +90,14 @@ fn civil_from_unix(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
     )
 }
 
-/// Caller-scoped item state (v2 `_user_data`).
-pub fn user_data(item_id: &str, starred: bool, play_count: u64) -> UserItemDataDto {
+/// Caller-scoped item state (v2 `_user_data`). `Played` follows the play
+/// history: an item is played once the caller has a play of it.
+pub fn user_data(
+    item_id: &str,
+    starred: bool,
+    play_count: u64,
+    last_played: Option<f64>,
+) -> UserItemDataDto {
     UserItemDataDto {
         item_id: item_id.to_owned(),
         key: item_id.to_owned(),
@@ -99,7 +105,7 @@ pub fn user_data(item_id: &str, starred: bool, play_count: u64) -> UserItemDataD
         play_count,
         is_favorite: starred,
         played: play_count > 0,
-        last_played_date: None,
+        last_played_date: last_played.map(|at| iso_o(Some(at))),
         rating: None,
         played_percentage: None,
     }
@@ -237,7 +243,7 @@ impl<'a, I: IdMap> Builder<'a, I> {
             )]));
         }
         dto.date_created = Some(iso_o(t.created_at));
-        dto.user_data = Some(user_data(&track_id, t.starred, t.play_count));
+        dto.user_data = Some(user_data(&track_id, t.starred, t.play_count, t.last_played));
         dto
     }
 
@@ -277,7 +283,7 @@ impl<'a, I: IdMap> Builder<'a, I> {
         }
         dto.provider_ids = Some(provider_ids);
         dto.date_created = Some(iso_o(a.date_added));
-        dto.user_data = Some(user_data(&album_id, a.starred, a.play_count));
+        dto.user_data = Some(user_data(&album_id, a.starred, a.play_count, a.last_played));
         dto
     }
 
@@ -300,7 +306,7 @@ impl<'a, I: IdMap> Builder<'a, I> {
         dto.sort_name = Some(ar.name.clone());
         dto.genres = Some(Vec::new());
         dto.date_created = Some(iso_o(ar.date_added));
-        dto.user_data = Some(user_data(&artist_id, ar.starred, 0));
+        dto.user_data = Some(user_data(&artist_id, ar.starred, 0, None));
         dto
     }
 
@@ -314,7 +320,7 @@ impl<'a, I: IdMap> Builder<'a, I> {
         dto.child_count = Some(p.track_count);
         dto.sort_name = Some(p.name.clone());
         dto.run_time_ticks = ticks(p.total_duration_seconds);
-        dto.user_data = Some(user_data(&pid, false, 0));
+        dto.user_data = Some(user_data(&pid, false, 0, None));
         dto
     }
 
@@ -326,7 +332,7 @@ impl<'a, I: IdMap> Builder<'a, I> {
         dto.is_folder = true;
         dto.child_count = Some(g.song_count);
         dto.sort_name = Some(g.name.clone());
-        dto.user_data = Some(user_data(&gid, false, 0));
+        dto.user_data = Some(user_data(&gid, false, 0, None));
         dto
     }
 }

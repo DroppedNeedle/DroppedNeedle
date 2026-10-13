@@ -240,8 +240,7 @@ fn album_order(sort: ItemSort, seed: impl FnOnce() -> u32) -> AlbumOrder {
     }
 }
 
-/// The caller, when the order reads their play history (which also drops
-/// what they never played).
+/// The caller, when the order reads their play history.
 fn history_user(sort: ItemSort, user_id: &str) -> Option<String> {
     matches!(sort, ItemSort::By(key, _) if key.is_history()).then(|| user_id.to_owned())
 }
@@ -278,7 +277,11 @@ impl LibraryRead for JellyfinLibrary {
                 album_id: filter.album.clone(),
                 artist_ids: filter.artists.clone(),
                 album_artist_ids: filter.album_artists.clone(),
-                played_by: history_user(sort, user_id),
+                listener: filter
+                    .played
+                    .map(|_| user_id.to_owned())
+                    .or_else(|| history_user(sort, user_id)),
+                played: filter.played,
                 ..TrackQuery::default()
             };
             let (tracks, total) = self
@@ -332,7 +335,7 @@ impl LibraryRead for JellyfinLibrary {
                 q: filter.search.clone(),
                 album_artist_ids: filter.artists.clone(),
                 appears_on: filter.appears_on.clone(),
-                played_by: history_user(sort, user_id),
+                listener: history_user(sort, user_id),
                 ..AlbumQuery::default()
             };
             let (albums, total) = self
