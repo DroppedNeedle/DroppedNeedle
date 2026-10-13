@@ -24,7 +24,17 @@
 //! would carry on and every async write would answer `LaneClosed`.
 //! Closures are synchronous (`FnOnce`, never `async`), so awaiting inside a
 //! write transaction is unrepresentable: there is no async API on the write
-//! path to await with. Every transaction carries a 2 s hard abort through
+//! path to await with.
+//!
+//! Nothing commits but the lane's own commit. A closure holds the
+//! connection, so a raw `COMMIT` is within its reach, and when the abort
+//! interrupts a writing statement SQLite rolls the whole transaction back
+//! and returns to autocommit, where each later statement would commit alone.
+//! A commit hook refuses every commit except the one the lane issues after
+//! the closure returns, and a write whose transaction ended inside its
+//! closure commits nothing, whatever the closure returned.
+//!
+//! Every transaction carries a 2 s hard abort through
 //! the SQLite progress handler, foreground ones a 250 ms soft budget
 //! (logged); chunked background work commits at most 500 rows at a time with
 //! a cancellation check between chunks.
@@ -159,9 +169,21 @@ impl WaitTimes {
 
 /// What one transaction did, before its failure is mapped for the caller.
 struct Outcome<R> {
-    value: Result<R, OpError>,
+    value: Result<R, Failure>,
     changes: u64,
     elapsed: Duration,
+}
+
+/// Why a transaction committed nothing.
+enum Failure {
+    /// The closure returned an error, or `BEGIN` or the lane's commit failed.
+    Op(OpError),
+    /// The abort fired while the closure ran.
+    TimedOut,
+    /// The transaction ended inside the closure.
+    Ended,
+    /// The connection could not be made ready for the turn.
+    Connection(DbError),
 }
 
 /// A queued async write: runs its transaction on the turn it is given and
@@ -413,7 +435,9 @@ impl Turn {
         match self.connection.as_mut() {
             Some(connection) => connection.transact(op),
             None => Outcome {
-                value: Err(OpError::Abort("the turn holds no connection".to_owned())),
+                value: Err(Failure::Op(OpError::Abort(
+                    "the turn holds no connection".to_owned(),
+                ))),
                 changes: 0,
                 elapsed: Duration::ZERO,
             },
@@ -616,11 +640,19 @@ fn finish<R>(lane: Lane, name: &'static str, outcome: Outcome<R>) -> Result<R, D
     }
     match outcome.value {
         Ok(value) => Ok(value),
-        Err(OpError::Abort(cause)) => Err(DbError::WriteFailed {
+        Err(Failure::TimedOut) => Err(DbError::TxTimeout {
+            operation: name.to_owned(),
+            changes: outcome.changes,
+        }),
+        Err(Failure::Ended) => Err(DbError::TransactionEnded {
+            operation: name.to_owned(),
+        }),
+        Err(Failure::Connection(error)) => Err(error),
+        Err(Failure::Op(OpError::Abort(cause))) => Err(DbError::WriteFailed {
             operation: name.to_owned(),
             cause,
         }),
-        Err(OpError::Sql(error)) => Err(map_write_error(name, outcome.changes, error)),
+        Err(Failure::Op(OpError::Sql(error))) => Err(map_write_error(name, outcome.changes, error)),
     }
 }
 
@@ -667,10 +699,13 @@ pub fn apply_connection_pragmas(connection: &Connection) -> Result<(), DbError> 
     Ok(())
 }
 
-/// The write connection and the abort clock its progress handler reads.
+/// The write connection, the abort clock its progress handler reads and
+/// the watch its commit and rollback hooks report to.
 struct WriterConnection {
+    path: PathBuf,
     connection: Connection,
     clock: Arc<AbortClock>,
+    watch: Arc<TxWatch>,
 }
 
 impl WriterConnection {
@@ -679,8 +714,18 @@ impl WriterConnection {
         register_fold(&connection)?;
         let clock = Arc::new(AbortClock::new());
         let handler_clock = Arc::clone(&clock);
-        connection.progress_handler(PROGRESS_OPS, Some(move || handler_clock.expired()));
-        Ok(Self { connection, clock })
+        connection.progress_handler(PROGRESS_OPS, Some(move || handler_clock.check()));
+        let watch = Arc::new(TxWatch::default());
+        let commit_watch = Arc::clone(&watch);
+        connection.commit_hook(Some(move || commit_watch.refuses_commit()));
+        let rollback_watch = Arc::clone(&watch);
+        connection.rollback_hook(Some(move || rollback_watch.note_rollback()));
+        Ok(Self {
+            path: path.to_owned(),
+            connection,
+            clock,
+            watch,
+        })
     }
 
     /// One turn, one transaction. The abort clock is armed for exactly the
@@ -688,25 +733,120 @@ impl WriterConnection {
     /// a panic included.
     fn transact<R>(&mut self, op: impl FnOnce(&Transaction) -> Result<R, OpError>) -> Outcome<R> {
         let started = Instant::now();
+        if let Err(error) = self.start_in_autocommit() {
+            return Outcome {
+                value: Err(Failure::Connection(error)),
+                changes: 0,
+                elapsed: started.elapsed(),
+            };
+        }
         let before = self.connection.total_changes();
-        let _armed = self.clock.arm(WRITE_HARD_BUDGET);
-        let value = run_transaction(&mut self.connection, op);
+        let armed = self.clock.arm(WRITE_HARD_BUDGET);
+        let value = run_transaction(&mut self.connection, &armed, &self.watch, op);
+        drop(armed);
         Outcome {
             value,
             changes: self.connection.total_changes().saturating_sub(before),
             elapsed: started.elapsed(),
         }
     }
+
+    /// A turn starts on a connection with no transaction open. One left
+    /// open (a rollback that failed at the end of the last turn) is rolled
+    /// back here, and if that fails too the connection is replaced.
+    fn start_in_autocommit(&mut self) -> Result<(), DbError> {
+        if self.connection.is_autocommit() {
+            return Ok(());
+        }
+        let Err(error) = self.connection.execute_batch("ROLLBACK") else {
+            tracing::warn!("write connection held an open transaction; rolled it back");
+            return Ok(());
+        };
+        tracing::error!(
+            cause = short_cause(&error),
+            "write connection could not roll back; opening a new one"
+        );
+        *self = Self::open(&self.path)?;
+        Ok(())
+    }
 }
 
+/// Run the closure between the lane's `BEGIN IMMEDIATE` and the lane's
+/// commit. The abort and the transaction's own fate are judged first:
+/// either one discards what the closure returned.
 fn run_transaction<R>(
     connection: &mut Connection,
+    armed: &Armed<'_>,
+    watch: &TxWatch,
     op: impl FnOnce(&Transaction) -> Result<R, OpError>,
-) -> Result<R, OpError> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let value = op(&transaction)?;
-    transaction.commit()?;
+) -> Result<R, Failure> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| Failure::Op(error.into()))?;
+    watch.begin();
+    let value = op(&transaction);
+    if armed.fired() {
+        return Err(Failure::TimedOut);
+    }
+    if watch.rolled_back() || transaction.is_autocommit() {
+        if let Err(OpError::Sql(error)) = &value {
+            tracing::error!(
+                cause = short_cause(error),
+                "write transaction was rolled back inside its closure"
+            );
+        }
+        return Err(Failure::Ended);
+    }
+    let value = value.map_err(Failure::Op)?;
+    let _allowed = watch.allow_commit();
+    transaction
+        .commit()
+        .map_err(|error| Failure::Op(error.into()))?;
     Ok(value)
+}
+
+/// What the commit and rollback hooks on the write connection share with
+/// the lane. The hooks run on whichever thread executes the statement.
+#[derive(Default)]
+struct TxWatch {
+    /// True only while the lane issues its own commit.
+    commit_allowed: AtomicBool,
+    /// Set by any whole rollback since the lane's `BEGIN`. A rollback to a
+    /// savepoint does not count.
+    rolled_back: AtomicBool,
+}
+
+impl TxWatch {
+    /// The commit hook's answer: true turns the commit into a rollback.
+    fn refuses_commit(&self) -> bool {
+        !self.commit_allowed.load(Ordering::Acquire)
+    }
+
+    fn note_rollback(&self) {
+        self.rolled_back.store(true, Ordering::Release);
+    }
+
+    fn begin(&self) {
+        self.rolled_back.store(false, Ordering::Release);
+    }
+
+    fn rolled_back(&self) -> bool {
+        self.rolled_back.load(Ordering::Acquire)
+    }
+
+    /// Let the lane's commit through until the guard is dropped.
+    fn allow_commit(&self) -> CommitAllowed<'_> {
+        self.commit_allowed.store(true, Ordering::Release);
+        CommitAllowed(self)
+    }
+}
+
+struct CommitAllowed<'a>(&'a TxWatch);
+
+impl Drop for CommitAllowed<'_> {
+    fn drop(&mut self) {
+        self.0.commit_allowed.store(false, Ordering::Release);
+    }
 }
 
 /// Deadline the SQLite progress handler reads, on the monotonic clock so a
@@ -715,6 +855,8 @@ struct AbortClock {
     epoch: Instant,
     /// Microseconds after `epoch`; `u64::MAX` while disarmed.
     deadline_micros: AtomicU64,
+    /// True once the handler has aborted a statement in this transaction.
+    fired: AtomicBool,
 }
 
 impl AbortClock {
@@ -722,6 +864,7 @@ impl AbortClock {
         Self {
             epoch: Instant::now(),
             deadline_micros: AtomicU64::new(u64::MAX),
+            fired: AtomicBool::new(false),
         }
     }
 
@@ -733,17 +876,30 @@ impl AbortClock {
     /// on every way out of the transaction.
     fn arm(&self, budget: Duration) -> Armed<'_> {
         let budget = u64::try_from(budget.as_micros()).unwrap_or(u64::MAX);
+        self.fired.store(false, Ordering::Release);
         self.deadline_micros
             .store(self.now_micros().saturating_add(budget), Ordering::Release);
         Armed(self)
     }
 
-    fn expired(&self) -> bool {
-        self.now_micros() > self.deadline_micros.load(Ordering::Acquire)
+    /// The progress handler's answer: true aborts the running statement.
+    fn check(&self) -> bool {
+        let expired = self.now_micros() > self.deadline_micros.load(Ordering::Acquire);
+        if expired {
+            self.fired.store(true, Ordering::Release);
+        }
+        expired
     }
 }
 
 struct Armed<'a>(&'a AbortClock);
+
+impl Armed<'_> {
+    /// True if the abort has fired since the clock was armed.
+    fn fired(&self) -> bool {
+        self.0.fired.load(Ordering::Acquire)
+    }
+}
 
 impl Drop for Armed<'_> {
     fn drop(&mut self) {

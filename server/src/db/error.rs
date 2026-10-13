@@ -44,6 +44,14 @@ pub enum DbError {
         /// Rows this transaction changed before the abort fired.
         changes: u64,
     },
+    /// A write closure ended its own transaction: a raw `COMMIT` or
+    /// `ROLLBACK`, or a failure that made SQLite roll the whole transaction
+    /// back. Nothing the closure did was committed.
+    #[error("write {operation} ended its own transaction; nothing was committed")]
+    TransactionEnded {
+        /// Operation name for the log line. Never SQL text or a path.
+        operation: String,
+    },
     /// Cooperative cancellation stopped a chunked background write.
     #[error("chunked write {operation} cancelled after {chunks} chunks")]
     Cancelled {

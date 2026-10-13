@@ -1114,12 +1114,6 @@ fn commit_hook_vetoes_what_follows_an_interrupted_transaction() {
             .query_row("SELECT COUNT(*) FROM scratch_turns", [], |row| row.get(0))
             .unwrap()
     };
-    let commit_refused = |error: rusqlite::Error| match error {
-        rusqlite::Error::SqliteFailure(code, _) => {
-            code.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_COMMITHOOK
-        }
-        _ => false,
-    };
 
     let abort = Arc::new(AtomicBool::new(false));
     let handler_abort = Arc::clone(&abort);
@@ -1158,7 +1152,7 @@ fn commit_hook_vetoes_what_follows_an_interrupted_transaction() {
         .execute("INSERT INTO scratch_turns (label) VALUES ('after')", [])
         .unwrap_err();
     assert!(
-        commit_refused(after),
+        commit_refused(&after),
         "an autocommit statement is refused by the hook"
     );
     assert_eq!(committed(), 0, "nothing after the interrupt stuck");
@@ -1168,12 +1162,88 @@ fn commit_hook_vetoes_what_follows_an_interrupted_transaction() {
         .execute("INSERT INTO scratch_turns (label) VALUES ('raw')", [])
         .unwrap();
     let raw = connection.execute_batch("COMMIT").unwrap_err();
-    assert!(commit_refused(raw), "a raw COMMIT is refused by the hook");
+    assert!(commit_refused(&raw), "a raw COMMIT is refused by the hook");
     assert!(
         connection.is_autocommit(),
         "the refused COMMIT ended the transaction"
     );
     assert_eq!(committed(), 0, "the refused COMMIT rolled back");
+}
+
+/// True for the error SQLite returns when a commit hook refuses a commit.
+fn commit_refused(error: &rusqlite::Error) -> bool {
+    matches!(
+        error,
+        rusqlite::Error::SqliteFailure(code, _)
+            if code.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_COMMITHOOK
+    )
+}
+
+/// The abort interrupts a writing statement, which rolls the transaction
+/// back. A closure that swallows that and writes one more row leaves no row:
+/// the statement is refused, and the caller hears the timeout whatever the
+/// closure returned.
+#[tokio::test]
+async fn write_after_a_swallowed_abort_leaves_nothing() {
+    let (lane, _dir) = scratch_lane("swallowed-abort");
+    let outcome = lane
+        .write(Lane::Foreground, "brief-swallow", |tx| {
+            insert_label(tx, "before")?;
+            let _interrupted = tx.execute(
+                "WITH RECURSIVE c(x) AS (
+                   SELECT 1 UNION ALL SELECT x + 1 FROM c LIMIT 100000
+                 )
+                 INSERT INTO scratch_turns (label)
+                 SELECT COUNT(*) FROM c AS a, c AS b",
+                [],
+            );
+            let _refused = insert_label(tx, "after");
+            Ok(())
+        })
+        .await;
+    assert!(
+        matches!(&outcome, Err(DbError::TxTimeout { operation, .. }) if operation == "brief-swallow"),
+        "the caller hears the timeout, got {outcome:?}"
+    );
+    assert!(labels(&lane).is_empty(), "nothing was committed");
+
+    lane.write(Lane::Foreground, "brief-probe", |tx| {
+        insert_label(tx, "next")
+    })
+    .await
+    .unwrap();
+    assert_eq!(labels(&lane), ["next"]);
+    lane.shutdown().await;
+}
+
+/// A raw `COMMIT` inside a closure is refused and ends the transaction.
+/// What the closure writes afterwards, here inside a savepoint it leaves
+/// open, is not committed either, and the caller is told.
+#[test]
+fn raw_commit_in_a_closure_commits_nothing() {
+    let (lane, _dir) = scratch_lane("raw-commit");
+    let mut refused = false;
+    let outcome = lane.write_blocking(Lane::Foreground, "brief-raw-commit", |tx| {
+        insert_label(tx, "before")?;
+        refused = tx
+            .execute_batch("COMMIT")
+            .as_ref()
+            .is_err_and(commit_refused);
+        tx.execute_batch("SAVEPOINT tail")?;
+        insert_label(tx, "tail")
+    });
+    assert!(
+        matches!(&outcome, Err(DbError::TransactionEnded { operation }) if operation == "brief-raw-commit"),
+        "the caller is told the transaction ended, got {outcome:?}"
+    );
+    assert!(refused, "the closure sees the hook's refusal");
+    assert!(labels(&lane).is_empty(), "nothing was committed");
+
+    lane.write_blocking(Lane::Foreground, "brief-probe", |tx| {
+        insert_label(tx, "next")
+    })
+    .unwrap();
+    assert_eq!(labels(&lane), ["next"]);
 }
 
 /// Savepoints inside a write closure work as they do on any transaction:
