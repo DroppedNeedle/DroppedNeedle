@@ -373,6 +373,8 @@ enum Refused {
     Busy,
     /// Shutdown gave up before the write's turn came.
     Closed,
+    /// A chunk's flag tripped while the chunk waited.
+    Cancelled,
 }
 
 impl Refused {
@@ -382,6 +384,9 @@ impl Refused {
                 operation: name.to_owned(),
             },
             Self::Closed => DbError::LaneClosed,
+            // The chunked write that hears this knows how many chunks it
+            // committed and puts the count in.
+            Self::Cancelled => cancelled(name, 0),
         }
     }
 }
@@ -412,6 +417,10 @@ struct Waiter {
     /// A durable write. It is never answered `Busy` for waiting too long:
     /// its caller may be between two steps of a publish.
     durable: bool,
+    /// The flag of the chunked write this is a chunk of. Once it trips the
+    /// relief thread answers the waiter instead of leaving it to wait out a
+    /// hold that may last as long as a reader does.
+    cancel: Option<CancelFlag>,
     grantee: Grantee,
 }
 
@@ -566,6 +575,7 @@ impl Shared {
         lane: Lane,
         name: &'static str,
         durable: bool,
+        cancel: Option<CancelFlag>,
         grantee: Grantee,
     ) -> Result<(), DbError> {
         // A write issued inside a closure on this lane would wait behind
@@ -618,6 +628,7 @@ impl Shared {
             lane,
             queued_at: Instant::now(),
             durable,
+            cancel,
             grantee,
         });
         self.idle.queued.fetch_add(1, Ordering::AcqRel);
@@ -844,16 +855,39 @@ impl Shared {
         }
     }
 
-    /// One pass of the relief thread. While a bulk write waits behind the
-    /// WAL hold, run a checkpoint pass, which is what can end the hold; once
-    /// the hold is off, whoever ended it, start the writes it kept waiting.
-    /// The pass needs nothing from the lane: it has its own connection, and
-    /// a held write is waiting for a turn, not inside a transaction.
+    /// One pass of the relief thread, which has work only while a bulk write
+    /// waits. Chunks whose chunked write was cancelled are taken out of the
+    /// queue and answered, so a cancelled write never waits out a hold. Then,
+    /// while the WAL hold is on, run a checkpoint pass, which is what can
+    /// end it; once the hold is off, whoever ended it, start the writes it
+    /// kept waiting. The pass needs nothing from the lane: it has its own
+    /// connection, and a held write is waiting for a turn, not inside a
+    /// transaction.
     fn relief_tick(self: &Arc<Self>, checkpoint: &dyn Fn()) {
-        let waiting = {
-            let state = self.state();
-            !state.closed && state.waiting[Class::Bulk as usize] > 0
+        let (stopped, waiting) = {
+            let mut state = self.state();
+            if state.closed || state.waiting[Class::Bulk as usize] == 0 {
+                return;
+            }
+            let mut stopped = Vec::new();
+            let mut at = 0;
+            while let Some(waiter) = state.background.get(at) {
+                if waiter.cancel.as_ref().is_some_and(CancelFlag::is_cancelled) {
+                    stopped.extend(state.background.remove(at));
+                } else {
+                    at += 1;
+                }
+            }
+            for waiter in &stopped {
+                state.waiting[waiter.class() as usize] -= 1;
+            }
+            self.idle.queued.fetch_sub(stopped.len(), Ordering::AcqRel);
+            (stopped, state.waiting[Class::Bulk as usize] > 0)
         };
+        // Answered after the lock: refusing a write drops its closure.
+        for waiter in stopped {
+            waiter.refuse(Refused::Cancelled);
+        }
         if !waiting {
             return;
         }
@@ -1053,6 +1087,22 @@ impl WriteLane {
         F: FnOnce(&Transaction) -> Result<R, OpError> + Send + 'static,
         R: Send + 'static,
     {
+        self.write_queued(lane, name, None, op).await
+    }
+
+    /// [`WriteLane::write`], for a chunk too: `cancel` is the flag of the
+    /// chunked write it belongs to.
+    async fn write_queued<F, R>(
+        &self,
+        lane: Lane,
+        name: &'static str,
+        cancel: Option<CancelFlag>,
+        op: F,
+    ) -> Result<R, DbError>
+    where
+        F: FnOnce(&Transaction) -> Result<R, OpError> + Send + 'static,
+        R: Send + 'static,
+    {
         let budget = self.shared.limits.budget(lane);
         let (reply, answer) = oneshot::channel();
         let write: AsyncWrite = Box::new(move |granted| {
@@ -1080,7 +1130,7 @@ impl WriteLane {
             let _ = reply.send(answer);
         });
         self.shared
-            .enqueue(lane, name, false, Grantee::Async(write))?;
+            .enqueue(lane, name, false, cancel, Grantee::Async(write))?;
         match answer.await {
             Ok(Answer::Ran(outcome)) => finish(name, outcome),
             Ok(Answer::Panicked) => Err(DbError::WriteFailed {
@@ -1105,7 +1155,7 @@ impl WriteLane {
     where
         F: FnOnce(&Transaction) -> Result<R, OpError>,
     {
-        self.write_parked(lane, name, false, op)
+        self.write_parked(lane, name, false, None, op)
     }
 
     /// [`WriteLane::write_blocking`] whose commit is on disk before it
@@ -1152,7 +1202,7 @@ impl WriteLane {
             Lane::Bulk => Lane::Background,
             other => other,
         };
-        self.write_parked(lane, name, true, op)
+        self.write_parked(lane, name, true, None, op)
     }
 
     /// Wait for the turn on the calling thread and run the closure there.
@@ -1161,6 +1211,7 @@ impl WriteLane {
         lane: Lane,
         name: &'static str,
         durable: bool,
+        cancel: Option<CancelFlag>,
         op: F,
     ) -> Result<R, DbError>
     where
@@ -1169,7 +1220,7 @@ impl WriteLane {
         let budget = self.shared.limits.budget(lane);
         let (parked, granted) = mpsc::channel();
         self.shared
-            .enqueue(lane, name, durable, Grantee::Blocking(parked))?;
+            .enqueue(lane, name, durable, cancel, Grantee::Blocking(parked))?;
         let mut turn = match granted.recv() {
             Ok(Ok(turn)) => turn,
             Ok(Err(refused)) => return Err(refused.into_error(name)),
@@ -1185,9 +1236,14 @@ impl WriteLane {
     /// hold is on the next chunk waits: a long bulk job stops at a chunk
     /// boundary, never inside a transaction. Returns the rows committed.
     ///
-    /// The flag is read before each chunk is queued and again when its turn
-    /// comes, which may be after a long hold. A tripped flag lets the chunk
-    /// that is running commit and stops the write there with `Cancelled`.
+    /// A tripped flag lets the chunk that is running commit and stops the
+    /// write there with `Cancelled`. The flag is read before each chunk is
+    /// queued and again when its turn comes. A chunk that is waiting, behind
+    /// the WAL hold or behind other writes, is not left to wait it out: on a
+    /// lane with a watch, which the database runtime's lane has, the relief
+    /// thread takes a cancelled chunk out of the queue within a tick (a
+    /// second) and the write returns `Cancelled` without that chunk having
+    /// run.
     pub async fn write_chunked<T, F>(
         &self,
         name: &'static str,
@@ -1214,17 +1270,18 @@ impl WriteLane {
             let writer = Arc::clone(&chunk);
             let stop = cancel.clone();
             let ran = self
-                .write(Lane::Bulk, name, move |tx| {
+                .write_queued(Lane::Bulk, name, Some(cancel.clone()), move |tx| {
                     if stop.is_cancelled() {
                         return Ok(false);
                     }
                     writer(&owned, tx)?;
                     Ok(true)
                 })
-                .await?;
-            if !ran {
+                .await;
+            if matches!(ran, Ok(false) | Err(DbError::Cancelled { .. })) {
                 return Err(cancelled(name, chunks));
             }
+            ran?;
             committed += total;
             chunks += 1;
         }
@@ -1251,16 +1308,17 @@ impl WriteLane {
             if cancel.is_cancelled() {
                 return Err(cancelled(name, chunks));
             }
-            let ran = self.write_blocking(Lane::Bulk, name, |tx| {
+            let ran = self.write_parked(Lane::Bulk, name, false, Some(cancel.clone()), |tx| {
                 if cancel.is_cancelled() {
                     return Ok(false);
                 }
                 chunk(rows, tx)?;
                 Ok(true)
-            })?;
-            if !ran {
+            });
+            if matches!(ran, Ok(false) | Err(DbError::Cancelled { .. })) {
                 return Err(cancelled(name, chunks));
             }
+            ran?;
             committed += rows.len();
         }
         Ok(committed)

@@ -1977,6 +1977,44 @@ async fn checkpoint_pass_that_loses_the_lock_leaves_the_hold_on() {
     runtime.shutdown().await;
 }
 
+/// A chunked write whose chunk is held by the WAL stops within moments of
+/// its flag tripping. It does not wait for the hold to end, it writes
+/// nothing, and it leaves nothing queued.
+#[tokio::test]
+async fn cancelled_chunked_write_does_not_wait_out_the_hold() {
+    let (runtime, _dir) = small_wal_runtime("wal-hold-cancel").await;
+    let reader = fill_wal_behind_a_reader(&runtime).await;
+    let lane = runtime.lane().clone();
+
+    let cancel = CancelFlag::never();
+    let (chunked, flag) = (lane.clone(), cancel.clone());
+    let (done, result) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let rows = ["one", "two", "three"];
+        let outcome = chunked.write_chunked_blocking("brief-held", &rows, 2, &flag, |rows, tx| {
+            rows.iter().try_for_each(|row| insert_label(tx, row))
+        });
+        let _ = done.send(outcome);
+    });
+    wait_queued(&lane, 1);
+    assert!(result.try_recv().is_err(), "the first chunk is held");
+
+    cancel.cancel();
+    let stopped = result
+        .recv_timeout(Duration::from_secs(5))
+        .expect("a cancelled chunk is answered while the hold is still on");
+    assert!(
+        matches!(stopped, Err(DbError::Cancelled { chunks: 0, .. })),
+        "the held chunk never ran, got {stopped:?}"
+    );
+    assert!(runtime.checkpoint().bulk_held());
+    assert_eq!(lane.idle_state().queued(), 0);
+    assert!(labels(&lane).is_empty());
+
+    drop(reader);
+    runtime.shutdown().await;
+}
+
 /// Planner statistics do not run while the WAL hold is on, and the skipped
 /// run does not use up the ten-minute check interval.
 #[tokio::test]
