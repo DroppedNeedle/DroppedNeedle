@@ -12,7 +12,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     task::{Context, Poll, Waker},
     time::{Duration, Instant},
@@ -1093,6 +1093,104 @@ async fn panicking_write_rolls_back_and_frees_the_lane() {
     .unwrap();
     assert_eq!(labels(&lane), ["after"]);
     lane.shutdown().await;
+}
+
+/// The SQLite behaviour the lane's commit guard rests on, on a bare
+/// connection: an interrupted writing statement rolls the whole transaction
+/// back to autocommit, and a commit hook that refuses turns both the next
+/// autocommit statement and a raw `COMMIT` into a rollback. Verified against
+/// SQLite 3.46.0 as bundled by rusqlite 0.32.1.
+#[test]
+fn commit_hook_vetoes_what_follows_an_interrupted_transaction() {
+    let dir = scratch_dir("hook-proof");
+    let db = dir.join("proof.db");
+    let connection = rusqlite::Connection::open(&db).unwrap();
+    connection
+        .execute("CREATE TABLE scratch_turns (label TEXT)", [])
+        .unwrap();
+    let committed = || -> i64 {
+        rusqlite::Connection::open(&db)
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM scratch_turns", [], |row| row.get(0))
+            .unwrap()
+    };
+    let commit_refused = |error: rusqlite::Error| match error {
+        rusqlite::Error::SqliteFailure(code, _) => {
+            code.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_COMMITHOOK
+        }
+        _ => false,
+    };
+
+    let abort = Arc::new(AtomicBool::new(false));
+    let handler_abort = Arc::clone(&abort);
+    connection.progress_handler(100, Some(move || handler_abort.load(Ordering::Acquire)));
+    connection.commit_hook(Some(|| true));
+
+    connection.execute_batch("BEGIN IMMEDIATE").unwrap();
+    connection
+        .execute("INSERT INTO scratch_turns (label) VALUES ('before')", [])
+        .unwrap();
+    abort.store(true, Ordering::Release);
+    let interrupted = connection
+        .execute(
+            "WITH RECURSIVE c(x) AS (
+               SELECT 1 UNION ALL SELECT x + 1 FROM c LIMIT 100000
+             )
+             INSERT INTO scratch_turns (label) SELECT COUNT(*) FROM c AS a, c AS b",
+            [],
+        )
+        .unwrap_err();
+    abort.store(false, Ordering::Release);
+    assert!(
+        matches!(
+            interrupted,
+            rusqlite::Error::SqliteFailure(code, _)
+                if code.code == rusqlite::ffi::ErrorCode::OperationInterrupted
+        ),
+        "the writing statement is interrupted, got {interrupted:?}"
+    );
+    assert!(
+        connection.is_autocommit(),
+        "the interrupt rolled the whole transaction back"
+    );
+
+    let after = connection
+        .execute("INSERT INTO scratch_turns (label) VALUES ('after')", [])
+        .unwrap_err();
+    assert!(
+        commit_refused(after),
+        "an autocommit statement is refused by the hook"
+    );
+    assert_eq!(committed(), 0, "nothing after the interrupt stuck");
+
+    connection.execute_batch("BEGIN IMMEDIATE").unwrap();
+    connection
+        .execute("INSERT INTO scratch_turns (label) VALUES ('raw')", [])
+        .unwrap();
+    let raw = connection.execute_batch("COMMIT").unwrap_err();
+    assert!(commit_refused(raw), "a raw COMMIT is refused by the hook");
+    assert!(
+        connection.is_autocommit(),
+        "the refused COMMIT ended the transaction"
+    );
+    assert_eq!(committed(), 0, "the refused COMMIT rolled back");
+}
+
+/// Savepoints inside a write closure work as they do on any transaction:
+/// a released one is kept, one rolled back to is not, and the write commits.
+#[test]
+fn write_closure_may_use_savepoints() {
+    let (lane, _dir) = scratch_lane("savepoint");
+    lane.write_blocking(Lane::Background, "brief-savepoint", |tx| {
+        tx.execute_batch("SAVEPOINT kept")?;
+        insert_label(tx, "kept")?;
+        tx.execute_batch("RELEASE kept; SAVEPOINT undone")?;
+        insert_label(tx, "undone")?;
+        tx.execute_batch("ROLLBACK TO undone; RELEASE undone")?;
+        insert_label(tx, "tail")
+    })
+    .unwrap();
+    assert_eq!(labels(&lane), ["kept", "tail"]);
 }
 
 /// Chunked background writes commit per chunk and honor cancellation.
