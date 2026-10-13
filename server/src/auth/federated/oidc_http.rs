@@ -18,6 +18,7 @@ use super::oidc::{
 };
 use super::oidc_models::{DiscoveryWire, Jwk, JwksWire, TokenWire};
 use super::transport::check_provider_url;
+use crate::http_client::{BodyError, read_capped};
 
 /// Discovery fetch timeout (v2 parity).
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -90,23 +91,18 @@ fn refuse_redirect(response: &reqwest::Response) -> Result<(), FederatedError> {
 }
 
 /// Read a body of at most [`MAX_BODY`] bytes.
-async fn read_capped(mut response: reqwest::Response) -> Result<Vec<u8>, FederatedError> {
-    let too_large =
-        || FederatedError::ProviderUnavailable("OIDC provider answer is too large".to_owned());
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_BODY as u64)
-    {
-        return Err(too_large());
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(unreachable)? {
-        if body.len() + chunk.len() > MAX_BODY {
-            return Err(too_large());
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
+async fn read_body(response: reqwest::Response) -> Result<Vec<u8>, FederatedError> {
+    read_capped(response, MAX_BODY)
+        .await
+        .map_err(|error| match error {
+            BodyError::TooLarge => {
+                FederatedError::ProviderUnavailable("OIDC provider answer is too large".to_owned())
+            }
+            BodyError::Transport(cause) => {
+                tracing::debug!(%cause, "OIDC provider request failed");
+                FederatedError::ProviderUnavailable("Could not reach OIDC provider".to_owned())
+            }
+        })
 }
 
 /// Apply the transport rule to one provider URL.
@@ -144,7 +140,7 @@ impl OidcIdp for OidcHttp {
                 "Failed to fetch OIDC discovery document".to_owned(),
             ));
         }
-        let bytes = read_capped(response).await?;
+        let bytes = read_body(response).await?;
         let wire: DiscoveryWire = serde_json::from_slice(&bytes).map_err(|_| {
             FederatedError::NotConfigured(
                 "OIDC discovery document is missing a required field".to_owned(),
@@ -224,7 +220,7 @@ impl OidcIdp for OidcHttp {
                 "OIDC token exchange failed".to_owned(),
             ));
         }
-        let bytes = read_capped(response).await?;
+        let bytes = read_body(response).await?;
         let wire: TokenWire = serde_json::from_slice(&bytes).map_err(|_| {
             FederatedError::ProviderUnavailable(
                 "OIDC provider returned an unexpected response".to_owned(),
@@ -261,7 +257,7 @@ impl OidcIdp for OidcHttp {
             tracing::debug!(status = %response.status(), "OIDC key set answered non-2xx");
             return Err(failed());
         }
-        let bytes = read_capped(response).await?;
+        let bytes = read_body(response).await?;
         let keys = serde_json::from_slice::<JwksWire>(&bytes)
             .map_err(|_| failed())?
             .into_keys();
@@ -293,7 +289,7 @@ impl OidcIdp for OidcHttp {
                 return None;
             }
         };
-        let bytes = read_capped(response).await.ok()?;
+        let bytes = read_body(response).await.ok()?;
         match serde_json::from_slice::<serde_json::Value>(&bytes) {
             Ok(serde_json::Value::Object(claims)) => Some(raw_claims(&claims)),
             _ => {
@@ -301,5 +297,56 @@ impl OidcIdp for OidcHttp {
                 None
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::http_client::HttpClientFactory;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    /// Answer one request with `head` and then `body_bytes` of filler.
+    async fn serve_once(head: &'static str, body_bytes: usize) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut raw = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !raw.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = socket.read(&mut chunk).await.unwrap();
+                assert_ne!(read, 0, "client closed before sending headers");
+                raw.extend_from_slice(&chunk[..read]);
+            }
+            // The client hangs up once it has seen too much, so a failed
+            // write here is the refusal working.
+            let _ = socket.write_all(head.as_bytes()).await;
+            let _ = socket.write_all(&vec![b' '; body_bytes]).await;
+        });
+        format!("http://{address}/keys")
+    }
+
+    /// A provider answer over the cap is refused, whether the provider
+    /// declares its length or streams past the cap without one.
+    #[tokio::test]
+    async fn an_answer_over_the_cap_is_refused() {
+        let factory = HttpClientFactory::new().unwrap();
+        let idp = OidcHttp::new(factory.no_redirect().clone());
+        let too_large =
+            FederatedError::ProviderUnavailable("OIDC provider answer is too large".to_owned());
+
+        let declared = serve_once("HTTP/1.1 200 OK\r\ncontent-length: 1048577\r\n\r\n", 0).await;
+        assert_eq!(
+            idp.signing_keys(&declared, true).await.err(),
+            Some(too_large.clone())
+        );
+
+        let streamed =
+            serve_once("HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n", MAX_BODY + 1).await;
+        assert_eq!(
+            idp.signing_keys(&streamed, true).await.err(),
+            Some(too_large)
+        );
     }
 }

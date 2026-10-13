@@ -912,6 +912,53 @@ impl<T: CaaTransport> CaaClient<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    /// Answer one request with `head` and then `body_bytes` of filler.
+    async fn serve_once(head: &'static str, body_bytes: usize) -> CaaRequest {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut raw = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !raw.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = socket.read(&mut chunk).await.unwrap();
+                assert_ne!(read, 0, "client closed before sending headers");
+                raw.extend_from_slice(&chunk[..read]);
+            }
+            // The client hangs up once it has seen too much, so a failed
+            // write here is the refusal working.
+            let _ = socket.write_all(head.as_bytes()).await;
+            let _ = socket.write_all(&vec![b' '; body_bytes]).await;
+        });
+        CaaRequest {
+            url: format!("http://{address}/cover"),
+            headers: Vec::new(),
+        }
+    }
+
+    /// The transport never buffers a body past its cap. A declared length
+    /// over the cap is a transport failure; a body that streams past it
+    /// is cut one byte over, so the caller's own size check refuses it.
+    #[tokio::test]
+    async fn a_body_over_the_transport_cap_is_never_buffered_whole() {
+        let factory = crate::http_client::HttpClientFactory::new().unwrap();
+        let transport = ReqwestCaaTransport::new(factory.no_redirect().clone());
+
+        let declared = serve_once("HTTP/1.1 200 OK\r\ncontent-length: 20971521\r\n\r\n", 0).await;
+        let error = transport.get(&declared).await.unwrap_err();
+        assert_eq!(error.0, "body larger than 20971520 bytes");
+
+        let streamed = serve_once(
+            "HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n",
+            TRANSPORT_MAX_BODY_BYTES + 4096,
+        )
+        .await;
+        let response = transport.get(&streamed).await.unwrap();
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body.len(), TRANSPORT_MAX_BODY_BYTES + 1);
+    }
 
     #[test]
     fn redirect_hops_stay_on_the_archive_hosts() {
