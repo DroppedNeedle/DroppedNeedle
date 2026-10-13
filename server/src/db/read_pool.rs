@@ -383,6 +383,9 @@ impl Pool {
     /// same; rusqlite puts a cached statement back without resetting it. So
     /// a closure that leaked a cursor would hand its snapshot to every later
     /// read here and pin the WAL for good. The transaction state sees it.
+    /// A closure that leaks the `Statement` itself, not only its rows,
+    /// leaves a handle that cannot be closed: no later read sees its
+    /// snapshot, but the WAL stays pinned until the process ends.
     /// Verified against SQLite 3.46.0 (rusqlite 0.32.1).
     fn cleaned(&self, connection: Connection, name: &'static str) -> Option<Connection> {
         let ended = if connection.is_autocommit() {
