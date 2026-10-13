@@ -24,8 +24,8 @@ use axum::{
 use droppedneedle::{
     db::{
         BACKUP_KEEP, CancelFlag, CheckpointMode, DbConfig, DbError, DbRuntime, LANE_QUEUE_CAPACITY,
-        Lane, OpError, WakeupChannel, WriteLane, filesystem_is_local, map_sqlx_busy, open_runtime,
-        sqlx_is_busy,
+        Lane, OpError, WakeupChannel, WriteLane, block_on, filesystem_is_local, map_sqlx_busy,
+        open_runtime, sqlx_is_busy,
     },
     error::{FIXED_INTERNAL_MESSAGE, INTERNAL_ERROR, busy_response},
     ids::{REQUEST_ID_HEADER, RequestId},
@@ -1292,6 +1292,31 @@ async fn nested_write_is_refused_on_the_same_lane_only() {
     assert_eq!(labels(&other), ["other"]);
     lane.shutdown().await;
     other.shutdown().await;
+}
+
+/// Synchronous code waits on a future through `db::block_on`. Outside a
+/// write closure it runs the future; inside one it refuses without polling
+/// it, so no closure holds the lane across a network call.
+#[test]
+fn block_on_is_refused_inside_a_write_closure() {
+    let (lane, _dir) = scratch_lane("block-on");
+    let runtime = current_thread_runtime();
+    let handle = runtime.handle();
+    assert_eq!(block_on(handle, "brief-outside", async { 7 }).unwrap(), 7);
+
+    let mut polled = false;
+    let inside = lane
+        .write_blocking(Lane::Foreground, "brief-holder", |tx| {
+            insert_label(tx, "holder")?;
+            Ok(block_on(handle, "brief-inside", async { polled = true }))
+        })
+        .unwrap();
+    assert!(
+        matches!(&inside, Err(DbError::WaitInsideWrite { operation }) if operation == "brief-inside"),
+        "a wait inside a write closure is refused, got {inside:?}"
+    );
+    assert!(!polled, "the refused future never ran");
+    assert_eq!(block_on(handle, "brief-after", async { 7 }).unwrap(), 7);
 }
 
 /// Savepoints inside a write closure work as they do on any transaction:

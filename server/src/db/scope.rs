@@ -1,10 +1,12 @@
-//! Which write closures the current thread is inside.
+//! Which write closures the current thread is inside, and the checked way
+//! for synchronous code to wait on a future.
 //!
 //! A write closure runs on one thread from start to end: the caller's for
 //! a blocking write, the lane's for an async one. The lane records it here
 //! for exactly that long, and reads the record before queueing a write, so
 //! a closure that writes to its own lane is refused instead of parking
-//! behind itself for ever.
+//! behind itself for ever. [`block_on`] reads it too, so no closure holds
+//! the lane while it waits on the network.
 //!
 //! The record is per thread. A closure that waits on another thread or task
 //! which itself writes to the same lane still hangs the lane, and nothing
@@ -12,9 +14,14 @@
 
 use std::{
     cell::RefCell,
+    future::Future,
     marker::PhantomData,
     sync::atomic::{AtomicU64, Ordering},
 };
+
+use tokio::runtime::Handle;
+
+use super::error::DbError;
 
 thread_local! {
     /// The lanes whose write closures this thread is inside, outermost first.
@@ -58,6 +65,27 @@ impl Drop for InsideWrite {
             }
         });
     }
+}
+
+/// Drive a future to completion from synchronous code: the one way sync
+/// code that also writes may wait on async work, such as a network call.
+/// `what` names the wait in the error.
+///
+/// Refused on a thread that is inside a write closure, on any database: the
+/// lane would be held for as long as the wait lasts. Do the wait first and
+/// write what it returned. Like `Handle::block_on`, this is for a blocking
+/// thread and panics on a thread that is driving async tasks.
+pub fn block_on<T>(
+    handle: &Handle,
+    what: &'static str,
+    future: impl Future<Output = T>,
+) -> Result<T, DbError> {
+    if WRITES.with_borrow(|writes| !writes.is_empty()) {
+        return Err(DbError::WaitInsideWrite {
+            operation: what.to_owned(),
+        });
+    }
+    Ok(handle.block_on(future))
 }
 
 /// True when the current thread is inside a write closure on `lane`.

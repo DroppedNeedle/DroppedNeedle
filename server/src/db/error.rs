@@ -60,6 +60,13 @@ pub enum DbError {
         /// Name of the refused write. Never SQL text or a path.
         operation: String,
     },
+    /// Synchronous code tried to wait on a future from inside a write
+    /// closure, where the lane would be held for as long as the wait lasts.
+    #[error("refusing to wait on {operation} inside a write closure")]
+    WaitInsideWrite {
+        /// What the wait was for. Never SQL text, a host or a path.
+        operation: String,
+    },
     /// Cooperative cancellation stopped a chunked background write.
     #[error("chunked write {operation} cancelled after {chunks} chunks")]
     Cancelled {

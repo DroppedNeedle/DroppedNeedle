@@ -10,7 +10,9 @@
 //! `write`, whose closure runs on the lane's own thread; synchronous code on
 //! a blocking thread calls `write_blocking` and runs its closure itself, so
 //! it may borrow. Neither needs a runtime to make progress. A closure that
-//! writes to its own lane is refused with `NestedWrite`.
+//! writes to its own lane is refused with `NestedWrite`. Synchronous code
+//! that must wait on a future goes through [`block_on`], which refuses
+//! inside a write closure.
 //!
 //! Layout: [`factory`] builds the runtime, [`checkpoint`] runs the GH-293
 //! checkpoint policy with TRUNCATE reclaim, [`writer`] serializes writes with
@@ -18,7 +20,8 @@
 //! the online backup API, [`durable`] carries the worker wakeups and job
 //! registry, [`analyze`] keeps the planner statistics fresh, [`fs`]
 //! enforces the local-filesystem rule, [`fold`] keeps the accent-insensitive
-//! search function, and [`error`] holds the typed errors.
+//! search function, `scope` records which write closures a thread is
+//! inside, and [`error`] holds the typed errors.
 
 pub mod analyze;
 pub mod backup;
@@ -49,6 +52,7 @@ pub use factory::{
 };
 pub use fold::{fold_text, register_fold};
 pub use fs::{filesystem_is_local, reject_remote_filesystem, reject_symlink, same_filesystem};
+pub use scope::block_on;
 pub use writer::{
     BACKGROUND_CHUNK_ROWS, CancelFlag, FOREGROUND_BURST, FOREGROUND_SOFT_BUDGET,
     LANE_QUEUE_CAPACITY, Lane, LaneIdle, OpError, WAIT_BUCKET_BOUNDS_MS, WRITE_HARD_BUDGET,
