@@ -1,11 +1,9 @@
 //! Acquire journeys through the real app: request, approve, land; follow
-//! toggle, approval, armed follow; plus the migration upgrade check and
-//! the usenet re-attach. Scratch databases only; the worker loop never
-//! runs here (landing is simulated through the journal).
+//! toggle, approval, armed follow. Scratch databases only; the worker loop
+//! never runs here (landing is simulated through the journal).
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::{Router, http::StatusCode};
 use droppedneedle::{
@@ -19,7 +17,7 @@ use droppedneedle::{
     ids::{IdGenerator, UuidGenerator},
     reads::ReadsSetup,
     runtime_config::{ConfigStore, Crypto, Secret},
-    schema::{apply_migrations, latest_version},
+    schema::apply_migrations,
 };
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -488,168 +486,4 @@ async fn acquire_follow_approval_arms_auto_download() {
         ),
         (Some(false), Some("revoked"))
     );
-}
-
-// ---------------------------------------------------------------------------
-// Migrations apply cleanly on top of the baseline and rerun idempotently.
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn migrations_upgrade_from_baseline() {
-    let dir = crate::common::ScratchDir::new("migrate");
-    let db_path = dir.join("migrate.db");
-
-    // Baseline only, as the oldest database would hold it.
-    let baseline = include_str!("../../migrations/0001_baseline.sql");
-    {
-        let conn = rusqlite::Connection::open(&db_path).expect("scratch opens");
-        conn.execute_batch(baseline).expect("baseline applies");
-        let version: i64 = conn
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .expect("version reads");
-        assert_eq!(version, 1);
-    }
-    let runtime = open_runtime(&DbConfig::new(&db_path))
-        .await
-        .expect("runtime opens");
-    apply_migrations(runtime.pool())
-        .await
-        .expect("later migrations apply on top of 0001");
-    let conn = rusqlite::Connection::open(&db_path).expect("scratch reopens");
-    let version: i64 = conn
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .expect("version reads");
-    assert_eq!(version, latest_version());
-    for name in ["download_idempotency_keys", "acquire_follow_cursors"] {
-        let table: Option<String> = conn
-            .query_row(
-                "SELECT name FROM sqlite_master WHERE name = ?1",
-                [name],
-                |row| row.get(0),
-            )
-            .expect("table lookup runs");
-        assert_eq!(table.as_deref(), Some(name));
-    }
-    drop(conn);
-
-    // A second run is a clean no-op (the boot path reruns every start).
-    apply_migrations(runtime.pool())
-        .await
-        .expect("migrations rerun cleanly");
-    let conn = rusqlite::Connection::open(&db_path).expect("scratch reopens");
-    let version: i64 = conn
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .expect("version reads");
-    assert_eq!(version, latest_version());
-    runtime.shutdown().await;
-}
-
-/// Crash-retry usenet enqueue re-attaches instead of double-adding: the
-/// deterministic job name is already on the client, so the adapter
-/// returns it with zero add calls. With no job present the search still
-/// runs and reports no candidate.
-#[tokio::test]
-async fn usenet_enqueue_reattaches_to_existing_job() {
-    use droppedneedle::acquire::dispatch::Journal;
-    use droppedneedle::acquire::downloads::sources::{DownloadSource, SourceError};
-    use droppedneedle::acquire::downloads::store::NewTask;
-    use droppedneedle::acquire::sources::SabnzbdSource;
-    use droppedneedle::acquire::usenet::mocks::{SabnzbdMock, serve_loopback};
-    use droppedneedle::acquire::usenet::newznab::NewznabIndexer;
-    use droppedneedle::acquire::usenet::policy::UsenetPolicy;
-    use droppedneedle::acquire::usenet::prowlarr::ProwlarrIndexer;
-    use droppedneedle::acquire::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
-    use droppedneedle::runtime_config::sections::UsenetBackendSetting;
-
-    let task_id = "0123456789abcdef0123456789abcdef";
-    let job_name = format!("droppedneedle-{task_id}-0");
-    let mock = SabnzbdMock::new();
-    mock.queue_job("nzo-1", &job_name, "Downloading", "100.0", "50.0", "50");
-    let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
-
-    let db = droppedneedle::acquire::db::AcquireDb::scratch().expect("scratch db");
-    db.add_user("u1", "U", "user").await.expect("user seeds");
-    let journal = Arc::new(Journal::new(db));
-    journal
-        .run("test.seed", |store| {
-            store.insert_task(
-                &NewTask {
-                    id: task_id.to_owned(),
-                    user_id: "u1".to_owned(),
-                    artist_name: "artist".to_owned(),
-                    album_title: "album".to_owned(),
-                    release_group_mbid: "rg-1".to_owned(),
-                    origin: "user".to_owned(),
-                    retry_count: 0,
-                },
-                1_700_000_000.0,
-            )
-        })
-        .await
-        .expect("task inserts");
-    let policy = UsenetPolicy::v2_defaults();
-    let queue = Arc::new(SabnzbdQueue::new(
-        SabnzbdClient::new(
-            reqwest::Client::new(),
-            &base,
-            "SABKEY",
-            3,
-            Duration::from_millis(1),
-        ),
-        &base,
-        "SABKEY",
-        std::env::temp_dir(),
-        policy.clone(),
-    ));
-    let source = SabnzbdSource::new(
-        queue,
-        Arc::new(NewznabIndexer::new(
-            Vec::new(),
-            Duration::from_secs(5),
-            Duration::from_secs(5),
-            Duration::from_secs(5),
-            Duration::from_secs(5),
-        )),
-        Arc::new(ProwlarrIndexer::new(
-            None,
-            Vec::new(),
-            false,
-            Duration::from_secs(5),
-            Duration::from_secs(5),
-            Duration::from_secs(5),
-        )),
-        UsenetBackendSetting::default(),
-        policy,
-        journal,
-        None,
-        Duration::from_secs(5),
-    );
-    let handle = source.enqueue(task_id, 0).await.expect("re-attaches");
-    assert_eq!(handle.job_name, job_name);
-    assert!(mock.state().add_file_requests.is_empty());
-    assert!(mock.state().add_url_requests.is_empty());
-    assert_eq!(handle.nzo_id, "nzo-1", "the handle keeps SABnzbd's job id");
-
-    // SABnzbd renames the finished job; the poll still finds it by id.
-    mock.state().queue_slots.clear();
-    mock.history_job(
-        "nzo-1",
-        &format!("{job_name}.1"),
-        "Completed",
-        "/downloads/complete/renamed",
-        1024,
-        "",
-    );
-    let progress = source.poll(&handle).await.expect("poll answers");
-    assert!(
-        progress.all_terminal && progress.all_succeeded,
-        "{progress:?}"
-    );
-
-    let missing = "fedcba9876543210fedcba9876543210";
-    let err = source
-        .enqueue(missing, 0)
-        .await
-        .expect_err("unknown task rejects");
-    assert!(matches!(err, SourceError::Rejected(_)));
 }

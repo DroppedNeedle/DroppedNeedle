@@ -1509,3 +1509,110 @@ fn usenet_secrets_never_logged() {
     let debug = format!("{slot:?}");
     assert!(!debug.contains("nzb-password"), "{debug}");
 }
+
+/// Crash-retry usenet enqueue re-attaches instead of double-adding: the
+/// deterministic job name is already on the client, so the adapter
+/// returns it with zero add calls. With no job present the search still
+/// runs and reports no candidate.
+#[tokio::test]
+async fn usenet_enqueue_reattaches_to_existing_job() {
+    use droppedneedle::acquire::dispatch::Journal;
+    use droppedneedle::acquire::downloads::sources::{DownloadSource, SourceError};
+    use droppedneedle::acquire::downloads::store::NewTask;
+    use droppedneedle::acquire::sources::SabnzbdSource;
+    use droppedneedle::runtime_config::sections::UsenetBackendSetting;
+    use std::sync::Arc;
+    use usenet::prowlarr::ProwlarrIndexer;
+
+    let task_id = "0123456789abcdef0123456789abcdef";
+    let job_name = format!("droppedneedle-{task_id}-0");
+    let mock = SabnzbdMock::new();
+    mock.queue_job("nzo-1", &job_name, "Downloading", "100.0", "50.0", "50");
+    let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
+
+    let db = droppedneedle::acquire::db::AcquireDb::scratch().expect("scratch db");
+    db.add_user("u1", "U", "user").await.expect("user seeds");
+    let journal = Arc::new(Journal::new(db));
+    journal
+        .run("test.seed", |store| {
+            store.insert_task(
+                &NewTask {
+                    id: task_id.to_owned(),
+                    user_id: "u1".to_owned(),
+                    artist_name: "artist".to_owned(),
+                    album_title: "album".to_owned(),
+                    release_group_mbid: "rg-1".to_owned(),
+                    origin: "user".to_owned(),
+                    retry_count: 0,
+                },
+                1_700_000_000.0,
+            )
+        })
+        .await
+        .expect("task inserts");
+    let policy = UsenetPolicy::v2_defaults();
+    let queue = Arc::new(SabnzbdQueue::new(
+        SabnzbdClient::new(
+            reqwest::Client::new(),
+            &base,
+            "SABKEY",
+            3,
+            Duration::from_millis(1),
+        ),
+        &base,
+        "SABKEY",
+        std::env::temp_dir(),
+        policy.clone(),
+    ));
+    let source = SabnzbdSource::new(
+        queue,
+        Arc::new(NewznabIndexer::new(
+            Vec::new(),
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+        )),
+        Arc::new(ProwlarrIndexer::new(
+            None,
+            Vec::new(),
+            false,
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+        )),
+        UsenetBackendSetting::default(),
+        policy,
+        journal,
+        None,
+        Duration::from_secs(5),
+    );
+    let handle = source.enqueue(task_id, 0).await.expect("re-attaches");
+    assert_eq!(handle.job_name, job_name);
+    assert!(mock.state().add_file_requests.is_empty());
+    assert!(mock.state().add_url_requests.is_empty());
+    assert_eq!(handle.nzo_id, "nzo-1", "the handle keeps SABnzbd's job id");
+
+    // SABnzbd renames the finished job; the poll still finds it by id.
+    mock.state().queue_slots.clear();
+    mock.history_job(
+        "nzo-1",
+        &format!("{job_name}.1"),
+        "Completed",
+        "/downloads/complete/renamed",
+        1024,
+        "",
+    );
+    let progress = source.poll(&handle).await.expect("poll answers");
+    assert!(
+        progress.all_terminal && progress.all_succeeded,
+        "{progress:?}"
+    );
+
+    let missing = "fedcba9876543210fedcba9876543210";
+    let err = source
+        .enqueue(missing, 0)
+        .await
+        .expect_err("unknown task rejects");
+    assert!(matches!(err, SourceError::Rejected(_)));
+}

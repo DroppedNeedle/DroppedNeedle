@@ -1,7 +1,9 @@
 //! Schema: fresh migrate, re-run, upgrade from every earlier version,
 //! legacy exclusions, merged tables, and foreign-key enforcement. The
-//! scratch databases live only in memory.
+//! scratch databases live only in memory, except the baseline upgrade,
+//! which runs through the production runtime on a file.
 
+use droppedneedle::db::{DbConfig, open_runtime};
 use droppedneedle::schema::{MIGRATOR, apply_migrations, assert_migrated, latest_version};
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -769,4 +771,58 @@ async fn migrations_stamp_their_own_version_in_order() {
 /// Number of migrations the binary carries.
 fn migration_count() -> i64 {
     i64::try_from(droppedneedle::schema::MIGRATOR.migrations.len()).unwrap_or(i64::MAX)
+}
+
+// ---------------------------------------------------------------------------
+// Migrations apply cleanly on top of the baseline and rerun idempotently.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn migrations_upgrade_from_baseline() {
+    let dir = crate::common::ScratchDir::new("migrate");
+    let db_path = dir.join("migrate.db");
+
+    // Baseline only, as the oldest database would hold it.
+    let baseline = include_str!("../../migrations/0001_baseline.sql");
+    {
+        let conn = rusqlite::Connection::open(&db_path).expect("scratch opens");
+        conn.execute_batch(baseline).expect("baseline applies");
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("version reads");
+        assert_eq!(version, 1);
+    }
+    let runtime = open_runtime(&DbConfig::new(&db_path))
+        .await
+        .expect("runtime opens");
+    apply_migrations(runtime.pool())
+        .await
+        .expect("later migrations apply on top of 0001");
+    let conn = rusqlite::Connection::open(&db_path).expect("scratch reopens");
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .expect("version reads");
+    assert_eq!(version, latest_version());
+    for name in ["download_idempotency_keys", "acquire_follow_cursors"] {
+        let table: Option<String> = conn
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE name = ?1",
+                [name],
+                |row| row.get(0),
+            )
+            .expect("table lookup runs");
+        assert_eq!(table.as_deref(), Some(name));
+    }
+    drop(conn);
+
+    // A second run is a clean no-op (the boot path reruns every start).
+    apply_migrations(runtime.pool())
+        .await
+        .expect("migrations rerun cleanly");
+    let conn = rusqlite::Connection::open(&db_path).expect("scratch reopens");
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .expect("version reads");
+    assert_eq!(version, latest_version());
+    runtime.shutdown().await;
 }
