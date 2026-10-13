@@ -29,9 +29,12 @@
 //!
 //! # Tests
 //!
-//! Wire goldens live with the tests: `tests/it/compat_journeys.rs` replays
-//! the client traces and pinned shapes in `tests/fixtures/compat/`
-//! (`COMPAT_BLESS=1` rewrites them), `tests/it/compat_subsonic.rs` and
+//! Wire goldens live with the tests, in `tests/fixtures/compat/`.
+//! `tests/it/compat_library_journeys.rs` replays the client traces and
+//! pinned shapes through the whole app over a library its own scanner
+//! filled (the `library_*` goldens); `tests/it/compat_journeys.rs` replays
+//! them over the test doubles. `COMPAT_BLESS=1` rewrites the goldens and is
+//! refused when `CI` is set. `tests/it/compat_subsonic.rs` and
 //! `tests/it/compat_jellyfin.rs` pin each protocol over the test doubles,
 //! and `tests/it/compat_catalog.rs` runs both over a real database.
 
