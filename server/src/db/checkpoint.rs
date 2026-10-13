@@ -280,7 +280,8 @@ impl CheckpointService {
     /// [`CheckpointService::run_once`] for the lane's relief thread, which
     /// calls it once a second while a bulk write is held. Only the pass that
     /// ends the hold is logged at info; the rest would be a line a second
-    /// for as long as a reader pins the WAL.
+    /// for as long as a reader pins the WAL. A pass that fails says so in
+    /// its outcome, and the lane puts that in its line about held writes.
     pub fn run_relief(&self) -> CheckpointOutcome {
         self.run_pass(CheckpointMode::Passive, true)
     }
@@ -449,7 +450,13 @@ impl CheckpointService {
                         log_lost_lock(relief);
                         (true, 0, 0, false)
                     } else {
-                        tracing::error!("WAL checkpoint failed with a non-lock error");
+                        // A relief pass comes round every second; the lane
+                        // reports its error with the writes it left held.
+                        if relief {
+                            tracing::debug!("WAL checkpoint failed with a non-lock error");
+                        } else {
+                            tracing::error!("WAL checkpoint failed with a non-lock error");
+                        }
                         return self.record(
                             mode,
                             at,

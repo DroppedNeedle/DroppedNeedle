@@ -532,6 +532,8 @@ struct State {
     /// When a full queue was last logged. A producer that is not awaiting
     /// its writes is refused at its own rate, which is no rate to log at.
     full_logged_at: Option<Instant>,
+    /// When the bulk writes held by the WAL were last named in the log.
+    held_logged_at: Option<Instant>,
 }
 
 impl State {
@@ -863,7 +865,7 @@ impl Shared {
     /// kept waiting. The pass needs nothing from the lane: it has its own
     /// connection, and a held write is waiting for a turn, not inside a
     /// transaction.
-    fn relief_tick(self: &Arc<Self>, checkpoint: &dyn Fn()) {
+    fn relief_tick(self: &Arc<Self>, checkpoint: &dyn Fn() -> Option<String>) {
         let (stopped, waiting) = {
             let mut state = self.state();
             if state.closed || state.waiting[Class::Bulk as usize] == 0 {
@@ -891,11 +893,40 @@ impl Shared {
         if !waiting {
             return;
         }
-        if self.hold.is_on() {
-            checkpoint();
-        }
+        let failed = if self.hold.is_on() {
+            checkpoint()
+        } else {
+            None
+        };
         if !self.hold.is_on() {
             self.grant_next();
+            return;
+        }
+        // A long hold is not silent: a reader that never ends, or a pass
+        // that keeps failing, parks bulk writes until shutdown.
+        let held = {
+            let mut state = self.state();
+            let oldest = state
+                .background
+                .iter()
+                .find(|waiter| waiter.class() == Class::Bulk)
+                .map(|waiter| waiter.queued_at.elapsed())
+                .filter(|waited| *waited >= HOLDER_LOG_EVERY);
+            let due = state
+                .held_logged_at
+                .is_none_or(|at| at.elapsed() >= HOLDER_LOG_EVERY);
+            oldest.filter(|_| due).map(|oldest| {
+                state.held_logged_at = Some(Instant::now());
+                (state.waiting[Class::Bulk as usize], oldest)
+            })
+        };
+        if let Some((held, oldest)) = held {
+            tracing::warn!(
+                held,
+                oldest_waited_ms = oldest.as_millis() as u64,
+                last_pass_error = failed.as_deref().unwrap_or("none"),
+                "bulk writes are still held: the WAL cannot shrink"
+            );
         }
     }
 }
@@ -1011,6 +1042,7 @@ impl WriteLane {
                     runner_thread: Some(runner_thread),
                     waits: WaitTimes::default(),
                     full_logged_at: None,
+                    held_logged_at: None,
                 }),
                 drained: Condvar::new(),
                 idle: Arc::new(LaneIdle::default()),
@@ -1047,11 +1079,16 @@ impl WriteLane {
     ///
     /// The watch thread answers the foreground writes that have waited too
     /// long and names a stuck holder. The relief thread calls `checkpoint`,
-    /// one blocking checkpoint pass, once a tick while a bulk write is held
-    /// by the WAL, and starts the held writes when the hold is off. A pass
+    /// one blocking checkpoint pass that returns its error if it failed,
+    /// once a tick while a bulk write is held by the WAL, and starts the
+    /// held writes when the hold is off. Writes held for 30 s or more are
+    /// counted in the log, at most every 30 s, with that error. A pass
     /// takes as long as the checkpoint takes, which is why it has a thread
     /// of its own: it never delays the watch thread's answers.
-    pub fn watch(&self, checkpoint: impl Fn() + Send + 'static) -> Result<LaneWatch, DbError> {
+    pub fn watch(
+        &self,
+        checkpoint: impl Fn() -> Option<String> + Send + 'static,
+    ) -> Result<LaneWatch, DbError> {
         let tick = self.shared.limits.watch_tick;
         let watch = Ticker::start("droppedneedle-db-watch", tick, &self.shared, |shared| {
             shared.watch_tick();

@@ -177,9 +177,7 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
             .with_water(high_water, low_water)
             .with_analyze(AnalyzeService::new(lane.clone(), pool.clone()));
     let relief = checkpoint.clone();
-    let watch = lane.watch(move || {
-        relief.run_relief();
-    })?;
+    let watch = lane.watch(move || relief.run_relief().error)?;
     let wakeups = DurableWorkWakeups::new(pool.clone());
 
     Ok(DbRuntime {
