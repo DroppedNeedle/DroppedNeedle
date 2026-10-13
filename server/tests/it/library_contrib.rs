@@ -1352,7 +1352,7 @@ async fn brief_worker_skips_non_verifying_and_recovers_leases() {
     assert_eq!(recovered, 0);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn brief_worker_spawn_loop_links_then_shuts_down() {
     let rig = Rig::new(ScriptedEvidence::identified(
         MBID_GROUP,
@@ -1370,30 +1370,38 @@ async fn brief_worker_spawn_loop_links_then_shuts_down() {
         MBID_RELEASE,
         Ok(Some(verified_release(MBID_RELEASE, MBID_GROUP))),
     );
+    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
     let worker = Arc::new(VerificationWorker::new(
         rig.service.clone(),
         rig.musicbrainz.clone(),
         rig.identity.clone(),
         VerificationWorkerConfig {
             worker_id: "test-loop".to_string(),
-            poll_interval: std::time::Duration::from_millis(10),
+            poll_interval: POLL_INTERVAL,
             lease_seconds: 90.0,
         },
     ));
     let (shutdown_tx, shutdown_rx) = shutdown_channel();
     let handle = spawn_verification_worker(worker, shutdown_rx);
-    let linked = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        loop {
-            let record = rig.service.get(&verifying.id).await.unwrap();
-            if record.state == ContributionState::Linked {
-                break record;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    // Let the loop arm its first wait, pass the interval, then give the
+    // pass its turns: every store here is in memory.
+    for _ in 0..3 {
+        tokio::task::yield_now().await;
+    }
+    tokio::time::advance(POLL_INTERVAL).await;
+    let mut linked = rig.service.get(&verifying.id).await.unwrap();
+    for _ in 0..1_000 {
+        if linked.state == ContributionState::Linked {
+            break;
         }
-    })
-    .await
-    .expect("worker loop should link the contribution");
-    assert_eq!(linked.state, ContributionState::Linked);
+        tokio::task::yield_now().await;
+        linked = rig.service.get(&verifying.id).await.unwrap();
+    }
+    assert_eq!(
+        linked.state,
+        ContributionState::Linked,
+        "worker loop should link the contribution"
+    );
     shutdown_tx.send(true).unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(5), handle)
         .await

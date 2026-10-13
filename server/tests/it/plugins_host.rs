@@ -163,6 +163,17 @@ const TOY_MANIFEST: &str = "[plugin]\n\
      auth = \"user\"\n\
      rate_limit_per_minute = 1\n";
 
+/// Give the tasks the host spawned their turns until `done` holds. The fake
+/// runtime never leaves the scheduler, so no clock is involved.
+async fn turns_until(done: impl Fn() -> bool) {
+    for _ in 0..1_000 {
+        if done() {
+            return;
+        }
+        tokio::task::yield_now().await;
+    }
+}
+
 fn enable_toy(rig: &Rig, manifest: &str) -> Arc<FakeConnection> {
     write_plugin(&rig.dir, "toy", manifest);
     rig.host.load_all();
@@ -249,12 +260,7 @@ async fn uninstall_stops_the_plugin_and_keeps_settings() {
     rig.host.uninstall("toy").unwrap();
     assert!(!rig.dir.join("plugins").join("toy").exists());
     assert!(rig.host.get("toy").is_none());
-    for _ in 0..50 {
-        if runtime.was_stopped() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    turns_until(|| runtime.was_stopped()).await;
     assert!(runtime.was_stopped());
     assert_eq!(
         rig.config.get_plugin("toy").unwrap().settings["level"],
@@ -684,12 +690,7 @@ async fn a_plugin_handling_a_notice_cannot_publish_again() {
         .unwrap();
     // The notice fans out to subscribers, including this plugin (same
     // causation is new to it), at depth 1.
-    for _ in 0..50 {
-        if !runtime.calls_to(methods::EVENT).is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    turns_until(|| !runtime.calls_to(methods::EVENT).is_empty()).await;
     assert_eq!(runtime.calls_to(methods::EVENT)[0]["kind"], "plugin_notice");
     let echo = rig
         .host
@@ -716,16 +717,15 @@ async fn fanout_reaches_subscribers_once_per_causation() {
         recording_mbid: None,
     });
     rig.host.dispatch_event(event.clone());
-    for _ in 0..100 {
-        if runtime.calls_to(methods::EVENT).len() == 1
+    turns_until(|| {
+        runtime.calls_to(methods::EVENT).len() == 1
             && runtime.calls_to(methods::SCROBBLE).len() == 1
-        {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    })
+    .await;
     rig.host.dispatch_event(event);
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // The host spawns the scrobble before it would spawn an event delivery,
+    // so a repeated event would have run by the time the scrobble shows.
+    turns_until(|| runtime.calls_to(methods::SCROBBLE).len() == 2).await;
     assert_eq!(
         runtime.calls_to(methods::EVENT).len(),
         1,

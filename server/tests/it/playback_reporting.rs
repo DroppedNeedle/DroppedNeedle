@@ -686,14 +686,13 @@ async fn a_scrobble_reaches_listenbrainz_once() {
             playback::services::submit_scrobble(&rig.deps, "user-1", &request).expect("accepted");
         assert!(answer.accepted);
     }
-    for _ in 0..100 {
-        if !seen.lock().expect("lock").is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    // Dropping the rig closes the queue; the worker delivers what is in it
+    // and then ends.
     drop(rig);
-    let _ = tokio::time::timeout(Duration::from_secs(5), worker).await;
+    tokio::time::timeout(Duration::from_secs(30), worker)
+        .await
+        .expect("the worker drains its queue")
+        .expect("the worker ends cleanly");
     server.abort();
     let seen = seen.lock().expect("lock").clone();
     assert_eq!(seen.len(), 1, "the dedup keeps the repeat at home");

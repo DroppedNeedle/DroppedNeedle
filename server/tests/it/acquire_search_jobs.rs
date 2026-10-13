@@ -24,7 +24,7 @@ use droppedneedle::acquire::sources::SlskdSource;
 use droppedneedle::acquire::target::Targets;
 use droppedneedle::acquire::target::lookup::{AlbumRelease, AlbumTrack, FixedAlbums};
 use droppedneedle::acquire::worker::{DownloadWorker, Source, WorkerConfig};
-use droppedneedle::events::EventSink;
+use droppedneedle::events::{EventHub, EventSink};
 use serde_json::{Value, json};
 
 const RELEASE: &str = "22222222-2222-4222-8222-222222222222";
@@ -79,6 +79,7 @@ struct Rig {
     staging: crate::common::ScratchDir,
     worker: Arc<DownloadWorker>,
     jobs: Arc<SearchJobs>,
+    events: EventHub,
 }
 
 /// The search service and a worker over the slskd mock, with a fixed
@@ -120,18 +121,22 @@ async fn rig(mock: &MockSlskd, review: bool) -> Rig {
         worker = worker.with_targets(targets.clone());
     }
     let worker = Arc::new(worker);
+    let events = EventHub::new();
+    let sink = EventSink::default();
+    sink.attach(&events);
     let jobs = Arc::new(SearchJobs::new(
         JobStore::new(db.clone()),
         worker.clone(),
         targets,
         Arc::new(QuotaLedger::unlimited(db.clone())),
-        EventSink::default(),
+        sink,
     ));
     Rig {
         journal,
         staging,
         worker,
         jobs,
+        events,
     }
 }
 
@@ -156,8 +161,10 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
         staging,
         worker,
         jobs,
+        events,
     } = rig(&mock, false).await;
     let owner = principal("u1");
+    let mut updates = events.subscribe(&owner.user_id);
     let stranger = principal("u2");
 
     let started = jobs
@@ -177,14 +184,18 @@ async fn manual_search_ranks_folders_and_fetches_the_picked_one() {
         panic!("nothing was searched: {started:?}");
     };
 
-    let mut view = jobs.get(&owner, &job_id).await.expect("job reads");
-    for _ in 0..200 {
-        if view.row.status != "searching" {
-            break;
+    // The job tells its owner about every change of status.
+    let view = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let view = jobs.get(&owner, &job_id).await.expect("job reads");
+            if view.row.status != "searching" {
+                break view;
+            }
+            updates.next().await.expect("the hub stays open");
         }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-        view = jobs.get(&owner, &job_id).await.expect("job reads");
-    }
+    })
+    .await
+    .expect("the search settles");
     assert_eq!(view.row.status, "completed");
     let payload = view.payload.expect("candidates decode");
     assert_eq!(payload.tracks_total, Some(4));

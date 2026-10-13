@@ -15,13 +15,14 @@ fn registry() -> TestRegistry {
     JobRegistry::new(MemoryRegistryStore::new())
 }
 
-/// Wait until the name clears, or panic with the name after the budget.
+/// Give the job its turns until the name clears. Nothing here leaves the
+/// scheduler, so no clock is involved.
 async fn wait_until_clear(registry: &TestRegistry, name: &str) {
-    for _ in 0..500 {
+    for _ in 0..1_000 {
         if !registry.is_running(name) {
             return;
         }
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        tokio::task::yield_now().await;
     }
     panic!("job {name} never cleared");
 }

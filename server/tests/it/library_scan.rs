@@ -9,7 +9,6 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use crate::common::ScratchDir;
 use droppedneedle::library::scan::{
@@ -223,18 +222,22 @@ async fn vanished_files_are_marked_missing_and_mass_loss_is_held_back() {
     );
 }
 
-/// Tag reader that signals shutdown on one nominated read.
+/// Tag reader that signals shutdown on one nominated read, and holds that
+/// read until the test has seen the drive abandoned.
 struct ShutdownOnRead {
     shutdown: watch::Sender<bool>,
     signal_at: u64,
     reads: AtomicU64,
+    abandoned: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
 }
 
 impl TagReader for ShutdownOnRead {
     fn read_tags(&self, _path: &Path) -> Result<ScannedTags, TagReadError> {
         if self.reads.fetch_add(1, Ordering::SeqCst) + 1 == self.signal_at {
             let _ = self.shutdown.send(true);
-            std::thread::sleep(Duration::from_millis(50));
+            if let Ok(abandoned) = self.abandoned.lock() {
+                let _ = abandoned.recv();
+            }
         }
         Ok(ScannedTags::default())
     }
@@ -288,10 +291,12 @@ async fn shutdown_mid_index_resumes_without_double_counting() {
         std::fs::write(root.join(format!("t{n:04}.flac")), b"junk").expect("plant");
     }
     let (shutdown, signal) = watch::channel(false);
+    let (resume, abandoned) = std::sync::mpsc::channel();
     let reader = Arc::new(ShutdownOnRead {
         shutdown,
         signal_at: 300,
         reads: AtomicU64::new(0),
+        abandoned: std::sync::Mutex::new(abandoned),
     });
     let (coordinator, paths) = coordinator(&root, reader);
     let requested = coordinator.request_run(&request(&root)).expect("requested");
@@ -302,6 +307,7 @@ async fn shutdown_mid_index_resumes_without_double_counting() {
             .is_none(),
         "shutdown abandons the drive"
     );
+    drop(resume);
     let (run, _, _) = coordinator.snapshot(&requested.run_id).expect("run");
     assert_eq!(run.state, ScanState::Indexing, "the run stays resumable");
 

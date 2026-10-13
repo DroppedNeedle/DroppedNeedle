@@ -6,7 +6,6 @@
 //! production database.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
@@ -169,15 +168,28 @@ async fn backup_run_then_list_then_report() {
     }
 }
 
+/// Backup names sort by the wall-clock millisecond they carry. Wait for the
+/// next one, so two runs never share a stamp.
+async fn next_millisecond() {
+    let millis = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|since| since.as_millis())
+            .unwrap_or(0)
+    };
+    let stamp = millis();
+    while millis() == stamp {
+        tokio::task::yield_now().await;
+    }
+}
+
 #[tokio::test]
 async fn backup_rotation_keeps_five() {
     let rig = Rig::open("rotation").await;
     for _ in 0..BACKUP_KEEP + 1 {
         let (status, _) = call(rig.admin_app(), "POST", "/admin/backups", None).await;
         assert_eq!(status, StatusCode::CREATED);
-        // Distinct names sort by wall clock; a breath between runs keeps
-        // the millisecond stamps apart.
-        tokio::time::sleep(Duration::from_millis(2)).await;
+        next_millisecond().await;
     }
     let (status, list) = call(rig.admin_app(), "GET", "/admin/backups", None).await;
     assert_eq!(status, StatusCode::OK);
@@ -269,7 +281,7 @@ async fn pre_upgrade_backup_runs_when_stale_and_skips_when_current() {
         droppedneedle::admin::backups::ensure_pre_upgrade_backup(&db_path, &backup_dir)
             .await
             .expect("repeat pre-upgrade runs");
-        tokio::time::sleep(Duration::from_millis(2)).await;
+        next_millisecond().await;
     }
     let kept = std::fs::read_dir(&backup_dir)
         .expect("backup dir reads")

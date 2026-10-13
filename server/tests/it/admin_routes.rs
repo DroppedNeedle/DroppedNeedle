@@ -298,12 +298,25 @@ const FIRST: &str = "cccccccc-0000-4000-8000-000000000003";
 /// wait on `album_gate`, so the test can watch a run mid-flight.
 struct ScriptedLibrary {
     calls: std::sync::Mutex<Vec<String>>,
+    recorded: tokio::sync::Notify,
     album_gate: tokio::sync::Semaphore,
 }
 
 impl ScriptedLibrary {
     fn record(&self, call: String) {
         self.calls.lock().unwrap().push(call);
+        self.recorded.notify_waiters();
+    }
+
+    /// Wait until `call` has been recorded.
+    async fn wait_called(&self, call: &str) {
+        loop {
+            let recorded = self.recorded.notified();
+            if self.called(call) {
+                return;
+            }
+            recorded.await;
+        }
     }
 
     fn called(&self, call: &str) -> bool {
@@ -438,6 +451,7 @@ async fn wait_for_status(rig: &Rig, done: impl Fn(&Value) -> bool) -> Value {
 async fn library_image_refresh_reports_progress_and_cancels() {
     let library = Arc::new(ScriptedLibrary {
         calls: std::sync::Mutex::new(Vec::new()),
+        recorded: tokio::sync::Notify::new(),
         album_gate: tokio::sync::Semaphore::new(0),
     });
     let rig = Rig::open_with("image-refresh", Some(library.clone())).await;
@@ -470,12 +484,12 @@ async fn library_image_refresh_reports_progress_and_cancels() {
         StatusCode::ACCEPTED,
         "a cancelled run frees the job name"
     );
-    for _ in 0..500 {
-        if library.called(&format!("audiodb:{FIRST}")) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        library.wait_called(&format!("audiodb:{FIRST}")),
+    )
+    .await
+    .expect("the run reaches the album's AudioDB warm");
     let done = wait_for_status(&rig, |body| body["is_syncing"] == false).await;
     assert_eq!(done["error_message"], Value::Null);
     assert!(library.called(&format!("album:{FIRST}")));
