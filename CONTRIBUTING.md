@@ -52,7 +52,7 @@ make check                  # all of the above, plus lint and format checks
 
 Browser tests use Playwright. Install the browser once with `make frontend-browser-install`.
 
-If you change a route or a request or response type, run `make contract-write` and commit the regenerated `server/openapi/openapi.json` and `frontend/src/lib/api/v3/openapi.d.ts` with your change.
+If you change a route or a request or response type, run `make contract-write` and commit the regenerated `server/openapi/openapi.json` and `frontend/src/lib/api/v3/openapi.d.ts` with your change. Both targets read the document from the integration-test build, so they reuse what `cargo test` already compiled; CI runs `server/openapi/check.sh` against the server binary itself.
 
 ## Pull requests
 

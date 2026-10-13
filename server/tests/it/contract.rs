@@ -1,5 +1,6 @@
 //! The committed OpenAPI snapshot matches the document the code builds.
-//! `server/openapi/check.sh` diffs the generated TypeScript in CI.
+//! `server/openapi/check.sh` diffs the generated TypeScript, and in CI
+//! takes the document from the shipping binary.
 
 use std::collections::BTreeSet;
 
@@ -14,8 +15,24 @@ fn committed_openapi_snapshot_matches_code() {
     let fresh_json = serde_json::to_value(ApiDoc::openapi()).unwrap();
     assert_eq!(
         committed_json, fresh_json,
-        "openapi.json drifted; run server/openapi/check.sh --write, then review the diff"
+        "openapi.json drifted; run make contract-write, then review the diff"
     );
+}
+
+/// Where `write_openapi_document` puts the document.
+const OPENAPI_OUT_ENV: &str = "DN_OPENAPI_OUT";
+
+/// Writes the document, byte for byte what `--print-openapi` prints, so
+/// `server/openapi/check.sh --from-tests` can reuse this binary instead of
+/// building the server a second time.
+#[test]
+#[ignore = "writes the OpenAPI document for server/openapi/check.sh --from-tests"]
+fn write_openapi_document() {
+    let out = std::env::var_os(OPENAPI_OUT_ENV)
+        .unwrap_or_else(|| panic!("{OPENAPI_OUT_ENV} names the file to write"));
+    let mut document = serde_json::to_string_pretty(&ApiDoc::openapi()).unwrap();
+    document.push('\n');
+    std::fs::write(out, document).unwrap();
 }
 
 /// The equality check above cannot catch a mounted route nobody told utoipa

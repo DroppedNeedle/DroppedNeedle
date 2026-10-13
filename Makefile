@@ -40,10 +40,10 @@ server-fmt-check: ## Check Rust formatting
 	cd "$(SERVER_DIR)" && $(CARGO) fmt --check
 
 contract-check: ## Fail if the OpenAPI snapshot or generated TypeScript drifted
-	"$(SERVER_DIR)/openapi/check.sh"
+	"$(SERVER_DIR)/openapi/check.sh" --from-tests
 
 contract-write: ## Regenerate the OpenAPI snapshot and TypeScript types
-	"$(SERVER_DIR)/openapi/check.sh" --write
+	"$(SERVER_DIR)/openapi/check.sh" --from-tests --write
 
 frontend-install: ## Install frontend dependencies
 	cd "$(FRONTEND_DIR)" && $(PNPM) install
