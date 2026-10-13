@@ -24,6 +24,7 @@
 	import LibraryManagementProfilePicker from './LibraryManagementProfilePicker.svelte';
 	import LibraryManagementProfileEditor from './LibraryManagementProfileEditor.svelte';
 	import LibraryManagementProfileSharing from './LibraryManagementProfileSharing.svelte';
+	import LibraryManagementRootPlacement from './LibraryManagementRootPlacement.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import {
 		forgetLibraryManagementActivationSession,
@@ -1054,6 +1055,7 @@
 									>{rootManagementStatus(root.id)}</span
 								>
 							</div>
+							<LibraryManagementRootPlacement rootId={root.id} rootLabel={root.label} />
 							<div class="mt-4">
 								<LibraryManagementProfilePicker
 									id={`root-${root.id}`}

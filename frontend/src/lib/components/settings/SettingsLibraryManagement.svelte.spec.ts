@@ -17,6 +17,14 @@ const h = vi.hoisted(() => ({
 		isLoading: false,
 		isFetching: false
 	} as Record<string, unknown>,
+	placement: {
+		data: { roots: [] as Array<{ root_id: string; mode: string }> },
+		isPending: false,
+		isError: false,
+		error: null,
+		refetch: vi.fn()
+	},
+	checkPlacement: vi.fn(),
 	validate: vi.fn(),
 	impact: vi.fn(),
 	update: vi.fn(),
@@ -55,6 +63,7 @@ vi.mock('$lib/queries/library-management/LibraryManagementQueries.svelte', () =>
 	getLibraryManagementSettingsQuery: () => h.settings,
 	getLibraryManagementActivationPreviewQuery: () => h.activation,
 	getLibraryManagementActivationHealthQuery: () => h.health,
+	getLibraryManagementPlacementQuery: () => h.placement,
 	getLibraryManagementOperationsQuery: () => h.operations,
 	getLibraryManagementPresetDiffQuery: () => h.presetDiff
 }));
@@ -107,7 +116,8 @@ vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () 
 			return h.purgeData;
 		}
 	}),
-	purgeLibraryManagementBaselinesMutation: () => ({ mutateAsync: h.purge, isPending: false })
+	purgeLibraryManagementBaselinesMutation: () => ({ mutateAsync: h.purge, isPending: false }),
+	checkLibraryManagementPlacementMutation: () => ({ mutate: h.checkPlacement, isPending: false })
 }));
 
 import SettingsLibraryManagement from './SettingsLibraryManagement.svelte';
@@ -364,6 +374,7 @@ beforeEach(() => {
 		isLoading: false,
 		isFetching: false
 	};
+	h.placement.data = { roots: [] };
 	const harmless = {
 		current_settings_revision: 'settings-1',
 		proposed_settings_revision: 'settings-2',
@@ -387,6 +398,40 @@ beforeEach(() => {
 });
 
 describe('SettingsLibraryManagement', () => {
+	it('warns on a library whose disk cannot add files safely and offers the check', async () => {
+		h.placement.data = {
+			roots: [
+				{ root_id: 'root-1', mode: 'check' },
+				{ root_id: 'root-2', mode: 'unknown' },
+				{ root_id: 'root-3', mode: 'link' }
+			]
+		};
+		await render(SettingsLibraryManagement, {
+			roots: [
+				roots[0],
+				{ ...roots[0], id: 'root-2', label: 'Vinyl rips', path: '/music/vinyl' },
+				{ ...roots[0], id: 'root-3', label: 'Singles', path: '/music/singles' }
+			],
+			policyRevision: 'policy-1'
+		});
+
+		await expect.element(page.getByText('Files can be overwritten in this library')).toBeVisible();
+		await expect
+			.element(
+				page.getByText(
+					'The disk under "Archive" has no way to add a file only when its name is free.'
+				)
+			)
+			.toBeVisible();
+		await expect.element(page.getByText('Not checked yet')).toBeVisible();
+		// The warned library and the unchecked one offer the check; the safe one shows nothing.
+		const checks = page.getByRole('button', { name: 'Check again' });
+		await expect.element(checks.nth(1)).toBeVisible();
+		expect(checks.elements()).toHaveLength(2);
+		await checks.nth(1).click();
+		expect(h.checkPlacement).toHaveBeenCalledWith('root-2');
+	});
+
 	it('starts off everywhere and preserves subordinate profile values while a master toggle is off', async () => {
 		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
 		await expect.element(page.getByText('Off everywhere')).toBeVisible();
