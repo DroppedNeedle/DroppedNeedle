@@ -137,7 +137,10 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // server from starting.
     let data_lock = DataLock::shared(&config.library_db_path)?;
     refuse_foreign_data_dir(&config).await?;
-    let runtime = open_runtime(&DbConfig::new(&config.library_db_path)).await?;
+    let runtime = open_runtime(
+        &DbConfig::new(&config.library_db_path).with_shutdown_grace(config.shutdown_grace),
+    )
+    .await?;
     let web = prepare_web(&config).await?;
 
     let crypto = Arc::new(Crypto::load_or_generate(&config.config_dir())?);

@@ -34,10 +34,21 @@
 //! the closure returns, and a write whose transaction ended inside its
 //! closure commits nothing, whatever the closure returned.
 //!
-//! Every transaction carries a 2 s hard abort through
-//! the SQLite progress handler, foreground ones a 250 ms soft budget
-//! (logged); chunked background work commits at most 500 rows at a time with
-//! a cancellation check between chunks.
+//! Who waits and who is refused. A foreground write is refused with `Busy`
+//! when 128 are already waiting, and again once it has waited 5 s for its
+//! turn: a request does not wait for ever behind a stuck write. A background
+//! write waits for its turn however long that takes; it is refused only past
+//! 4,096 waiting, which means a producer is not awaiting its writes.
+//!
+//! Each class has a time budget, enforced through the SQLite progress
+//! handler: a foreground transaction is logged past 250 ms and aborted at
+//! 2 s, a background one logged past 1 s and aborted at 5 s. The abort only
+//! fires inside SQLite. For a closure stuck anywhere else there is the
+//! [`LaneWatch`] thread, which the database runtime starts: once a second it
+//! answers the foreground writes that have waited too long and names in the
+//! log a write that has held the lane past twice its budget. Chunked
+//! background work commits at most 500 rows at a time with a cancellation
+//! check between chunks.
 
 use std::{
     collections::VecDeque,
@@ -64,16 +75,40 @@ use super::{
 /// Foreground admissions granted before one background admission while both
 /// lanes are busy. The v2 `foreground_burst=8` value, unchanged.
 pub const FOREGROUND_BURST: u32 = 8;
-/// Maximum queued admissions per lane. Past this, a write fails fast with
-/// `Busy` (HTTP 503 with `Retry-After` at the handler layer) instead of
-/// growing memory without bound.
-pub const LANE_QUEUE_CAPACITY: usize = 128;
+/// Foreground writes that may wait at once. Past this, a write fails fast
+/// with `Busy` (HTTP 503 with `Retry-After` at the handler layer): a request
+/// is better told to retry than parked behind 128 others.
+pub const FOREGROUND_QUEUE_CAPACITY: usize = 128;
+/// Background writes that may wait at once. A producer that awaits its
+/// writes has one outstanding, so this is only reached by one that spawns
+/// writes without awaiting them; it then fails loudly instead of growing
+/// memory without bound.
+pub const BACKGROUND_QUEUE_CAPACITY: usize = 4_096;
 /// Foreground transactions slower than this log a warning with their name.
+/// A request-path write is a handful of rows; a quarter of a second means
+/// something is wrong with it.
 pub const FOREGROUND_SOFT_BUDGET: Duration = Duration::from_millis(250);
-/// Hard abort for any single write transaction, enforced by the SQLite
-/// progress handler. Four times the busy horizon, so a stuck writer fails
-/// before it can wedge every waiter twice over.
-pub const WRITE_HARD_BUDGET: Duration = Duration::from_secs(2);
+/// Hard abort for a foreground transaction, enforced by the SQLite progress
+/// handler. Well under the 5 s busy horizon, so one runaway request cannot
+/// push the requests waiting behind it past their own limit.
+pub const FOREGROUND_HARD_BUDGET: Duration = Duration::from_secs(2);
+/// Background transactions slower than this log a warning with their name.
+/// Job writes carry more rows than a request does; past a second they hold
+/// requests up for long enough to notice.
+pub const BACKGROUND_SOFT_BUDGET: Duration = Duration::from_secs(1);
+/// Hard abort for a background transaction. The busy horizon: a request
+/// never waits behind one job write for longer than it could wait on a lock.
+/// A write that cannot fit is chunked.
+pub const BACKGROUND_HARD_BUDGET: Duration = Duration::from_secs(5);
+/// How long a foreground write waits for its turn before it is answered
+/// `Busy`. The busy horizon again: what a request already gets when another
+/// connection holds the file lock that long.
+pub const FOREGROUND_WAIT_LIMIT: Duration = Duration::from_secs(5);
+/// How often the watch thread wakes. A second keeps the `Busy` answer within
+/// a second of the limit and costs nothing while the lane is idle.
+pub const WATCH_TICK: Duration = Duration::from_secs(1);
+/// How often a write that still holds the lane is named in the log again.
+pub const HOLDER_LOG_EVERY: Duration = Duration::from_secs(30);
 /// Progress-handler granularity: the abort check runs every 10k VM ops.
 const PROGRESS_OPS: std::os::raw::c_int = 10_000;
 /// Largest chunk a background write commits at once.
@@ -89,6 +124,64 @@ pub enum Lane {
     Foreground,
     /// Background jobs. Yields to foreground bursts and to WAL backpressure.
     Background,
+}
+
+impl Lane {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Foreground => "foreground",
+            Self::Background => "background",
+        }
+    }
+}
+
+/// The time one class of write may take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Budget {
+    /// A transaction slower than this is logged.
+    pub warn: Duration,
+    /// A transaction still running SQL at this point is aborted.
+    pub abort: Duration,
+}
+
+/// The lane's time limits. Production runs on the defaults, which are the
+/// constants above; these are not settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LaneLimits {
+    /// Budget of a foreground transaction.
+    pub foreground: Budget,
+    /// Budget of a background transaction.
+    pub background: Budget,
+    /// How long a foreground write waits for its turn before `Busy`.
+    pub foreground_wait: Duration,
+    /// How often the watch thread wakes.
+    pub watch_tick: Duration,
+}
+
+impl Default for LaneLimits {
+    fn default() -> Self {
+        Self {
+            foreground: Budget {
+                warn: FOREGROUND_SOFT_BUDGET,
+                abort: FOREGROUND_HARD_BUDGET,
+            },
+            background: Budget {
+                warn: BACKGROUND_SOFT_BUDGET,
+                abort: BACKGROUND_HARD_BUDGET,
+            },
+            foreground_wait: FOREGROUND_WAIT_LIMIT,
+            watch_tick: WATCH_TICK,
+        }
+    }
+}
+
+impl LaneLimits {
+    fn budget(&self, lane: Lane) -> Budget {
+        match lane {
+            Lane::Foreground => self.foreground,
+            Lane::Background => self.background,
+        }
+    }
 }
 
 /// Failure from inside a write closure. The transaction rolls back either
@@ -142,6 +235,11 @@ impl LaneIdle {
     pub fn is_idle(&self) -> bool {
         self.queued.load(Ordering::Acquire) == 0 && !self.active.load(Ordering::Acquire)
     }
+
+    /// Writes waiting for a turn.
+    pub fn queued(&self) -> usize {
+        self.queued.load(Ordering::Acquire)
+    }
 }
 
 /// How long admissions waited for their turn since the lane opened.
@@ -188,22 +286,72 @@ enum Failure {
     Connection(DbError),
 }
 
-/// A queued async write: runs its transaction on the turn it is given and
-/// answers its caller.
-type AsyncWrite = Box<dyn FnOnce(Turn) + Send>;
+/// Why a queued write was answered without a turn.
+#[derive(Debug, Clone, Copy)]
+enum Refused {
+    /// A foreground write waited past its limit.
+    Busy,
+    /// Shutdown gave up before the write's turn came.
+    Closed,
+}
+
+impl Refused {
+    fn into_error(self, name: &'static str) -> DbError {
+        match self {
+            Self::Busy => DbError::Busy {
+                operation: name.to_owned(),
+            },
+            Self::Closed => DbError::LaneClosed,
+        }
+    }
+}
+
+/// What a queued async write tells its caller.
+enum Answer<R> {
+    Ran(Outcome<R>),
+    Panicked,
+    Refused(Refused),
+}
+
+/// A queued async write: given a turn it runs its transaction, and either
+/// way it answers its caller.
+type AsyncWrite = Box<dyn FnOnce(Result<Turn, Refused>) + Send>;
 
 /// Who a turn goes to.
 enum Grantee {
     /// A caller parked in `write_blocking`, which runs its own closure.
-    Blocking(mpsc::Sender<Turn>),
+    Blocking(mpsc::Sender<Result<Turn, Refused>>),
     /// A boxed async write, which the lane's thread runs.
     Async(AsyncWrite),
 }
 
 struct Waiter {
     name: &'static str,
+    lane: Lane,
     queued_at: Instant,
     grantee: Grantee,
+}
+
+impl Waiter {
+    /// Answer the caller without a turn. Runs the caller's own code (it
+    /// drops the write closure), so never call it with the lane's mutex held.
+    fn refuse(self, why: Refused) {
+        match self.grantee {
+            Grantee::Blocking(parked) => {
+                let _ = parked.send(Err(why));
+            }
+            Grantee::Async(write) => write(Err(why)),
+        }
+    }
+}
+
+/// The write that holds the turn.
+struct Holder {
+    name: &'static str,
+    lane: Lane,
+    since: Instant,
+    /// When the watch thread last named it in the log.
+    logged_at: Option<Instant>,
 }
 
 /// An async write and the turn it was granted, on its way to the lane's
@@ -255,6 +403,7 @@ impl std::fmt::Debug for WriteLane {
 struct Shared {
     id: LaneId,
     db_path: PathBuf,
+    limits: LaneLimits,
     state: Mutex<State>,
     /// Signalled when no turn is out and nobody waits.
     drained: Condvar,
@@ -267,10 +416,14 @@ struct State {
     background: VecDeque<Waiter>,
     /// The write connection while no turn is out. Gone after shutdown.
     connection: Option<WriterConnection>,
-    turn_out: bool,
+    /// The write a turn is out to.
+    holder: Option<Holder>,
     grants: u32,
     bg_was_pending: bool,
     closed: bool,
+    /// Shutdown returned while a turn was still out: the connection is
+    /// closed when that turn ends, not kept.
+    gave_up: bool,
     /// The way to the thread that runs async writes.
     runner: Option<mpsc::Sender<Granted>>,
     runner_thread: Option<JoinHandle<()>>,
@@ -322,18 +475,26 @@ impl Shared {
             drop(state);
             return Err(DbError::LaneClosed);
         }
-        let queue = match lane {
-            Lane::Foreground => &mut state.foreground,
-            Lane::Background => &mut state.background,
+        let (queue, capacity) = match lane {
+            Lane::Foreground => (&mut state.foreground, FOREGROUND_QUEUE_CAPACITY),
+            Lane::Background => (&mut state.background, BACKGROUND_QUEUE_CAPACITY),
         };
-        if queue.len() >= LANE_QUEUE_CAPACITY {
+        if queue.len() >= capacity {
             drop(state);
+            if lane == Lane::Background {
+                tracing::error!(
+                    operation = name,
+                    waiting = capacity,
+                    "background write queue is full; a producer is not awaiting its writes"
+                );
+            }
             return Err(DbError::Busy {
                 operation: name.to_owned(),
             });
         }
         queue.push_back(Waiter {
             name,
+            lane,
             queued_at: Instant::now(),
             grantee,
         });
@@ -350,7 +511,7 @@ impl Shared {
         loop {
             let (waiter, connection, runner, waited) = {
                 let mut state = self.state();
-                if state.turn_out {
+                if state.holder.is_some() {
                     return;
                 }
                 let Some(connection) = state.connection.take() else {
@@ -362,7 +523,12 @@ impl Shared {
                     self.drained.notify_all();
                     return;
                 };
-                state.turn_out = true;
+                state.holder = Some(Holder {
+                    name: waiter.name,
+                    lane: waiter.lane,
+                    since: Instant::now(),
+                    logged_at: None,
+                });
                 self.idle.active.store(true, Ordering::Release);
                 self.idle.queued.fetch_sub(1, Ordering::AcqRel);
                 let waited = waiter.queued_at.elapsed();
@@ -379,7 +545,9 @@ impl Shared {
                 connection: Some(connection),
             };
             let refused = match waiter.grantee {
-                Grantee::Blocking(parked) => parked.send(turn).err().map(|unsent| unsent.0),
+                Grantee::Blocking(parked) => {
+                    parked.send(Ok(turn)).err().and_then(|unsent| unsent.0.ok())
+                }
                 Grantee::Async(write) => match runner {
                     Some(runner) => runner
                         .send(Granted { write, turn })
@@ -401,35 +569,129 @@ impl Shared {
         }
     }
 
-    /// Put the connection back at the end of a turn.
+    /// Put the connection back at the end of a turn. After a shutdown that
+    /// gave up on this turn there is nobody to keep it for, so it is closed.
     fn take_back(&self, connection: WriterConnection) {
         let mut state = self.state();
-        state.connection = Some(connection);
-        state.turn_out = false;
+        state.holder = None;
+        if state.gave_up {
+            drop(state);
+            drop(connection);
+        } else {
+            state.connection = Some(connection);
+        }
     }
 
-    /// Refuse new writes, wait for queued ones to finish, close the
-    /// connection and stop the lane's thread. False if that thread did not
-    /// stop cleanly.
-    fn close(&self) -> bool {
-        let (connection, runner, runner_thread) = {
+    /// Refuse new writes, let queued ones finish for up to `grace`, close
+    /// the connection and stop the lane's thread. Past `grace` the writes
+    /// still queued are answered `LaneClosed` and the write holding the turn
+    /// is left to end by itself. False if the lane's thread did not stop
+    /// cleanly.
+    fn close(&self, grace: Duration) -> bool {
+        let deadline = Instant::now() + grace;
+        let (connection, runner, runner_thread, unserved, stuck) = {
             let mut state = self.state();
             state.closed = true;
-            while state.turn_out || !state.foreground.is_empty() || !state.background.is_empty() {
+            while state.holder.is_some()
+                || !state.foreground.is_empty()
+                || !state.background.is_empty()
+            {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    break;
+                }
                 state = self
                     .drained
-                    .wait(state)
-                    .unwrap_or_else(PoisonError::into_inner);
+                    .wait_timeout(state, left)
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .0;
             }
+            let mut unserved: Vec<Waiter> = state.foreground.drain(..).collect();
+            unserved.extend(state.background.drain(..));
+            self.idle.queued.fetch_sub(unserved.len(), Ordering::AcqRel);
+            let stuck = state
+                .holder
+                .as_ref()
+                .map(|holder| (holder.name, holder.since.elapsed()));
+            state.gave_up = stuck.is_some();
             (
                 state.connection.take(),
                 state.runner.take(),
                 state.runner_thread.take(),
+                unserved,
+                stuck,
             )
         };
         drop(connection);
         drop(runner);
-        runner_thread.is_none_or(|thread| thread.join().is_ok())
+        let refused = unserved.len();
+        for waiter in unserved {
+            waiter.refuse(Refused::Closed);
+        }
+        match stuck {
+            // The lane's thread may be the one that is stuck. It ends by
+            // itself once its write returns, so it is not waited for.
+            Some((operation, held)) => {
+                tracing::warn!(
+                    operation,
+                    held_ms = held.as_millis() as u64,
+                    refused,
+                    "shutdown gave up on a write that still holds the lane"
+                );
+                true
+            }
+            None => runner_thread.is_none_or(|thread| thread.join().is_ok()),
+        }
+    }
+
+    /// One pass of the watch thread: answer the foreground writes that have
+    /// waited past their limit, and name a write that has held the turn past
+    /// twice its budget.
+    fn watch_tick(&self) {
+        let (overdue, stuck) = {
+            let mut state = self.state();
+            let mut overdue = Vec::new();
+            // Arrival order is age order, so the overdue ones are in front.
+            while state
+                .foreground
+                .front()
+                .is_some_and(|waiter| waiter.queued_at.elapsed() >= self.limits.foreground_wait)
+            {
+                overdue.extend(state.foreground.pop_front());
+            }
+            self.idle.queued.fetch_sub(overdue.len(), Ordering::AcqRel);
+            let waiting = (state.foreground.len(), state.background.len());
+            let stuck = state.holder.as_mut().and_then(|holder| {
+                let held = holder.since.elapsed();
+                let due = held > self.limits.budget(holder.lane).abort * 2
+                    && holder
+                        .logged_at
+                        .is_none_or(|at| at.elapsed() >= HOLDER_LOG_EVERY);
+                due.then(|| {
+                    holder.logged_at = Some(Instant::now());
+                    (holder.name, holder.lane, held)
+                })
+            });
+            (overdue, stuck.map(|stuck| (stuck, waiting)))
+        };
+        for waiter in overdue {
+            tracing::warn!(
+                operation = waiter.name,
+                waited_ms = waiter.queued_at.elapsed().as_millis() as u64,
+                "foreground write waited past its limit; answering busy"
+            );
+            waiter.refuse(Refused::Busy);
+        }
+        if let Some(((operation, lane, held), (foreground, background))) = stuck {
+            tracing::error!(
+                operation,
+                lane = lane.label(),
+                held_ms = held.as_millis() as u64,
+                foreground_waiting = foreground,
+                background_waiting = background,
+                "a write has held the lane well past its budget"
+            );
+        }
     }
 }
 
@@ -441,9 +703,13 @@ struct Turn {
 }
 
 impl Turn {
-    fn transact<R>(&mut self, op: impl FnOnce(&Transaction) -> Result<R, OpError>) -> Outcome<R> {
+    fn transact<R>(
+        &mut self,
+        budget: Budget,
+        op: impl FnOnce(&Transaction) -> Result<R, OpError>,
+    ) -> Outcome<R> {
         match self.connection.as_mut() {
-            Some(connection) => connection.transact(op),
+            Some(connection) => connection.transact(budget, op),
             None => Outcome {
                 value: Err(Failure::Op(OpError::Abort(
                     "the turn holds no connection".to_owned(),
@@ -468,7 +734,23 @@ impl WriteLane {
     /// Open the writer on an existing database file: the write connection
     /// with its pragmas set, and the thread that runs async writes. Needs no
     /// runtime.
+    ///
+    /// A lane opened here has no watch thread: until [`WriteLane::watch`] is
+    /// started, a foreground write waits for its turn without limit and a
+    /// stuck holder is not logged. The database runtime starts one for its
+    /// lane, which is the only lane production opens.
     pub fn open(db_path: &Path) -> Result<Self, DbError> {
+        Self::open_limited(db_path, LaneLimits::default())
+    }
+
+    /// [`WriteLane::open`] with other time limits, so a test can reach them
+    /// without waiting out the real ones.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_with(db_path: &Path, limits: LaneLimits) -> Result<Self, DbError> {
+        Self::open_limited(db_path, limits)
+    }
+
+    fn open_limited(db_path: &Path, limits: LaneLimits) -> Result<Self, DbError> {
         let id = LaneId::next();
         let connection = WriterConnection::open(db_path, id)?;
         let (runner, granted) = mpsc::channel();
@@ -480,14 +762,16 @@ impl WriteLane {
             shared: Arc::new(Shared {
                 id,
                 db_path: db_path.to_owned(),
+                limits,
                 state: Mutex::new(State {
                     foreground: VecDeque::new(),
                     background: VecDeque::new(),
                     connection: Some(connection),
-                    turn_out: false,
+                    holder: None,
                     grants: 0,
                     bg_was_pending: false,
                     closed: false,
+                    gave_up: false,
                     runner: Some(runner),
                     runner_thread: Some(runner_thread),
                     waits: WaitTimes::default(),
@@ -513,38 +797,81 @@ impl WriteLane {
         self.shared.state().waits
     }
 
+    /// Start the watch thread for this lane. It wakes on real time, not a
+    /// runtime's clock, so paused time in a test neither trips nor stalls
+    /// it. It stops when the returned handle is stopped or dropped, or when
+    /// the lane is gone.
+    pub fn watch(&self) -> Result<LaneWatch, DbError> {
+        let shared = Arc::downgrade(&self.shared);
+        let tick = self.shared.limits.watch_tick;
+        let (stop, stopped) = mpsc::channel::<()>();
+        let thread = std::thread::Builder::new()
+            .name("droppedneedle-db-watch".to_owned())
+            .spawn(move || {
+                while let Err(mpsc::RecvTimeoutError::Timeout) = stopped.recv_timeout(tick) {
+                    let Some(shared) = shared.upgrade() else {
+                        return;
+                    };
+                    shared.watch_tick();
+                }
+            })
+            .map_err(DbError::Io)?;
+        Ok(LaneWatch {
+            stop,
+            thread: Some(thread),
+        })
+    }
+
     /// Run one synchronous closure inside one `IMMEDIATE` transaction.
     ///
     /// The closure receives the transaction and returns a value; commit
-    /// follows a returned `Ok`, rollback follows `Err`, an abort or a panic.
+    /// follows a returned `Ok` if the transaction is still the lane's,
+    /// rollback follows `Err`, an abort or a panic.
     /// The closure is plain `FnOnce`: holding the lock across an await is
     /// impossible because there is nothing to await with. It is queued on
     /// the first poll and runs on the lane's thread when its turn comes,
-    /// whether or not this future is still polled. A full lane fails fast
-    /// with `Busy` rather than queueing without bound.
+    /// whether or not this future is still polled.
+    ///
+    /// A background write waits for its turn. A foreground write is answered
+    /// `Busy` when the foreground queue is full, or when it has waited past
+    /// the limit, in which case it never runs.
     pub async fn write<F, R>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, DbError>
     where
         F: FnOnce(&Transaction) -> Result<R, OpError> + Send + 'static,
         R: Send + 'static,
     {
+        let budget = self.shared.limits.budget(lane);
         let (reply, answer) = oneshot::channel();
-        let write: AsyncWrite = Box::new(move |mut turn| {
-            let outcome = catch_unwind(AssertUnwindSafe(|| turn.transact(op)));
-            // The turn goes back before the caller hears, so a caller that
-            // was just answered finds the lane idle.
-            drop(turn);
-            if outcome.is_err() {
-                tracing::error!(operation = name, "write closure panicked; rolled back");
-            }
-            let _ = reply.send(outcome.ok());
+        let write: AsyncWrite = Box::new(move |granted| {
+            let answer = match granted {
+                Ok(mut turn) => {
+                    let outcome = catch_unwind(AssertUnwindSafe(|| turn.transact(budget, op)));
+                    // The turn goes back before the caller hears, so a
+                    // caller that was just answered finds the lane idle.
+                    drop(turn);
+                    match outcome {
+                        Ok(outcome) => Answer::Ran(outcome),
+                        Err(_) => {
+                            tracing::error!(
+                                operation = name,
+                                "write closure panicked; rolled back"
+                            );
+                            Answer::Panicked
+                        }
+                    }
+                }
+                Err(refused) => Answer::Refused(refused),
+            };
+            let _ = reply.send(answer);
         });
         self.shared.enqueue(lane, name, Grantee::Async(write))?;
         match answer.await {
-            Ok(Some(outcome)) => finish(lane, name, outcome),
-            Ok(None) => Err(DbError::WriteFailed {
+            Ok(Answer::Ran(outcome)) => finish(lane, budget, name, outcome),
+            Ok(Answer::Panicked) => Err(DbError::WriteFailed {
                 operation: name.to_owned(),
                 cause: "the write closure panicked".to_owned(),
             }),
+            Ok(Answer::Refused(refused)) => Err(refused.into_error(name)),
             Err(_) => Err(DbError::LaneClosed),
         }
     }
@@ -562,12 +889,17 @@ impl WriteLane {
     where
         F: FnOnce(&Transaction) -> Result<R, OpError>,
     {
+        let budget = self.shared.limits.budget(lane);
         let (parked, granted) = mpsc::channel();
         self.shared.enqueue(lane, name, Grantee::Blocking(parked))?;
-        let mut turn = granted.recv().map_err(|_| DbError::LaneClosed)?;
-        let outcome = turn.transact(op);
+        let mut turn = match granted.recv() {
+            Ok(Ok(turn)) => turn,
+            Ok(Err(refused)) => return Err(refused.into_error(name)),
+            Err(_) => return Err(DbError::LaneClosed),
+        };
+        let outcome = turn.transact(budget, op);
         drop(turn);
-        finish(lane, name, outcome)
+        finish(lane, budget, name, outcome)
     }
 
     /// Commit `items` in chunks of at most 500 rows with a cancellation
@@ -600,35 +932,49 @@ impl WriteLane {
             let owned: Vec<T> = items.drain(..take).collect();
             let total = owned.len();
             let writer = Arc::clone(&chunk);
-            let started = Instant::now();
             self.write(Lane::Background, name, move |tx| {
                 writer(&owned, tx)?;
                 Ok(())
             })
             .await?;
-            let elapsed = started.elapsed();
-            if elapsed > Duration::from_secs(1) {
-                tracing::warn!(
-                    operation = name,
-                    elapsed_ms = elapsed.as_millis() as u64,
-                    rows = total,
-                    "background chunk exceeded its one-second budget"
-                );
-            }
             committed += total;
             chunks += 1;
         }
         Ok(committed)
     }
 
-    /// Drain and stop: refuse new writes, let queued ones finish, then
-    /// close the connection and join the lane's thread. Idempotent: the
-    /// first call wins, later calls find nothing to close.
-    pub async fn shutdown(&self) {
+    /// Drain and stop: refuse new writes, let queued ones finish for up to
+    /// `grace`, then close the connection and join the lane's thread. A
+    /// write that still holds the lane at the bound is named in the log and
+    /// left to end by itself; the writes queued behind it are answered
+    /// `LaneClosed`. Idempotent: the first call wins, later calls find
+    /// nothing to close.
+    pub async fn shutdown(&self, grace: Duration) {
         let shared = Arc::clone(&self.shared);
-        let closed = tokio::task::spawn_blocking(move || shared.close()).await;
+        let closed = tokio::task::spawn_blocking(move || shared.close(grace)).await;
         if !matches!(closed, Ok(true)) {
             tracing::error!("writer thread did not stop cleanly");
+        }
+    }
+}
+
+/// The handle of a lane's watch thread. Stopping or dropping it ends the
+/// thread.
+#[derive(Debug)]
+pub struct LaneWatch {
+    /// Never sent on: the thread ends when this is dropped.
+    stop: mpsc::Sender<()>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl LaneWatch {
+    /// Stop the thread and wait for it. It is at most one pass of
+    /// bookkeeping away from noticing.
+    pub fn stop(self) {
+        let Self { stop, thread } = self;
+        drop(stop);
+        if thread.is_some_and(|thread| thread.join().is_err()) {
+            tracing::error!("database watch thread did not stop cleanly");
         }
     }
 }
@@ -637,19 +983,25 @@ impl WriteLane {
 /// turn itself, which passes the lane on.
 fn run_async_writes(granted: mpsc::Receiver<Granted>) {
     for Granted { write, turn } in granted {
-        write(turn);
+        write(Ok(turn));
     }
 }
 
-/// Map one transaction's outcome for its caller and log a slow foreground
-/// write.
-fn finish<R>(lane: Lane, name: &'static str, outcome: Outcome<R>) -> Result<R, DbError> {
-    if lane == Lane::Foreground && outcome.elapsed > FOREGROUND_SOFT_BUDGET {
+/// Map one transaction's outcome for its caller and log a write that ran
+/// past its class's soft budget.
+fn finish<R>(
+    lane: Lane,
+    budget: Budget,
+    name: &'static str,
+    outcome: Outcome<R>,
+) -> Result<R, DbError> {
+    if outcome.elapsed > budget.warn {
         tracing::warn!(
             operation = name,
+            lane = lane.label(),
             elapsed_ms = outcome.elapsed.as_millis() as u64,
             changes = outcome.changes,
-            "foreground write exceeded its soft budget"
+            "write exceeded its soft budget"
         );
     }
     match outcome.value {
@@ -760,7 +1112,11 @@ impl WriterConnection {
     /// One turn, one transaction. The abort clock is armed for exactly the
     /// transaction; commit follows `Ok`, rollback follows anything else,
     /// a panic included.
-    fn transact<R>(&mut self, op: impl FnOnce(&Transaction) -> Result<R, OpError>) -> Outcome<R> {
+    fn transact<R>(
+        &mut self,
+        budget: Budget,
+        op: impl FnOnce(&Transaction) -> Result<R, OpError>,
+    ) -> Outcome<R> {
         let started = Instant::now();
         if let Err(error) = self.start_in_autocommit() {
             return Outcome {
@@ -770,9 +1126,14 @@ impl WriterConnection {
             };
         }
         let before = self.connection.total_changes();
-        let armed = self.clock.arm(WRITE_HARD_BUDGET);
-        let value = run_transaction(&mut self.connection, &armed, &self.watch, self.lane, op);
-        drop(armed);
+        let value = run_transaction(
+            &mut self.connection,
+            &self.clock,
+            budget.abort,
+            &self.watch,
+            self.lane,
+            op,
+        );
         Outcome {
             value,
             changes: self.connection.total_changes().saturating_sub(before),
@@ -805,7 +1166,8 @@ impl WriterConnection {
 /// either one discards what the closure returned.
 fn run_transaction<R>(
     connection: &mut Connection,
-    armed: &Armed<'_>,
+    clock: &AbortClock,
+    abort_after: Duration,
     watch: &TxWatch,
     lane: LaneId,
     op: impl FnOnce(&Transaction) -> Result<R, OpError>,
@@ -813,6 +1175,9 @@ fn run_transaction<R>(
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| Failure::Op(error.into()))?;
+    // Armed after `BEGIN`: the budget counts the work, not the wait for the
+    // file lock.
+    let armed = clock.arm(abort_after);
     watch.begin();
     let value = {
         let _inside = scope::enter_write(lane);

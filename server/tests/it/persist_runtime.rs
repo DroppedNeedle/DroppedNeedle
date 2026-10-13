@@ -23,9 +23,9 @@ use axum::{
 };
 use droppedneedle::{
     db::{
-        BACKUP_KEEP, CancelFlag, CheckpointMode, DbConfig, DbError, DbRuntime, LANE_QUEUE_CAPACITY,
-        Lane, OpError, WakeupChannel, WriteLane, block_on, filesystem_is_local, map_sqlx_busy,
-        open_runtime, sqlx_is_busy,
+        BACKUP_KEEP, Budget, CancelFlag, CheckpointMode, DbConfig, DbError, DbRuntime,
+        FOREGROUND_QUEUE_CAPACITY, Lane, LaneLimits, OpError, WakeupChannel, WriteLane, block_on,
+        filesystem_is_local, map_sqlx_busy, open_runtime, sqlx_is_busy,
     },
     error::{FIXED_INTERNAL_MESSAGE, INTERNAL_ERROR, busy_response},
     ids::{REQUEST_ID_HEADER, RequestId},
@@ -94,15 +94,24 @@ async fn admit(writes: &mut [QueuedWrite]) {
     .await;
 }
 
+/// How long a brief's shutdown lets queued writes finish: far longer than
+/// any of them takes.
+const DRAIN: Duration = Duration::from_secs(10);
+
 /// A lane on a scratch database holding one table, with no pool beside it.
 fn scratch_lane(name: &str) -> (WriteLane, ScratchDir) {
+    scratch_lane_with(name, LaneLimits::default())
+}
+
+/// [`scratch_lane`] with time limits a brief can reach quickly.
+fn scratch_lane_with(name: &str, limits: LaneLimits) -> (WriteLane, ScratchDir) {
     let dir = scratch_dir(name);
     let db = dir.join("library.db");
     rusqlite::Connection::open(&db)
         .unwrap()
         .execute("CREATE TABLE scratch_turns (label TEXT)", [])
         .unwrap();
-    let lane = WriteLane::open(&db).unwrap();
+    let lane = WriteLane::open_with(&db, limits).unwrap();
     (lane, dir)
 }
 
@@ -722,7 +731,7 @@ async fn writer_lane_backpressure_fails_fast_when_full() {
     inside.await.unwrap();
 
     let mut fillers: Vec<QueuedWrite> = Vec::new();
-    for _ in 0..LANE_QUEUE_CAPACITY {
+    for _ in 0..FOREGROUND_QUEUE_CAPACITY {
         let lane = runtime.lane().clone();
         fillers.push(Box::pin(async move {
             lane.write(Lane::Foreground, "brief-fill", |tx| {
@@ -734,6 +743,18 @@ async fn writer_lane_backpressure_fails_fast_when_full() {
         }));
     }
     admit(&mut fillers).await;
+    for _ in 0..200 {
+        let lane = runtime.lane().clone();
+        fillers.push(Box::pin(async move {
+            lane.write(Lane::Background, "brief-job", |tx| {
+                tx.execute("INSERT INTO scratch_full (id) VALUES (3)", [])?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        }));
+    }
+    admit(&mut fillers[FOREGROUND_QUEUE_CAPACITY..]).await;
 
     match runtime
         .lane()
@@ -808,7 +829,199 @@ async fn runaway_write_aborts_at_hard_budget() {
     .unwrap();
     assert_eq!(labels(&lane), ["a", "b", "c", "d", "e", "after"]);
 
-    lane.shutdown().await;
+    lane.shutdown(DRAIN).await;
+}
+
+/// Run short queries inside a write until `span` of real time has gone.
+fn burn(tx: &rusqlite::Transaction, span: Duration) -> Result<(), OpError> {
+    let started = Instant::now();
+    while started.elapsed() < span {
+        let _rows: i64 = tx.query_row(
+            "WITH RECURSIVE c(x) AS (
+               SELECT 1 UNION ALL SELECT x + 1 FROM c LIMIT 20000
+             )
+             SELECT COUNT(*) FROM c",
+            [],
+            |row| row.get(0),
+        )?;
+    }
+    Ok(())
+}
+
+/// Each class has its own budget, here scaled down from 2 s and 5 s. A
+/// write that outlasts the foreground budget is rolled back on the
+/// foreground lane and commits on the background lane; a background write
+/// past its own budget is rolled back.
+#[tokio::test]
+async fn background_budget_outlasts_the_foreground_one() {
+    let foreground_abort = Duration::from_millis(100);
+    let (lane, _dir) = scratch_lane_with(
+        "class-budgets",
+        LaneLimits {
+            foreground: Budget {
+                warn: foreground_abort,
+                abort: foreground_abort,
+            },
+            background: Budget {
+                warn: Duration::from_secs(1),
+                abort: Duration::from_secs(1),
+            },
+            ..LaneLimits::default()
+        },
+    );
+    let request = lane
+        .write(Lane::Foreground, "brief-request", move |tx| {
+            burn(tx, foreground_abort * 3)?;
+            insert_label(tx, "request")
+        })
+        .await;
+    assert!(
+        matches!(&request, Err(DbError::TxTimeout { operation, .. }) if operation == "brief-request"),
+        "a foreground write past its budget is aborted, got {request:?}"
+    );
+    lane.write(Lane::Background, "brief-job", move |tx| {
+        burn(tx, foreground_abort * 3)?;
+        insert_label(tx, "job")
+    })
+    .await
+    .unwrap();
+
+    let runaway = lane
+        .write(Lane::Background, "brief-runaway", |tx| {
+            insert_label(tx, "runaway")?;
+            burn(tx, Duration::from_secs(60))
+        })
+        .await;
+    assert!(
+        matches!(&runaway, Err(DbError::TxTimeout { operation, changes: 1 }) if operation == "brief-runaway"),
+        "a background write past its own budget is aborted, got {runaway:?}"
+    );
+    assert_eq!(labels(&lane), ["job"]);
+    lane.shutdown(DRAIN).await;
+}
+
+/// A foreground write that has waited past the limit behind a held lane is
+/// answered `Busy` and never runs, whether its caller is parked on a thread
+/// or awaiting on a runtime whose clock is paused. A background write in the
+/// same position commits once the holder is done.
+#[tokio::test(start_paused = true)]
+async fn foreground_wait_past_its_limit_is_refused() {
+    let (lane, _dir) = scratch_lane_with(
+        "foreground-wait",
+        LaneLimits {
+            foreground_wait: Duration::from_millis(50),
+            watch_tick: Duration::from_millis(10),
+            ..LaneLimits::default()
+        },
+    );
+    let watch = lane.watch().unwrap();
+    let running = lane.clone();
+    let (held, inside, let_go) = hold();
+    let holder = tokio::spawn(async move {
+        running
+            .write(Lane::Background, "brief-held", move |tx| {
+                held.wait();
+                insert_label(tx, "held")
+            })
+            .await
+            .unwrap();
+    });
+    inside.await.unwrap();
+
+    let parked = lane.clone();
+    let (answered, answer) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let outcome = parked.write_blocking(Lane::Foreground, "brief-parked", |tx| {
+            insert_label(tx, "parked")
+        });
+        let _ = answered.send(outcome);
+    });
+    let mut request = Box::pin(lane.write(Lane::Foreground, "brief-request", |tx| {
+        insert_label(tx, "request")
+    }));
+    let mut job = Box::pin(lane.write(Lane::Background, "brief-job", |tx| insert_label(tx, "job")));
+    std::future::poll_fn(|cx| {
+        assert!(request.as_mut().poll(cx).is_pending());
+        assert!(job.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+
+    let refused = answer
+        .recv_timeout(Duration::from_secs(10))
+        .expect("a foreground write past its limit must be answered");
+    assert!(
+        matches!(&refused, Err(DbError::Busy { operation }) if operation == "brief-parked"),
+        "a parked foreground caller hears Busy, got {refused:?}"
+    );
+    let refused = request.await;
+    assert!(
+        matches!(&refused, Err(DbError::Busy { operation }) if operation == "brief-request"),
+        "an awaiting foreground caller hears Busy, got {refused:?}"
+    );
+
+    let_go.send(()).unwrap();
+    holder.await.unwrap();
+    job.await.unwrap();
+    assert_eq!(labels(&lane), ["held", "job"]);
+    lane.shutdown(DRAIN).await;
+    watch.stop();
+}
+
+/// Shutdown behind a write that does not return gives up at its bound: it
+/// comes back, and the writes still queued, from a thread and from an async
+/// caller, are answered `LaneClosed` and never run.
+#[test]
+fn shutdown_gives_up_on_a_holder_that_does_not_return() {
+    let (lane, _dir) = scratch_lane("shutdown-stuck");
+    let (held, inside, let_go) = hold();
+    let holder_lane = lane.clone();
+    let holder = std::thread::spawn(move || {
+        holder_lane.write_blocking(Lane::Foreground, "brief-stuck", move |tx| {
+            held.wait();
+            insert_label(tx, "stuck")
+        })
+    });
+    inside.blocking_recv().unwrap();
+
+    let mut cx = Context::from_waker(Waker::noop());
+    let mut queued = Box::pin(lane.write(Lane::Background, "brief-queued", |tx| {
+        insert_label(tx, "queued")
+    }));
+    assert!(queued.as_mut().poll(&mut cx).is_pending());
+    let parked_lane = lane.clone();
+    let parked = std::thread::spawn(move || {
+        parked_lane.write_blocking(Lane::Foreground, "brief-parked", |tx| {
+            insert_label(tx, "parked")
+        })
+    });
+    let waiting = lane.idle_state();
+    while waiting.queued() < 2 {
+        std::thread::yield_now();
+    }
+
+    let (down_tx, down) = std::sync::mpsc::channel();
+    let closing = lane.clone();
+    std::thread::spawn(move || {
+        current_thread_runtime().block_on(closing.shutdown(Duration::from_millis(100)));
+        let _ = down_tx.send(());
+    });
+    down.recv_timeout(Duration::from_secs(10))
+        .expect("shutdown must give up on a write that does not return");
+    let refused = queued.as_mut().poll(&mut cx);
+    assert!(
+        matches!(refused, Poll::Ready(Err(DbError::LaneClosed))),
+        "a queued async write hears LaneClosed, got {refused:?}"
+    );
+    let refused = parked.join().unwrap();
+    assert!(
+        matches!(refused, Err(DbError::LaneClosed)),
+        "a parked write hears LaneClosed, got {refused:?}"
+    );
+
+    let_go.send(()).unwrap();
+    holder.join().unwrap().unwrap();
+    assert_eq!(labels(&lane), ["stuck"]);
 }
 
 /// A blocking write issued on the only runtime thread gets its turn behind
@@ -855,7 +1068,7 @@ async fn blocking_write_on_the_runtime_thread_takes_its_turn() {
     }
     assert_eq!(labels(&lane), ["running", "queued", "blocking"]);
     assert_eq!(lane.wait_times().admissions, 3);
-    lane.shutdown().await;
+    lane.shutdown(DRAIN).await;
 }
 
 /// A blocking write runs on the caller's thread, so its closure may borrow.
@@ -925,7 +1138,7 @@ fn shutdown_drains_accepted_writes_then_refuses() {
             let (down_tx, down_rx) = std::sync::mpsc::channel();
             let lane = lane.clone();
             std::thread::spawn(move || {
-                current_thread_runtime().block_on(lane.shutdown());
+                current_thread_runtime().block_on(lane.shutdown(DRAIN));
                 let _ = down_tx.send(());
             });
             down = Some(down_rx);
@@ -1002,7 +1215,7 @@ async fn queued_write_outlives_its_dropped_future() {
     .await
     .unwrap();
     assert_eq!(labels(&lane), ["running", "dropped", "after"]);
-    lane.shutdown().await;
+    lane.shutdown(DRAIN).await;
 }
 
 /// A runtime dropped with one write running and two queued shuts down, the
@@ -1055,7 +1268,7 @@ fn lane_outlives_a_runtime_dropped_with_writes_in_it() {
         })
         .await
         .unwrap();
-        lane.shutdown().await;
+        lane.shutdown(DRAIN).await;
     });
     assert_eq!(labels(&lane), ["running", "first", "second", "after"]);
 }
@@ -1096,7 +1309,7 @@ async fn panicking_write_rolls_back_and_frees_the_lane() {
     .await
     .unwrap();
     assert_eq!(labels(&lane), ["after"]);
-    lane.shutdown().await;
+    lane.shutdown(DRAIN).await;
 }
 
 /// True for the error SQLite returns when a commit hook refuses a commit.
@@ -1182,8 +1395,8 @@ async fn nested_write_is_refused_on_the_same_lane_only() {
 
     assert_eq!(labels(&lane), ["outer", "outer-async"]);
     assert_eq!(labels(&other), ["other"]);
-    lane.shutdown().await;
-    other.shutdown().await;
+    lane.shutdown(DRAIN).await;
+    other.shutdown(DRAIN).await;
 }
 
 /// Synchronous code waits on a future through `db::block_on`. Outside a

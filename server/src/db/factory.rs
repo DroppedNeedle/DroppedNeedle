@@ -44,7 +44,7 @@ use super::{
     durable::DurableWorkWakeups,
     error::DbError,
     fs::{reject_remote_filesystem, reject_symlink},
-    writer::{CancelFlag, WriteLane},
+    writer::{CancelFlag, LaneWatch, WriteLane},
 };
 
 /// Reader connections in the pool. The writer lane owns one more outside.
@@ -77,6 +77,9 @@ pub struct DbConfig {
     pub readers: u32,
     /// Lock wait on pool connections. Defaults to [`BUSY_TIMEOUT`].
     pub busy_timeout: Duration,
+    /// How long shutdown lets queued writes finish. Defaults to
+    /// [`crate::config::DEFAULT_SHUTDOWN_GRACE`].
+    pub shutdown_grace: Duration,
 }
 
 impl DbConfig {
@@ -86,7 +89,14 @@ impl DbConfig {
             path: path.to_owned(),
             readers: MAX_READERS,
             busy_timeout: BUSY_TIMEOUT,
+            shutdown_grace: crate::config::DEFAULT_SHUTDOWN_GRACE,
         }
+    }
+
+    /// Bound shutdown's wait for queued writes by the deployment's grace.
+    pub fn with_shutdown_grace(mut self, grace: Duration) -> Self {
+        self.shutdown_grace = grace;
+        self
     }
 }
 
@@ -96,6 +106,10 @@ pub struct DbRuntime {
     path: PathBuf,
     pool: SqlitePool,
     lane: WriteLane,
+    /// The lane's watch thread. It ends with this handle, so a runtime that
+    /// is dropped without [`DbRuntime::shutdown`] leaves no thread behind.
+    watch: LaneWatch,
+    shutdown_grace: Duration,
     checkpoint: CheckpointService,
     wakeups: DurableWorkWakeups,
     backups: BackupService,
@@ -133,6 +147,7 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
     reads_frozen.store(true, Ordering::Release);
 
     let lane = WriteLane::open(&path)?;
+    let watch = lane.watch()?;
     let checkpoint = CheckpointService::new(&path, pool.clone(), lane.idle_state())
         .with_analyze(AnalyzeService::new(lane.clone(), pool.clone()));
     let wakeups = DurableWorkWakeups::new(pool.clone());
@@ -141,6 +156,8 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
         path,
         pool,
         lane,
+        watch,
+        shutdown_grace: config.shutdown_grace,
         checkpoint,
         wakeups,
         backups,
@@ -223,13 +240,15 @@ impl DbRuntime {
         &self.backups
     }
 
-    /// Clean shutdown in order: drain the writer lane, reclaim the WAL,
-    /// then close the pool. Draining first means no
+    /// Clean shutdown in order: drain the writer lane, stop its watch
+    /// thread, reclaim the WAL, then close the pool. Draining first means no
     /// write lands after the reclaim; the reclaim itself is best effort (a
     /// held lock leaves the WAL in place), so a quiet shutdown leaves no
-    /// `-wal` or `-shm` behind.
+    /// `-wal` or `-shm` behind. The drain is bounded by the configured
+    /// grace: a write that has not returned by then is logged and left.
     pub async fn shutdown(self) {
-        self.lane.shutdown().await;
+        self.lane.shutdown(self.shutdown_grace).await;
+        self.watch.stop();
         let checkpoint = self.checkpoint.clone();
         let _ = tokio::task::spawn_blocking(move || checkpoint.shutdown_truncate()).await;
         self.pool.close().await;

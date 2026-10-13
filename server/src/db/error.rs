@@ -3,7 +3,9 @@
 //! Lock contention is transient by construction: the writer lane serializes
 //! writes and every connection waits out the 5 s busy timeout before SQLite
 //! reports busy. When busy still escapes, the data path maps it to the typed
-//! retryable [`DbError::Busy`]; handlers render that as HTTP 503 with
+//! retryable [`DbError::Busy`]. The lane answers the same way when a
+//! foreground write finds its queue full or has waited 5 s for its turn.
+//! Handlers render that as HTTP 503 with
 //! `Retry-After: 1` through [`crate::error::busy_response`]. The client
 //! retries; this process never spins.
 
@@ -30,7 +32,9 @@ pub enum DbError {
         /// The path that was refused.
         path: PathBuf,
     },
-    /// Lock contention outlived the busy timeout. Retryable by the caller.
+    /// Lock contention outlived the busy timeout, or a write was refused by
+    /// the lane: its queue was full, or it was a foreground write that
+    /// waited past its limit and never ran. Retryable by the caller.
     #[error("database is busy during {operation}; retry the request")]
     Busy {
         /// Operation name for the log line. Never SQL text or a path.
@@ -99,7 +103,8 @@ pub enum DbError {
         /// The staging path that was refused.
         path: PathBuf,
     },
-    /// The writer lane is shut down, or went away before it answered.
+    /// The writer lane is shut down, went away before it answered, or gave
+    /// up at shutdown before this write's turn came.
     #[error("write lane is closed")]
     LaneClosed,
     /// A write closure failed inside its transaction. The transaction rolled

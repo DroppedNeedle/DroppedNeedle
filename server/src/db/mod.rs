@@ -14,6 +14,12 @@
 //! that must wait on a future goes through [`block_on`], which refuses
 //! inside a write closure.
 //!
+//! A background write waits for its turn. A foreground write is refused
+//! with `Busy` when its queue is full or it has waited 5 s, so a request
+//! never waits for ever behind a stuck write. Each class has its own time
+//! budget, and the lane's watch thread, which the runtime starts and stops,
+//! names in the log a write that holds the lane past it.
+//!
 //! Layout: [`factory`] builds the runtime, [`checkpoint`] runs the GH-293
 //! checkpoint policy with TRUNCATE reclaim, [`writer`] serializes writes with
 //! foreground-burst-8 fairness, [`backup`] copies the live database out with
@@ -54,8 +60,9 @@ pub use fold::{fold_text, register_fold};
 pub use fs::{filesystem_is_local, reject_remote_filesystem, reject_symlink, same_filesystem};
 pub use scope::block_on;
 pub use writer::{
-    BACKGROUND_CHUNK_ROWS, CancelFlag, FOREGROUND_BURST, FOREGROUND_SOFT_BUDGET,
-    LANE_QUEUE_CAPACITY, Lane, LaneIdle, OpError, WAIT_BUCKET_BOUNDS_MS, WRITE_HARD_BUDGET,
-    WaitTimes, WriteLane, apply_connection_pragmas, decide_lane, open_connection,
-    open_journal_connection,
+    BACKGROUND_CHUNK_ROWS, BACKGROUND_HARD_BUDGET, BACKGROUND_QUEUE_CAPACITY,
+    BACKGROUND_SOFT_BUDGET, Budget, CancelFlag, FOREGROUND_BURST, FOREGROUND_HARD_BUDGET,
+    FOREGROUND_QUEUE_CAPACITY, FOREGROUND_SOFT_BUDGET, FOREGROUND_WAIT_LIMIT, HOLDER_LOG_EVERY,
+    Lane, LaneIdle, LaneLimits, LaneWatch, OpError, WAIT_BUCKET_BOUNDS_MS, WATCH_TICK, WaitTimes,
+    WriteLane, apply_connection_pragmas, decide_lane, open_connection, open_journal_connection,
 };
