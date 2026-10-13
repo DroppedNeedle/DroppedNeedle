@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::common::ScratchDir;
+use crate::common::{ScratchDir, migrated_db};
+use droppedneedle::library::repairs::hygiene;
 use droppedneedle::library::scan::{
     BlockingPool, EffectivePolicy, LibraryRoot, LibraryScanCoordinator, NullTagReader,
     RootRegistry, RootSeamError, ScanKind, ScanRequest, ScanRun, ScanScope, ScanState, ScanTrigger,
@@ -408,14 +409,17 @@ async fn unrecorded_scan_request_is_an_error() {
     assert!(library.request_scan(None, "no-such-user").is_err());
 }
 
+/// What happens between two scan windows: a listener, a curator or a
+/// job acting while the scan is half way through an album.
+type Meanwhile = Box<dyn FnOnce() + Send>;
+
 /// Tag reader for the regroup briefs: every file reads as a track of the
 /// album `albums` names for its path, and one nominated read first runs
-/// a statement against the catalog, the way a listener acts mid-scan.
+/// `meanwhile`.
 struct RetagReader {
-    store: Arc<SqliteScanStore>,
     albums: std::sync::Mutex<HashMap<String, String>>,
     /// File name, and what happens just before it is read.
-    meanwhile: std::sync::Mutex<Option<(String, String)>>,
+    meanwhile: std::sync::Mutex<Option<(String, Meanwhile)>>,
 }
 
 impl RetagReader {
@@ -439,10 +443,8 @@ impl TagReader for RetagReader {
                 _ => None,
             }
         };
-        if let Some((_, sql)) = due {
-            self.store
-                .execute_batch_for_tests(&sql)
-                .expect("mid-scan statement runs");
+        if let Some((_, act)) = due {
+            act();
         }
         let mut read = ScannedTags::default();
         read.tag.title = name.into_owned();
@@ -453,12 +455,20 @@ impl TagReader for RetagReader {
     }
 }
 
+/// The last file of a 300-file album, read in the second window's last
+/// batch: what runs before it runs after the first window committed.
+const LAST_FILE: &str = "t299.flac";
+
 struct RegroupRig {
-    _scratch: ScratchDir,
+    scratch: ScratchDir,
     root: PathBuf,
     reader: Arc<RetagReader>,
-    coordinator: LibraryScanCoordinator<RetagReader>,
+    coordinator: Arc<LibraryScanCoordinator<RetagReader>>,
     rewrites: usize,
+    /// Album titles no other brief uses, so each brief's album ids (and
+    /// the log lines naming them) are its own.
+    before: String,
+    after: String,
 }
 
 impl RegroupRig {
@@ -466,9 +476,10 @@ impl RegroupRig {
         let scratch = ScratchDir::new(name);
         let root = scratch.join("music");
         std::fs::create_dir_all(&root).expect("root");
-        let store = Arc::new(SqliteScanStore::scratch().expect("scan store opens"));
+        let db = scratch.join("app.db");
+        migrated_db(&db);
+        let store = Arc::new(SqliteScanStore::open(&db).expect("scan store opens"));
         let reader = Arc::new(RetagReader {
-            store: Arc::clone(&store),
             albums: std::sync::Mutex::default(),
             meanwhile: std::sync::Mutex::default(),
         });
@@ -489,12 +500,18 @@ impl RegroupRig {
         )
         .with_wakeups(WorkWakeups::new());
         Self {
-            _scratch: scratch,
+            scratch,
             root,
             reader,
-            coordinator,
+            coordinator: Arc::new(coordinator),
             rewrites: 0,
+            before: format!("{name} before"),
+            after: format!("{name} after"),
         }
+    }
+
+    fn db(&self) -> PathBuf {
+        self.scratch.join("app.db")
     }
 
     /// Write (or rewrite, so the scan sees a changed file) every file and
@@ -509,13 +526,31 @@ impl RegroupRig {
         }
     }
 
+    /// Run `act` just before the file named `at` is read.
+    fn meanwhile(&self, at: &str, act: impl FnOnce() + Send + 'static) {
+        *self.reader.meanwhile.lock().expect("meanwhile") = Some((at.to_owned(), Box::new(act)));
+    }
+
+    /// Run the statements between the two windows.
+    fn meanwhile_sql(&self, sql: String) {
+        let store = Arc::clone(self.coordinator.store());
+        self.meanwhile(LAST_FILE, move || {
+            store
+                .execute_batch_for_tests(&sql)
+                .expect("mid-scan statement runs");
+        });
+    }
+
     async fn scan(&self) {
+        assert_eq!(self.scan_to_its_end().await.state, ScanState::Completed);
+    }
+
+    async fn scan_to_its_end(&self) -> ScanRun {
         self.coordinator
             .request_run(&request(&self.root))
             .expect("requested");
         let paths = HashMap::from([("music".to_owned(), self.root.clone())]);
-        let run = self.coordinator.run_once(&paths).await.expect("scan runs");
-        assert_eq!(run.state, ScanState::Completed);
+        self.coordinator.run_once(&paths).await.expect("scan runs")
     }
 
     fn album_of(&self, relative: &str) -> String {
@@ -527,8 +562,8 @@ impl RegroupRig {
     fn accept_match(&self, album: &str) {
         self.run(&format!(
             "INSERT INTO local_album_external_identities (local_album_id, provider, \
-             release_group_mbid, decision_source, selected_at) \
-             VALUES ('{album}', 'musicbrainz', 'rg-1', 'manual', 0);"
+             release_group_mbid, release_mbid, decision_source, selected_at) \
+             VALUES ('{album}', 'musicbrainz', 'rg-1', 'rel-1', 'manual', 0);"
         ));
     }
 
@@ -565,6 +600,15 @@ impl RegroupRig {
     }
 }
 
+/// The album the scan's first window moved the retagged tracks to, as a
+/// SQL expression: no row until the first track has left `album`.
+fn new_row(album: &str) -> String {
+    format!(
+        "(SELECT local_album_id FROM local_tracks WHERE relative_path = 'a/t000.flac' \
+         AND local_album_id != '{album}')"
+    )
+}
+
 /// What a listener does with a track of the retagged album once the scan
 /// has moved it: plays it (filed, as playback files it, under the album
 /// the track is on right then), favorites that album and adds the track
@@ -587,24 +631,74 @@ fn listener_acts(album: &str) -> String {
     )
 }
 
-/// An album with an accepted match, big enough that a retag of all of it
-/// commits in two windows. `meanwhile` runs between the two.
+/// A scanned album of 300 files, big enough that a retag of all of it
+/// commits in two windows. Returns the rig, the files and the album.
+async fn big_album(name: &str) -> (RegroupRig, Vec<String>, String) {
+    let mut rig = RegroupRig::new(name);
+    let files: Vec<String> = (0..300).map(|n| format!("a/t{n:03}.flac")).collect();
+    let before = rig.before.clone();
+    rig.tag(&files, &before);
+    rig.scan().await;
+    let album = rig.album_of("a/t000.flac");
+    (rig, files, album)
+}
+
+/// An album with an accepted match, retagged whole across two windows.
+/// `meanwhile` runs between the two.
 async fn retag_across_two_windows(
     name: &str,
     meanwhile: impl Fn(&str) -> String,
 ) -> (RegroupRig, String) {
-    let mut rig = RegroupRig::new(name);
-    let files: Vec<String> = (0..300).map(|n| format!("a/t{n:03}.flac")).collect();
-    rig.tag(&files, "Before");
-    rig.scan().await;
-    let album = rig.album_of("a/t000.flac");
+    let (mut rig, files, album) = big_album(name).await;
     rig.accept_match(&album);
 
-    rig.tag(&files, "After");
-    *rig.reader.meanwhile.lock().expect("meanwhile") =
-        Some(("t299.flac".to_owned(), meanwhile(&album)));
+    let after = rig.after.clone();
+    rig.tag(&files, &after);
+    rig.meanwhile_sql(meanwhile(&album));
     rig.scan().await;
     (rig, album)
+}
+
+/// Warnings about retagged albums, from every thread: the scan commits on
+/// a blocking thread, which a per-thread subscriber would not see. Call
+/// before the scan whose warning the brief asserts.
+fn retag_warnings() -> &'static std::sync::Mutex<Vec<String>> {
+    static LINES: std::sync::OnceLock<std::sync::Mutex<Vec<String>>> = std::sync::OnceLock::new();
+    struct Capture;
+    impl std::io::Write for Capture {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let line = String::from_utf8_lossy(buf);
+            if line.contains("retagged album") {
+                retag_warnings()
+                    .lock()
+                    .expect("lines")
+                    .push(line.into_owned());
+            }
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(|| Capture)
+            .with_ansi(false)
+            .with_max_level(tracing::level_filters::LevelFilter::WARN)
+            .finish();
+        tracing::subscriber::set_global_default(subscriber).expect("no other global subscriber");
+    });
+    LINES.get_or_init(Default::default)
+}
+
+/// Whether a warning that both rows were kept names these two albums.
+fn warned_both_kept(album: &str, new_row: &str) -> bool {
+    retag_warnings()
+        .lock()
+        .expect("lines")
+        .iter()
+        .any(|line| line.contains("both kept") && line.contains(album) && line.contains(new_row))
 }
 
 /// A retagged album keeps its row and its accepted match when someone
@@ -619,7 +713,8 @@ async fn retagged_album_keeps_its_match_when_played_mid_scan() {
     assert_eq!(
         rig.count(&format!(
             "SELECT COUNT(*) FROM local_albums a JOIN local_album_external_identities i \
-             ON i.local_album_id = a.id WHERE a.id = '{album}' AND a.title = 'After'"
+             ON i.local_album_id = a.id WHERE a.id = '{album}' AND a.title = '{}'",
+            rig.after
         )),
         1,
         "the kept row has the new name and the match"
@@ -636,26 +731,102 @@ async fn retagged_album_keeps_its_match_when_played_mid_scan() {
     );
 }
 
-/// A retag that cannot be followed (here an alias someone gave the new
-/// row) leaves both rows, and every play and favorite where it was.
+/// A management preview someone made of the new row while the scan was
+/// half way through the album names that row and its revisions. The scan
+/// does not rewrite it: both rows stay, every play and favorite stays
+/// where it was, and the log says which two albums were left apart.
 #[tokio::test]
-async fn unfollowed_retag_leaves_plays_and_favorites_alone() {
-    let (rig, album) = retag_across_two_windows("scan-regroup-held", |album| {
+async fn retag_with_a_plan_on_the_new_row_is_left_apart_and_logged() {
+    retag_warnings();
+    let (rig, album) = retag_across_two_windows("scan-regroup-planned", |album| {
+        let new_row = new_row(album);
         format!(
-            "{} INSERT INTO local_album_aliases (alias, local_album_id, kind, created_at) \
-             SELECT 'held', local_album_id, 'merged_album', 0 FROM local_tracks \
-             WHERE relative_path = 'a/t000.flac' AND local_album_id != '{album}';",
-            listener_acts(album)
+            "{} INSERT INTO library_operation_jobs (id, kind, state, created_at, updated_at) \
+             VALUES ('plan', 'library_management', 'ready', 0, 0); \
+             INSERT INTO library_management_job_snapshots (job_id, mode, origin, phase, \
+             selection_json, profile_revision, settings_revision, naming_revision, \
+             policy_revision, catalog_revision, profile_snapshot_json, created_at, updated_at) \
+             VALUES ('plan', 'preview', 'manual', 'ready', '{{}}', 'p', 's', 'n', 'rev-1', 0, \
+             '{{}}', 0, 0); \
+             INSERT INTO library_management_plan_items (job_id, ordinal, bundle_ordinal, \
+             local_album_id, expected_album_revision, expected_catalog_revision, \
+             expected_policy_revision, expected_profile_revision, expected_root_id, \
+             expected_relative_path, expected_stat_revision, expected_tag_revision, \
+             expected_file_fingerprint, source_path_identity, desired_document_json, \
+             desired_document_hash, eligibility, reason_code, created_at) \
+             SELECT 'plan', 0, 0, {new_row}, 1, 0, 'rev-1', 'p', 'music', 'a/t000.flac', 's', \
+             't', 'f', 'i', '{{}}', '{}', 'blocked', 'IDENTITY_NOT_ACCEPTED', 0 \
+             WHERE {new_row} IS NOT NULL;",
+            listener_acts(album),
+            "0".repeat(64),
         )
     })
     .await;
 
     let new_row = rig.album_of("a/t000.flac");
     assert_ne!(new_row, album, "the retag was not followed");
-    assert_eq!(rig.count("SELECT COUNT(*) FROM local_album_aliases"), 1);
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM library_management_plan_items \
+             WHERE local_album_id = '{new_row}' AND expected_album_revision = 1"
+        )),
+        1,
+        "the plan item is as it was made"
+    );
     assert_eq!(
         rig.listener_rows(&new_row),
         (3, 3),
         "the play, the favorite and the playlist entry still name the new row"
+    );
+    assert!(warned_both_kept(&album, &new_row), "the log names both");
+}
+
+/// Catalog cleanup retires an empty album row into the one live album of
+/// the same name. Half way through a retagged album the scan's new row
+/// looks like that live album; retiring a row into it ties it down, and
+/// the retag can then not be followed. Cleanup leaves it until the scan
+/// has ended.
+#[tokio::test]
+async fn cleanup_leaves_a_half_retagged_album_alone_mid_scan() {
+    let (mut rig, files, album) = big_album("scan-regroup-cleanup").await;
+    rig.accept_match(&album);
+    let after = rig.after.clone();
+    rig.tag(&files, &after);
+    let db = rig.db();
+    let new_row = new_row(&album);
+    let retired = Arc::new(std::sync::Mutex::new(None));
+    let cell = Arc::clone(&retired);
+    rig.meanwhile(LAST_FILE, move || {
+        let mut conn = droppedneedle::db::open_connection(&db).expect("side connection opens");
+        conn.execute_batch(&format!(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_name, album_artist_name_folded, album_artist_id, grouping_source, \
+             created_at, updated_at) SELECT 'shell', root_id, 'shell', title, title_folded, \
+             album_artist_name, album_artist_name_folded, album_artist_id, 'automatic', 0, 0 \
+             FROM local_albums WHERE id = {new_row}; \
+             INSERT INTO library_operation_jobs (id, kind, state, created_at, updated_at) \
+             VALUES ('cleanup', 'repair', 'running', 0, 0);"
+        ))
+        .expect("an empty row of the same name");
+        let tx = conn.transaction().expect("transaction");
+        let changed = hygiene::clean_album(&tx, "shell", "cleanup", 0.0).expect("cleanup runs");
+        tx.commit().expect("commit");
+        *cell.lock().expect("cell") = Some(changed.is_some());
+    });
+    rig.scan().await;
+
+    assert_eq!(
+        *retired.lock().expect("cell"),
+        Some(false),
+        "the empty row waits for the scan to end"
+    );
+    assert_eq!(rig.album_of("a/t000.flac"), album);
+    assert_eq!(rig.album_of("a/t299.flac"), album);
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM local_album_external_identities WHERE local_album_id = '{album}'"
+        )),
+        1,
+        "the retagged album keeps its row and its match"
     );
 }

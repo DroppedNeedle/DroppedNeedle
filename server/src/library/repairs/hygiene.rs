@@ -4,7 +4,8 @@
 //! does nothing unless the evidence is unambiguous.
 //!
 //! - An empty album shell (no files left) that names the same album as
-//!   exactly one live album in the same root is retired into it.
+//!   exactly one live album in the same root is retired into it, once no
+//!   running scan is still moving tracks onto that album.
 //! - An album an imported (v2 `legacy_import`) identity split off, whose
 //!   every file's own tags name another release group, is folded into the
 //!   one live album in the same folder that carries that group.
@@ -170,6 +171,23 @@ fn retire_empty_shell(
         return Ok(None);
     };
     if busy(tx, &[&album.id])? {
+        return Ok(None);
+    }
+    // A scan still running moved tracks onto the receiver: it may be the
+    // new row of an album being retagged, which the album's old row takes
+    // over when the retag has been read to the end. A row retired into it
+    // would stop that.
+    let mid_scan: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM library_scan_runs run \
+         CROSS JOIN local_tracks t \
+         CROSS JOIN library_scan_album_moves m ON m.run_id = run.id \
+           AND m.root_id = t.root_id AND m.relative_path = t.relative_path \
+           AND m.local_track_id = t.id \
+         WHERE run.terminal_at IS NULL AND t.local_album_id = ?1)",
+        params![target],
+        |row| row.get(0),
+    )?;
+    if mid_scan {
         return Ok(None);
     }
     let source = identity(tx, &album.id)?;
