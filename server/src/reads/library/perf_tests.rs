@@ -2036,3 +2036,1381 @@ async fn perf_100k_player_pages_hold_p95() {
         assert!(over.is_empty(), "over budget:\n{}", report.join("\n"));
     }
 }
+
+// Read pool replay: the 17 budgeted reads through the catalog on sqlx, and
+// the same statements replayed through `Db::read` on the runtime's own
+// request pool, one closure and so one checkout per statement.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::time::{Duration, Instant};
+
+use crate::db::{Db, DbError, WriteLane};
+use library::player::{
+    AlbumOrder, AlbumQuery, OrderKey, PlayerAlbum, PlayerCatalog, PlayerTrack, SqlitePlayerCatalog,
+    TrackOrder, TrackQuery,
+};
+use rusqlite::types::Value;
+
+/// The budgeted reads, in the order the two acceptance tests time them.
+const READS: [&str; 17] = [
+    "library_albums",
+    "library_artists",
+    "library_tracks",
+    "library_stats",
+    "local_albums",
+    "local_search_miss",
+    "player_tracks_title",
+    "player_tracks_search_miss",
+    "player_albums_title",
+    "player_albums_newest",
+    "search3_sync_page_offset_99500",
+    "search3_songs_hit_page",
+    "search3_songs_common_page",
+    "player_tracks_random_50",
+    "player_tracks_shuffle_page",
+    "player_albums_shuffle_page_9000",
+    "player_tracks_year_page",
+];
+
+/// The one read whose rows differ call to call.
+const RANDOM_READ: usize = 13;
+
+/// What one read hands back.
+#[derive(Debug, PartialEq)]
+enum Output {
+    Nothing,
+    Albums(Vec<AlbumRecord>),
+    Artists(Vec<ArtistRecord>),
+    Tracks(Vec<TrackRecord>),
+    Stats(StatsRecord),
+    PlayerTracks(Vec<PlayerTrack>),
+    PlayerAlbums(Vec<PlayerAlbum>),
+}
+
+impl Output {
+    fn len(&self) -> usize {
+        match self {
+            Output::Nothing => 0,
+            Output::Stats(_) => 1,
+            Output::Albums(rows) => rows.len(),
+            Output::Artists(rows) => rows.len(),
+            Output::Tracks(rows) => rows.len(),
+            Output::PlayerTracks(rows) => rows.len(),
+            Output::PlayerAlbums(rows) => rows.len(),
+        }
+    }
+}
+
+/// The 17 reads as the acceptance tests call them, over one sqlx pool.
+struct Reads {
+    catalog: SqliteCatalog,
+    player: SqlitePlayerCatalog,
+    miss_albums: AlbumFilter,
+    miss_tracks: TrackFilter,
+    miss: TrackQuery,
+    hit: TrackQuery,
+    common: TrackQuery,
+}
+
+impl Reads {
+    fn over(pool: &SqlitePool) -> Self {
+        let db = LibraryDb::new(pool);
+        let search = |q: &str| TrackQuery {
+            q: Some(q.to_owned()),
+            ..TrackQuery::default()
+        };
+        Self {
+            catalog: SqliteCatalog::new(&db),
+            player: SqlitePlayerCatalog::new(&db),
+            miss_albums: AlbumFilter {
+                q: Some("zzz-no-such-thing-zzz".to_owned()),
+                ..Default::default()
+            },
+            miss_tracks: TrackFilter {
+                q: Some("zzz-no-such-thing-zzz".to_owned()),
+                ..Default::default()
+            },
+            miss: search("zzz-no-such-thing-zzz"),
+            hit: search("track 0123"),
+            common: search("perf artist 01"),
+        }
+    }
+
+    async fn run(&self, read: usize) -> Output {
+        let (catalog, player) = (&self.catalog, &self.player);
+        let open = TrackQuery::default();
+        let albums = AlbumQuery::default();
+        match read {
+            0 | 4 => Output::Albums(
+                catalog
+                    .list_albums(&AlbumFilter::default(), AlbumSort::Name, false, 50, 0)
+                    .await
+                    .expect("lists")
+                    .0,
+            ),
+            1 => Output::Artists(
+                catalog
+                    .list_artists(ArtistScope::All, None, ArtistSort::Name, false, 50, 0)
+                    .await
+                    .expect("lists")
+                    .0,
+            ),
+            2 => Output::Tracks(
+                catalog
+                    .list_tracks(&TrackFilter::default(), TrackSort::Title, false, 48, 0)
+                    .await
+                    .expect("lists")
+                    .0,
+            ),
+            3 => Output::Stats(catalog.stats().await.expect("stats read")),
+            5 => {
+                let albums = catalog
+                    .list_albums(&self.miss_albums, AlbumSort::Name, false, 20, 0)
+                    .await
+                    .expect("lists");
+                let tracks = catalog
+                    .list_tracks(&self.miss_tracks, TrackSort::Title, false, 20, 0)
+                    .await
+                    .expect("lists");
+                assert!(albums.0.is_empty() && tracks.0.is_empty());
+                Output::Nothing
+            }
+            6 => Output::PlayerTracks(
+                player
+                    .tracks(&open, TrackOrder::Title, 100, 0)
+                    .await
+                    .expect("page reads")
+                    .0,
+            ),
+            7 => Output::PlayerTracks(
+                player
+                    .tracks(&self.miss, TrackOrder::Title, 100, 0)
+                    .await
+                    .expect("page reads")
+                    .0,
+            ),
+            8 => Output::PlayerAlbums(
+                player
+                    .albums(&albums, AlbumOrder::Title, 100, 0)
+                    .await
+                    .expect("page reads")
+                    .0,
+            ),
+            9 => Output::PlayerAlbums(
+                player
+                    .albums(&albums, AlbumOrder::By(OrderKey::Added, true), 10, 0)
+                    .await
+                    .expect("page reads")
+                    .0,
+            ),
+            10 => Output::PlayerTracks(
+                player
+                    .track_page(&open, TrackOrder::Natural, 500, 99_500)
+                    .await
+                    .expect("page reads"),
+            ),
+            11 => Output::PlayerTracks(
+                player
+                    .track_page(&self.hit, TrackOrder::Album, 20, 0)
+                    .await
+                    .expect("page reads"),
+            ),
+            12 => Output::PlayerTracks(
+                player
+                    .track_page(&self.common, TrackOrder::Album, 20, 0)
+                    .await
+                    .expect("page reads"),
+            ),
+            13 => Output::PlayerTracks(
+                player
+                    .track_page(&open, TrackOrder::Random, 50, 0)
+                    .await
+                    .expect("page reads"),
+            ),
+            14 => Output::PlayerTracks(
+                player
+                    .tracks(&open, TrackOrder::Shuffle(7), 100, 0)
+                    .await
+                    .expect("page reads")
+                    .0,
+            ),
+            15 => Output::PlayerAlbums(
+                player
+                    .album_page(&albums, AlbumOrder::Shuffle(7), 50, 9_000)
+                    .await
+                    .expect("page reads"),
+            ),
+            _ => Output::PlayerTracks(
+                player
+                    .tracks(&open, TrackOrder::By(OrderKey::Year, false), 100, 0)
+                    .await
+                    .expect("page reads")
+                    .0,
+            ),
+        }
+    }
+}
+
+/// Statements seen by the recording connection: the text as prepared, and
+/// the same text with its binds written in.
+static TRACED: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// `sqlite3_trace_v2` callback for `SQLITE_TRACE_STMT`: the third argument
+/// is the statement about to run.
+unsafe extern "C" fn trace_statement(
+    _event: std::os::raw::c_uint,
+    _context: *mut std::os::raw::c_void,
+    statement: *mut std::os::raw::c_void,
+    _text: *mut std::os::raw::c_void,
+) -> std::os::raw::c_int {
+    use rusqlite::ffi;
+    let statement = statement.cast::<ffi::sqlite3_stmt>();
+    // SAFETY: SQLite passes a live statement, `sqlite3_sql` returns text the
+    // statement owns, and the expanded text is ours to free.
+    unsafe {
+        let template = ffi::sqlite3_sql(statement);
+        let expanded = ffi::sqlite3_expanded_sql(statement);
+        if !template.is_null() && !expanded.is_null() {
+            let pair = (
+                std::ffi::CStr::from_ptr(template)
+                    .to_string_lossy()
+                    .into_owned(),
+                std::ffi::CStr::from_ptr(expanded)
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+            TRACED
+                .lock()
+                .unwrap_or_else(|held| held.into_inner())
+                .push(pair);
+        }
+        if !expanded.is_null() {
+            ffi::sqlite3_free(expanded.cast());
+        }
+    }
+    0
+}
+
+/// The binds of one statement, read back by walking the prepared text
+/// beside the expanded one: each `?` outside a string literal stands where
+/// the expanded text has a literal.
+fn split_binds(template: &str, expanded: &str) -> Vec<Value> {
+    let (template, expanded) = (template.as_bytes(), expanded.as_bytes());
+    let (mut at, mut seen) = (0, 0);
+    let mut quoted = false;
+    let mut binds = Vec::new();
+    while at < template.len() {
+        if template[at] == b'?' && !quoted {
+            at += 1;
+            while at < template.len() && template[at].is_ascii_digit() {
+                at += 1;
+            }
+            if expanded[seen] == b'\'' {
+                let mut text = Vec::new();
+                seen += 1;
+                loop {
+                    if expanded[seen] == b'\'' {
+                        if expanded.get(seen + 1) == Some(&b'\'') {
+                            text.push(b'\'');
+                            seen += 2;
+                            continue;
+                        }
+                        seen += 1;
+                        break;
+                    }
+                    text.push(expanded[seen]);
+                    seen += 1;
+                }
+                binds.push(Value::Text(String::from_utf8(text).expect("utf-8 bind")));
+            } else if expanded[seen..].starts_with(b"NULL") {
+                seen += 4;
+                binds.push(Value::Null);
+            } else {
+                let start = seen;
+                while seen < expanded.len()
+                    && (expanded[seen].is_ascii_digit()
+                        || matches!(expanded[seen], b'-' | b'+' | b'.' | b'e' | b'E'))
+                {
+                    seen += 1;
+                }
+                let number = std::str::from_utf8(&expanded[start..seen]).expect("ascii number");
+                binds.push(match number.parse::<i64>() {
+                    Ok(whole) => Value::Integer(whole),
+                    Err(_) => Value::Real(number.parse().expect("numeric bind")),
+                });
+            }
+            continue;
+        }
+        if template[at] == b'\'' {
+            quoted = !quoted;
+        }
+        assert_eq!(
+            template[at],
+            expanded[seen],
+            "expanded text follows its template:\n{}\n{}",
+            String::from_utf8_lossy(template),
+            String::from_utf8_lossy(expanded)
+        );
+        at += 1;
+        seen += 1;
+    }
+    assert_eq!(seen, expanded.len(), "expanded text ends with its template");
+    binds
+}
+
+/// How a replayed statement's rows are decoded.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Shape {
+    /// One page of ids, in order.
+    Ids,
+    Albums,
+    Tracks,
+    ArtistRows,
+    AlbumCounts,
+    CreditCounts,
+    StatsMain,
+    Formats,
+    PlayerTracks,
+    PlayerAlbums,
+    /// Counts, flags and anything else: read and dropped.
+    Scalars,
+}
+
+impl Shape {
+    fn of(columns: &[String]) -> Self {
+        let has = |name: &str| columns.iter().any(|column| column == name);
+        let is = |names: &[&str]| columns.iter().map(String::as_str).eq(names.iter().copied());
+        if has("tag_genre") {
+            Shape::PlayerTracks
+        } else if has("primary_genre") {
+            Shape::PlayerAlbums
+        } else if has("contribution_state") {
+            Shape::Albums
+        } else if has("album_artist_mbid") {
+            Shape::Tracks
+        } else if is(&["id", "name", "artist_mbid", "linked", "date_added"]) {
+            Shape::ArtistRows
+        } else if has("size_bytes") {
+            Shape::StatsMain
+        } else if has("appearances") {
+            Shape::CreditCounts
+        } else if is(&["id", "total"]) {
+            Shape::AlbumCounts
+        } else if is(&["format", "total"]) {
+            Shape::Formats
+        } else if is(&["id"]) {
+            Shape::Ids
+        } else {
+            Shape::Scalars
+        }
+    }
+
+    /// Rows read for the ids of the page before them.
+    fn follows_page(self) -> bool {
+        matches!(
+            self,
+            Shape::Albums
+                | Shape::Tracks
+                | Shape::ArtistRows
+                | Shape::PlayerTracks
+                | Shape::PlayerAlbums
+        )
+    }
+}
+
+/// One recorded statement of a read.
+struct Step {
+    sql: String,
+    binds: Vec<Value>,
+    shape: Shape,
+    columns: HashMap<String, usize>,
+}
+
+type Plan = Arc<Vec<Step>>;
+
+/// Record the statements each read issues, on a connection of its own. Each
+/// read runs once unrecorded first, so what is kept is the warm sequence the
+/// timed calls issue.
+async fn record_plans(path: &Path) -> Vec<Plan> {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(path)
+                .read_only(true),
+        )
+        .await
+        .expect("recording connection opens");
+    {
+        let mut connection = pool.acquire().await.expect("recording connection");
+        let mut handle = connection.lock_handle().await.expect("handle locks");
+        // SAFETY: the handle is locked for this call, and the callback is a
+        // plain function that outlives the connection.
+        let status = unsafe {
+            rusqlite::ffi::sqlite3_trace_v2(
+                handle.as_raw_handle().as_ptr().cast(),
+                rusqlite::ffi::SQLITE_TRACE_STMT as std::os::raw::c_uint,
+                Some(trace_statement),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(status, rusqlite::ffi::SQLITE_OK, "trace installs");
+    }
+    let reads = Reads::over(&pool);
+    let probe =
+        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .expect("probe connection opens");
+    let mut plans = Vec::new();
+    for (read, name) in READS.iter().enumerate() {
+        reads.run(read).await;
+        TRACED
+            .lock()
+            .unwrap_or_else(|held| held.into_inner())
+            .clear();
+        reads.run(read).await;
+        let traced = std::mem::take(&mut *TRACED.lock().unwrap_or_else(|held| held.into_inner()));
+        assert!(!traced.is_empty(), "{name} issued no statement");
+        let steps = traced
+            .into_iter()
+            // A statement SQLite runs inside another (the FTS index reading
+            // its own tables) is traced as a comment. The outer statement
+            // issues it again on replay.
+            .filter(|(_, expanded)| !expanded.starts_with("-- "))
+            .map(|(template, expanded)| {
+                let binds = split_binds(&template, &expanded);
+                let names: Vec<String> = probe
+                    .prepare(&template)
+                    .expect("recorded statement prepares")
+                    .column_names()
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect();
+                Step {
+                    binds,
+                    shape: Shape::of(&names),
+                    columns: names
+                        .into_iter()
+                        .enumerate()
+                        .map(|(at, name)| (name, at))
+                        .collect(),
+                    sql: template,
+                }
+            })
+            .collect();
+        plans.push(Arc::new(steps));
+    }
+    pool.close().await;
+    plans
+}
+
+/// One row read by column name, with the positions looked up once per
+/// statement.
+struct Cells<'a, 'row> {
+    row: &'a rusqlite::Row<'row>,
+    columns: &'a HashMap<String, usize>,
+}
+
+impl Cells<'_, '_> {
+    fn get<T: rusqlite::types::FromSql>(&self, name: &str) -> rusqlite::Result<T> {
+        self.row.get(self.columns[name])
+    }
+}
+
+fn album_cells(cells: &Cells<'_, '_>, contributions: bool) -> rusqlite::Result<AlbumRecord> {
+    let track_count: i64 = cells.get("track_count")?;
+    Ok(AlbumRecord {
+        id: cells.get("id")?,
+        title: cells.get("title")?,
+        artist_name: cells.get("artist_name")?,
+        artist_id: cells.get("artist_id")?,
+        release_group_mbid: cells.get("release_group_mbid")?,
+        release_mbid: cells.get("release_mbid")?,
+        artist_mbid: cells.get("artist_mbid")?,
+        linked: cells.get("linked")?,
+        track_count: track_count.max(0) as u64,
+        total_duration_seconds: cells.get("total_duration_seconds")?,
+        total_size_bytes: cells.get("total_size_bytes")?,
+        format: cells.get("format")?,
+        year: cells.get("year")?,
+        is_compilation: cells.get("is_compilation")?,
+        cover_available: cells.get("cover_available")?,
+        date_added: cells.get("date_added")?,
+        contribution_id: if contributions {
+            cells.get("contribution_id")?
+        } else {
+            None
+        },
+        contribution_state: if contributions {
+            cells.get("contribution_state")?
+        } else {
+            None
+        },
+    })
+}
+
+fn track_cells(cells: &Cells<'_, '_>) -> rusqlite::Result<TrackRecord> {
+    Ok(TrackRecord {
+        id: cells.get("id")?,
+        title: cells.get("title")?,
+        album_id: cells.get("album_id")?,
+        album_title: cells.get("album_title")?,
+        artist_name: cells.get("artist_name")?,
+        artist_id: cells.get("artist_id")?,
+        album_artist_name: cells.get("album_artist_name")?,
+        album_artist_id: cells.get("album_artist_id")?,
+        recording_mbid: cells.get("recording_mbid")?,
+        release_group_mbid: cells.get("release_group_mbid")?,
+        artist_mbid: cells.get("artist_mbid")?,
+        album_artist_mbid: cells.get("album_artist_mbid")?,
+        disc_number: cells.get("disc_number")?,
+        track_number: cells.get("track_number")?,
+        year: cells.get("year")?,
+        genre: cells.get("genre")?,
+        duration_seconds: cells.get("duration_seconds")?,
+        format: cells.get("format")?,
+        bit_rate: cells.get("bit_rate")?,
+        sample_rate: cells.get("sample_rate")?,
+        bit_depth: cells.get("bit_depth")?,
+        channels: cells.get("channels")?,
+        file_size_bytes: cells.get("file_size_bytes")?,
+        date_added: cells.get("date_added")?,
+        cover_available: cells.get("cover_available")?,
+    })
+}
+
+fn player_track_cells(cells: &Cells<'_, '_>) -> rusqlite::Result<PlayerTrack> {
+    let genres: Option<String> = cells.get("genres")?;
+    let tag_genre: Option<String> = cells.get("tag_genre")?;
+    let genres = match genres.filter(|value| !value.is_empty()) {
+        Some(list) => list.split('\u{1f}').map(str::to_owned).collect(),
+        None => tag_genre
+            .into_iter()
+            .filter(|genre| !genre.trim().is_empty())
+            .collect(),
+    };
+    Ok(PlayerTrack {
+        id: cells.get("id")?,
+        title: cells.get("title")?,
+        album_id: cells.get("album_id")?,
+        album_title: cells.get("album_title")?,
+        artist_name: cells.get("artist_name")?,
+        artist_id: cells.get("artist_id")?,
+        album_artist_id: cells.get("album_artist_id")?,
+        album_artist_name: cells.get("album_artist_name")?,
+        disc_number: cells.get("disc_number")?,
+        track_number: cells.get("track_number")?,
+        year: cells.get("year")?,
+        genres,
+        duration_seconds: cells.get("duration_seconds")?,
+        format: cells.get("format")?,
+        bit_rate: cells.get("bit_rate")?,
+        sample_rate: cells.get("sample_rate")?,
+        bit_depth: cells.get("bit_depth")?,
+        channels: cells.get("channels")?,
+        file_size_bytes: cells.get("file_size_bytes")?,
+        date_added: cells.get("date_added")?,
+        sort_name: cells.get("sort_name")?,
+        disc_subtitle: cells.get("disc_subtitle")?,
+        recording_mbid: cells.get("recording_mbid")?,
+        artist_mbid: cells.get("artist_mbid")?,
+        album_artist_mbid: cells.get("album_artist_mbid")?,
+        release_group_mbid: cells.get("release_group_mbid")?,
+        release_type: cells.get("release_type")?,
+        replaygain_track_gain: cells.get("rg_track_gain")?,
+        replaygain_album_gain: cells.get("rg_album_gain")?,
+        replaygain_track_peak: cells.get("rg_track_peak")?,
+        replaygain_album_peak: cells.get("rg_album_peak")?,
+        cover_available: cells.get("cover_available")?,
+    })
+}
+
+/// Records keyed by id, put back in the order of the page that asked for
+/// them, as the catalog does. With no page, row order stands.
+fn in_page_order<T>(
+    records: Vec<T>,
+    page: Option<&Vec<String>>,
+    id: impl Fn(&T) -> &String,
+) -> Vec<T> {
+    let Some(page) = page else {
+        return records;
+    };
+    let mut by_id = HashMap::with_capacity(records.len());
+    for record in records {
+        by_id.insert(id(&record).clone(), record);
+    }
+    page.iter().filter_map(|id| by_id.remove(id)).collect()
+}
+
+/// What a read carries from one statement to the next: the page of ids and
+/// the partly built records. It leaves one closure by value and enters the
+/// next, as the catalog holds them between two sqlx calls.
+struct Carried {
+    page: Option<Vec<String>>,
+    output: Output,
+    artists: Option<Vec<ArtistRecord>>,
+    album_counts: HashMap<String, u64>,
+    credit_counts: HashMap<String, (u64, u64)>,
+    stats: Option<StatsRecord>,
+}
+
+impl Carried {
+    fn new() -> Self {
+        Self {
+            page: None,
+            output: Output::Nothing,
+            artists: None,
+            album_counts: HashMap::new(),
+            credit_counts: HashMap::new(),
+            stats: None,
+        }
+    }
+
+    /// The records the catalog returns, once every statement has run.
+    fn finish(self) -> Output {
+        let page = self.page;
+        if let Some(mut records) = self.artists {
+            for record in &mut records {
+                record.album_count = self.album_counts.get(&record.id).copied().unwrap_or(0);
+                let (tracks, appearances) = self
+                    .credit_counts
+                    .get(&record.id)
+                    .copied()
+                    .unwrap_or((0, 0));
+                record.track_count = tracks;
+                record.appearance_album_count = appearances;
+            }
+            return Output::Artists(in_page_order(records, page.as_ref(), |r| &r.id));
+        }
+        if let Some(stats) = self.stats {
+            return Output::Stats(stats);
+        }
+        self.output
+    }
+}
+
+/// One recorded statement on one pooled connection, decoded into the
+/// records the catalog returns. Rows read for a page of ids take the ids
+/// this run's page returned.
+fn replay_step(
+    connection: &rusqlite::Connection,
+    step: &Step,
+    carried: &mut Carried,
+) -> rusqlite::Result<()> {
+    let Carried {
+        page,
+        output,
+        artists,
+        album_counts,
+        credit_counts,
+        stats,
+    } = carried;
+    {
+        let mut statement = connection.prepare_cached(&step.sql)?;
+        let chained = step.shape.follows_page()
+            && page
+                .as_ref()
+                .is_some_and(|ids| ids.len() == step.binds.len());
+        let mut rows = match page.as_ref() {
+            Some(ids) if chained => statement.query(rusqlite::params_from_iter(ids.iter()))?,
+            _ => statement.query(rusqlite::params_from_iter(step.binds.iter()))?,
+        };
+        let columns = &step.columns;
+        match step.shape {
+            Shape::Ids => {
+                let mut ids = Vec::new();
+                while let Some(row) = rows.next()? {
+                    ids.push(row.get::<_, String>(0)?);
+                }
+                *page = Some(ids);
+            }
+            Shape::Albums => {
+                let mut records = Vec::new();
+                while let Some(row) = rows.next()? {
+                    records.push(album_cells(&Cells { row, columns }, true)?);
+                }
+                *output = Output::Albums(in_page_order(records, page.as_ref(), |r| &r.id));
+            }
+            Shape::Tracks => {
+                let mut records = Vec::new();
+                while let Some(row) = rows.next()? {
+                    records.push(track_cells(&Cells { row, columns })?);
+                }
+                *output = Output::Tracks(records);
+            }
+            Shape::ArtistRows => {
+                let mut records = Vec::new();
+                while let Some(row) = rows.next()? {
+                    let cells = Cells { row, columns };
+                    records.push(ArtistRecord {
+                        id: cells.get("id")?,
+                        name: cells.get("name")?,
+                        artist_mbid: cells.get("artist_mbid")?,
+                        linked: cells.get("linked")?,
+                        album_count: 0,
+                        track_count: 0,
+                        appearance_album_count: 0,
+                        date_added: cells.get("date_added")?,
+                    });
+                }
+                *artists = Some(records);
+            }
+            Shape::AlbumCounts => {
+                while let Some(row) = rows.next()? {
+                    let total: i64 = row.get(1)?;
+                    album_counts.insert(row.get(0)?, total.max(0) as u64);
+                }
+            }
+            Shape::CreditCounts => {
+                while let Some(row) = rows.next()? {
+                    let cells = Cells { row, columns };
+                    let tracks: i64 = cells.get("tracks")?;
+                    let appearances: i64 = cells.get("appearances")?;
+                    credit_counts.insert(
+                        cells.get("id")?,
+                        (tracks.max(0) as u64, appearances.max(0) as u64),
+                    );
+                }
+            }
+            Shape::StatsMain => {
+                while let Some(row) = rows.next()? {
+                    let cells = Cells { row, columns };
+                    let albums: i64 = cells.get("albums")?;
+                    let artists: i64 = cells.get("artists")?;
+                    let tracks: i64 = cells.get("tracks")?;
+                    *stats = Some(StatsRecord {
+                        total_albums: albums.max(0) as u64,
+                        total_artists: artists.max(0) as u64,
+                        total_tracks: tracks.max(0) as u64,
+                        total_size_bytes: cells.get("size_bytes")?,
+                        format_breakdown: HashMap::new(),
+                    });
+                }
+            }
+            Shape::Formats => {
+                while let Some(row) = rows.next()? {
+                    let total: i64 = row.get(1)?;
+                    if let Some(stats) = stats.as_mut() {
+                        stats
+                            .format_breakdown
+                            .insert(row.get(0)?, total.max(0) as u64);
+                    }
+                }
+            }
+            Shape::PlayerTracks => {
+                let mut records = Vec::new();
+                while let Some(row) = rows.next()? {
+                    records.push(player_track_cells(&Cells { row, columns })?);
+                }
+                *output = Output::PlayerTracks(in_page_order(records, page.as_ref(), |r| &r.id));
+            }
+            Shape::PlayerAlbums => {
+                let mut records = Vec::new();
+                while let Some(row) = rows.next()? {
+                    let cells = Cells { row, columns };
+                    records.push(PlayerAlbum {
+                        record: album_cells(&cells, false)?,
+                        genre: cells.get("primary_genre")?,
+                        sort_name: cells.get("album_sort_name")?,
+                        original_release_date: cells.get("original_release_date")?,
+                    });
+                }
+                *output =
+                    Output::PlayerAlbums(in_page_order(records, page.as_ref(), |r| &r.record.id));
+            }
+            Shape::Scalars => {
+                while let Some(row) = rows.next()? {
+                    for at in 0..columns.len() {
+                        std::hint::black_box(row.get::<_, Value>(at)?);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Everything a timed sample needs.
+struct Replay {
+    reads: Reads,
+    plans: Vec<Plan>,
+}
+
+/// Which way a sample goes.
+#[derive(Clone)]
+enum Via {
+    Sqlx,
+    Pool(Db),
+}
+
+impl Replay {
+    async fn build(fixture: &Fixture) -> Self {
+        Self {
+            reads: Reads::over(&fixture.pool),
+            plans: record_plans(fixture.runtime.path()).await,
+        }
+    }
+
+    async fn via_sqlx(&self, read: usize) -> Output {
+        self.reads.run(read).await
+    }
+
+    /// One `read` per recorded statement, in order, as each sqlx call is one
+    /// checkout: the read queues for a connection per statement and holds
+    /// nothing between two.
+    async fn via_pool(&self, db: &Db, read: usize) -> Output {
+        let mut carried = Carried::new();
+        for at in 0..self.plans[read].len() {
+            let plan = Arc::clone(&self.plans[read]);
+            carried = db
+                .read("replay.step", move |connection| -> Result<_, DbError> {
+                    let mut carried = carried;
+                    replay_step(connection, &plan[at], &mut carried)?;
+                    Ok(carried)
+                })
+                .await
+                .expect("pooled read");
+        }
+        carried.finish()
+    }
+
+    /// One timed read, in milliseconds. The result is dropped inside the
+    /// timing on both paths, as the acceptance tests do.
+    async fn sample(&self, via: &Via, read: usize) -> f64 {
+        let tick = Instant::now();
+        match via {
+            Via::Sqlx => drop(std::hint::black_box(self.via_sqlx(read).await)),
+            Via::Pool(pool) => drop(std::hint::black_box(self.via_pool(pool, read).await)),
+        }
+        tick.elapsed().as_secs_f64() * 1000.0
+    }
+
+    /// Both paths return the same records for every read. The random read
+    /// and an empty page are held to their row count.
+    async fn assert_same_records(&self, pool: &Db) {
+        for (read, name) in READS.iter().enumerate() {
+            let catalog = self.via_sqlx(read).await;
+            let replayed = self.via_pool(pool, read).await;
+            // An empty page has no rows to decode, so the replay has no
+            // record type to give it.
+            if read == RANDOM_READ || catalog.len() == 0 {
+                assert_eq!(catalog.len(), replayed.len(), "{name}: row count");
+            } else {
+                assert_eq!(catalog, replayed, "{name}: records");
+            }
+        }
+    }
+
+    /// Per read: warm-ups, then timed pairs, one sample of each path back
+    /// to back with the order swapping every pair. Returns the p95 of each
+    /// path per read.
+    async fn serial(
+        &self,
+        first: &Via,
+        second: &Via,
+        warmups: usize,
+        pairs: usize,
+    ) -> Vec<(f64, f64)> {
+        let mut out = Vec::with_capacity(READS.len());
+        for read in 0..READS.len() {
+            for _ in 0..warmups {
+                self.sample(first, read).await;
+                self.sample(second, read).await;
+            }
+            let (mut one, mut two) = (Vec::with_capacity(pairs), Vec::with_capacity(pairs));
+            for pair in 0..pairs {
+                if pair % 2 == 0 {
+                    one.push(self.sample(first, read).await);
+                    two.push(self.sample(second, read).await);
+                } else {
+                    two.push(self.sample(second, read).await);
+                    one.push(self.sample(first, read).await);
+                }
+            }
+            out.push((percentile(&mut one, 95.0), percentile(&mut two, 95.0)));
+        }
+        out
+    }
+}
+
+const SERIAL_WARMUPS: usize = 10;
+const SERIAL_PAIRS: usize = 200;
+const CONCURRENT_TASKS: usize = 16;
+const CONCURRENT_ROUNDS: usize = 20;
+const WRITER_ROWS: i64 = 256;
+
+/// One concurrent block: 16 tasks each run the 17 reads in turn for 20
+/// rounds while one writer commits 256-row transactions without pause.
+/// Returns the samples per read and the writer's commit count.
+async fn concurrent_block(
+    replay: &Arc<Replay>,
+    via: &Via,
+    lane: &WriteLane,
+) -> (Vec<Vec<f64>>, u64) {
+    let stop = Arc::new(AtomicBool::new(false));
+    let writer = tokio::spawn({
+        let (stop, lane) = (Arc::clone(&stop), lane.clone());
+        async move {
+            let mut commits: u64 = 0;
+            while !stop.load(Ordering::Relaxed) {
+                let stamp = commits as i64;
+                lane.write(Lane::Background, "replay writer", move |tx| {
+                    let mut insert = tx.prepare_cached(
+                        "INSERT OR REPLACE INTO replay_writes (id, stamp) VALUES (?1, ?2)",
+                    )?;
+                    for id in 0..WRITER_ROWS {
+                        insert.execute((id, stamp))?;
+                    }
+                    Ok(())
+                })
+                .await
+                .expect("writer commits");
+                commits += 1;
+            }
+            commits
+        }
+    });
+    let mut tasks = Vec::with_capacity(CONCURRENT_TASKS);
+    for _ in 0..CONCURRENT_TASKS {
+        let (replay, via) = (Arc::clone(replay), via.clone());
+        tasks.push(tokio::spawn(async move {
+            let mut samples = vec![Vec::with_capacity(CONCURRENT_ROUNDS); READS.len()];
+            for _ in 0..CONCURRENT_ROUNDS {
+                for (read, bucket) in samples.iter_mut().enumerate() {
+                    bucket.push(replay.sample(&via, read).await);
+                }
+            }
+            samples
+        }));
+    }
+    let mut merged = vec![Vec::new(); READS.len()];
+    for task in tasks {
+        for (read, samples) in task.await.expect("reader task").into_iter().enumerate() {
+            merged[read].extend(samples);
+        }
+    }
+    stop.store(true, Ordering::Relaxed);
+    (merged, writer.await.expect("writer task"))
+}
+
+/// Blocks in the given order; a path's samples are its blocks together.
+/// Returns the p95 per read for `first` and `second`, and the commits the
+/// writer made beside each.
+async fn concurrent(
+    replay: &Arc<Replay>,
+    first: &Via,
+    second: &Via,
+    lane: &WriteLane,
+) -> (Vec<(f64, f64)>, (u64, u64)) {
+    let mut samples = [vec![Vec::new(); READS.len()], vec![Vec::new(); READS.len()]];
+    let mut commits = [0u64; 2];
+    for which in [0, 1, 1, 0] {
+        let via = if which == 0 { first } else { second };
+        let (block, written) = concurrent_block(replay, via, lane).await;
+        for (read, values) in block.into_iter().enumerate() {
+            samples[which][read].extend(values);
+        }
+        commits[which] += written;
+    }
+    let [mut one, mut two] = samples;
+    let p95 = (0..READS.len())
+        .map(|read| {
+            (
+                percentile(&mut one[read], 95.0),
+                percentile(&mut two[read], 95.0),
+            )
+        })
+        .collect();
+    (p95, (commits[0], commits[1]))
+}
+
+fn load_average() -> f64 {
+    std::fs::read_to_string("/proc/loadavg")
+        .expect("load average reads")
+        .split_whitespace()
+        .next()
+        .and_then(|first| first.parse().ok())
+        .expect("load average parses")
+}
+
+/// The 1-minute load average the pass starts at. Waits up to ten minutes
+/// for it to fall under 2.0 and refuses to start otherwise.
+async fn wait_for_quiet_host() -> f64 {
+    let deadline = Instant::now() + Duration::from_secs(600);
+    loop {
+        let load = load_average();
+        if load < 2.0 {
+            return load;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "refused to start: the load average is {load:.2} after ten minutes of waiting; \
+             nothing was timed"
+        );
+        eprintln!("load average {load:.2}, waiting for it to fall under 2.0");
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+}
+
+/// Resident and peak resident memory of this process, in MiB.
+fn resident_mib() -> (f64, f64) {
+    let status = std::fs::read_to_string("/proc/self/status").expect("status reads");
+    let field = |name: &str| {
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix(name))
+            .and_then(|rest| rest.split_whitespace().next())
+            .and_then(|kib| kib.parse::<f64>().ok())
+            .expect("memory field parses")
+            / 1024.0
+    };
+    (field("VmRSS:"), field("VmHWM:"))
+}
+
+/// The p95 of both paths for every read, one pass.
+#[derive(Clone, Default)]
+struct Pass {
+    /// Load average at the start, after the serial part and at the end.
+    load: [f64; 3],
+    /// (sqlx, pool) per read.
+    serial: Vec<(f64, f64)>,
+    concurrent: Vec<(f64, f64)>,
+}
+
+/// Where the passes are kept between invocations: one pass per invocation,
+/// so a pass and its wait for a quiet host fit one command.
+fn passes_file() -> PathBuf {
+    std::env::var_os("READ_POOL_REPLAY_PASSES")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../read-pool-replay.tsv"))
+}
+
+/// Values are kept as their bits, so the verdict is worked from what was
+/// measured and not from a rounded print.
+fn load_passes(file: &Path) -> Vec<Pass> {
+    let Ok(text) = std::fs::read_to_string(file) else {
+        return Vec::new();
+    };
+    let bits = |field: &str| f64::from_bits(u64::from_str_radix(field, 16).expect("bits parse"));
+    let mut passes: Vec<Pass> = Vec::new();
+    for line in text.lines() {
+        let fields: Vec<&str> = line.split('\t').collect();
+        match fields.as_slice() {
+            ["load", start, middle, end] => passes.push(Pass {
+                load: [bits(start), bits(middle), bits(end)],
+                ..Pass::default()
+            }),
+            [part, _name, sqlx, pool] => {
+                let pass = passes.last_mut().expect("a pass starts with its load line");
+                let pair = (bits(sqlx), bits(pool));
+                if *part == "serial" {
+                    pass.serial.push(pair);
+                } else {
+                    pass.concurrent.push(pair);
+                }
+            }
+            _ => panic!("unreadable line in {}: {line}", file.display()),
+        }
+    }
+    passes
+}
+
+fn save_pass(file: &Path, pass: &Pass) {
+    use std::io::Write as _;
+    let mut text = format!(
+        "load\t{:x}\t{:x}\t{:x}\n",
+        pass.load[0].to_bits(),
+        pass.load[1].to_bits(),
+        pass.load[2].to_bits()
+    );
+    for (part, values) in [("serial", &pass.serial), ("concurrent", &pass.concurrent)] {
+        for (read, (sqlx, pool)) in values.iter().enumerate() {
+            text.push_str(&format!(
+                "{part}\t{}\t{:x}\t{:x}\n",
+                READS[read],
+                sqlx.to_bits(),
+                pool.to_bits()
+            ));
+        }
+    }
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(file)
+        .and_then(|mut file| file.write_all(text.as_bytes()))
+        .expect("pass is saved");
+}
+
+fn median(mut values: Vec<f64>) -> f64 {
+    values.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
+    values[values.len() / 2]
+}
+
+/// Pool against sqlx: at most 1.25 times, or at most 0.5 ms above.
+fn keeps_pace(sqlx: f64, pool: f64) -> bool {
+    pool <= sqlx * 1.25 || pool <= sqlx + 0.5
+}
+
+/// The serial rule for one read. Under budget on sqlx, the pool keeps pace
+/// and stays under 10 ms. At or over budget on sqlx, the pool is held to
+/// sqlx plus 0.5 ms.
+fn serial_holds(sqlx: f64, pool: f64) -> bool {
+    if sqlx >= 10.0 {
+        pool <= sqlx + 0.5
+    } else {
+        keeps_pace(sqlx, pool) && pool < 10.0
+    }
+}
+
+fn print_pass(number: usize, pass: &Pass) {
+    eprintln!(
+        "pass {number}: load average {:.2} at the start, {:.2} after the serial part, {:.2} at the end",
+        pass.load[0], pass.load[1], pass.load[2]
+    );
+    eprintln!(
+        "  read | serial sqlx p95, pool p95, ratio | concurrent sqlx p95, pool p95, ratio (ms)"
+    );
+    for (read, name) in READS.iter().enumerate() {
+        let (ss, sp) = pass.serial[read];
+        let (cs, cp) = pass.concurrent[read];
+        eprintln!(
+            "  {name} | {ss:.3}, {sp:.3}, {:.3} | {cs:.3}, {cp:.3}, {:.3}",
+            sp / ss,
+            cp / cs
+        );
+    }
+}
+
+/// The table of S and P (the median of the passes' p95) and the verdict.
+fn print_verdict(passes: &[Pass]) {
+    for (at, pass) in passes.iter().enumerate() {
+        print_pass(at + 1, pass);
+    }
+    eprintln!("median of {} passes:", passes.len());
+    eprintln!("  read | serial S, P, P/S, holds | concurrent S, P, P/S, holds (ms)");
+    let mut trips = Vec::new();
+    let mut over_budget = Vec::new();
+    let mut worst_serial = (0.0_f64, "");
+    let mut worst_concurrent = (0.0_f64, "");
+    for (read, name) in READS.iter().enumerate() {
+        let pick = |part: fn(&Pass) -> &Vec<(f64, f64)>| {
+            (
+                median(passes.iter().map(|pass| part(pass)[read].0).collect()),
+                median(passes.iter().map(|pass| part(pass)[read].1).collect()),
+            )
+        };
+        let (ss, sp) = pick(|pass| &pass.serial);
+        let (cs, cp) = pick(|pass| &pass.concurrent);
+        let serial_ok = serial_holds(ss, sp);
+        let concurrent_ok = keeps_pace(cs, cp);
+        eprintln!(
+            "  {name} | {ss:.3}, {sp:.3}, {:.3}, {} | {cs:.3}, {cp:.3}, {:.3}, {}",
+            sp / ss,
+            if serial_ok { "yes" } else { "NO" },
+            cp / cs,
+            if concurrent_ok { "yes" } else { "NO" },
+        );
+        if sp / ss > worst_serial.0 {
+            worst_serial = (sp / ss, name);
+        }
+        if cp / cs > worst_concurrent.0 {
+            worst_concurrent = (cp / cs, name);
+        }
+        if ss >= 10.0 {
+            over_budget.push(format!("{name} (sqlx {ss:.3} ms)"));
+        }
+        if !serial_ok {
+            trips.push(format!("{name} serial: sqlx {ss:.3} ms, pool {sp:.3} ms"));
+        }
+        if !concurrent_ok {
+            trips.push(format!(
+                "{name} concurrent: sqlx {cs:.3} ms, pool {cp:.3} ms"
+            ));
+        }
+    }
+    eprintln!(
+        "worst serial ratio {:.3} ({}), worst concurrent ratio {:.3} ({})",
+        worst_serial.0, worst_serial.1, worst_concurrent.0, worst_concurrent.1
+    );
+    if !over_budget.is_empty() {
+        eprintln!(
+            "sqlx itself is at 10 ms or more, so the pool is held to sqlx plus 0.5 ms: {}",
+            over_budget.join(", ")
+        );
+    }
+    if trips.is_empty() {
+        eprintln!("VERDICT: pass");
+    } else {
+        eprintln!("VERDICT: trip\n  {}", trips.join("\n  "));
+    }
+}
+
+/// The scratch table the concurrent writer rewrites. It is no catalog
+/// table, so the catalog revision the player reads cache against stays put.
+async fn seed_replay(fixture: &Fixture) {
+    write_batch(
+        fixture,
+        "replay writes table",
+        "CREATE TABLE replay_writes (id INTEGER PRIMARY KEY, stamp INTEGER NOT NULL) STRICT;"
+            .to_owned(),
+    )
+    .await;
+}
+
+async fn settle(fixture: &Fixture) {
+    let checkpoint = fixture.runtime.checkpoint().clone();
+    for _ in 0..5 {
+        let pass = tokio::task::spawn_blocking({
+            let checkpoint = checkpoint.clone();
+            move || checkpoint.run_once()
+        })
+        .await
+        .expect("checkpoint runs");
+        if pass.active_bytes <= 0 {
+            break;
+        }
+    }
+}
+
+/// The replay returns what the catalog returns, read for read, on the
+/// small adversarial catalog.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replayed_reads_match_the_catalog() {
+    let fixture = seed_small().await;
+    seed_replay(&fixture).await;
+    let replay = Arc::new(Replay::build(&fixture).await);
+    let db = fixture.runtime.db().clone();
+    replay.assert_same_records(&db).await;
+    let (samples, commits) =
+        concurrent_block(&replay, &Via::Pool(db), fixture.runtime.lane()).await;
+    assert!(commits > 0, "the writer committed beside the reads");
+    assert!(
+        samples
+            .iter()
+            .all(|read| read.len() == CONCURRENT_TASKS * CONCURRENT_ROUNDS)
+    );
+}
+
+/// One pass of the read pool measurement on the seeded 100k catalog; the
+/// third pass prints the verdict. Ignored: run with --release, alone on the
+/// host, once per pass.
+#[test]
+#[ignore = "100k read pool measurement; run explicitly with --release, one pass per invocation"]
+fn read_pool_replay() {
+    let file = passes_file();
+    let done = load_passes(&file);
+    if done.len() >= 3 {
+        print_verdict(&done);
+        return;
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .expect("runtime builds");
+    // The pass runs as a task, so every sample starts on a worker thread
+    // as a request handler does.
+    let pass = runtime
+        .block_on(runtime.spawn(replay_pass(done.len() + 1, file.clone())))
+        .expect("pass runs");
+    let passes = load_passes(&file);
+    if passes.len() >= 3 {
+        print_verdict(&passes);
+    } else {
+        print_pass(passes.len(), &pass);
+        eprintln!("{} of 3 passes done; no verdict yet", passes.len());
+    }
+}
+
+/// Seeds, times one pass and saves it to `file` as soon as it is timed.
+async fn replay_pass(number: usize, file: PathBuf) -> Pass {
+    let fixture = seed_small().await;
+    seed_100k(&fixture).await;
+    seed_replay(&fixture).await;
+    // Production statistics, as the player acceptance test runs them.
+    crate::db::AnalyzeService::new(fixture.runtime.lane().clone(), fixture.pool.clone())
+        .run()
+        .await
+        .expect("analyze runs");
+    settle(&fixture).await;
+    let stats = fixture.catalog.stats().await.expect("stats read");
+    assert_eq!(stats.total_tracks, 100007);
+    let path = fixture.runtime.path().to_owned();
+    let lane = fixture.runtime.lane().clone();
+    let replay = Arc::new(Replay::build(&fixture).await);
+    for read in 0..READS.len() {
+        replay.via_sqlx(read).await;
+    }
+    let db = fixture.runtime.db().clone();
+    replay.assert_same_records(&db).await;
+    let before = resident_mib();
+    let (today, pooled) = (Via::Sqlx, Via::Pool(db));
+
+    let mut pass = Pass::default();
+    pass.load[0] = wait_for_quiet_host().await;
+    eprintln!("pass {number} starts at load average {:.2}", pass.load[0]);
+    pass.serial = replay
+        .serial(&today, &pooled, SERIAL_WARMUPS, SERIAL_PAIRS)
+        .await;
+    pass.load[1] = load_average();
+    let (judged, commits) = concurrent(&replay, &today, &pooled, &lane).await;
+    pass.concurrent = judged;
+    pass.load[2] = load_average();
+    save_pass(&file, &pass);
+    let warmed = resident_mib();
+    let wal_mib = std::fs::metadata(format!("{}-wal", path.display()))
+        .map(|wal| wal.len() as f64 / 1_048_576.0)
+        .unwrap_or(0.0);
+    eprintln!(
+        "writer commits beside the concurrent reads: {} beside sqlx, {} beside the pool; \
+         the WAL file is {wal_mib:.1} MiB afterwards",
+        commits.0, commits.1
+    );
+
+    // Report only; it does not reach the verdict.
+    eprintln!(
+        "report only, resident memory (MiB, current and peak): {:.1} and {:.1} with both paths \
+         warm; {:.1} and {:.1} after the timed parts",
+        before.0, before.1, warmed.0, warmed.1
+    );
+    pass
+}
+
+/// The rule the verdict applies, and the passes surviving their file.
+#[test]
+fn replay_rule_and_saved_passes() {
+    assert!(keeps_pace(1.0, 1.25) && keeps_pace(0.3, 0.8) && !keeps_pace(4.0, 5.01));
+    assert!(serial_holds(8.0, 9.9) && !serial_holds(8.0, 10.0) && !serial_holds(4.0, 5.01));
+    assert!(serial_holds(12.0, 12.5) && !serial_holds(12.0, 12.51));
+    assert_eq!(median(vec![3.0, 1.0, 2.0]), 2.0);
+
+    let dir = crate::tooling::scratch::ScratchDir::new("replay-passes").expect("scratch dir");
+    let file = dir.join("passes.tsv");
+    assert!(load_passes(&file).is_empty());
+    for pass in 0..3 {
+        let value = |read: usize| {
+            (
+                0.1 + read as f64 / 3.0 + pass as f64,
+                0.2 + read as f64 / 7.0,
+            )
+        };
+        save_pass(
+            &file,
+            &Pass {
+                load: [0.5, 1.5, 4.25],
+                serial: (0..READS.len()).map(value).collect(),
+                concurrent: (0..READS.len()).map(value).rev().collect(),
+            },
+        );
+    }
+    let passes = load_passes(&file);
+    assert_eq!(passes.len(), 3);
+    assert_eq!(passes[2].load, [0.5, 1.5, 4.25]);
+    assert_eq!(
+        passes[1].serial[16],
+        (0.1 + 16.0 / 3.0 + 1.0, 0.2 + 16.0 / 7.0)
+    );
+    assert_eq!(passes[0].concurrent[0], passes[0].serial[16]);
+    print_verdict(&passes);
+}
