@@ -18,6 +18,7 @@ export interface AdvancedSettingsForm {
 	http_timeout: number;
 	http_connect_timeout: number;
 	http_max_connections: number;
+	subsonic_search_page_limit: number;
 	batch_artist_images: number;
 	batch_albums: number;
 	delay_artist: number;

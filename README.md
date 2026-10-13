@@ -267,6 +267,7 @@ Where things live in the UI:
 | Library Management profiles, previews, recovery | Library Management (admin) |
 | Download clients, indexers, quality tiers, verification, wanted watcher | Settings > Download Client |
 | Subsonic and Jellyfin APIs, app passwords, transcoding | Settings > Connect Apps |
+| Subsonic search result page ceiling | Settings > Advanced > Network & Batch Processing |
 | Jellyfin | Settings > Jellyfin |
 | Navidrome | Settings > Navidrome |
 | Plex | Settings > Plex |
