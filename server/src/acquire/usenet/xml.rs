@@ -21,11 +21,16 @@ use quick_xml::events::{BytesStart, Event};
 /// caps is `caps > categories > category > subcat`: four levels.
 pub const MAX_DEPTH: usize = 64;
 
-/// Most elements and attributes accepted in one document. A full page of
-/// 1000 items with extended attributes is tens of thousands; the bound keeps a
-/// body made of nothing but tiny tags or empty attributes from costing
-/// many times its size in memory.
-pub const MAX_NODES: usize = 200_000;
+/// Most elements and attributes accepted in one document. Each
+/// `newznab:attr` is three nodes (the element, `name`, `value`), so an
+/// item with 25 of them plus its own dozen elements and attributes is
+/// about 90 to 150 nodes, and the largest page an indexer serves, 1000
+/// items, is 90,000 to 150,000: this leaves that page 2.5 times over. The
+/// bound keeps a body made of nothing but tiny tags or empty attributes
+/// from costing many times its size in memory (about 40 MB at the bound).
+/// The per-item figure is read off the recorded feeds, not measured on a
+/// live 1000-item page.
+pub const MAX_NODES: usize = 400_000;
 
 /// One element: tag, attributes, child elements, and direct text.
 #[derive(Debug, Clone, PartialEq, Eq)]
