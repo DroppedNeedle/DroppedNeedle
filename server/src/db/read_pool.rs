@@ -10,8 +10,8 @@
 //! in a deferred transaction, so its statements see one state, and holds the
 //! connection for the closure's whole length. That is why a request read
 //! runs one statement per closure: a page of three statements queues three
-//! short times, as three pool checkouts did before, and a cheap read never
-//! waits behind the whole of an expensive one.
+//! short times, and a cheap read never waits behind the whole of an
+//! expensive one.
 //!
 //! Each pool has one queue, in arrival order, shared by async and blocking
 //! callers. A waiter holds nothing: no connection, no thread, no snapshot. A
@@ -31,7 +31,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, TransactionState};
 use tokio::sync::oneshot;
 
 use super::{
@@ -50,6 +50,10 @@ const STATEMENT_CACHE: usize = 128;
 /// How often a long read that is waiting for a connection looks at its
 /// cancel flag.
 const CANCEL_POLL: Duration = Duration::from_millis(100);
+
+/// The id of no checkout: a connection that comes to the pool from the pass,
+/// which opened it, and not back from a read.
+const NO_CHECKOUT: u64 = u64::MAX;
 
 /// Why a waiting read was answered without a connection.
 #[derive(Debug, Clone, Copy)]
@@ -114,7 +118,8 @@ struct State {
     waiters: VecDeque<Waiter>,
     out: Vec<Out>,
     /// Connections that had to be closed and could not be opened again. The
-    /// next caller that finds nothing idle tries once more.
+    /// pool's pass tries again every tick; until it succeeds the pool is
+    /// that much smaller and callers queue for the connections left.
     missing: usize,
     closed: bool,
     next_id: u64,
@@ -223,18 +228,6 @@ impl Pool {
         if let Some(connection) = state.idle.pop() {
             state.check_out(id, name);
             return Ok(Admitted::Now(self.checkout(connection, id, name)));
-        }
-        if state.missing > 0 {
-            state.missing -= 1;
-            state.check_out(id, name);
-            drop(state);
-            return match open_reader(&self.path, self.busy_timeout) {
-                Ok(connection) => Ok(Admitted::Now(self.checkout(connection, id, name))),
-                Err(error) => {
-                    self.give_back(None, id);
-                    Err(error)
-                }
-            };
         }
         let (grantee, waiting) = wait();
         state.waiters.push_back(Waiter {
@@ -383,14 +376,28 @@ impl Pool {
 
     /// Make sure a connection carries no transaction to its next caller. One
     /// that will not leave its transaction is closed and replaced.
+    ///
+    /// Autocommit alone does not say so. SQLite keeps the read transaction
+    /// open for as long as any statement on the connection is still being
+    /// stepped, and `COMMIT` succeeds and turns autocommit back on all the
+    /// same; rusqlite puts a cached statement back without resetting it. So
+    /// a closure that leaked a cursor would hand its snapshot to every later
+    /// read here and pin the WAL for good. The transaction state sees it.
+    /// Verified against SQLite 3.46.0 (rusqlite 0.32.1).
     fn cleaned(&self, connection: Connection, name: &'static str) -> Option<Connection> {
-        if connection.is_autocommit() {
-            return Some(connection);
-        }
-        let ended = connection
-            .prepare_cached("COMMIT")
-            .and_then(|mut commit| commit.execute([]));
-        if connection.is_autocommit() {
+        let ended = if connection.is_autocommit() {
+            Ok(0)
+        } else {
+            connection
+                .prepare_cached("COMMIT")
+                .and_then(|mut commit| commit.execute([]))
+        };
+        if connection.is_autocommit()
+            && matches!(
+                connection.transaction_state(None),
+                Ok(TransactionState::None)
+            )
+        {
             return Some(connection);
         }
         tracing::error!(
@@ -413,29 +420,39 @@ impl Pool {
         }
     }
 
+    /// The waiter can no longer be served: its future was dropped.
+    fn is_gone(waiter: &Waiter) -> bool {
+        matches!(&waiter.grantee, Grantee::Async(waiting) if waiting.is_closed())
+    }
+
+    /// The waiter is a future that has waited past the limit. A parked
+    /// thread times itself.
+    fn is_overdue(&self, waiter: &Waiter) -> bool {
+        matches!(waiter.grantee, Grantee::Async(_))
+            && self
+                .wait_limit
+                .is_some_and(|limit| waiter.queued_at.elapsed() >= limit)
+    }
+
     /// One pass, on real time: answer the futures that have waited past the
-    /// limit, forget the ones whose caller is gone, and name a read that has
-    /// held its connection for 30 s, then every 30 s. A parked thread times
-    /// itself and is left alone.
-    fn pass(&self) {
-        let (overdue, held) = {
+    /// limit, forget the ones whose caller is gone, name a read that has
+    /// held its connection for 30 s, then every 30 s, and try once to open
+    /// a connection the pool is missing. A parked thread times itself and
+    /// is left alone.
+    fn pass(self: &Arc<Self>) {
+        let (gone, overdue, held, missing) = {
             let mut state = self.state();
-            let mut overdue = Vec::new();
-            let mut at = 0;
-            while let Some(waiter) = state.waiters.get(at) {
-                let done = match &waiter.grantee {
-                    Grantee::Async(waiting) => {
-                        waiting.is_closed()
-                            || self
-                                .wait_limit
-                                .is_some_and(|limit| waiter.queued_at.elapsed() >= limit)
+            let (mut gone, mut overdue) = (Vec::new(), Vec::new());
+            let done = |waiter: &Waiter| Self::is_gone(waiter) || self.is_overdue(waiter);
+            if state.waiters.iter().any(done) {
+                for waiter in std::mem::take(&mut state.waiters) {
+                    if Self::is_gone(&waiter) {
+                        gone.push(waiter);
+                    } else if self.is_overdue(&waiter) {
+                        overdue.push(waiter);
+                    } else {
+                        state.waiters.push_back(waiter);
                     }
-                    Grantee::Blocking(_) => false,
-                };
-                if done {
-                    overdue.extend(state.waiters.remove(at));
-                } else {
-                    at += 1;
                 }
             }
             let mut held = Vec::new();
@@ -450,8 +467,9 @@ impl Pool {
                     held.push((out.name, age));
                 }
             }
-            (overdue, held)
+            (gone, overdue, held, state.missing > 0 && !state.closed)
         };
+        drop(gone);
         // Logged before anyone is answered.
         for (operation, age) in held {
             tracing::warn!(
@@ -472,12 +490,18 @@ impl Pool {
         for waiter in overdue {
             drop(waiter.answer(Err(Refused::Busy)));
         }
+        // Only this pass reopens, one connection a tick, so two threads
+        // never open the same one. The failure that made it missing was
+        // logged then; a tick that fails again says nothing.
+        if missing && let Ok(connection) = open_reader(&self.path, self.busy_timeout) {
+            self.state().missing -= 1;
+            self.give_back(Some(connection), NO_CHECKOUT);
+            tracing::info!(pool = self.label, "a read connection was opened again");
+        }
     }
 
-    /// Refuse new reads, answer every waiter, close the idle connections and
-    /// wait until `deadline` for the ones still out. One that comes back
-    /// later is closed by the thread returning it.
-    fn close(&self, deadline: Option<Instant>) {
+    /// Refuse new reads, answer every waiter and close the idle connections.
+    fn shut(&self) {
         let (idle, unserved) = {
             let mut state = self.state();
             state.closed = true;
@@ -489,6 +513,12 @@ impl Pool {
         for waiter in unserved {
             drop(waiter.answer(Err(Refused::Closed)));
         }
+    }
+
+    /// Wait until `deadline` for the connections of a shut pool that are
+    /// still out, and name the reads that hold one at the end. One that
+    /// comes back later is closed by the thread returning it.
+    fn wait_for_readers(&self, deadline: Option<Instant>) {
         let mut state = self.state();
         while !state.out.is_empty() {
             let Some(deadline) = deadline else {
@@ -508,11 +538,17 @@ impl Pool {
                 .unwrap_or_else(PoisonError::into_inner)
                 .0;
         }
-        for out in &state.out {
+        let stuck: Vec<_> = state
+            .out
+            .iter()
+            .map(|out| (out.name, out.since.elapsed()))
+            .collect();
+        drop(state);
+        for (operation, held) in stuck {
             tracing::error!(
-                operation = out.name,
+                operation,
                 pool = self.label,
-                held_ms = out.since.elapsed().as_millis() as u64,
+                held_ms = held.as_millis() as u64,
                 "shutdown gave up on a read that still holds its connection"
             );
         }
@@ -660,10 +696,14 @@ impl ReadPools {
     }
 
     /// Close both pools, waiting until `deadline` for reads still running.
+    /// Both are shut before either is waited for, so no read is admitted
+    /// and no waiter is left parked while the other pool's readers finish.
     /// Blocking.
     pub(crate) fn close(&self, deadline: Option<Instant>) {
-        self.requests.close(deadline);
-        self.long.close(deadline);
+        self.requests.shut();
+        self.long.shut();
+        self.requests.wait_for_readers(deadline);
+        self.long.wait_for_readers(deadline);
     }
 
     pub(crate) async fn read<R, E, F>(&self, name: &'static str, op: F) -> Result<R, E>
@@ -675,7 +715,8 @@ impl ReadPools {
         let checkout = self.requests.acquire(name).await?;
         // Started from this task, never from a drop. If the runtime is going
         // down and drops the closure unrun, the checkout inside it passes
-        // its connection on.
+        // its connection on. A closure that has started is the runtime's to
+        // wait for: dropping a runtime joins its blocking threads.
         match tokio::task::spawn_blocking(move || checkout.run(op)).await {
             Ok(result) => result,
             Err(stopped) if stopped.is_panic() => {
