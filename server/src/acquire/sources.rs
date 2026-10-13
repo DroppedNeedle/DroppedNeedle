@@ -127,6 +127,17 @@ impl SlskdSource {
         }
     }
 
+    /// The handle's files, with the mount they must sit in.
+    pub async fn landed(
+        &self,
+        handle: &SourceHandle,
+    ) -> Result<crate::acquire::landing::Landed, SourceError> {
+        Ok(crate::acquire::landing::Landed {
+            mounts: vec![self.repo.downloads_mount().to_path_buf()],
+            files: self.locate_files(handle).await?,
+        })
+    }
+
     /// Where the handle's files sit on the downloads mount. Located from
     /// the mount alone (no transfer records needed), so a reimport after
     /// the client forgot the transfers still finds them. Files that cannot
@@ -627,6 +638,22 @@ enum Query<'a> {
 }
 
 impl SabnzbdSource {
+    /// The finished job's folder, with the mount it must sit in.
+    pub async fn landed(
+        &self,
+        handle: &SourceHandle,
+    ) -> Result<crate::acquire::landing::Landed, SourceError> {
+        let seen = self.inspect(handle).await?;
+        Ok(crate::acquire::landing::Landed {
+            mounts: vec![self.queue.downloads_mount().to_path_buf()],
+            files: seen
+                .paths
+                .into_iter()
+                .map(crate::acquire::landing::Reported::path)
+                .collect(),
+        })
+    }
+
     /// A manual search: the album's releases from the active indexers
     /// (and usenet-targeting plugin indexers), gated and ordered as the
     /// automatic path orders them.

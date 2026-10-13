@@ -487,8 +487,10 @@ async fn request_waits_for_a_download_source() {
         Some("no_download_source")
     );
 
-    *sources.lock().unwrap() =
-        Arc::new(vec![Source::Fixed(Arc::new(FixedSource::new(Vec::new())))]);
+    *sources.lock().unwrap() = Arc::new(vec![Source::Fixed(Arc::new(FixedSource::new(
+        std::path::PathBuf::new(),
+        Vec::new(),
+    )))]);
     worker.run_once(2).await;
     let attempts: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM download_attempts WHERE task_id = ?1")

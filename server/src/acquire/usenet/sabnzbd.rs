@@ -747,7 +747,9 @@ impl SabnzbdQueue {
         SabnzbdQueue {
             client,
             configured: !url.is_empty() && !api_key.is_empty(),
-            mount: downloads_mount,
+            // A relative folder means "under the working directory"; made
+            // absolute once so every path joined onto it is too.
+            mount: std::path::absolute(&downloads_mount).unwrap_or(downloads_mount),
             policy,
             complete_dir_cache: Mutex::new(None),
         }
@@ -761,6 +763,11 @@ impl SabnzbdQueue {
     /// Configured means URL + key were both present at build time.
     pub fn is_configured(&self) -> bool {
         self.configured
+    }
+
+    /// DroppedNeedle's mount of SABnzbd's completed output.
+    pub fn downloads_mount(&self) -> &Path {
+        &self.mount
     }
 
     /// Health never raises: failures become the error variant.
@@ -1459,11 +1466,13 @@ fn to_int(value: &str) -> i64 {
 
 /// Fold separators to posix before any remap (v2 `_posix_norm`): a
 /// Windows-native SAB reports backslash paths.
+/// `.` and `..` segments are dropped, so a storage path joined onto the
+/// mount can never climb out of it.
 fn posix_parts(value: &str) -> Vec<String> {
     value
         .replace('\\', "/")
         .split('/')
-        .filter(|part| !part.is_empty())
+        .filter(|part| !part.is_empty() && *part != "." && *part != "..")
         .map(str::to_owned)
         .collect()
 }
@@ -1631,5 +1640,13 @@ mod tests {
         let found = enumerate_audio(&mount, &mount.join("release"));
         assert_eq!(found.len(), 1, "{found:?}");
         assert!(found[0].ends_with("track.flac"));
+    }
+
+    #[test]
+    fn a_storage_path_cannot_climb_out_of_the_mount() {
+        assert_eq!(
+            posix_parts("/complete/../../etc/./job\\..\\x"),
+            ["complete", "etc", "job", "x"]
+        );
     }
 }

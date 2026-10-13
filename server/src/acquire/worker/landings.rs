@@ -210,8 +210,8 @@ impl DownloadWorker {
             return;
         };
         let now = now_unix_f64();
-        let paths = match source.landed_paths(handle).await {
-            Ok(paths) => paths,
+        let landed = match source.landed_paths(handle).await {
+            Ok(landed) => landed,
             Err(error) => {
                 tracing::warn!(task_id = %task.id, %error, "download client could not list the landed files");
                 let detail = explain("files_unlisted").message;
@@ -229,7 +229,7 @@ impl DownloadWorker {
         let staging_root = (self.config)().staging_root;
         let manifest = read_manifest(&staging_root, &task.id).await;
         let report = landing
-            .land(task, Some(&attempt.id), manifest.as_ref(), paths, patient)
+            .land(task, Some(&attempt.id), manifest.as_ref(), landed, patient)
             .await;
         self.conclude(task, attempt, source, handle, report, origin, now)
             .await;

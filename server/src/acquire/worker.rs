@@ -195,14 +195,15 @@ pub enum Source {
 /// fixed paths, so journeys can drive the worker end to end.
 #[cfg(any(test, feature = "test-support"))]
 pub struct FixedSource {
+    mount: PathBuf,
     paths: Vec<PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl FixedSource {
-    /// Downloads land at `paths`.
-    pub fn new(paths: Vec<PathBuf>) -> Self {
-        Self { paths }
+    /// Downloads land at `paths`, inside the downloads folder `mount`.
+    pub fn new(mount: PathBuf, paths: Vec<PathBuf>) -> Self {
+        Self { mount, paths }
     }
 
     fn names(&self) -> Vec<String> {
@@ -309,21 +310,26 @@ impl Source {
         }
     }
 
-    /// The landed files (or job folder) for a finished handle.
+    /// The landed files (or job folder) for a finished handle, with the
+    /// downloads folders the landing confines them to.
     async fn landed_paths(
         &self,
         handle: &SourceHandle,
-    ) -> Result<Vec<crate::acquire::landing::Reported>, SourceError> {
-        use crate::acquire::landing::Reported;
+    ) -> Result<crate::acquire::landing::Landed, SourceError> {
         match self {
-            Self::Slskd(source) => source.locate_files(handle).await,
-            Self::Sab(source) => source
-                .inspect(handle)
-                .await
-                .map(|seen| seen.paths.into_iter().map(Reported::path).collect()),
+            Self::Slskd(source) => source.landed(handle).await,
+            Self::Sab(source) => source.landed(handle).await,
             Self::Plugin(source) => source.landed_paths(handle).await,
             #[cfg(any(test, feature = "test-support"))]
-            Self::Fixed(source) => Ok(source.paths.iter().cloned().map(Reported::path).collect()),
+            Self::Fixed(source) => Ok(crate::acquire::landing::Landed {
+                mounts: vec![source.mount.clone()],
+                files: source
+                    .paths
+                    .iter()
+                    .cloned()
+                    .map(crate::acquire::landing::Reported::path)
+                    .collect(),
+            }),
         }
     }
 

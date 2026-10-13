@@ -592,6 +592,35 @@ fn locator_resolves_leaf_flat_and_username_layouts() {
         None
     );
     assert_eq!(locator.locate_file("alice", "", None), None);
+
+    // A link is never followed, even to a file inside the mount: importing
+    // through it would remove the other download's file.
+    #[cfg(unix)]
+    {
+        std::fs::create_dir_all(mount.join("Linked")).expect("link dir");
+        std::os::unix::fs::symlink(
+            mount.join("OK Computer").join("01 Track 1.flac"),
+            mount.join("Linked").join("09 Link.flac"),
+        )
+        .expect("file link");
+        std::os::unix::fs::symlink(mount.join("OK Computer"), mount.join("Alias"))
+            .expect("folder link");
+        assert_eq!(
+            locator.locate_file("alice", "@@music\\Linked\\09 Link.flac", None),
+            None
+        );
+        assert_eq!(
+            locator.locate_file("alice", "@@music\\Alias\\01 Track 1.flac", None),
+            Some(
+                mount
+                    .canonicalize()
+                    .expect("mount resolves")
+                    .join("OK Computer")
+                    .join("01 Track 1.flac")
+            ),
+            "found where it really is, never through the linked folder"
+        );
+    }
 }
 
 #[test]

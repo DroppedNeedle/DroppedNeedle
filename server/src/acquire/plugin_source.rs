@@ -432,49 +432,79 @@ impl DownloadSource for PluginDownloadSource {
 }
 
 impl PluginDownloadSource {
-    /// The files a finished plugin download produced, for import. Plugins
-    /// are trusted code, but their paths are still confined: every file
-    /// must resolve inside the workspace the plugin reports, and without a
-    /// workspace nothing is imported.
+    /// The files a finished plugin download produced, for import, with
+    /// the folders the plugin may download into. Plugins are trusted code,
+    /// but what they report is still confined: the landing refuses a path
+    /// outside those folders, whatever workspace the plugin names.
     pub async fn landed_paths(
         &self,
         handle: &SourceHandle,
-    ) -> Result<Vec<crate::acquire::landing::Reported>, SourceError> {
-        use crate::acquire::landing::{Reported, lexical_absolute};
+    ) -> Result<crate::acquire::landing::Landed, SourceError> {
+        use crate::acquire::landing::{Landed, Reported};
         let seen = self
             .host
             .download_inspect(&Self::plugin_handle(handle))
             .await
             .map_err(source_error)?;
-        let workspace = PathBuf::from(&seen.workspace_path);
-        let Ok(workspace) = workspace.canonicalize() else {
+        let mut files: Vec<Reported> = seen
+            .file_paths
+            .iter()
+            .map(|path| Reported::path(PathBuf::from(path)))
+            .collect();
+        if files.is_empty() && !seen.workspace_path.is_empty() {
+            files.push(Reported::path(PathBuf::from(&seen.workspace_path)));
+        }
+        if files.is_empty() {
             tracing::warn!(
                 plugin = %self.key,
-                "plugin download names no usable workspace; nothing imported"
+                "plugin download names no files and no workspace; nothing imported"
             );
-            return Ok(Vec::new());
-        };
-        if seen.file_paths.is_empty() {
-            return Ok(vec![Reported::path(workspace)]);
         }
-        let mut paths = Vec::with_capacity(seen.file_paths.len());
-        for reported in &seen.file_paths {
-            let reported = PathBuf::from(reported);
-            // Not there (yet): resolved by name, so `workspace/../x` is
-            // still outside.
-            let resolved = reported
-                .canonicalize()
-                .ok()
-                .or_else(|| lexical_absolute(&reported));
-            match resolved {
-                Some(path) if path.starts_with(&workspace) => paths.push(Reported::path(path)),
-                _ => tracing::warn!(
-                    plugin = %self.key,
-                    "plugin reported a file outside its workspace; ignored"
-                ),
+        Ok(Landed {
+            mounts: self.download_folders(),
+            files,
+        })
+    }
+
+    /// Where this plugin may put finished downloads: its data folder, and
+    /// the folder in its `downloads_dir` setting when its manifest
+    /// declares one. Read on every landing, so a settings save applies to
+    /// the next one. Empty when the plugin is gone.
+    fn download_folders(&self) -> Vec<PathBuf> {
+        let Some(plugin) = self.host.download_client(&self.key) else {
+            return Vec::new();
+        };
+        let name = &plugin.manifest.name;
+        let mut folders = vec![self.host.data_dir(name)];
+        if plugin
+            .manifest
+            .settings
+            .iter()
+            .any(|field| field.key == "downloads_dir")
+        {
+            // Read as the plugin itself gets it: a value sealed at rest
+            // (an import from v2 seals them all) is opened.
+            match self
+                .host
+                .config()
+                .get_plugin_raw(name, &plugin.manifest.secret_keys())
+            {
+                Ok(stored) => {
+                    if let Some(dir) = stored
+                        .settings
+                        .get("downloads_dir")
+                        .map(|dir| dir.trim())
+                        .filter(|dir| !dir.is_empty())
+                    {
+                        folders.push(PathBuf::from(dir));
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(plugin = %self.key, %error, "plugin settings unreadable");
+                }
             }
         }
-        Ok(paths)
+        folders
     }
 
     async fn discard_records(&self, handle: &SourceHandle) -> Result<bool, SourceError> {

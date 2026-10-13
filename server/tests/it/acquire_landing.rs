@@ -11,6 +11,8 @@ use std::sync::Arc;
 use droppedneedle::acquire::downloads::state::TaskStatus;
 use droppedneedle::acquire::downloads::store::NewTask;
 use droppedneedle::acquire::landing::library::LibraryLanding;
+use droppedneedle::acquire::landing::specs::{Disposition, Rejection};
+use droppedneedle::acquire::landing::{Landed, LandingResult, OUTSIDE_DOWNLOADS, Reported};
 use droppedneedle::acquire::wiring::settled_hook;
 use droppedneedle::acquire::worker::{DownloadWorker, FixedSource, Source, WorkerConfig};
 use droppedneedle::ids::{IdGenerator, UuidGenerator};
@@ -260,7 +262,10 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
         Arc::new(
             DownloadWorker::fixed(
                 acquire.journal.clone(),
-                vec![Source::Fixed(Arc::new(FixedSource::new(paths)))],
+                vec![Source::Fixed(Arc::new(FixedSource::new(
+                    downloads.clone(),
+                    paths,
+                )))],
                 WorkerConfig {
                     staging_root: acquire.staging_root.clone(),
                     ..WorkerConfig::default()
@@ -503,7 +508,10 @@ async fn held_files_import_as_upgrades_or_discard() {
         Arc::new(
             DownloadWorker::fixed(
                 acquire.journal.clone(),
-                vec![Source::Fixed(Arc::new(FixedSource::new(paths)))],
+                vec![Source::Fixed(Arc::new(FixedSource::new(
+                    dir.join("downloads"),
+                    paths,
+                )))],
                 WorkerConfig {
                     staging_root: acquire.staging_root.clone(),
                     ..WorkerConfig::default()
@@ -635,4 +643,249 @@ async fn held_files_import_as_upgrades_or_discard() {
         })
         .unwrap_or_default();
     assert_eq!(left, vec![seeded[3]], "{body}");
+}
+
+/// An acquire bundle with no library attached, and its scratch folder.
+async fn bare_acquire() -> (droppedneedle::acquire::AcquireSetup, PathBuf) {
+    let auth = droppedneedle::auth::wiring::AuthSetup::for_tests().expect("test auth");
+    let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
+    let mut reads = droppedneedle::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
+        .expect("reads bundle");
+    let acquire = droppedneedle::acquire::AcquireSetup::for_tests(
+        auth.users.clone(),
+        ids,
+        &mut reads.collections,
+    )
+    .expect("acquire bundle");
+    acquire
+        .db
+        .add_user("u-ada", "Ada", "user")
+        .await
+        .expect("user");
+    let dir = acquire
+        .db
+        .path()
+        .parent()
+        .expect("scratch dir")
+        .to_path_buf();
+    (acquire, dir)
+}
+
+/// Land `landed` for a fresh task and return the rejection code, if any.
+async fn rejection_code(
+    acquire: &droppedneedle::acquire::AcquireSetup,
+    task_id: &'static str,
+    landed: Landed,
+) -> Option<&'static str> {
+    rejection(acquire, task_id, landed, false)
+        .await
+        .map(|rejection| rejection.code)
+}
+
+/// Land `landed` for a fresh task and return the rejection, if any.
+async fn rejection(
+    acquire: &droppedneedle::acquire::AcquireSetup,
+    task_id: &'static str,
+    landed: Landed,
+    patient: bool,
+) -> Option<Rejection> {
+    acquire
+        .journal
+        .run("test.seed", move |store| {
+            store.insert_task(&new_task(task_id, GOOD_GROUP), 1.0)
+        })
+        .await
+        .expect("task");
+    let task = acquire.journal.read_task(task_id).await.unwrap().unwrap();
+    match acquire
+        .landing
+        .land(&task, None, None, landed, patient)
+        .await
+        .result
+    {
+        LandingResult::Rejected(rejection) => Some(rejection),
+        _ => None,
+    }
+}
+
+/// A finished download is only read from inside its client's downloads
+/// folder. A link standing in for the download, a path somewhere else, a
+/// `..` path and a path under a linked folder are each refused with the
+/// reason that is given before anything is read. (Reading or removing the
+/// file cannot be seen here: this rig has no library to import into.)
+#[cfg(unix)]
+#[tokio::test]
+async fn a_download_outside_its_clients_folder_is_refused() {
+    use std::os::unix::fs::symlink;
+    let (acquire, dir) = bare_acquire().await;
+    let mount = dir.join("downloads");
+    let outside = dir.join("elsewhere");
+    let secret = land_file(&outside, "01.flac", "flac_full_01.flac", "Mysterons", 1);
+    std::fs::create_dir_all(&mount).expect("mount");
+    symlink(&secret, mount.join("01.flac")).expect("file link");
+    symlink(&outside, mount.join("job")).expect("folder link");
+
+    let cases = [
+        ("t-link", mount.join("01.flac")),
+        ("t-linked-folder", mount.join("job")),
+        ("t-linked-parent", mount.join("job/01.flac")),
+        ("t-elsewhere", secret.clone()),
+        ("t-dotdot", mount.join("../elsewhere/01.flac")),
+    ];
+    for (task_id, path) in cases {
+        let landed = Landed {
+            mounts: vec![mount.clone()],
+            files: vec![Reported::path(path)],
+        };
+        assert_eq!(
+            rejection_code(&acquire, task_id, landed).await,
+            Some(OUTSIDE_DOWNLOADS),
+            "{task_id}"
+        );
+    }
+
+    // A downloads folder that cannot be resolved right now (a share that
+    // is not answering, a folder not there yet) says nothing against the
+    // path: the files read as missing and the landing waits.
+    let unmounted = dir.join("not-mounted");
+    let landed = Landed {
+        mounts: vec![unmounted.clone()],
+        files: vec![Reported::path(unmounted.join("job"))],
+    };
+    let waiting = rejection(&acquire, "t-unmounted", landed, true)
+        .await
+        .expect("rejected");
+    assert_eq!(
+        (waiting.code, waiting.disposition),
+        ("files_missing", Disposition::Temporary)
+    );
+
+    // The same file inside the folder gets past the path check (and stops
+    // at the next one: this rig has no library).
+    let inside = land_file(
+        &mount.join("real"),
+        "01.flac",
+        "flac_full_01.flac",
+        "Mysterons",
+        1,
+    );
+    let landed = Landed {
+        mounts: vec![mount.clone()],
+        files: vec![Reported::path(inside)],
+    };
+    assert_eq!(
+        rejection_code(&acquire, "t-inside", landed).await,
+        Some("local_fault")
+    );
+}
+
+/// A plugin's finished download is confined to the plugin's own folders
+/// (its data folder and its `downloads_dir` setting), whatever workspace
+/// the plugin itself names.
+#[tokio::test]
+async fn a_plugin_download_is_confined_to_the_plugins_folders() {
+    use droppedneedle::acquire::downloads::SourceHandle;
+    use droppedneedle::acquire::plugin_source::{PluginDownloadSource, ReleasePolicy};
+    use droppedneedle::acquire::usenet::policy::UsenetPolicy;
+    use droppedneedle::plugins::fakes::FakeLauncher;
+    use droppedneedle::plugins::host::PluginHost;
+    use droppedneedle::plugins::protocol::methods;
+
+    let (acquire, dir) = bare_acquire().await;
+    let plugin_dir = dir.join("plugins/toy");
+    std::fs::create_dir_all(&plugin_dir).expect("plugin dir");
+    std::fs::write(
+        plugin_dir.join("plugin.toml"),
+        "[plugin]\n\
+         name = \"toy\"\n\
+         version = \"1.0.0\"\n\
+         api_version = 1\n\
+         entrypoint = \"plugin:Toy\"\n\
+         capabilities = [\"download_client\"]\n\
+         [[capability]]\n\
+         id = \"download_client\"\n\
+         source = \"toy\"\n\
+         display_name = \"Toy\"\n\
+         [[settings]]\n\
+         key = \"downloads_dir\"\n\
+         label = \"Downloads directory\"\n",
+    )
+    .expect("manifest");
+    let config = Arc::new(
+        ConfigStore::open(
+            &dir.join("plugin-config.json"),
+            Crypto::from_key_bytes(&[7u8; 32]).expect("key"),
+        )
+        .expect("config"),
+    );
+    let launcher = Arc::new(FakeLauncher::new());
+    let host = PluginHost::new(dir.join("plugins"), config, launcher.clone());
+    host.load_all();
+    let allowed = dir.join("plugin-downloads");
+    // Both folders exist, as they do once a real plugin has started.
+    std::fs::create_dir_all(&allowed).expect("downloads dir");
+    std::fs::create_dir_all(host.data_dir("toy")).expect("data dir");
+    host.update_settings(
+        "toy",
+        true,
+        std::collections::HashMap::from([(
+            "downloads_dir".to_owned(),
+            allowed.to_string_lossy().into_owned(),
+        )]),
+    )
+    .expect("plugin enabled");
+    let runtime = launcher.runtime("toy");
+    let source = PluginDownloadSource::new(
+        host,
+        "plugin:toy".to_owned(),
+        acquire.journal.clone(),
+        ReleasePolicy {
+            usenet: UsenetPolicy::v2_defaults(),
+            ignored_terms: Vec::new(),
+            required_terms: Vec::new(),
+        },
+    );
+    let handle = SourceHandle {
+        source: "plugin:toy".to_owned(),
+        ..SourceHandle::default()
+    };
+
+    // The plugin names a workspace of its own choosing, and a file in it.
+    let outside = dir.join("elsewhere");
+    let secret = land_file(&outside, "01.flac", "flac_full_01.flac", "Mysterons", 1);
+    runtime.answer(
+        methods::INSPECT,
+        Ok(serde_json::json!({
+            "state": "completed",
+            "workspace_path": outside,
+            "file_paths": [secret],
+        })),
+    );
+    let landed = source.landed_paths(&handle).await.expect("inspect");
+    assert_eq!(
+        rejection_code(&acquire, "t-plugin-out", landed).await,
+        Some(OUTSIDE_DOWNLOADS)
+    );
+
+    // A file in the folder the admin set gets past the path check.
+    let inside = land_file(
+        &allowed.join("job"),
+        "01.flac",
+        "flac_full_01.flac",
+        "Mysterons",
+        1,
+    );
+    runtime.answer(
+        methods::INSPECT,
+        Ok(serde_json::json!({
+            "state": "completed",
+            "workspace_path": allowed.join("job"),
+            "file_paths": [inside],
+        })),
+    );
+    let landed = source.landed_paths(&handle).await.expect("inspect");
+    assert_eq!(
+        rejection_code(&acquire, "t-plugin-in", landed).await,
+        Some("local_fault")
+    );
 }

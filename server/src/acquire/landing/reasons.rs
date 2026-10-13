@@ -38,6 +38,11 @@ pub const CATALOG: &[Reason] = &[
         "Check that the download client is running and reachable, then retry import.",
     ),
     reason(
+        "outside_downloads_folder",
+        "The download client pointed at files outside its downloads folder, or at a link, so nothing was read.",
+        "Check the downloads folder set for this client in Settings, and that the download itself is not a link to somewhere else. A plugin must put its files in its own data folder or its downloads folder setting.",
+    ),
+    reason(
         "size_mismatch",
         "A file on disk is not the size the source advertised. It may still be downloading or be damaged.",
         "Retry import once the download client shows it finished, or let DroppedNeedle try another source.",

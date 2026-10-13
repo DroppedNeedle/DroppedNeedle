@@ -163,6 +163,12 @@ impl<T: SlskdHttp> SlskdRepository<T> {
         self.configured
     }
 
+    /// DroppedNeedle's mount of slskd's finished downloads.
+    #[must_use]
+    pub fn downloads_mount(&self) -> &std::path::Path {
+        &self.downloads_mount
+    }
+
     #[must_use]
     pub fn policy(&self) -> &DownloadPolicy {
         &self.policy

@@ -399,6 +399,13 @@ later call (`get_status`, `inspect_materialization`, `discard_client_artifacts`,
 `downloading`, `completed` or `failed`); `inspect_materialization` returns a
 `DownloadMaterialization` with the finished files in `file_paths`.
 
+Finished files must be inside the plugin's data folder (`ctx.data_dir`) or
+the folder in the plugin's `downloads_dir` setting, if its manifest declares
+one. Report absolute paths. If any reported path is outside those folders, or
+is a link or sits under one, the whole download is refused and nothing is
+read. `workspace_path` does not widen this: it is only used as the folder to
+import when `file_paths` is empty.
+
 Files mode (non-empty `files`) means the client fetches exactly those files.
 Folder mode (empty `files`) means the client works out the files itself and
 reports them when done.

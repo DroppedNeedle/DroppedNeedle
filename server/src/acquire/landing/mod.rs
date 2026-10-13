@@ -26,6 +26,7 @@
 //! next candidate for what is still missing, partial or held once the
 //! candidates run out, or a wait.
 
+pub mod confine;
 pub mod decision;
 pub mod hold;
 pub mod library;
@@ -40,6 +41,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
+pub use self::confine::Landed;
+use self::confine::{Place, place};
 use self::decision::{Decision, Outcome, check_files, decide};
 use self::hold::HoldItem;
 use self::matching::{FilePlan, FoundRelease, MatchSummary, find};
@@ -66,6 +69,10 @@ pub const UPGRADE_BLOCKED: &str = "upgrade_blocked";
 /// Hold code for a better file that could not be placed when its old copy
 /// could not be put back either: the old copy is in the recycle bin.
 pub const UPGRADE_RESTORE_FAILED: &str = "upgrade_restore_failed";
+
+/// Rejection code for a download whose client named a path outside its
+/// downloads folder, or one reached through a link.
+pub const OUTSIDE_DOWNLOADS: &str = "outside_downloads_folder";
 
 /// One file or folder a download client reported, with the byte size it
 /// advertised for that exact file when it did (Soulseek does).
@@ -221,19 +228,40 @@ impl LandingService {
         &self.library
     }
 
-    /// Land one task's files: probe, check, match, then import, hold, or
-    /// reject. Never fails: every problem becomes a result the worker can
-    /// act on, and the decision is recorded. `patient` lets missing files
-    /// wait for another pass (a transfer that just finished may not be
-    /// visible on the mount yet).
+    /// Land one task's files: confine, probe, check, match, then import,
+    /// hold, or reject. Never fails: every problem becomes a result the
+    /// worker can act on, and the decision is recorded. `patient` lets
+    /// missing files wait for another pass (a transfer that just finished
+    /// may not be visible on the mount yet).
     pub async fn land(
         &self,
         task: &TaskRow,
         attempt_id: Option<&str>,
         manifest: Option<&DownloadManifest>,
-        reported: Vec<Reported>,
+        landed: Landed,
         patient: bool,
     ) -> LandingReport {
+        let library = self.library.get().cloned();
+        let library_dirs = library
+            .as_ref()
+            .map(|library| library.library_dirs())
+            .unwrap_or_default();
+        let confined = tokio::task::spawn_blocking(move || {
+            let libraries = canonical_dirs(&library_dirs);
+            let confined = confine(landed, &libraries);
+            (confined, libraries)
+        })
+        .await;
+        let (reported, libraries) = match confined {
+            Ok((Ok(reported), libraries)) => (reported, libraries),
+            Ok((Err(rejection), _)) => {
+                return self.reject_unprobed(task, attempt_id, rejection).await;
+            }
+            Err(error) => {
+                let rejection = local_fault(format!("path check failed: {error}"));
+                return self.reject_unprobed(task, attempt_id, rejection).await;
+            }
+        };
         let details = {
             let task_id = task.id.clone();
             self.journal
@@ -248,7 +276,6 @@ impl LandingService {
         };
         let mut target = target_for(task, &details, manifest);
         target.wait_for_files = patient;
-        let library = self.library.get().cloned();
         // The album's chosen edition (manual identity, pin, best fit) is
         // the only acceptable release: matching, the missing positions and
         // the pinned-edition check all use it.
@@ -265,12 +292,6 @@ impl LandingService {
             }
             target.release_mbid = Some(pin);
         }
-        let library_dirs = library
-            .as_ref()
-            .map(|library| library.library_dirs())
-            .unwrap_or_default();
-        let libraries = canonical_dirs(&library_dirs);
-        let reported = confine(reported, &libraries);
         // Sizes key on the exact reported file, never on a bare name: two
         // discs can each hold a `01 - Intro.flac`.
         target.expected_sizes = reported
@@ -282,20 +303,8 @@ impl LandingService {
         let landing = match probed {
             Ok(landing) => landing,
             Err(error) => {
-                let decision = Decision {
-                    checks: Vec::new(),
-                    outcome: Outcome::Reject(local_fault(format!("probe failed: {error}"))),
-                    release_mbid: None,
-                    distance: None,
-                };
-                return self
-                    .finish(
-                        task,
-                        attempt_id,
-                        Acted::decided(decision, 0),
-                        &Landing::default(),
-                    )
-                    .await;
+                let rejection = local_fault(format!("probe failed: {error}"));
+                return self.reject_unprobed(task, attempt_id, rejection).await;
             }
         };
         if landing.nothing_found()
@@ -355,6 +364,28 @@ impl LandingService {
             }
         };
         self.finish(task, attempt_id, acted, &landing).await
+    }
+
+    /// Record a rejection made before anything on disk was read.
+    async fn reject_unprobed(
+        &self,
+        task: &TaskRow,
+        attempt_id: Option<&str>,
+        rejection: Rejection,
+    ) -> LandingReport {
+        let decision = Decision {
+            checks: Vec::new(),
+            outcome: Outcome::Reject(rejection),
+            release_mbid: None,
+            distance: None,
+        };
+        self.finish(
+            task,
+            attempt_id,
+            Acted::decided(decision, 0),
+            &Landing::default(),
+        )
+        .await
     }
 
     /// Hold every audio file of a decision that holds.
@@ -1041,33 +1072,58 @@ pub fn target_for(
     }
 }
 
-/// Reported paths, resolved, without anything inside the library: a
-/// download client (or plugin) naming library files must never have them
-/// imported, held, or removed as download sources.
-fn confine(reported: Vec<Reported>, libraries: &[PathBuf]) -> Vec<Reported> {
-    reported
-        .into_iter()
-        .filter_map(|file| {
-            // A missing path is resolved by name so the probe still counts
-            // it missing; one that cannot be is dropped.
-            let resolved = file
-                .path
-                .canonicalize()
-                .ok()
-                .or_else(|| lexical_absolute(&file.path))?;
-            if libraries.iter().any(|dir| resolved.starts_with(dir)) {
+/// The reported paths as they sit inside the client's downloads folders,
+/// without anything inside the library: a download client (or plugin)
+/// naming library files must never have them imported, held, or removed as
+/// download sources. One path outside the folders, or reached through a
+/// link, refuses the whole landing before anything is read. A path whose
+/// folder cannot be resolved right now is left out, so the landing reads
+/// as missing files and waits like any other. Blocking.
+fn confine(landed: Landed, libraries: &[PathBuf]) -> Result<Vec<Reported>, Rejection> {
+    let mut kept = Vec::with_capacity(landed.files.len());
+    let mut refused = 0usize;
+    for file in landed.files {
+        let resolved = match place(&file.path, &landed.mounts) {
+            Place::Inside(resolved) => resolved,
+            Place::Outside => {
                 tracing::warn!(
                     path = %file.path.display(),
-                    "download client reported a path inside the library; ignored"
+                    "reported path is outside the client's downloads folder or behind a link; refused"
                 );
-                return None;
+                refused += 1;
+                continue;
             }
-            Some(Reported {
-                path: resolved,
-                size: file.size,
-            })
-        })
-        .collect()
+            Place::Unknown => {
+                tracing::warn!(
+                    path = %file.path.display(),
+                    "the client's downloads folder cannot be resolved right now; path not read"
+                );
+                continue;
+            }
+        };
+        if libraries.iter().any(|dir| resolved.starts_with(dir)) {
+            tracing::warn!(
+                path = %file.path.display(),
+                "download client reported a path inside the library; ignored"
+            );
+            continue;
+        }
+        kept.push(Reported {
+            path: resolved,
+            size: file.size,
+        });
+    }
+    if refused > 0 {
+        return Err(Rejection {
+            code: OUTSIDE_DOWNLOADS,
+            disposition: Disposition::LocalFault,
+            quarantine: None,
+            detail: format!(
+                "{refused} reported path(s) are outside the client's downloads folder or reached through a link"
+            ),
+        });
+    }
+    Ok(kept)
 }
 
 /// Library folders as the filesystem resolves them.

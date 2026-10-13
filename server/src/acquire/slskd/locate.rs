@@ -67,6 +67,10 @@ impl Locator {
         let expected_size = size.filter(|size| *size > 0);
 
         let within_mount = |candidate: &Path| -> Option<PathBuf> {
+            // Never through a link, even one that stays inside the mount.
+            if is_link(candidate) || candidate.parent().is_some_and(is_link) {
+                return None;
+            }
             let resolved = candidate.canonicalize().ok()?;
             if !resolved.starts_with(&mount) {
                 tracing::warn!("slskd path escapes the downloads mount");
@@ -509,6 +513,9 @@ fn walk_find(
             if seen > MAX_WALK_ENTRIES {
                 return None;
             }
+            if is_link(&entry.path()) {
+                continue;
+            }
             let resolved = entry.path().canonicalize().ok()?;
             if !resolved.starts_with(&mount) {
                 continue;
@@ -526,7 +533,16 @@ fn walk_find(
     None
 }
 
+/// Whether `path` is itself a symbolic link. A finished download is never
+/// read through one: the target could be another download's file.
+fn is_link(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
+}
+
 fn confined_file(mount: &Path, candidate: &Path) -> Option<PathBuf> {
+    if is_link(candidate) {
+        return None;
+    }
     let resolved = candidate.canonicalize().ok()?;
     if !resolved.starts_with(mount) || !resolved.is_file() {
         return None;
@@ -619,7 +635,7 @@ fn walk_find_normalised(
                 return AliasOutcome::FailClosed(FailKind::Budget, 0);
             }
             let resolved = match entry.path().canonicalize() {
-                Ok(resolved) if resolved.starts_with(mount) => resolved,
+                Ok(resolved) if resolved.starts_with(mount) && !is_link(&entry.path()) => resolved,
                 _ => continue,
             };
             if resolved.is_dir() {
@@ -848,7 +864,7 @@ fn walk_find_fuzzy(
                 return AliasOutcome::FailClosed(FailKind::Budget, 0);
             }
             let resolved = match entry.path().canonicalize() {
-                Ok(resolved) if resolved.starts_with(mount) => resolved,
+                Ok(resolved) if resolved.starts_with(mount) && !is_link(&entry.path()) => resolved,
                 _ => continue,
             };
             if resolved.is_dir() {
