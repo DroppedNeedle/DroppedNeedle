@@ -362,6 +362,10 @@ impl SettingsSetup {
                 get(h::get_security).put(h::put_security),
             )
             .route("/settings/security/verify-hibp", post(h::verify_hibp))
+            .route(
+                "/settings/public-address",
+                get(h::get_public_address).put(h::put_public_address),
+            )
             .route("/settings/oidc", get(h::get_oidc).put(h::put_oidc))
             .route("/settings/oidc/verify", post(h::verify_oidc))
             .route("/settings/lastfm", get(h::get_lastfm).put(h::put_lastfm))

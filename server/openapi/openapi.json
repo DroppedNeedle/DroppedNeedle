@@ -21807,6 +21807,59 @@
         }
       }
     },
+    "/api/v3/settings/public-address": {
+      "get": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Read the addresses stated as this server's own.",
+        "operationId": "get_public_address",
+        "responses": {
+          "200": {
+            "description": "Stated public addresses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicAddress"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Replace the addresses stated as this server's own. The session origin\ncheck accepts a change from a page at one of them.",
+        "operationId": "put_public_address",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicAddress"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The list as stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicAddress"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An entry is not an address, or there are more than eight"
+          }
+        }
+      }
+    },
     "/api/v3/settings/scrobble": {
       "get": {
         "tags": [
@@ -43346,6 +43399,20 @@
               "null"
             ],
             "description": "Server version, when known."
+          }
+        }
+      },
+      "PublicAddress": {
+        "type": "object",
+        "description": "The addresses at which this DroppedNeedle is served, for a deployment\nwhose reverse proxy leaves the server with the wrong idea of its own\naddress. The session origin check accepts a change from a page at one of\nthem, on top of the address it works out for itself.\n\nA section of its own, so that saving another one can never empty it.",
+        "properties": {
+          "origins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Up to eight origins such as `https://music.example.com` or\n`http://192.168.1.5:8688`: scheme, host and optional port, no path.\nStored the way a browser sends `Origin`.",
+            "default": []
           }
         }
       },

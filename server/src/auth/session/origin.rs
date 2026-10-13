@@ -74,6 +74,66 @@ impl Origin {
         Self::new(scheme, &host.trim().parse().ok()?)
     }
 
+    /// An address an admin typed, as pasted from the address bar: `http` or
+    /// `https`, a host and an optional port, with at most a trailing `/`.
+    /// The error is the reason it was refused, worded to follow the entry.
+    pub fn from_stated(text: &str) -> Result<Self, String> {
+        const NOT_AN_ADDRESS: &str = "is not a web address";
+        const NO_SCHEME: &str = "must start with http:// or https://";
+        let text = text.trim();
+        if text.is_empty() {
+            return Err("is empty".to_owned());
+        }
+        if text.chars().any(|c| c.is_whitespace() || c.is_control()) {
+            return Err("has a space in it".to_owned());
+        }
+        if text.contains('*') {
+            return Err("has a wildcard in it: list each address in full".to_owned());
+        }
+        let lower = text.to_ascii_lowercase();
+        if !lower.starts_with("http://") && !lower.starts_with("https://") {
+            return Err(NO_SCHEME.to_owned());
+        }
+        let url = reqwest::Url::parse(text).map_err(|_| NOT_AN_ADDRESS.to_owned())?;
+        if text.contains('@') || !url.username().is_empty() || url.password().is_some() {
+            return Err("has a user name or password in it".to_owned());
+        }
+        if url.query().is_some() || url.fragment().is_some() {
+            return Err("must end after the host and port: leave out the ? or # part".to_owned());
+        }
+        if url.path() != "/" {
+            return Err(
+                "must end after the host and port: a path, the base path included, is not \
+                 part of it"
+                    .to_owned(),
+            );
+        }
+        if url.port() == Some(0) {
+            return Err("has port 0: a port is between 1 and 65535".to_owned());
+        }
+        let (Some(host), Some(port)) = (url.host_str(), url.port_or_known_default()) else {
+            return Err(NOT_AN_ADDRESS.to_owned());
+        };
+        // Through the parser the check itself uses, so a saved address is
+        // one a request's `Origin` can equal.
+        Self::from_url(&format!("{}://{host}:{port}", url.scheme()))
+            .ok_or_else(|| NOT_AN_ADDRESS.to_owned())
+    }
+
+    /// The text a browser sends as `Origin`: the default port left out.
+    pub fn serialized(&self) -> String {
+        let default_port = if self.scheme == Scheme::HTTPS.as_str() {
+            443
+        } else {
+            80
+        };
+        if self.port == default_port {
+            format!("{}://{}", self.scheme, self.host)
+        } else {
+            self.to_string()
+        }
+    }
+
     fn new(scheme: &str, authority: &Authority) -> Option<Self> {
         let scheme = scheme.to_ascii_lowercase();
         let default_port = if scheme == Scheme::HTTP.as_str() {
@@ -279,5 +339,60 @@ mod tests {
         );
         assert_eq!(Origin::from_host("http", ""), None);
         assert_eq!(Origin::from_host("ftp", "music.lan"), None);
+    }
+
+    #[test]
+    fn a_stated_address_is_an_origin_and_nothing_more() {
+        let stored = |text: &str| Origin::from_stated(text).map(|origin| origin.serialized());
+        for (typed, kept) in [
+            ("https://music.example.com", "https://music.example.com"),
+            ("https://music.example.com/", "https://music.example.com"),
+            ("  HTTPS://Music.Example.COM  ", "https://music.example.com"),
+            ("https://music.example.com:443", "https://music.example.com"),
+            ("http://music.lan:80/", "http://music.lan"),
+            ("http://music.lan:8688", "http://music.lan:8688"),
+            ("https://music.lan:80", "https://music.lan:80"),
+            ("http://192.168.1.5:8688", "http://192.168.1.5:8688"),
+            ("http://[::1]:8688", "http://[::1]:8688"),
+            ("https://[2001:DB8::1]", "https://[2001:db8::1]"),
+            (
+                "https://m\u{fc}nchen.example",
+                "https://xn--mnchen-3ya.example",
+            ),
+        ] {
+            assert_eq!(stored(typed).as_deref(), Ok(kept), "{typed}");
+            // What is kept reads back as the same origin, and a browser on
+            // that page sends exactly it.
+            assert_eq!(Origin::from_stated(kept), Origin::from_stated(typed));
+            assert_eq!(Origin::from_url(kept), Origin::from_stated(typed).ok());
+        }
+        for refused in [
+            "",
+            "music.example.com",
+            "music.example.com:8688",
+            "//music.example.com",
+            "ftp://music.example.com",
+            "file:///srv/music",
+            "https://",
+            "https://music.example.com/music",
+            "https://music.example.com/music/",
+            "https://music.example.com//",
+            "https://music.example.com?next=1",
+            "https://music.example.com/?",
+            "https://music.example.com#top",
+            "https://admin@music.example.com",
+            "https://admin:secret@music.example.com",
+            "https://music.example.com@evil.test",
+            "https://*.example.com",
+            "https://*",
+            "http://music.lan:0",
+            "http://music.lan:65536",
+            "http://music.lan:port",
+            "http://music lan",
+            "http://music.lan http://other.lan",
+            "null",
+        ] {
+            assert!(stored(refused).is_err(), "{refused:?} was accepted");
+        }
     }
 }

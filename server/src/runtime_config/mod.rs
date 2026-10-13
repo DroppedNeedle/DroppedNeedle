@@ -60,6 +60,7 @@ pub const KNOWN_TOP_LEVEL_KEYS: &[&str] = &[
     "wrapped_settings",
     "oidc_settings",
     "security_settings",
+    "public_address",
     "connect_apps",
     "library_settings",
     "library_management",

@@ -71,6 +71,7 @@ impl PlainSection for ScrobbleSettings {}
 impl PlainSection for PrimaryMusicSource {}
 impl PlainSection for GetIt {}
 impl PlainSection for SecuritySettings {}
+impl PlainSection for PublicAddress {}
 impl PlainSection for ConnectApps {}
 impl PlainSection for DownloadPolicy {}
 impl PlainSection for MusicBrainzSettings {}

@@ -1218,6 +1218,8 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/api/v3/settings/prowlarr/config", Posture::Admin),
     ("PUT", "/api/v3/settings/prowlarr/config", Posture::Admin),
     ("POST", "/api/v3/settings/prowlarr/test", Posture::Admin),
+    ("GET", "/api/v3/settings/public-address", Posture::Admin),
+    ("PUT", "/api/v3/settings/public-address", Posture::Admin),
     ("GET", "/api/v3/settings/scrobble", Posture::Admin),
     ("PUT", "/api/v3/settings/scrobble", Posture::Admin),
     ("GET", "/api/v3/settings/security", Posture::Admin),

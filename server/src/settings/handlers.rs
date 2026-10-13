@@ -42,8 +42,8 @@ use crate::runtime_config::secret_sections::{
 };
 use crate::runtime_config::sections::{
     ConnectApps, DownloadPolicy, EditionPreferences, FilesystemWatcher, GetIt, HomeSettings,
-    LibraryManagementProfile, LibraryScanSchedule, PrimaryMusicSource, ScrobbleSettings,
-    SecuritySettings, UserPreferences, WantedWatcher,
+    LibraryManagementProfile, LibraryScanSchedule, PrimaryMusicSource, PublicAddress,
+    ScrobbleSettings, SecuritySettings, UserPreferences, WantedWatcher,
 };
 
 type JsonResult<T> = Result<Json<T>, SettingsError>;
@@ -317,6 +317,36 @@ pub async fn verify_hibp(
     ValidJson(body): ValidJson<SecuritySettings>,
 ) -> JsonResult<VerifyConnectionResponse> {
     settings.service().verify_hibp(body).await.map(Json)
+}
+
+/// Read the addresses stated as this server's own.
+#[utoipa::path(
+    get,
+    path = "/api/v3/settings/public-address",
+    responses((status = 200, description = "Stated public addresses", body = PublicAddress))
+)]
+pub async fn get_public_address(
+    State(settings): State<SettingsSetup>,
+) -> JsonResult<PublicAddress> {
+    settings.service().get().map(Json)
+}
+
+/// Replace the addresses stated as this server's own. The session origin
+/// check accepts a change from a page at one of them.
+#[utoipa::path(
+    put,
+    path = "/api/v3/settings/public-address",
+    request_body = PublicAddress,
+    responses(
+        (status = 200, description = "The list as stored", body = PublicAddress),
+        (status = 400, description = "An entry is not an address, or there are more than eight")
+    )
+)]
+pub async fn put_public_address(
+    State(settings): State<SettingsSetup>,
+    ValidJson(body): ValidJson<PublicAddress>,
+) -> JsonResult<PublicAddress> {
+    settings.service().save(body).await.map(Json)
 }
 
 /// Read the inbound Connect Apps config.

@@ -8906,6 +8906,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/settings/public-address": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the addresses stated as this server's own. */
+        get: operations["get_public_address"];
+        /**
+         * Replace the addresses stated as this server's own. The session origin
+         *     check accepts a change from a page at one of them.
+         */
+        put: operations["put_public_address"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/settings/scrobble": {
         parameters: {
             query?: never;
@@ -18786,6 +18807,23 @@ export interface components {
             valid: boolean;
             /** @description Server version, when known. */
             version?: string | null;
+        };
+        /**
+         * @description The addresses at which this DroppedNeedle is served, for a deployment
+         *     whose reverse proxy leaves the server with the wrong idea of its own
+         *     address. The session origin check accepts a change from a page at one of
+         *     them, on top of the address it works out for itself.
+         *
+         *     A section of its own, so that saving another one can never empty it.
+         */
+        PublicAddress: {
+            /**
+             * @description Up to eight origins such as `https://music.example.com` or
+             *     `http://192.168.1.5:8688`: scheme, host and optional port, no path.
+             *     Stored the way a browser sends `Origin`.
+             * @default []
+             */
+            origins: string[];
         };
         /**
          * @description What kind of purchase a link offers.
@@ -43012,6 +43050,57 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ProwlarrTestResponse"];
                 };
+            };
+        };
+    };
+    get_public_address: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stated public addresses */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicAddress"];
+                };
+            };
+        };
+    };
+    put_public_address: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublicAddress"];
+            };
+        };
+        responses: {
+            /** @description The list as stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicAddress"];
+                };
+            };
+            /** @description An entry is not an address, or there are more than eight */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
