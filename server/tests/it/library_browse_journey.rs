@@ -1,44 +1,20 @@
-//! Library browse gaps and local file downloads over a scratch migrated
-//! database and a real music root on disk: membership, album status with
-//! upgrade tiers, top-songs track resolution, the stats extras, track
-//! identity fields, the appearance sort, then track and album downloads
-//! with the access setting, path safety, ranges and a streamed ZIP read
-//! back, and local playback by track id through the real stream gateway.
-
-use crate::common::ScratchDir;
+//! Library browse gaps and local file downloads on the production app:
+//! membership, album status with upgrade tiers, top-songs track resolution,
+//! the stats extras, track identity fields, the appearance sort, then track
+//! and album downloads with the access setting, path safety, ranges and a
+//! streamed ZIP read back, and local playback by track id.
+//!
+//! The catalog rows are seeded by hand, some over files that are missing,
+//! unreadable or outside the folder. The app scans every new library
+//! folder, so the folder is added empty and the files and rows go in after
+//! that first scan: nothing scans it again while the journey runs.
 
 use std::io::Read as _;
-use std::sync::{Arc, Mutex};
 
-use axum::Router;
-use axum::body::Body;
-use axum::http::{Request, StatusCode, header};
-use droppedneedle::auth::session::extract::Transport;
-use droppedneedle::auth::session::middleware::CurrentSession;
-use droppedneedle::auth::users::memory::TestRig;
-use droppedneedle::auth::users::roles::{Role, SessionKind};
-use droppedneedle::db::{DbConfig, DbRuntime, Lane, OpError, open_runtime};
-use droppedneedle::ids::UuidGenerator;
-use droppedneedle::library::scan::models::EffectivePolicy;
-use droppedneedle::library::scan::roots::{LibraryRoot, RootRegistry};
-use droppedneedle::reads::library::{
-    LibraryDeps, library_router,
-    lookups::SqliteLookups,
-    memory::MemoryLyrics,
-    sqlite::{LibraryDb, SqliteCatalog, SqliteFavorites},
-    stores::UpgradePolicy,
-    tags::FileTagReader,
-};
-use droppedneedle::runtime_config::sections::{DownloadAccess, SecuritySettings};
-use droppedneedle::stream::download::{DownloadState, download_routes};
-use droppedneedle::stream::gateway::{Gateway, RemoteMedia, RemoteReader};
-use droppedneedle::stream::local_files::LibraryFiles;
-use droppedneedle::stream::routes::{AudioSource, StreamFault, StreamState, stream_routes};
-use droppedneedle::stream::transcode::{
-    FfmpegTranscoder, LocalTranscodeGate, StdFfmpegSpawner, TranscodeSettings,
-};
+use axum::http::{HeaderMap, StatusCode, header};
 use serde_json::{Value, json};
-use tower::ServiceExt as _;
+
+use crate::common::TestApp;
 
 /// A real tagged FLAC, so the tag view has something to read.
 fn opener() -> Vec<u8> {
@@ -51,26 +27,37 @@ fn opener() -> Vec<u8> {
 const CLOSER: &[u8] = b"closer mp3 bytes, a little longer";
 
 struct Fixture {
-    #[allow(dead_code)]
-    runtime: DbRuntime,
-    rig: TestRig,
-    access: Arc<Mutex<DownloadAccess>>,
-    music: std::path::PathBuf,
-    /// Declared last so the database closes before the directory goes.
-    _scratch: ScratchDir,
+    app: TestApp,
+    /// The owner's `authorization` header value.
+    admin: String,
+    /// A plain user's.
+    user: String,
 }
 
 async fn fixture() -> Fixture {
-    let dir = ScratchDir::new("library-browse-journey");
-    let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
-        .await
-        .expect("scratch runtime opens");
+    let app = TestApp::start("library-browse-journey").await;
+    let admin = app.login_admin().await;
+    let user = app.login_user("ada").await.authorization;
+    // Upgrades are off until an admin allows them, and nothing is below
+    // the cutoff while they are off.
+    let headers = [("authorization", admin.as_str())];
+    let policy = "/api/v3/settings/download-clients/policy";
+    let (status, mut saved) = app.call("GET", policy, &headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    saved["upgrade_allowed"] = json!(true);
+    let (status, saved) = app.call("PUT", policy, &headers, Some(saved)).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["quality_cutoff"], "lossless");
+
+    let dir = app.config.root_app_dir.clone();
     let music = dir.join("music");
+    std::fs::create_dir_all(&music).expect("music dir");
+    app.add_library_folder("r1", &music).await;
+
     std::fs::create_dir_all(music.join("Aurora/First Light")).expect("album dir");
     std::fs::write(music.join("Aurora/First Light/01 Opener.flac"), opener()).expect("opener");
     std::fs::write(music.join("Aurora/First Light/02 Closer.mp3"), CLOSER).expect("closer");
     std::fs::write(dir.join("outside.flac"), b"not in the library").expect("outside");
-    let music = music.canonicalize().expect("music root");
     let seed = [
         "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) VALUES \
          ('a1', 'Aurora', 'aurora', 'group', 1000, 1000), \
@@ -119,211 +106,94 @@ async fn fixture() -> Fixture {
         "INSERT INTO library_scan_runs (id, kind, trigger, state, phase, aggregate_scope, \
          queued_at, updated_at, terminal_at) VALUES \
          ('run1', 'incremental', 'manual', 'completed', 'reconciling', '{}', 10, 20, 2000.5), \
-         ('run2', 'incremental', 'manual', 'failed', 'reconciling', '{}', 30, 40, 3000.0)",
+         ('run2', 'incremental', 'manual', 'failed', 'reconciling', '{}', 30, 40, 9000000000.0)",
         "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, artist_name, album_title, \
          requested_at, status) VALUES ('rg-req', 'RG-REQ', 'Someone', 'Wanted', '2024-01-01', 'pending')",
     ]
     .join(";\n");
-    runtime
-        .lane()
-        .write(Lane::Foreground, "browse journey seed", move |tx| {
-            tx.execute_batch(&seed).map_err(OpError::from)?;
-            Ok(())
-        })
-        .await
-        .expect("seed batch runs");
-    Fixture {
-        runtime,
-        rig: TestRig::new().expect("rig builds"),
-        access: Arc::new(Mutex::new(DownloadAccess::Everyone)),
-        music,
-        _scratch: dir,
-    }
-}
-
-/// Remote reader for a local-only gateway.
-struct NoRemote;
-
-impl RemoteReader for NoRemote {
-    async fn open_stream(
-        &self,
-        _source: AudioSource,
-        _key: &str,
-        _user_id: &str,
-        _head_only: bool,
-    ) -> Result<droppedneedle::stream::routes::StreamMedia, StreamFault> {
-        let canned: Result<RemoteMedia, StreamFault> = async { Err(StreamFault::NotFound) }.await;
-        canned.map(Into::into)
-    }
+    app.db().execute_batch(&seed).expect("seed batch runs");
+    Fixture { app, admin, user }
 }
 
 impl Fixture {
-    /// Library reads, downloads and streaming, as `user_id` (anonymous
-    /// when None).
-    fn app(&self, user_id: Option<&str>) -> Router {
-        let db = LibraryDb::new(self.runtime.pool());
-        let ids = Arc::new(UuidGenerator);
-        let music = self.music.clone();
-        let access = Arc::clone(&self.access);
-        let files = LibraryFiles::new(
-            self.runtime.pool().clone(),
-            Arc::new(move || {
-                RootRegistry::new(
-                    vec![LibraryRoot::new(
-                        "r1",
-                        music.clone(),
-                        EffectivePolicy::Automatic,
-                    )],
-                    true,
-                    "rev",
-                )
-            }),
-        );
-        let library = LibraryDeps {
-            catalog: Arc::new(SqliteCatalog::new(&db)),
-            favorites: Arc::new(SqliteFavorites::new(&db)),
-            lyrics: Arc::new(MemoryLyrics::new()),
-            lookups: Arc::new(SqliteLookups::new(&db)),
-            upgrade_policy: Arc::new(|| UpgradePolicy {
-                quality_cutoff: Some("lossless".to_owned()),
-                upgrade_allowed: true,
-            }),
-            tags: Arc::new(FileTagReader::new(files.clone())),
-            auth: self.rig.deps.clone(),
-            ids: ids.clone(),
-        };
-        // ffmpeg is reported absent, so every local read is served direct.
-        let gateway = Gateway::new(
-            std::path::PathBuf::from("unused-constructor-root"),
-            NoRemote,
-            FfmpegTranscoder::new(
-                StdFfmpegSpawner::with_path("ffmpeg".into()),
-                Arc::new(LocalTranscodeGate::new()),
-            ),
-            TranscodeSettings::default(),
-            false,
-        )
-        .with_library(files.clone());
-        let stream = StreamState {
-            engine: Arc::new(gateway),
-            ids: ids.clone(),
-        };
-        let download = DownloadState::new(
-            Some(files),
-            Arc::new(move || {
-                Ok(SecuritySettings {
-                    library_download_access: *access.lock().expect("access lock"),
-                    ..SecuritySettings::default()
-                })
-            }),
-            self.rig.deps.clone(),
-            ids,
-        );
-        let router = library_router(library)
-            .merge(download_routes(download))
-            .merge(stream_routes(stream));
-        match user_id {
-            Some(user_id) => {
-                let user_id = user_id.to_owned();
-                router.layer(axum::middleware::from_fn(
-                    move |mut req: Request<Body>, next: axum::middleware::Next| {
-                        let user_id = user_id.clone();
-                        async move {
-                            req.extensions_mut().insert(CurrentSession {
-                                user_id,
-                                session_id: "sess-1".to_owned(),
-                                kind: SessionKind::Standard,
-                                transport: Transport::Bearer,
-                            });
-                            next.run(req).await
-                        }
-                    },
-                ))
-            }
-            None => router,
+    /// One `/api/v3` request, signed by `who` when given.
+    async fn send_ranged(
+        &self,
+        who: Option<&str>,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+        range: Option<&str>,
+    ) -> (StatusCode, HeaderMap, Vec<u8>) {
+        let mut headers = Vec::new();
+        if let Some(who) = who {
+            headers.push(("authorization", who));
         }
+        if let Some(range) = range {
+            headers.push(("range", range));
+        }
+        self.app
+            .raw(method, &format!("/api/v3{path}"), &headers, body)
+            .await
     }
-}
 
-async fn send(
-    app: Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
-    send_ranged(app, method, path, body, None).await
-}
-
-async fn send_ranged(
-    app: Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-    range: Option<&str>,
-) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
-    let mut request = Request::builder().method(method).uri(path);
-    if let Some(range) = range {
-        request = request.header(header::RANGE, range);
+    async fn send(
+        &self,
+        who: Option<&str>,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, HeaderMap, Vec<u8>) {
+        self.send_ranged(who, method, path, body, None).await
     }
-    let request = match body {
-        Some(body) => request
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(body.to_string())),
-        None => request.body(Body::empty()),
-    }
-    .expect("request builds");
-    let response = app.oneshot(request).await.expect("router answers");
-    let status = response.status();
-    let headers = response.headers().clone();
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body reads");
-    (status, headers, bytes.to_vec())
-}
 
-async fn json_call(
-    app: Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (StatusCode, Value) {
-    let (status, _, bytes) = send(app, method, path, body).await;
-    (
-        status,
-        serde_json::from_slice(&bytes).expect("body is json"),
-    )
+    async fn json(
+        &self,
+        who: &str,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let (status, _, bytes) = self.send(Some(who), method, path, body).await;
+        (
+            status,
+            serde_json::from_slice(&bytes).expect("body is json"),
+        )
+    }
 }
 
 #[tokio::test]
 async fn browse_gaps_journey() {
     let fixture = fixture().await;
-    let user = fixture.rig.seed_user("ada", Role::User).await;
-    let app = fixture.app(Some(&user.id));
 
     // Membership: case-folded, owned by release group, requested by history.
-    let (status, body) = json_call(
-        app.clone(),
-        "POST",
-        "/library/membership",
-        Some(json!({"album_ids": ["RG1", " rg1 ", "rg-req", "rg-missing", ""]})),
-    )
-    .await;
+    let (status, body) = fixture
+        .json(
+            &fixture.user,
+            "POST",
+            "/library/membership",
+            Some(json!({"album_ids": ["RG1", " rg1 ", "rg-req", "rg-missing", ""]})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         body,
         json!({"owned_ids": ["rg1"], "requested_ids": ["rg-req"]})
     );
     let too_many: Vec<String> = (0..501).map(|n| format!("id-{n}")).collect();
-    let (status, body) = json_call(
-        app.clone(),
-        "POST",
-        "/library/membership",
-        Some(json!({ "album_ids": too_many })),
-    )
-    .await;
+    let (status, body) = fixture
+        .json(
+            &fixture.user,
+            "POST",
+            "/library/membership",
+            Some(json!({ "album_ids": too_many })),
+        )
+        .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     // The unfiltered form: every held release group and open request.
-    let (status, body) = json_call(app.clone(), "GET", "/library/mbids", None).await;
+    let (status, body) = fixture
+        .json(&fixture.user, "GET", "/library/mbids", None)
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         body,
@@ -332,33 +202,45 @@ async fn browse_gaps_journey() {
 
     // Tags straight from the file: admins only, with v2's answers for a
     // file that is gone or unreadable.
-    let admin = fixture.rig.seed_user("root", Role::Admin).await;
-    let admin_app = fixture.app(Some(&admin.id));
-    let (status, body) = json_call(admin_app.clone(), "GET", "/library/tracks/t1/tags", None).await;
+    let (status, body) = fixture
+        .json(&fixture.admin, "GET", "/library/tracks/t1/tags", None)
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["title"], "Airbag");
     assert_eq!(
         body["musicbrainz_release_group_id"],
         "b1392450-e666-3926-a536-22c65f834433"
     );
-    let (status, body) = json_call(admin_app.clone(), "GET", "/library/tracks/t2/tags", None).await;
+    let (status, body) = fixture
+        .json(&fixture.admin, "GET", "/library/tracks/t2/tags", None)
+        .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"]["message"], "Could not read the audio file.");
-    let (status, body) = json_call(admin_app.clone(), "GET", "/library/tracks/t3/tags", None).await;
+    let (status, body) = fixture
+        .json(&fixture.admin, "GET", "/library/tracks/t3/tags", None)
+        .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(
         body["error"]["message"],
         "The audio file is no longer present on disk."
     );
-    let (status, _) = json_call(admin_app.clone(), "GET", "/library/tracks/t4/tags", None).await;
+    let (status, _) = fixture
+        .json(&fixture.admin, "GET", "/library/tracks/t4/tags", None)
+        .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    let (status, _) = json_call(admin_app, "GET", "/library/tracks/nope/tags", None).await;
+    let (status, _) = fixture
+        .json(&fixture.admin, "GET", "/library/tracks/nope/tags", None)
+        .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _) = json_call(app.clone(), "GET", "/library/tracks/t1/tags", None).await;
+    let (status, _) = fixture
+        .json(&fixture.user, "GET", "/library/tracks/t1/tags", None)
+        .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 
     // Album status by MusicBrainz id: tiers judged against the cutoff.
-    let (status, body) = json_call(app.clone(), "GET", "/library/albums/rg1/status", None).await;
+    let (status, body) = fixture
+        .json(&fixture.user, "GET", "/library/albums/rg1/status", None)
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["in_library"], true);
     assert_eq!(body["album_id"], "al1");
@@ -368,27 +250,32 @@ async fn browse_gaps_journey() {
     assert_eq!(body["tracks"][0]["below_cutoff"], false);
     assert_eq!(body["tracks"][1]["current_tier"], "mp3_320");
     assert_eq!(body["tracks"][1]["below_cutoff"], true);
-    let (_, body) = json_call(app.clone(), "GET", "/library/albums/al2/status", None).await;
+    let (_, body) = fixture
+        .json(&fixture.user, "GET", "/library/albums/al2/status", None)
+        .await;
     assert_eq!(body["album_id"], "al2");
-    let (_, body) = json_call(app.clone(), "GET", "/library/albums/nope/status", None).await;
+    let (_, body) = fixture
+        .json(&fixture.user, "GET", "/library/albums/nope/status", None)
+        .await;
     assert_eq!(
         body,
         json!({"in_library": false, "album_id": "nope", "track_count": 0, "tracks": []})
     );
 
     // Top-songs resolution: known positions resolve, the rest stay bare.
-    let (status, body) = json_call(
-        app.clone(),
-        "POST",
-        "/library/resolve-tracks",
-        Some(json!({"items": [
-            {"release_group_mbid": "RG1", "track_number": 2},
-            {"release_group_mbid": "rg1", "disc_number": 2, "track_number": 1},
-            {"release_group_mbid": "rg-missing", "track_number": 1},
-            {"release_group_mbid": "rg1"}
-        ]})),
-    )
-    .await;
+    let (status, body) = fixture
+        .json(
+            &fixture.user,
+            "POST",
+            "/library/resolve-tracks",
+            Some(json!({"items": [
+                {"release_group_mbid": "RG1", "track_number": 2},
+                {"release_group_mbid": "rg1", "disc_number": 2, "track_number": 1},
+                {"release_group_mbid": "rg-missing", "track_number": 1},
+                {"release_group_mbid": "rg1"}
+            ]})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["items"][0]["source"], "local");
     assert_eq!(body["items"][0]["track_source_id"], "t2");
@@ -404,13 +291,30 @@ async fn browse_gaps_journey() {
 
     // Stats extras: one pending review, one unidentified album, last
     // completed scan.
-    let (_, body) = json_call(app.clone(), "GET", "/library/stats", None).await;
+    let (_, body) = fixture
+        .json(&fixture.user, "GET", "/library/stats", None)
+        .await;
     assert_eq!(body["review_count"], 1);
     assert_eq!(body["local_only_count"], 1);
-    assert_eq!(body["last_scan_at"], 2000.5);
+    let last_completed: f64 = fixture
+        .app
+        .db()
+        .query_row(
+            "SELECT MAX(terminal_at) FROM library_scan_runs WHERE state = 'completed'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("scan runs read");
+    // Read back through JSON text, as the answer was: parsing a float from
+    // text can land one step off the value that was written.
+    let as_sent: Value =
+        serde_json::from_str(&json!(last_completed).to_string()).expect("number parses");
+    assert_eq!(body["last_scan_at"], as_sent);
 
     // Track identity and quality fields.
-    let (_, body) = json_call(app.clone(), "GET", "/library/tracks/t1", None).await;
+    let (_, body) = fixture
+        .json(&fixture.user, "GET", "/library/tracks/t1", None)
+        .await;
     assert_eq!(body["recording_mbid"], "rec-opener");
     assert_eq!(body["release_group_mbid"], "RG1");
     assert_eq!(body["artist_mbid"], "mb-aurora");
@@ -420,16 +324,18 @@ async fn browse_gaps_journey() {
     assert_eq!(body["channels"], 2);
 
     // Appearance sort: the guest credited on someone else's album leads.
-    let (status, body) = json_call(
-        app,
-        "GET",
-        "/library/artists?sort=appearance_count&order=desc",
-        None,
-    )
-    .await;
+    let (status, body) = fixture
+        .json(
+            &fixture.user,
+            "GET",
+            "/library/artists?sort=appearance_count&order=desc",
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["items"][0]["id"], "a3");
     assert_eq!(body["items"][0]["appearance_album_count"], 1);
+    fixture.app.stop().await;
 }
 
 fn zip_entries(bytes: Vec<u8>) -> Vec<(String, Vec<u8>)> {
@@ -448,16 +354,17 @@ fn zip_entries(bytes: Vec<u8>) -> Vec<(String, Vec<u8>)> {
 #[tokio::test]
 async fn local_downloads_journey() {
     let fixture = fixture().await;
-    let user = fixture.rig.seed_user("ada", Role::User).await;
-    let admin = fixture.rig.seed_user("root", Role::Admin).await;
-    let app = fixture.app(Some(&user.id));
 
-    let (status, body) = json_call(app.clone(), "GET", "/download/access", None).await;
+    let (status, body) = fixture
+        .json(&fixture.user, "GET", "/download/access", None)
+        .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!({"allowed": true}));
 
     // One track, byte for byte, as an attachment.
-    let (status, headers, bytes) = send(app.clone(), "GET", "/download/local/track/t1", None).await;
+    let (status, headers, bytes) = fixture
+        .send(Some(&fixture.user), "GET", "/download/local/track/t1", None)
+        .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(bytes, opener());
     assert_eq!(headers[header::CONTENT_TYPE], "audio/flac");
@@ -474,14 +381,15 @@ async fn local_downloads_journey() {
     );
 
     // A single range resumes a track download; one past the end is 416.
-    let (status, headers, bytes) = send_ranged(
-        app.clone(),
-        "GET",
-        "/download/local/track/t2",
-        None,
-        Some("bytes=7-11"),
-    )
-    .await;
+    let (status, headers, bytes) = fixture
+        .send_ranged(
+            Some(&fixture.user),
+            "GET",
+            "/download/local/track/t2",
+            None,
+            Some("bytes=7-11"),
+        )
+        .await;
     assert_eq!(status, StatusCode::PARTIAL_CONTENT);
     assert_eq!(bytes, &CLOSER[7..12]);
     assert_eq!(
@@ -489,14 +397,15 @@ async fn local_downloads_journey() {
         format!("bytes 7-11/{}", CLOSER.len()).as_str()
     );
     assert!(headers.contains_key(header::CONTENT_DISPOSITION));
-    let (status, headers, _) = send_ranged(
-        app.clone(),
-        "GET",
-        "/download/local/track/t2",
-        None,
-        Some("bytes=999-"),
-    )
-    .await;
+    let (status, headers, _) = fixture
+        .send_ranged(
+            Some(&fixture.user),
+            "GET",
+            "/download/local/track/t2",
+            None,
+            Some("bytes=999-"),
+        )
+        .await;
     assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
     assert_eq!(
         headers[header::CONTENT_RANGE],
@@ -505,22 +414,39 @@ async fn local_downloads_journey() {
 
     // Playback resolves the same track ids through the same catalog
     // lookup and root confinement.
-    let (status, headers, bytes) = send(app.clone(), "GET", "/stream/local/t1", None).await;
+    let (status, headers, bytes) = fixture
+        .send(Some(&fixture.user), "GET", "/stream/local/t1", None)
+        .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(bytes, opener());
     assert_eq!(headers[header::CONTENT_TYPE], "audio/flac");
-    let (status, _, _) = send(app.clone(), "GET", "/stream/local/t4", None).await;
+    let (status, _, _) = fixture
+        .send(Some(&fixture.user), "GET", "/stream/local/t4", None)
+        .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    let (status, _, _) = send(app.clone(), "GET", "/stream/local/nope", None).await;
+    let (status, _, _) = fixture
+        .send(Some(&fixture.user), "GET", "/stream/local/nope", None)
+        .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     // Path safety: a row pointing outside the root is refused, a file gone
     // from disk and an unknown id are 404.
-    let (status, _, _) = send(app.clone(), "GET", "/download/local/track/t4", None).await;
+    let (status, _, _) = fixture
+        .send(Some(&fixture.user), "GET", "/download/local/track/t4", None)
+        .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    let (status, _, _) = send(app.clone(), "GET", "/download/local/track/t3", None).await;
+    let (status, _, _) = fixture
+        .send(Some(&fixture.user), "GET", "/download/local/track/t3", None)
+        .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _, _) = send(app.clone(), "GET", "/download/local/track/nope", None).await;
+    let (status, _, _) = fixture
+        .send(
+            Some(&fixture.user),
+            "GET",
+            "/download/local/track/nope",
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     // The album as a streamed ZIP, by local id and by MusicBrainz id.
@@ -532,7 +458,7 @@ async fn local_downloads_journey() {
         "/download/local/album/al1",
         "/download/local/album/mbid/rg1",
     ] {
-        let (status, headers, bytes) = send(app.clone(), "GET", path, None).await;
+        let (status, headers, bytes) = fixture.send(Some(&fixture.user), "GET", path, None).await;
         assert_eq!(status, StatusCode::OK, "{path}");
         assert_eq!(headers[header::CONTENT_TYPE], "application/zip");
         assert_eq!(
@@ -550,33 +476,61 @@ async fn local_downloads_journey() {
         assert_eq!(zip_entries(bytes), expected, "{path}");
     }
     // An album with nothing servable on disk is 404, as is an unknown mbid.
-    let (status, _, _) = send(app.clone(), "GET", "/download/local/album/al2", None).await;
+    let (status, _, _) = fixture
+        .send(
+            Some(&fixture.user),
+            "GET",
+            "/download/local/album/al2",
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    let (status, _, _) = send(app.clone(), "GET", "/download/local/album/mbid/rg-x", None).await;
+    let (status, _, _) = fixture
+        .send(
+            Some(&fixture.user),
+            "GET",
+            "/download/local/album/mbid/rg-x",
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     // The access setting is read per request: admins-only refuses the user
     // and still admits the admin.
-    *fixture.access.lock().expect("access lock") = DownloadAccess::Admin;
-    let (_, body) = json_call(app.clone(), "GET", "/download/access", None).await;
+    let (status, mut security) = fixture
+        .json(&fixture.admin, "GET", "/settings/security", None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{security}");
+    security["library_download_access"] = json!("admin");
+    let (status, saved) = fixture
+        .json(&fixture.admin, "PUT", "/settings/security", Some(security))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let (_, body) = fixture
+        .json(&fixture.user, "GET", "/download/access", None)
+        .await;
     assert_eq!(body, json!({"allowed": false}));
-    let (status, body) = json_call(app.clone(), "GET", "/download/local/album/al1", None).await;
+    let (status, body) = fixture
+        .json(&fixture.user, "GET", "/download/local/album/al1", None)
+        .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(
         body["error"]["message"],
         "Library downloads are restricted by the administrator"
     );
-    let (status, _, _) = send(
-        fixture.app(Some(&admin.id)),
-        "GET",
-        "/download/local/track/t2",
-        None,
-    )
-    .await;
+    let (status, _, _) = fixture
+        .send(
+            Some(&fixture.admin),
+            "GET",
+            "/download/local/track/t2",
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::OK);
 
     // No session, no download.
-    let (status, headers, _) = send(fixture.app(None), "GET", "/download/access", None).await;
+    let (status, headers, _) = fixture.send(None, "GET", "/download/access", None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(headers[header::WWW_AUTHENTICATE], "Bearer");
+    fixture.app.stop().await;
 }
