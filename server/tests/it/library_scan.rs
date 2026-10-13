@@ -260,7 +260,7 @@ fn coordinator<T: TagReader + 'static>(
         "rev-1",
     );
     let coordinator = LibraryScanCoordinator::new(
-        Arc::new(SqliteScanStore::open_ephemeral().expect("scan store opens")),
+        Arc::new(SqliteScanStore::scratch().expect("scan store opens")),
         BlockingPool::new(4),
         tags,
         Arc::new(StaticResolver::new(registry)),

@@ -240,7 +240,7 @@ mod tests {
             "rev-1",
         );
         LibraryScanCoordinator::new(
-            Arc::new(SqliteScanStore::open_ephemeral().expect("scan store opens")),
+            Arc::new(SqliteScanStore::scratch().expect("scan store opens")),
             BlockingPool::new(2),
             Arc::new(NullTagReader::new()),
             Arc::new(StaticResolver::new(registry)),

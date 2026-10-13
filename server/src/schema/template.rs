@@ -35,20 +35,6 @@ pub fn copy_to(path: &Path) -> Result<(), String> {
         .map_err(|error| format!("database copy at {}: {error}", path.display()))
 }
 
-/// Load the migrated database into `connection`, replacing what it holds.
-/// For in-memory databases, which have no file to copy to.
-pub fn load_into(connection: &mut rusqlite::Connection) -> Result<(), String> {
-    let dir = ScratchDir::new("db-load").map_err(|error| error.to_string())?;
-    let path = dir.path().join("app.db");
-    copy_to(&path)?;
-    let source =
-        rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .map_err(|error| format!("template source: {error}"))?;
-    rusqlite::backup::Backup::new(&source, connection)
-        .and_then(|backup| backup.run_to_completion(1024, std::time::Duration::ZERO, None))
-        .map_err(|error| format!("template load: {error}"))
-}
-
 /// Migrate on a thread of its own, so this works from inside a runtime
 /// and from plain synchronous code alike.
 fn build() -> Result<Vec<u8>, String> {

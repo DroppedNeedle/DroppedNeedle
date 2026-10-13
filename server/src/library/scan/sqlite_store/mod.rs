@@ -92,6 +92,10 @@ struct Inner {
 /// SQLite [`ScanStore`] over the application database file.
 pub struct SqliteScanStore {
     inner: Mutex<Inner>,
+    /// Declared after `inner`, so the connection closes before the
+    /// directory goes.
+    #[cfg(any(test, feature = "test-support"))]
+    scratch: Option<crate::tooling::scratch::ScratchDir>,
 }
 
 impl SqliteScanStore {
@@ -103,13 +107,17 @@ impl SqliteScanStore {
         Ok(Self::wrap(connection))
     }
 
-    /// In-memory store loaded from the migrated template, for unit tests.
+    /// Store on a private copy of the migrated template, for tests. The
+    /// copy's directory is removed when the store drops.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn open_ephemeral() -> Result<Self, String> {
-        let mut connection = Connection::open_in_memory().map_err(|error| error.to_string())?;
-        crate::db::apply_connection_pragmas(&connection).map_err(|error| error.to_string())?;
-        crate::schema::template::load_into(&mut connection)?;
-        Ok(Self::wrap(connection))
+    pub fn scratch() -> Result<Self, String> {
+        let dir = crate::tooling::scratch::ScratchDir::new("scan-store")
+            .map_err(|error| error.to_string())?;
+        let path = dir.path().join("app.db");
+        crate::schema::template::copy_to(&path)?;
+        let mut store = Self::open(&path)?;
+        store.scratch = Some(dir);
+        Ok(store)
     }
 
     fn wrap(conn: Connection) -> Self {
@@ -121,6 +129,8 @@ impl SqliteScanStore {
                 catalog_version: 0,
                 catalog_cache: HashMap::new(),
             }),
+            #[cfg(any(test, feature = "test-support"))]
+            scratch: None,
         }
     }
 
