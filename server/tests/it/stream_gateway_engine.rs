@@ -12,7 +12,6 @@ use droppedneedle::stream;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::Router;
 use axum::body::Body;
@@ -714,7 +713,7 @@ struct BlockingRemote {
 
 struct BlockingRemoteInner {
     media: RemoteMedia,
-    entries: AtomicUsize,
+    entries: tokio::sync::watch::Sender<usize>,
     release: tokio::sync::Notify,
 }
 
@@ -723,20 +722,21 @@ impl BlockingRemote {
         Self {
             inner: Arc::new(BlockingRemoteInner {
                 media,
-                entries: AtomicUsize::new(0),
+                entries: tokio::sync::watch::Sender::new(0),
                 release: tokio::sync::Notify::new(),
             }),
         }
     }
 
     async fn wait_for_entries(&self, want: usize) {
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            while self.inner.entries.load(Ordering::SeqCst) < want {
-                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-            }
-        })
+        let mut entries = self.inner.entries.subscribe();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            entries.wait_for(|entered| *entered >= want),
+        )
         .await
-        .expect("holders reach the remote");
+        .expect("holders reach the remote")
+        .expect("the remote is alive");
     }
 }
 
@@ -749,7 +749,7 @@ impl RemoteReader for BlockingRemote {
         _head_only: bool,
     ) -> Result<droppedneedle::stream::routes::StreamMedia, StreamFault> {
         let canned: Result<RemoteMedia, StreamFault> = async {
-            self.inner.entries.fetch_add(1, Ordering::SeqCst);
+            self.inner.entries.send_modify(|entered| *entered += 1);
             self.inner.release.notified().await;
             Ok(self.inner.media.clone())
         }
