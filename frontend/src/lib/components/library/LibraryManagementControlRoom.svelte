@@ -627,7 +627,7 @@
 					<TriangleAlert class="mt-0.5 h-5 w-5" /><span
 						><strong>Some file writes are still being retried</strong><br />{retryingBundles.length}
 						{retryingBundles.length === 1 ? 'write' : 'writes'} started more than a day ago
-						{retryingBundles.length === 1 ? 'has' : 'have'} not gone through and could not be undone either.
+						{retryingBundles.length === 1 ? 'is' : 'are'} still not finished and could not be undone either.
 						DroppedNeedle tries again every hour and at each start, and has deleted nothing. The usual
 						cause is a library folder that is missing, read-only or full: check the folders these files
 						are in, and the server log.</span
@@ -663,7 +663,7 @@
 						{#each leftoverFiles as file (`${file.root_id}/${file.rel_path}`)}<li
 								class="rounded-md bg-base-100/60 p-2 font-mono text-xs break-all"
 							>
-								{file.root_path}/{file.rel_path}
+								{file.root_path.replace(/\/+$/, '')}/{file.rel_path}
 							</li>{/each}
 					</ul>
 					{#if leftoverFileCount > leftoverFiles.length}<span class="text-sm"
