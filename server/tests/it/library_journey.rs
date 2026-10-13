@@ -159,6 +159,30 @@ impl Rig {
         assert_eq!(ended, jobs, "identification jobs that ran");
         self.settled_at.set(latest);
     }
+
+    /// Wait until the app is done with the edition a person chose for the
+    /// album. Approving a candidate that names only a release queues the
+    /// placing of the album's files for the operations loop. When it gets
+    /// there it places them, or hands the album back to automatic choice,
+    /// and either way moves the album's identity and the catalog revision:
+    /// a preview sealed before then is stale, and an Undo after it is
+    /// blocked.
+    async fn edition_settled(&self, album: &str) {
+        let db = self.app.db();
+        self.app
+            .until("the chosen edition is placed or handed back", || {
+                let waiting: i64 = db
+                    .query_row(
+                        "SELECT COUNT(*) FROM library_edition_remap_queue \
+                         WHERE local_album_id = ?1",
+                        [album],
+                        |row| row.get(0),
+                    )
+                    .expect("remap queue reads");
+                async move { (waiting == 0).then_some(()) }
+            })
+            .await;
+    }
 }
 
 fn fixtures_dir() -> PathBuf {
@@ -450,7 +474,10 @@ async fn library_journey_scan_identify_review_organize_undo() {
     assert_eq!(status, StatusCode::OK, "{body}");
     rig.identified(1).await;
 
-    // Curator approval seals a manual identity.
+    // Curator approval seals a manual identity. The candidate names only
+    // the release, so the app goes on to ask MusicBrainz for it. The script
+    // was emptied above and does not know it, so the album goes back to
+    // automatic choice on the same release. The preview waits for that.
     let (status, body) = app
         .call(
             "POST",
@@ -463,6 +490,7 @@ async fn library_journey_scan_identify_review_organize_undo() {
     assert_eq!(body["review"]["state"], json!("approved"));
     assert_eq!(body["identity"]["release_mbid"], json!(REL_1));
     assert_eq!(body["identity"]["decision_source"], json!("manual"));
+    rig.edition_settled(album_key).await;
 
     // Auto-organize the whole album: preview, apply, and the files move
     // with new tags.
@@ -510,8 +538,11 @@ async fn library_journey_scan_identify_review_organize_undo() {
     assert_eq!(read_title(&moved), "Organized Title");
 
     // A rescan after the move re-reads the rewritten files and keeps them
-    // on the same album, so the curator's identity still applies.
+    // on the same album, so the approved release still applies. The rescan
+    // queues the album for identification again; Undo checks the identity,
+    // so that job ends first.
     app.scan_library().await;
+    rig.identified(1).await;
     {
         use droppedneedle::library::identify::stores::IdentityStore as _;
         use droppedneedle::library::scan::CatalogStore as _;
@@ -608,6 +639,9 @@ async fn library_journey_retag_apply_baseline_restore() {
         )
         .await;
     assert_eq!(status, StatusCode::OK);
+    // The candidate names only the release: the app places the file on it
+    // in its own time, and the preview is sealed after that.
+    rig.edition_settled(album_key).await;
 
     // Manual retag preview, then apply.
     let (status, body) = app
