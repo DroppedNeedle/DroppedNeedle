@@ -20,7 +20,7 @@
 //! of an album is retagged into a new album in one run, the old row takes
 //! the new name instead of being left behind.
 
-use super::retag_pairs::{self, RetagPairReason};
+use super::retag_pairs::{self, RetagPairReason, RetagPairState};
 use super::*;
 use crate::library::identify::sqlite::{
     chosen_matches_differ, offer_album, retarget_references, settle_followed_match,
@@ -994,10 +994,12 @@ fn holds(track: &str, run: &str) -> String {
 /// is recorded with the reason and the log names the two, once
 /// ([`RetagPair::leave_apart`]): the album lost most of its tracks, a
 /// file was added with the retag, two chosen matches differ, or the new
-/// row could not be deleted. A pair on record is not tried again, unless the store failed
-/// the last time. Nothing is recorded when the tracks went to an album
-/// that was there before or that holds tracks from elsewhere (a person
-/// joining albums), or to more than one album (a split).
+/// row could not be deleted. A pair on record is not tried again, unless
+/// the store failed the last time and the pair is still open: one a
+/// person joined or dismissed is theirs. Nothing is recorded when the
+/// tracks went to an album that was there before or that holds tracks
+/// from elsewhere (a person joining albums), or to more than one album
+/// (a split).
 fn follow_regrouped(
     tx: &rusqlite::Transaction<'_>,
     run_id: &str,
@@ -1032,9 +1034,10 @@ fn follow_regrouped(
         new: target,
         now,
     };
-    if retag_pairs::recorded(tx, album_id, target)?
-        .is_some_and(|reason| reason != RetagPairReason::StoreError)
-    {
+    // A pair on record is left as it is. Only one the store failed on,
+    // and that no person has settled since, is tried again.
+    let retry = (RetagPairReason::StoreError, RetagPairState::Open);
+    if retag_pairs::recorded(tx, album_id, target)?.is_some_and(|recorded| recorded != retry) {
         return Ok(None);
     }
     // The new row holds tracks that did not come from this album. When
@@ -1160,7 +1163,8 @@ fn follow_regrouped(
 /// it would delete or re-point. SQLite reports a plain foreign key as
 /// `SQLITE_CONSTRAINT_FOREIGNKEY` and one with `ON DELETE RESTRICT` as
 /// `SQLITE_CONSTRAINT_TRIGGER` with the message "FOREIGN KEY constraint
-/// failed" (checked on SQLite 3.46.1).
+/// failed". Probed on SQLite 3.46.1; the build bundles 3.46.0, where the
+/// brief with a plan on the new row sees the same.
 fn foreign_key_refused(error: &rusqlite::Error) -> bool {
     let rusqlite::Error::SqliteFailure(failure, message) = error else {
         return false;

@@ -89,35 +89,43 @@ impl RetagPairState {
     }
 }
 
-/// The reason the pair is recorded under, when it is.
+/// The reason the pair is recorded under and where it stands, when it is
+/// on record.
 pub(super) fn recorded(
     conn: &Connection,
     old_album_id: &str,
     new_album_id: &str,
-) -> rusqlite::Result<Option<RetagPairReason>> {
-    let reason: Option<String> = conn
+) -> rusqlite::Result<Option<(RetagPairReason, RetagPairState)>> {
+    let stored: Option<(String, String)> = conn
         .prepare_cached(
-            "SELECT reason FROM library_retag_pairs \
+            "SELECT reason, state FROM library_retag_pairs \
              WHERE old_album_id = ?1 AND new_album_id = ?2",
         )?
-        .query_row(params![old_album_id, new_album_id], |row| row.get(0))
+        .query_row(params![old_album_id, new_album_id], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
         .optional()?;
-    reason
-        .map(|reason| {
-            RetagPairReason::parse(&reason).ok_or_else(|| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    0,
-                    rusqlite::types::Type::Text,
-                    format!("unknown retag pair reason {reason}").into(),
-                )
-            })
+    let unknown = |column: usize, value: &str| {
+        rusqlite::Error::FromSqlConversionFailure(
+            column,
+            rusqlite::types::Type::Text,
+            format!("unknown retag pair value {value}").into(),
+        )
+    };
+    stored
+        .map(|(reason, state)| {
+            Ok((
+                RetagPairReason::parse(&reason).ok_or_else(|| unknown(0, &reason))?,
+                RetagPairState::parse(&state).ok_or_else(|| unknown(1, &state))?,
+            ))
         })
         .transpose()
 }
 
 /// Record the pair as open. A pair already recorded stays as it is,
-/// except that a store error gives way to a reason found since. Returns
-/// whether anything was written, so the caller says it once.
+/// except that a store error on a pair still open gives way to a reason
+/// found since. Returns whether anything was written, so the caller says
+/// it once.
 pub(super) fn record(
     conn: &Connection,
     old_album_id: &str,
@@ -131,7 +139,8 @@ pub(super) fn record(
              recorded_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5) \
              ON CONFLICT (old_album_id, new_album_id) DO UPDATE SET \
              reason = excluded.reason, updated_at = excluded.updated_at \
-             WHERE library_retag_pairs.reason = ?6 AND excluded.reason <> ?6",
+             WHERE library_retag_pairs.reason = ?6 AND library_retag_pairs.state = ?4 \
+             AND excluded.reason <> ?6",
         )?
         .execute(params![
             old_album_id,

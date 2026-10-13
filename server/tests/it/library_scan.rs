@@ -1501,23 +1501,24 @@ async fn excluded_track_does_not_hold_its_album() {
 
 /// Files a scan does not see may only be out of reach for a moment (a
 /// share that dropped out, files taken away to be re-encoded). In the scan
-/// that finds them gone they still hold their album: three bonus tracks
-/// retagged in that same scan do not walk off with the album's row and
-/// its match.
+/// that finds them gone they still hold their album: the files retagged
+/// in that same scan do not walk off with the album's row and its match,
+/// even when they are most of the album, and nothing is recorded.
 #[tokio::test]
 async fn files_gone_in_this_very_scan_still_hold_their_album() {
     let (mut rig, files, album) = chosen_album("scan-regroup-unreachable", 15).await;
-    for relative in &files[3..] {
+    for relative in &files[9..] {
         std::fs::remove_file(rig.root.join(relative)).expect("file removed");
     }
     let after = rig.after.clone();
-    rig.tag(&files[..3], &after);
+    rig.tag(&files[..9], &after);
     rig.scan().await;
 
     let new_row = rig.album_of("a/t000.flac");
     assert_ne!(new_row, album, "not followed");
-    assert_eq!(rig.rows_on(&album), 12);
-    assert_eq!(rig.rows_on(&new_row), 3);
+    assert_eq!(rig.rows_on(&album), 6);
+    assert_eq!(rig.rows_on(&new_row), 9);
+    assert_eq!(retag_pairs(&rig), vec![]);
     assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
     assert_eq!(match_of(&rig, &new_row), None);
     assert_eq!(rig.queued_jobs(&new_row), 1, "offered when the scan ended");
@@ -1679,6 +1680,36 @@ async fn retag_into_an_album_that_was_there_is_not_a_pair() {
     assert_eq!(retag_pairs(&rig), vec![]);
     assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
     assert_eq!(match_of(&rig, &other), None);
+}
+
+/// Two albums retagged into one new album in the same scan are a person
+/// joining them too: the new row is this scan's, but the tracks on it
+/// that came from the other album are not. Neither album is followed and
+/// neither is recorded as a pair.
+#[tokio::test]
+async fn two_albums_retagged_into_a_new_one_are_not_pairs() {
+    let mut rig = RegroupRig::new("scan-regroup-two-into-one");
+    let first: Vec<String> = (0..10).map(|n| format!("a/t{n:03}.flac")).collect();
+    let second: Vec<String> = (0..10).map(|n| format!("a/u{n}.flac")).collect();
+    let (before, after) = (rig.before.clone(), rig.after.clone());
+    rig.tag(&first, &before);
+    rig.tag(&second, "scan-regroup-two-into-one other");
+    rig.scan().await;
+    let (one, other) = (rig.album_of("a/t000.flac"), rig.album_of("a/u0.flac"));
+    assert_ne!(one, other);
+    rig.accept_match(&one);
+    rig.accept_match(&other);
+
+    rig.tag(&first, &after);
+    rig.tag(&second, &after);
+    rig.scan().await;
+
+    let joined = rig.album_of("a/t000.flac");
+    assert_eq!(rig.album_of("a/u0.flac"), joined);
+    assert!(joined != one && joined != other, "neither was followed");
+    assert_eq!(retag_pairs(&rig), vec![]);
+    assert_eq!(match_of(&rig, &one), matched("rel-1", "manual"));
+    assert_eq!(match_of(&rig, &other), matched("rel-1", "manual"));
 }
 
 /// "Leave unmanaged" and a custom edition are stored as a match a person
