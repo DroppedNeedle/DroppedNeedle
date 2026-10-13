@@ -39,11 +39,37 @@ pub const TRUST_WARNING: &str = "Only install plugins you trust. A plugin runs a
 const API_BASE: &str = "https://api.github.com";
 const CODELOAD_BASE: &str = "https://codeload.github.com";
 
-/// Fetch one URL. `Ok(None)` means 404 (or any non-200); anything else
-/// is the body, capped at [`MAX_PLUGIN_ZIP_BYTES`] while streaming.
+/// What GitHub answered for one URL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Fetched {
+    /// 200. The body, capped at [`MAX_PLUGIN_ZIP_BYTES`] while streaming.
+    Found(Vec<u8>),
+    /// 404 and nothing else: no such repository, release, ref or commit.
+    NotFound,
+    /// 401, or a 403 that is not a rate limit.
+    Denied,
+    /// 429, or a 403 that carries a rate-limit signal.
+    RateLimited {
+        /// Seconds until GitHub takes requests again, when it said.
+        retry_after: Option<u64>,
+    },
+    /// Any other status.
+    Failed(u16),
+}
+
+/// A fetch that got no usable answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FetchError {
+    /// The body is over [`MAX_PLUGIN_ZIP_BYTES`].
+    TooLarge,
+    /// The request or the download broke. The text is log-only.
+    Transport(String),
+}
+
+/// Fetch one URL and say what came back.
 pub trait ArchiveFetcher: Send + Sync {
     /// GET one URL.
-    fn fetch<'a>(&'a self, url: &'a str) -> BoxFuture<'a, Result<Option<Vec<u8>>, String>>;
+    fn fetch<'a>(&'a self, url: &'a str) -> BoxFuture<'a, Result<Fetched, FetchError>>;
 }
 
 /// Production fetcher over the shared HTTP client.
@@ -58,37 +84,77 @@ impl ReqwestFetcher {
     }
 }
 
+/// What a status other than 200 means, or `None` for a 200 whose body is
+/// still to read. Only a 404 is "not found".
+///
+/// From GitHub's "Rate limits for the REST API" page, read 2026-10-13: an
+/// exhausted hourly limit is a 403 or 429 with `x-ratelimit-remaining: 0`
+/// and `x-ratelimit-reset` as the Unix second it lifts; a secondary limit
+/// is a 403 or 429 with `retry-after` in seconds when GitHub sends it. A
+/// secondary limit sent as a bare 403 cannot be told from a refusal
+/// without reading the body, so it counts as denied.
+fn refusal(
+    status: reqwest::StatusCode,
+    headers: &reqwest::header::HeaderMap,
+    now: u64,
+) -> Option<Fetched> {
+    let number = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|text| text.trim().parse::<u64>().ok())
+    };
+    let retry_after = number("retry-after");
+    let exhausted = number("x-ratelimit-remaining") == Some(0);
+    let limited = status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || (status == reqwest::StatusCode::FORBIDDEN && (exhausted || retry_after.is_some()));
+    Some(match status {
+        reqwest::StatusCode::OK => return None,
+        reqwest::StatusCode::NOT_FOUND => Fetched::NotFound,
+        _ if limited => Fetched::RateLimited {
+            retry_after: retry_after.or_else(|| {
+                number("x-ratelimit-reset")
+                    .filter(|_| exhausted)
+                    .map(|reset| reset.saturating_sub(now))
+            }),
+        },
+        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN => Fetched::Denied,
+        other => Fetched::Failed(other.as_u16()),
+    })
+}
+
 impl ArchiveFetcher for ReqwestFetcher {
-    fn fetch<'a>(&'a self, url: &'a str) -> BoxFuture<'a, Result<Option<Vec<u8>>, String>> {
+    fn fetch<'a>(&'a self, url: &'a str) -> BoxFuture<'a, Result<Fetched, FetchError>> {
         Box::pin(async move {
+            let transport = |error: reqwest::Error| FetchError::Transport(error.to_string());
             let mut response = self
                 .http
                 .get(url)
                 .header("accept", "application/vnd.github+json")
                 .send()
                 .await
-                .map_err(|error| format!("download failed: {error}"))?;
-            if response.status() != reqwest::StatusCode::OK {
-                return Ok(None);
+                .map_err(transport)?;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_secs())
+                .unwrap_or(0);
+            if let Some(answer) = refusal(response.status(), response.headers(), now) {
+                return Ok(answer);
             }
             if response
                 .content_length()
                 .is_some_and(|declared| declared > MAX_PLUGIN_ZIP_BYTES as u64)
             {
-                return Err("too large".to_owned());
+                return Err(FetchError::TooLarge);
             }
             let mut body = Vec::new();
-            while let Some(chunk) = response
-                .chunk()
-                .await
-                .map_err(|error| format!("download failed: {error}"))?
-            {
+            while let Some(chunk) = response.chunk().await.map_err(transport)? {
                 body.extend_from_slice(&chunk);
                 if body.len() > MAX_PLUGIN_ZIP_BYTES {
-                    return Err("too large".to_owned());
+                    return Err(FetchError::TooLarge);
                 }
             }
-            Ok(Some(body))
+            Ok(Fetched::Found(body))
         })
     }
 }
@@ -406,12 +472,19 @@ struct CommitInfo {
     sha: String,
 }
 
-fn fetch_failed(reason: String) -> InstallError {
-    if reason.contains("too large") {
-        InstallError::TooLarge
-    } else {
-        tracing::warn!(%reason, "plugin download failed");
-        InstallError::Download
+/// The body behind one URL, or `None` when GitHub has nothing there.
+async fn fetch_body(
+    fetcher: &dyn ArchiveFetcher,
+    url: &str,
+) -> Result<Option<Vec<u8>>, InstallError> {
+    match fetcher.fetch(url).await {
+        Ok(Fetched::Found(body)) => Ok(Some(body)),
+        Ok(_) => Ok(None),
+        Err(FetchError::TooLarge) => Err(InstallError::TooLarge),
+        Err(FetchError::Transport(reason)) => {
+            tracing::warn!(%reason, "plugin download failed");
+            Err(InstallError::Download)
+        }
     }
 }
 
@@ -425,7 +498,7 @@ async fn commit_for(
         "{API_BASE}/repos/{}/{}/commits/{reference}",
         source.owner, source.repo
     );
-    let Some(body) = fetcher.fetch(&url).await.map_err(fetch_failed)? else {
+    let Some(body) = fetch_body(fetcher, &url).await? else {
         return Ok(None);
     };
     let info: CommitInfo = serde_json::from_slice(&body).map_err(|_| InstallError::Download)?;
@@ -446,7 +519,7 @@ pub async fn resolve(
                 "{API_BASE}/repos/{}/{}/releases/latest",
                 source.owner, source.repo
             );
-            match fetcher.fetch(&url).await.map_err(fetch_failed)? {
+            match fetch_body(fetcher, &url).await? {
                 Some(body) => {
                     let release: LatestRelease =
                         serde_json::from_slice(&body).map_err(|_| InstallError::Download)?;
@@ -490,10 +563,8 @@ pub async fn stage(
         "{CODELOAD_BASE}/{}/{}/zip/{}",
         resolved.source.owner, resolved.source.repo, resolved.commit
     );
-    let archive = fetcher
-        .fetch(&url)
-        .await
-        .map_err(fetch_failed)?
+    let archive = fetch_body(fetcher, &url)
+        .await?
         .ok_or_else(|| InstallError::RefNotFound(format!("commit {}", resolved.commit)))?;
     if archive.len() > MAX_PLUGIN_ZIP_BYTES {
         return Err(InstallError::TooLarge);
@@ -712,6 +783,34 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    fn only_a_404_reads_as_not_found() {
+        use reqwest::StatusCode;
+        use reqwest::header::{HeaderMap, HeaderValue};
+
+        let sorted = |status: u16, pairs: &[(&'static str, &'static str)]| {
+            let mut headers = HeaderMap::new();
+            for (name, value) in pairs {
+                headers.insert(*name, HeaderValue::from_static(value));
+            }
+            refusal(StatusCode::from_u16(status).unwrap(), &headers, 1000)
+        };
+        let limited = |retry_after| Some(Fetched::RateLimited { retry_after });
+        let exhausted = [
+            ("x-ratelimit-remaining", "0"),
+            ("x-ratelimit-reset", "1600"),
+        ];
+        assert_eq!(sorted(200, &[]), None);
+        assert_eq!(sorted(404, &[]), Some(Fetched::NotFound));
+        assert_eq!(sorted(401, &[]), Some(Fetched::Denied));
+        assert_eq!(sorted(403, &[]), Some(Fetched::Denied));
+        assert_eq!(sorted(403, &exhausted), limited(Some(600)));
+        assert_eq!(sorted(403, &[("retry-after", "30")]), limited(Some(30)));
+        assert_eq!(sorted(429, &[]), limited(None));
+        assert_eq!(sorted(422, &[]), Some(Fetched::Failed(422)));
+        assert_eq!(sorted(500, &[]), Some(Fetched::Failed(500)));
     }
 
     #[test]

@@ -16,7 +16,7 @@ use serde_json::Value;
 
 use crate::auth::users::roles::Role;
 
-use super::install::{ArchiveEntry, ArchiveFetcher, ArchiveUnpacker};
+use super::install::{ArchiveEntry, ArchiveFetcher, ArchiveUnpacker, FetchError, Fetched};
 use super::protocol::RpcError;
 use super::runtime::{
     BoxFuture, CallError, EventKind, HostServices, LaunchSpec, PluginConnection, PluginEvent,
@@ -206,29 +206,32 @@ impl PluginLauncher for FakeLauncher {
     }
 }
 
-/// Scripted archive fetcher: URLs map to bytes (`None` = missing ref).
+/// Scripted archive fetcher: each URL gives the answer set for it, and a
+/// URL with none is a 404.
 pub struct FakeFetcher {
-    archives: Mutex<HashMap<String, Vec<u8>>>,
-    /// URLs that fail, with reasons.
-    pub failures: Mutex<HashMap<String, String>>,
+    answers: Mutex<HashMap<String, Fetched>>,
     /// Requested URLs, in order.
     pub requested: Mutex<Vec<String>>,
 }
 
 impl FakeFetcher {
-    /// Empty fetcher: every URL is a missing ref.
+    /// Empty fetcher: every URL is a 404.
     pub fn new() -> Self {
         Self {
-            archives: Mutex::new(HashMap::new()),
-            failures: Mutex::new(HashMap::new()),
+            answers: Mutex::new(HashMap::new()),
             requested: Mutex::new(Vec::new()),
         }
     }
 
     /// Serve bytes for one URL.
     pub fn insert(&self, url: &str, bytes: &[u8]) {
-        if let Ok(mut guard) = self.archives.lock() {
-            guard.insert(url.to_owned(), bytes.to_vec());
+        self.answer(url, Fetched::Found(bytes.to_vec()));
+    }
+
+    /// Answer one URL with anything GitHub can say.
+    pub fn answer(&self, url: &str, answer: Fetched) {
+        if let Ok(mut guard) = self.answers.lock() {
+            guard.insert(url.to_owned(), answer);
         }
     }
 }
@@ -240,21 +243,17 @@ impl Default for FakeFetcher {
 }
 
 impl ArchiveFetcher for FakeFetcher {
-    fn fetch<'a>(&'a self, url: &'a str) -> BoxFuture<'a, Result<Option<Vec<u8>>, String>> {
+    fn fetch<'a>(&'a self, url: &'a str) -> BoxFuture<'a, Result<Fetched, FetchError>> {
         Box::pin(async move {
             if let Ok(mut guard) = self.requested.lock() {
                 guard.push(url.to_owned());
             }
-            if let Ok(guard) = self.failures.lock()
-                && let Some(reason) = guard.get(url)
-            {
-                return Err(reason.clone());
-            }
             Ok(self
-                .archives
+                .answers
                 .lock()
                 .ok()
-                .and_then(|guard| guard.get(url).cloned()))
+                .and_then(|guard| guard.get(url).cloned())
+                .unwrap_or(Fetched::NotFound))
         })
     }
 }
