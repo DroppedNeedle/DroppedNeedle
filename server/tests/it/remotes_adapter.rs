@@ -1474,3 +1474,152 @@ async fn plex_keys_cannot_walk_to_other_paths() {
     }
     task.abort();
 }
+
+/// Ids in a request are the listener's to choose, and Plex and Jellyfin
+/// take them as part of the path. One that is not a plain id (it could
+/// walk to another path, or add a query) sends nothing and reads as not
+/// found, on browse, image and stream calls alike; a plain id reaches
+/// exactly its own path, and a genre name travels as one path segment.
+#[tokio::test]
+async fn request_ids_cannot_steer_plex_or_jellyfin_calls() {
+    use remotes::jellyfin::MixSeed;
+    let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let log = seen.clone();
+    let (base_url, task) = serve_fake(Router::new().fallback(move |request: Request<Body>| {
+        let asked = request
+            .uri()
+            .path_and_query()
+            .map(|full| full.as_str().to_owned())
+            .unwrap_or_default();
+        log.lock().expect("lock").push(asked);
+        async { StatusCode::NOT_FOUND }
+    }))
+    .await;
+    let take_seen = || std::mem::take(&mut *seen.lock().expect("lock"));
+    let paths = |seen: Vec<String>| -> Vec<String> {
+        seen.into_iter()
+            .map(|asked| asked.split('?').next().unwrap_or_default().to_owned())
+            .collect()
+    };
+    let client = http_client();
+    let plex = plex_handle(&base_url, Vec::new());
+    let jellyfin = jellyfin_handle(&base_url);
+    let jellyfin_adapter = JellyfinAdapter::new(
+        http_client(),
+        base_url.clone(),
+        JELLYFIN_KEY.to_owned(),
+        "jf-user-1".to_owned(),
+    );
+
+    let long_id = "7".repeat(600);
+    for id in [
+        "../Users",
+        "..",
+        "12/children",
+        "12?X-Plex-Token=other",
+        "12#x",
+        "%2e%2e",
+        "",
+        long_id.as_str(),
+    ] {
+        for (source, handle) in [("plex", &plex), ("jellyfin", &jellyfin)] {
+            let refused = [
+                handle.album_detail(id).await.err(),
+                handle.album_tracks(id).await.err(),
+                handle.artist_detail(id).await.err(),
+                handle.playlist_detail(id).await.err(),
+                handle.image_bytes(id, 300).await.err(),
+                handle.playlist_cover_bytes(id, 300).await.err(),
+            ];
+            assert!(
+                refused
+                    .iter()
+                    .all(|outcome| *outcome == Some(AdapterError::NotFound)),
+                "{source} took the id {id:?}: {refused:?}"
+            );
+        }
+        let refused = [
+            jellyfin_adapter.lyrics(id).await.err(),
+            jellyfin_adapter.similar(id, 10).await.err(),
+            jellyfin_adapter
+                .mix(&MixSeed::Item(id.to_owned()), 10)
+                .await
+                .err(),
+            jellyfin_adapter
+                .mix(&MixSeed::Artist(id.to_owned()), 10)
+                .await
+                .err(),
+        ];
+        assert!(
+            refused
+                .iter()
+                .all(|outcome| *outcome == Some(AdapterError::NotFound)),
+            "jellyfin took the id {id:?}: {refused:?}"
+        );
+        for (source, key) in [
+            ("jellyfin", id.to_owned()),
+            ("plex", format!("library/parts/{id}/file.flac")),
+        ] {
+            // A Plex part key is a path by nature, so a slash alone is fine.
+            if source == "plex" && id == "12/children" {
+                continue;
+            }
+            let handle = if source == "plex" { &plex } else { &jellyfin };
+            match handle.audio_request(&key) {
+                Err(AdapterError::Unsupported(_)) => {}
+                Err(other) => panic!("{source} stream key {key:?} failed as {other:?}"),
+                Ok(request) => panic!(
+                    "{source} stream key {key:?} would be sent to {}",
+                    request.url().path()
+                ),
+            }
+        }
+        assert_eq!(take_seen(), Vec::<String>::new(), "{id:?} reached a server");
+    }
+    for genre in ["..", "."] {
+        let outcome = jellyfin_adapter
+            .mix(&MixSeed::Genre(genre.to_owned()), 10)
+            .await;
+        assert_eq!(outcome.err(), Some(AdapterError::NotFound), "{genre:?}");
+    }
+    assert_eq!(take_seen(), Vec::<String>::new());
+
+    let _ = plex.album_detail("12").await;
+    let _ = plex.album_tracks("12").await;
+    let _ = plex.playlist_detail("12").await;
+    let _ = plex.image_bytes("12", 300).await;
+    assert_eq!(
+        paths(take_seen()),
+        [
+            "/library/metadata/12",
+            "/library/metadata/12/children",
+            "/playlists",
+            "/library/metadata/12/thumb",
+        ]
+    );
+    let id = "0123456789abcdef0123456789abcdef";
+    let dashed = "01234567-89ab-cdef-0123-456789abcdef";
+    let _ = jellyfin.album_detail(id).await;
+    let _ = jellyfin.playlist_detail(dashed).await;
+    let _ = jellyfin.image_bytes(id, 300).await;
+    let _ = jellyfin_adapter.lyrics(id).await;
+    let _ = jellyfin_adapter.similar(id, 10).await;
+    let _ = jellyfin_adapter
+        .mix(&MixSeed::Genre("Rock/Pop? 100%#1".to_owned()), 10)
+        .await;
+    let request = jellyfin.audio_request(id).expect("a plain id builds");
+    let _ = client.execute(request).await;
+    assert_eq!(
+        paths(take_seen()),
+        [
+            format!("/Items/{id}"),
+            format!("/Items/{dashed}"),
+            format!("/Items/{id}/Images/Primary"),
+            format!("/Audio/{id}/Lyrics"),
+            format!("/Items/{id}/Similar"),
+            "/MusicGenres/Rock%2FPop%3F%20100%25%231/InstantMix".to_owned(),
+            format!("/Audio/{id}/stream"),
+        ]
+    );
+    task.abort();
+}

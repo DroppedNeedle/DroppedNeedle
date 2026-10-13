@@ -24,7 +24,8 @@ use std::time::Duration;
 use serde::de::DeserializeOwned;
 
 use super::adapter::{
-    AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse, read_api_body, read_image,
+    AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse, checked_url, read_api_body,
+    read_image, request_id,
 };
 use super::jellyfin_models::{
     AuthenticationResult, Item, ItemPage, Lyrics, NamedPage, PlaybackReport, QueryFilters,
@@ -262,6 +263,7 @@ impl JellyfinAdapter {
     /// One album by id. None is absence (404).
     pub async fn album_detail(&self, id: &str) -> Result<Option<AlbumView>, AdapterError> {
         self.require_configured()?;
+        let id = request_id(id)?;
         let item: Option<Item> = self
             .get(
                 &format!("/Items/{id}"),
@@ -274,6 +276,7 @@ impl JellyfinAdapter {
     /// Album tracks in index order.
     pub async fn album_tracks(&self, id: &str) -> Result<Vec<TrackView>, AdapterError> {
         self.require_configured()?;
+        let id = request_id(id)?;
         let query = params(&[
             ("albumIds", id),
             ("includeItemTypes", "Audio"),
@@ -336,6 +339,7 @@ impl JellyfinAdapter {
     /// One artist by id. None is absence (404).
     pub async fn artist_detail(&self, id: &str) -> Result<Option<ArtistView>, AdapterError> {
         self.require_configured()?;
+        let id = request_id(id)?;
         let item: Option<Item> = self
             .get(
                 &format!("/Items/{id}"),
@@ -713,6 +717,7 @@ impl JellyfinAdapter {
     /// One playlist with its Audio tracks. None is absence.
     pub async fn playlist_detail(&self, id: &str) -> Result<Option<PlaylistDetail>, AdapterError> {
         self.require_configured()?;
+        let id = request_id(id)?;
         let meta: Option<Item> = self
             .get(
                 &format!("/Items/{id}"),
@@ -760,6 +765,7 @@ impl JellyfinAdapter {
     /// no lyrics for the item.
     pub async fn lyrics(&self, id: &str) -> Result<Option<LyricsView>, AdapterError> {
         self.require_configured()?;
+        let id = request_id(id)?;
         let lyrics: Option<Lyrics> = self.get(&format!("/Audio/{id}/Lyrics"), &[]).await?;
         let raw = lyrics.map(|lyrics| lyrics.lyrics).unwrap_or_default();
         if raw.is_empty() {
@@ -815,6 +821,7 @@ impl JellyfinAdapter {
     /// album rows contribute their tracks, up to `limit` tracks.
     pub async fn similar(&self, id: &str, limit: i64) -> Result<Vec<TrackView>, AdapterError> {
         self.require_configured()?;
+        let id = request_id(id)?;
         let mut query = params(&[("Fields", "ProviderIds"), ("EnableUserData", "true")]);
         query.push(("Limit".to_owned(), limit.to_string()));
         let page = self.items(&format!("/Items/{id}/Similar"), &query).await?;
@@ -834,16 +841,17 @@ impl JellyfinAdapter {
     }
 
     /// Instant mix for an item, artist, or genre. Preserved from v2 (three
-    /// routes); genre names escape `/` as `%2F` before hitting the path.
+    /// routes); a genre name is percent-encoded as one path segment.
     pub async fn mix(&self, seed: &MixSeed, limit: i64) -> Result<Vec<TrackView>, AdapterError> {
         self.require_configured()?;
         let mut query = params(&[("Fields", "ProviderIds"), ("EnableUserData", "true")]);
         query.push(("Limit".to_owned(), limit.to_string()));
         let endpoint = match seed {
-            MixSeed::Item(id) => format!("/Items/{id}/InstantMix"),
-            MixSeed::Artist(id) => format!("/Artists/{id}/InstantMix"),
+            MixSeed::Item(id) => format!("/Items/{}/InstantMix", request_id(id)?),
+            MixSeed::Artist(id) => format!("/Artists/{}/InstantMix", request_id(id)?),
             MixSeed::Genre(name) => {
-                format!("/MusicGenres/{}/InstantMix", name.replace('/', "%2F"))
+                let genre = genre_segment(name).ok_or(AdapterError::NotFound)?;
+                format!("/MusicGenres/{genre}/InstantMix")
             }
         };
         let page = self.items(&endpoint, &query).await?;
@@ -914,6 +922,7 @@ impl JellyfinAdapter {
         size: i64,
     ) -> Result<(Vec<u8>, String), AdapterError> {
         self.require_configured()?;
+        let id = request_id(id)?;
         let size = size.to_string();
         let query = params(&[("maxWidth", &size), ("maxHeight", &size), ("quality", "90")]);
         self.get_bytes(&format!("/Items/{id}/Images/Primary"), &query, "image/jpeg")
@@ -930,8 +939,12 @@ impl JellyfinAdapter {
         if !self.user_id.is_empty() {
             query.push(("userId".to_owned(), self.user_id.clone()));
         }
+        let invalid = || AdapterError::Unsupported("Invalid Jellyfin audio id".to_owned());
+        let id = request_id(id).map_err(|_| invalid())?;
+        let url =
+            checked_url(&self.base_url, &format!("/Audio/{id}/stream")).ok_or_else(invalid)?;
         self.client
-            .get(format!("{}/Audio/{id}/stream", self.base_url))
+            .get(url)
             .header("Authorization", self.auth_header())
             .query(&query)
             .build()
@@ -1064,7 +1077,7 @@ impl JellyfinAdapter {
         }
         let response = self
             .client
-            .get(format!("{}{endpoint}", self.base_url))
+            .get(checked_url(&self.base_url, endpoint).ok_or(AdapterError::NotFound)?)
             .header("Accept", "application/json")
             .header("Authorization", self.auth_header())
             .query(&query)
@@ -1133,7 +1146,7 @@ impl JellyfinAdapter {
         }
         let response = self
             .client
-            .get(format!("{}{endpoint}", self.base_url))
+            .get(checked_url(&self.base_url, endpoint).ok_or(AdapterError::NotFound)?)
             .header("Authorization", self.auth_header())
             .query(query)
             .timeout(REQUEST_TIMEOUT)
@@ -1283,6 +1296,22 @@ fn order_word(descending: bool) -> &'static str {
 
 fn sort_or<'a>(value: &'a str, fallback: &'a str) -> &'a str {
     if value.is_empty() { fallback } else { value }
+}
+
+/// The longest genre name sent as a path segment.
+const MAX_GENRE_BYTES: usize = 256;
+
+/// A genre name as one percent-encoded path segment: `/`, `?`, `#` and
+/// `%` in it cannot change the path or the query. A name that is a dot
+/// segment, empty or over-long has no segment.
+fn genre_segment(name: &str) -> Option<String> {
+    if name.is_empty() || name.len() > MAX_GENRE_BYTES || matches!(name, "." | "..") {
+        return None;
+    }
+    let mut holder = reqwest::Url::parse("http://genre.invalid/").ok()?;
+    holder.path_segments_mut().ok()?.pop().push(name);
+    let segment = holder.path().strip_prefix('/')?;
+    (!segment.is_empty() && !segment.contains('/')).then(|| segment.to_owned())
 }
 
 fn image_url_for(id: &str, tag: Option<&str>) -> Option<String> {

@@ -30,7 +30,8 @@ use std::sync::RwLock;
 use std::time::Duration;
 
 use super::adapter::{
-    AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse, read_api_body, read_image,
+    AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse, checked_url, read_api_body,
+    read_image, request_id,
 };
 use super::connections::{PlexServerTokens, ServerSettings};
 use super::models::{
@@ -112,19 +113,10 @@ impl PlexAdapter {
         !self.base_url().is_empty() && !self.token.is_empty()
     }
 
-    /// The address a validated path is sent to, checked on what was built
-    /// and not on the text: the same server as the base address, and
-    /// exactly the path asked for under it.
+    /// The address a path on this server is sent to, or `None` when
+    /// joining it would not land on that path of this server.
     fn checked_url(&self, path: &str) -> Option<reqwest::Url> {
-        let base = self.base_url();
-        let url = reqwest::Url::parse(&format!("{base}{path}")).ok()?;
-        let base = reqwest::Url::parse(&base).ok()?;
-        let expected = format!("{}{path}", base.path().trim_end_matches('/'));
-        let same_server = url.origin() == base.origin()
-            && url.username() == base.username()
-            && url.password() == base.password();
-        (same_server && url.path() == expected && url.query().is_none() && url.fragment().is_none())
-            .then_some(url)
+        checked_url(&self.base_url(), path)
     }
 
     /// Current base URL; an https upgrade rewrites it in place.
@@ -342,6 +334,7 @@ impl PlexAdapter {
     /// One album by rating key. None is absence.
     pub async fn album_detail(&self, id: &str) -> Result<Option<AlbumView>, AdapterError> {
         self.require_configured()?;
+        let id = request_id(id)?;
         let container = self
             .request(&format!("/library/metadata/{id}"), &[])
             .await?;
@@ -351,6 +344,7 @@ impl PlexAdapter {
     /// Album tracks via the metadata children endpoint.
     pub async fn album_tracks(&self, id: &str) -> Result<Vec<TrackView>, AdapterError> {
         self.require_configured()?;
+        let id = request_id(id)?;
         let container = self
             .request(&format!("/library/metadata/{id}/children"), &[])
             .await?;
@@ -417,6 +411,7 @@ impl PlexAdapter {
     /// One artist by rating key. None is absence.
     pub async fn artist_detail(&self, id: &str) -> Result<Option<ArtistView>, AdapterError> {
         self.require_configured()?;
+        let id = request_id(id)?;
         let container = self
             .request(&format!("/library/metadata/{id}"), &[])
             .await?;
@@ -579,6 +574,7 @@ impl PlexAdapter {
     /// One playlist with its tracks. None is absence.
     pub async fn playlist_detail(&self, id: &str) -> Result<Option<PlaylistDetail>, AdapterError> {
         self.require_configured()?;
+        let id = request_id(id)?;
         let Some(summary) = self
             .playlists()
             .await?
@@ -788,6 +784,7 @@ impl PlexAdapter {
         size: i64,
     ) -> Result<(Vec<u8>, String), AdapterError> {
         self.require_configured()?;
+        let id = request_id(id)?;
         let size = size.to_string();
         self.get_bytes(
             &format!("/library/metadata/{id}/thumb"),
@@ -850,6 +847,7 @@ impl PlexAdapter {
         size: i64,
     ) -> Result<(Vec<u8>, String), AdapterError> {
         self.require_configured()?;
+        let id = request_id(id)?;
         let container = self.audio_playlists().await?;
         let composite = container
             .metadata
@@ -859,9 +857,6 @@ impl PlexAdapter {
             .filter(|path| !path.is_empty())
             .unwrap_or_else(|| format!("/playlists/{id}/composite"));
         let composite = validated_cover_path(&composite)?;
-        if self.checked_url(composite).is_none() {
-            return Err(AdapterError::NotFound);
-        }
         let size = size.to_string();
         self.get_bytes(
             composite,
@@ -907,14 +902,20 @@ impl PlexAdapter {
     /// Pinned sections, or every music section when nothing is pinned.
     async fn resolve_sections(&self) -> Result<Vec<String>, AdapterError> {
         self.require_configured()?;
-        if !self.section_ids.is_empty() {
-            return Ok(self.section_ids.clone());
-        }
-        Ok(self
-            .music_libraries()
-            .await?
+        let sections = if self.section_ids.is_empty() {
+            self.music_libraries()
+                .await?
+                .into_iter()
+                .map(|(key, _)| key)
+                .collect()
+        } else {
+            self.section_ids.clone()
+        };
+        // Section keys go into request paths too. They come from settings
+        // or the server's own list, and are held to the same plain-id rule.
+        Ok(sections
             .into_iter()
-            .map(|(key, _)| key)
+            .filter(|section| request_id(section).is_ok())
             .collect())
     }
 
@@ -1113,17 +1114,17 @@ impl PlexAdapter {
         if !self.is_configured() {
             return Err(AdapterError::NotConfigured);
         }
-        let url = format!("{}{endpoint}", self.base_url());
+        let url = self.checked_url(endpoint).ok_or(AdapterError::NotFound)?;
         let response = self
             .client
-            .get(&url)
+            .get(url.clone())
             .query(pairs)
             .headers(self.headers())
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await
             .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
-        self.maybe_upgrade_base(&url, response.url());
+        self.maybe_upgrade_base(url.as_str(), response.url());
         let status = response.status();
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(AdapterError::Auth);
@@ -1161,9 +1162,10 @@ impl PlexAdapter {
                 reqwest::header::HeaderValue::from_static("image/*"),
             );
         }
+        let url = self.checked_url(endpoint).ok_or(AdapterError::NotFound)?;
         let response = self
             .client
-            .get(format!("{}{endpoint}", self.base_url()))
+            .get(url)
             .query(pairs)
             .headers(headers)
             .timeout(REQUEST_TIMEOUT)

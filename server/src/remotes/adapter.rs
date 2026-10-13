@@ -118,6 +118,49 @@ pub(crate) async fn read_api_body(
     }
 }
 
+/// The longest id accepted from a request. Real ones are 36 characters at
+/// most.
+const MAX_REQUEST_ID_BYTES: usize = 128;
+
+/// An id that came from a request, kept only when it is a plain id:
+/// ASCII letters, digits, `-` and `_`, not empty and not over-long. Plex
+/// and Jellyfin take ids as part of the request path, and the web
+/// framework has already decoded the id, so `../Users` or `12?x=1` would
+/// send the held credential to another path. Anything else is not found,
+/// with no request made.
+///
+/// Shapes checked: every `Id`, `ItemId`, `AlbumId` and `ParentId` in the
+/// recorded Jellyfin 10.10.6 answers under `tests/reference/compat/` is
+/// 32 hex characters, and the in-repo mocks use forms like `jf-al-1` and
+/// `px-pl-1`. Plex rating keys are digits and Jellyfin also accepts the
+/// dashed UUID form; neither was probed against a live server here.
+pub(crate) fn request_id(id: &str) -> Result<&str, AdapterError> {
+    let plain = !id.is_empty()
+        && id.len() <= MAX_REQUEST_ID_BYTES
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'));
+    if plain {
+        Ok(id)
+    } else {
+        Err(AdapterError::NotFound)
+    }
+}
+
+/// The address a path is sent to, checked on what was built and not on
+/// the text: the same server as the base address, exactly the path asked
+/// for under it, and no query or fragment of the path's own.
+pub(crate) fn checked_url(base: &str, path: &str) -> Option<reqwest::Url> {
+    let url = reqwest::Url::parse(&format!("{base}{path}")).ok()?;
+    let base = reqwest::Url::parse(base).ok()?;
+    let expected = format!("{}{path}", base.path().trim_end_matches('/'));
+    let same_server = url.origin() == base.origin()
+        && url.username() == base.username()
+        && url.password() == base.password();
+    (same_server && url.path() == expected && url.query().is_none() && url.fragment().is_none())
+        .then_some(url)
+}
+
 /// One page of remote records plus the upstream match total.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RemotePage<T> {
