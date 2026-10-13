@@ -65,9 +65,10 @@ fn slskd_error(error: SlskdError) -> SourceError {
 
 fn sab_error(error: SabnzbdError) -> SourceError {
     match &error {
-        SabnzbdError::RejectedNzb | SabnzbdError::RejectedNzbUrl | SabnzbdError::MissingNzbUrl => {
-            SourceError::Rejected(error.to_string())
-        }
+        SabnzbdError::RejectedNzb
+        | SabnzbdError::RejectedNzbUrl
+        | SabnzbdError::MissingNzbUrl
+        | SabnzbdError::NzbTooLarge => SourceError::Rejected(error.to_string()),
         _ => SourceError::Unavailable(error.to_string()),
     }
 }

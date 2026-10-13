@@ -1272,6 +1272,33 @@ async fn oversized_indexer_bodies_are_refused() {
     assert!(matches!(err, ProwlarrError::Decode(_)), "{err:?}");
 }
 
+/// An NZB or a SABnzbd answer past its cap is an error, however the
+/// server sends it: here both arrive in pieces with no declared length.
+#[tokio::test]
+async fn oversized_nzbs_and_sabnzbd_answers_are_refused() {
+    let nzb = format!(
+        "<nzb><!-- {} --></nzb>",
+        "x".repeat(usenet::sabnzbd::MAX_NZB_BYTES)
+    );
+    let (base, _server) = serve_streamed(nzb.into_bytes()).await;
+    let err = sab_client(&base)
+        .fetch_nzb(&format!("{base}/big.nzb"), TIMEOUT)
+        .await
+        .expect_err("too large");
+    assert!(matches!(err, NzbFetchError::TooLarge), "{err:?}");
+
+    let answer = format!(
+        "{{\"queue\": {{\"slots\": []}}{}}}",
+        " ".repeat(usenet::sabnzbd::MAX_SABNZBD_BODY_BYTES)
+    );
+    let (base, _server) = serve_streamed(answer.into_bytes()).await;
+    let err = sab_client(&base)
+        .queue(TIMEOUT)
+        .await
+        .expect_err("too large");
+    assert!(matches!(err, SabnzbdError::ResponseTooLarge), "{err:?}");
+}
+
 // ---------------------------------------------------------------------------
 // Transport failures never carry the request URL.
 // ---------------------------------------------------------------------------

@@ -18,6 +18,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 
 use super::policy::UsenetPolicy;
+use super::{BodyError, read_capped};
 use crate::http_client::transport_error;
 
 pub use super::sabnzbd_models::{
@@ -26,6 +27,21 @@ pub use super::sabnzbd_models::{
 use super::sabnzbd_models::{
     CategoriesReply, ConfigReply, HistoryReply, QueueReply, StatusReply, VersionReply,
 };
+
+/// The most an NZB may weigh. An NZB lists one segment per posted article:
+/// about 120 bytes of XML for an article of about 750 KB, so roughly
+/// 1/6000 of the release. That is 2 MB for a 10 GB box set and 17 MB for
+/// 100 GB. 50 MB leaves room for older posts with smaller articles and
+/// still bounds what one enqueue holds in memory, since the NZB is handed
+/// to SABnzbd from memory. The figures are arithmetic, not a measurement
+/// of a live indexer.
+pub const MAX_NZB_BYTES: usize = 50 * 1024 * 1024;
+
+/// The most one SABnzbd API answer may weigh. The largest are the queue
+/// and a 50-job history page. At a few kilobytes a job, and tens for one
+/// with a long unpack log, a real answer is a few megabytes at worst.
+/// Those sizes are an estimate, not a measurement.
+pub const MAX_SABNZBD_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
 // Errors + credential scrubbing.
@@ -57,6 +73,12 @@ pub enum SabnzbdError {
     /// SABnzbd returned a body that is neither JSON nor its text form.
     #[error("SABnzbd returned non-JSON: {0}")]
     NonJson(String),
+    /// SABnzbd's answer passed [`MAX_SABNZBD_BODY_BYTES`].
+    #[error("SABnzbd's answer is too large to read")]
+    ResponseTooLarge,
+    /// The indexer's NZB passed [`MAX_NZB_BYTES`].
+    #[error("the NZB is larger than {} MB and was not fetched", MAX_NZB_BYTES / (1024 * 1024))]
+    NzbTooLarge,
     /// Two jobs matched one handle; refusing to guess.
     #[error("SABnzbd returned an ambiguous job identity")]
     AmbiguousIdentity,
@@ -108,6 +130,10 @@ pub enum NzbFetchError {
         /// Body snippet.
         snippet: String,
     },
+    /// The NZB passed [`MAX_NZB_BYTES`]. The indexer answered, so SABnzbd
+    /// is not handed the URL either.
+    #[error("the NZB is larger than {} MB", MAX_NZB_BYTES / (1024 * 1024))]
+    TooLarge,
 }
 
 /// Scrub credential-looking query values from addurl errors: the Newznab
@@ -407,10 +433,12 @@ impl SabnzbdClient {
             .get("content-type")
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
-        let bytes = response
-            .bytes()
+        let bytes = read_capped(response, MAX_NZB_BYTES)
             .await
-            .map_err(|err| NzbFetchError::Transport(transport_error(err)))?;
+            .map_err(|error| match error {
+                BodyError::TooLarge => NzbFetchError::TooLarge,
+                BodyError::Transport(detail) => NzbFetchError::Transport(detail),
+            })?;
         let head: Vec<u8> = bytes.iter().take(512).copied().collect();
         if !looks_like_nzb(&head) {
             let snippet = String::from_utf8_lossy(&bytes).chars().take(200).collect();
@@ -420,7 +448,7 @@ impl SabnzbdClient {
                 snippet,
             });
         }
-        Ok(bytes.to_vec())
+        Ok(bytes)
     }
 
     fn api_url(&self) -> String {
@@ -500,11 +528,13 @@ impl SabnzbdClient {
                 snippet: response_snippet(response).await,
             });
         }
-        let text = response
-            .text()
+        let bytes = read_capped(response, MAX_SABNZBD_BODY_BYTES)
             .await
-            .map_err(|err| SabnzbdError::Transport(transport_error(err)))?;
-        parse_body(&text)
+            .map_err(|error| match error {
+                BodyError::TooLarge => SabnzbdError::ResponseTooLarge,
+                BodyError::Transport(detail) => SabnzbdError::Transport(detail),
+            })?;
+        parse_body(&String::from_utf8_lossy(&bytes))
     }
 
     async fn parse_add(&self, response: reqwest::Response) -> Result<AddResponse, SabnzbdError> {
@@ -571,14 +601,11 @@ fn is_auth_error(message: &str) -> bool {
     low.contains("api key incorrect") || low.contains("api key required")
 }
 
+/// The start of an error body. One longer than a few kilobytes reads as
+/// empty.
 async fn response_snippet(response: reqwest::Response) -> String {
-    response
-        .text()
-        .await
-        .unwrap_or_default()
-        .chars()
-        .take(200)
-        .collect()
+    let bytes = read_capped(response, 8 * 1024).await.unwrap_or_default();
+    String::from_utf8_lossy(&bytes).chars().take(200).collect()
 }
 
 /// The NZB head check (v2 `fetch_nzb`): `<?xml` or `<nzb` up front, or
@@ -930,6 +957,7 @@ impl SabnzbdQueue {
                     snippet: "indexer answered; addurl cannot help".to_owned(),
                 });
             }
+            Err(NzbFetchError::TooLarge) => return Err(SabnzbdError::NzbTooLarge),
             Err(NzbFetchError::ContentRejection { snippet, .. }) => {
                 // An error page can echo the URL it was asked for.
                 return Err(SabnzbdError::Api {

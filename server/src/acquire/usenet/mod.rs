@@ -35,22 +35,28 @@ pub mod xml;
 /// still stops an indexer from filling memory.
 pub const MAX_INDEXER_BODY_BYTES: usize = 10 * 1024 * 1024;
 
-/// Why an indexer body could not be read.
+/// Why a response body could not be read.
 pub(crate) enum BodyError {
-    /// The body is larger than [`MAX_INDEXER_BODY_BYTES`].
+    /// The body is larger than the cap it was read under.
     TooLarge,
     /// The connection broke part-way. Never holds the request URL.
     Transport(String),
 }
 
-/// Read an indexer body, giving up as soon as it passes the cap, whether
-/// or not the indexer declared its length.
-pub(crate) async fn read_indexer_body(
+/// Read an indexer body under [`MAX_INDEXER_BODY_BYTES`].
+pub(crate) async fn read_indexer_body(response: reqwest::Response) -> Result<Vec<u8>, BodyError> {
+    read_capped(response, MAX_INDEXER_BODY_BYTES).await
+}
+
+/// Read a body, giving up as soon as it passes `cap` bytes, whether or
+/// not the server declared its length.
+pub(crate) async fn read_capped(
     mut response: reqwest::Response,
+    cap: usize,
 ) -> Result<Vec<u8>, BodyError> {
     if response
         .content_length()
-        .is_some_and(|length| length > MAX_INDEXER_BODY_BYTES as u64)
+        .is_some_and(|length| length > cap as u64)
     {
         return Err(BodyError::TooLarge);
     }
@@ -60,7 +66,7 @@ pub(crate) async fn read_indexer_body(
         .await
         .map_err(|error| BodyError::Transport(crate::http_client::transport_error(error)))?
     {
-        if body.len() + chunk.len() > MAX_INDEXER_BODY_BYTES {
+        if body.len() + chunk.len() > cap {
             return Err(BodyError::TooLarge);
         }
         body.extend_from_slice(&chunk);
