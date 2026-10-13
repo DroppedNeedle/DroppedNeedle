@@ -1,324 +1,164 @@
-//! Stage-8 E2E: library journeys through the real app.
+//! Library journeys.
 //!
-//! Everything here runs against `create_app` with the production
-//! SQLite bundle over scratch databases plus the library test bundle
-//! (scripted identify providers, memory stores, publish cell under a
-//! sandbox root). No test touches the network, the production
-//! database, or the real library: every root is a fresh sandbox
-//! under the temp dir, planted from read-only fixture copies.
+//! The journeys run the production app on a scratch data directory
+//! ([`TestApp`]) with MusicBrainz and AcoustID scripted at the two provider
+//! ports. The background loops run as they do in production, so a journey
+//! waits on what it can observe: a scan run's state, the identification
+//! queue, a job's state. Rows are read and seeded through connections of
+//! the journey's own to the app's database. Every folder is a fresh sandbox
+//! under the scratch directory, planted from read-only fixture copies.
 //!
-//! Journeys (each owns a scratch dir, parallel-safe):
-//!
-//! - `library_journey_scan_identify_review_organize_undo`: add root →
-//!   scan → identify → review → approve → auto-organize → Undo, with
-//!   a scan purity pin (zero byte writes across scan+identify).
-//! - `library_journey_retag_apply_baseline_restore`: manual retag
-//!   preview → Apply → baseline restore.
-//! - `manage_routes_limit_a_trusted_user_to_a_plain_retag`: what a
-//!   trusted user may and may not do on the manage routes.
-//! - `library_loops_start_and_stop`: every background loop starts
-//!   over the real bundle and shuts down cleanly.
-//! - `library_journey_undo_edition_then_reidentify`: an automatic
-//!   edition undone to review, then an explicit re-identification with
-//!   controls, candidate review, the choice, and the edition finder.
+//! The tests on `bare_library` are component tests: they step a worker or a
+//! store by hand, on a library bundle with no app around it.
 
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::common::ScratchDir;
-use axum::Router;
-use axum::body::Body;
-use axum::http::{HeaderMap, Request, StatusCode};
-use droppedneedle::auth::prod::ProdAuth;
-use droppedneedle::auth::session::cookies::COOKIE_NAME;
-use droppedneedle::auth::users::stores::SystemClock;
-use droppedneedle::auth::wiring::AuthSetup;
-use droppedneedle::config::DEFAULT_PORT;
-use droppedneedle::db::{DbConfig, DbRuntime, open_runtime};
-use droppedneedle::http_client::HttpClientFactory;
+use crate::common::library::ScriptedIdentify;
+use crate::common::{ScratchDir, TestApp, closed_outbound};
+use axum::http::StatusCode;
+use droppedneedle::bootstrap::Port;
 use droppedneedle::ids::{IdGenerator, UuidGenerator};
-use droppedneedle::library::identify::models::RecallResult;
+use droppedneedle::library::contrib::ContribProviders;
+use droppedneedle::library::identify::models::{LocalAlbumFacts, RecallResult};
+use droppedneedle::library::identify::sqlite::SqliteIdentifyStore;
 use droppedneedle::library::matching::{CreditedArtist, Release, ReleaseTrack};
-use droppedneedle::library::wiring::LibrarySetup;
-use droppedneedle::runtime_config::sections::SecuritySettings;
-use droppedneedle::runtime_config::{
-    ConfigStore, Crypto, Secret, secret_sections::WrappedSettings,
-};
-use droppedneedle::{AppConfig, AppState, create_app, reads::ReadsSetup};
+use droppedneedle::library::scan::SqliteScanStore;
+use droppedneedle::library::wiring::{LibrarySetup, TestContribProviders};
+use droppedneedle::runtime_config::{ConfigStore, Crypto};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use tower::ServiceExt as _;
 
-/// Fixed host for every request.
-const HOST: &str = "e2e.test";
 /// The two tied editions the scripted recall offers. Real release MBIDs,
 /// because choosing an edition checks the ID's shape.
 const REL_1: &str = "11111111-1111-4111-8111-111111111111";
 const REL_2: &str = "22222222-2222-4222-8222-222222222222";
-/// Wrapped shared secret saved into every scratch config.
-const TEST_WRAPPED_KEY: &str = "lib-journey-wrapped-key-1";
 
-/// One scratch deployment: migrated database, production adapters,
-/// library test bundle, and the app router over them.
-struct Lib {
-    /// Held, never read: dropping it would close the pool out from under
-    /// the adapters.
-    #[allow(dead_code)]
-    runtime: DbRuntime,
-    bundle: ProdAuth,
-    store: Arc<ConfigStore>,
-    crypto: Arc<Crypto>,
-    http: HttpClientFactory,
-    ids: Arc<UuidGenerator>,
-    clock: Arc<SystemClock>,
-    dir: PathBuf,
-    /// Dropped last: the scratch directory goes away with the test.
-    _scratch: ScratchDir,
-    db_path: PathBuf,
-    library: LibrarySetup,
+/// The app for one journey, the provider scripts it answers from, and the
+/// journey's own connections to its database.
+struct Rig {
+    app: TestApp,
+    identify: Arc<ScriptedIdentify>,
+    contrib: TestContribProviders,
+    scan_store: SqliteScanStore,
+    identify_store: SqliteIdentifyStore,
+    /// When the last identification job the journey accounted for ended.
+    settled_at: Cell<i64>,
 }
 
-impl Lib {
-    async fn open(tag: &str) -> Self {
-        let scratch = ScratchDir::new(&format!("lib-journey-{tag}"));
-        let dir = scratch.to_path_buf();
-        let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
-            .await
-            .expect("scratch runtime opens");
-        let crypto = Arc::new(Crypto::from_key_bytes(&[7u8; 32]).expect("test key"));
-        let store = Arc::new(
-            ConfigStore::open(
-                &dir.join("config.json"),
-                Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
-            )
-            .expect("scratch config opens"),
-        );
-        let mut security: SecuritySettings = store.get().expect("security section reads");
-        security.hibp_check = false;
-        store.save(security).expect("hibp switch saves");
-        store
-            .save_secret(WrappedSettings {
-                api_key: Secret::new(TEST_WRAPPED_KEY),
-            })
-            .expect("wrapped key saves");
-
-        let ids = Arc::new(UuidGenerator);
-        let clock = Arc::new(SystemClock);
-        let bundle = ProdAuth::new(
-            runtime.pool(),
-            runtime.lane(),
-            Arc::clone(&crypto),
-            Arc::clone(&ids) as Arc<dyn IdGenerator>,
-            Arc::clone(&clock) as Arc<dyn droppedneedle::auth::users::stores::Clock>,
-            &dir.join("avatars"),
-        );
-        let http = HttpClientFactory::new().expect("http factory builds");
-        let db_path = dir.join("app.db");
-        // The library bundle builds once here and is shared with the
-        // app: memory stores must survive across calls.
-        let users = AuthSetup::build(
-            bundle.clone(),
-            Arc::clone(&store),
-            Arc::clone(&crypto),
-            &http,
-            Arc::clone(&ids) as Arc<dyn IdGenerator>,
-            Arc::clone(&clock) as Arc<dyn droppedneedle::auth::users::stores::Clock>,
-            "",
-        )
-        .expect("prod auth bundle builds")
-        .users;
-        let library = LibrarySetup::for_tests_at(
-            users,
-            Arc::clone(&ids) as Arc<dyn IdGenerator>,
-            &db_path,
-            Arc::clone(&store),
-        )
-        .expect("library bundle builds");
+impl Rig {
+    async fn start(tag: &str) -> Self {
+        let identify = ScriptedIdentify::new();
+        let contrib = TestContribProviders::default();
+        let mut outbound = closed_outbound();
+        outbound.identify_providers = Port::given(identify.clone());
+        outbound.contribution_providers = Port::given(ContribProviders {
+            discogs: contrib.discogs.clone(),
+            musicbrainz: contrib.musicbrainz.clone(),
+        });
+        let app = TestApp::start_with(tag, outbound).await;
+        let db = &app.config.library_db_path;
         Self {
-            runtime,
-            bundle,
-            store,
-            crypto,
-            http,
-            ids,
-            clock,
-            dir,
-            _scratch: scratch,
-            db_path,
-            library,
+            scan_store: SqliteScanStore::open(db).expect("scan rows open"),
+            identify_store: SqliteIdentifyStore::open(db).expect("identify rows open"),
+            app,
+            identify,
+            contrib,
+            settled_at: Cell::new(0),
         }
     }
 
-    /// The app router over this deployment's bundles.
-    fn router(&self) -> Router {
-        let auth = AuthSetup::build(
-            self.bundle.clone(),
-            Arc::clone(&self.store),
-            Arc::clone(&self.crypto),
-            &self.http,
-            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            Arc::clone(&self.clock) as Arc<dyn droppedneedle::auth::users::stores::Clock>,
-            "",
-        )
-        .expect("prod auth bundle builds");
-        let reads = ReadsSetup::build(
-            self.runtime.pool(),
-            auth.users.clone(),
-            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            crate::common::reads_inputs(
-                Arc::clone(&self.store),
-                self.db_path.parent().expect("db dir"),
-                self.runtime.lane().clone(),
-            ),
-            None,
-        )
-        .with_collections(droppedneedle::reads::collections::db::CollectionsDb::new(
-            self.runtime.pool().clone(),
-            self.runtime.lane().clone(),
-        ));
-        let mut app_config = AppConfig::new(DEFAULT_PORT);
-        app_config.root_app_dir = self
-            .db_path
-            .parent()
-            .map(|parent| parent.to_path_buf())
-            .unwrap_or_else(std::env::temp_dir);
-        let (media, _worker) = droppedneedle::media::MediaSetup::build(
-            &self.db_path,
-            &app_config,
-            auth.users.clone(),
-            Arc::clone(&self.crypto),
-            &self.http,
-            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            Some(self.library.root_source()),
-            self.runtime.pool().clone(),
-            self.runtime.lane().clone(),
-            Arc::clone(&self.store),
-            Arc::new(droppedneedle::remotes::adapter::PlaylistImportSink::new(
-                reads.collections.clone(),
-            )),
-            &droppedneedle::bootstrap::Outbound::live(),
-        )
-        .expect("media bundle builds");
-        let mut reads = reads;
-        let acquire = droppedneedle::acquire::AcquireSetup::build(
-            droppedneedle::acquire::db::AcquireDb::from_runtime(&self.runtime),
-            &app_config,
-            auth.users.clone(),
-            &self.http,
-            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            Arc::clone(&self.store),
-            &mut reads.collections,
-            &droppedneedle::bootstrap::Outbound::live(),
-        )
-        .expect("acquire bundle builds");
-        let compat = droppedneedle::compat::CompatSetup::build(
-            droppedneedle::compat::setup::CompatDeps::over_reads(
-                auth.users.clone(),
-                Arc::clone(&self.crypto),
-                media.playback.clone(),
-                media.stream.engine.clone(),
-                self.library.clone(),
-                &reads,
-                droppedneedle::compat::settings::LiveSettings::from_config(Arc::clone(&self.store)),
-            ),
-        );
-        let providers = Arc::new(droppedneedle::providers::Providers::with_memory_cache());
-        let admin = droppedneedle::admin::AdminSetup::for_tests(
-            auth.users.clone(),
-            acquire.requests.quota.clone(),
-            Arc::new(droppedneedle::providers::InMemoryProviderCache::new()),
-            providers.clone(),
-        );
-        let jobs = droppedneedle::jobs::wiring::JobsSetup::for_tests(auth.users.clone());
-        let plugins = droppedneedle::plugins::wiring::PluginsSetup::for_tests(
-            auth.users.clone(),
-            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            jobs.registry().clone(),
-        )
-        .expect("test plugins bundle builds");
-        let settings = droppedneedle::settings::wiring::SettingsSetup::for_tests(
-            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            auth.users.clone(),
-        )
-        .expect("test settings bundle builds");
-        let state = AppState::new(
-            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            self.http.clone(),
-            app_config,
-            auth,
-            reads,
-            providers,
-            media,
-            acquire,
-            self.library.clone(),
-            compat,
-            admin,
-            settings,
-            jobs,
-            plugins,
-            droppedneedle::concerts::ConcertsSetup::unwired(),
-        );
-        create_app(state)
+    /// End the journey: the app stops as it does in production, and the
+    /// harness fails the journey if a background loop held that up.
+    async fn stop(self) {
+        self.app.stop().await;
     }
-}
 
-async fn call(
-    app: Router,
-    method: &str,
-    uri: &str,
-    headers: &[(&str, &str)],
-    body: Option<Value>,
-) -> (StatusCode, Value) {
-    let mut builder = Request::builder().method(method).uri(uri);
-    builder = builder.header("host", HOST);
-    for (name, value) in headers {
-        builder = builder.header(*name, *value);
-    }
-    let body = match body {
-        Some(json) => {
-            builder = builder.header("content-type", "application/json");
-            Body::from(json.to_string())
+    /// Stop the app and build it again on the same data directory.
+    async fn restart(self) -> Self {
+        Self {
+            app: self.app.restart().await,
+            ..self
         }
-        None => Body::empty(),
-    };
-    let response = app
-        .oneshot(builder.body(body).expect("request builds"))
-        .await
-        .expect("router responds");
-    let status = response.status();
-    let _headers: HeaderMap = response.headers().clone();
-    let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
-        .await
-        .expect("body reads");
-    let json = if bytes.is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_slice(&bytes).expect("body is json")
-    };
-    let _ = COOKIE_NAME;
-    (status, json)
-}
+    }
 
-fn bearer(token: &str) -> String {
-    format!("Bearer {token}")
-}
+    /// Pause identification as the owner. Returns the switch's revision.
+    async fn pause_identification(&self) -> u64 {
+        let auth = self.app.login_admin().await;
+        let headers = [("authorization", auth.as_str())];
+        let (status, body) = self
+            .app
+            .call("GET", "/api/v3/library/activity", &headers, None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let control = control_revision(&body);
+        let (status, body) = self
+            .app
+            .call(
+                "POST",
+                "/api/v3/library/identification/pause",
+                &headers,
+                Some(json!({"expected_revision": control})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["row_revision"].as_u64().expect("revision")
+    }
 
-async fn setup_admin(app: Router, username: &str, password: &str) -> String {
-    let (status, body) = call(
-        app,
-        "POST",
-        "/api/v3/auth/setup",
-        &[],
-        Some(json!({
-            "username": username,
-            "password": password,
-            "display_name": username,
-            "transport": "bearer",
-        })),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED, "setup must succeed: {body}");
-    body["token"].as_str().expect("admin token").to_owned()
+    /// Let identification run again; the loop wakes at once.
+    async fn resume_identification(&self, paused_at: u64) {
+        let auth = self.app.login_admin().await;
+        let (status, body) = self
+            .app
+            .call(
+                "POST",
+                "/api/v3/library/identification/resume",
+                &[("authorization", auth.as_str())],
+                Some(json!({"expected_revision": paused_at})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
+    /// The owner chooses `REL_1` as the album's edition.
+    async fn choose_first_edition(&self, album: &str) {
+        let auth = self.app.login_admin().await;
+        let (status, body) = self
+            .app
+            .call(
+                "PUT",
+                &format!("/api/v3/library/albums/{album}/edition"),
+                &[("authorization", auth.as_str())],
+                Some(json!({"release_mbid": REL_1})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
+    /// Wait until the identification queue is idle, and check that exactly
+    /// `jobs` jobs ended since the journey last asked.
+    async fn identified(&self, jobs: i64) {
+        let since = self.settled_at.get();
+        let db = self.app.db();
+        let (ended, latest) = self
+            .app
+            .until("identification settles", || {
+                let (open, ended, latest): (i64, i64, i64) = db
+                    .query_row(
+                        "SELECT COALESCE(SUM(state IN ('queued', 'running')), 0), \
+                         COALESCE(SUM(state NOT IN ('queued', 'running') AND updated_ms > ?1), 0), \
+                         COALESCE(MAX(updated_ms), 0) FROM library_identify_jobs",
+                        [since],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .expect("identify queue reads");
+                async move { (open == 0 && ended >= jobs).then_some((ended, latest)) }
+            })
+            .await;
+        assert_eq!(ended, jobs, "identification jobs that ran");
+        self.settled_at.set(latest);
+    }
 }
 
 fn fixtures_dir() -> PathBuf {
@@ -398,12 +238,13 @@ async fn drain_scans(library: &LibrarySetup) {
 /// ambiguous review, never guess. Both answer to the release MBID the
 /// files carry (as if MusicBrainz had folded it into each), so the
 /// album id cannot pick one.
-fn ambiguous_recall(library: &LibrarySetup, album_id: &str) -> RecallResult {
+fn ambiguous_recall(store: &SqliteIdentifyStore, album_id: &str) -> RecallResult {
     use droppedneedle::library::identify::stores::FactsSource as _;
-    let facts = library
-        .identify_store
-        .album_facts(album_id)
-        .expect("album facts");
+    ambiguous_from(&store.album_facts(album_id).expect("album facts"))
+}
+
+/// [`ambiguous_recall`] for the album identification is asking about.
+fn ambiguous_from(facts: &LocalAlbumFacts) -> RecallResult {
     let tagged: Vec<String> = facts
         .tracks
         .iter()
@@ -464,7 +305,7 @@ fn read_title(path: &Path) -> String {
 /// album's editions (a merge that detaches conflicting editions): the
 /// dropped editions are the candidates, keyed `group:release`.
 /// Identification itself never files one; it always picks a best guess.
-fn file_edition_review(library: &LibrarySetup, album_id: &str) -> String {
+fn file_edition_review(store: &SqliteIdentifyStore, album_id: &str) -> String {
     use droppedneedle::library::identify::models::CandidateEvidence;
     let candidate = |group: &str, release: &str| CandidateEvidence {
         candidate_key: format!("{group}:{release}"),
@@ -480,7 +321,7 @@ fn file_edition_review(library: &LibrarySetup, album_id: &str) -> String {
     };
     let id = format!("rev-{album_id}");
     droppedneedle::library::identify::review::file_review(
-        library.identify_store.as_ref(),
+        store,
         &id,
         album_id,
         "EDITION_CLEARED_CONFLICT",
@@ -491,48 +332,31 @@ fn file_edition_review(library: &LibrarySetup, album_id: &str) -> String {
 
 #[tokio::test]
 async fn library_journey_scan_identify_review_organize_undo() {
-    let lib = Lib::open("organize").await;
-    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
-    let auth = bearer(&admin);
+    let rig = Rig::start("lib-organize").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
     let headers = [("authorization", auth.as_str())];
 
+    // Scripted providers tie two candidates for whatever album is asked
+    // about.
+    rig.identify.recall_from(ambiguous_from);
+
     // Plant two tracks in one album dir, then add the root.
-    let music = lib.dir.join("music");
+    let music = app.config.root_app_dir.join("music");
     let file_a = plant(&music, "album-a/01.flac", "management_full.flac");
     let file_b = plant(&music, "album-a/02.flac", "management_full.flac");
     let title_a_before = read_title(&file_a);
     let title_b_before = read_title(&file_b);
     let bytes_before = snapshot_tree(&music);
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/roots",
-        &headers,
-        Some(json!({"id": "music", "path": music.to_string_lossy()})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED, "{body}");
-
-    // Scan, then drive the supervisor until idle.
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/scan",
-        &headers,
-        Some(json!({})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let run_id = body["run_id"].as_str().expect("run id").to_owned();
-    drain_scans(&lib.library).await;
-    let (status, body) = call(
-        lib.router(),
-        "GET",
-        &format!("/api/v3/library/scan/runs/{run_id}"),
-        &headers,
-        None,
-    )
-    .await;
+    let first_scan = app.add_library_folder("music", &music).await;
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/scan/runs/{first_scan}"),
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["run"]["state"], json!("completed"));
     assert_eq!(
@@ -540,49 +364,37 @@ async fn library_journey_scan_identify_review_organize_undo() {
         Some(2),
         "exactly the two planted tracks index"
     );
-    let files = body["files"].as_array().expect("run files");
-    assert_eq!(files.len(), 2);
-    let track_a = files
-        .iter()
-        .find(|file| file["relative_path"] == json!("album-a/01.flac"))
-        .and_then(|file| file["track_id"].as_str())
-        .expect("track a id")
-        .to_owned();
-    let track_b = files
-        .iter()
-        .find(|file| file["relative_path"] == json!("album-a/02.flac"))
-        .and_then(|file| file["track_id"].as_str())
-        .expect("track b id")
-        .to_owned();
+    let (track_a, track_b) = {
+        use droppedneedle::library::scan::CatalogStore as _;
+        let track = |path| {
+            rig.scan_store
+                .track_at("music", path)
+                .expect("track indexed")
+        };
+        (track("album-a/01.flac"), track("album-a/02.flac"))
+    };
 
-    // Purity: scan plus watcher work wrote zero media bytes.
-    lib.library.watcher_tick().await;
+    // Purity: the scan wrote zero media bytes.
     assert_eq!(snapshot_tree(&music), bytes_before);
     assert_eq!(read_title(&file_a), title_a_before);
     assert_eq!(read_title(&file_b), title_b_before);
 
     // Identification keys on the catalog album the reads API serves.
-    let (status, body) = call(
-        lib.router(),
-        "GET",
-        &format!("/api/v3/library/tracks/{track_a}"),
-        &headers,
-        None,
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/tracks/{track_a}"),
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let album_id = body["album_id"].as_str().expect("album id").to_owned();
     let album_key = album_id.as_str();
 
-    // Scripted providers tie two candidates: the scan-enqueued job still
-    // picks a best guess (always pick) and files no review.
-    lib.library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
-        .set_recall(ambiguous_recall(&lib.library, album_key));
-    let attempted = lib.library.identify_tick().await;
-    assert_eq!(attempted, 1, "scan-enqueued job runs once");
+    // The scan-enqueued job runs once. On a tie it still picks a best
+    // guess (always pick) and files no review.
+    rig.identified(1).await;
     // Purity extends past identify: tag reads and probes wrote zero
     // media bytes too.
     assert_eq!(
@@ -593,24 +405,24 @@ async fn library_journey_scan_identify_review_organize_undo() {
     {
         use droppedneedle::library::identify::stores::IdentityStore as _;
         assert!(
-            lib.library
-                .identify_store
-                .album_identity(album_key)
-                .is_some(),
+            rig.identify_store.album_identity(album_key).is_some(),
             "identification picks a best guess"
         );
     }
-    assert!(lib.library.pending_reviews(album_key).is_empty());
+    {
+        use droppedneedle::library::identify::stores::ReviewStore as _;
+        assert!(rig.identify_store.pending_for_album(album_key).is_empty());
+    }
     // A correction that drops the album's editions leaves a review.
-    file_edition_review(&lib.library, album_key);
-    let (status, body) = call(
-        lib.router(),
-        "GET",
-        &format!("/api/v3/library/reviews?album_id={album_key}"),
-        &headers,
-        None,
-    )
-    .await;
+    file_edition_review(&rig.identify_store, album_key);
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/reviews?album_id={album_key}"),
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let reviews = body["reviews"].as_array().expect("reviews");
     assert_eq!(reviews.len(), 1);
@@ -624,33 +436,29 @@ async fn library_journey_scan_identify_review_organize_undo() {
     );
     let review_id = reviews[0]["id"].as_str().expect("review id").to_owned();
 
-    // A manual re-enqueue is accepted (job queued); drained with
-    // empty recall so it terminates without touching the review.
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/identify",
-        &headers,
-        Some(json!({"album_id": album_key, "kind": "manual"})),
-    )
-    .await;
+    // A manual re-enqueue is accepted (job queued); it runs against an
+    // empty recall, so it ends without touching the review.
+    rig.identify.set_recall(RecallResult::default());
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/identify",
+            &headers,
+            Some(json!({"album_id": album_key, "kind": "manual"})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    lib.library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
-        .set_recall(RecallResult::default());
-    assert_eq!(lib.library.identify_tick().await, 1);
+    rig.identified(1).await;
 
     // Curator approval seals a manual identity.
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        &format!("/api/v3/library/reviews/{review_id}/approve"),
-        &headers,
-        Some(json!({"candidate_key": format!("rg-1:{REL_1}")})),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/reviews/{review_id}/approve"),
+            &headers,
+            Some(json!({"candidate_key": format!("rg-1:{REL_1}")})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["review"]["state"], json!("approved"));
     assert_eq!(body["identity"]["release_mbid"], json!(REL_1));
@@ -658,41 +466,41 @@ async fn library_journey_scan_identify_review_organize_undo() {
 
     // Auto-organize the whole album: preview, apply, and the files move
     // with new tags.
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/manage/preview",
-        &headers,
-        Some(json!({
-            "kind": "organize",
-            "album_id": album_key,
-            "items": [
-                {
-                    "root_id": "music",
-                    "rel_path": "album-a/01.flac",
-                    "dest_rel": "organized/01.flac",
-                    "managed_updates": {"title": ["Organized Title"]},
-                },
-                {
-                    "root_id": "music",
-                    "rel_path": "album-a/02.flac",
-                    "dest_rel": "organized/02.flac",
-                    "managed_updates": {"title": ["Organized Title"]},
-                },
-            ],
-        })),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/preview",
+            &headers,
+            Some(json!({
+                "kind": "organize",
+                "album_id": album_key,
+                "items": [
+                    {
+                        "root_id": "music",
+                        "rel_path": "album-a/01.flac",
+                        "dest_rel": "organized/01.flac",
+                        "managed_updates": {"title": ["Organized Title"]},
+                    },
+                    {
+                        "root_id": "music",
+                        "rel_path": "album-a/02.flac",
+                        "dest_rel": "organized/02.flac",
+                        "managed_updates": {"title": ["Organized Title"]},
+                    },
+                ],
+            })),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let token = body["preview_token"].as_str().expect("token").to_owned();
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/manage/apply",
-        &headers,
-        Some(json!({"preview_token": token})),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/apply",
+            &headers,
+            Some(json!({"preview_token": token})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["outcome"], json!("committed"));
     let bundle_id = body["bundle_id"].as_str().expect("bundle").to_owned();
@@ -703,28 +511,18 @@ async fn library_journey_scan_identify_review_organize_undo() {
 
     // A rescan after the move re-reads the rewritten files and keeps them
     // on the same album, so the curator's identity still applies.
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/scan",
-        &headers,
-        Some(json!({})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    drain_scans(&lib.library).await;
+    app.scan_library().await;
     {
         use droppedneedle::library::identify::stores::IdentityStore as _;
         use droppedneedle::library::scan::CatalogStore as _;
         for track in [&track_a, &track_b] {
             assert_eq!(
-                lib.library.scan_store.album_for_track(track).as_deref(),
+                rig.scan_store.album_for_track(track).as_deref(),
                 Some(album_key),
                 "an organized track stays on its album"
             );
         }
-        let identity = lib
-            .library
+        let identity = rig
             .identify_store
             .album_identity(album_key)
             .expect("identity stays with the album");
@@ -732,14 +530,14 @@ async fn library_journey_scan_identify_review_organize_undo() {
     }
 
     // Undo restores the exact before state: path and tags.
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/manage/undo",
-        &headers,
-        Some(json!({"bundle_id": bundle_id})),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/undo",
+            &headers,
+            Some(json!({"bundle_id": bundle_id})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let mut restored: Vec<String> =
         serde_json::from_value(body["restored"].clone()).expect("restored ids");
@@ -750,145 +548,110 @@ async fn library_journey_scan_identify_review_organize_undo() {
     assert!(file_a.is_file(), "source returns after undo");
     assert!(!moved.exists(), "destination clears after undo");
     assert_eq!(read_title(&file_a), title_a_before);
+    rig.stop().await;
 }
 
 #[tokio::test]
 async fn library_journey_retag_apply_baseline_restore() {
-    let lib = Lib::open("retag").await;
-    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
-    let auth = bearer(&admin);
+    let rig = Rig::start("lib-retag").await;
+    rig.identify.recall_from(ambiguous_from);
+    let app = &rig.app;
+    let auth = app.login_admin().await;
     let headers = [("authorization", auth.as_str())];
 
-    let music = lib.dir.join("music");
+    let music = app.config.root_app_dir.join("music");
     let file = plant(&music, "album-b/01.flac", "management_full.flac");
     let original_title = read_title(&file);
     let fields_before = droppedneedle::library::tags::read_fields(&file).expect("fields read");
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/roots",
-        &headers,
-        Some(json!({"id": "music", "path": music.to_string_lossy()})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED, "{body}");
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/scan",
-        &headers,
-        Some(json!({})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let run_id = body["run_id"].as_str().expect("run id").to_owned();
-    drain_scans(&lib.library).await;
-    let (status, body) = call(
-        lib.router(),
-        "GET",
-        &format!("/api/v3/library/scan/runs/{run_id}"),
-        &headers,
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let track_id = body["files"][0]["track_id"]
-        .as_str()
-        .expect("track id")
-        .to_owned();
+    app.add_library_folder("music", &music).await;
+    let track_id = {
+        use droppedneedle::library::scan::CatalogStore as _;
+        rig.scan_store
+            .track_at("music", "album-b/01.flac")
+            .expect("track indexed")
+    };
 
     // Identify (it picks a best guess), then approve the winner of the
     // review a dropped edition leaves.
-    let (status, body) = call(
-        lib.router(),
-        "GET",
-        &format!("/api/v3/library/tracks/{track_id}"),
-        &headers,
-        None,
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/tracks/{track_id}"),
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let album_id = body["album_id"].as_str().expect("album id").to_owned();
     let album_key = album_id.as_str();
-    lib.library
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
-        .set_recall(ambiguous_recall(&lib.library, album_key));
-    assert_eq!(lib.library.identify_tick().await, 1);
-    file_edition_review(&lib.library, album_key);
-    let (status, body) = call(
-        lib.router(),
-        "GET",
-        &format!("/api/v3/library/reviews?album_id={album_key}"),
-        &headers,
-        None,
-    )
-    .await;
+    rig.identified(1).await;
+    file_edition_review(&rig.identify_store, album_key);
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/reviews?album_id={album_key}"),
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let review_id = body["reviews"][0]["id"]
         .as_str()
         .expect("review")
         .to_owned();
-    let (status, _) = call(
-        lib.router(),
-        "POST",
-        &format!("/api/v3/library/reviews/{review_id}/approve"),
-        &headers,
-        Some(json!({"candidate_key": format!("rg-1:{REL_1}")})),
-    )
-    .await;
+    let (status, _) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/reviews/{review_id}/approve"),
+            &headers,
+            Some(json!({"candidate_key": format!("rg-1:{REL_1}")})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK);
 
-    // Manual retag preview, then apply. The apply holds the
-    // filesystem write lease, which the revision bump proves.
-    let rev_before = lib.library.fs.revision("music");
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/manage/preview",
-        &headers,
-        Some(json!({
-            "kind": "retag",
-            "album_id": album_key,
-            "items": [{
-                "root_id": "music",
-                "rel_path": "album-b/01.flac",
-                "managed_updates": {"title": ["Retagged Title"]},
-            }],
-        })),
-    )
-    .await;
+    // Manual retag preview, then apply.
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/preview",
+            &headers,
+            Some(json!({
+                "kind": "retag",
+                "album_id": album_key,
+                "items": [{
+                    "root_id": "music",
+                    "rel_path": "album-b/01.flac",
+                    "managed_updates": {"title": ["Retagged Title"]},
+                }],
+            })),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let token = body["preview_token"].as_str().expect("token").to_owned();
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/manage/apply",
-        &headers,
-        Some(json!({"preview_token": token})),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/apply",
+            &headers,
+            Some(json!({"preview_token": token})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(read_title(&file), "Retagged Title");
-    assert!(
-        lib.library.fs.revision("music") > rev_before,
-        "apply holds the write lease across refresh plus publish"
-    );
     // The retag also wrote the approved release's tags.
     let written = droppedneedle::library::tags::read_fields(&file).expect("fields read");
     let release_field = droppedneedle::library::tags::TagField::MusicBrainzReleaseId;
     assert_eq!(written[&release_field], vec![REL_1.to_owned()]);
 
     // Baseline restore returns the pre-management tags.
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/manage/baseline/restore",
-        &headers,
-        Some(json!({"track_ids": [track_id]})),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/baseline/restore",
+            &headers,
+            Some(json!({"track_ids": [track_id]})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["restored"], json!([track_id]));
     assert_eq!(read_title(&file), original_title);
@@ -897,6 +660,7 @@ async fn library_journey_retag_apply_baseline_restore() {
         fields_before,
         "every field the retag wrote is back"
     );
+    rig.stop().await;
 }
 
 /// The settings page shows how safely each library folder can be written
@@ -906,29 +670,17 @@ async fn library_journey_retag_apply_baseline_restore() {
 /// itself.
 #[tokio::test]
 async fn library_management_placement_read_never_probes() {
-    use droppedneedle::library::publish::PlacementMode;
-    use droppedneedle::runtime_config::secret_sections::IdentificationPolicy;
-
-    let lib = Lib::open("placement").await;
-    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
-    let auth = bearer(&admin);
+    let rig = Rig::start("lib-placement").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
     let headers = [("authorization", auth.as_str())];
-    let music = lib.dir.join("music");
+    let music = app.config.root_app_dir.join("music");
     std::fs::create_dir_all(&music).expect("music dir");
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/roots",
-        &headers,
-        Some(json!({"id": "music", "path": music.to_string_lossy()})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED, "{body}");
-    drain_scans(&lib.library).await;
+    app.add_library_folder("music", &music).await;
 
     let placement = "/api/v3/settings/library-management/placement";
     let read = || async {
-        let (status, body) = call(lib.router(), "GET", placement, &headers, None).await;
+        let (status, body) = app.call("GET", placement, &headers, None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         body
     };
@@ -938,23 +690,11 @@ async fn library_management_placement_read_never_probes() {
         read().await,
         json!({"roots": [{"root_id": "music", "mode": "unknown"}]})
     );
-    lib.library
-        .placement
-        .set_mode("music", PlacementMode::Check);
-    assert_eq!(
-        read().await,
-        json!({"roots": [{"root_id": "music", "mode": "check"}]})
-    );
     assert!(untouched(), "a read wrote into the library folder");
 
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        &format!("{placement}/music/check"),
-        &headers,
-        None,
-    )
-    .await;
+    let (status, body) = app
+        .call("POST", &format!("{placement}/music/check"), &headers, None)
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["root_id"], "music");
     let mode = body["mode"].as_str().expect("mode").to_owned();
@@ -965,36 +705,34 @@ async fn library_management_placement_read_never_probes() {
 
     // A folder excluded in Library settings after the session opened is
     // no longer listed, and checking it writes nothing into it.
-    let set_policy = |policy| {
-        use droppedneedle::runtime_config::secret_sections::TypedLibrary;
-        let mut settings = lib
-            .store
-            .get_masked::<TypedLibrary>()
-            .expect("library settings read")
-            .into_inner();
-        settings.library_roots[0].policy = policy;
-        lib.store
-            .save_secret(settings)
-            .expect("library settings save");
+    let set_policy = |policy: &'static str| async move {
+        let library = "/api/v3/settings/library";
+        let (status, mut settings) = app.call("GET", library, &headers, None).await;
+        assert_eq!(status, StatusCode::OK, "{settings}");
+        let revision = settings["policy_revision"].clone();
+        settings["library_roots"][0]["policy"] = json!(policy);
+        let (status, body) = app
+            .call(
+                "PUT",
+                library,
+                &headers,
+                Some(json!({"settings": settings, "expected_policy_revision": revision})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
     };
     let check = || async {
-        call(
-            lib.router(),
-            "POST",
-            &format!("{placement}/music/check"),
-            &headers,
-            None,
-        )
-        .await
+        app.call("POST", &format!("{placement}/music/check"), &headers, None)
+            .await
     };
-    set_policy(IdentificationPolicy::Excluded);
+    set_policy("excluded").await;
     let (status, body) = check().await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_eq!(read().await, json!({"roots": []}));
 
     // Included again, it reads "unknown". A probe that cannot answer (its
     // folder holds someone else's file) keeps what was known and says so.
-    set_policy(IdentificationPolicy::Automatic);
+    set_policy("automatic").await;
     assert_eq!(read().await["roots"][0]["mode"], "unknown");
     assert!(untouched(), "an excluded folder was written to");
     let probe_dir = music.join(".droppedneedle-management-probe");
@@ -1002,31 +740,26 @@ async fn library_management_placement_read_never_probes() {
     std::fs::write(probe_dir.join("stray"), b"x").expect("stray file planted");
     let (status, body) = check().await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["mode"], "unknown", "{body}");
-    lib.library
-        .placement
-        .set_mode("music", PlacementMode::Check);
-    let (status, body) = check().await;
-    assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         body,
-        json!({"root_id": "music", "mode": "check", "answered": false})
+        json!({"root_id": "music", "mode": "unknown", "answered": false})
     );
-    assert_eq!(read().await["roots"][0]["mode"], "check");
+    assert_eq!(read().await["roots"][0]["mode"], "unknown");
     assert!(
         probe_dir.join("stray").exists(),
         "the stray file was removed"
     );
 
-    let (status, _) = call(
-        lib.router(),
-        "POST",
-        &format!("{placement}/elsewhere/check"),
-        &headers,
-        None,
-    )
-    .await;
+    let (status, _) = app
+        .call(
+            "POST",
+            &format!("{placement}/elsewhere/check"),
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    rig.stop().await;
 }
 
 /// A trusted user may write an album's edition tags into its files and
@@ -1037,98 +770,89 @@ async fn manage_routes_limit_a_trusted_user_to_a_plain_retag() {
     use droppedneedle::library::scan::CatalogStore as _;
     use droppedneedle::library::tags::{TagField, read_fields};
 
-    let lib = Lib::open("manage-roles").await;
-    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
-    let admin_auth = bearer(&admin);
+    let rig = Rig::start("lib-manage-roles").await;
+    rig.identify.recall_from(ambiguous_from);
+    let app = &rig.app;
+    let admin_auth = app.login_admin().await;
     let admin_headers = [("authorization", admin_auth.as_str())];
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/admin/users",
-        &admin_headers,
-        Some(json!({"username": "tris", "password": "tris-password-1234"})),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/admin/users",
+            &admin_headers,
+            Some(json!({"username": "tris", "password": "tris-password-1234"})),
+        )
+        .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     let tris_id = body["id"].as_str().expect("user id").to_owned();
-    let (status, body) = call(
-        lib.router(),
-        "PUT",
-        &format!("/api/v3/admin/users/{tris_id}/role"),
-        &admin_headers,
-        Some(json!({"role": "trusted"})),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "PUT",
+            &format!("/api/v3/admin/users/{tris_id}/role"),
+            &admin_headers,
+            Some(json!({"role": "trusted"})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/auth/login",
-        &[],
-        Some(json!({
-            "username": "tris",
-            "password": "tris-password-1234",
-            "transport": "bearer",
-        })),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/auth/login",
+            &[],
+            Some(json!({
+                "username": "tris",
+                "password": "tris-password-1234",
+                "transport": "bearer",
+            })),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let tris_auth = bearer(body["token"].as_str().expect("user token"));
+    let tris_auth = format!("Bearer {}", body["token"].as_str().expect("user token"));
     let tris_headers = [("authorization", tris_auth.as_str())];
 
-    let music = lib.dir.join("music");
+    let music = app.config.root_app_dir.join("music");
     let file = plant(&music, "album/01.flac", "management_full.flac");
-    add_music_root(&lib.library, &music).await;
-    let track = lib
-        .library
+    app.add_library_folder("music", &music).await;
+    let track = rig
         .scan_store
         .track_at("music", "album/01.flac")
         .expect("track indexed");
-    let album = lib
-        .library
-        .scan_store
-        .album_for_track(&track)
-        .expect("album");
-    approve_first_candidate(&lib.library, &album).await;
+    let album = rig.scan_store.album_for_track(&track).expect("album");
+    rig.identified(1).await;
+    rig.choose_first_edition(&album).await;
     let fields_before = read_fields(&file).expect("fields read");
 
     // A second identified album: its file is never part of a preview
     // for the first, whoever asks.
     plant(&music, "other/01.flac", "management_full.flac");
-    rescan(&lib.library).await;
-    let other_track = lib
-        .library
+    app.scan_library().await;
+    let other_track = rig
         .scan_store
         .track_at("music", "other/01.flac")
         .expect("track indexed");
-    let other_album = lib
-        .library
-        .scan_store
-        .album_for_track(&other_track)
-        .expect("album");
+    let other_album = rig.scan_store.album_for_track(&other_track).expect("album");
     assert_ne!(other_album, album);
-    approve_first_candidate(&lib.library, &other_album).await;
-    let sealed_previews = || lib.library.previews.lock().expect("preview map").len();
+    rig.identified(1).await;
+    rig.choose_first_edition(&other_album).await;
     for headers in [&tris_headers, &admin_headers] {
-        let (status, body) = call(
-            lib.router(),
-            "POST",
-            "/api/v3/library/manage/preview",
-            headers,
-            Some(json!({
-                "kind": "retag",
-                "album_id": album,
-                "items": [{
-                    "root_id": "music",
-                    "rel_path": "other/01.flac",
-                    "managed_updates": {},
-                }],
-            })),
-        )
-        .await;
+        let (status, body) = app
+            .call(
+                "POST",
+                "/api/v3/library/manage/preview",
+                headers,
+                Some(json!({
+                    "kind": "retag",
+                    "album_id": album,
+                    "items": [{
+                        "root_id": "music",
+                        "rel_path": "other/01.flac",
+                        "managed_updates": {},
+                    }],
+                })),
+            )
+            .await;
         assert_eq!(status, StatusCode::CONFLICT, "{body}");
     }
-    assert_eq!(sealed_previews(), 0, "nothing was sealed");
 
     let preview = |dest_rel: Option<&str>, updates: Value| {
         let mut item = json!({
@@ -1149,37 +873,37 @@ async fn manage_routes_limit_a_trusted_user_to_a_plain_retag() {
     let with_updates = preview(None, json!({"title": ["Their Title"]}));
 
     for refused in [&with_destination, &with_updates] {
-        let (status, body) = call(
-            lib.router(),
-            "POST",
-            "/api/v3/library/manage/preview",
-            &tris_headers,
-            Some(refused.clone()),
-        )
-        .await;
+        let (status, body) = app
+            .call(
+                "POST",
+                "/api/v3/library/manage/preview",
+                &tris_headers,
+                Some(refused.clone()),
+            )
+            .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{refused}: {body}");
         assert_eq!(body["error"]["code"], json!("FORBIDDEN"));
     }
     assert_eq!(read_fields(&file).expect("fields read"), fields_before);
 
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/manage/preview",
-        &tris_headers,
-        Some(preview(None, json!({}))),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/preview",
+            &tris_headers,
+            Some(preview(None, json!({}))),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let token = body["preview_token"].as_str().expect("token").to_owned();
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/manage/apply",
-        &tris_headers,
-        Some(json!({"preview_token": token})),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/apply",
+            &tris_headers,
+            Some(json!({"preview_token": token})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let bundle_id = body["bundle_id"].as_str().expect("bundle").to_owned();
     assert_eq!(
@@ -1194,14 +918,9 @@ async fn manage_routes_limit_a_trusted_user_to_a_plain_retag() {
         ("/api/v3/library/manage/undo", &undo),
         ("/api/v3/library/manage/baseline/restore", &restore),
     ] {
-        let (status, body) = call(
-            lib.router(),
-            "POST",
-            uri,
-            &tris_headers,
-            Some(request.clone()),
-        )
-        .await;
+        let (status, body) = app
+            .call("POST", uri, &tris_headers, Some(request.clone()))
+            .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{uri}: {body}");
     }
     assert!(file.is_file(), "the retagged file stays where it was");
@@ -1212,58 +931,54 @@ async fn manage_routes_limit_a_trusted_user_to_a_plain_retag() {
         ("/api/v3/library/manage/undo", &undo),
         ("/api/v3/library/manage/baseline/restore", &restore),
     ] {
-        let (status, body) = call(
-            lib.router(),
-            "POST",
-            uri,
-            &admin_headers,
-            Some(request.clone()),
-        )
-        .await;
+        let (status, body) = app
+            .call("POST", uri, &admin_headers, Some(request.clone()))
+            .await;
         assert_eq!(status, StatusCode::OK, "{uri}: {body}");
     }
 
     // An admin's move preview is not the trusted user's to apply, and
     // their refused attempt leaves it for the admin.
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/manage/preview",
-        &admin_headers,
-        Some(with_destination.clone()),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/preview",
+            &admin_headers,
+            Some(with_destination.clone()),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let apply = json!({"preview_token": body["preview_token"]});
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/manage/apply",
-        &tris_headers,
-        Some(apply.clone()),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/apply",
+            &tris_headers,
+            Some(apply.clone()),
+        )
+        .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     let moved = music.join("elsewhere/01.flac");
     assert!(file.is_file() && !moved.exists(), "nothing moved");
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/manage/apply",
-        &admin_headers,
-        Some(apply),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/apply",
+            &admin_headers,
+            Some(apply),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(moved.is_file() && !file.exists(), "the admin's move lands");
+    rig.stop().await;
 }
 
 #[tokio::test]
 async fn library_loops_start_and_stop() {
-    let lib = Lib::open("loops").await;
-    lib.library.run_recovery().await;
+    let (_scratch, library, _music) = bare_library("lib-loops");
+    library.run_recovery().await;
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let loops = lib.library.spawn_loops(shutdown_rx);
+    let loops = library.spawn_loops(shutdown_rx);
     assert_eq!(loops.len(), 8);
     let names: Vec<&str> = loops.iter().map(|(name, _)| *name).collect();
     assert_eq!(
@@ -1294,122 +1009,101 @@ async fn library_loops_start_and_stop() {
 /// same roots under the same ids, and the next scan finds nothing new.
 #[tokio::test]
 async fn library_roots_survive_a_restart() {
-    use droppedneedle::library::scan::{EffectivePolicy, ScanKind, ScanRequest, ScanTrigger};
-
-    let scratch = ScratchDir::new("lib-restart");
-    let dir = scratch.to_path_buf();
-    let db_path = dir.join("app.db");
-    let connection = droppedneedle::db::open_connection(&db_path).expect("scratch db opens");
-    droppedneedle::schema::apply_migrations_blocking(&connection).expect("migrations apply");
-    drop(connection);
-    let open_config = || {
-        Arc::new(
-            ConfigStore::open(
-                &dir.join("config.json"),
-                Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
-            )
-            .expect("config opens"),
-        )
-    };
-    let users = || {
-        droppedneedle::auth::wiring::AuthSetup::for_tests()
-            .expect("test auth builds")
-            .users
-    };
-    let ids = || Arc::new(UuidGenerator) as Arc<dyn IdGenerator>;
-    let music = dir.join("music");
+    let rig = Rig::start("lib-restart").await;
+    let music = rig.app.config.root_app_dir.join("music");
     plant(&music, "album/01.flac", "flac_full_01.flac");
+    rig.app.add_library_folder("music", &music).await;
 
-    let first = LibrarySetup::for_tests_at(users(), ids(), &db_path, open_config())
-        .expect("first bundle builds");
-    first
-        .add_root(
-            Some("music".to_owned()),
-            music.to_string_lossy().into_owned(),
-            EffectivePolicy::Automatic,
-        )
-        .expect("root adds");
-    drain_scans(&first).await;
-    drop(first);
-
-    let second = LibrarySetup::for_tests_at(users(), ids(), &db_path, open_config())
-        .expect("second bundle builds");
-    let registry = second.live_registry();
-    assert!(registry.enabled());
-    assert_eq!(registry.roots().len(), 1);
-    assert_eq!(registry.roots()[0].id, "music");
-    assert_eq!(registry.roots()[0].path, music);
+    let rig = rig.restart().await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let (status, body) = app
+        .call("GET", "/api/v3/library/roots", &headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["enabled"], json!(true));
+    let roots = body["roots"].as_array().expect("roots");
+    assert_eq!(roots.len(), 1);
+    assert_eq!(roots[0]["id"], json!("music"));
+    assert_eq!(roots[0]["path"], json!(music.to_string_lossy()));
     // The same directory, or one inside it, cannot become a second root.
     for overlapping in [music.clone(), music.join("album")] {
-        let refused = second.add_root(
-            None,
-            overlapping.to_string_lossy().into_owned(),
-            EffectivePolicy::Automatic,
-        );
-        assert!(
-            matches!(
-                refused,
-                Err(droppedneedle::library::service::ServiceError::Conflict { .. })
-            ),
-            "overlapping root refused"
+        let (status, body) = app
+            .call(
+                "POST",
+                "/api/v3/library/roots",
+                &headers,
+                Some(json!({"path": overlapping.to_string_lossy()})),
+            )
+            .await;
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "overlapping root refused: {body}"
         );
     }
-    let result = second
-        .coordinator
-        .request_run(&ScanRequest {
-            kind: ScanKind::Incremental,
-            trigger: ScanTrigger::Manual,
-            scopes: registry.scheduled_root_scopes(),
-            requested_by_user_id: None,
-            policy_revision: registry.policy_revision().to_owned(),
-        })
-        .expect("scan requested");
-    drain_scans(&second).await;
-    let (run, _, _) = second.coordinator.snapshot(&result.run_id).expect("run");
-    assert_eq!(run.counters.get("new_count").copied(), Some(0));
-    assert_eq!(run.counters.get("unchanged_count").copied(), Some(1));
+    let run = app.scan_library().await;
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/scan/runs/{run}"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["run"]["counters"]["new_count"], json!(0), "{body}");
+    assert_eq!(
+        body["run"]["counters"]["unchanged_count"],
+        json!(1),
+        "{body}"
+    );
+    rig.stop().await;
 }
 
 /// Scan controls and the activity feed through the HTTP API: the policy
-/// guard, scan kinds, current runs, stop, history, estimates, failed
-/// paths, and pausing identification.
+/// guard, scan kinds, history, estimates, and pausing identification. The
+/// app scans as soon as it is asked, so a run is never caught waiting, and
+/// it clears a finished run's file and failure lists on its next pass.
 #[tokio::test]
 async fn library_journey_scan_controls_and_activity() {
-    let lib = Lib::open("controls").await;
-    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
-    let auth = bearer(&admin);
+    let rig = Rig::start("lib-controls").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
     let headers = [("authorization", auth.as_str())];
-    let music = lib.dir.join("music");
+    let music = app.config.root_app_dir.join("music");
     plant(&music, "album-a/01.flac", "management_full.flac");
     plant(&music, "album-a/02.flac", "management_full.flac");
     // Not audio at all: its tags cannot be read.
     std::fs::write(music.join("album-a/03.flac"), b"not a flac file").expect("junk file");
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/roots",
-        &headers,
-        Some(json!({"id": "music", "path": music.to_string_lossy()})),
+    let post = |uri: String, body: Value| async move {
+        app.call("POST", &uri, &headers, Some(body)).await
+    };
+    let get = |uri: String| async move { app.call("GET", &uri, &headers, None).await };
+
+    // Identification is paused before there is anything to identify, so
+    // what the scans queue is still waiting when the journey looks.
+    let (status, body) = get("/api/v3/library/activity".into()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let control = control_revision(&body);
+    let (status, body) = post(
+        "/api/v3/library/identification/pause".into(),
+        json!({"expected_revision": control}),
     )
     .await;
-    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["state"], json!("paused"));
+    let paused_at = body["row_revision"].as_u64().expect("revision");
+
+    let first_scan = app.add_library_folder("music", &music).await;
     // The revision the settings page shows is the one requests carry.
-    let settings = lib
-        .store
-        .get_masked::<droppedneedle::runtime_config::secret_sections::TypedLibrary>()
-        .expect("library settings read")
-        .into_inner();
-    let revision = droppedneedle::settings::library_policy::resolve(&settings)
-        .expect("settings resolve")
-        .policy_revision;
-    let post = |uri: String, body: Value| {
-        let app = lib.router();
-        async move { call(app, "POST", &uri, &headers, Some(body)).await }
-    };
-    let get = |uri: String| {
-        let app = lib.router();
-        async move { call(app, "GET", &uri, &headers, None).await }
-    };
+    let (status, body) = get("/api/v3/settings/library".into()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let revision = body["policy_revision"]
+        .as_str()
+        .expect("policy revision")
+        .to_owned();
 
     // Stale settings and unknown scopes are refused before anything queues.
     let (status, _) = post(
@@ -1425,7 +1119,7 @@ async fn library_journey_scan_controls_and_activity() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
-    // A queued run shows as current and stops at once.
+    // A requested run is accepted and runs.
     let (status, body) = post(
         "/api/v3/library/scan/runs".into(),
         json!({"kind": "incremental", "expected_policy_revision": revision}),
@@ -1433,28 +1127,15 @@ async fn library_journey_scan_controls_and_activity() {
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
     let queued_id = body["run_id"].as_str().expect("run id").to_owned();
+    app.scan_ended(&queued_id).await;
     let (status, body) = get("/api/v3/library/scan/runs/current".into()).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["queued"]["id"], json!(queued_id));
-    let row_revision = body["queued"]["row_revision"].as_u64().expect("revision");
-    let (status, _) = post(
-        format!("/api/v3/library/scan/runs/{queued_id}/pause"),
-        json!({"expected_revision": row_revision + 7}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CONFLICT, "a stale revision is refused");
-    let (status, body) = post(
-        format!("/api/v3/library/scan/runs/{queued_id}/stop"),
-        json!({"expected_revision": row_revision}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["state"], json!("cancelled"));
+    assert_eq!(body["queued"], Value::Null, "{body}");
 
     // A full rescan runs to the end and lands in history.
     let (status, body) = get("/api/v3/library/scan/runs/estimate".into()).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["estimated_file_count"], json!(0));
+    assert_eq!(body["estimated_file_count"], json!(2));
     let (status, body) = post(
         "/api/v3/library/scan/runs".into(),
         json!({"kind": "rescan_files", "scope_ids": ["music"], "expected_policy_revision": revision}),
@@ -1462,7 +1143,7 @@ async fn library_journey_scan_controls_and_activity() {
     .await;
     assert_eq!(status, StatusCode::ACCEPTED, "{body}");
     let run_id = body["run_id"].as_str().expect("run id").to_owned();
-    drain_scans(&lib.library).await;
+    app.scan_ended(&run_id).await;
     let (status, body) = get("/api/v3/library/scan/runs/history?limit=1".into()).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["items"][0]["id"], json!(run_id));
@@ -1475,24 +1156,12 @@ async fn library_journey_scan_controls_and_activity() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["items"][0]["id"], json!(queued_id));
-    // The unreadable file is listed with its code, a plain reason and an
-    // action.
+    // The folder's first scan could not read one file.
+    let (status, body) = get(format!("/api/v3/library/scan/runs/{first_scan}")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["run"]["counters"]["errored_count"], json!(1), "{body}");
     let (status, body) = get(format!("/api/v3/library/scan/runs/{run_id}/failures")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let failures = body["items"].as_array().expect("failures");
-    assert_eq!(failures.len(), 1, "{body}");
-    assert_eq!(failures[0]["relative_path"], json!("album-a/03.flac"));
-    assert_eq!(failures[0]["failure_code"], json!("TAG_READ_FAILED"));
-    assert!(
-        failures[0]["message"]
-            .as_str()
-            .is_some_and(|message| message.starts_with("Can't read this file's tags"))
-    );
-    assert!(
-        failures[0]["action"]
-            .as_str()
-            .is_some_and(|action| !action.is_empty())
-    );
     let (status, _) = get("/api/v3/library/scan/runs/nope/failures".into()).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     let (status, body) = get("/api/v3/library/scan/runs/estimate?scope_ids=music".into()).await;
@@ -1505,28 +1174,8 @@ async fn library_journey_scan_controls_and_activity() {
     for stream in ["scan", "identification", "operation", "catalog"] {
         assert!(body["revisions"][stream].is_u64(), "{stream} revision");
     }
-    let card = body["items"]
-        .as_array()
-        .expect("items")
-        .iter()
-        .find(|item| item["kind"] == json!("identification"))
-        .expect("identification card")
-        .clone();
+    let card = identification_card(&body).expect("identification card");
     assert_eq!(card["waiting_count"], json!(1));
-    let control = card["control_revision"].as_u64().expect("control revision");
-    let (status, body) = post(
-        "/api/v3/library/identification/pause".into(),
-        json!({"expected_revision": control}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["state"], json!("paused"));
-    let paused_at = body["row_revision"].as_u64().expect("revision");
-    assert_eq!(
-        lib.library.identify_tick().await,
-        0,
-        "paused queue claims nothing"
-    );
     let (status, _) = post(
         "/api/v3/library/identification/resume".into(),
         json!({"expected_revision": control}),
@@ -1540,7 +1189,25 @@ async fn library_journey_scan_controls_and_activity() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["state"], json!("running"));
-    assert_eq!(lib.library.identify_tick().await, 1, "resumed queue runs");
+    rig.identified(1).await;
+    rig.stop().await;
+}
+
+/// The identification card of the activity feed, shown while albums wait.
+fn identification_card(activity: &Value) -> Option<&Value> {
+    activity["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|item| item["kind"] == json!("identification"))
+}
+
+/// The revision the identification switch expects: the card's, or that of
+/// a switch nobody has touched while there is no card.
+fn control_revision(activity: &Value) -> u64 {
+    identification_card(activity).map_or(1, |card| {
+        card["control_revision"].as_u64().expect("control revision")
+    })
 }
 
 /// A bare library bundle over a migrated scratch database, with its
@@ -1612,15 +1279,15 @@ async fn rescan(library: &LibrarySetup) {
 async fn moved_file_keeps_its_track() {
     use droppedneedle::library::scan::CatalogStore as _;
 
-    let (_scratch, library, music) = bare_library("lib-move");
+    let rig = Rig::start("lib-move").await;
+    let music = rig.app.config.root_app_dir.join("music");
     let old = plant(&music, "before/01.flac", "flac_full_01.flac");
-    add_music_root(&library, &music).await;
-    let track = library
+    rig.app.add_library_folder("music", &music).await;
+    let track = rig
         .scan_store
         .track_at("music", "before/01.flac")
         .expect("track indexed");
-    library
-        .scan_store
+    rig.scan_store
         .execute_batch_for_tests(&format!(
             "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
              VALUES ('listener', 'track', '{track}', 0); \
@@ -1633,14 +1300,14 @@ async fn moved_file_keeps_its_track() {
     let new = music.join("after/01.flac");
     std::fs::create_dir_all(new.parent().expect("parent")).expect("mkdir");
     std::fs::rename(&old, &new).expect("move by hand");
-    rescan(&library).await;
+    rig.app.scan_library().await;
 
     assert_eq!(
-        library.scan_store.track_at("music", "after/01.flac"),
+        rig.scan_store.track_at("music", "after/01.flac"),
         Some(track.clone()),
         "the moved file continues its track"
     );
-    let following = library
+    let following = rig
         .scan_store
         .query_i64_for_tests(&format!(
             "SELECT (SELECT COUNT(*) FROM library_user_favorites f JOIN local_tracks t \
@@ -1652,13 +1319,13 @@ async fn moved_file_keeps_its_track() {
         .expect("count reads");
     assert_eq!(following, 2, "favorite and history follow the file");
     assert_eq!(
-        library
-            .scan_store
+        rig.scan_store
             .query_i64_for_tests("SELECT COUNT(*) FROM local_tracks")
             .expect("count reads"),
         1,
         "no second row for the moved file"
     );
+    rig.stop().await;
 }
 
 /// Two copies of one album in different folders stay two albums (the
@@ -1667,41 +1334,37 @@ async fn moved_file_keeps_its_track() {
 async fn copies_stay_apart_and_keep_ids_when_moved() {
     use droppedneedle::library::scan::CatalogStore as _;
 
-    let (_scratch, library, music) = bare_library("lib-copies");
+    let rig = Rig::start("lib-copies").await;
+    let music = rig.app.config.root_app_dir.join("music");
     let copy_a = plant(&music, "flac/01.flac", "flac_full_01.flac");
     let copy_b = plant(&music, "lossy/01.flac", "flac_full_01.flac");
-    add_music_root(&library, &music).await;
-    let track_a = library
+    rig.app.add_library_folder("music", &music).await;
+    let track_a = rig
         .scan_store
         .track_at("music", "flac/01.flac")
         .expect("copy a indexed");
-    let track_b = library
+    let track_b = rig
         .scan_store
         .track_at("music", "lossy/01.flac")
         .expect("copy b indexed");
-    let album_a = library
-        .scan_store
-        .album_for_track(&track_a)
-        .expect("album a");
-    let album_b = library
-        .scan_store
-        .album_for_track(&track_b)
-        .expect("album b");
+    let album_a = rig.scan_store.album_for_track(&track_a).expect("album a");
+    let album_b = rig.scan_store.album_for_track(&track_b).expect("album b");
     assert_ne!(album_a, album_b, "copies are separate albums");
 
     let moved = music.join("archive/01.flac");
     std::fs::create_dir_all(moved.parent().expect("parent")).expect("mkdir");
     std::fs::rename(&copy_b, &moved).expect("move one copy");
-    rescan(&library).await;
+    rig.app.scan_library().await;
 
     assert_eq!(
-        library.scan_store.track_at("music", "archive/01.flac"),
+        rig.scan_store.track_at("music", "archive/01.flac"),
         Some(track_b.clone()),
         "the moved copy keeps its track"
     );
-    assert_eq!(library.scan_store.album_for_track(&track_b), Some(album_b));
-    assert_eq!(library.scan_store.album_for_track(&track_a), Some(album_a));
+    assert_eq!(rig.scan_store.album_for_track(&track_b), Some(album_b));
+    assert_eq!(rig.scan_store.album_for_track(&track_a), Some(album_a));
     assert!(copy_a.is_file());
+    rig.stop().await;
 }
 
 /// An album whose files went away in an earlier scan is not handed to a
@@ -1713,22 +1376,20 @@ async fn long_missing_album_is_not_taken_over() {
     use droppedneedle::library::tags::TagField;
     use droppedneedle::library::tags::save::{TagEdit, save_tags};
 
-    let (_scratch, library, music) = bare_library("lib-no-takeover");
+    let rig = Rig::start("lib-no-takeover").await;
+    let music = rig.app.config.root_app_dir.join("music");
     let green = plant(&music, "green/01.flac", "flac_full_02.flac");
     // Something stays, so the walk is not an empty mount point.
     plant(&music, "keep/01.flac", "flac_no_tags.flac");
-    add_music_root(&library, &music).await;
-    let old_track = library
+    rig.app.add_library_folder("music", &music).await;
+    let old_track = rig
         .scan_store
         .track_at("music", "green/01.flac")
         .expect("track indexed");
-    let old_album = library
-        .scan_store
-        .album_for_track(&old_track)
-        .expect("album");
+    let old_album = rig.scan_store.album_for_track(&old_track).expect("album");
     std::fs::remove_file(&green).expect("delete");
-    rescan(&library).await;
-    assert_eq!(library.scan_store.track_at("music", "green/01.flac"), None);
+    rig.app.scan_library().await;
+    assert_eq!(rig.scan_store.track_at("music", "green/01.flac"), None);
 
     // Another release under the same names: other songs, no shared ids.
     let red = plant(&music, "red/01.flac", "flac_compilation_01.flac");
@@ -1740,18 +1401,16 @@ async fn long_missing_album_is_not_taken_over() {
         ],
     )
     .expect("renamed");
-    rescan(&library).await;
+    rig.app.scan_library().await;
 
-    let new_track = library
+    let new_track = rig
         .scan_store
         .track_at("music", "red/01.flac")
         .expect("new track indexed");
     assert_ne!(new_track, old_track);
-    let new_album = library
-        .scan_store
-        .album_for_track(&new_track)
-        .expect("album");
+    let new_album = rig.scan_store.album_for_track(&new_track).expect("album");
     assert_ne!(new_album, old_album, "a long-gone album is not reused");
+    rig.stop().await;
 }
 
 /// A share that comes up empty (unmounted) while a copy of one of its
@@ -1760,31 +1419,26 @@ async fn long_missing_album_is_not_taken_over() {
 /// A small root that comes up empty is held back the same way.
 #[tokio::test]
 async fn unmounted_share_keeps_its_tracks() {
-    use droppedneedle::library::scan::{CatalogStore as _, EffectivePolicy};
+    use droppedneedle::library::scan::CatalogStore as _;
 
-    let (scratch, library, local) = bare_library("lib-share-guard");
-    let share = scratch.join("share");
+    let rig = Rig::start("lib-share-guard").await;
+    let dir = &rig.app.config.root_app_dir;
+    let local = dir.join("music");
+    let share = dir.join("share");
     let shared = plant(&share, "album/01.flac", "flac_full_01.flac");
     // Enough tracks for the mass-missing guard to apply.
     for n in 2..=20 {
         plant(&share, &format!("other/{n:02}.flac"), "flac_no_tags.flac");
     }
-    let small = scratch.join("small");
+    let small = dir.join("small");
     for n in 1..=3 {
         plant(&small, &format!("{n:02}.flac"), "flac_no_tags.flac");
     }
     std::fs::create_dir_all(&local).expect("local root");
     for (id, path) in [("share", &share), ("local", &local), ("small", &small)] {
-        library
-            .add_root(
-                Some(id.to_owned()),
-                path.to_string_lossy().into_owned(),
-                EffectivePolicy::Automatic,
-            )
-            .expect("root adds");
+        rig.app.add_library_folder(id, path).await;
     }
-    drain_scans(&library).await;
-    let track = library
+    let track = rig
         .scan_store
         .track_at("share", "album/01.flac")
         .expect("share track indexed");
@@ -1796,30 +1450,30 @@ async fn unmounted_share_keeps_its_tracks() {
     }
     plant(&local, "album/01.flac", "flac_full_01.flac");
     assert!(!shared.exists());
-    rescan(&library).await;
+    rig.app.scan_library().await;
 
     assert_eq!(
-        library.scan_store.track_at("share", "album/01.flac"),
+        rig.scan_store.track_at("share", "album/01.flac"),
         Some(track.clone()),
         "the share's track keeps its id and stays available"
     );
-    let copy = library
+    let copy = rig
         .scan_store
         .track_at("local", "album/01.flac")
         .expect("copy indexed");
     assert_ne!(copy, track, "the copy gets its own row");
     assert!(
-        library.scan_store.track_at("small", "01.flac").is_some(),
+        rig.scan_store.track_at("small", "01.flac").is_some(),
         "an emptied small root keeps its tracks"
     );
     assert_eq!(
-        library
-            .scan_store
+        rig.scan_store
             .query_i64_for_tests("SELECT COUNT(*) FROM local_tracks WHERE availability = 'missing'")
             .expect("count reads"),
         0,
         "nothing is marked missing"
     );
+    rig.stop().await;
 }
 
 /// Retagging every track of an album to a new name keeps the album row,
@@ -1830,20 +1484,20 @@ async fn retagged_album_keeps_its_identity() {
     use droppedneedle::library::tags::TagField;
     use droppedneedle::library::tags::save::{TagEdit, save_tags};
 
-    let (_scratch, library, music) = bare_library("lib-retag-album");
+    let rig = Rig::start("lib-retag-album").await;
+    let music = rig.app.config.root_app_dir.join("music");
     // No release MBID here: the album is known by its tagged names.
     let files = [
         plant(&music, "album/01.flac", "flac_full_02.flac"),
         plant(&music, "album/02.flac", "flac_full_02.flac"),
     ];
-    add_music_root(&library, &music).await;
-    let track = library
+    rig.app.add_library_folder("music", &music).await;
+    let track = rig
         .scan_store
         .track_at("music", "album/01.flac")
         .expect("track indexed");
-    let album = library.scan_store.album_for_track(&track).expect("album");
-    library
-        .scan_store
+    let album = rig.scan_store.album_for_track(&track).expect("album");
+    rig.scan_store
         .execute_batch_for_tests(&format!(
             "INSERT INTO local_album_external_identities (local_album_id, provider, \
              release_group_mbid, decision_source, selected_at) \
@@ -1858,16 +1512,15 @@ async fn retagged_album_keeps_its_identity() {
         )
         .expect("album retagged");
     }
-    rescan(&library).await;
+    rig.app.scan_library().await;
 
     assert_eq!(
-        library.scan_store.album_for_track(&track).as_deref(),
+        rig.scan_store.album_for_track(&track).as_deref(),
         Some(album.as_str()),
         "the retagged album keeps its row"
     );
     assert_eq!(
-        library
-            .scan_store
+        rig.scan_store
             .query_i64_for_tests(&format!(
                 "SELECT COUNT(*) FROM local_albums WHERE id = '{album}' AND title = 'Renamed'"
             ))
@@ -1876,13 +1529,13 @@ async fn retagged_album_keeps_its_identity() {
         "the kept row takes the new name"
     );
     assert_eq!(
-        library
-            .scan_store
+        rig.scan_store
             .query_i64_for_tests("SELECT COUNT(*) FROM local_albums")
             .expect("count reads"),
         1,
         "no second album"
     );
+    rig.stop().await;
 }
 
 /// An automatic identity write never replaces a person's album or track
@@ -1981,9 +1634,9 @@ async fn failed_approval_leaves_the_review_pending() {
         .test_providers
         .as_ref()
         .expect("scripted providers")
-        .set_recall(ambiguous_recall(&library, &album));
+        .set_recall(ambiguous_recall(&library.identify_store, &album));
     assert_eq!(library.identify_tick().await, 1);
-    file_edition_review(&library, &album);
+    file_edition_review(&library.identify_store, &album);
     let review = library.pending_reviews(&album);
     assert_eq!(review.len(), 1);
     library
@@ -2059,70 +1712,45 @@ async fn journal_on_a_removed_root_waits() {
 async fn identification_survives_restarts() {
     use droppedneedle::library::identify::models::DecisionSource;
     use droppedneedle::library::identify::stores::IdentityStore as _;
-    use droppedneedle::library::scan::{CatalogStore as _, EffectivePolicy};
+    use droppedneedle::library::scan::CatalogStore as _;
 
-    let scratch = ScratchDir::new("lib-identify-restart");
-    let dir = scratch.to_path_buf();
-    let db_path = dir.join("app.db");
-    let connection = droppedneedle::db::open_connection(&db_path).expect("scratch db opens");
-    droppedneedle::schema::apply_migrations_blocking(&connection).expect("migrations apply");
-    drop(connection);
-    let config = Arc::new(
-        ConfigStore::open(
-            &dir.join("config.json"),
-            Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
-        )
-        .expect("config opens"),
-    );
-    let bundle = || {
-        LibrarySetup::for_tests_at(
-            droppedneedle::auth::wiring::AuthSetup::for_tests()
-                .expect("test auth builds")
-                .users,
-            Arc::new(UuidGenerator) as Arc<dyn IdGenerator>,
-            &db_path,
-            Arc::clone(&config),
-        )
-        .expect("bundle builds")
-    };
-    let music = dir.join("music");
+    let rig = Rig::start("lib-identify-restart").await;
+    rig.identify.recall_from(ambiguous_from);
+    // Paused, so the job the scan queues is still waiting at the restart.
+    let paused_at = rig.pause_identification().await;
+    let music = rig.app.config.root_app_dir.join("music");
     plant(&music, "album/01.flac", "flac_full_01.flac");
-
-    let first = bundle();
-    first
-        .add_root(
-            Some("music".to_owned()),
-            music.to_string_lossy().into_owned(),
-            EffectivePolicy::Automatic,
-        )
-        .expect("root adds");
-    drain_scans(&first).await;
-    let track = first
+    rig.app.add_library_folder("music", &music).await;
+    let track = rig
         .scan_store
         .track_at("music", "album/01.flac")
         .expect("track indexed");
-    let album = first.scan_store.album_for_track(&track).expect("album");
-    drop(first);
+    let album = rig.scan_store.album_for_track(&track).expect("album");
 
     // The scan-queued job is still there after a restart.
-    let second = bundle();
-    second.run_recovery().await;
-    second
-        .test_providers
-        .as_ref()
-        .expect("scripted providers")
-        .set_recall(ambiguous_recall(&second, &album));
-    assert_eq!(second.identify_tick().await, 1, "queued job survives");
-    choose_first_edition(&second, &album).await;
-    drop(second);
+    let rig = rig.restart().await;
+    let waiting: i64 = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT COUNT(*) FROM library_identify_jobs WHERE state = 'queued' AND attempts = 0",
+            [],
+            |row| row.get(0),
+        )
+        .expect("queue reads");
+    assert_eq!(waiting, 1, "queued job survives");
+    rig.resume_identification(paused_at).await;
+    rig.identified(1).await;
+    rig.choose_first_edition(&album).await;
 
-    let third = bundle();
-    let identity = third
+    let rig = rig.restart().await;
+    let identity = rig
         .identify_store
         .album_identity(&album)
         .expect("identity survives");
     assert_eq!(identity.decision_source, DecisionSource::Manual);
     assert_eq!(identity.release_mbid.as_deref(), Some(REL_1));
+    rig.stop().await;
 }
 
 /// Identify the album, then have a person choose the first of two tied
@@ -2132,7 +1760,7 @@ async fn approve_first_candidate(library: &LibrarySetup, album: &str) {
         .test_providers
         .as_ref()
         .expect("scripted providers")
-        .set_recall(ambiguous_recall(library, album));
+        .set_recall(ambiguous_recall(&library.identify_store, album));
     assert_eq!(library.identify_tick().await, 1);
     choose_first_edition(library, album).await;
 }
@@ -2303,7 +1931,7 @@ fn release_documents_answer_to_merged_ids() {
 #[tokio::test]
 async fn library_contribution_seed_callback_verify_links_album() {
     use droppedneedle::library::contrib::models::{
-        MusicBrainzVerifiedRelease, MusicBrainzVerifiedTrack, VerificationOutcome,
+        MusicBrainzVerifiedRelease, MusicBrainzVerifiedTrack,
     };
 
     const RELEASE: &str = "11111111-1111-4111-8111-111111111111";
@@ -2312,13 +1940,48 @@ async fn library_contribution_seed_callback_verify_links_album() {
     const WRONG: &str = "44444444-4444-4444-8444-444444444444";
     const ARTIST_MBID: &str = "33333333-3333-4333-8333-333333333333";
 
-    let lib = Lib::open("contrib").await;
-    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
-    let auth = bearer(&admin);
+    let rig = Rig::start("lib-contrib").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
     let headers = [("authorization", auth.as_str())];
 
+    // MusicBrainz as the verification worker will find it: one release
+    // that shares the title but not the tracklist, and the right one.
+    let release = |mbid: &str, titles: [&str; 2]| MusicBrainzVerifiedRelease {
+        release_mbid: mbid.to_owned(),
+        release_group_mbid: GROUP.to_owned(),
+        title: "Test Album".to_owned(),
+        artist_name: "Test Artist".to_owned(),
+        artist_mbid: Some(ARTIST_MBID.to_owned()),
+        tracks: titles
+            .iter()
+            .enumerate()
+            .map(|(index, title)| MusicBrainzVerifiedTrack {
+                title: (*title).to_owned(),
+                position: index as i64 + 1,
+                disc_number: 1,
+                duration_seconds: Some(200.0),
+                recording_mbid: Some(format!("{mbid}-rec-{index}")),
+                release_track_mbid: Some(format!("{mbid}-track-{index}")),
+            })
+            .collect(),
+        ..Default::default()
+    };
+    let providers = &rig.contrib;
+    providers.musicbrainz.insert_verification(
+        WRONG,
+        Ok(Some(release(
+            WRONG,
+            ["Somebody Else", "Another Tune Entirely"],
+        ))),
+    );
+    providers.musicbrainz.insert_verification(
+        RELEASE,
+        Ok(Some(release(RELEASE, ["First Song", "Second Song"]))),
+    );
+
     // One indexed two-track album, as a scan leaves it.
-    let db = rusqlite::Connection::open(&lib.db_path).expect("db opens");
+    let db = app.db();
     db.execute_batch(
         "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
          VALUES ('artist-1', 'Test Artist', 'test artist', 'person', 1, 1); \
@@ -2342,32 +2005,25 @@ async fn library_contribution_seed_callback_verify_links_album() {
         .expect("track seeds");
     }
 
-    let (status, created) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/albums/album-1/contributions",
-        &headers,
-        None,
-    )
-    .await;
+    let (status, created) = app
+        .call(
+            "POST",
+            "/api/v3/library/albums/album-1/contributions",
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{created}");
     assert_eq!(created["state"], json!("draft"));
     let id = created["id"].as_str().expect("contribution id").to_owned();
     // The album view carries the open contribution for the album page.
-    let (status, album) = call(
-        lib.router(),
-        "GET",
-        "/api/v3/library/albums/album-1",
-        &headers,
-        None,
-    )
-    .await;
+    let (status, album) = app
+        .call("GET", "/api/v3/library/albums/album-1", &headers, None)
+        .await;
     assert_eq!(status, StatusCode::OK, "{album}");
     assert_eq!(album["contribution_id"], json!(id));
     assert_eq!(album["contribution_state"], json!("draft"));
-    let (status, ready) = call(
-        lib.router(),
-        "PUT",
+    let (status, ready) = app.call("PUT",
         &format!("/api/v3/library/contributions/{id}/draft"),
         &headers,
         Some(json!({"expected_row_revision": created["row_revision"], "draft": created["draft"]})),
@@ -2377,26 +2033,26 @@ async fn library_contribution_seed_callback_verify_links_album() {
     assert_eq!(ready["state"], json!("ready"));
 
     // A stale revision answers with a code, a sentence and an action.
-    let (status, stale) = call(
-        lib.router(),
-        "POST",
-        &format!("/api/v3/library/contributions/{id}/musicbrainz/duplicates"),
-        &headers,
-        Some(json!({"expected_row_revision": created["row_revision"]})),
-    )
-    .await;
+    let (status, stale) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/contributions/{id}/musicbrainz/duplicates"),
+            &headers,
+            Some(json!({"expected_row_revision": created["row_revision"]})),
+        )
+        .await;
     assert_eq!(status, StatusCode::CONFLICT, "{stale}");
     assert_eq!(stale["error"]["code"], json!("CONTRIBUTION_CHANGED"));
     assert!(stale["error"]["details"]["action"].is_string());
 
-    let (status, checked) = call(
-        lib.router(),
-        "POST",
-        &format!("/api/v3/library/contributions/{id}/musicbrainz/duplicates"),
-        &headers,
-        Some(json!({"expected_row_revision": ready["row_revision"]})),
-    )
-    .await;
+    let (status, checked) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/contributions/{id}/musicbrainz/duplicates"),
+            &headers,
+            Some(json!({"expected_row_revision": ready["row_revision"]})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{checked}");
     assert_eq!(checked["state"], json!("ready"));
 
@@ -2404,14 +2060,14 @@ async fn library_contribution_seed_callback_verify_links_album() {
         ("authorization", auth.as_str()),
         ("origin", "https://music.example"),
     ];
-    let (status, seed) = call(
-        lib.router(),
-        "POST",
-        &format!("/api/v3/library/contributions/{id}/musicbrainz/seed"),
-        &origin,
-        Some(json!({"expected_row_revision": checked["row_revision"]})),
-    )
-    .await;
+    let (status, seed) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/contributions/{id}/musicbrainz/seed"),
+            &origin,
+            Some(json!({"expected_row_revision": checked["row_revision"]})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{seed}");
     let redirect = seed["fields"]
         .as_array()
@@ -2429,83 +2085,42 @@ async fn library_contribution_seed_callback_verify_links_album() {
         .to_owned();
 
     // The editor sends the browser back, here to the v1 path, signed out.
-    let back = |token: &str| {
-        Request::builder()
-            .uri(format!(
-                "/api/v1/library/contributions/musicbrainz/callback?token={token}&release_mbid={WRONG}"
-            ))
-            .header("host", HOST)
-            .body(Body::empty())
-            .expect("request builds")
-    };
-    let response = lib.router().oneshot(back(&token)).await.expect("responds");
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let back = format!(
+        "/api/v1/library/contributions/musicbrainz/callback?token={token}&release_mbid={WRONG}"
+    );
+    let (status, answer, _) = app.raw("GET", &back, &[], None).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
     assert_eq!(
-        response.headers()["location"],
+        answer["location"],
         format!("/library/contributions/{id}?musicbrainz=returned").as_str()
     );
-    let reused = lib.router().oneshot(back(&token)).await.expect("responds");
-    assert_eq!(
-        reused.headers()["location"],
-        "/library?musicbrainz=callback-error"
-    );
+    let (_, reused, _) = app.raw("GET", &back, &[], None).await;
+    assert_eq!(reused["location"], "/library?musicbrainz=callback-error");
 
-    let providers = lib
-        .library
-        .test_contrib
-        .as_ref()
-        .expect("scripted providers");
-    let release = |mbid: &str, titles: [&str; 2]| MusicBrainzVerifiedRelease {
-        release_mbid: mbid.to_owned(),
-        release_group_mbid: GROUP.to_owned(),
-        title: "Test Album".to_owned(),
-        artist_name: "Test Artist".to_owned(),
-        artist_mbid: Some(ARTIST_MBID.to_owned()),
-        tracks: titles
-            .iter()
-            .enumerate()
-            .map(|(index, title)| MusicBrainzVerifiedTrack {
-                title: (*title).to_owned(),
-                position: index as i64 + 1,
-                disc_number: 1,
-                duration_seconds: Some(200.0),
-                recording_mbid: Some(format!("{mbid}-rec-{index}")),
-                release_track_mbid: Some(format!("{mbid}-track-{index}")),
-            })
-            .collect(),
-        ..Default::default()
+    // The returned release does not fit: the matcher refuses it and says
+    // why.
+    let contribution = format!("/api/v3/library/contributions/{id}");
+    let verified = || async {
+        app.until(
+            "the verification worker settles the contribution",
+            || async {
+                let (status, body) = app.call("GET", &contribution, &headers, None).await;
+                assert_eq!(status, StatusCode::OK, "{body}");
+                (body["state"] != json!("verifying")).then_some(())
+            },
+        )
+        .await;
     };
-    let now = || {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_secs_f64()
-    };
+    verified().await;
 
-    // The returned release shares the title but not the tracklist: the
-    // matcher refuses it and says why.
-    providers.musicbrainz.insert_verification(
-        WRONG,
-        Ok(Some(release(
-            WRONG,
-            ["Somebody Else", "Another Tune Entirely"],
-        ))),
-    );
-    let outcome = lib
-        .library
-        .contrib_worker
-        .run_once(now())
-        .await
-        .expect("worker runs");
-    assert_eq!(outcome, Some(VerificationOutcome::NeedsReview));
-    let (status, review) = call(
-        lib.router(),
-        "GET",
-        &format!("/api/v3/library/contributions/{id}"),
-        &headers,
-        None,
-    )
-    .await;
+    let (status, review) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/contributions/{id}"),
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{review}");
     assert_eq!(review["state"], json!("needs_review"));
     assert_eq!(
@@ -2515,39 +2130,29 @@ async fn library_contribution_seed_callback_verify_links_album() {
     assert!(review["review_reason"]["action"].is_string());
 
     // The curator records the right release; it fits and links.
-    let (status, verifying) = call(
-        lib.router(),
-        "PUT",
-        &format!("/api/v3/library/contributions/{id}/musicbrainz/result"),
-        &headers,
-        Some(json!({
-            "expected_row_revision": review["row_revision"],
-            "release_id_or_url": RELEASE,
-            "replace_existing_result": true,
-        })),
-    )
-    .await;
+    let (status, verifying) = app
+        .call(
+            "PUT",
+            &format!("/api/v3/library/contributions/{id}/musicbrainz/result"),
+            &headers,
+            Some(json!({
+                "expected_row_revision": review["row_revision"],
+                "release_id_or_url": RELEASE,
+                "replace_existing_result": true,
+            })),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{verifying}");
     assert_eq!(verifying["state"], json!("verifying"));
-    providers.musicbrainz.insert_verification(
-        RELEASE,
-        Ok(Some(release(RELEASE, ["First Song", "Second Song"]))),
-    );
-    let outcome = lib
-        .library
-        .contrib_worker
-        .run_once(now())
-        .await
-        .expect("worker runs");
-    assert_eq!(outcome, Some(VerificationOutcome::Linked));
-    let (status, linked) = call(
-        lib.router(),
-        "GET",
-        &format!("/api/v3/library/contributions/{id}"),
-        &headers,
-        None,
-    )
-    .await;
+    verified().await;
+    let (status, linked) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/contributions/{id}"),
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{linked}");
     assert_eq!(linked["state"], json!("linked"));
     let identity: (String, String, String) = db
@@ -2607,16 +2212,18 @@ async fn library_contribution_seed_callback_verify_links_album() {
             ),
         ]
     );
+    rig.stop().await;
 }
 
 /// The release the planted files name, built from their own tags so every
 /// id agrees.
-fn tagged_release(library: &LibrarySetup, album_id: &str) -> Release {
+fn tagged_release(store: &SqliteIdentifyStore, album_id: &str) -> Release {
     use droppedneedle::library::identify::stores::FactsSource as _;
-    let facts = library
-        .identify_store
-        .album_facts(album_id)
-        .expect("album facts");
+    tagged_from(&store.album_facts(album_id).expect("album facts"))
+}
+
+/// [`tagged_release`] for the album identification is asking about.
+fn tagged_from(facts: &LocalAlbumFacts) -> Release {
     let first = &facts.tracks[0];
     Release {
         id: first.release_mbid.clone().expect("tagged release"),
@@ -2688,64 +2295,38 @@ fn track_row(db: &Path, track_id: &str) -> TrackRow {
 async fn library_journey_undo_edition_then_reidentify() {
     use droppedneedle::library::identify::sources::{Edition, EditionPage};
     use droppedneedle::library::identify::stores::IdentityStore as _;
-    use droppedneedle::library::operations::{service, tick};
+    use droppedneedle::library::operations::decisions::live_automatic_edition_undo;
 
-    let lib = Lib::open("operations").await;
-    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
-    let auth = bearer(&admin);
+    let rig = Rig::start("lib-operations").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
     let headers = [("authorization", auth.as_str())];
-    let music = lib.dir.join("music");
+    let music = app.config.root_app_dir.join("music");
     plant(&music, "album-r/01.flac", "flac_full_01.flac");
     plant(&music, "album-r/02.flac", "flac_full_02.flac");
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/roots",
-        &headers,
-        Some(json!({"id": "music", "path": music.to_string_lossy()})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED, "{body}");
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/scan",
-        &headers,
-        Some(json!({})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let run_id = body["run_id"].as_str().expect("run id").to_owned();
-    drain_scans(&lib.library).await;
-    let (_, body) = call(
-        lib.router(),
-        "GET",
-        &format!("/api/v3/library/scan/runs/{run_id}"),
-        &headers,
-        None,
-    )
-    .await;
-    let track_id = body["files"][0]["track_id"]
-        .as_str()
-        .expect("track id")
-        .to_owned();
-    let (_, body) = call(
-        lib.router(),
-        "GET",
-        &format!("/api/v3/library/tracks/{track_id}"),
-        &headers,
-        None,
-    )
-    .await;
+    // Identification waits until the journey has scripted MusicBrainz for
+    // the album the scan finds.
+    let paused_at = rig.pause_identification().await;
+    app.add_library_folder("music", &music).await;
+    let track_id = {
+        use droppedneedle::library::scan::CatalogStore as _;
+        rig.scan_store
+            .track_at("music", "album-r/01.flac")
+            .expect("track indexed")
+    };
+    let (_, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/tracks/{track_id}"),
+            &headers,
+            None,
+        )
+        .await;
     let album = body["album_id"].as_str().expect("album id").to_owned();
-    let release = tagged_release(&lib.library, &album);
+    let release = tagged_release(&rig.identify_store, &album);
     let (manual_track, auto_track) = {
         use droppedneedle::library::identify::stores::FactsSource as _;
-        let facts = lib
-            .library
-            .identify_store
-            .album_facts(&album)
-            .expect("facts");
+        let facts = rig.identify_store.album_facts(&album).expect("facts");
         (
             facts.tracks[0].local_track_id.clone(),
             facts.tracks[1].local_track_id.clone(),
@@ -2770,7 +2351,8 @@ async fn library_journey_undo_edition_then_reidentify() {
         "automatic".to_owned(),
     );
     {
-        let conn = droppedneedle::db::open_connection(&lib.db_path).expect("db opens");
+        let conn =
+            droppedneedle::db::open_connection(&app.config.library_db_path).expect("db opens");
         for (track, row) in [(&manual_track, &manual_row), (&auto_track, &prior_auto_row)] {
             conn.execute(
                 "INSERT INTO local_track_external_identities (local_track_id, provider, \
@@ -2782,28 +2364,30 @@ async fn library_journey_undo_edition_then_reidentify() {
             .expect("prior track row");
         }
     }
-    let scripted = lib.library.test_providers.as_ref().expect("scripted");
+    let scripted = &rig.identify;
     scripted.set_recall(RecallResult {
         releases: vec![release.clone()],
         ..RecallResult::default()
     });
 
     // The scan-queued attempt seals the exact edition automatically.
-    assert_eq!(lib.library.identify_tick().await, 1);
-    let sealed = lib
-        .library
-        .identify_store
-        .album_identity(&album)
-        .expect("sealed");
+    rig.resume_identification(paused_at).await;
+    rig.identified(1).await;
+    let sealed = rig.identify_store.album_identity(&album).expect("sealed");
     assert_eq!(sealed.release_mbid.as_deref(), Some(release.id.as_str()));
-    assert_eq!(track_row(&lib.db_path, &manual_track), manual_row);
     assert_eq!(
-        track_row(&lib.db_path, &auto_track).1.as_deref(),
+        track_row(&app.config.library_db_path, &manual_track),
+        manual_row
+    );
+    assert_eq!(
+        track_row(&app.config.library_db_path, &auto_track)
+            .1
+            .as_deref(),
         Some(release.id.as_str())
     );
 
     // Undo needs the revisions the acceptance left; stale ones are refused.
-    let (album_revision, identity_revision) = service::automatic_edition_undo(&lib.library, &album)
+    let (album_revision, identity_revision) = live_automatic_edition_undo(&app.db(), &album)
         .expect("undo reads")
         .expect("undo is live");
     let undo = format!("/api/v3/library/albums/{album}/undo-automatic-edition");
@@ -2815,73 +2399,82 @@ async fn library_journey_undo_edition_then_reidentify() {
         "expected_album_revision": album_revision,
         "expected_identity_revision": identity_revision,
     });
-    let (status, body) = call(lib.router(), "POST", &undo, &headers, Some(stale)).await;
+    let (status, body) = app.call("POST", &undo, &headers, Some(stale)).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["error"]["code"], json!("STALE_REVISION"));
-    let (status, body) = call(lib.router(), "POST", &undo, &headers, Some(fresh.clone())).await;
+    let (status, body) = app.call("POST", &undo, &headers, Some(fresh.clone())).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["outcome"], json!("cleared_to_review"));
-    assert!(lib.library.identify_store.album_identity(&album).is_none());
+    assert!(rig.identify_store.album_identity(&album).is_none());
     // The curator's track row was never touched; the automatic one is back
     // on its earlier release, disc, and position.
-    assert_eq!(track_row(&lib.db_path, &manual_track), manual_row);
-    assert_eq!(track_row(&lib.db_path, &auto_track), prior_auto_row);
+    assert_eq!(
+        track_row(&app.config.library_db_path, &manual_track),
+        manual_row
+    );
+    assert_eq!(
+        track_row(&app.config.library_db_path, &auto_track),
+        prior_auto_row
+    );
     let reviews = format!("/api/v3/library/reviews?album_id={album}");
-    let (_, body) = call(lib.router(), "GET", &reviews, &headers, None).await;
+    let (_, body) = app.call("GET", &reviews, &headers, None).await;
     assert_eq!(
         body["reviews"][0]["reason_code"],
         json!("AUTOMATIC_EDITION_CLEARED_TO_REVIEW")
     );
-    let (status, _) = call(lib.router(), "POST", &undo, &headers, Some(fresh)).await;
+    let (status, _) = app.call("POST", &undo, &headers, Some(fresh)).await;
     assert_eq!(status, StatusCode::NOT_FOUND, "an undo is used once");
 
     // Start a re-identification; the same key returns the same job.
     let start = format!("/api/v3/library/albums/{album}/reidentify");
     let key = json!({"idempotency_key": "again-1"});
-    let (status, job) = call(lib.router(), "POST", &start, &headers, Some(key.clone())).await;
+    let (status, job) = app.call("POST", &start, &headers, Some(key.clone())).await;
     assert_eq!(status, StatusCode::OK, "{job}");
     assert_eq!(job["state"], json!("queued"));
     assert_eq!(job["kind"], json!("explicit_reidentification"));
     let job_id = job["id"].as_str().expect("job id").to_owned();
-    let (_, again) = call(lib.router(), "POST", &start, &headers, Some(key)).await;
+    let (_, again) = app.call("POST", &start, &headers, Some(key)).await;
     assert_eq!(again["id"], json!(job_id));
 
     // Stop it while queued, then resume: it starts over.
     let operation = format!("/api/v3/library/operations/{job_id}");
-    let (status, stopped) = call(
-        lib.router(),
-        "POST",
-        &format!("{operation}/stop"),
-        &headers,
-        Some(json!({"expected_row_revision": job["row_revision"]})),
-    )
-    .await;
+    let (status, stopped) = app
+        .call(
+            "POST",
+            &format!("{operation}/stop"),
+            &headers,
+            Some(json!({"expected_row_revision": job["row_revision"]})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{stopped}");
     assert_eq!(stopped["state"], json!("stopped"));
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        &format!("{operation}/resume"),
-        &headers,
-        Some(json!({"expected_row_revision": job["row_revision"]})),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("{operation}/resume"),
+            &headers,
+            Some(json!({"expected_row_revision": job["row_revision"]})),
+        )
+        .await;
     assert_eq!(status, StatusCode::CONFLICT, "stale revision: {body}");
-    let (_, resumed) = call(
-        lib.router(),
-        "POST",
-        &format!("{operation}/resume"),
-        &headers,
-        Some(json!({"expected_row_revision": stopped["row_revision"]})),
-    )
-    .await;
+    let (_, resumed) = app
+        .call(
+            "POST",
+            &format!("{operation}/resume"),
+            &headers,
+            Some(json!({"expected_row_revision": stopped["row_revision"]})),
+        )
+        .await;
     assert_eq!(resumed["state"], json!("queued"));
 
     // The worker scores the candidates and waits for a choice.
-    let ops = service::Operations::new(&lib.library);
-    assert!(tick(&lib.library, &ops, "journey-worker").await);
-    let (status, ready) = call(lib.router(), "GET", &operation, &headers, None).await;
-    assert_eq!(status, StatusCode::OK, "{ready}");
+    let ready = app
+        .until("the worker scores the candidates", || async {
+            let (status, job) = app.call("GET", &operation, &headers, None).await;
+            assert_eq!(status, StatusCode::OK, "{job}");
+            (!matches!(job["state"].as_str(), Some("queued" | "running"))).then_some(job)
+        })
+        .await;
     assert_eq!(ready["state"], json!("ready"), "{ready}");
     let candidates = ready["reidentification_candidates"]
         .as_array()
@@ -2893,7 +2486,7 @@ async fn library_journey_undo_edition_then_reidentify() {
         json!("supported")
     );
     assert!(
-        lib.library.identify_store.album_identity(&album).is_none(),
+        rig.identify_store.album_identity(&album).is_none(),
         "nothing seals before the choice"
     );
 
@@ -2911,22 +2504,22 @@ async fn library_journey_undo_edition_then_reidentify() {
     });
     let finder =
         format!("/api/v3/library/albums/{album}/reidentification/releases?title=OK%20Computer");
-    let (status, found) = call(lib.router(), "GET", &finder, &headers, None).await;
+    let (status, found) = app.call("GET", &finder, &headers, None).await;
     assert_eq!(status, StatusCode::OK, "{found}");
     assert_eq!(found["items"][0]["is_current_release"], json!(false));
 
     // The choice seals a manual identity and settles the review.
-    let (status, done) = call(
-        lib.router(),
-        "POST",
-        &format!("{operation}/candidate"),
-        &headers,
-        Some(json!({
-            "expected_row_revision": ready["row_revision"],
-            "candidate_key": candidates[0]["candidate_key"],
-        })),
-    )
-    .await;
+    let (status, done) = app
+        .call(
+            "POST",
+            &format!("{operation}/candidate"),
+            &headers,
+            Some(json!({
+                "expected_row_revision": ready["row_revision"],
+                "candidate_key": candidates[0]["candidate_key"],
+            })),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{done}");
     assert_eq!(done["state"], json!("succeeded"));
     assert_eq!(done["terminal_code"], json!("IDENTIFIED"));
@@ -2934,17 +2527,14 @@ async fn library_journey_undo_edition_then_reidentify() {
         done["selected_reidentification_candidate_key"],
         candidates[0]["candidate_key"]
     );
-    let manual = lib
-        .library
-        .identify_store
-        .album_identity(&album)
-        .expect("sealed");
+    let manual = rig.identify_store.album_identity(&album).expect("sealed");
     assert_eq!(manual.release_mbid.as_deref(), Some(release.id.as_str()));
     assert_eq!(manual.decision_source.as_str(), "manual");
-    let (_, body) = call(lib.router(), "GET", &reviews, &headers, None).await;
+    let (_, body) = app.call("GET", &reviews, &headers, None).await;
     assert_eq!(body["reviews"], json!([]), "the review is settled");
-    let (_, found) = call(lib.router(), "GET", &finder, &headers, None).await;
+    let (_, found) = app.call("GET", &finder, &headers, None).await;
     assert_eq!(found["items"][0]["is_current_release"], json!(true));
+    rig.stop().await;
 }
 
 /// Two "Low" records with music and no MusicBrainz evidence: listed as a
@@ -2952,12 +2542,13 @@ async fn library_journey_undo_edition_then_reidentify() {
 /// distinct, after which the group stays gone.
 #[tokio::test]
 async fn artist_duplicate_groups_list_open_and_dismiss() {
-    let lib = Lib::open("reconcile").await;
-    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
-    let auth = bearer(&admin);
+    let rig = Rig::start("lib-reconcile").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
     let headers = [("authorization", auth.as_str())];
     {
-        let conn = droppedneedle::db::open_connection(&lib.db_path).expect("db opens");
+        let conn =
+            droppedneedle::db::open_connection(&app.config.library_db_path).expect("db opens");
         for n in ["1", "2"] {
             conn.execute_batch(&format!(
                 "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
@@ -2979,14 +2570,14 @@ async fn artist_duplicate_groups_list_open_and_dismiss() {
         }
     }
 
-    let (status, body) = call(
-        lib.router(),
-        "GET",
-        "/api/v3/library/artists/duplicate-groups?search=lo",
-        &headers,
-        None,
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "GET",
+            "/api/v3/library/artists/duplicate-groups?search=lo",
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["total"], 1, "{body}");
     let group = &body["items"][0];
@@ -2995,33 +2586,34 @@ async fn artist_duplicate_groups_list_open_and_dismiss() {
     let group_id = group["id"].as_str().expect("group id").to_owned();
     let path = format!("/api/v3/library/artists/duplicate-groups/{group_id}");
 
-    let (status, detail) = call(lib.router(), "GET", &path, &headers, None).await;
+    let (status, detail) = app.call("GET", &path, &headers, None).await;
     assert_eq!(status, StatusCode::OK, "{detail}");
     assert_eq!(detail["releases"].as_array().map(Vec::len), Some(2));
     let revisions = detail["member_revisions"].clone();
 
     let dismiss = format!("{path}/dismiss");
     let stale = json!({"expected_member_revisions": {"low-1": 1, "low-2": 9}});
-    let (status, body) = call(lib.router(), "POST", &dismiss, &headers, Some(stale)).await;
+    let (status, body) = app.call("POST", &dismiss, &headers, Some(stale)).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
 
     let fresh = json!({"expected_member_revisions": revisions});
-    let (status, body) = call(lib.router(), "POST", &dismiss, &headers, Some(fresh)).await;
+    let (status, body) = app.call("POST", &dismiss, &headers, Some(fresh)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["dismissed_pairs"], 1);
 
-    let (_, body) = call(
-        lib.router(),
-        "GET",
-        "/api/v3/library/artists/reconciliation",
-        &headers,
-        None,
-    )
-    .await;
+    let (_, body) = app
+        .call(
+            "GET",
+            "/api/v3/library/artists/reconciliation",
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(body["state"], "idle", "{body}");
     assert_eq!(body["same_name_only_count"], 0, "{body}");
-    let (status, _) = call(lib.router(), "GET", &path, &headers, None).await;
+    let (status, _) = app.call("GET", &path, &headers, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    rig.stop().await;
 }
 
 /// Removing with files moves them into the root's recycle bin, never
@@ -3182,82 +2774,53 @@ async fn library_journey_choose_edition() {
     use droppedneedle::library::identify::stores::IdentityStore as _;
 
     const OTHER: &str = "0f6e7a1c-2b3d-4e5f-8a9b-1c2d3e4f5a6b";
-    let lib = Lib::open("edition").await;
-    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
-    let auth = bearer(&admin);
+    let rig = Rig::start("lib-edition").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
     let headers = [("authorization", auth.as_str())];
-    let music = lib.dir.join("music");
+    let music = app.config.root_app_dir.join("music");
     plant(&music, "album-e/01.flac", "flac_full_01.flac");
     plant(&music, "album-e/02.flac", "flac_full_02.flac");
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/roots",
-        &headers,
-        Some(json!({"id": "music", "path": music.to_string_lossy()})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED, "{body}");
-    let (_, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/scan",
-        &headers,
-        Some(json!({})),
-    )
-    .await;
-    let run_id = body["run_id"].as_str().expect("run id").to_owned();
-    drain_scans(&lib.library).await;
-    let (_, body) = call(
-        lib.router(),
-        "GET",
-        &format!("/api/v3/library/scan/runs/{run_id}"),
-        &headers,
-        None,
-    )
-    .await;
-    let track_id = body["files"][0]["track_id"]
-        .as_str()
-        .expect("track")
-        .to_owned();
-    let (_, body) = call(
-        lib.router(),
-        "GET",
-        &format!("/api/v3/library/tracks/{track_id}"),
-        &headers,
-        None,
-    )
-    .await;
+    // Identification waits until the journey has scripted MusicBrainz for
+    // the album the scan finds.
+    let paused_at = rig.pause_identification().await;
+    app.add_library_folder("music", &music).await;
+    let track_id = {
+        use droppedneedle::library::scan::CatalogStore as _;
+        rig.scan_store
+            .track_at("music", "album-e/01.flac")
+            .expect("track indexed")
+    };
+    let (_, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/tracks/{track_id}"),
+            &headers,
+            None,
+        )
+        .await;
     let album = body["album_id"].as_str().expect("album id").to_owned();
-    let fit = tagged_release(&lib.library, &album);
+    let fit = tagged_release(&rig.identify_store, &album);
     // Another edition of the group holding only the first song.
     let mut other = fit.clone();
     other.id = OTHER.to_owned();
     other.tracks.truncate(1);
     other.tracks[0].id = "other-track-0".to_owned();
-    lib.library
-        .test_providers
-        .as_ref()
-        .expect("scripted")
-        .set_recall(RecallResult {
-            releases: vec![fit.clone(), other.clone()],
-            ..RecallResult::default()
-        });
-    assert_eq!(lib.library.identify_tick().await, 1);
+    rig.identify.set_recall(RecallResult {
+        releases: vec![fit.clone(), other.clone()],
+        ..RecallResult::default()
+    });
+    rig.resume_identification(paused_at).await;
+    rig.identified(1).await;
     let edition = format!("/api/v3/library/albums/{album}/edition");
-    let (_, body) = call(lib.router(), "GET", &edition, &headers, None).await;
+    let (_, body) = app.call("GET", &edition, &headers, None).await;
     assert_eq!(body["state"], json!("confirmed"), "{body}");
     assert_eq!(body["release_mbid"], json!(fit.id));
 
     // The plan for the current edition: both files keep their place.
-    let (status, body) = call(
-        lib.router(),
-        "GET",
-        &format!("{edition}/plan"),
-        &headers,
-        None,
-    )
-    .await;
+    let (status, body) = app
+        .call("GET", &format!("{edition}/plan"), &headers, None)
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["is_current"], json!(true));
     assert_eq!(
@@ -3271,14 +2834,14 @@ async fn library_journey_choose_edition() {
     );
     // The plan for the smaller edition, before choosing it: one file
     // keeps its place, the other becomes an extra, nothing changes yet.
-    let (status, body) = call(
-        lib.router(),
-        "GET",
-        &format!("{edition}/plan?release_mbid={OTHER}"),
-        &headers,
-        None,
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("{edition}/plan?release_mbid={OTHER}"),
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["is_current"], json!(false));
     assert_eq!(
@@ -3290,22 +2853,18 @@ async fn library_journey_choose_edition() {
         (&json!(1), &json!(0), &json!(1)),
         "{body}"
     );
-    let unchanged = lib
-        .library
-        .identify_store
-        .album_identity(&album)
-        .expect("row");
+    let unchanged = rig.identify_store.album_identity(&album).expect("row");
     assert_eq!(unchanged.release_mbid.as_deref(), Some(fit.id.as_str()));
 
     // Choose the smaller edition: one file placed, one kept as an extra.
-    let (status, body) = call(
-        lib.router(),
-        "PUT",
-        &edition,
-        &headers,
-        Some(json!({"release_mbid": OTHER})),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "PUT",
+            &edition,
+            &headers,
+            Some(json!({"release_mbid": OTHER})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["retag_files"].as_array().map(Vec::len), Some(1));
     assert_eq!(body["extra_track_ids"].as_array().map(Vec::len), Some(1));
@@ -3313,67 +2872,55 @@ async fn library_journey_choose_edition() {
     assert_eq!(body["status"]["undo_available"], json!(true));
 
     // An automatic pass never flips the choice.
-    let (status, _) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/identify",
-        &headers,
-        Some(json!({"album_id": album})),
-    )
-    .await;
+    let (status, _) = app
+        .call(
+            "POST",
+            "/api/v3/library/identify",
+            &headers,
+            Some(json!({"album_id": album})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK);
-    lib.library.identify_tick().await;
-    let kept = lib
-        .library
-        .identify_store
-        .album_identity(&album)
-        .expect("row");
+    rig.identified(1).await;
+    let kept = rig.identify_store.album_identity(&album).expect("row");
     assert_eq!(kept.release_mbid.as_deref(), Some(OTHER));
 
     // Undo brings back the automatic best fit.
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        &format!("{edition}/undo"),
-        &headers,
-        None,
-    )
-    .await;
+    let (status, body) = app
+        .call("POST", &format!("{edition}/undo"), &headers, None)
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["state"], json!("confirmed"));
     assert_eq!(body["release_mbid"], json!(fit.id));
 
     // Choose again, then let DroppedNeedle choose: best fit again.
-    let (status, _) = call(
-        lib.router(),
-        "PUT",
-        &edition,
-        &headers,
-        Some(json!({"release_mbid": OTHER})),
-    )
-    .await;
+    let (status, _) = app
+        .call(
+            "PUT",
+            &edition,
+            &headers,
+            Some(json!({"release_mbid": OTHER})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK);
-    let (status, body) = call(lib.router(), "DELETE", &edition, &headers, None).await;
+    let (status, body) = app.call("DELETE", &edition, &headers, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    lib.library.identify_tick().await;
-    let back = lib
-        .library
-        .identify_store
-        .album_identity(&album)
-        .expect("row");
+    rig.identified(1).await;
+    let back = rig.identify_store.album_identity(&album).expect("row");
     assert_eq!(back.release_mbid.as_deref(), Some(fit.id.as_str()));
 
     // A release MusicBrainz does not know is refused with a reason.
-    let (status, body) = call(
-        lib.router(),
-        "PUT",
-        &edition,
-        &headers,
-        Some(json!({"release_mbid": "11111111-2222-4333-8444-555555555555"})),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "PUT",
+            &edition,
+            &headers,
+            Some(json!({"release_mbid": "11111111-2222-4333-8444-555555555555"})),
+        )
+        .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_eq!(body["error"]["code"], json!("EDITION_NOT_FOUND"));
+    rig.stop().await;
 }
 
 /// Catalog corrections end to end: split a track off, find it still there
@@ -3385,37 +2932,23 @@ async fn library_journey_choose_edition() {
 async fn library_journey_catalog_corrections() {
     use droppedneedle::library::scan::CatalogStore as _;
 
-    let lib = Lib::open("corrections").await;
-    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
-    let auth = bearer(&admin);
+    let rig = Rig::start("lib-corrections").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
     let headers = [("authorization", auth.as_str())];
-    let music = lib.dir.join("music");
+    let music = app.config.root_app_dir.join("music");
     plant(&music, "a/01.flac", "flac_full_01.flac");
     plant(&music, "a/02.flac", "flac_full_02.flac");
     plant(&music, "b/01.flac", "flac_full_01.flac");
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/roots",
-        &headers,
-        Some(json!({"id": "music", "path": music.to_string_lossy()})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED, "{body}");
+    // Nothing is scripted at MusicBrainz, so identification stays paused:
+    // the journey is about what a person does with the album.
+    rig.pause_identification().await;
+    app.add_library_folder("music", &music).await;
     let scan = || async {
-        let (status, body) = call(
-            lib.router(),
-            "POST",
-            "/api/v3/library/scan",
-            &headers,
-            Some(json!({})),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        drain_scans(&lib.library).await;
+        app.scan_library().await;
     };
     scan().await;
-    let store = &lib.library.scan_store;
+    let store = &rig.scan_store;
     let a1 = store.track_at("music", "a/01.flac").expect("a/01");
     let a2 = store.track_at("music", "a/02.flac").expect("a/02");
     let b1 = store.track_at("music", "b/01.flac").expect("b/01");
@@ -3425,14 +2958,14 @@ async fn library_journey_catalog_corrections() {
 
     // Split track 2 off album A.
     let selection = json!({"track_ids": [a2], "title": "Bonus"});
-    let (status, preview) = call(
-        lib.router(),
-        "POST",
-        &format!("/api/v3/library/albums/{album_a}/split-preview"),
-        &headers,
-        Some(selection.clone()),
-    )
-    .await;
+    let (status, preview) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/albums/{album_a}/split-preview"),
+            &headers,
+            Some(selection.clone()),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{preview}");
     assert_eq!(preview["automatic_groups"][0]["created"], json!(true));
     assert_eq!(preview["automatic_groups"][0]["title"], json!("Bonus"));
@@ -3445,13 +2978,15 @@ async fn library_journey_catalog_corrections() {
     let split = format!("/api/v3/library/albums/{album_a}/split");
     let mut apply = selection.clone();
     apply["preview_token"] = json!("1.0000");
-    let (status, body) = call(lib.router(), "POST", &split, &headers, Some(apply)).await;
+    let (status, body) = app.call("POST", &split, &headers, Some(apply)).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["error"]["code"], json!("PREVIEW_EXPIRED"));
     let mut apply = selection.clone();
     apply["preview_token"] = json!(token);
     apply["idempotency_key"] = json!("split-1");
-    let (status, applied) = call(lib.router(), "POST", &split, &headers, Some(apply.clone())).await;
+    let (status, applied) = app
+        .call("POST", &split, &headers, Some(apply.clone()))
+        .await;
     assert_eq!(status, StatusCode::OK, "{applied}");
     let album_new = applied["target_album_id"]
         .as_str()
@@ -3461,7 +2996,7 @@ async fn library_journey_catalog_corrections() {
         store.album_for_track(&a2).as_deref(),
         Some(album_new.as_str())
     );
-    let (status, replay) = call(lib.router(), "POST", &split, &headers, Some(apply)).await;
+    let (status, replay) = app.call("POST", &split, &headers, Some(apply)).await;
     assert_eq!(status, StatusCode::OK, "{replay}");
     assert_eq!(replay["target_album_id"], json!(album_new));
 
@@ -3475,14 +3010,14 @@ async fn library_journey_catalog_corrections() {
     // Reset grouping sends the track back to album A; the split album is
     // retired into it.
     let selection = json!({"track_ids": [a2]});
-    let (status, preview) = call(
-        lib.router(),
-        "POST",
-        &format!("/api/v3/library/albums/{album_new}/reset-grouping-preview"),
-        &headers,
-        Some(selection.clone()),
-    )
-    .await;
+    let (status, preview) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/albums/{album_new}/reset-grouping-preview"),
+            &headers,
+            Some(selection.clone()),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{preview}");
     assert_eq!(
         preview["automatic_groups"][0]["local_album_id"],
@@ -3490,20 +3025,20 @@ async fn library_journey_catalog_corrections() {
     );
     let mut apply = selection;
     apply["preview_token"] = preview["preview_token"].clone();
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        &format!("/api/v3/library/albums/{album_new}/reset-grouping"),
-        &headers,
-        Some(apply),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/albums/{album_new}/reset-grouping"),
+            &headers,
+            Some(apply),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         store.album_for_track(&a2).as_deref(),
         Some(album_a.as_str())
     );
-    let db = rusqlite::Connection::open(&lib.db_path).expect("db opens");
+    let db = rusqlite::Connection::open(&app.config.library_db_path).expect("db opens");
     let retired_into = |album: &str| -> Option<String> {
         db.query_row(
             "SELECT retired_into_album_id FROM local_albums WHERE id = ?1",
@@ -3537,14 +3072,14 @@ async fn library_journey_catalog_corrections() {
     ))
     .expect("favorite and play album b");
     let selection = json!({"track_ids": [b1], "target_album_id": album_a});
-    let (status, preview) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/albums/merge-preview",
-        &headers,
-        Some(selection.clone()),
-    )
-    .await;
+    let (status, preview) = app
+        .call(
+            "POST",
+            "/api/v3/library/albums/merge-preview",
+            &headers,
+            Some(selection.clone()),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{preview}");
     assert_eq!(preview["aliases"], json!([album_b]));
     assert_eq!(preview["edition_changes"][0]["change"], json!("moved"));
@@ -3553,24 +3088,24 @@ async fn library_journey_catalog_corrections() {
     apply["preview_token"] = preview["preview_token"].clone();
     let mut other_choice = apply.clone();
     other_choice["identity_choice"] = json!("retain_manual");
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/albums/merge",
-        &headers,
-        Some(other_choice),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/albums/merge",
+            &headers,
+            Some(other_choice),
+        )
+        .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["error"]["code"], json!("STALE_REVISION"));
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/albums/merge",
-        &headers,
-        Some(apply),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/albums/merge",
+            &headers,
+            Some(apply),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let (favorite, played): (String, String) = db
         .query_row(
@@ -3613,27 +3148,27 @@ async fn library_journey_catalog_corrections() {
         "surviving_artist_id": "artist-keep",
         "expected_revisions": {"artist-keep": 1, "artist-dupe": 1},
     });
-    let (status, preview) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/artists/merge-preview",
-        &headers,
-        Some(selection.clone()),
-    )
-    .await;
+    let (status, preview) = app
+        .call(
+            "POST",
+            "/api/v3/library/artists/merge-preview",
+            &headers,
+            Some(selection.clone()),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{preview}");
     assert_eq!(preview["reference_counts"]["favorites"], json!(1));
     let mut apply = selection;
     apply["preview_token"] = preview["preview_token"].clone();
     apply["idempotency_key"] = json!("artist-merge-1");
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/artists/merge",
-        &headers,
-        Some(apply),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/artists/merge",
+            &headers,
+            Some(apply),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["retired_artist_ids"], json!(["artist-dupe"]));
     let (retired, favorite): (Option<String>, String) = db
@@ -3646,6 +3181,7 @@ async fn library_journey_catalog_corrections() {
         .expect("merged artist");
     assert_eq!(retired.as_deref(), Some("artist-keep"));
     assert_eq!(favorite, "artist-keep");
+    rig.stop().await;
 }
 
 /// Run one Library Management worker step off the async runtime.
@@ -3736,7 +3272,7 @@ async fn library_management_preview_apply_undo() {
         .test_providers
         .as_ref()
         .expect("scripted providers")
-        .set_recall(ambiguous_recall(&library, &album));
+        .set_recall(ambiguous_recall(&library.identify_store, &album));
     assert_eq!(library.identify_tick().await, 1);
     library
         .scan_store
@@ -3949,132 +3485,107 @@ async fn library_management_preview_apply_undo() {
 }
 
 /// Run repair turns until the job leaves `queued` and `running`.
-async fn settle_repair(lib: &Lib, headers: &[(&str, &str)], path: &str) -> Value {
-    use droppedneedle::library::repairs::{service::Repairs, tick};
-    let repairs = Repairs::new(&lib.library);
-    for _ in 0..50 {
-        tick(&lib.library, &repairs, "repair-worker").await;
-        let (status, body) = call(lib.router(), "GET", path, headers, None).await;
+async fn settle_repair(app: &TestApp, headers: &[(&str, &str)], path: &str) -> Value {
+    app.until("the repair job settles", || async {
+        let (status, body) = app.call("GET", path, headers, None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        if !matches!(body["state"].as_str(), Some("queued" | "running")) {
-            return body;
-        }
-    }
-    panic!("repair job never settled");
+        (!matches!(body["state"].as_str(), Some("queued" | "running"))).then_some(body)
+    })
+    .await
 }
 
 #[tokio::test]
 async fn library_journey_identity_repair_and_preparation() {
     use droppedneedle::library::identify::stores::IdentityStore as _;
 
-    let lib = Lib::open("repairs").await;
-    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
-    let auth = bearer(&admin);
+    let rig = Rig::start("lib-repairs").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
     let headers = [("authorization", auth.as_str())];
-    let music = lib.dir.join("music");
+    let music = app.config.root_app_dir.join("music");
     plant(&music, "album-r/01.flac", "flac_full_01.flac");
     plant(&music, "album-r/02.flac", "flac_full_02.flac");
-    let root = json!({"id": "music", "path": music.to_string_lossy()});
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/roots",
-        &headers,
-        Some(root),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED, "{body}");
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/scan",
-        &headers,
-        Some(json!({})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let run_id = body["run_id"].as_str().expect("run id").to_owned();
-    drain_scans(&lib.library).await;
+    // Identification waits until the journey has scripted MusicBrainz for
+    // the album the scan finds.
+    let paused_at = rig.pause_identification().await;
+    let run_id = app.add_library_folder("music", &music).await;
     let run_path = format!("/api/v3/library/scan/runs/{run_id}");
-    let (_, body) = call(lib.router(), "GET", &run_path, &headers, None).await;
-    let track_id = body["files"][0]["track_id"]
-        .as_str()
-        .expect("track")
-        .to_owned();
+    let track_id = {
+        use droppedneedle::library::scan::CatalogStore as _;
+        rig.scan_store
+            .track_at("music", "album-r/01.flac")
+            .expect("track indexed")
+    };
     let track_path = format!("/api/v3/library/tracks/{track_id}");
-    let (_, body) = call(lib.router(), "GET", &track_path, &headers, None).await;
+    let (_, body) = app.call("GET", &track_path, &headers, None).await;
     let album = body["album_id"].as_str().expect("album id").to_owned();
-    let release = tagged_release(&lib.library, &album);
-    let scripted = lib.library.test_providers.as_ref().expect("scripted");
+    let release = tagged_release(&rig.identify_store, &album);
+    let scripted = &rig.identify;
     scripted.set_recall(RecallResult {
         releases: vec![release.clone()],
         ..RecallResult::default()
     });
-    assert_eq!(lib.library.identify_tick().await, 1);
+    rig.resume_identification(paused_at).await;
+    rig.identified(1).await;
 
     // Scan diagnostics: a redacted download, never a full path.
-    let (status, body) = call(
-        lib.router(),
-        "GET",
-        &format!("{run_path}/diagnostics"),
-        &headers,
-        None,
-    )
-    .await;
+    let (status, body) = app
+        .call("GET", &format!("{run_path}/diagnostics"), &headers, None)
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["format"], json!("droppedneedle-library-diagnostic-v1"));
     assert!(!body.to_string().contains(&*music.to_string_lossy()));
-    let (status, _) = call(
-        lib.router(),
-        "GET",
-        "/api/v3/library/scan/runs/nope/diagnostics",
-        &headers,
-        None,
-    )
-    .await;
+    let (status, _) = app
+        .call(
+            "GET",
+            "/api/v3/library/scan/runs/nope/diagnostics",
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     // A recheck while the match holds: one album, valid, nothing to apply.
-    let (_, body) = call(
-        lib.router(),
-        "GET",
-        "/api/v3/library/identity-repairs/estimate",
-        &headers,
-        None,
-    )
-    .await;
+    let (_, body) = app
+        .call(
+            "GET",
+            "/api/v3/library/identity-repairs/estimate",
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(body["identity_count"], json!(1), "{body}");
     let create = json!({"idempotency_key": "repair-1"});
-    let (status, job) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/identity-repairs",
-        &headers,
-        Some(create.clone()),
-    )
-    .await;
+    let (status, job) = app
+        .call(
+            "POST",
+            "/api/v3/library/identity-repairs",
+            &headers,
+            Some(create.clone()),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{job}");
-    let (_, again) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/identity-repairs",
-        &headers,
-        Some(create),
-    )
-    .await;
+    let (_, again) = app
+        .call(
+            "POST",
+            "/api/v3/library/identity-repairs",
+            &headers,
+            Some(create),
+        )
+        .await;
     assert_eq!(again["id"], job["id"], "same key, same job");
     let job_path = format!(
         "/api/v3/library/identity-repairs/{}",
         job["id"].as_str().expect("id")
     );
-    let ready = settle_repair(&lib, &headers, &job_path).await;
+    let ready = settle_repair(app, &headers, &job_path).await;
     assert_eq!(ready["state"], json!("ready"), "{ready}");
     assert_eq!(
         ready["repair_summary"]["counts_by_finding"]["valid"],
         json!(1)
     );
     let findings_path = format!("{job_path}/findings");
-    let (_, findings) = call(lib.router(), "GET", &findings_path, &headers, None).await;
+    let (_, findings) = app.call("GET", &findings_path, &headers, None).await;
     let item = &findings["items"][0];
     assert_eq!(item["reason_code"], json!("CURRENT_IDENTITY_PASSES"));
     assert!(item["reason"]["action"].is_string(), "{findings}");
@@ -4091,19 +3602,19 @@ async fn library_journey_identity_repair_and_preparation() {
         releases: vec![moved],
         ..RecallResult::default()
     });
-    let (_, job) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/identity-repairs",
-        &headers,
-        Some(json!({"idempotency_key": "repair-2"})),
-    )
-    .await;
+    let (_, job) = app
+        .call(
+            "POST",
+            "/api/v3/library/identity-repairs",
+            &headers,
+            Some(json!({"idempotency_key": "repair-2"})),
+        )
+        .await;
     let job_path = format!(
         "/api/v3/library/identity-repairs/{}",
         job["id"].as_str().expect("id")
     );
-    let ready = settle_repair(&lib, &headers, &job_path).await;
+    let ready = settle_repair(app, &headers, &job_path).await;
     assert_eq!(
         ready["repair_summary"]["estimated_apply_changes"],
         json!(1),
@@ -4112,43 +3623,34 @@ async fn library_journey_identity_repair_and_preparation() {
     let apply = format!("{job_path}/apply");
     let revision = ready["row_revision"].clone();
     let unconfirmed = json!({"expected_row_revision": revision, "confirmation": false});
-    let (status, _) = call(lib.router(), "POST", &apply, &headers, Some(unconfirmed)).await;
+    let (status, _) = app.call("POST", &apply, &headers, Some(unconfirmed)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let stale = json!({"expected_row_revision": 0, "confirmation": true});
-    let (status, _) = call(lib.router(), "POST", &apply, &headers, Some(stale)).await;
+    let (status, _) = app.call("POST", &apply, &headers, Some(stale)).await;
     assert_eq!(status, StatusCode::CONFLICT);
     let confirmed = json!({"expected_row_revision": revision, "confirmation": true});
-    let (status, body) = call(lib.router(), "POST", &apply, &headers, Some(confirmed)).await;
+    let (status, body) = app.call("POST", &apply, &headers, Some(confirmed)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let done = settle_repair(&lib, &headers, &job_path).await;
+    let done = settle_repair(app, &headers, &job_path).await;
     assert_eq!(done["state"], json!("succeeded"), "{done}");
     assert_eq!(done["succeeded_count"], json!(1));
-    assert!(lib.library.identify_store.album_identity(&album).is_none());
-    let (_, findings) = call(
-        lib.router(),
-        "GET",
-        &format!("{job_path}/findings"),
-        &headers,
-        None,
-    )
-    .await;
+    assert!(rig.identify_store.album_identity(&album).is_none());
+    let (_, findings) = app
+        .call("GET", &format!("{job_path}/findings"), &headers, None)
+        .await;
     assert_eq!(findings["items"][0]["apply_result"], json!("DETACHED"));
 
     // The detach is undone from the album, like an edition change.
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        &format!("/api/v3/library/albums/{album}/edition/undo"),
-        &headers,
-        Some(json!({})),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/albums/{album}/edition/undo"),
+            &headers,
+            Some(json!({})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let restored = lib
-        .library
-        .identify_store
-        .album_identity(&album)
-        .expect("restored");
+    let restored = rig.identify_store.album_identity(&album).expect("restored");
     assert_eq!(restored.release_mbid.as_deref(), Some(release.id.as_str()));
 
     // Preparation: the album has its exact release, so the report is
@@ -4157,90 +3659,105 @@ async fn library_journey_identity_repair_and_preparation() {
         releases: vec![release.clone()],
         ..RecallResult::default()
     });
-    let (_, estimate) = call(
-        lib.router(),
-        "GET",
-        "/api/v3/library/management/identity-preparations/estimate?root_id=music",
-        &headers,
-        None,
-    )
-    .await;
+    let (_, estimate) = app
+        .call(
+            "GET",
+            "/api/v3/library/management/identity-preparations/estimate?root_id=music",
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(estimate["album_count"], json!(1), "{estimate}");
     assert_eq!(estimate["selected_root_count"], json!(1));
-    let (_, job) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/management/identity-preparations",
-        &headers,
-        Some(json!({"idempotency_key": "prep-1"})),
-    )
-    .await;
+    let (_, job) = app
+        .call(
+            "POST",
+            "/api/v3/library/management/identity-preparations",
+            &headers,
+            Some(json!({"idempotency_key": "prep-1"})),
+        )
+        .await;
     let prep_path = format!(
         "/api/v3/library/management/identity-preparations/{}",
         job["id"].as_str().expect("id")
     );
     let as_preparation = job_path.replace("identity-repairs", "management/identity-preparations");
-    let (status, _) = call(lib.router(), "GET", &as_preparation, &headers, None).await;
+    let (status, _) = app.call("GET", &as_preparation, &headers, None).await;
     assert_eq!(
         status,
         StatusCode::NOT_FOUND,
         "a repair is not a preparation"
     );
-    let ready = settle_repair(&lib, &headers, &prep_path).await;
+    let ready = settle_repair(app, &headers, &prep_path).await;
     assert_eq!(ready["state"], json!("ready"), "{ready}");
-    let (_, findings) = call(
-        lib.router(),
-        "GET",
-        &format!("{prep_path}/findings"),
-        &headers,
-        None,
-    )
-    .await;
+    let (_, findings) = app
+        .call("GET", &format!("{prep_path}/findings"), &headers, None)
+        .await;
     let code = findings["items"][0]["finding_code"]
         .as_str()
         .expect("finding");
     assert!(matches!(code, "ready" | "mapping_ready"), "{findings}");
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        &format!("{prep_path}/discard"),
-        &headers,
-        Some(json!({"expected_row_revision": ready["row_revision"]})),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("{prep_path}/discard"),
+            &headers,
+            Some(json!({"expected_row_revision": ready["row_revision"]})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         body["terminal_code"],
         json!("IDENTITY_PREPARATION_DISCARDED")
     );
-    let (_, list) = call(
-        lib.router(),
-        "GET",
-        "/api/v3/library/management/identity-preparations?limit=5",
-        &headers,
-        None,
-    )
-    .await;
+    let (_, list) = app
+        .call(
+            "GET",
+            "/api/v3/library/management/identity-preparations?limit=5",
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(list["items"].as_array().map(Vec::len), Some(1), "{list}");
 
     // Automatic edition acceptance: with the profile switch on, an album
     // without an exact edition gets the one edition that clearly fits,
     // as an unconfirmed automatic match with its undo.
     {
-        use droppedneedle::runtime_config::sections::{
-            LibraryManagement, LibraryManagementProfile,
-        };
-        let mut settings: LibraryManagement = lib.library.config.get().expect("settings");
+        use droppedneedle::runtime_config::sections::LibraryManagementProfile;
+        let page = "/api/v3/settings/library-management";
+        let (status, saved) = app.call("GET", page, &headers, None).await;
+        assert_eq!(status, StatusCode::OK, "{saved}");
+        let mut settings = saved.clone();
+        settings
+            .as_object_mut()
+            .expect("settings")
+            .remove("settings_revision");
         let mut profile = LibraryManagementProfile {
-            id: "auto".to_owned(),
+            id: "7c0f2f52-3a41-4d0e-9c57-2b1f4c6a8e10".to_owned(),
             name: "Auto".to_owned(),
             ..LibraryManagementProfile::default()
         };
         profile.identity.automatic_edition_acceptance_enabled = true;
-        settings.profiles.push(profile);
-        settings.default_profile_id = "auto".to_owned();
-        lib.library.config.save(settings).expect("settings saved");
-        let conn = droppedneedle::db::open_connection(&lib.db_path).expect("db opens");
+        settings["profiles"]
+            .as_array_mut()
+            .expect("profiles")
+            .push(serde_json::to_value(profile).expect("profile serializes"));
+        settings["default_profile_id"] = json!("7c0f2f52-3a41-4d0e-9c57-2b1f4c6a8e10");
+        let (status, body) = app
+            .call(
+                "PUT",
+                page,
+                &headers,
+                Some(json!({
+                    "settings": settings,
+                    "expected_settings_revision": saved["settings_revision"],
+                })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let conn =
+            droppedneedle::db::open_connection(&app.config.library_db_path).expect("db opens");
         conn.execute(
             "DELETE FROM local_track_external_identities WHERE local_track_id IN \
              (SELECT id FROM local_tracks WHERE local_album_id = ?1)",
@@ -4260,28 +3777,23 @@ async fn library_journey_identity_repair_and_preparation() {
         )
         .expect("match state planted");
     }
-    let (_, job) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/management/identity-preparations",
-        &headers,
-        Some(json!({"idempotency_key": "prep-auto"})),
-    )
-    .await;
+    let (_, job) = app
+        .call(
+            "POST",
+            "/api/v3/library/management/identity-preparations",
+            &headers,
+            Some(json!({"idempotency_key": "prep-auto"})),
+        )
+        .await;
     let auto_path = format!(
         "/api/v3/library/management/identity-preparations/{}",
         job["id"].as_str().expect("id")
     );
-    let ready = settle_repair(&lib, &headers, &auto_path).await;
+    let ready = settle_repair(app, &headers, &auto_path).await;
     assert_eq!(ready["state"], json!("ready"), "{ready}");
-    let (_, findings) = call(
-        lib.router(),
-        "GET",
-        &format!("{auto_path}/findings"),
-        &headers,
-        None,
-    )
-    .await;
+    let (_, findings) = app
+        .call("GET", &format!("{auto_path}/findings"), &headers, None)
+        .await;
     let item = &findings["items"][0];
     assert_eq!(
         item["apply_result"],
@@ -4289,16 +3801,12 @@ async fn library_journey_identity_repair_and_preparation() {
         "{findings}"
     );
     assert_eq!(item["suggested_edition"]["auto_gate"], json!("AUTO_ACCEPT"));
-    let accepted = lib
-        .library
-        .identify_store
-        .album_identity(&album)
-        .expect("accepted");
+    let accepted = rig.identify_store.album_identity(&album).expect("accepted");
     assert_eq!(accepted.release_mbid.as_deref(), Some(release.id.as_str()));
     // A confident acceptance is applied as confirmed: no flag remains.
     let match_state = || -> Option<String> {
         use rusqlite::OptionalExtension as _;
-        droppedneedle::db::open_connection(&lib.db_path)
+        droppedneedle::db::open_connection(&app.config.library_db_path)
             .expect("db opens")
             .query_row(
                 "SELECT state || ':' || reason_code FROM library_album_match_state \
@@ -4311,21 +3819,22 @@ async fn library_journey_identity_repair_and_preparation() {
     };
     assert_eq!(match_state(), None);
     let undo = &item["automatic_undo"];
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        &format!("/api/v3/library/albums/{album}/undo-automatic-edition"),
-        &headers,
-        Some(json!({
-            "expected_album_revision": undo["expected_album_revision"],
-            "expected_identity_revision": undo["expected_identity_revision"],
-        })),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/albums/{album}/undo-automatic-edition"),
+            &headers,
+            Some(json!({
+                "expected_album_revision": undo["expected_album_revision"],
+                "expected_identity_revision": undo["expected_identity_revision"],
+            })),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(lib.library.identify_store.album_identity(&album).is_none());
+    assert!(rig.identify_store.album_identity(&album).is_none());
     // The undo puts back the match state the acceptance replaced.
     assert_eq!(match_state().as_deref(), Some("unmatched:NO_CANDIDATE"));
+    rig.stop().await;
 }
 
 /// Apply a ready preview from its handle and run the worker once.
@@ -4413,7 +3922,7 @@ async fn library_management_tools_journey() {
         .test_providers
         .as_ref()
         .expect("scripted providers")
-        .set_recall(ambiguous_recall(&library, &album));
+        .set_recall(ambiguous_recall(&library.identify_store, &album));
     assert_eq!(library.identify_tick().await, 1);
     library
         .scan_store
@@ -4906,7 +4415,7 @@ async fn library_management_tools_journey() {
         .test_providers
         .as_ref()
         .expect("scripted providers")
-        .set_recall(ambiguous_recall(&library, &second_album));
+        .set_recall(ambiguous_recall(&library.identify_store, &second_album));
     library.identify_tick().await;
     droppedneedle::library::operations::service::Operations::new(&library)
         .confirm_match(&second_album, "admin")
@@ -5135,7 +4644,7 @@ async fn library_management_custom_edition_journey() {
         .test_providers
         .as_ref()
         .expect("scripted providers")
-        .set_recall(ambiguous_recall(&library, &album));
+        .set_recall(ambiguous_recall(&library.identify_store, &album));
     assert_eq!(library.identify_tick().await, 1);
     library
         .scan_store
@@ -5297,7 +4806,7 @@ async fn library_management_artwork_journey() {
         .test_providers
         .as_ref()
         .expect("scripted providers")
-        .set_recall(ambiguous_recall(&library, &album));
+        .set_recall(ambiguous_recall(&library.identify_store, &album));
     assert_eq!(library.identify_tick().await, 1);
     library
         .scan_store
@@ -5542,43 +5051,23 @@ fn walk_files(dir: &std::path::Path) -> Vec<PathBuf> {
 async fn library_journey_review_exclude_restore_dismiss() {
     use droppedneedle::library::scan::CatalogStore as _;
 
-    let lib = Lib::open("reviews").await;
-    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
-    let auth = bearer(&admin);
+    let rig = Rig::start("lib-reviews").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
     let headers = [("authorization", auth.as_str())];
-    let music = lib.dir.join("music");
+    let music = app.config.root_app_dir.join("music");
     plant(&music, "album-v/01.flac", "flac_full_01.flac");
     plant(&music, "album-v/02.flac", "flac_full_02.flac");
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/roots",
-        &headers,
-        Some(json!({"id": "music", "path": music.to_string_lossy()})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED, "{body}");
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/scan",
-        &headers,
-        Some(json!({})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    drain_scans(&lib.library).await;
-    let track = lib
-        .library
+    // Nothing is scripted at MusicBrainz, so identification stays paused:
+    // the journey is about what a person does with the album.
+    rig.pause_identification().await;
+    app.add_library_folder("music", &music).await;
+    let track = rig
         .scan_store
         .track_at("music", "album-v/01.flac")
         .expect("track indexed");
-    let album = lib
-        .library
-        .scan_store
-        .album_for_track(&track)
-        .expect("album");
-    let conn = droppedneedle::db::open_connection(&lib.db_path).expect("db opens");
+    let album = rig.scan_store.album_for_track(&track).expect("album");
+    let conn = droppedneedle::db::open_connection(&app.config.library_db_path).expect("db opens");
     conn.execute(
         "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
          candidates_json, state, created_ms, updated_ms) \
@@ -5598,84 +5087,64 @@ async fn library_journey_review_exclude_restore_dismiss() {
     };
 
     // The list needs no album id and explains the review in plain words.
-    let (status, body) = call(
-        lib.router(),
-        "GET",
-        "/api/v3/library/reviews",
-        &headers,
-        None,
-    )
-    .await;
+    let (status, body) = app
+        .call("GET", "/api/v3/library/reviews", &headers, None)
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["total"], json!(1));
     assert_eq!(body["reviews"][0]["id"], json!("rev-1"));
     assert!(body["reviews"][0]["reason"]["action"].as_str().is_some());
-    let (status, body) = call(
-        lib.router(),
-        "GET",
-        "/api/v3/library/reviews/rev-1",
-        &headers,
-        None,
-    )
-    .await;
+    let (status, body) = app
+        .call("GET", "/api/v3/library/reviews/rev-1", &headers, None)
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["album_id"], json!(album));
 
     // Exclude takes the files out; nothing is deleted.
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/reviews/rev-1/exclude",
-        &headers,
-        None,
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/reviews/rev-1/exclude",
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["state"], json!("excluded"));
     assert!(availability(&conn).iter().all(|value| value == "excluded"));
     assert!(music.join("album-v/01.flac").exists());
 
     // A settled review takes no other decision.
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/reviews/rev-1/dismiss",
-        &headers,
-        None,
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/reviews/rev-1/dismiss",
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["error"]["code"], json!("REVIEW_SETTLED"));
 
     // Restore puts the files back and closes the review.
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/reviews/rev-1/restore",
-        &headers,
-        None,
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/reviews/rev-1/restore",
+            &headers,
+            None,
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["state"], json!("dismissed"));
     assert!(availability(&conn).iter().all(|value| value == "indexed"));
-    let (_, body) = call(
-        lib.router(),
-        "GET",
-        "/api/v3/library/reviews",
-        &headers,
-        None,
-    )
-    .await;
+    let (_, body) = app
+        .call("GET", "/api/v3/library/reviews", &headers, None)
+        .await;
     assert_eq!(body["total"], json!(0), "nothing pending");
-    let (_, body) = call(
-        lib.router(),
-        "GET",
-        "/api/v3/library/reviews?state=all",
-        &headers,
-        None,
-    )
-    .await;
+    let (_, body) = app
+        .call("GET", "/api/v3/library/reviews?state=all", &headers, None)
+        .await;
     assert_eq!(body["total"], json!(1));
 
     // A bulk keep-as-tagged previews first, and applies only that preview.
@@ -5687,47 +5156,42 @@ async fn library_journey_review_exclude_restore_dismiss() {
     )
     .expect("second review filed");
     let selection = json!({"action": "keep_tagged", "filter": {"root_id": "music"}});
-    let (status, preview) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/reviews/bulk-preview",
-        &headers,
-        Some(selection.clone()),
-    )
-    .await;
+    let (status, preview) = app
+        .call(
+            "POST",
+            "/api/v3/library/reviews/bulk-preview",
+            &headers,
+            Some(selection.clone()),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{preview}");
     assert_eq!(preview["eligible"], json!(1));
     let mut stale = selection.clone();
     stale["preview_token"] = json!("not-the-preview");
-    let (status, _) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/reviews/bulk-apply",
-        &headers,
-        Some(stale),
-    )
-    .await;
+    let (status, _) = app
+        .call(
+            "POST",
+            "/api/v3/library/reviews/bulk-apply",
+            &headers,
+            Some(stale),
+        )
+        .await;
     assert_eq!(status, StatusCode::CONFLICT);
     let mut apply = selection;
     apply["preview_token"] = preview["preview_token"].clone();
-    let (status, body) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/reviews/bulk-apply",
-        &headers,
-        Some(apply),
-    )
-    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/reviews/bulk-apply",
+            &headers,
+            Some(apply),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["applied"], json!(1));
-    let (_, body) = call(
-        lib.router(),
-        "GET",
-        "/api/v3/library/reviews/rev-2",
-        &headers,
-        None,
-    )
-    .await;
+    let (_, body) = app
+        .call("GET", "/api/v3/library/reviews/rev-2", &headers, None)
+        .await;
     assert_eq!(body["state"], json!("rejected"));
 
     // A bulk accept never replaces an edition someone picked by hand.
@@ -5750,18 +5214,19 @@ async fn library_journey_review_exclude_restore_dismiss() {
         rusqlite::params![album, candidates.to_string()],
     )
     .expect("third review filed");
-    let (status, preview) = call(
-        lib.router(),
-        "POST",
-        "/api/v3/library/reviews/bulk-preview",
-        &headers,
-        Some(json!({"action": "accept", "filter": {}})),
-    )
-    .await;
+    let (status, preview) = app
+        .call(
+            "POST",
+            "/api/v3/library/reviews/bulk-preview",
+            &headers,
+            Some(json!({"action": "accept", "filter": {}})),
+        )
+        .await;
     assert_eq!(status, StatusCode::OK, "{preview}");
     assert_eq!(preview["eligible"], json!(0));
     assert_eq!(
         preview["skipped"][0]["reason"]["code"],
         json!("REVIEW_ALBUM_PINNED")
     );
+    rig.stop().await;
 }

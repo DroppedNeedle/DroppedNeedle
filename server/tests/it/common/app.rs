@@ -2,7 +2,9 @@
 //! directory, served and stopped the way `main` does it.
 
 use std::{
+    future::Future,
     net::SocketAddr,
+    path::Path,
     time::{Duration, Instant},
 };
 
@@ -65,6 +67,7 @@ pub struct TestApp {
     pub sabnzbd_url: String,
     /// The mock Plex server, at `plex.base_url`.
     pub plex: MockServer,
+    outbound: bootstrap::Outbound,
     router: Option<Router>,
     admin: tokio::sync::OnceCell<String>,
     stop: Option<oneshot::Sender<()>>,
@@ -77,6 +80,12 @@ pub struct TestApp {
 impl TestApp {
     /// Build and serve the app in a new scratch directory named after `tag`.
     pub async fn start(tag: &str) -> Self {
+        Self::start_with(tag, closed_outbound()).await
+    }
+
+    /// As [`TestApp::start`], reaching the outside world as `outbound`
+    /// says: a journey that scripts a provider port passes it here.
+    pub async fn start_with(tag: &str, outbound: bootstrap::Outbound) -> Self {
         let dir = ScratchDir::new(tag);
         let config = AppConfig::with_root(0, &dir);
         std::fs::create_dir_all(&config.cache_dir).expect("cache dir creates");
@@ -89,38 +98,56 @@ impl TestApp {
             .expect("mock SABnzbd starts");
         let plex = serve_plex().await.expect("mock Plex starts");
 
+        let mut app = Self {
+            config,
+            slskd,
+            sabnzbd,
+            sabnzbd_url,
+            plex,
+            outbound,
+            router: None,
+            admin: tokio::sync::OnceCell::new(),
+            stop: None,
+            server: None,
+            sabnzbd_server,
+            _dir: dir,
+        };
+        app.boot().await;
+        app
+    }
+
+    /// Build the app on the data directory and serve it.
+    async fn boot(&mut self) {
         // The state goes at once: workers that stop when their queue's last
         // handle drops would otherwise sit out the shutdown grace.
         let bootstrap::Built {
             router, background, ..
-        } = bootstrap::build_with(config.clone(), closed_outbound())
+        } = bootstrap::build_with(self.config.clone(), self.outbound.clone())
             .await
             .expect("the app builds");
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("loopback binds");
         let (stop, signal) = oneshot::channel::<()>();
-        let server = tokio::spawn(bootstrap::serve(
+        self.server = Some(tokio::spawn(bootstrap::serve(
             listener,
             router.clone(),
             background,
             async {
                 let _ = signal.await;
             },
-        ));
-        Self {
-            config,
-            slskd,
-            sabnzbd,
-            sabnzbd_url,
-            plex,
-            router: Some(router),
-            admin: tokio::sync::OnceCell::new(),
-            stop: Some(stop),
-            server: Some(server),
-            sabnzbd_server,
-            _dir: dir,
-        }
+        )));
+        self.router = Some(router);
+        self.stop = Some(stop);
+    }
+
+    /// Stop the app as [`TestApp::stop`] does, then build it again on the
+    /// same data directory. Sessions are in the database, so a login from
+    /// before still signs requests.
+    pub async fn restart(mut self) -> Self {
+        self.halt().await;
+        self.boot().await;
+        self
     }
 
     /// Answer one request as a client on the same host would get it.
@@ -183,6 +210,106 @@ impl TestApp {
             serde_json::from_slice(&bytes).expect("body is json")
         };
         (status, json)
+    }
+
+    /// Wait for something the app does in its own time. `check` is asked
+    /// again and again until it answers; `what` names the wait if it never
+    /// does.
+    pub async fn until<T, F>(&self, what: &str, mut check: impl FnMut() -> F) -> T
+    where
+        F: Future<Output = Option<T>>,
+    {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            if let Some(found) = check().await {
+                return found;
+            }
+            assert!(Instant::now() < deadline, "never happened: {what}");
+            // Slower than the request limiter refills, so a check may ask
+            // the app each time round.
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Add a library folder as the owner and wait for the scan the app gives
+    /// every new folder. Returns that scan's run id.
+    pub async fn add_library_folder(&self, id: &str, path: &Path) -> String {
+        let admin = self.login_admin().await;
+        let headers = [("authorization", admin.as_str())];
+        let before = self.finished_scans(&headers).await;
+        let (status, body) = self
+            .call(
+                "POST",
+                "/api/v3/library/roots",
+                &headers,
+                Some(json!({"id": id, "path": path.to_string_lossy()})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        self.until("the new folder's first scan", || async {
+            let (status, body) = self
+                .call("GET", "/api/v3/library/scan/runs", &headers, None)
+                .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            if body["current"]
+                .as_array()
+                .is_none_or(|runs| !runs.is_empty())
+            {
+                return None;
+            }
+            body["history"]
+                .as_array()?
+                .iter()
+                .filter_map(|run| run["id"].as_str())
+                .find(|run| !before.iter().any(|seen| seen == run))
+                .map(str::to_owned)
+        })
+        .await
+    }
+
+    /// Ask for a scan of every folder as the owner and wait for it to end.
+    /// Returns the run id.
+    pub async fn scan_library(&self) -> String {
+        let admin = self.login_admin().await;
+        let headers = [("authorization", admin.as_str())];
+        let (status, body) = self
+            .call("POST", "/api/v3/library/scan", &headers, Some(json!({})))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let run = body["run_id"].as_str().expect("run id").to_owned();
+        self.scan_ended(&run).await;
+        run
+    }
+
+    /// Wait for one scan run to end.
+    pub async fn scan_ended(&self, run: &str) {
+        let admin = self.login_admin().await;
+        let headers = [("authorization", admin.as_str())];
+        let uri = format!("/api/v3/library/scan/runs/{run}");
+        self.until("the scan ends", || async {
+            let (status, body) = self.call("GET", &uri, &headers, None).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            let state = body["run"]["state"].as_str()?;
+            matches!(
+                state,
+                "completed" | "failed" | "cancelled" | "superseded_policy_changed"
+            )
+            .then_some(())
+        })
+        .await;
+    }
+
+    async fn finished_scans(&self, headers: &[(&str, &str)]) -> Vec<String> {
+        let (status, body) = self
+            .call("GET", "/api/v3/library/scan/runs", headers, None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["history"]
+            .as_array()
+            .expect("scan history")
+            .iter()
+            .filter_map(|run| run["id"].as_str().map(str::to_owned))
+            .collect()
     }
 
     /// A connection to the app's database, for seeding rows and reading
@@ -252,6 +379,10 @@ impl TestApp {
     /// database closed, the listener gone. Fails if shutdown had to wait
     /// out its grace period.
     pub async fn stop(mut self) {
+        self.halt().await;
+    }
+
+    async fn halt(&mut self) {
         let grace = self.config.shutdown_grace;
         self.router = None;
         let started = Instant::now();

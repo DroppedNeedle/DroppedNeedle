@@ -3,6 +3,7 @@
 //! journeys, and a scratch directory that removes itself.
 
 mod app;
+pub mod library;
 
 pub use app::TestApp;
 
