@@ -1,0 +1,60 @@
+{
+  "request": "GET /UserViews?userId=00000000000000000000000000000002",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "Items": [
+      {
+        "Name": "Music",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000003",
+        "Etag": "00000000000000000000000000000021",
+        "DateCreated": "0000-00-00T00:00:00.0000000Z",
+        "CanDelete": false,
+        "CanDownload": false,
+        "SortName": "music",
+        "ExternalUrls": [],
+        "Path": "/config/root/default/Music",
+        "EnableMediaSourceDisplay": true,
+        "ChannelId": null,
+        "Taglines": [],
+        "Genres": [],
+        "PlayAccess": "Full",
+        "RemoteTrailers": [],
+        "ProviderIds": {},
+        "IsFolder": true,
+        "ParentId": "00000000000000000000000000000022",
+        "Type": "CollectionFolder",
+        "People": [],
+        "Studios": [],
+        "GenreItems": [],
+        "LocalTrailerCount": 0,
+        "UserData": {
+          "PlaybackPositionTicks": 0,
+          "PlayCount": 0,
+          "IsFavorite": false,
+          "Played": false,
+          "Key": "00000000-0000-0000-0000-000000000003",
+          "ItemId": "00000000000000000000000000000023"
+        },
+        "ChildCount": 3,
+        "SpecialFeatureCount": 0,
+        "DisplayPreferencesId": "00000000000000000000000000000003",
+        "Tags": [],
+        "CollectionType": "music",
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Unknown",
+        "LockedFields": [],
+        "LockData": false
+      }
+    ],
+    "TotalRecordCount": 1,
+    "StartIndex": 0
+  }
+}

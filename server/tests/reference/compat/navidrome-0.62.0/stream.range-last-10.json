@@ -1,0 +1,15 @@
+{
+  "request": "GET /rest/stream?u=reference&p=***&v=1.16.1&c=dn-ref&f=json&id=0000000000000000000008",
+  "status": 206,
+  "headers": {
+    "accept-ranges": "bytes",
+    "content-length": "10",
+    "content-range": "bytes 1557-1566/1567",
+    "content-type": "audio/flac",
+    "last-modified": "<date>",
+    "x-content-duration": "0.3"
+  },
+  "body": {
+    "bytes": 10
+  }
+}

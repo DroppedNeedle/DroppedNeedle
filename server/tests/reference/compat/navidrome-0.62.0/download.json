@@ -1,0 +1,14 @@
+{
+  "request": "GET /rest/download?u=reference&p=***&v=1.16.1&c=dn-ref&f=json&id=0000000000000000000008",
+  "status": 200,
+  "headers": {
+    "accept-ranges": "bytes",
+    "content-disposition": "attachment; filename=\"Airbag.flac\"",
+    "content-length": "1567",
+    "content-type": "audio/flac",
+    "last-modified": "<date>"
+  },
+  "body": {
+    "bytes": 1567
+  }
+}

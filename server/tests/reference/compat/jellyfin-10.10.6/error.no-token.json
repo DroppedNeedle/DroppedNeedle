@@ -1,0 +1,8 @@
+{
+  "request": "GET /Items?Recursive=true&IncludeItemTypes=MusicAlbum",
+  "status": 401,
+  "headers": {
+    "content-length": "0"
+  },
+  "body": null
+}

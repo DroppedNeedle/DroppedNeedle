@@ -1,0 +1,58 @@
+{
+  "request": "GET /rest/getAlbumList2?u=reference&p=***&v=1.16.1&c=dn-ref&f=json&type=byGenre&genre=Rock",
+  "status": 200,
+  "headers": {
+    "content-length": "729",
+    "content-type": "application/json",
+    "x-total-count": "1"
+  },
+  "body": {
+    "subsonic-response": {
+      "status": "ok",
+      "version": "1.16.1",
+      "type": "navidrome",
+      "serverVersion": "0.62.0 (1b46b977)",
+      "openSubsonic": true,
+      "albumList2": {
+        "album": [
+          {
+            "id": "0000000000000000000015",
+            "name": "Achtung Baby",
+            "artist": "U2",
+            "artistId": "0000000000000000000004",
+            "coverArt": "al-0000000000000000000015_00000000",
+            "songCount": 1,
+            "duration": 0,
+            "created": "0000-00-00T00:00:00.000000000Z",
+            "year": 1991,
+            "genre": "Rock",
+            "userRating": 0,
+            "genres": [
+              {
+                "name": "Rock"
+              }
+            ],
+            "musicBrainzId": "",
+            "isCompilation": false,
+            "sortName": "achtung baby",
+            "discTitles": [],
+            "originalReleaseDate": {},
+            "releaseDate": {},
+            "releaseTypes": [],
+            "recordLabels": [],
+            "moods": [],
+            "artists": [
+              {
+                "id": "0000000000000000000004",
+                "name": "U2"
+              }
+            ],
+            "displayArtist": "U2",
+            "explicitStatus": "",
+            "version": ""
+          }
+        ]
+      }
+    }
+  }
+}

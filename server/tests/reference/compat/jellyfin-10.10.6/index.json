@@ -1,0 +1,895 @@
+{
+  "requests": [
+    {
+      "name": "system.info.public",
+      "file": "system.info.public.json",
+      "method": "GET",
+      "path": "/System/Info/Public",
+      "query": [],
+      "auth": "none",
+      "answer": "json"
+    },
+    {
+      "name": "login",
+      "file": "login.json",
+      "method": "POST",
+      "path": "/Users/AuthenticateByName",
+      "query": [],
+      "body": {
+        "Username": "{user_name}",
+        "Pw": "{password}"
+      },
+      "auth": "client",
+      "answer": "json"
+    },
+    {
+      "name": "system.info",
+      "file": "system.info.json",
+      "method": "GET",
+      "path": "/System/Info",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "quickconnect.enabled",
+      "file": "quickconnect.enabled.json",
+      "method": "GET",
+      "path": "/QuickConnect/Enabled",
+      "query": [],
+      "auth": "none",
+      "answer": "json"
+    },
+    {
+      "name": "users.me",
+      "file": "users.me.json",
+      "method": "GET",
+      "path": "/Users/Me",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "users.by-id",
+      "file": "users.by-id.json",
+      "method": "GET",
+      "path": "/Users/{user}",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "userviews",
+      "file": "userviews.json",
+      "method": "GET",
+      "path": "/UserViews",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "userviews.legacy",
+      "file": "userviews.legacy.json",
+      "method": "GET",
+      "path": "/Users/{user}/Views",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.albums",
+      "file": "items.albums.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Recursive",
+          "true"
+        ],
+        [
+          "IncludeItemTypes",
+          "MusicAlbum"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.tracks",
+      "file": "items.tracks.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Recursive",
+          "true"
+        ],
+        [
+          "IncludeItemTypes",
+          "Audio"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.artists",
+      "file": "items.artists.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Recursive",
+          "true"
+        ],
+        [
+          "IncludeItemTypes",
+          "MusicArtist"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.playlists",
+      "file": "items.playlists.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Recursive",
+          "true"
+        ],
+        [
+          "IncludeItemTypes",
+          "Playlist"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.genres",
+      "file": "items.genres.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Recursive",
+          "true"
+        ],
+        [
+          "IncludeItemTypes",
+          "MusicGenre"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.sort-premiere-date",
+      "file": "items.sort-premiere-date.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Recursive",
+          "true"
+        ],
+        [
+          "IncludeItemTypes",
+          "MusicAlbum"
+        ],
+        [
+          "SortBy",
+          "PremiereDate"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.sort-date-created-paged",
+      "file": "items.sort-date-created-paged.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Recursive",
+          "true"
+        ],
+        [
+          "IncludeItemTypes",
+          "MusicAlbum"
+        ],
+        [
+          "SortBy",
+          "DateCreated"
+        ],
+        [
+          "SortOrder",
+          "Descending"
+        ],
+        [
+          "Limit",
+          "2"
+        ],
+        [
+          "StartIndex",
+          "1"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.parent-album",
+      "file": "items.parent-album.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "ParentId",
+          "{album.ok_computer}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.parent-library",
+      "file": "items.parent-library.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "ParentId",
+          "{library}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.ids",
+      "file": "items.ids.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Ids",
+          "{track.airbag},{track.paranoid_android}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.album-artist-ids",
+      "file": "items.album-artist-ids.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Recursive",
+          "true"
+        ],
+        [
+          "IncludeItemTypes",
+          "MusicAlbum"
+        ],
+        [
+          "AlbumArtistIds",
+          "{artist.radiohead}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.filter-favorite",
+      "file": "items.filter-favorite.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Recursive",
+          "true"
+        ],
+        [
+          "IncludeItemTypes",
+          "Audio"
+        ],
+        [
+          "Filters",
+          "IsFavorite"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.no-total-count",
+      "file": "items.no-total-count.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Recursive",
+          "true"
+        ],
+        [
+          "IncludeItemTypes",
+          "MusicAlbum"
+        ],
+        [
+          "EnableTotalRecordCount",
+          "false"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.legacy",
+      "file": "items.legacy.json",
+      "method": "GET",
+      "path": "/Users/{user}/Items",
+      "query": [
+        [
+          "Recursive",
+          "true"
+        ],
+        [
+          "IncludeItemTypes",
+          "MusicAlbum"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.lowercase",
+      "file": "items.lowercase.json",
+      "method": "GET",
+      "path": "/items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Recursive",
+          "true"
+        ],
+        [
+          "IncludeItemTypes",
+          "MusicAlbum"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "latest",
+      "file": "latest.json",
+      "method": "GET",
+      "path": "/UserItems/Latest",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "ParentId",
+          "{library}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "empty"
+    },
+    {
+      "name": "latest.legacy",
+      "file": "latest.legacy.json",
+      "method": "GET",
+      "path": "/Users/{user}/Items/Latest",
+      "query": [
+        [
+          "ParentId",
+          "{library}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "artists",
+      "file": "artists.json",
+      "method": "GET",
+      "path": "/Artists",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "artists.album-artists",
+      "file": "artists.album-artists.json",
+      "method": "GET",
+      "path": "/Artists/AlbumArtists",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "genres",
+      "file": "genres.json",
+      "method": "GET",
+      "path": "/Genres",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "music-genres",
+      "file": "music-genres.json",
+      "method": "GET",
+      "path": "/MusicGenres",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.filters",
+      "file": "items.filters.json",
+      "method": "GET",
+      "path": "/Items/Filters",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "ParentId",
+          "{library}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "item.album",
+      "file": "item.album.json",
+      "method": "GET",
+      "path": "/Items/{album.ok_computer}",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "item.track",
+      "file": "item.track.json",
+      "method": "GET",
+      "path": "/Items/{track.airbag}",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "item.artist",
+      "file": "item.artist.json",
+      "method": "GET",
+      "path": "/Items/{artist.radiohead}",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "item.legacy",
+      "file": "item.legacy.json",
+      "method": "GET",
+      "path": "/Users/{user}/Items/{track.airbag}",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "playback-info.get",
+      "file": "playback-info.get.json",
+      "method": "GET",
+      "path": "/Items/{track.airbag}/PlaybackInfo",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "playback-info.post",
+      "file": "playback-info.post.json",
+      "method": "POST",
+      "path": "/Items/{track.airbag}/PlaybackInfo",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "body": {
+        "UserId": "{user}",
+        "DeviceProfile": {}
+      },
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "similar",
+      "file": "similar.json",
+      "method": "GET",
+      "path": "/Items/{track.airbag}/Similar",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "instant-mix.item",
+      "file": "instant-mix.item.json",
+      "method": "GET",
+      "path": "/Items/{track.airbag}/InstantMix",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "instant-mix.artist",
+      "file": "instant-mix.artist.json",
+      "method": "GET",
+      "path": "/Artists/{artist.radiohead}/InstantMix",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "image.primary",
+      "file": "image.primary.json",
+      "method": "GET",
+      "path": "/Items/{album.ok_computer}/Images/Primary",
+      "query": [],
+      "auth": "none",
+      "answer": "json"
+    },
+    {
+      "name": "stream.full",
+      "file": "stream.full.json",
+      "method": "GET",
+      "path": "/Audio/{track.airbag}/stream",
+      "query": [
+        [
+          "static",
+          "true"
+        ]
+      ],
+      "auth": "default",
+      "answer": "bytes"
+    },
+    {
+      "name": "stream.range-first-50",
+      "file": "stream.range-first-50.json",
+      "method": "GET",
+      "path": "/Audio/{track.airbag}/stream",
+      "query": [
+        [
+          "static",
+          "true"
+        ]
+      ],
+      "headers": {
+        "range": "bytes=0-49"
+      },
+      "auth": "default",
+      "answer": "bytes"
+    },
+    {
+      "name": "stream.range-last-10",
+      "file": "stream.range-last-10.json",
+      "method": "GET",
+      "path": "/Audio/{track.airbag}/stream",
+      "query": [
+        [
+          "static",
+          "true"
+        ]
+      ],
+      "headers": {
+        "range": "bytes=-10"
+      },
+      "auth": "default",
+      "answer": "bytes"
+    },
+    {
+      "name": "stream.range-past-end",
+      "file": "stream.range-past-end.json",
+      "method": "GET",
+      "path": "/Audio/{track.airbag}/stream",
+      "query": [
+        [
+          "static",
+          "true"
+        ]
+      ],
+      "headers": {
+        "range": "bytes=999999-"
+      },
+      "auth": "default",
+      "answer": "bytes"
+    },
+    {
+      "name": "stream.head",
+      "file": "stream.head.json",
+      "method": "HEAD",
+      "path": "/Audio/{track.airbag}/stream",
+      "query": [
+        [
+          "static",
+          "true"
+        ]
+      ],
+      "auth": "default",
+      "answer": "bytes"
+    },
+    {
+      "name": "stream.flac",
+      "file": "stream.flac.json",
+      "method": "GET",
+      "path": "/Audio/{track.airbag}/stream.flac",
+      "query": [
+        [
+          "static",
+          "true"
+        ]
+      ],
+      "auth": "default",
+      "answer": "bytes"
+    },
+    {
+      "name": "universal.source",
+      "file": "universal.source.json",
+      "method": "GET",
+      "path": "/Audio/{track.airbag}/universal",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Container",
+          "flac"
+        ],
+        [
+          "AudioCodec",
+          "flac"
+        ]
+      ],
+      "auth": "default",
+      "answer": "unread"
+    },
+    {
+      "name": "universal.mp3",
+      "file": "universal.mp3.json",
+      "method": "GET",
+      "path": "/Audio/{track.airbag}/universal",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Container",
+          "mp3"
+        ],
+        [
+          "AudioCodec",
+          "mp3"
+        ]
+      ],
+      "auth": "default",
+      "answer": "unread"
+    },
+    {
+      "name": "stream.no-credentials",
+      "file": "stream.no-credentials.json",
+      "method": "GET",
+      "path": "/Audio/{track.airbag}/stream",
+      "query": [
+        [
+          "static",
+          "true"
+        ]
+      ],
+      "auth": "none",
+      "answer": "bytes"
+    },
+    {
+      "name": "stream.api-key",
+      "file": "stream.api-key.json",
+      "method": "GET",
+      "path": "/Audio/{track.airbag}/stream",
+      "query": [
+        [
+          "static",
+          "true"
+        ]
+      ],
+      "auth": "api_key",
+      "answer": "bytes"
+    },
+    {
+      "name": "error.unknown-item",
+      "file": "error.unknown-item.json",
+      "method": "GET",
+      "path": "/Items/ffffffffffffffffffffffffffffffff",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "error.no-token",
+      "file": "error.no-token.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "Recursive",
+          "true"
+        ],
+        [
+          "IncludeItemTypes",
+          "MusicAlbum"
+        ]
+      ],
+      "auth": "none",
+      "answer": "empty"
+    },
+    {
+      "name": "error.wrong-password",
+      "file": "error.wrong-password.json",
+      "method": "POST",
+      "path": "/Users/AuthenticateByName",
+      "query": [],
+      "body": {
+        "Username": "reference",
+        "Pw": "wrong-password"
+      },
+      "auth": "client",
+      "answer": "text"
+    },
+    {
+      "name": "error.unknown-audio",
+      "file": "error.unknown-audio.json",
+      "method": "GET",
+      "path": "/Audio/ffffffffffffffffffffffffffffffff/stream",
+      "query": [
+        [
+          "static",
+          "true"
+        ]
+      ],
+      "auth": "default",
+      "answer": "text"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "request": "POST /Sessions/Playing/Stopped",
+  "status": 204,
+  "headers": {},
+  "body": null
+}

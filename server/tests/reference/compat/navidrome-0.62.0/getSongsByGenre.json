@@ -1,0 +1,77 @@
+{
+  "request": "GET /rest/getSongsByGenre?u=reference&p=***&v=1.16.1&c=dn-ref&f=json&genre=Rock&count=10",
+  "status": 200,
+  "headers": {
+    "content-length": "1051",
+    "content-type": "application/json"
+  },
+  "body": {
+    "subsonic-response": {
+      "status": "ok",
+      "version": "1.16.1",
+      "type": "navidrome",
+      "serverVersion": "0.62.0 (1b46b977)",
+      "openSubsonic": true,
+      "songsByGenre": {
+        "song": [
+          {
+            "id": "0000000000000000000010",
+            "parent": "0000000000000000000015",
+            "isDir": false,
+            "title": "One",
+            "album": "Achtung Baby",
+            "artist": "U2",
+            "track": 3,
+            "year": 1991,
+            "genre": "Rock",
+            "coverArt": "dc-0000000000000000000015:1_0",
+            "size": 16008,
+            "contentType": "audio/mpeg",
+            "suffix": "mp3",
+            "bitRate": 345,
+            "path": "U2/Achtung Baby/01-03 - One.mp3",
+            "discNumber": 1,
+            "created": "0000-00-00T00:00:00.000000000Z",
+            "albumId": "0000000000000000000015",
+            "artistId": "0000000000000000000004",
+            "type": "music",
+            "bpm": 0,
+            "comment": "",
+            "sortName": "one",
+            "mediaType": "song",
+            "musicBrainzId": "",
+            "isrc": [],
+            "genres": [
+              {
+                "name": "Rock"
+              }
+            ],
+            "replayGain": {},
+            "channelCount": 2,
+            "samplingRate": 44100,
+            "bitDepth": 0,
+            "moods": [],
+            "artists": [
+              {
+                "id": "0000000000000000000004",
+                "name": "U2"
+              }
+            ],
+            "displayArtist": "U2",
+            "albumArtists": [
+              {
+                "id": "0000000000000000000004",
+                "name": "U2"
+              }
+            ],
+            "displayAlbumArtist": "U2",
+            "contributors": [],
+            "displayComposer": "",
+            "explicitStatus": "",
+            "groupings": []
+          }
+        ]
+      }
+    }
+  }
+}

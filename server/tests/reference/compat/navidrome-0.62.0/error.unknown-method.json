@@ -1,0 +1,11 @@
+{
+  "request": "GET /rest/noSuchMethod?u=reference&p=***&v=1.16.1&c=dn-ref&f=json",
+  "status": 404,
+  "headers": {
+    "content-length": "19",
+    "content-type": "text/plain; charset=utf-8"
+  },
+  "body": {
+    "text": "404 page not found\n"
+  }
+}

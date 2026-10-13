@@ -1,0 +1,13 @@
+{
+  "request": "HEAD /Audio/00000000000000000000000000000008/stream?static=true",
+  "status": 200,
+  "headers": {
+    "accept-ranges": "bytes",
+    "content-length": "1567",
+    "content-type": "audio/flac",
+    "last-modified": "<date>"
+  },
+  "body": {
+    "bytes": 0
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "request": "GET /Audio/ffffffffffffffffffffffffffffffff/stream?static=true",
+  "status": 404,
+  "headers": {
+    "content-type": "text/plain",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "text": "Error processing request."
+  }
+}

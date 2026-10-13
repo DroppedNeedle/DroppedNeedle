@@ -1,0 +1,198 @@
+{
+  "requests": [
+    {
+      "name": "favorite",
+      "file": "favorite.json",
+      "write": true,
+      "method": "POST",
+      "path": "/UserFavoriteItems/{track.airbag}",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "playlist.create",
+      "file": "playlist.create.json",
+      "write": true,
+      "method": "POST",
+      "path": "/Playlists",
+      "query": [],
+      "body": {
+        "Name": "Reference",
+        "Ids": [
+          "{track.airbag}"
+        ],
+        "UserId": "{user}",
+        "MediaType": "Audio"
+      },
+      "auth": "default",
+      "answer": "json",
+      "sets": {
+        "ref": "playlist",
+        "at": [
+          "Id"
+        ]
+      }
+    },
+    {
+      "name": "playing.stopped",
+      "file": "playing.stopped.json",
+      "write": true,
+      "method": "POST",
+      "path": "/Sessions/Playing/Stopped",
+      "query": [],
+      "body": {
+        "ItemId": "{track.airbag}",
+        "PositionTicks": 10000000
+      },
+      "auth": "default",
+      "answer": "empty"
+    },
+    {
+      "name": "items.filter-favorite",
+      "file": "items.filter-favorite.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Recursive",
+          "true"
+        ],
+        [
+          "IncludeItemTypes",
+          "Audio"
+        ],
+        [
+          "Filters",
+          "IsFavorite"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.filter-played",
+      "file": "items.filter-played.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Recursive",
+          "true"
+        ],
+        [
+          "IncludeItemTypes",
+          "Audio"
+        ],
+        [
+          "Filters",
+          "IsPlayed"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.sort-date-played",
+      "file": "items.sort-date-played.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Recursive",
+          "true"
+        ],
+        [
+          "IncludeItemTypes",
+          "Audio"
+        ],
+        [
+          "SortBy",
+          "DatePlayed"
+        ],
+        [
+          "SortOrder",
+          "Descending"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.playlists",
+      "file": "items.playlists.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "Recursive",
+          "true"
+        ],
+        [
+          "IncludeItemTypes",
+          "Playlist"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "item.track",
+      "file": "item.track.json",
+      "method": "GET",
+      "path": "/Items/{track.airbag}",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "playlist",
+      "file": "playlist.json",
+      "method": "GET",
+      "path": "/Playlists/{playlist}",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "playlist.items",
+      "file": "playlist.items.json",
+      "method": "GET",
+      "path": "/Playlists/{playlist}/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    }
+  ]
+}

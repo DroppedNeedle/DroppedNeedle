@@ -1,0 +1,9 @@
+{
+  "request": "GET /Items/00000000000000000000000000000014/Images/Primary",
+  "status": 404,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": "OK Computer does not have an image of type Primary"
+}

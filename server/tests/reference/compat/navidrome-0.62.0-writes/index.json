@@ -1,0 +1,185 @@
+{
+  "requests": [
+    {
+      "name": "star",
+      "file": "star.json",
+      "write": true,
+      "method": "GET",
+      "path": "/rest/star",
+      "query": [
+        [
+          "id",
+          "{track.airbag}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "createPlaylist",
+      "file": "createPlaylist.json",
+      "write": true,
+      "method": "GET",
+      "path": "/rest/createPlaylist",
+      "query": [
+        [
+          "name",
+          "Reference"
+        ],
+        [
+          "songId",
+          "{track.airbag}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json",
+      "sets": {
+        "ref": "playlist",
+        "at": [
+          "subsonic-response",
+          "playlist",
+          "id"
+        ]
+      }
+    },
+    {
+      "name": "scrobble",
+      "file": "scrobble.json",
+      "write": true,
+      "method": "GET",
+      "path": "/rest/scrobble",
+      "query": [
+        [
+          "id",
+          "{track.airbag}"
+        ],
+        [
+          "submission",
+          "true"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getStarred2",
+      "file": "getStarred2.json",
+      "method": "GET",
+      "path": "/rest/getStarred2",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getStarred",
+      "file": "getStarred.json",
+      "method": "GET",
+      "path": "/rest/getStarred",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getPlaylists",
+      "file": "getPlaylists.json",
+      "method": "GET",
+      "path": "/rest/getPlaylists",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getPlaylist",
+      "file": "getPlaylist.json",
+      "method": "GET",
+      "path": "/rest/getPlaylist",
+      "query": [
+        [
+          "id",
+          "{playlist}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getSong",
+      "file": "getSong.json",
+      "method": "GET",
+      "path": "/rest/getSong",
+      "query": [
+        [
+          "id",
+          "{track.airbag}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getAlbum",
+      "file": "getAlbum.json",
+      "method": "GET",
+      "path": "/rest/getAlbum",
+      "query": [
+        [
+          "id",
+          "{album.ok_computer}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getNowPlaying",
+      "file": "getNowPlaying.json",
+      "method": "GET",
+      "path": "/rest/getNowPlaying",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getAlbumList2.starred",
+      "file": "getAlbumList2.starred.json",
+      "method": "GET",
+      "path": "/rest/getAlbumList2",
+      "query": [
+        [
+          "type",
+          "starred"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getAlbumList2.recent",
+      "file": "getAlbumList2.recent.json",
+      "method": "GET",
+      "path": "/rest/getAlbumList2",
+      "query": [
+        [
+          "type",
+          "recent"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getAlbumList2.frequent",
+      "file": "getAlbumList2.frequent.json",
+      "method": "GET",
+      "path": "/rest/getAlbumList2",
+      "query": [
+        [
+          "type",
+          "frequent"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    }
+  ]
+}

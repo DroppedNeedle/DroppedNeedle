@@ -1,0 +1,23 @@
+{
+  "request": "GET /Items/Filters?userId=00000000000000000000000000000002&ParentId=00000000000000000000000000000003",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "Genres": [
+      "Alternative Rock",
+      "Rock"
+    ],
+    "Tags": [],
+    "OfficialRatings": [],
+    "Years": [
+      1991,
+      1997,
+      1998,
+      2001,
+      2015
+    ]
+  }
+}

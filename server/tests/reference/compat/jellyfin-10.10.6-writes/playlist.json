@@ -1,0 +1,15 @@
+{
+  "request": "GET /Playlists/00000000000000000000000000000001",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "OpenAccess": true,
+    "Shares": [],
+    "ItemIds": [
+      "00000000000000000000000000000008"
+    ]
+  }
+}

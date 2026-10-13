@@ -1,0 +1,25 @@
+{
+  "request": "GET /rest/getScanStatus?u=reference&p=***&v=1.16.1&c=dn-ref&f=json",
+  "status": 200,
+  "headers": {
+    "content-length": "276",
+    "content-type": "application/json"
+  },
+  "body": {
+    "subsonic-response": {
+      "status": "ok",
+      "version": "1.16.1",
+      "type": "navidrome",
+      "serverVersion": "0.62.0 (1b46b977)",
+      "openSubsonic": true,
+      "scanStatus": {
+        "scanning": false,
+        "count": 6,
+        "folderCount": 5,
+        "lastScan": "0000-00-00T00:00:00.000000000Z",
+        "scanType": "quick",
+        "elapsedTime": 317870027
+      }
+    }
+  }
+}

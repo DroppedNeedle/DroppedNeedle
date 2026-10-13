@@ -1,0 +1,43 @@
+{
+  "request": "GET /System/Info",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "OperatingSystemDisplayName": "",
+    "HasPendingRestart": false,
+    "IsShuttingDown": false,
+    "SupportsLibraryMonitor": true,
+    "WebSocketPortNumber": 8096,
+    "CompletedInstallations": [],
+    "CanSelfRestart": true,
+    "CanLaunchWebBrowser": false,
+    "ProgramDataPath": "/config",
+    "WebPath": "/jellyfin/jellyfin-web",
+    "ItemsByNamePath": "/config/metadata",
+    "CachePath": "/cache",
+    "LogPath": "/config/log",
+    "InternalMetadataPath": "/config/metadata",
+    "TranscodingTempPath": "/cache/transcodes",
+    "CastReceiverApplications": [
+      {
+        "Id": "F007D354",
+        "Name": "Stable"
+      },
+      {
+        "Id": "6F511C87",
+        "Name": "Unstable"
+      }
+    ],
+    "HasUpdateAvailable": false,
+    "EncoderLocation": "System",
+    "SystemArchitecture": "X64",
+    "LocalAddress": "http://reference.invalid",
+    "ServerName": "dn-ref",
+    "Version": "10.10.6",
+    "OperatingSystem": "",
+    "Id": "00000000000000000000000000000019"
+  }
+}

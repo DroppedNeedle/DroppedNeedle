@@ -1,0 +1,703 @@
+{
+  "requests": [
+    {
+      "name": "ping",
+      "file": "ping.json",
+      "method": "GET",
+      "path": "/rest/ping",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getLicense",
+      "file": "getLicense.json",
+      "method": "GET",
+      "path": "/rest/getLicense",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getOpenSubsonicExtensions",
+      "file": "getOpenSubsonicExtensions.json",
+      "method": "GET",
+      "path": "/rest/getOpenSubsonicExtensions",
+      "query": [],
+      "auth": "none",
+      "answer": "json"
+    },
+    {
+      "name": "getMusicFolders",
+      "file": "getMusicFolders.json",
+      "method": "GET",
+      "path": "/rest/getMusicFolders",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getUser",
+      "file": "getUser.json",
+      "method": "GET",
+      "path": "/rest/getUser",
+      "query": [
+        [
+          "username",
+          "reference"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getScanStatus",
+      "file": "getScanStatus.json",
+      "method": "GET",
+      "path": "/rest/getScanStatus",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getArtists",
+      "file": "getArtists.json",
+      "method": "GET",
+      "path": "/rest/getArtists",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getIndexes",
+      "file": "getIndexes.json",
+      "method": "GET",
+      "path": "/rest/getIndexes",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getArtist",
+      "file": "getArtist.json",
+      "method": "GET",
+      "path": "/rest/getArtist",
+      "query": [
+        [
+          "id",
+          "{artist.radiohead}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getAlbum",
+      "file": "getAlbum.json",
+      "method": "GET",
+      "path": "/rest/getAlbum",
+      "query": [
+        [
+          "id",
+          "{album.ok_computer}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getSong",
+      "file": "getSong.json",
+      "method": "GET",
+      "path": "/rest/getSong",
+      "query": [
+        [
+          "id",
+          "{track.airbag}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getMusicDirectory.artist",
+      "file": "getMusicDirectory.artist.json",
+      "method": "GET",
+      "path": "/rest/getMusicDirectory",
+      "query": [
+        [
+          "id",
+          "{artist.radiohead}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getMusicDirectory.album",
+      "file": "getMusicDirectory.album.json",
+      "method": "GET",
+      "path": "/rest/getMusicDirectory",
+      "query": [
+        [
+          "id",
+          "{album.ok_computer}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getGenres",
+      "file": "getGenres.json",
+      "method": "GET",
+      "path": "/rest/getGenres",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getSongsByGenre",
+      "file": "getSongsByGenre.json",
+      "method": "GET",
+      "path": "/rest/getSongsByGenre",
+      "query": [
+        [
+          "genre",
+          "Rock"
+        ],
+        [
+          "count",
+          "10"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getRandomSongs",
+      "file": "getRandomSongs.json",
+      "method": "GET",
+      "path": "/rest/getRandomSongs",
+      "query": [
+        [
+          "size",
+          "10"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getAlbumList2.newest",
+      "file": "getAlbumList2.newest.json",
+      "method": "GET",
+      "path": "/rest/getAlbumList2",
+      "query": [
+        [
+          "type",
+          "newest"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getAlbumList2.alphabeticalByName",
+      "file": "getAlbumList2.alphabeticalByName.json",
+      "method": "GET",
+      "path": "/rest/getAlbumList2",
+      "query": [
+        [
+          "type",
+          "alphabeticalByName"
+        ],
+        [
+          "size",
+          "2"
+        ],
+        [
+          "offset",
+          "1"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getAlbumList2.byYear",
+      "file": "getAlbumList2.byYear.json",
+      "method": "GET",
+      "path": "/rest/getAlbumList2",
+      "query": [
+        [
+          "type",
+          "byYear"
+        ],
+        [
+          "fromYear",
+          "1990"
+        ],
+        [
+          "toYear",
+          "1999"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getAlbumList2.byGenre",
+      "file": "getAlbumList2.byGenre.json",
+      "method": "GET",
+      "path": "/rest/getAlbumList2",
+      "query": [
+        [
+          "type",
+          "byGenre"
+        ],
+        [
+          "genre",
+          "Rock"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getAlbumList.newest",
+      "file": "getAlbumList.newest.json",
+      "method": "GET",
+      "path": "/rest/getAlbumList",
+      "query": [
+        [
+          "type",
+          "newest"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "search3.no-query",
+      "file": "search3.no-query.json",
+      "method": "GET",
+      "path": "/rest/search3",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "search3.empty-quotes",
+      "file": "search3.empty-quotes.json",
+      "method": "GET",
+      "path": "/rest/search3",
+      "query": [
+        [
+          "query",
+          "\"\""
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "search3.word",
+      "file": "search3.word.json",
+      "method": "GET",
+      "path": "/rest/search3",
+      "query": [
+        [
+          "query",
+          "radiohead"
+        ],
+        [
+          "artistCount",
+          "1"
+        ],
+        [
+          "albumCount",
+          "1"
+        ],
+        [
+          "songCount",
+          "1"
+        ],
+        [
+          "songOffset",
+          "1"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "search2.word",
+      "file": "search2.word.json",
+      "method": "GET",
+      "path": "/rest/search2",
+      "query": [
+        [
+          "query",
+          "radiohead"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getPlaylists",
+      "file": "getPlaylists.json",
+      "method": "GET",
+      "path": "/rest/getPlaylists",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getStarred2",
+      "file": "getStarred2.json",
+      "method": "GET",
+      "path": "/rest/getStarred2",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getStarred",
+      "file": "getStarred.json",
+      "method": "GET",
+      "path": "/rest/getStarred",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getNowPlaying",
+      "file": "getNowPlaying.json",
+      "method": "GET",
+      "path": "/rest/getNowPlaying",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getPlayQueue",
+      "file": "getPlayQueue.json",
+      "method": "GET",
+      "path": "/rest/getPlayQueue",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getBookmarks",
+      "file": "getBookmarks.json",
+      "method": "GET",
+      "path": "/rest/getBookmarks",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getArtistInfo2",
+      "file": "getArtistInfo2.json",
+      "method": "GET",
+      "path": "/rest/getArtistInfo2",
+      "query": [
+        [
+          "id",
+          "{artist.radiohead}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getAlbumInfo2",
+      "file": "getAlbumInfo2.json",
+      "method": "GET",
+      "path": "/rest/getAlbumInfo2",
+      "query": [
+        [
+          "id",
+          "{album.ok_computer}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getTopSongs",
+      "file": "getTopSongs.json",
+      "method": "GET",
+      "path": "/rest/getTopSongs",
+      "query": [
+        [
+          "artist",
+          "Radiohead"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getSimilarSongs2",
+      "file": "getSimilarSongs2.json",
+      "method": "GET",
+      "path": "/rest/getSimilarSongs2",
+      "query": [
+        [
+          "id",
+          "{artist.radiohead}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getLyricsBySongId",
+      "file": "getLyricsBySongId.json",
+      "method": "GET",
+      "path": "/rest/getLyricsBySongId",
+      "query": [
+        [
+          "id",
+          "{track.airbag}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getLyrics",
+      "file": "getLyrics.json",
+      "method": "GET",
+      "path": "/rest/getLyrics",
+      "query": [
+        [
+          "artist",
+          "Radiohead"
+        ],
+        [
+          "title",
+          "Airbag"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getCoverArt",
+      "file": "getCoverArt.json",
+      "method": "GET",
+      "path": "/rest/getCoverArt",
+      "query": [
+        [
+          "id",
+          "{album.ok_computer}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "bytes"
+    },
+    {
+      "name": "stream.full",
+      "file": "stream.full.json",
+      "method": "GET",
+      "path": "/rest/stream",
+      "query": [
+        [
+          "id",
+          "{track.airbag}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "bytes"
+    },
+    {
+      "name": "stream.range-first-50",
+      "file": "stream.range-first-50.json",
+      "method": "GET",
+      "path": "/rest/stream",
+      "query": [
+        [
+          "id",
+          "{track.airbag}"
+        ]
+      ],
+      "headers": {
+        "range": "bytes=0-49"
+      },
+      "auth": "default",
+      "answer": "bytes"
+    },
+    {
+      "name": "stream.range-last-10",
+      "file": "stream.range-last-10.json",
+      "method": "GET",
+      "path": "/rest/stream",
+      "query": [
+        [
+          "id",
+          "{track.airbag}"
+        ]
+      ],
+      "headers": {
+        "range": "bytes=-10"
+      },
+      "auth": "default",
+      "answer": "bytes"
+    },
+    {
+      "name": "stream.range-past-end",
+      "file": "stream.range-past-end.json",
+      "method": "GET",
+      "path": "/rest/stream",
+      "query": [
+        [
+          "id",
+          "{track.airbag}"
+        ]
+      ],
+      "headers": {
+        "range": "bytes=999999-"
+      },
+      "auth": "default",
+      "answer": "text"
+    },
+    {
+      "name": "stream.head",
+      "file": "stream.head.json",
+      "method": "HEAD",
+      "path": "/rest/stream",
+      "query": [
+        [
+          "id",
+          "{track.airbag}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "bytes"
+    },
+    {
+      "name": "stream.format-raw",
+      "file": "stream.format-raw.json",
+      "method": "GET",
+      "path": "/rest/stream",
+      "query": [
+        [
+          "id",
+          "{track.airbag}"
+        ],
+        [
+          "format",
+          "raw"
+        ]
+      ],
+      "auth": "default",
+      "answer": "bytes"
+    },
+    {
+      "name": "download",
+      "file": "download.json",
+      "method": "GET",
+      "path": "/rest/download",
+      "query": [
+        [
+          "id",
+          "{track.airbag}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "bytes"
+    },
+    {
+      "name": "error.wrong-password",
+      "file": "error.wrong-password.json",
+      "method": "GET",
+      "path": "/rest/ping",
+      "query": [],
+      "auth": "wrong_password",
+      "answer": "json"
+    },
+    {
+      "name": "error.missing-id",
+      "file": "error.missing-id.json",
+      "method": "GET",
+      "path": "/rest/getAlbum",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "error.unknown-id",
+      "file": "error.unknown-id.json",
+      "method": "GET",
+      "path": "/rest/getAlbum",
+      "query": [
+        [
+          "id",
+          "no-such-id"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "error.unknown-method",
+      "file": "error.unknown-method.json",
+      "method": "GET",
+      "path": "/rest/noSuchMethod",
+      "query": [],
+      "auth": "default",
+      "answer": "text"
+    },
+    {
+      "name": "error.stream-unknown-id",
+      "file": "error.stream-unknown-id.json",
+      "method": "GET",
+      "path": "/rest/stream",
+      "query": [
+        [
+          "id",
+          "no-such-id"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "error.music-folder-repeated",
+      "file": "error.music-folder-repeated.json",
+      "method": "GET",
+      "path": "/rest/getArtists",
+      "query": [
+        [
+          "musicFolderId",
+          "1"
+        ],
+        [
+          "musicFolderId",
+          "1"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "error.music-folder-unknown",
+      "file": "error.music-folder-unknown.json",
+      "method": "GET",
+      "path": "/rest/getArtists",
+      "query": [
+        [
+          "musicFolderId",
+          "99"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    }
+  ]
+}

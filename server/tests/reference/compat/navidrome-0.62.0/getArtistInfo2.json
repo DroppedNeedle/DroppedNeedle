@@ -1,0 +1,23 @@
+{
+  "request": "GET /rest/getArtistInfo2?u=reference&p=***&v=1.16.1&c=dn-ref&f=json&id=0000000000000000000003",
+  "status": 200,
+  "headers": {
+    "content-length": "819",
+    "content-type": "application/json"
+  },
+  "body": {
+    "subsonic-response": {
+      "status": "ok",
+      "version": "1.16.1",
+      "type": "navidrome",
+      "serverVersion": "0.62.0 (1b46b977)",
+      "openSubsonic": true,
+      "artistInfo2": {
+        "musicBrainzId": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+        "smallImageUrl": "http://reference.invalid/share/img/<token>?size=300",
+        "mediumImageUrl": "http://reference.invalid/share/img/<token>?size=600",
+        "largeImageUrl": "http://reference.invalid/share/img/<token>?size=1200"
+      }
+    }
+  }
+}

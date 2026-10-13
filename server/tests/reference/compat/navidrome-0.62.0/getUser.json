@@ -1,0 +1,36 @@
+{
+  "request": "GET /rest/getUser?u=reference&p=***&v=1.16.1&c=dn-ref&f=json&username=reference",
+  "status": 200,
+  "headers": {
+    "content-length": "443",
+    "content-type": "application/json"
+  },
+  "body": {
+    "subsonic-response": {
+      "status": "ok",
+      "version": "1.16.1",
+      "type": "navidrome",
+      "serverVersion": "0.62.0 (1b46b977)",
+      "openSubsonic": true,
+      "user": {
+        "username": "reference",
+        "scrobblingEnabled": true,
+        "adminRole": true,
+        "settingsRole": false,
+        "downloadRole": true,
+        "uploadRole": false,
+        "playlistRole": false,
+        "coverArtRole": true,
+        "commentRole": false,
+        "podcastRole": false,
+        "streamRole": true,
+        "jukeboxRole": false,
+        "shareRole": false,
+        "videoConversionRole": false,
+        "folder": [
+          1
+        ]
+      }
+    }
+  }
+}

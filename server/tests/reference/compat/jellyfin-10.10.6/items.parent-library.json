@@ -1,0 +1,124 @@
+{
+  "request": "GET /Items?userId=00000000000000000000000000000002&ParentId=00000000000000000000000000000003",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "Items": [
+      {
+        "Name": "ユキ",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000007",
+        "ChannelId": null,
+        "RunTimeTicks": 0,
+        "IsFolder": true,
+        "Type": "MusicArtist",
+        "UserData": {
+          "PlaybackPositionTicks": 0,
+          "PlayCount": 0,
+          "IsFavorite": false,
+          "Played": false,
+          "Key": "Artist-ユキ",
+          "ItemId": "00000000000000000000000000000023"
+        },
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Unknown"
+      },
+      {
+        "Name": "Massive Attack",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000006",
+        "ChannelId": null,
+        "RunTimeTicks": 0,
+        "IsFolder": true,
+        "Type": "MusicArtist",
+        "UserData": {
+          "PlaybackPositionTicks": 0,
+          "PlayCount": 0,
+          "IsFavorite": false,
+          "Played": false,
+          "Key": "Artist-Massive Attack",
+          "ItemId": "00000000000000000000000000000023"
+        },
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Unknown"
+      },
+      {
+        "Name": "Various Artists",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000025",
+        "ChannelId": null,
+        "RunTimeTicks": 0,
+        "IsFolder": true,
+        "Type": "MusicArtist",
+        "UserData": {
+          "PlaybackPositionTicks": 0,
+          "PlayCount": 0,
+          "IsFavorite": false,
+          "Played": false,
+          "Key": "Artist-Various Artists",
+          "ItemId": "00000000000000000000000000000023"
+        },
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Unknown"
+      },
+      {
+        "Name": "Radiohead",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000004",
+        "ChannelId": null,
+        "RunTimeTicks": 0,
+        "IsFolder": true,
+        "Type": "MusicArtist",
+        "UserData": {
+          "PlaybackPositionTicks": 0,
+          "PlayCount": 0,
+          "IsFavorite": false,
+          "Played": false,
+          "Key": "Artist-Radiohead",
+          "ItemId": "00000000000000000000000000000023"
+        },
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Unknown"
+      },
+      {
+        "Name": "U2",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000005",
+        "ChannelId": null,
+        "RunTimeTicks": 0,
+        "IsFolder": true,
+        "Type": "MusicArtist",
+        "UserData": {
+          "PlaybackPositionTicks": 0,
+          "PlayCount": 0,
+          "IsFavorite": false,
+          "Played": false,
+          "Key": "Artist-U2",
+          "ItemId": "00000000000000000000000000000023"
+        },
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Unknown"
+      }
+    ],
+    "TotalRecordCount": 5,
+    "StartIndex": 0
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "request": "GET /rest/getAlbum?u=reference&p=***&v=1.16.1&c=dn-ref&f=json&id=no-such-id",
+  "status": 200,
+  "headers": {
+    "content-length": "183",
+    "content-type": "application/json"
+  },
+  "body": {
+    "subsonic-response": {
+      "status": "failed",
+      "version": "1.16.1",
+      "type": "navidrome",
+      "serverVersion": "0.62.0 (1b46b977)",
+      "openSubsonic": true,
+      "error": {
+        "code": 70,
+        "message": "Album not found"
+      }
+    }
+  }
+}

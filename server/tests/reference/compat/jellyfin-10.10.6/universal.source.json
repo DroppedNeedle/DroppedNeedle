@@ -1,0 +1,13 @@
+{
+  "request": "GET /Audio/00000000000000000000000000000008/universal?userId=00000000000000000000000000000002&Container=flac&AudioCodec=flac",
+  "status": 200,
+  "headers": {
+    "accept-ranges": "bytes",
+    "content-length": "1567",
+    "content-type": "audio/flac",
+    "last-modified": "<date>"
+  },
+  "body": {
+    "unread": true
+  }
+}

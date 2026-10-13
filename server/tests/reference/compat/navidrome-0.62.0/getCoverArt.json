@@ -1,0 +1,13 @@
+{
+  "request": "GET /rest/getCoverArt?u=reference&p=***&v=1.16.1&c=dn-ref&f=json&id=0000000000000000000014",
+  "status": 200,
+  "headers": {
+    "cache-control": "public, max-age=315360000",
+    "content-type": "image/webp",
+    "last-modified": "<date>",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "bytes": 69228
+  }
+}

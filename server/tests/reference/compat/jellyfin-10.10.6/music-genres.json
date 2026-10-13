@@ -1,0 +1,38 @@
+{
+  "request": "GET /MusicGenres?userId=00000000000000000000000000000002",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "Items": [
+      {
+        "Name": "Alternative Rock",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000026",
+        "ChannelId": null,
+        "Type": "MusicGenre",
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Unknown"
+      },
+      {
+        "Name": "Rock",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000027",
+        "ChannelId": null,
+        "Type": "MusicGenre",
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Unknown"
+      }
+    ],
+    "TotalRecordCount": 2,
+    "StartIndex": 0
+  }
+}

@@ -1,0 +1,121 @@
+{
+  "request": "GET /rest/search3?u=reference&p=***&v=1.16.1&c=dn-ref&f=json&query=radiohead&artistCount=1&albumCount=1&songCount=1&songOffset=1",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "subsonic-response": {
+      "status": "ok",
+      "version": "1.16.1",
+      "type": "navidrome",
+      "serverVersion": "0.62.0 (1b46b977)",
+      "openSubsonic": true,
+      "searchResult3": {
+        "artist": [
+          {
+            "id": "0000000000000000000003",
+            "name": "Radiohead",
+            "coverArt": "ar-0000000000000000000003_0",
+            "albumCount": 2,
+            "artistImageUrl": "http://reference.invalid/share/img/<token>?size=600",
+            "musicBrainzId": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "sortName": "radiohead",
+            "roles": [
+              "albumartist",
+              "artist",
+              "maincredit"
+            ]
+          }
+        ],
+        "album": [
+          {
+            "id": "0000000000000000000019",
+            "name": "OK Computer",
+            "artist": "Radiohead",
+            "artistId": "0000000000000000000003",
+            "coverArt": "al-0000000000000000000019_00000000",
+            "songCount": 1,
+            "duration": 0,
+            "created": "0000-00-00T00:00:00.000000000Z",
+            "year": 1997,
+            "userRating": 0,
+            "genres": [],
+            "musicBrainzId": "",
+            "isCompilation": false,
+            "sortName": "ok computer",
+            "discTitles": [],
+            "originalReleaseDate": {},
+            "releaseDate": {},
+            "releaseTypes": [],
+            "recordLabels": [],
+            "moods": [],
+            "artists": [
+              {
+                "id": "0000000000000000000003",
+                "name": "Radiohead"
+              }
+            ],
+            "displayArtist": "Radiohead",
+            "explicitStatus": "",
+            "version": ""
+          }
+        ],
+        "song": [
+          {
+            "id": "0000000000000000000009",
+            "parent": "0000000000000000000019",
+            "isDir": false,
+            "title": "Paranoid Android",
+            "album": "OK Computer",
+            "artist": "Radiohead",
+            "track": 2,
+            "year": 1997,
+            "coverArt": "dc-0000000000000000000019:1_0",
+            "size": 1463,
+            "contentType": "audio/flac",
+            "suffix": "flac",
+            "bitRate": 1,
+            "path": "Radiohead/OK Computer/01-02 - Paranoid Android.flac",
+            "discNumber": 1,
+            "created": "0000-00-00T00:00:00.000000000Z",
+            "albumId": "0000000000000000000019",
+            "artistId": "0000000000000000000003",
+            "type": "music",
+            "bpm": 0,
+            "comment": "",
+            "sortName": "paranoid android",
+            "mediaType": "song",
+            "musicBrainzId": "",
+            "isrc": [],
+            "genres": [],
+            "replayGain": {},
+            "channelCount": 2,
+            "samplingRate": 44100,
+            "bitDepth": 16,
+            "moods": [],
+            "artists": [
+              {
+                "id": "0000000000000000000003",
+                "name": "Radiohead"
+              }
+            ],
+            "displayArtist": "Radiohead",
+            "albumArtists": [
+              {
+                "id": "0000000000000000000003",
+                "name": "Radiohead"
+              }
+            ],
+            "displayAlbumArtist": "Radiohead",
+            "contributors": [],
+            "displayComposer": "",
+            "explicitStatus": "",
+            "groupings": []
+          }
+        ]
+      }
+    }
+  }
+}

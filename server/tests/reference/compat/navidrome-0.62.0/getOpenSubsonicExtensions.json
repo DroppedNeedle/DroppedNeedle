@@ -1,0 +1,55 @@
+{
+  "request": "GET /rest/getOpenSubsonicExtensions?v=1.16.1&c=dn-ref&f=json",
+  "status": 200,
+  "headers": {
+    "content-length": "393",
+    "content-type": "application/json"
+  },
+  "body": {
+    "subsonic-response": {
+      "status": "ok",
+      "version": "1.16.1",
+      "type": "navidrome",
+      "serverVersion": "0.62.0 (1b46b977)",
+      "openSubsonic": true,
+      "openSubsonicExtensions": [
+        {
+          "name": "transcodeOffset",
+          "versions": [
+            1
+          ]
+        },
+        {
+          "name": "formPost",
+          "versions": [
+            1
+          ]
+        },
+        {
+          "name": "songLyrics",
+          "versions": [
+            1
+          ]
+        },
+        {
+          "name": "indexBasedQueue",
+          "versions": [
+            1
+          ]
+        },
+        {
+          "name": "transcoding",
+          "versions": [
+            1
+          ]
+        },
+        {
+          "name": "playbackReport",
+          "versions": [
+            1
+          ]
+        }
+      ]
+    }
+  }
+}
