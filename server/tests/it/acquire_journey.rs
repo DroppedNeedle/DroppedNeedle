@@ -1,8 +1,9 @@
 //! Acquire journeys through the whole app: request, approve, land; follow
-//! toggle, approval, armed follow. No download client is configured, so the
-//! worker holds the queue and landing is simulated through the journal.
+//! toggle, approval, armed follow; a request held until a source is added.
+//! The app starts with no download client, so the worker holds the queue
+//! and the first journey simulates landing through the journal.
 
-use std::path::Path;
+use std::{path::Path, time::Duration};
 
 use axum::http::StatusCode;
 use serde_json::{Value, json};
@@ -205,5 +206,92 @@ async fn acquire_follow_approval_arms_auto_download() {
         ),
         (Some(false), Some("revoked"))
     );
+    app.stop().await;
+}
+
+// ---------------------------------------------------------------------------
+// Journey 3: no download source → the request is accepted and says it is
+// waiting → the admin saves the slskd connection → the request starts.
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn acquire_held_request_starts_when_a_source_is_saved() {
+    let app = TestApp::start("held").await;
+    let admin = app.login_admin().await;
+    let molly = app.login_user("molly").await.authorization;
+
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/requests/albums",
+            &[("authorization", molly.as_str())],
+            Some(json!({
+                "musicbrainz_id": RG_MBID,
+                "artist": "Massive Attack",
+                "album": "Blue Lines",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/requests/approvals/{RG_MBID}/approve"),
+            &[("authorization", admin.as_str())],
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // Approved, with nowhere to download from: Molly sees why it waits.
+    let (status, body) = app
+        .call(
+            "GET",
+            "/api/v3/requests/active",
+            &[("authorization", molly.as_str())],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["count"], 1, "{body}");
+    assert_eq!(body["items"][0]["waiting_reason"], "no_download_source");
+    assert!(app.slskd.search_texts().is_empty());
+
+    // The admin turns slskd on in Settings.
+    let (status, body) = app
+        .call(
+            "PUT",
+            "/api/v3/settings/download-client/config",
+            &[("authorization", admin.as_str())],
+            Some(json!({
+                "enabled": true,
+                "url": app.slskd.base_url(),
+                "api_key": "slskd-key",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // The save itself starts the request: slskd is searched for the album
+    // long before the worker's next pass on its own would come round.
+    let searched = async {
+        while app.slskd.search_texts().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(5), searched)
+        .await
+        .expect("saving a source starts the held request");
+    let (status, body) = app
+        .call(
+            "GET",
+            "/api/v3/requests/active",
+            &[("authorization", molly.as_str())],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["count"], 1, "{body}");
+    assert_eq!(body["items"][0]["waiting_reason"], Value::Null);
     app.stop().await;
 }
