@@ -570,11 +570,14 @@ impl Shared {
     }
 
     /// Put the connection back at the end of a turn. After a shutdown that
-    /// gave up on this turn there is nobody to keep it for, so it is closed.
+    /// gave up on this turn there is nobody to keep it for, so it is closed
+    /// and the lane is marked idle here: no later grant will do it.
     fn take_back(&self, connection: WriterConnection) {
         let mut state = self.state();
         state.holder = None;
         if state.gave_up {
+            self.idle.active.store(false, Ordering::Release);
+            self.drained.notify_all();
             drop(state);
             drop(connection);
         } else {
@@ -588,7 +591,8 @@ impl Shared {
     /// is left to end by itself. False if the lane's thread did not stop
     /// cleanly.
     fn close(&self, grace: Duration) -> bool {
-        let deadline = Instant::now() + grace;
+        // A grace too long to add to the clock is no bound at all.
+        let deadline = Instant::now().checked_add(grace);
         let (connection, runner, runner_thread, unserved, stuck) = {
             let mut state = self.state();
             state.closed = true;
@@ -596,6 +600,13 @@ impl Shared {
                 || !state.foreground.is_empty()
                 || !state.background.is_empty()
             {
+                let Some(deadline) = deadline else {
+                    state = self
+                        .drained
+                        .wait(state)
+                        .unwrap_or_else(PoisonError::into_inner);
+                    continue;
+                };
                 let left = deadline.saturating_duration_since(Instant::now());
                 if left.is_zero() {
                     break;
@@ -632,7 +643,7 @@ impl Shared {
             // The lane's thread may be the one that is stuck. It ends by
             // itself once its write returns, so it is not waited for.
             Some((operation, held)) => {
-                tracing::warn!(
+                tracing::error!(
                     operation,
                     held_ms = held.as_millis() as u64,
                     refused,
@@ -663,7 +674,7 @@ impl Shared {
             let waiting = (state.foreground.len(), state.background.len());
             let stuck = state.holder.as_mut().and_then(|holder| {
                 let held = holder.since.elapsed();
-                let due = held > self.limits.budget(holder.lane).abort * 2
+                let due = held > self.limits.budget(holder.lane).abort.saturating_mul(2)
                     && holder
                         .logged_at
                         .is_none_or(|at| at.elapsed() >= HOLDER_LOG_EVERY);
@@ -703,21 +714,45 @@ struct Turn {
 }
 
 impl Turn {
+    /// Run the turn's transaction and log what its caller may no longer be
+    /// there to hear: a queued write runs even when its future was dropped,
+    /// so these lines are written here, on the thread that ran it.
     fn transact<R>(
         &mut self,
+        lane: Lane,
         budget: Budget,
+        name: &'static str,
         op: impl FnOnce(&Transaction) -> Result<R, OpError>,
     ) -> Outcome<R> {
-        match self.connection.as_mut() {
-            Some(connection) => connection.transact(budget, op),
-            None => Outcome {
+        let Some(connection) = self.connection.as_mut() else {
+            return Outcome {
                 value: Err(Failure::Op(OpError::Abort(
                     "the turn holds no connection".to_owned(),
                 ))),
                 changes: 0,
                 elapsed: Duration::ZERO,
-            },
+            };
+        };
+        let outcome = connection.transact(budget, op);
+        // `elapsed` runs from before `BEGIN`, so it includes the wait for
+        // the file lock, which the abort budget does not count.
+        if outcome.elapsed > budget.warn {
+            tracing::warn!(
+                operation = name,
+                lane = lane.label(),
+                elapsed_ms = outcome.elapsed.as_millis() as u64,
+                changes = outcome.changes,
+                "write exceeded its soft budget"
+            );
         }
+        if let Err(Failure::Ended(cause)) = &outcome.value {
+            tracing::error!(
+                operation = name,
+                cause = cause.as_deref().unwrap_or("the closure returned no error"),
+                "write transaction was rolled back inside its closure"
+            );
+        }
+        outcome
     }
 }
 
@@ -750,7 +785,8 @@ impl WriteLane {
         Self::open_limited(db_path, limits)
     }
 
-    fn open_limited(db_path: &Path, limits: LaneLimits) -> Result<Self, DbError> {
+    /// [`WriteLane::open`] with the given time limits.
+    pub(crate) fn open_limited(db_path: &Path, limits: LaneLimits) -> Result<Self, DbError> {
         let id = LaneId::next();
         let connection = WriterConnection::open(db_path, id)?;
         let (runner, granted) = mpsc::channel();
@@ -812,7 +848,12 @@ impl WriteLane {
                     let Some(shared) = shared.upgrade() else {
                         return;
                     };
-                    shared.watch_tick();
+                    // A tick drops the closures of the writes it refuses,
+                    // which is the caller's code. One that panics must not
+                    // end the watch.
+                    if catch_unwind(AssertUnwindSafe(|| shared.watch_tick())).is_err() {
+                        tracing::error!("database watch tick panicked; the watch carries on");
+                    }
                 }
             })
             .map_err(DbError::Io)?;
@@ -845,7 +886,8 @@ impl WriteLane {
         let write: AsyncWrite = Box::new(move |granted| {
             let answer = match granted {
                 Ok(mut turn) => {
-                    let outcome = catch_unwind(AssertUnwindSafe(|| turn.transact(budget, op)));
+                    let outcome =
+                        catch_unwind(AssertUnwindSafe(|| turn.transact(lane, budget, name, op)));
                     // The turn goes back before the caller hears, so a
                     // caller that was just answered finds the lane idle.
                     drop(turn);
@@ -866,7 +908,7 @@ impl WriteLane {
         });
         self.shared.enqueue(lane, name, Grantee::Async(write))?;
         match answer.await {
-            Ok(Answer::Ran(outcome)) => finish(lane, budget, name, outcome),
+            Ok(Answer::Ran(outcome)) => finish(name, outcome),
             Ok(Answer::Panicked) => Err(DbError::WriteFailed {
                 operation: name.to_owned(),
                 cause: "the write closure panicked".to_owned(),
@@ -897,9 +939,9 @@ impl WriteLane {
             Ok(Err(refused)) => return Err(refused.into_error(name)),
             Err(_) => return Err(DbError::LaneClosed),
         };
-        let outcome = turn.transact(budget, op);
+        let outcome = turn.transact(lane, budget, name, op);
         drop(turn);
-        finish(lane, budget, name, outcome)
+        finish(name, outcome)
     }
 
     /// Commit `items` in chunks of at most 500 rows with a cancellation
@@ -947,8 +989,9 @@ impl WriteLane {
     /// `grace`, then close the connection and join the lane's thread. A
     /// write that still holds the lane at the bound is named in the log and
     /// left to end by itself; the writes queued behind it are answered
-    /// `LaneClosed`. Idempotent: the first call wins, later calls find
-    /// nothing to close.
+    /// `LaneClosed`. The first call closes the lane and a later one finds
+    /// nothing to close, unless the first gave up on a write that is still
+    /// running: a later call then waits for that write, up to `grace` again.
     pub async fn shutdown(&self, grace: Duration) {
         let shared = Arc::clone(&self.shared);
         let closed = tokio::task::spawn_blocking(move || shared.close(grace)).await;
@@ -987,39 +1030,17 @@ fn run_async_writes(granted: mpsc::Receiver<Granted>) {
     }
 }
 
-/// Map one transaction's outcome for its caller and log a write that ran
-/// past its class's soft budget.
-fn finish<R>(
-    lane: Lane,
-    budget: Budget,
-    name: &'static str,
-    outcome: Outcome<R>,
-) -> Result<R, DbError> {
-    if outcome.elapsed > budget.warn {
-        tracing::warn!(
-            operation = name,
-            lane = lane.label(),
-            elapsed_ms = outcome.elapsed.as_millis() as u64,
-            changes = outcome.changes,
-            "write exceeded its soft budget"
-        );
-    }
+/// Map one transaction's outcome for its caller.
+fn finish<R>(name: &'static str, outcome: Outcome<R>) -> Result<R, DbError> {
     match outcome.value {
         Ok(value) => Ok(value),
         Err(Failure::TimedOut) => Err(DbError::TxTimeout {
             operation: name.to_owned(),
             changes: outcome.changes,
         }),
-        Err(Failure::Ended(cause)) => {
-            tracing::error!(
-                operation = name,
-                cause = cause.as_deref().unwrap_or("the closure returned no error"),
-                "write transaction was rolled back inside its closure"
-            );
-            Err(DbError::TransactionEnded {
-                operation: name.to_owned(),
-            })
-        }
+        Err(Failure::Ended(_)) => Err(DbError::TransactionEnded {
+            operation: name.to_owned(),
+        }),
         Err(Failure::Connection(error)) => Err(error),
         Err(Failure::Op(OpError::Abort(cause))) => Err(DbError::WriteFailed {
             operation: name.to_owned(),

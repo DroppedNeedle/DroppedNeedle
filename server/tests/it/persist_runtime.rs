@@ -906,15 +906,34 @@ async fn background_budget_outlasts_the_foreground_one() {
 /// same position commits once the holder is done.
 #[tokio::test(start_paused = true)]
 async fn foreground_wait_past_its_limit_is_refused() {
-    let (lane, _dir) = scratch_lane_with(
-        "foreground-wait",
-        LaneLimits {
-            foreground_wait: Duration::from_millis(50),
-            watch_tick: Duration::from_millis(10),
-            ..LaneLimits::default()
-        },
-    );
-    let watch = lane.watch().unwrap();
+    let dir = scratch_dir("foreground-wait");
+    let db = dir.join("library.db");
+    common::migrated_db(&db);
+    let config = DbConfig::new(&db).with_lane_limits(LaneLimits {
+        foreground_wait: Duration::from_millis(50),
+        watch_tick: Duration::from_millis(10),
+        ..LaneLimits::default()
+    });
+    // The lane comes from the production runtime, so the watch at work here
+    // is the one that runtime starts. The pool's timeouts run on a runtime's
+    // clock, so it is opened and closed on one whose clock is not paused.
+    let unpaused = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let runtime = std::thread::scope(|scope| {
+        scope
+            .spawn(|| unpaused.block_on(open_runtime(&config)))
+            .join()
+    })
+    .unwrap()
+    .unwrap();
+    let lane = runtime.lane().clone();
+    lane.write_blocking(Lane::Foreground, "brief-table", |tx| {
+        tx.execute("CREATE TABLE scratch_turns (label TEXT)", [])?;
+        Ok(())
+    })
+    .unwrap();
     let running = lane.clone();
     let (held, inside, let_go) = hold();
     let holder = tokio::spawn(async move {
@@ -964,8 +983,9 @@ async fn foreground_wait_past_its_limit_is_refused() {
     holder.await.unwrap();
     job.await.unwrap();
     assert_eq!(labels(&lane), ["held", "job"]);
-    lane.shutdown(DRAIN).await;
-    watch.stop();
+    std::thread::spawn(move || unpaused.block_on(runtime.shutdown()))
+        .join()
+        .unwrap();
 }
 
 /// Shutdown behind a write that does not return gives up at its bound: it

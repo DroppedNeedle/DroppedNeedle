@@ -44,7 +44,7 @@ use super::{
     durable::DurableWorkWakeups,
     error::DbError,
     fs::{reject_remote_filesystem, reject_symlink},
-    writer::{CancelFlag, LaneWatch, WriteLane},
+    writer::{CancelFlag, LaneLimits, LaneWatch, WriteLane},
 };
 
 /// Reader connections in the pool. The writer lane owns one more outside.
@@ -80,6 +80,8 @@ pub struct DbConfig {
     /// How long shutdown lets queued writes finish. Defaults to
     /// [`crate::config::DEFAULT_SHUTDOWN_GRACE`].
     pub shutdown_grace: Duration,
+    /// The lane's time limits. Not a setting: only a test changes them.
+    lane_limits: LaneLimits,
 }
 
 impl DbConfig {
@@ -90,12 +92,21 @@ impl DbConfig {
             readers: MAX_READERS,
             busy_timeout: BUSY_TIMEOUT,
             shutdown_grace: crate::config::DEFAULT_SHUTDOWN_GRACE,
+            lane_limits: LaneLimits::default(),
         }
     }
 
     /// Bound shutdown's wait for queued writes by the deployment's grace.
     pub fn with_shutdown_grace(mut self, grace: Duration) -> Self {
         self.shutdown_grace = grace;
+        self
+    }
+
+    /// Other lane time limits, so a test can reach them without waiting out
+    /// the real ones.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_lane_limits(mut self, limits: LaneLimits) -> Self {
+        self.lane_limits = limits;
         self
     }
 }
@@ -146,7 +157,7 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
     crate::schema::assert_migrated(&pool).await?;
     reads_frozen.store(true, Ordering::Release);
 
-    let lane = WriteLane::open(&path)?;
+    let lane = WriteLane::open_limited(&path, config.lane_limits)?;
     let watch = lane.watch()?;
     let checkpoint = CheckpointService::new(&path, pool.clone(), lane.idle_state())
         .with_analyze(AnalyzeService::new(lane.clone(), pool.clone()));
