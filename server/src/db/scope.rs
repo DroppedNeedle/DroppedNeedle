@@ -80,7 +80,11 @@ pub fn block_on<T>(
     what: &'static str,
     future: impl Future<Output = T>,
 ) -> Result<T, DbError> {
-    if WRITES.with_borrow(|writes| !writes.is_empty()) {
+    // A thread whose record is already gone is ending, not inside a closure.
+    let inside = WRITES
+        .try_with(|writes| !writes.borrow().is_empty())
+        .unwrap_or(false);
+    if inside {
         return Err(DbError::WaitInsideWrite {
             operation: what.to_owned(),
         });
@@ -90,5 +94,7 @@ pub fn block_on<T>(
 
 /// True when the current thread is inside a write closure on `lane`.
 pub(crate) fn inside_write_on(lane: LaneId) -> bool {
-    WRITES.with_borrow(|writes| writes.contains(&lane))
+    WRITES
+        .try_with(|writes| writes.borrow().contains(&lane))
+        .unwrap_or(false)
 }

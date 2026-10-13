@@ -181,8 +181,9 @@ enum Failure {
     Op(OpError),
     /// The abort fired while the closure ran.
     TimedOut,
-    /// The transaction ended inside the closure.
-    Ended,
+    /// The transaction ended inside the closure. Carries the closure's own
+    /// error, if it returned one.
+    Ended(Option<String>),
     /// The connection could not be made ready for the turn.
     Connection(DbError),
 }
@@ -657,9 +658,16 @@ fn finish<R>(lane: Lane, name: &'static str, outcome: Outcome<R>) -> Result<R, D
             operation: name.to_owned(),
             changes: outcome.changes,
         }),
-        Err(Failure::Ended) => Err(DbError::TransactionEnded {
-            operation: name.to_owned(),
-        }),
+        Err(Failure::Ended(cause)) => {
+            tracing::error!(
+                operation = name,
+                cause = cause.as_deref().unwrap_or("the closure returned no error"),
+                "write transaction was rolled back inside its closure"
+            );
+            Err(DbError::TransactionEnded {
+                operation: name.to_owned(),
+            })
+        }
         Err(Failure::Connection(error)) => Err(error),
         Err(Failure::Op(OpError::Abort(cause))) => Err(DbError::WriteFailed {
             operation: name.to_owned(),
@@ -729,6 +737,12 @@ impl WriterConnection {
         let clock = Arc::new(AbortClock::new());
         let handler_clock = Arc::clone(&clock);
         connection.progress_handler(PROGRESS_OPS, Some(move || handler_clock.check()));
+        // Verified against SQLite 3.46.0 (libsqlite3-sys 0.30.1, rusqlite
+        // 0.32.1): a commit hook that refuses rolls back an autocommit
+        // statement and a raw `COMMIT`, and a refused `RELEASE` at depth
+        // zero leaves the connection out of autocommit, so the rollback
+        // flag decides whether the transaction ended, not `is_autocommit()`
+        // alone.
         let watch = Arc::new(TxWatch::default());
         let commit_watch = Arc::clone(&watch);
         connection.commit_hook(Some(move || commit_watch.refuses_commit()));
@@ -808,13 +822,12 @@ fn run_transaction<R>(
         return Err(Failure::TimedOut);
     }
     if watch.rolled_back() || transaction.is_autocommit() {
-        if let Err(OpError::Sql(error)) = &value {
-            tracing::error!(
-                cause = short_cause(error),
-                "write transaction was rolled back inside its closure"
-            );
-        }
-        return Err(Failure::Ended);
+        let cause = match value {
+            Ok(_) => None,
+            Err(OpError::Sql(error)) => Some(short_cause(&error)),
+            Err(OpError::Abort(cause)) => Some(cause),
+        };
+        return Err(Failure::Ended(cause));
     }
     let value = value.map_err(Failure::Op)?;
     let _allowed = watch.allow_commit();
