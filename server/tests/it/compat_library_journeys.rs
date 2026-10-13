@@ -341,6 +341,10 @@ async fn jellyfin_pinned_reference_shapes() {
     let latest = trace.get("/jellyfin/UserItems/Latest", &auth).await;
     assert_golden("library_pinned_jellyfin_latest.json", &trace.recorded());
 
+    // The rig identifies no album, so no album sends a release group key.
+    let mezzanine = named(&latest, "Name", "Mezzanine");
+    assert_eq!(mezzanine["ProviderIds"], json!({}));
+
     let album_id = named(&latest, "Name", "Mezzanine")["Id"]
         .as_str()
         .expect("album id");
@@ -378,6 +382,11 @@ async fn jellyfin_pinned_reference_shapes() {
         "library_pinned_jellyfin_playlist_items.json",
         &trace.recorded(),
     );
+
+    // Nor does the rig identify an artist, so no artist sends an artist key.
+    let artists = trace.get("/jellyfin/Artists", &auth).await;
+    let radiohead = named(&artists["Items"], "Name", "Radiohead");
+    assert_eq!(radiohead["ProviderIds"], json!({}));
     rig.stop().await;
 }
 

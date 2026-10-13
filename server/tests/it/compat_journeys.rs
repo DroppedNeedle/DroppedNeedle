@@ -101,7 +101,8 @@ pub(crate) fn seed_jellyfin(library: &FakeLibrary, engine: &MemoryEngine) {
     ] {
         library.add_artist(
             ArtistView {
-                artist_mbid: mbid.to_owned(),
+                id: mbid.to_owned(),
+                artist_mbid: Some(mbid.to_owned()),
                 name: name.to_owned(),
                 album_count: albums,
                 date_added: Some(added),
@@ -125,10 +126,11 @@ pub(crate) fn seed_jellyfin(library: &FakeLibrary, engine: &MemoryEngine) {
         ("rg-2", "Second Dawn", 2023, 1, 240.0, 2000.0, 0, None),
     ] {
         library.add_album(AlbumView {
-            rg_mbid: rg.to_owned(),
+            id: rg.to_owned(),
+            release_group_mbid: Some(rg.to_owned()),
             title: title.to_owned(),
             artist_name: Some("Blue Giant".to_owned()),
-            artist_mbid: Some("mb-a1".to_owned()),
+            artist_id: Some("mb-a1".to_owned()),
             year: Some(year),
             genre: Some("Rock".to_owned()),
             track_count: tracks,

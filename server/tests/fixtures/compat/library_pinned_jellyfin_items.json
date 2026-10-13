@@ -31,9 +31,7 @@
       "MediaType": "Unknown",
       "Name": "Achtung Baby",
       "ProductionYear": 1991,
-      "ProviderIds": {
-        "MusicBrainzReleaseGroup": "<id-6>"
-      },
+      "ProviderIds": {},
       "RunTimeTicks": 3400000,
       "ServerId": "<id-1>",
       "SortName": "Achtung Baby",
@@ -51,13 +49,13 @@
       "AlbumArtist": "Massive Attack",
       "AlbumArtists": [
         {
-          "Id": "<id-7>",
+          "Id": "<id-6>",
           "Name": "Massive Attack"
         }
       ],
       "ArtistItems": [
         {
-          "Id": "<id-7>",
+          "Id": "<id-6>",
           "Name": "Massive Attack"
         }
       ],
@@ -68,7 +66,7 @@
       "ChildCount": 1,
       "DateCreated": "0000-00-00T00:00:00.0000000Z",
       "Genres": [],
-      "Id": "<id-8>",
+      "Id": "<id-7>",
       "ImageBlurHashes": {},
       "ImageTags": {},
       "IsFolder": true,
@@ -76,17 +74,15 @@
       "MediaType": "Unknown",
       "Name": "Mezzanine",
       "ProductionYear": 1998,
-      "ProviderIds": {
-        "MusicBrainzReleaseGroup": "<id-9>"
-      },
+      "ProviderIds": {},
       "RunTimeTicks": 3230000,
       "ServerId": "<id-1>",
       "SortName": "Mezzanine",
       "Type": "MusicAlbum",
       "UserData": {
         "IsFavorite": false,
-        "ItemId": "<id-8>",
-        "Key": "<id-8>",
+        "ItemId": "<id-7>",
+        "Key": "<id-7>",
         "PlayCount": 0,
         "PlaybackPositionTicks": 0,
         "Played": false
@@ -96,13 +92,13 @@
       "AlbumArtist": "Various Artists",
       "AlbumArtists": [
         {
-          "Id": "<id-10>",
+          "Id": "<id-8>",
           "Name": "Various Artists"
         }
       ],
       "ArtistItems": [
         {
-          "Id": "<id-10>",
+          "Id": "<id-8>",
           "Name": "Various Artists"
         }
       ],
@@ -113,7 +109,7 @@
       "ChildCount": 1,
       "DateCreated": "0000-00-00T00:00:00.0000000Z",
       "Genres": [],
-      "Id": "<id-11>",
+      "Id": "<id-9>",
       "ImageBlurHashes": {},
       "ImageTags": {},
       "IsFolder": true,
@@ -121,17 +117,15 @@
       "MediaType": "Unknown",
       "Name": "Now Thats Music",
       "ProductionYear": 2001,
-      "ProviderIds": {
-        "MusicBrainzReleaseGroup": "<id-12>"
-      },
+      "ProviderIds": {},
       "RunTimeTicks": 3000000,
       "ServerId": "<id-1>",
       "SortName": "Now Thats Music",
       "Type": "MusicAlbum",
       "UserData": {
         "IsFavorite": false,
-        "ItemId": "<id-11>",
-        "Key": "<id-11>",
+        "ItemId": "<id-9>",
+        "Key": "<id-9>",
         "PlayCount": 0,
         "PlaybackPositionTicks": 0,
         "Played": false
@@ -141,13 +135,13 @@
       "AlbumArtist": "Radiohead",
       "AlbumArtists": [
         {
-          "Id": "<id-13>",
+          "Id": "<id-10>",
           "Name": "Radiohead"
         }
       ],
       "ArtistItems": [
         {
-          "Id": "<id-13>",
+          "Id": "<id-10>",
           "Name": "Radiohead"
         }
       ],
@@ -160,7 +154,7 @@
       "Genres": [
         "Alternative Rock"
       ],
-      "Id": "<id-14>",
+      "Id": "<id-11>",
       "ImageBlurHashes": {},
       "ImageTags": {},
       "IsFolder": true,
@@ -168,17 +162,15 @@
       "MediaType": "Unknown",
       "Name": "OK Computer",
       "ProductionYear": 1997,
-      "ProviderIds": {
-        "MusicBrainzReleaseGroup": "<id-15>"
-      },
+      "ProviderIds": {},
       "RunTimeTicks": 6000000,
       "ServerId": "<id-1>",
       "SortName": "OK Computer",
       "Type": "MusicAlbum",
       "UserData": {
         "IsFavorite": false,
-        "ItemId": "<id-14>",
-        "Key": "<id-14>",
+        "ItemId": "<id-11>",
+        "Key": "<id-11>",
         "PlayCount": 0,
         "PlaybackPositionTicks": 0,
         "Played": false
@@ -188,13 +180,13 @@
       "AlbumArtist": "ユキ",
       "AlbumArtists": [
         {
-          "Id": "<id-16>",
+          "Id": "<id-12>",
           "Name": "ユキ"
         }
       ],
       "ArtistItems": [
         {
-          "Id": "<id-16>",
+          "Id": "<id-12>",
           "Name": "ユキ"
         }
       ],
@@ -205,7 +197,7 @@
       "ChildCount": 1,
       "DateCreated": "0000-00-00T00:00:00.0000000Z",
       "Genres": [],
-      "Id": "<id-17>",
+      "Id": "<id-13>",
       "ImageBlurHashes": {},
       "ImageTags": {},
       "IsFolder": true,
@@ -213,17 +205,15 @@
       "MediaType": "Unknown",
       "Name": "望厚",
       "ProductionYear": 2015,
-      "ProviderIds": {
-        "MusicBrainzReleaseGroup": "<id-18>"
-      },
+      "ProviderIds": {},
       "RunTimeTicks": 3000000,
       "ServerId": "<id-1>",
       "SortName": "望厚",
       "Type": "MusicAlbum",
       "UserData": {
         "IsFavorite": false,
-        "ItemId": "<id-17>",
-        "Key": "<id-17>",
+        "ItemId": "<id-13>",
+        "Key": "<id-13>",
         "PlayCount": 0,
         "PlaybackPositionTicks": 0,
         "Played": false

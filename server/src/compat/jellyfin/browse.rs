@@ -770,7 +770,7 @@ where
                 .library
                 .album(&ctx.principal.id, &internal)
                 .await
-                .and_then(|a| a.artist_mbid),
+                .and_then(|a| a.artist_id),
             _ => None,
         };
         let Some(artist_mbid) = artist_mbid else {

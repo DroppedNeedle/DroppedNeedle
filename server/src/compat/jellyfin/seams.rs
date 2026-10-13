@@ -157,10 +157,14 @@ pub struct TrackView {
 /// Album row (v2 `ViewAlbum` subset).
 #[derive(Debug, Clone, Default)]
 pub struct AlbumView {
-    pub rg_mbid: String,
+    /// Local album id: the Jellyfin item id and image tag come from it.
+    pub id: String,
+    /// Accepted MusicBrainz release group id, when the album has one.
+    pub release_group_mbid: Option<String>,
     pub title: String,
     pub artist_name: Option<String>,
-    pub artist_mbid: Option<String>,
+    /// Local id of the album artist.
+    pub artist_id: Option<String>,
     pub year: Option<i32>,
     pub genre: Option<String>,
     pub track_count: usize,
@@ -177,7 +181,10 @@ pub struct AlbumView {
 /// Artist row (v2 `ViewArtist` subset).
 #[derive(Debug, Clone, Default)]
 pub struct ArtistView {
-    pub artist_mbid: String,
+    /// Local artist id: the Jellyfin item id and image tag come from it.
+    pub id: String,
+    /// Accepted MusicBrainz artist id, when the artist has one.
+    pub artist_mbid: Option<String>,
     pub name: String,
     pub album_count: usize,
     /// Unix seconds added.

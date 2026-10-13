@@ -4,9 +4,9 @@
       "Bitrate": 2000,
       "Container": "m4a",
       "DefaultAudioStreamIndex": 0,
-      "DirectStreamUrl": "http://test.local/jellyfin/Audio/<id-19>/stream.m4a?static=true&mediaSourceId=<id-19>&api_key=***",
+      "DirectStreamUrl": "http://test.local/jellyfin/Audio/<id-14>/stream.m4a?static=true&mediaSourceId=<id-14>&api_key=***",
       "GenPtsInput": false,
-      "Id": "<id-19>",
+      "Id": "<id-14>",
       "IgnoreDts": false,
       "IgnoreIndex": false,
       "IsInfiniteStream": false,
@@ -42,5 +42,5 @@
       "Type": "Default"
     }
   ],
-  "PlaySessionId": "<id-20>"
+  "PlaySessionId": "<id-15>"
 }

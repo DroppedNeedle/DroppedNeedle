@@ -79,10 +79,11 @@ fn album_view(album: PlayerAlbum) -> AlbumView {
     let image_tag = (record.cover_available || record.release_group_mbid.is_some())
         .then(|| tag_for(&format!("album:{}", record.id)));
     AlbumView {
-        rg_mbid: record.id,
+        id: record.id,
+        release_group_mbid: record.release_group_mbid,
         title: record.title,
         artist_name: Some(record.artist_name),
-        artist_mbid: Some(record.artist_id),
+        artist_id: Some(record.artist_id),
         year: record.year.and_then(|year| i32::try_from(year).ok()),
         genre: album.genre,
         track_count: record.track_count as usize,
@@ -101,7 +102,8 @@ fn artist_view(artist: ArtistRecord) -> ArtistView {
         .is_some()
         .then(|| tag_for(&format!("artist:{}", artist.id)));
     ArtistView {
-        artist_mbid: artist.id,
+        id: artist.id,
+        artist_mbid: artist.artist_mbid,
         name: artist.name,
         album_count: artist.album_count as usize,
         date_added: artist.date_added,
@@ -154,15 +156,12 @@ impl JellyfinLibrary {
         user_id: &str,
         mut views: Vec<AlbumView>,
     ) -> Result<Vec<AlbumView>, CompatError> {
-        let ids = views
-            .iter()
-            .map(|view| view.rg_mbid.clone())
-            .collect::<Vec<_>>();
+        let ids = views.iter().map(|view| view.id.clone()).collect::<Vec<_>>();
         let starred = self.library.starred(user_id, "album", &ids).await?;
         let plays = self.library.plays(user_id, "album", &ids).await?;
         for view in &mut views {
-            view.starred = starred.contains_key(&view.rg_mbid);
-            if let Some((count, last)) = plays.get(&view.rg_mbid) {
+            view.starred = starred.contains_key(&view.id);
+            if let Some((count, last)) = plays.get(&view.id) {
                 view.play_count = *count;
                 view.last_played = *last;
             }
@@ -175,13 +174,10 @@ impl JellyfinLibrary {
         user_id: &str,
         mut views: Vec<ArtistView>,
     ) -> Result<Vec<ArtistView>, CompatError> {
-        let ids = views
-            .iter()
-            .map(|view| view.artist_mbid.clone())
-            .collect::<Vec<_>>();
+        let ids = views.iter().map(|view| view.id.clone()).collect::<Vec<_>>();
         let starred = self.library.starred(user_id, "artist", &ids).await?;
         for view in &mut views {
-            view.starred = starred.contains_key(&view.artist_mbid);
+            view.starred = starred.contains_key(&view.id);
         }
         Ok(views)
     }

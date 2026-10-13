@@ -109,7 +109,7 @@ impl FakeLibrary {
     pub fn add_artist(&self, artist: ArtistView, album_artist: bool) {
         if let Ok(mut rows) = self.rows.lock() {
             if album_artist {
-                rows.album_artist_mbids.insert(artist.artist_mbid.clone());
+                rows.album_artist_mbids.insert(artist.id.clone());
             }
             rows.artists.push(artist);
         }
@@ -181,18 +181,18 @@ fn track_for(rows: &MemoryRows, user_id: &str, track: &TrackView) -> TrackView {
 
 fn album_for(rows: &MemoryRows, user_id: &str, album: &AlbumView) -> AlbumView {
     let mut album = album.clone();
-    album.starred = is_favorite(rows, user_id, "album", &album.rg_mbid);
-    album.image_tag = cover_tag(rows, &album.rg_mbid);
+    album.starred = is_favorite(rows, user_id, "album", &album.id);
+    album.image_tag = cover_tag(rows, &album.id);
     album
 }
 
 fn artist_for(rows: &MemoryRows, user_id: &str, artist: &ArtistView) -> ArtistView {
     let mut artist = artist.clone();
-    artist.starred = is_favorite(rows, user_id, "artist", &artist.artist_mbid);
+    artist.starred = is_favorite(rows, user_id, "artist", &artist.id);
     artist.image_tag = rows
         .artist_images
-        .contains_key(&artist.artist_mbid)
-        .then(|| format!("tag-{}", artist.artist_mbid));
+        .contains_key(&artist.id)
+        .then(|| format!("tag-{}", artist.id));
     artist
 }
 
@@ -259,14 +259,14 @@ fn sort_albums(albums: &mut [AlbumView], key: SortKey, desc: bool) {
                 .unwrap_or(std::cmp::Ordering::Equal),
             SortKey::Title => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
             SortKey::Year | SortKey::PremiereDate => a.year.cmp(&b.year),
-            SortKey::Random => fnv(&a.rg_mbid).cmp(&fnv(&b.rg_mbid)),
+            SortKey::Random => fnv(&a.id).cmp(&fnv(&b.id)),
             SortKey::DatePlayed => a
                 .last_played
                 .partial_cmp(&b.last_played)
                 .unwrap_or(std::cmp::Ordering::Equal),
             SortKey::PlayCount => a.play_count.cmp(&b.play_count),
         };
-        flip(desc, ord.then_with(|| a.rg_mbid.cmp(&b.rg_mbid)))
+        flip(desc, ord.then_with(|| a.id.cmp(&b.id)))
     });
 }
 
@@ -385,11 +385,10 @@ impl LibraryRead for FakeLibrary {
                     .iter()
                     .filter(|a| {
                         (filter.artists.is_empty()
-                            || a.artist_mbid
+                            || a.artist_id
                                 .as_ref()
                                 .is_some_and(|m| filter.artists.contains(m)))
-                            && (filter.appears_on.is_empty()
-                                || appears_on.contains(a.rg_mbid.as_str()))
+                            && (filter.appears_on.is_empty() || appears_on.contains(a.id.as_str()))
                             && filter.search.as_deref().is_none_or(|needle| {
                                 matches(&[Some(a.title.as_str()), a.artist_name.as_deref()], needle)
                             })
@@ -412,7 +411,7 @@ impl LibraryRead for FakeLibrary {
     async fn albums_by_ids(&self, user_id: &str, ids: &[String]) -> Vec<AlbumView> {
         self.with_rows(|rows| {
             ids.iter()
-                .filter_map(|id| rows.albums.iter().find(|a| &a.rg_mbid == id))
+                .filter_map(|id| rows.albums.iter().find(|a| &a.id == id))
                 .map(|a| album_for(rows, user_id, a))
                 .collect()
         })
@@ -423,7 +422,7 @@ impl LibraryRead for FakeLibrary {
         self.with_rows(|rows| {
             rows.albums
                 .iter()
-                .find(|a| a.rg_mbid == rg_mbid)
+                .find(|a| a.id == rg_mbid)
                 .map(|a| album_for(rows, user_id, a))
         })
         .flatten()
@@ -442,8 +441,7 @@ impl LibraryRead for FakeLibrary {
                 rows.artists
                     .iter()
                     .filter(|a| {
-                        (scope == ArtistScope::All
-                            || rows.album_artist_mbids.contains(&a.artist_mbid))
+                        (scope == ArtistScope::All || rows.album_artist_mbids.contains(&a.id))
                             && search.is_none_or(|needle| matches(&[Some(a.name.as_str())], needle))
                     })
                     .map(|a| artist_for(rows, user_id, a))
@@ -457,7 +455,7 @@ impl LibraryRead for FakeLibrary {
         self.with_rows(|rows| {
             rows.artists
                 .iter()
-                .find(|a| a.artist_mbid == mbid)
+                .find(|a| a.id == mbid)
                 .map(|a| artist_for(rows, user_id, a))
         })
         .flatten()

@@ -243,8 +243,8 @@ impl<'a, I: IdMap> Builder<'a, I> {
 
     /// Album → `MusicAlbum` DTO (v2 `JellyfinBuilder.album`).
     pub async fn album(&self, a: &AlbumView) -> BaseItemDto {
-        let album_id = self.ids.to_jf("album", &a.rg_mbid).await;
-        let artist_jf = match a.artist_mbid.as_deref() {
+        let album_id = self.ids.to_jf("album", &a.id).await;
+        let artist_jf = match a.artist_id.as_deref() {
             Some(m) => Some(self.ids.to_jf("artist", m).await),
             None => None,
         };
@@ -271,10 +271,11 @@ impl<'a, I: IdMap> Builder<'a, I> {
         if let Some(tag) = tag {
             dto.image_tags.insert("Primary".to_owned(), tag);
         }
-        dto.provider_ids = Some(BTreeMap::from([(
-            "MusicBrainzReleaseGroup".to_owned(),
-            a.rg_mbid.clone(),
-        )]));
+        let mut provider_ids = BTreeMap::new();
+        if let Some(mbid) = a.release_group_mbid.as_deref() {
+            provider_ids.insert("MusicBrainzReleaseGroup".to_owned(), mbid.to_owned());
+        }
+        dto.provider_ids = Some(provider_ids);
         dto.date_created = Some(iso_o(a.date_added));
         dto.user_data = Some(user_data(&album_id, a.starred, a.play_count));
         dto
@@ -282,7 +283,7 @@ impl<'a, I: IdMap> Builder<'a, I> {
 
     /// Artist → `MusicArtist` DTO (v2 `JellyfinBuilder.artist`).
     pub async fn artist(&self, ar: &ArtistView) -> BaseItemDto {
-        let artist_id = self.ids.to_jf("artist", &ar.artist_mbid).await;
+        let artist_id = self.ids.to_jf("artist", &ar.id).await;
         let tag = ar.image_tag.clone();
         let mut dto = base(artist_id.clone(), ar.name.clone(), self.server_id);
         dto.item_type = "MusicArtist".to_owned();
@@ -291,10 +292,11 @@ impl<'a, I: IdMap> Builder<'a, I> {
         if let Some(tag) = tag {
             dto.image_tags.insert("Primary".to_owned(), tag);
         }
-        dto.provider_ids = Some(BTreeMap::from([(
-            "MusicBrainzArtist".to_owned(),
-            ar.artist_mbid.clone(),
-        )]));
+        let mut provider_ids = BTreeMap::new();
+        if let Some(mbid) = ar.artist_mbid.as_deref() {
+            provider_ids.insert("MusicBrainzArtist".to_owned(), mbid.to_owned());
+        }
+        dto.provider_ids = Some(provider_ids);
         dto.sort_name = Some(ar.name.clone());
         dto.genres = Some(Vec::new());
         dto.date_created = Some(iso_o(ar.date_added));
