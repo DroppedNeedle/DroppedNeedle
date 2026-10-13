@@ -174,9 +174,12 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
     let (high_water, low_water) = config.wal_water;
     let checkpoint =
         CheckpointService::new(&path, pool.clone(), lane.idle_state(), lane.wal_hold())
-            .with_water(high_water, low_water)
-            .with_analyze(AnalyzeService::new(lane.clone(), pool.clone()));
+            .with_water(high_water, low_water);
+    // Cloned before the statistics service is attached: the relief thread
+    // shares the policy, the hold and the latest record, and owns nothing
+    // that keeps the lane alive.
     let relief = checkpoint.clone();
+    let checkpoint = checkpoint.with_analyze(AnalyzeService::new(lane.clone(), pool.clone()));
     let watch = lane.watch(move || relief.run_relief().error)?;
     let wakeups = DurableWorkWakeups::new(pool.clone());
 

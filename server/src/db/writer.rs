@@ -127,7 +127,7 @@ pub const WATCH_TICK: Duration = Duration::from_secs(1);
 pub const HOLDER_LOG_EVERY: Duration = Duration::from_secs(30);
 /// Progress-handler granularity: the abort check runs every 10k VM ops.
 const PROGRESS_OPS: std::os::raw::c_int = 10_000;
-/// Largest chunk a background write commits at once.
+/// Largest chunk a bulk write commits at once.
 pub const BACKGROUND_CHUNK_ROWS: usize = 500;
 /// Upper bounds, in milliseconds, of the buckets [`WaitTimes`] counts into.
 /// 250 ms is the wait the architecture's trip condition is stated against.
@@ -158,8 +158,8 @@ impl Lane {
 }
 
 /// Whether bulk writes are held back because the WAL cannot shrink. The
-/// checkpoint service sets it after every pass; the lane reads it each time
-/// it picks the next write.
+/// checkpoint service sets it after every pass that did not fail; the lane
+/// reads it each time it picks the next write.
 #[derive(Debug, Default)]
 pub struct WalHold {
     on: AtomicBool,
@@ -457,7 +457,7 @@ struct Granted {
     turn: Turn,
 }
 
-/// Cooperative stop flag for chunked background writes and backups.
+/// Cooperative stop flag for chunked bulk writes and backups.
 /// Cloneable so a flag can cross into blocking tasks; clones share one trip.
 #[derive(Debug, Default, Clone)]
 pub struct CancelFlag {
@@ -1387,7 +1387,12 @@ pub struct LaneWatch {
 impl LaneWatch {
     /// Stop the threads and wait for them. The watch thread is at most one
     /// pass of bookkeeping away from noticing, the relief thread at most one
-    /// checkpoint pass, so call this from a thread that may block.
+    /// checkpoint pass, so call this from a thread that may block. That
+    /// wait has no bound of its own: a pass stuck on a disk that does not
+    /// answer holds it. The runtime's shutdown reclaims the WAL straight
+    /// after and would be stuck on the same disk, so nothing waits here
+    /// that would not wait there, and the process's own exit bound covers
+    /// both.
     pub fn stop(self) {
         let (stops, threads): (Vec<_>, Vec<_>) = self
             .tickers

@@ -7,10 +7,11 @@
 //! Backpressure holds bulk writes only, never a request's write or a job's
 //! state write, when active WAL crosses 64 MiB or a checkpoint makes no
 //! measurable progress for 60 s. The service sets the lane's
-//! [`WalHold`] after every pass. While a bulk write waits behind it, the
-//! lane's relief thread runs [`CheckpointService::run_relief`] once a
-//! second, so the hold ends within a second of the WAL being able to
-//! shrink and does not wait for the 30 s loop.
+//! [`WalHold`] after every pass that did not fail. While a bulk write waits
+//! behind it, the lane's relief thread runs
+//! [`CheckpointService::run_relief`] once a second, so the hold ends a
+//! second and one pass, at most, after the WAL can shrink and does not wait
+//! for the 30 s loop.
 //!
 //! v2 never reclaimed: `PASSIVE` leaves checkpointed frames allocated, so a
 //! dead `-wal` of several MB survived graceful restarts. v3 adds `TRUNCATE`
@@ -24,7 +25,7 @@
 
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, PoisonError},
     time::{Duration, Instant, SystemTime},
 };
 
@@ -36,12 +37,12 @@ use super::writer::{LaneIdle, WalHold};
 
 /// `PASSIVE` checkpoint cadence. The GH-293 owner calibration, unchanged.
 pub const CHECKPOINT_CADENCE: Duration = Duration::from_secs(30);
-/// Stall bound: no measurable `PASSIVE` progress for this long suspends
-/// background producers. The GH-293 owner calibration, unchanged.
+/// Stall bound: no measurable `PASSIVE` progress for this long holds bulk
+/// writes. The GH-293 owner calibration, unchanged.
 pub const CHECKPOINT_READER_BLOCKED_BOUND: Duration = Duration::from_secs(60);
-/// Active-WAL high water: above this, background producers suspend.
+/// Active-WAL high water: above this, bulk writes are held.
 pub const ACTIVE_HIGH_WATER_BYTES: i64 = 64 * 1024 * 1024;
-/// Active-WAL low water: at or below this, suspended producers resume.
+/// Active-WAL low water: at or below this, held bulk writes run again.
 pub const ACTIVE_LOW_WATER_BYTES: i64 = 16 * 1024 * 1024;
 /// Minimum gap between live `TRUNCATE` reclaims. Shutdown reclaim ignores it.
 pub const TRUNCATE_MIN_INTERVAL: Duration = Duration::from_secs(60 * 60);
@@ -173,14 +174,14 @@ impl BackpressurePolicy {
                     active_bytes,
                     busy,
                     reader_blocked_secs = reader_blocked.as_secs_f64(),
-                    "WAL backpressure: suspending background producers"
+                    "WAL backpressure: holding bulk writes"
                 );
             }
             self.suspended = true;
         } else if self.suspended && ((0..=self.low_water).contains(&active_bytes) || progress) {
             tracing::info!(
                 active_bytes,
-                "WAL backpressure cleared: resuming background producers"
+                "WAL backpressure cleared: bulk writes may run"
             );
             self.suspended = false;
         }
@@ -480,7 +481,10 @@ impl CheckpointService {
             -1
         };
         let wal_file_bytes = wal_allocation(&self.db_path);
-        let observation = self.policy.lock().map(|mut policy| {
+        let observation = {
+            // A poisoned lock is taken all the same: a pass that could no
+            // longer set the hold would leave it as it was until shutdown.
+            let mut policy = self.policy.lock().unwrap_or_else(PoisonError::into_inner);
             let observation = policy.observe(
                 busy,
                 log_frames,
@@ -489,19 +493,16 @@ impl CheckpointService {
                 Instant::now(),
                 measured,
             );
-            // Set under the policy's lock, so of two passes at once the
-            // later answer is the one the lane is left with.
+            // Set under the policy's lock, so the flag is always what the
+            // policy last decided.
             self.hold.set(observation.suspended);
             observation
-        });
-        let (suspended, reader_blocked, progress) = match observation {
-            Ok(observation) => (
-                observation.suspended,
-                observation.reader_blocked,
-                observation.progress,
-            ),
-            Err(_) => (self.bulk_held(), Duration::ZERO, false),
         };
+        let (suspended, reader_blocked, progress) = (
+            observation.suspended,
+            observation.reader_blocked,
+            observation.progress,
+        );
         let outcome = CheckpointOutcome {
             at,
             mode,
