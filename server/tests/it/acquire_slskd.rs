@@ -51,6 +51,30 @@ fn temp_mount(tag: &str) -> crate::common::ScratchDir {
     crate::common::ScratchDir::new(tag)
 }
 
+/// slskd's key travels in a header, but the base URL is the user's and
+/// can hold a secret of its own (a proxy path, basic-auth userinfo). A
+/// dead slskd must not put it in the error the worker logs.
+#[tokio::test]
+async fn transport_errors_never_carry_the_url() {
+    const MARKER: &str = "MARKERKEY7f3a91";
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    drop(listener);
+    let base = format!("http://127.0.0.1:{port}/{MARKER}");
+    let client = SlskdClient::new(ReqwestSlskdHttp::new(
+        reqwest::Client::new(),
+        &base,
+        MOCK_API_KEY,
+    ));
+
+    let err = client.health_check().await.expect_err("refused");
+    assert!(matches!(err, slskd::SlskdError::Transport(_)), "{err:?}");
+    let shown = format!("{err} {err:?}");
+    assert!(!shown.contains(MARKER), "{shown}");
+}
+
 // Wire-shape tests.
 
 #[tokio::test]

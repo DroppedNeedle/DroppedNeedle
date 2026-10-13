@@ -138,6 +138,36 @@ pub enum HttpClientError {
     Build(#[from] reqwest::Error),
 }
 
+/// What went wrong with a request, safe to log, store or show.
+///
+/// A reqwest error prints the URL it was sent to, and that URL often
+/// holds a secret: SABnzbd and Newznab take the API key as a query
+/// parameter, and a user's base URL can carry userinfo or a proxy path.
+/// This drops the URL and keeps the causes under it (connection refused,
+/// timed out, bad certificate), which describe the socket and never the
+/// request. Checked against reqwest 0.12.28 with hyper-util 0.1.21.
+pub fn transport_error(error: reqwest::Error) -> String {
+    let error = error.without_url();
+    let mut text = error.to_string();
+    append_causes(&error, &mut text);
+    text.chars().take(300).collect()
+}
+
+/// Append what lies under `error`, one cause after another. A cause that
+/// is itself a reqwest error is passed over, since it prints a URL of its
+/// own and one borrowed here cannot have it removed (a redirect refused
+/// under `https_only` nests one). What lies under it is still kept.
+fn append_causes(error: &(dyn std::error::Error + 'static), text: &mut String) {
+    let mut cause = error.source();
+    while let Some(inner) = cause {
+        if !inner.is::<reqwest::Error>() {
+            text.push_str(": ");
+            text.push_str(&inner.to_string());
+        }
+        cause = inner.source();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,6 +190,39 @@ mod tests {
         socket.write_all(reply).await.unwrap();
         let status = pending.await.unwrap().unwrap().status().as_u16();
         (String::from_utf8(raw).unwrap().to_lowercase(), status)
+    }
+
+    /// A reqwest error found further down the chain keeps its URL, so its
+    /// own line is left out while the causes beneath it still show.
+    #[tokio::test]
+    async fn a_nested_request_error_never_prints_its_url() {
+        #[derive(Debug)]
+        struct Outer(reqwest::Error);
+        impl std::fmt::Display for Outer {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("outer")
+            }
+        }
+        impl std::error::Error for Outer {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let nested = Client::new()
+            .get(format!("http://{address}/?apikey=MARKERKEY7f3a91"))
+            .send()
+            .await
+            .unwrap_err();
+        assert!(nested.to_string().contains("MARKERKEY7f3a91"));
+
+        let mut text = String::from("outer");
+        append_causes(&Outer(nested), &mut text);
+        assert!(!text.contains("MARKERKEY7f3a91"), "{text}");
+        assert!(text.contains("client error"), "{text}");
     }
 
     #[tokio::test]

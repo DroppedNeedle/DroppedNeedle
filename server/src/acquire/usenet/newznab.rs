@@ -18,6 +18,7 @@ use reqwest::Client;
 use thiserror::Error;
 
 use super::xml::{self, Element};
+use crate::http_client::transport_error;
 
 // ---------------------------------------------------------------------------
 // Boundary types (v2 `repositories/protocols/indexer.py` + `download_identity.py`).
@@ -184,8 +185,8 @@ pub struct NewznabApiLimits {
 /// back off or stand down without failing the fan-out.
 #[derive(Debug, Clone, Error)]
 pub enum NewznabError {
-    /// The request never got an answer (the exception class name rides
-    /// along because timeouts stringify to `""`, v2 #389).
+    /// The request never got an answer. The detail never holds the
+    /// request URL, which carries the indexer key.
     #[error("newznab request failed: {0}")]
     Transport(String),
     /// Indexer answered HTTP 4xx/5xx.
@@ -527,7 +528,7 @@ impl NewznabClient {
             .timeout(timeout)
             .send()
             .await
-            .map_err(|err| NewznabError::Transport(transport_detail(&err)))?;
+            .map_err(|err| NewznabError::Transport(transport_error(err)))?;
         if response.status().as_u16() == 429 {
             return Err(NewznabError::RateLimited {
                 message: "newznab: rate limited".to_owned(),
@@ -552,29 +553,8 @@ impl NewznabClient {
         let bytes = response
             .bytes()
             .await
-            .map_err(|err| NewznabError::Transport(transport_detail(&err)))?;
+            .map_err(|err| NewznabError::Transport(transport_error(err)))?;
         safe_parse(&bytes)
-    }
-}
-
-/// Transport detail that never collapses to `""`: timeouts stringify
-/// empty, so the error type name stands in (v2 #389).
-fn transport_detail(err: &reqwest::Error) -> String {
-    let text = err.to_string();
-    if text.trim().is_empty() {
-        if err.is_timeout() {
-            "timeout".to_owned()
-        } else if err.is_connect() {
-            "connect error".to_owned()
-        } else if err.is_request() {
-            "request error".to_owned()
-        } else if err.is_body() {
-            "body error".to_owned()
-        } else {
-            "transport error".to_owned()
-        }
-    } else {
-        text
     }
 }
 

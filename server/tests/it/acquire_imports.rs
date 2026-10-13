@@ -295,6 +295,28 @@ fn cover_allowlist_blocks_non_cdn_and_plain_http() {
 
 // --- Lidarr import tests ---
 
+/// The Lidarr base URL is the user's and can hold a secret of its own (a
+/// proxy path, basic-auth userinfo). A dead Lidarr must not put it in
+/// the detail the import and the probe log.
+#[tokio::test]
+async fn lidarr_transport_errors_never_carry_the_url() {
+    const MARKER: &str = "MARKERKEY7f3a91";
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    drop(listener);
+    let base = format!("http://127.0.0.1:{port}/{MARKER}");
+
+    let err = LidarrClient::new(http_client())
+        .system_status(&base, "key")
+        .await
+        .expect_err("refused");
+    let shown = format!("{err:?}");
+    assert!(shown.contains("Unavailable"), "{shown}");
+    assert!(!shown.contains(MARKER), "{shown}");
+}
+
 #[tokio::test]
 async fn lidarr_import_becomes_follows_with_counts() {
     let (rig, admin_id, _) = seed_rig().await;

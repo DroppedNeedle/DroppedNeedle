@@ -9,6 +9,8 @@
 
 use std::future::Future;
 
+use crate::http_client::transport_error;
+
 /// One answered HTTP response: status plus raw body.
 #[derive(Debug, Clone)]
 pub struct HttpReply {
@@ -16,7 +18,8 @@ pub struct HttpReply {
     pub body: Vec<u8>,
 }
 
-/// The transport broke down before producing a status code.
+/// The transport broke down before producing a status code. The detail
+/// never holds the request URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpFault(pub String);
 
@@ -80,12 +83,12 @@ impl ReqwestSlskdHttp {
         let response = request
             .send()
             .await
-            .map_err(|err| HttpFault(err.to_string()))?;
+            .map_err(|err| HttpFault(transport_error(err)))?;
         let status = response.status().as_u16();
         let body = response
             .bytes()
             .await
-            .map_err(|err| HttpFault(err.to_string()))?
+            .map_err(|err| HttpFault(transport_error(err)))?
             .to_vec();
         Ok(HttpReply { status, body })
     }

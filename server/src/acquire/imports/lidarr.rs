@@ -20,6 +20,7 @@ use super::models::LIDARR_API_KEY_MASK;
 use super::models::{
     LidarrArtistCandidate, LidarrArtistListResponse, LidarrConnectionSettings, LidarrImportResponse,
 };
+use crate::http_client::transport_error;
 
 /// True for a well-formed MusicBrainz id: `8-4-4-4-12` lowercase-or-upper
 /// hex, surrounding whitespace ignored, `unknown_` ids rejected (v2
@@ -146,7 +147,12 @@ impl LidarrClient {
             .header("X-Api-Key", api_key)
             .send()
             .await
-            .map_err(|cause| LidarrError::Unavailable(format!("lidarr request failed: {cause}")))?;
+            .map_err(|cause| {
+                LidarrError::Unavailable(format!(
+                    "lidarr request failed: {}",
+                    transport_error(cause)
+                ))
+            })?;
         let status = response.status();
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(LidarrError::Auth);
@@ -161,7 +167,9 @@ impl LidarrClient {
             .bytes()
             .await
             .map(|body| body.to_vec())
-            .map_err(|cause| LidarrError::Unavailable(format!("lidarr read failed: {cause}")))
+            .map_err(|cause| {
+                LidarrError::Unavailable(format!("lidarr read failed: {}", transport_error(cause)))
+            })
     }
 }
 

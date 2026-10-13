@@ -1216,6 +1216,145 @@ async fn prowlarr_apikey_never_logged() {
 }
 
 // ---------------------------------------------------------------------------
+// Transport failures never carry the request URL.
+// ---------------------------------------------------------------------------
+
+/// Stands in for an API key. Anything that prints it has leaked a URL.
+const MARKER: &str = "MARKERKEY7f3a91";
+
+type LogBuffer = std::sync::Arc<std::sync::Mutex<Vec<u8>>>;
+
+/// Collect this thread's log output until the guard drops.
+fn capture_logs() -> (LogBuffer, tracing::subscriber::DefaultGuard) {
+    struct Capture(LogBuffer);
+    impl std::io::Write for Capture {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("log buffer").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let buffer = LogBuffer::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer({
+            let buffer = buffer.clone();
+            move || Capture(buffer.clone())
+        })
+        .with_max_level(tracing::level_filters::LevelFilter::TRACE)
+        .finish();
+    (buffer, tracing::subscriber::set_default(subscriber))
+}
+
+fn logged(buffer: &LogBuffer) -> String {
+    String::from_utf8_lossy(&buffer.lock().expect("log buffer")).into_owned()
+}
+
+/// The error as a log line, a stored reason or a debug dump would show it.
+fn shown(error: &(impl std::fmt::Display + std::fmt::Debug)) -> String {
+    format!("{error} {error:?}")
+}
+
+/// SABnzbd takes its key as a query parameter on every call, so a dead
+/// SABnzbd must not put the request URL in an error or a log line. The
+/// NZB fetch is the same: the enclosure URL carries the indexer's key.
+#[tokio::test]
+async fn sab_transport_errors_never_carry_the_url() {
+    let (logs, _guard) = capture_logs();
+    let base = refused_url("").await;
+    let client = || SabnzbdClient::new(http(), &base, MARKER, 1, Duration::from_millis(1));
+
+    let err = client().queue(TIMEOUT).await.expect_err("refused");
+    assert!(matches!(err, SabnzbdError::Transport(_)), "{err:?}");
+    assert!(!shown(&err).contains(MARKER), "{}", shown(&err));
+
+    let err = client()
+        .add_file("job", b"<nzb/>", None, None, None, TIMEOUT)
+        .await
+        .expect_err("refused");
+    assert!(!shown(&err).contains(MARKER), "{}", shown(&err));
+
+    let enclosure = format!("{base}/getnzb?id=1&token={MARKER}");
+    let err = client()
+        .add_url("job", &enclosure, None, None, None, TIMEOUT)
+        .await
+        .expect_err("refused");
+    assert!(!shown(&err).contains(MARKER), "{}", shown(&err));
+
+    let err = client()
+        .fetch_nzb(&enclosure, TIMEOUT)
+        .await
+        .expect_err("refused");
+    assert!(matches!(err, NzbFetchError::Transport(_)), "{err:?}");
+    assert!(!shown(&err).contains(MARKER), "{}", shown(&err));
+
+    let mount = temp_dir("sab-dead");
+    let queue = SabnzbdQueue::new(client(), &base, MARKER, mount.to_path_buf(), test_policy());
+    assert_eq!(queue.health_check().await.status, "error");
+    let text = logged(&logs);
+    assert!(text.contains("sabnzbd health check failed"), "{text}");
+    assert!(!text.contains(MARKER), "{text}");
+}
+
+/// Newznab takes its key as a query parameter too. A dead indexer is
+/// logged by the health check, the caps fetch and the search fan-out.
+#[tokio::test]
+async fn newznab_transport_errors_never_carry_the_url() {
+    let (logs, _guard) = capture_logs();
+    let base = refused_url("/api").await;
+    let client = || NewznabClient::new(http(), &base, MARKER, "dead", "Dead");
+
+    let err = client().caps(TIMEOUT).await.expect_err("refused");
+    assert!(!shown(&err).contains(MARKER), "{}", shown(&err));
+
+    let indexer = newznab_indexer(vec![entry_for(client(), "dead", "Dead", 0)]);
+    assert_eq!(indexer.health_check().await.status, "error");
+    assert!(
+        indexer
+            .search_album("Radiohead", "In Rainbows", None, TIMEOUT)
+            .await
+            .is_empty()
+    );
+    let text = logged(&logs);
+    assert!(text.contains("newznab indexer search failed"), "{text}");
+    assert!(!text.contains(MARKER), "{text}");
+}
+
+/// Prowlarr's key travels in a header, but the base URL is the user's
+/// and can hold a secret of its own (a proxy path, basic-auth userinfo).
+#[tokio::test]
+async fn prowlarr_transport_errors_never_carry_the_url() {
+    let (logs, _guard) = capture_logs();
+    let base = refused_url(&format!("/{MARKER}")).await;
+    let client = || ProwlarrClient::new(http(), &base, "SUPERSECRET", "prowlarr");
+
+    let err = client()
+        .search("x", &[], &[], 100, TIMEOUT)
+        .await
+        .expect_err("refused");
+    assert!(!shown(&err).contains(MARKER), "{}", shown(&err));
+
+    let indexer = usenet::prowlarr::ProwlarrIndexer::new(
+        Some(client()),
+        vec![3000],
+        true,
+        Duration::from_secs(300),
+        Duration::from_secs(300),
+        TIMEOUT,
+    );
+    assert!(
+        indexer
+            .search_album("Radiohead", "In Rainbows", TIMEOUT)
+            .await
+            .is_empty()
+    );
+    let text = logged(&logs);
+    assert!(text.contains("prowlarr search failed"), "{text}");
+    assert!(!text.contains(MARKER), "{text}");
+}
+
+// ---------------------------------------------------------------------------
 // Policy: tiers, recipe, timeouts, retention.
 // ---------------------------------------------------------------------------
 

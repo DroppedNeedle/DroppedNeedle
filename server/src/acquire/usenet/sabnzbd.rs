@@ -18,6 +18,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 
 use super::policy::UsenetPolicy;
+use crate::http_client::transport_error;
 
 pub use super::sabnzbd_models::{
     AddResponse, Category, Config, History, HistorySlot, Misc, Queue, QueueSlot,
@@ -33,7 +34,8 @@ use super::sabnzbd_models::{
 /// Transport/HTTP/SABnzbd failure. Auth failures carry `auth: true`.
 #[derive(Debug, Clone, Error)]
 pub enum SabnzbdError {
-    /// The request never got an answer (DNS/refused/timeout/reset).
+    /// The request never got an answer (DNS/refused/timeout/reset). The
+    /// detail never holds the request URL, which carries the API key.
     #[error("SABnzbd request failed: {0}")]
     Transport(String),
     /// SABnzbd answered HTTP 4xx/5xx.
@@ -82,7 +84,8 @@ impl SabnzbdError {
 /// content rejection (v2 `content_rejection` marker) never does.
 #[derive(Debug, Clone, Error)]
 pub enum NzbFetchError {
-    /// No response at all (DNS/refused/timeout): addurl may help.
+    /// No response at all (DNS/refused/timeout): addurl may help. The
+    /// detail never holds the enclosure URL, which carries the indexer key.
     #[error("NZB fetch failed: {0}")]
     Transport(String),
     /// The indexer answered with HTTP 4xx/5xx: handing the same URL to
@@ -289,10 +292,7 @@ impl SabnzbdClient {
             .timeout(timeout)
             .send()
             .await
-            .map_err(|err| {
-                // Transport text can echo the request URL, apikey included.
-                SabnzbdError::Transport(redact_query_secrets(&err.to_string()))
-            })?;
+            .map_err(|err| SabnzbdError::Transport(transport_error(err)))?;
         self.parse_add(response).await
     }
 
@@ -334,7 +334,7 @@ impl SabnzbdClient {
             .timeout(timeout)
             .send()
             .await
-            .map_err(|err| redacted_addurl_error(&SabnzbdError::Transport(err.to_string())))?;
+            .map_err(|err| SabnzbdError::Transport(transport_error(err)))?;
         match self.parse_add(response).await {
             Ok(added) => Ok(added),
             Err(err) => Err(redacted_addurl_error(&err)),
@@ -396,7 +396,7 @@ impl SabnzbdClient {
         let response = self
             .get_with_retry(url, &[], timeout)
             .await
-            .map_err(|err| NzbFetchError::Transport(err.to_string()))?;
+            .map_err(|err| NzbFetchError::Transport(transport_error(err)))?;
         let status = response.status().as_u16();
         if status >= 400 {
             let snippet = response_snippet(response).await;
@@ -410,7 +410,7 @@ impl SabnzbdClient {
         let bytes = response
             .bytes()
             .await
-            .map_err(|err| NzbFetchError::Transport(err.to_string()))?;
+            .map_err(|err| NzbFetchError::Transport(transport_error(err)))?;
         let head: Vec<u8> = bytes.iter().take(512).copied().collect();
         if !looks_like_nzb(&head) {
             let snippet = String::from_utf8_lossy(&bytes).chars().take(200).collect();
@@ -452,7 +452,7 @@ impl SabnzbdClient {
         let response = self
             .get_with_retry(&url, &query_refs, timeout)
             .await
-            .map_err(|err| SabnzbdError::Transport(err.to_string()))?;
+            .map_err(|err| SabnzbdError::Transport(transport_error(err)))?;
         let data = self.parse_json(response).await?;
         serde_json::from_value(data).map_err(|err| SabnzbdError::NonJson(err.to_string()))
     }
@@ -503,7 +503,7 @@ impl SabnzbdClient {
         let text = response
             .text()
             .await
-            .map_err(|err| SabnzbdError::Transport(err.to_string()))?;
+            .map_err(|err| SabnzbdError::Transport(transport_error(err)))?;
         parse_body(&text)
     }
 
@@ -514,11 +514,10 @@ impl SabnzbdClient {
 }
 
 /// Rebuild an addurl failure with echoed enclosure credentials scrubbed
-/// (v2 `_redacted_addurl_error`).
+/// (v2 `_redacted_addurl_error`). SABnzbd's own answer is what can echo
+/// them; a transport failure never holds the URL to begin with.
 fn redacted_addurl_error(err: &SabnzbdError) -> SabnzbdError {
     match err {
-        // Transport text can echo the request URL, enclosure key included.
-        SabnzbdError::Transport(detail) => SabnzbdError::Transport(redact_query_secrets(detail)),
         SabnzbdError::Http { status, snippet } => SabnzbdError::Http {
             status: *status,
             snippet: redact_query_secrets(snippet),
@@ -925,9 +924,11 @@ impl SabnzbdQueue {
                 });
             }
             Err(NzbFetchError::ContentRejection { snippet, .. }) => {
+                // An error page can echo the URL it was asked for.
                 return Err(SabnzbdError::Api {
                     message: format!(
-                        "indexer returned a non-NZB body (likely an error/limit page): {snippet}"
+                        "indexer returned a non-NZB body (likely an error/limit page): {}",
+                        redact_query_secrets(&snippet)
                     ),
                     auth: false,
                 });
@@ -1615,14 +1616,6 @@ fn mount_has_any_file(mount: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn addurl_transport_errors_scrub_echoed_keys() {
-        let err = redacted_addurl_error(&SabnzbdError::Transport(
-            "error sending request for url (https://sab/addurl?name=https://idx/getnzb?apikey=SUPERSECRET)".to_owned(),
-        ));
-        assert!(!err.to_string().contains("SUPERSECRET"), "{err}");
-    }
 
     #[cfg(unix)]
     #[test]

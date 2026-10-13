@@ -21,6 +21,7 @@ use thiserror::Error;
 use super::newznab::{
     IndexerHealth, IndexerResult, UsenetRelease, normalize_newznab_query, parse_rfc2822_date,
 };
+use crate::http_client::transport_error;
 
 // ---------------------------------------------------------------------------
 // Wire models (v2 `prowlarr_models.py`: devopsarr/prowlarr-py shapes,
@@ -145,7 +146,8 @@ pub struct ProwlarrSystemStatus {
 #[derive(Debug, Clone, Error)]
 pub enum ProwlarrError {
     /// The request never got an answer (a malformed base URL maps here
-    /// too, the v2 lidarr precedent: never a raw 500).
+    /// too, the v2 lidarr precedent: never a raw 500). The detail never
+    /// holds the request URL.
     #[error("Prowlarr request failed: {0}")]
     Transport(String),
     /// Instance answered HTTP 4xx/5xx (other than auth/429).
@@ -327,7 +329,7 @@ impl ProwlarrClient {
             .timeout(timeout)
             .send()
             .await
-            .map_err(|err| ProwlarrError::Transport(transport_detail(&err)))?;
+            .map_err(|err| ProwlarrError::Transport(transport_error(err)))?;
         let status = response.status().as_u16();
         if status == 401 || status == 403 {
             return Err(ProwlarrError::Auth { code: status });
@@ -347,7 +349,7 @@ impl ProwlarrClient {
             .bytes()
             .await
             .map(|bytes| bytes.to_vec())
-            .map_err(|err| ProwlarrError::Transport(transport_detail(&err)))
+            .map_err(|err| ProwlarrError::Transport(transport_error(err)))
     }
 
     fn api_base(&self) -> String {
@@ -357,21 +359,6 @@ impl ProwlarrClient {
 
 fn decode<T: serde::de::DeserializeOwned>(content: &[u8]) -> Result<T, ProwlarrError> {
     serde_json::from_slice(content).map_err(|err| ProwlarrError::Decode(err.to_string()))
-}
-
-fn transport_detail(err: &reqwest::Error) -> String {
-    let text = err.to_string();
-    if text.trim().is_empty() {
-        if err.is_timeout() {
-            "timeout".to_owned()
-        } else if err.is_connect() {
-            "connect error".to_owned()
-        } else {
-            "transport error".to_owned()
-        }
-    } else {
-        text
-    }
 }
 
 fn retry_after(response: &reqwest::Response) -> Option<f64> {
