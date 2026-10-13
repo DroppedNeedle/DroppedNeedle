@@ -520,6 +520,9 @@ struct State {
     runner: Option<mpsc::Sender<Granted>>,
     runner_thread: Option<JoinHandle<()>>,
     waits: WaitTimes,
+    /// When a full queue was last logged. A producer that is not awaiting
+    /// its writes is refused at its own rate, which is no rate to log at.
+    full_logged_at: Option<Instant>,
 }
 
 impl State {
@@ -584,8 +587,15 @@ impl Shared {
         let class = Class::of(lane, durable);
         let capacity = class.capacity();
         if state.waiting[class as usize] >= capacity {
+            let log = class != Class::Request
+                && state
+                    .full_logged_at
+                    .is_none_or(|at| at.elapsed() >= HOLDER_LOG_EVERY);
+            if log {
+                state.full_logged_at = Some(Instant::now());
+            }
             drop(state);
-            if class != Class::Request {
+            if log {
                 tracing::error!(
                     operation = name,
                     lane = lane.label(),
@@ -809,14 +819,8 @@ impl Shared {
             });
             (overdue, stuck.map(|stuck| (stuck, waiting)))
         };
-        for waiter in overdue {
-            tracing::warn!(
-                operation = waiter.name,
-                waited_ms = waiter.queued_at.elapsed().as_millis() as u64,
-                "foreground write waited past its limit; answering busy"
-            );
-            waiter.refuse(Refused::Busy);
-        }
+        // Logged before the refusals, which run the callers' code: a panic
+        // there must not cost the line that names the holder.
         if let Some(((operation, lane, held), (foreground, background))) = stuck {
             tracing::error!(
                 operation,
@@ -826,6 +830,17 @@ impl Shared {
                 background_waiting = background,
                 "a write has held the lane well past its budget"
             );
+        }
+        if let Some(oldest) = overdue.first() {
+            tracing::warn!(
+                refused = overdue.len(),
+                oldest = oldest.name,
+                waited_ms = oldest.queued_at.elapsed().as_millis() as u64,
+                "foreground writes waited past their limit; answering busy"
+            );
+        }
+        for waiter in overdue {
+            waiter.refuse(Refused::Busy);
         }
     }
 
@@ -961,6 +976,7 @@ impl WriteLane {
                     runner: Some(runner),
                     runner_thread: Some(runner_thread),
                     waits: WaitTimes::default(),
+                    full_logged_at: None,
                 }),
                 drained: Condvar::new(),
                 idle: Arc::new(LaneIdle::default()),
