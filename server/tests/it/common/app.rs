@@ -10,7 +10,7 @@ use axum::{
     Router,
     body::Body,
     extract::ConnectInfo,
-    http::{Request, StatusCode},
+    http::{HeaderMap, Request, StatusCode},
 };
 use droppedneedle::{
     AppConfig,
@@ -19,6 +19,7 @@ use droppedneedle::{
         usenet::mocks::{SabnzbdMock, serve_loopback},
     },
     bootstrap,
+    remotes::mocks::{MockServer, serve_plex},
 };
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
@@ -40,11 +41,12 @@ pub struct Login {
 /// The production app on a fresh data directory.
 ///
 /// Every outside service with an address fixed in code sits on a closed
-/// port, and no download client is configured: a journey that wants one
-/// saves the address of `slskd` or `sabnzbd` in Settings, as an admin
-/// would. The data directory is `config.root_app_dir`. The
-/// background loops run as they do in production, so a journey waits on
-/// something it can observe (a row, a response, a call a mock recorded).
+/// port, and no download client or media server is configured: a journey
+/// that wants one saves the address of `slskd`, `sabnzbd` or `plex` in
+/// Settings, as an admin would. The data directory is
+/// `config.root_app_dir`. The background loops run as they do in
+/// production, so a journey waits on something it can observe (a row, a
+/// response, a call a mock recorded).
 ///
 /// End a journey with [`TestApp::stop`]. Dropping the app without it still
 /// tells the loops to stop and removes the directory.
@@ -61,6 +63,8 @@ pub struct TestApp {
     /// Where the mock SABnzbd listens.
     #[allow(dead_code)]
     pub sabnzbd_url: String,
+    /// The mock Plex server, at `plex.base_url`.
+    pub plex: MockServer,
     router: Option<Router>,
     admin: tokio::sync::OnceCell<String>,
     stop: Option<oneshot::Sender<()>>,
@@ -83,6 +87,7 @@ impl TestApp {
         let (sabnzbd_url, sabnzbd_server) = serve_loopback(sabnzbd.router())
             .await
             .expect("mock SABnzbd starts");
+        let plex = serve_plex().await.expect("mock Plex starts");
 
         // The state goes at once: workers that stop when their queue's last
         // handle drops would otherwise sit out the shutdown grace.
@@ -108,6 +113,7 @@ impl TestApp {
             slskd,
             sabnzbd,
             sabnzbd_url,
+            plex,
             router: Some(router),
             admin: tokio::sync::OnceCell::new(),
             stop: Some(stop),
@@ -129,14 +135,14 @@ impl TestApp {
             .expect("the app answers")
     }
 
-    /// One JSON request. An empty answer reads as `Value::Null`.
-    pub async fn call(
+    /// One request, answered as it came: status, headers and body bytes.
+    pub async fn raw(
         &self,
         method: &str,
         uri: &str,
         headers: &[(&str, &str)],
         body: Option<Value>,
-    ) -> (StatusCode, Value) {
+    ) -> (StatusCode, HeaderMap, Vec<u8>) {
         let mut builder = Request::builder()
             .method(method)
             .uri(uri)
@@ -155,15 +161,34 @@ impl TestApp {
             .request(builder.body(body).expect("request builds"))
             .await;
         let status = response.status();
-        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        let headers = response.headers().clone();
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024 * 1024)
             .await
             .expect("body reads");
+        (status, headers, bytes.to_vec())
+    }
+
+    /// One JSON request. An empty answer reads as `Value::Null`.
+    pub async fn call(
+        &self,
+        method: &str,
+        uri: &str,
+        headers: &[(&str, &str)],
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let (status, _, bytes) = self.raw(method, uri, headers, body).await;
         let json = if bytes.is_empty() {
             Value::Null
         } else {
             serde_json::from_slice(&bytes).expect("body is json")
         };
         (status, json)
+    }
+
+    /// A connection to the app's database, for seeding rows and reading
+    /// them back.
+    pub fn db(&self) -> rusqlite::Connection {
+        rusqlite::Connection::open(&self.config.library_db_path).expect("database opens")
     }
 
     /// The owner's `authorization` header value. The first call runs
