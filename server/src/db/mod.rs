@@ -6,6 +6,17 @@
 //! no async API on the write path, so holding a write transaction across an
 //! await is unrepresentable.
 //!
+//! [`Db`] is the one handle that carries all of it: the lane's writes, and
+//! reads on two pools of read-only connections. `read` and `read_blocking`
+//! share the request pool and its one arrival-ordered queue, and are
+//! answered `Busy` after 5 s of waiting; `read_long` has a small pool of its
+//! own and waits until served or cancelled. One read closure is one
+//! connection and one snapshot for its whole length, so a request read runs
+//! one statement per closure unless its statements must agree. A read
+//! closure calls nothing on `Db` and waits on nothing: a write, another
+//! pooled read and [`block_on`] are refused inside one with `InsideRead`,
+//! and a pooled read inside a write closure with `ReadInsideWrite`.
+//!
 //! Writes take turns on the lane's one connection. Async code calls
 //! `write`, whose closure runs on the lane's own thread; synchronous code on
 //! a blocking thread calls `write_blocking` and runs its closure itself, so
@@ -29,14 +40,15 @@
 //! while the checkpoint service reports the WAL too large or stalled, and
 //! the runtime's relief thread checkpoints every second until they can go.
 //!
-//! Layout: [`factory`] builds the runtime, [`checkpoint`] runs the GH-293
+//! Layout: [`factory`] builds the runtime, [`handle`] is `Db`, [`read_pool`]
+//! holds the two read pools, [`checkpoint`] runs the GH-293
 //! checkpoint policy with TRUNCATE reclaim, [`writer`] serializes writes with
 //! foreground-burst-8 fairness, [`backup`] copies the live database out with
 //! the online backup API, [`durable`] carries the worker wakeups and job
 //! registry, [`analyze`] keeps the planner statistics fresh, [`fs`]
 //! enforces the local-filesystem rule, [`fold`] keeps the accent-insensitive
-//! search function, `scope` records which write closures a thread is
-//! inside, and [`error`] holds the typed errors.
+//! search function, `scope` records which write and read closures a thread
+//! is inside, and [`error`] holds the typed errors.
 
 pub mod analyze;
 pub mod backup;
@@ -46,6 +58,8 @@ pub mod error;
 pub mod factory;
 pub mod fold;
 pub mod fs;
+pub mod handle;
+pub mod read_pool;
 mod scope;
 pub mod writer;
 
@@ -67,12 +81,14 @@ pub use factory::{
 };
 pub use fold::{fold_text, register_fold};
 pub use fs::{filesystem_is_local, reject_remote_filesystem, reject_symlink, same_filesystem};
+pub use handle::Db;
+pub use read_pool::{LONG_READERS, OldestRead, ReadActivity};
 pub use scope::block_on;
 pub use writer::{
     BACKGROUND_CHUNK_ROWS, BACKGROUND_HARD_BUDGET, BACKGROUND_QUEUE_CAPACITY,
     BACKGROUND_SOFT_BUDGET, Budget, CancelFlag, FOREGROUND_BURST, FOREGROUND_HARD_BUDGET,
     FOREGROUND_QUEUE_CAPACITY, FOREGROUND_SOFT_BUDGET, FOREGROUND_WAIT_LIMIT, HOLDER_LOG_EVERY,
-    Lane, LaneIdle, LaneLimits, LaneWatch, OpError, WAIT_BUCKET_BOUNDS_MS, WATCH_TICK, WaitTimes,
-    WalHold, WriteLane, apply_connection_pragmas, decide_lane, open_connection,
+    Lane, LaneIdle, LaneLimits, LaneWatch, OpError, ReliefPass, WAIT_BUCKET_BOUNDS_MS, WATCH_TICK,
+    WaitTimes, WalHold, WriteLane, apply_connection_pragmas, decide_lane, open_connection,
     open_journal_connection,
 };

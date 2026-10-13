@@ -82,6 +82,7 @@ use tokio::sync::oneshot;
 use super::{
     error::{DbError, rusqlite_is_busy},
     fold::register_fold,
+    read_pool::OldestRead,
     scope::{self, LaneId},
 };
 
@@ -180,6 +181,16 @@ impl WalHold {
     pub fn force(&self, on: bool) {
         self.set(on);
     }
+}
+
+/// What one relief pass tells the lane, for its line about held writes.
+#[derive(Debug, Default)]
+pub struct ReliefPass {
+    /// The checkpoint's error, if the pass failed.
+    pub error: Option<String>,
+    /// The pooled read that has been open longest: an open read is what
+    /// keeps the WAL from shrinking.
+    pub oldest_read: Option<OldestRead>,
 }
 
 /// What a waiting write counts as against the queue bounds.
@@ -587,6 +598,13 @@ impl Shared {
                 operation: name.to_owned(),
             });
         }
+        // A write issued inside a read closure would wait for its turn
+        // while that closure pins the WAL.
+        if scope::inside_read_on(self.id) {
+            return Err(DbError::InsideRead {
+                operation: name.to_owned(),
+            });
+        }
         // A refused closure is dropped by the caller, after the lock.
         let mut state = self.state();
         if state.closed {
@@ -865,7 +883,7 @@ impl Shared {
     /// kept waiting. The pass needs nothing from the lane: it has its own
     /// connection, and a held write is waiting for a turn, not inside a
     /// transaction.
-    fn relief_tick(self: &Arc<Self>, checkpoint: &dyn Fn() -> Option<String>) {
+    fn relief_tick(self: &Arc<Self>, checkpoint: &dyn Fn() -> ReliefPass) {
         let (stopped, waiting) = {
             let mut state = self.state();
             if state.closed || state.waiting[Class::Bulk as usize] == 0 {
@@ -893,10 +911,10 @@ impl Shared {
         if !waiting {
             return;
         }
-        let failed = if self.hold.is_on() {
+        let pass = if self.hold.is_on() {
             checkpoint()
         } else {
-            None
+            ReliefPass::default()
         };
         if !self.hold.is_on() {
             self.grant_next();
@@ -924,7 +942,12 @@ impl Shared {
             tracing::warn!(
                 held,
                 oldest_waited_ms = oldest.as_millis() as u64,
-                last_pass_error = failed.as_deref().unwrap_or("none"),
+                last_pass_error = pass.error.as_deref().unwrap_or("none"),
+                oldest_read = pass.oldest_read.map_or("none", |read| read.name),
+                oldest_read_pool = pass.oldest_read.map_or("none", |read| read.pool),
+                oldest_read_ms = pass
+                    .oldest_read
+                    .map_or(0, |read| read.age.as_millis() as u64),
                 "bulk writes are still held: the WAL cannot shrink"
             );
         }
@@ -1067,6 +1090,12 @@ impl WriteLane {
         Arc::clone(&self.shared.hold)
     }
 
+    /// The database this lane writes, as the per-thread record of open
+    /// closures knows it.
+    pub(crate) fn database(&self) -> LaneId {
+        self.shared.id
+    }
+
     /// How long admissions have waited for their turn so far.
     pub fn wait_times(&self) -> WaitTimes {
         self.shared.state().waits
@@ -1079,15 +1108,16 @@ impl WriteLane {
     ///
     /// The watch thread answers the foreground writes that have waited too
     /// long and names a stuck holder. The relief thread calls `checkpoint`,
-    /// one blocking checkpoint pass that returns its error if it failed,
-    /// once a tick while a bulk write is held by the WAL, and starts the
-    /// held writes when the hold is off. Writes held for 30 s or more are
-    /// counted in the log, at most every 30 s, with that error. A pass
-    /// takes as long as the checkpoint takes, which is why it has a thread
-    /// of its own: it never delays the watch thread's answers.
+    /// one blocking checkpoint pass that returns its error if it failed and
+    /// the oldest pooled read, once a tick while a bulk write is held by the
+    /// WAL, and starts the held writes when the hold is off. Writes held for
+    /// 30 s or more are counted in the log, at most every 30 s, with that
+    /// error and that read. A pass takes as long as the checkpoint takes,
+    /// which is why it has a thread of its own: it never delays the watch
+    /// thread's answers.
     pub fn watch(
         &self,
-        checkpoint: impl Fn() -> Option<String> + Send + 'static,
+        checkpoint: impl Fn() -> ReliefPass + Send + 'static,
     ) -> Result<LaneWatch, DbError> {
         let tick = self.shared.limits.watch_tick;
         let watch = Ticker::start("droppedneedle-db-watch", tick, &self.shared, |shared| {
@@ -1385,6 +1415,11 @@ pub struct LaneWatch {
 }
 
 impl LaneWatch {
+    /// Another thread that starts and stops with the watch.
+    pub(crate) fn add(&mut self, ticker: Ticker) {
+        self.tickers.push(ticker);
+    }
+
     /// Stop the threads and wait for them. The watch thread is at most one
     /// pass of bookkeeping away from noticing, the relief thread at most one
     /// checkpoint pass, so call this from a thread that may block. That
@@ -1408,20 +1443,21 @@ impl LaneWatch {
     }
 }
 
-/// A thread that runs one pass over the lane every tick.
+/// A thread that runs one pass over some shared state every tick, for as
+/// long as that state is alive.
 #[derive(Debug)]
-struct Ticker {
+pub(crate) struct Ticker {
     /// Never sent on: the thread ends when this is dropped.
     stop: mpsc::Sender<()>,
     thread: JoinHandle<()>,
 }
 
 impl Ticker {
-    fn start(
+    pub(crate) fn start<S: Send + Sync + 'static>(
         name: &'static str,
         tick: Duration,
-        shared: &Arc<Shared>,
-        pass: impl Fn(&Arc<Shared>) + Send + 'static,
+        shared: &Arc<S>,
+        pass: impl Fn(&Arc<S>) + Send + 'static,
     ) -> Result<Self, DbError> {
         let shared = Arc::downgrade(shared);
         let (stop, stopped) = mpsc::channel::<()>();

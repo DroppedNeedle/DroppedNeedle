@@ -4,16 +4,19 @@
 //! directory, refuse symlinks and network filesystems, open the reader pool
 //! with the full pragma set, take a verified backup when the schema is
 //! behind, run the schema migrations and assert `user_version`, then start
-//! the writer lane and wire the checkpoint, wakeup, and backup services.
+//! the writer lane, open the read pools and wire the checkpoint, wakeup,
+//! and backup services.
 //!
 //! Backups live in `backups/` next to the database file, so they share its
 //! volume and filesystem (the backup stages and renames in place).
 //!
-//! Connection budget: the pool carries 7 reader connections and the writer
-//! lane owns 1 dedicated connection outside the pool, for 8 handles total
-//! with exactly one writer. The pool keeps the spec'd shape while the writer
-//! stays a true single connection, which is what lets the lane enforce the
-//! no-await-inside-write-transaction rule structurally.
+//! Connection budget: the sqlx pool carries up to 7 reader connections, the
+//! writer lane owns 1 dedicated connection, and the read pools hold 7
+//! request connections and 2 long ones, all open from boot, for up to 17
+//! handles with exactly one writer. The sqlx pool goes once the last area
+//! reads through [`Db`]. The writer stays a true single connection, which
+//! is what lets the lane enforce the no-await-inside-write-transaction rule
+//! structurally.
 //!
 //! Schema hooks used (from [`crate::schema`]):
 //! `crate::schema::apply_migrations(&SqlitePool) -> Result<(), SchemaError>`
@@ -25,7 +28,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use sqlx::{
@@ -44,10 +47,16 @@ use super::{
     durable::DurableWorkWakeups,
     error::DbError,
     fs::{reject_remote_filesystem, reject_symlink},
-    writer::{CancelFlag, LaneLimits, LaneWatch, WriteLane},
+    handle::Db,
+    read_pool::{ReadActivity, ReadPools},
+    writer::{CancelFlag, LaneLimits, LaneWatch, ReliefPass, Ticker, WriteLane},
 };
 
-/// Reader connections in the pool. The writer lane owns one more outside.
+/// Reader connections in the sqlx pool, and request connections in the read
+/// pool, which is also how many request reads run at once. Measured on a
+/// 12-core host beside a busy writer: with 10 or more running readers the
+/// writer commits a third less and the heavy reads slow down, and with 4
+/// the cheap reads wait about twice as long.
 pub const MAX_READERS: u32 = 7;
 /// Warm connections kept ready.
 pub const MIN_CONNECTIONS: u32 = 1;
@@ -73,7 +82,8 @@ pub const WAL_AUTOCHECKPOINT: i64 = 1000;
 pub struct DbConfig {
     /// Live database file, created with its parent directory when missing.
     pub path: PathBuf,
-    /// Reader connections in the pool. Defaults to [`MAX_READERS`].
+    /// Reader connections in the sqlx pool and request connections in the
+    /// read pool. Defaults to [`MAX_READERS`].
     pub readers: u32,
     /// Lock wait on pool connections. Defaults to [`BUSY_TIMEOUT`].
     pub busy_timeout: Duration,
@@ -85,6 +95,9 @@ pub struct DbConfig {
     /// The WAL sizes, high then low, at which bulk writes are held and let
     /// go. Not a setting: only a test changes them.
     wal_water: (i64, i64),
+    /// How long a request read waits for a pooled connection before `Busy`.
+    /// Not a setting: only a test changes it.
+    read_wait: Duration,
 }
 
 impl DbConfig {
@@ -97,6 +110,7 @@ impl DbConfig {
             shutdown_grace: crate::config::DEFAULT_SHUTDOWN_GRACE,
             lane_limits: LaneLimits::default(),
             wal_water: (ACTIVE_HIGH_WATER_BYTES, ACTIVE_LOW_WATER_BYTES),
+            read_wait: ACQUIRE_TIMEOUT,
         }
     }
 
@@ -121,17 +135,26 @@ impl DbConfig {
         self.wal_water = (high, low);
         self
     }
+
+    /// A shorter wait for a pooled connection, so a test reaches `Busy`
+    /// without waiting out the real one.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_read_wait(mut self, wait: Duration) -> Self {
+        self.read_wait = wait;
+        self
+    }
 }
 
 /// The serving database: pool, writer lane, and services in one handle.
 #[derive(Debug)]
 pub struct DbRuntime {
     path: PathBuf,
-    pool: SqlitePool,
-    lane: WriteLane,
-    /// The lane's watch and relief threads. They end with this handle, so a
-    /// runtime that is dropped without [`DbRuntime::shutdown`] leaves no
-    /// thread behind.
+    db: Db,
+    reads: ReadActivity,
+    /// The lane's watch and relief threads and the read pools' pass. They
+    /// end with this handle, so a runtime that is dropped without
+    /// [`DbRuntime::shutdown`] leaves no thread behind. Never owned by
+    /// [`Db`], whose clones outlive the runtime.
     watch: LaneWatch,
     shutdown_grace: Duration,
     checkpoint: CheckpointService,
@@ -171,22 +194,46 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
     reads_frozen.store(true, Ordering::Release);
 
     let lane = WriteLane::open_limited(&path, config.lane_limits)?;
+    // Read-only connections, so they open after the writer: it is the
+    // writer that makes sure the WAL and its index exist.
+    let pools = ReadPools::open(
+        &path,
+        lane.database(),
+        config.readers as usize,
+        config.busy_timeout,
+        config.read_wait,
+    )?;
+    let reads = pools.activity();
     let (high_water, low_water) = config.wal_water;
     let checkpoint =
         CheckpointService::new(&path, pool.clone(), lane.idle_state(), lane.wal_hold())
-            .with_water(high_water, low_water);
+            .with_water(high_water, low_water)
+            .with_pooled_reads(reads.clone());
     // Cloned before the statistics service is attached: the relief thread
     // shares the policy, the hold and the latest record, and owns nothing
-    // that keeps the lane alive.
+    // that keeps the lane or the read pools alive.
     let relief = checkpoint.clone();
+    let oldest = reads.clone();
     let checkpoint = checkpoint.with_analyze(AnalyzeService::new(lane.clone(), pool.clone()));
-    let watch = lane.watch(move || relief.run_relief().error)?;
+    let mut watch = lane.watch(move || ReliefPass {
+        error: relief.run_relief().error,
+        oldest_read: oldest.oldest(),
+    })?;
+    // The pools' pass has a thread of its own, so a slow pass over the lane
+    // never delays a reader's `Busy` and the other way round. It holds the
+    // pools weakly and stops with the rest of the watch.
+    watch.add(Ticker::start(
+        "droppedneedle-db-readers",
+        config.lane_limits.watch_tick,
+        &pools,
+        |pools| pools.pass(),
+    )?);
     let wakeups = DurableWorkWakeups::new(pool.clone());
 
     Ok(DbRuntime {
         path,
-        pool,
-        lane,
+        db: Db::new(lane, pools, pool),
+        reads,
         watch,
         shutdown_grace: config.shutdown_grace,
         checkpoint,
@@ -244,16 +291,27 @@ impl DbRuntime {
         &self.path
     }
 
+    /// The handle areas read and write through.
+    pub fn db(&self) -> &Db {
+        &self.db
+    }
+
+    /// What the read pools are doing: connections out, callers waiting, the
+    /// oldest open read.
+    pub fn read_activity(&self) -> &ReadActivity {
+        &self.reads
+    }
+
     /// Reader pool. Reads only after boot, enforced by `query_only=ON` on
     /// every checkout once migrations complete; every write goes through
     /// [`DbRuntime::lane`].
     pub fn pool(&self) -> &SqlitePool {
-        &self.pool
+        self.db.sqlx()
     }
 
     /// The single writer.
     pub fn lane(&self) -> &WriteLane {
-        &self.lane
+        self.db.lane()
     }
 
     /// Checkpoint runner with the latest-record export.
@@ -271,26 +329,38 @@ impl DbRuntime {
         &self.backups
     }
 
-    /// Clean shutdown in order: drain the writer lane, stop its watch
-    /// threads, reclaim the WAL, then close the pool. Draining first means
-    /// no write lands after the reclaim; the reclaim itself is best effort
-    /// (a held lock leaves the WAL in place), so a quiet shutdown leaves no
-    /// `-wal` or `-shm` behind. The drain is bounded by the configured
-    /// grace: a write that has not returned by then is logged and left.
-    /// Closing the lane lifts the WAL hold, so a held bulk write runs in the
-    /// drain like any other and does not use up the grace.
+    /// Clean shutdown in order: drain the writer lane, stop the watch
+    /// threads, close the read pools, reclaim the WAL, then close the sqlx
+    /// pool. Draining first means no write lands after the reclaim; the
+    /// reclaim itself is best effort (a held lock leaves the WAL in place),
+    /// so a quiet shutdown leaves no `-wal` or `-shm` behind. The drain is
+    /// bounded by the configured grace: a write that has not returned by
+    /// then is logged and left. Closing the lane lifts the WAL hold, so a
+    /// held bulk write runs in the drain like any other and does not use up
+    /// the grace.
+    ///
+    /// The read pools get what is left of that same grace, not one of their
+    /// own: a read still running when it ends is named in the log and left,
+    /// the reclaim then fails fast and the WAL stays for the next start.
     pub async fn shutdown(self) {
-        self.lane.shutdown(self.shutdown_grace).await;
+        // A grace too long to add to the clock is no bound at all.
+        let deadline = Instant::now().checked_add(self.shutdown_grace);
+        self.db.lane().shutdown(self.shutdown_grace).await;
         let (watch, checkpoint) = (self.watch, self.checkpoint.clone());
+        let pools = Arc::clone(self.db.reads());
         // Stopping the watch can wait out a relief pass in flight, so it
         // happens off the runtime, and before the reclaim that pass would
         // otherwise block.
         let _ = tokio::task::spawn_blocking(move || {
             watch.stop();
+            // Before the reclaim: it needs every reader gone, and SQLite
+            // removes `-wal` and `-shm` only when the last handle to close
+            // is a read-write one, which a pooled connection is not.
+            pools.close(deadline);
             checkpoint.shutdown_truncate()
         })
         .await;
-        self.pool.close().await;
+        self.db.sqlx().close().await;
     }
 }
 

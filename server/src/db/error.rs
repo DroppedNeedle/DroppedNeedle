@@ -34,7 +34,8 @@ pub enum DbError {
     },
     /// Lock contention outlived the busy timeout, or a write was refused by
     /// the lane: its queue was full, or it was a foreground write that
-    /// waited past its limit and never ran. Retryable by the caller.
+    /// waited past its limit and never ran. Also a request read that waited
+    /// past the limit for a pooled connection. Retryable by the caller.
     #[error("database is busy during {operation}; retry the request")]
     Busy {
         /// Operation name for the log line. Never SQL text or a path.
@@ -71,6 +72,35 @@ pub enum DbError {
         /// What the wait was for. Never SQL text, a host or a path.
         operation: String,
     },
+    /// A pooled read was issued from inside a write closure on the same
+    /// database. It would see the state from before the transaction, so it
+    /// is refused at once: read on the transaction instead.
+    #[error("read {operation} was issued inside a write closure on the same database")]
+    ReadInsideWrite {
+        /// Name of the refused read. Never SQL text or a path.
+        operation: String,
+    },
+    /// A write, another pooled read or a wait on a future was issued from
+    /// inside a read closure, which holds a connection and pins the WAL for
+    /// as long as it runs. Refused at once.
+    #[error("{operation} was issued inside a read closure on the same database")]
+    InsideRead {
+        /// Name of the refused call. Never SQL text, a host or a path.
+        operation: String,
+    },
+    /// A long read's cancel flag tripped while it waited for a connection.
+    #[error("read {operation} was cancelled while it waited for a connection")]
+    ReadCancelled {
+        /// Operation name for the log line. Never SQL text or a path.
+        operation: String,
+    },
+    /// The closure of an async read panicked. Its connection went back to
+    /// the pool.
+    #[error("read {operation} panicked")]
+    ReadPanicked {
+        /// Operation name for the log line. Never SQL text or a path.
+        operation: String,
+    },
     /// Cooperative cancellation stopped a chunked bulk write.
     #[error("chunked write {operation} cancelled after {chunks} chunks")]
     Cancelled {
@@ -103,9 +133,10 @@ pub enum DbError {
         /// The staging path that was refused.
         path: PathBuf,
     },
-    /// The writer lane is shut down, went away before it answered, or gave
-    /// up at shutdown before this write's turn came.
-    #[error("write lane is closed")]
+    /// The database is shutting down: the writer lane is closed, went away
+    /// before it answered or gave up before this write's turn came, or a
+    /// read pool is closed.
+    #[error("the database is shutting down")]
     LaneClosed,
     /// A write closure failed inside its transaction. The transaction rolled
     /// back; the message names the operation, never SQL text or a path.

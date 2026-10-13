@@ -17,7 +17,7 @@
 //! dead `-wal` of several MB survived graceful restarts. v3 adds `TRUNCATE`
 //! reclaim when three gates hold: the last `PASSIVE` reported zero active
 //! frames, the writer lane is idle and every reader connection is back in
-//! the pool, and an hour passed since the last reclaim. A final `TRUNCATE`
+//! its pool, and an hour passed since the last reclaim. A final `TRUNCATE`
 //! runs at clean shutdown, so a stopped database leaves no `-wal` behind.
 //!
 //! Every pass records its outcome for the log and keeps the latest one for
@@ -33,7 +33,10 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use tokio::sync::RwLock;
 
-use super::writer::{LaneIdle, WalHold};
+use super::{
+    read_pool::ReadActivity,
+    writer::{LaneIdle, WalHold},
+};
 
 /// `PASSIVE` checkpoint cadence. The GH-293 owner calibration, unchanged.
 pub const CHECKPOINT_CADENCE: Duration = Duration::from_secs(30);
@@ -210,6 +213,9 @@ pub struct CheckpointService {
     latest: Arc<RwLock<Option<CheckpointOutcome>>>,
     last_truncate: Arc<Mutex<Option<Instant>>>,
     hold: Arc<WalHold>,
+    /// The read pools' counts. Never the pools themselves or the handle
+    /// that owns them: this service is cloned into the relief thread.
+    pooled_reads: Option<ReadActivity>,
     analyze: Option<super::analyze::AnalyzeService>,
 }
 
@@ -231,8 +237,16 @@ impl CheckpointService {
             latest: Arc::new(RwLock::new(None)),
             last_truncate: Arc::new(Mutex::new(None)),
             hold,
+            pooled_reads: None,
             analyze: None,
         }
+    }
+
+    /// Count the read pools in the reader-idle half of the `TRUNCATE` gate.
+    #[must_use]
+    pub(crate) fn with_pooled_reads(mut self, reads: ReadActivity) -> Self {
+        self.pooled_reads = Some(reads);
+        self
     }
 
     /// Other water marks for the backpressure rule.
@@ -338,9 +352,11 @@ impl CheckpointService {
         outcome
     }
 
-    /// True when every pooled connection is back in the pool.
+    /// True when every pooled connection is back in its pool: the sqlx
+    /// pool's and the read pools'.
     fn readers_idle(&self) -> bool {
         self.pool.num_idle() as u32 == self.pool.size()
+            && self.pooled_reads.as_ref().is_none_or(ReadActivity::is_idle)
     }
 
     /// Run one pass in the given mode and record its outcome. A relief pass

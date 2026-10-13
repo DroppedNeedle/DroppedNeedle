@@ -1,0 +1,163 @@
+//! `Db`: the one handle an area needs to read and write the database.
+//!
+//! It carries the writer lane, the two read pools and, until the last area
+//! has moved its reads off it, the sqlx reader pool. The factory builds it
+//! once; clones are cheap and share everything.
+
+use std::sync::Arc;
+
+use rusqlite::{Connection, Transaction};
+use sqlx::SqlitePool;
+
+use super::{
+    error::DbError,
+    read_pool::ReadPools,
+    writer::{CancelFlag, Lane, OpError, WriteLane},
+};
+
+/// The database, for reads and writes. Cloneable; every clone shares the one
+/// writer lane and the same read pools.
+#[derive(Clone)]
+pub struct Db {
+    lane: WriteLane,
+    reads: Arc<ReadPools>,
+    sqlx: SqlitePool,
+}
+
+impl std::fmt::Debug for Db {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Db")
+            .field("lane", &self.lane)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Db {
+    pub(crate) fn new(lane: WriteLane, reads: Arc<ReadPools>, sqlx: SqlitePool) -> Self {
+        Self { lane, reads, sqlx }
+    }
+
+    pub(crate) fn lane(&self) -> &WriteLane {
+        &self.lane
+    }
+
+    pub(crate) fn reads(&self) -> &Arc<ReadPools> {
+        &self.reads
+    }
+
+    /// One checkout of a request connection: the closure runs inside one
+    /// read transaction and sees one snapshot. The connection is held for
+    /// the whole closure, so on the request path a closure runs one
+    /// statement; put statements in one closure only when they must agree.
+    ///
+    /// The read waits for a connection as a future, in arrival order with
+    /// every other request read, and is answered `Busy` after 5 s. The
+    /// closure runs on a blocking thread. Dropped while it waits, the read
+    /// loses its place; dropped after the closure started, the closure
+    /// finishes and its result is discarded. A closure that panics answers
+    /// `ReadPanicked`.
+    ///
+    /// Inside the closure, call nothing on `Db` and wait on nothing: a
+    /// write, another read and [`super::block_on`] are each refused with
+    /// `InsideRead`. `name` is for the log and the errors, never SQL text
+    /// or a path.
+    pub async fn read<R, E, F>(&self, name: &'static str, op: F) -> Result<R, E>
+    where
+        F: FnOnce(&Connection) -> Result<R, E> + Send + 'static,
+        R: Send + 'static,
+        E: From<DbError> + Send + 'static,
+    {
+        self.reads.read(name, op).await
+    }
+
+    /// [`Db::read`] for synchronous code on a blocking thread. The closure
+    /// runs on the calling thread and may borrow. Same pool and same queue
+    /// as `read`; the calling thread is parked while it waits. A panic in
+    /// the closure gives the connection back and continues up the caller's
+    /// thread.
+    pub fn read_blocking<R, E, F>(&self, name: &'static str, op: F) -> Result<R, E>
+    where
+        F: FnOnce(&Connection) -> Result<R, E>,
+        E: From<DbError>,
+    {
+        self.reads.read_blocking(name, op)
+    }
+
+    /// A read that may run long (a scan window, an export), on the long
+    /// pool. Waits for a connection for as long as it takes, checking
+    /// `cancel`, and answers `ReadCancelled` once the flag trips. The
+    /// closure collects what it needs and returns: an open read keeps the
+    /// WAL from shrinking, so it never waits on anything a writer feeds.
+    pub fn read_long<R, E, F>(&self, name: &'static str, cancel: &CancelFlag, op: F) -> Result<R, E>
+    where
+        F: FnOnce(&Connection) -> Result<R, E>,
+        E: From<DbError>,
+    {
+        self.reads.read_long(name, cancel, op)
+    }
+
+    /// [`WriteLane::write`] on this database's lane.
+    pub async fn write<F, R>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, DbError>
+    where
+        F: FnOnce(&Transaction) -> Result<R, OpError> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.lane.write(lane, name, op).await
+    }
+
+    /// [`WriteLane::write_blocking`] on this database's lane.
+    pub fn write_blocking<F, R>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, DbError>
+    where
+        F: FnOnce(&Transaction) -> Result<R, OpError>,
+    {
+        self.lane.write_blocking(lane, name, op)
+    }
+
+    /// [`WriteLane::write_durable`] on this database's lane.
+    pub fn write_durable<F, R>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, DbError>
+    where
+        F: FnOnce(&Transaction) -> Result<R, OpError>,
+    {
+        self.lane.write_durable(lane, name, op)
+    }
+
+    /// [`WriteLane::write_chunked`] on this database's lane.
+    pub async fn write_chunked<T, F>(
+        &self,
+        name: &'static str,
+        items: Vec<T>,
+        chunk_rows: usize,
+        cancel: &CancelFlag,
+        chunk: F,
+    ) -> Result<usize, DbError>
+    where
+        T: Send + 'static,
+        F: Fn(&[T], &Transaction) -> Result<(), OpError> + Send + Sync + 'static,
+    {
+        self.lane
+            .write_chunked(name, items, chunk_rows, cancel, chunk)
+            .await
+    }
+
+    /// [`WriteLane::write_chunked_blocking`] on this database's lane.
+    pub fn write_chunked_blocking<T, F>(
+        &self,
+        name: &'static str,
+        items: &[T],
+        chunk_rows: usize,
+        cancel: &CancelFlag,
+        chunk: F,
+    ) -> Result<usize, DbError>
+    where
+        F: FnMut(&[T], &Transaction) -> Result<(), OpError>,
+    {
+        self.lane
+            .write_chunked_blocking(name, items, chunk_rows, cancel, chunk)
+    }
+
+    /// The sqlx reader pool, for the areas that have not moved their reads
+    /// to [`Db::read`] yet.
+    pub fn sqlx(&self) -> &SqlitePool {
+        &self.sqlx
+    }
+}
