@@ -27,7 +27,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 ring = "0.17"
 sha1 = "0.10"
 rubato = "0.16"
-rusqlite = { version = "0.32", features = ["bundled", "backup", "functions"] }
+rusqlite = { version = "0.32", features = ["bundled", "backup", "functions", "hooks"] }
 rusty-chromaprint = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

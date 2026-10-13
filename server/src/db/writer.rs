@@ -24,7 +24,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 use rusqlite::{Connection, Transaction, TransactionBehavior};
@@ -52,8 +52,6 @@ pub const WRITE_HARD_BUDGET: Duration = Duration::from_secs(2);
 const PROGRESS_OPS: std::os::raw::c_int = 10_000;
 /// Largest chunk a background write commits at once.
 pub const BACKGROUND_CHUNK_ROWS: usize = 500;
-/// Disarmed abort clock: no deadline within a Louvre lifetime.
-const DISARMED_MS: u64 = u64::MAX;
 
 /// Which queue a write admission waits in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -543,7 +541,7 @@ fn writer_loop(
     exec_rx: std::sync::mpsc::Receiver<QueuedOp>,
     ready_tx: std::sync::mpsc::Sender<Result<(), DbError>>,
 ) {
-    let clock = Box::new(AbortClock::new());
+    let clock = Arc::new(AbortClock::new());
     let opened = (|| -> Result<Connection, DbError> {
         let connection = open_connection(path)?;
         register_fold(&connection)?;
@@ -556,13 +554,13 @@ fn writer_loop(
             return;
         }
     };
-    install_abort_clock(&connection, &clock);
+    let handler_clock = Arc::clone(&clock);
+    connection.progress_handler(PROGRESS_OPS, Some(move || handler_clock.expired()));
     let _ = ready_tx.send(Ok(()));
     let mut connection = connection;
     for req in exec_rx {
         run_one(&mut connection, &clock, req);
     }
-    clear_abort_clock(&connection);
 }
 
 /// One admission, one transaction. The abort clock is armed for exactly the
@@ -600,63 +598,38 @@ fn run_one(connection: &mut Connection, clock: &AbortClock, req: QueuedOp) {
     });
 }
 
-/// Wall-clock deadline the SQLite progress callback reads. Owned by the
-/// writer thread; the callback fires only on that thread during a
-/// transaction, so no cross-thread lifetime applies.
+/// Deadline the SQLite progress handler reads, on the monotonic clock so a
+/// wall-clock step can neither abort a healthy write nor spare a stuck one.
 struct AbortClock {
-    deadline_ms: AtomicU64,
+    epoch: Instant,
+    /// Microseconds after `epoch`; `u64::MAX` while disarmed.
+    deadline_micros: AtomicU64,
 }
 
 impl AbortClock {
     fn new() -> Self {
         Self {
-            deadline_ms: AtomicU64::new(DISARMED_MS),
+            epoch: Instant::now(),
+            deadline_micros: AtomicU64::new(u64::MAX),
         }
     }
 
+    fn now_micros(&self) -> u64 {
+        u64::try_from(self.epoch.elapsed().as_micros()).unwrap_or(u64::MAX)
+    }
+
     fn arm(&self, budget: Duration) {
-        self.deadline_ms.store(
-            now_millis().saturating_add(budget.as_millis() as u64),
-            Ordering::Release,
-        );
+        let budget = u64::try_from(budget.as_micros()).unwrap_or(u64::MAX);
+        self.deadline_micros
+            .store(self.now_micros().saturating_add(budget), Ordering::Release);
     }
 
     fn disarm(&self) {
-        self.deadline_ms.store(DISARMED_MS, Ordering::Release);
+        self.deadline_micros.store(u64::MAX, Ordering::Release);
     }
-}
 
-/// Progress callback: abort the transaction past its deadline. Reads one
-/// atomic; the pointer stays valid because the clock outlives the connection
-/// that carries the handler.
-unsafe extern "C" fn progress_callback(context: *mut std::ffi::c_void) -> std::os::raw::c_int {
-    // Safety: installed only by `install_abort_clock` with a live clock.
-    let clock = unsafe { &*(context as *const AbortClock) };
-    if now_millis() > clock.deadline_ms.load(Ordering::Acquire) {
-        1
-    } else {
-        0
-    }
-}
-
-/// Attach the abort clock to a writer connection. The clock must outlive the
-/// connection; both live in `writer_loop`, the clock in the outer scope.
-fn install_abort_clock(connection: &Connection, clock: &AbortClock) {
-    let context: *const AbortClock = clock;
-    unsafe {
-        rusqlite::ffi::sqlite3_progress_handler(
-            connection.handle(),
-            PROGRESS_OPS,
-            Some(progress_callback),
-            context as *mut std::ffi::c_void,
-        );
-    }
-}
-
-/// Detach the abort clock before the writer connection closes.
-fn clear_abort_clock(connection: &Connection) {
-    unsafe {
-        rusqlite::ffi::sqlite3_progress_handler(connection.handle(), 0, None, std::ptr::null_mut());
+    fn expired(&self) -> bool {
+        self.now_micros() > self.deadline_micros.load(Ordering::Acquire)
     }
 }
 
@@ -705,14 +678,6 @@ fn short_cause(error: &rusqlite::Error) -> String {
             text.chars().take(120).collect()
         }
     }
-}
-
-/// Current wall-clock milliseconds for the abort clock.
-fn now_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|span| span.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 #[cfg(test)]
