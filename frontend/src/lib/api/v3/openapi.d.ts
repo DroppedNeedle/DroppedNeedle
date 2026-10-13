@@ -8180,6 +8180,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/settings/library-management/placement": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How safely each library folder can be written to, as last checked.
+         *     Reading this checks nothing.
+         */
+        get: operations["get_management_placement"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library-management/placement/{root_id}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check one library folder now. The check creates a folder named
+         *     `.droppedneedle-management-probe` at the top of the library folder
+         *     and removes it again.
+         */
+        post: operations["check_management_placement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/settings/library-management/profile-imports": {
         parameters: {
             query?: never;
@@ -16551,6 +16592,29 @@ export interface components {
             /** @description The library folder it is in. */
             root_path: string;
         };
+        /** @description What checking one library folder found. */
+        ManagementPlacementCheckView: {
+            /**
+             * @description False when the check could not tell, for example on a full or
+             *     read-only disk. `mode` is then the last result, which is kept.
+             */
+            answered: boolean;
+            /** @description The folder's mode now. */
+            mode: components["schemas"]["ManagementPlacementMode"];
+            root_id: string;
+        };
+        /**
+         * @description How DroppedNeedle can add a file to a library folder.
+         * @enum {string}
+         */
+        ManagementPlacementMode: "unknown" | "rename" | "link" | "check";
+        /**
+         * @description Every saved library folder DroppedNeedle can write to. Excluded
+         *     folders are not listed.
+         */
+        ManagementPlacementView: {
+            roots: components["schemas"]["ManagementRootPlacementView"][];
+        };
         /** @description One page of planned files. */
         ManagementPlanItemPage: {
             has_more: boolean;
@@ -16748,6 +16812,11 @@ export interface components {
             items: components["schemas"]["ManagementResultItemView"][];
             /** Format: int64 */
             next_after_ordinal?: number | null;
+        };
+        /** @description One library folder and how files can be added to it. */
+        ManagementRootPlacementView: {
+            mode: components["schemas"]["ManagementPlacementMode"];
+            root_id: string;
         };
         /**
          * @description A preview's scope: library folders, artists, albums, files, or a
@@ -41561,6 +41630,91 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["LibraryManagementChangeImpact"];
                 };
+            };
+        };
+    };
+    get_management_placement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Placement mode of each library folder */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementPlacementView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    check_management_placement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Library root id */
+                root_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The folder's placement mode now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementPlacementCheckView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown or excluded library folder */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The library folders cannot be opened right now */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

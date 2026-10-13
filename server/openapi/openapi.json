@@ -20267,6 +20267,77 @@
         }
       }
     },
+    "/api/v3/settings/library-management/placement": {
+      "get": {
+        "tags": [
+          "crate::library::http::management_tools"
+        ],
+        "summary": "How safely each library folder can be written to, as last checked.\nReading this checks nothing.",
+        "operationId": "get_management_placement",
+        "responses": {
+          "200": {
+            "description": "Placement mode of each library folder",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementPlacementView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        }
+      }
+    },
+    "/api/v3/settings/library-management/placement/{root_id}/check": {
+      "post": {
+        "tags": [
+          "crate::library::http::management_tools"
+        ],
+        "summary": "Check one library folder now. The check creates a folder named\n`.droppedneedle-management-probe` at the top of the library folder\nand removes it again.",
+        "operationId": "check_management_placement",
+        "parameters": [
+          {
+            "name": "root_id",
+            "in": "path",
+            "description": "Library root id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The folder's placement mode now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementPlacementCheckView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown or excluded library folder"
+          },
+          "409": {
+            "description": "The library folders cannot be opened right now"
+          }
+        }
+      }
+    },
     "/api/v3/settings/library-management/profile-imports": {
       "post": {
         "tags": [
@@ -38454,6 +38525,53 @@
           }
         }
       },
+      "ManagementPlacementCheckView": {
+        "type": "object",
+        "description": "What checking one library folder found.",
+        "required": [
+          "root_id",
+          "mode",
+          "answered"
+        ],
+        "properties": {
+          "answered": {
+            "type": "boolean",
+            "description": "False when the check could not tell, for example on a full or\nread-only disk. `mode` is then the last result, which is kept."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ManagementPlacementMode",
+            "description": "The folder's mode now."
+          },
+          "root_id": {
+            "type": "string"
+          }
+        }
+      },
+      "ManagementPlacementMode": {
+        "type": "string",
+        "description": "How DroppedNeedle can add a file to a library folder.",
+        "enum": [
+          "unknown",
+          "rename",
+          "link",
+          "check"
+        ]
+      },
+      "ManagementPlacementView": {
+        "type": "object",
+        "description": "Every saved library folder DroppedNeedle can write to. Excluded\nfolders are not listed.",
+        "required": [
+          "roots"
+        ],
+        "properties": {
+          "roots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagementRootPlacementView"
+            }
+          }
+        }
+      },
       "ManagementPlanItemPage": {
         "type": "object",
         "description": "One page of planned files.",
@@ -39017,6 +39135,22 @@
               "null"
             ],
             "format": "int64"
+          }
+        }
+      },
+      "ManagementRootPlacementView": {
+        "type": "object",
+        "description": "One library folder and how files can be added to it.",
+        "required": [
+          "root_id",
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/ManagementPlacementMode"
+          },
+          "root_id": {
+            "type": "string"
           }
         }
       },

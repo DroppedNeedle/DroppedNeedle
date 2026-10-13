@@ -6,9 +6,11 @@ import { toPreviewDetail } from './libraryManagementAdapters';
 import type { OperationResponse } from '$lib/queries/library/LibraryOperationsTypes';
 import { operationControlUrl } from '$lib/queries/library/LibraryOperationMutations.svelte';
 import { toOperationResponse } from '$lib/queries/library/libraryOperationAdapters';
+import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
 
 import { invalidateLibraryManagementSurfaces } from './LibraryManagementInvalidation';
+import { LibraryManagementQueryKeyFactory } from './LibraryManagementQueryKeyFactory';
 import type {
 	LibraryManagementActivationConfirmRequest,
 	LibraryManagementActivationPreviewRequest,
@@ -257,4 +259,29 @@ export const controlLibraryManagementOperationMutation = (action: 'pause' | 'res
 			toastStore.show({ message: `Organization ${action} requested`, type: 'success' });
 		},
 		onError: showActionError(`Could not ${action} this organization operation`)
+	}));
+
+// Checks one library folder now. The server creates and removes a folder
+// at the top of it.
+export const checkLibraryManagementPlacementMutation = (
+	getUserId: () => string | null | undefined
+) =>
+	createMutation(() => ({
+		mutationFn: (rootId: string) =>
+			api.global.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.checkPlacement(rootId)),
+		onSuccess: async (result) => {
+			await invalidateQueriesWithPersister({
+				queryKey: LibraryManagementQueryKeyFactory.placement(getUserId())
+			});
+			if (!result.answered) {
+				toastStore.show({
+					message:
+						result.mode === 'unknown'
+							? 'Could not check this library right now. The server log has the reason.'
+							: 'Could not check this library right now. Its last result is kept.',
+					type: 'error'
+				});
+			}
+		},
+		onError: showActionError('Could not check this library')
 	}));

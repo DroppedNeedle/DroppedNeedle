@@ -170,6 +170,9 @@ pub struct LibrarySetup {
     pub test_contrib: Option<TestContribProviders>,
     /// Publish cell (empty until a usable root exists).
     pub publish: Arc<std::sync::Mutex<PublishCell>>,
+    /// Placement modes of the open publish session, readable without the
+    /// cell.
+    pub placement: super::manage::RootPlacement,
     /// Unsettled publish bundles, read from the journal; their tracks
     /// take no new managed writes until a pass settles them.
     pub held_bundles: super::manage::HeldBundles,
@@ -463,6 +466,8 @@ impl LibrarySetup {
                 identify_store.clone(),
             )),
         )?;
+        let publish = PublishCell::new(db_path);
+        let placement = publish.placement();
         Ok(Self {
             users,
             ids,
@@ -483,7 +488,8 @@ impl LibrarySetup {
             contrib_worker,
             #[cfg(any(test, feature = "test-support"))]
             test_contrib: None,
-            publish: Arc::new(std::sync::Mutex::new(PublishCell::new(db_path))),
+            publish: Arc::new(std::sync::Mutex::new(publish)),
+            placement,
             held_bundles: super::manage::HeldBundles::new(db_path),
             leftover_files: super::manage::LeftoverFiles::new(db_path),
             previews: Arc::new(std::sync::Mutex::new(HashMap::new())),

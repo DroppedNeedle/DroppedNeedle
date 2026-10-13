@@ -72,9 +72,10 @@ impl Sandbox {
     }
 
     /// Probe a root whose placement mode is still `Unknown`, because a
-    /// bundle is about to place files under it. This is the only time the
-    /// probe writes to a library. A root that answers `Unknown` again is
-    /// probed again for the next bundle.
+    /// bundle is about to place files under it. Apart from an
+    /// administrator's check, this is the only time the probe writes to a
+    /// library. A root that answers `Unknown` again is probed again for
+    /// the next bundle.
     pub fn probe_placement(&self, root_id: &str) -> Result<PlacementMode, PublishError> {
         let known = self.placement_mode(root_id);
         if known != PlacementMode::Unknown {
@@ -82,6 +83,18 @@ impl Sandbox {
         }
         let mode = place::probe(self.root_dir(root_id)?);
         self.store_placement_mode(root_id, mode);
+        Ok(mode)
+    }
+
+    /// Probe a root again whatever is known about it, because an
+    /// administrator asked, and return the probe's answer. A probe that
+    /// could not tell (`Unknown`) leaves what was known in place: a full
+    /// disk must not clear a standing `Check`.
+    pub fn recheck_placement(&self, root_id: &str) -> Result<PlacementMode, PublishError> {
+        let mode = place::probe(self.root_dir(root_id)?);
+        if mode != PlacementMode::Unknown {
+            self.store_placement_mode(root_id, mode);
+        }
         Ok(mode)
     }
 

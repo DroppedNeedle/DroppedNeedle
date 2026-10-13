@@ -14,7 +14,7 @@ use super::publish::publisher::{PublishOutcome, Publisher, SqliteCatalog};
 use super::publish::recovery::LeftoverReport;
 use super::publish::snapshots::{BaselineStore, BlobStore, SnapshotStore, sha256_hex};
 use super::publish::tags_seam::TagDocument;
-use super::publish::{PublishError, Sandbox};
+use super::publish::{PlacementMode, PublishError, Sandbox};
 use super::scan::fs::WriteGuard;
 use super::scan::models::EffectivePolicy;
 use super::scan::roots::RootRegistry;
@@ -65,6 +65,59 @@ pub(crate) struct OpenPublish {
 pub struct PublishCell {
     db_path: PathBuf,
     pub(crate) cell: Option<OpenPublish>,
+    placement: RootPlacement,
+}
+
+/// How files can be placed under each root of the open publisher session,
+/// as its probes found. Kept beside the cell so a read never waits on a
+/// publish holding it, and never probes: only a publish or an
+/// administrator's "Check again" does.
+#[derive(Clone, Default)]
+pub struct RootPlacement {
+    open: std::sync::Arc<std::sync::Mutex<Option<Sandbox>>>,
+}
+
+impl RootPlacement {
+    /// The mode of one root as last probed. `Unknown` for a root the open
+    /// session does not hold, and while no session is open.
+    pub fn mode(&self, root_id: &str) -> PlacementMode {
+        self.open
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .map_or(PlacementMode::Unknown, |sandbox| {
+                sandbox.placement_mode(root_id)
+            })
+    }
+
+    /// Fix a root's mode without probing. Tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_mode(&self, root_id: &str, mode: PlacementMode) {
+        let open = self
+            .open
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(sandbox) = open.as_ref() {
+            sandbox.set_placement_mode(root_id, mode);
+        }
+    }
+
+    fn follow(&self, session: Option<Sandbox>) {
+        *self
+            .open
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = session;
+    }
+}
+
+/// What a placement check found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlacementCheck {
+    /// The root's mode now.
+    pub mode: PlacementMode,
+    /// False when the probe could not tell (a full or read-only disk, a
+    /// share that did not answer). `mode` is then what was known before.
+    pub answered: bool,
 }
 
 /// Unsettled publish bundles as the journal records them: anything not
@@ -198,7 +251,30 @@ impl PublishCell {
         Self {
             db_path: db_path.to_owned(),
             cell: None,
+            placement: RootPlacement::default(),
         }
+    }
+
+    /// The placement modes of whatever session this cell has open.
+    pub(crate) fn placement(&self) -> RootPlacement {
+        self.placement.clone()
+    }
+
+    /// Probe one root of the open session now. `None` for a root the
+    /// session does not hold. The caller holds the cell, so no publish is
+    /// placing files under the root meanwhile.
+    fn recheck_placement(&self, root_id: &str) -> Result<Option<PlacementCheck>, PublishError> {
+        let Some(open) = self.cell.as_ref() else {
+            return Ok(None);
+        };
+        if !open.root_ids.iter().any(|id| id == root_id) {
+            return Ok(None);
+        }
+        let probed = open.sandbox.recheck_placement(root_id)?;
+        Ok(Some(PlacementCheck {
+            mode: open.sandbox.placement_mode(root_id),
+            answered: probed != PlacementMode::Unknown,
+        }))
     }
 
     /// True while the journal holds an unsettled bundle (cleanup still
@@ -252,6 +328,7 @@ impl PublishCell {
         let ids: Vec<String> = roots.iter().map(|root| root.id.clone()).collect();
         if roots.is_empty() {
             self.cell = None;
+            self.placement.follow(None);
             return Ok(Vec::new());
         }
         if let Some(open) = self.cell.as_ref()
@@ -275,6 +352,7 @@ impl PublishCell {
             FsSpaceProbe::new(space_roots.clone()),
             today_day,
         )?;
+        self.placement.follow(Some(sandbox.clone()));
         self.cell = Some(OpenPublish {
             sandbox,
             publisher,
@@ -1124,6 +1202,28 @@ impl LibrarySetup {
         };
         cell.refresh(&registry, &self.root_dirs)?;
         Ok(cell.open()?.sandbox.clone())
+    }
+
+    /// Probe one root now, under the session the saved library folders
+    /// call for: a folder excluded or removed since the session opened is
+    /// no longer in it and answers `None`, and nothing is written there.
+    /// Waits for a write in flight. Blocking.
+    pub(crate) fn check_placement(
+        &self,
+        root_id: &str,
+    ) -> Result<Option<PlacementCheck>, PublishError> {
+        let registry = self.live_registry();
+        let mut cell = self
+            .publish
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guards = if cell.needs_refresh(&registry) {
+            self.publish_guards(&registry)
+        } else {
+            Vec::new()
+        };
+        cell.refresh(&registry, &self.root_dirs)?;
+        cell.recheck_placement(root_id)
     }
 
     /// Publish one album a management job planned. The tags to write and

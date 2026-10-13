@@ -32,6 +32,7 @@ use crate::library::management::restore::{
 };
 use crate::library::management::service::Management;
 use crate::library::management::tag_edit::{EditorContext, TagEditRequest};
+use crate::library::publish::PlacementMode;
 use crate::library::wiring::LibrarySetup;
 use crate::runtime_config::sections::LibraryManagement;
 use crate::settings::models::LibraryManagementSettingsResponse;
@@ -74,6 +75,14 @@ pub fn router() -> Router<LibrarySetup> {
         .route(
             "/library/management/automatic/skipped",
             get(list_management_automatic_skipped),
+        )
+        .route(
+            "/settings/library-management/placement",
+            get(get_management_placement),
+        )
+        .route(
+            "/settings/library-management/placement/{root_id}/check",
+            post(check_management_placement),
         )
         .route(
             "/settings/library-management/activation-previews",
@@ -658,6 +667,118 @@ pub async fn resolve_management_bundle(
     let management = Management::new(&state);
     let resolved = blocking(move || management.resolve_bundle(&bundle_id, &caller.user_id)).await?;
     Ok(Json(resolved.into()))
+}
+
+// ---------------------------------------------------------------------------
+// Placement.
+// ---------------------------------------------------------------------------
+
+/// How DroppedNeedle can add a file to a library folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagementPlacementMode {
+    /// Not checked yet, or the check could not tell.
+    Unknown,
+    /// A file is added only when its name is free.
+    Rename,
+    /// The same, through a hard link.
+    Link,
+    /// The disk has neither: the name is checked, then the file is moved
+    /// in, and a file another program creates in between is replaced.
+    Check,
+}
+
+impl From<PlacementMode> for ManagementPlacementMode {
+    fn from(mode: PlacementMode) -> Self {
+        match mode {
+            PlacementMode::Unknown => Self::Unknown,
+            PlacementMode::Rename => Self::Rename,
+            PlacementMode::Link => Self::Link,
+            PlacementMode::Check => Self::Check,
+        }
+    }
+}
+
+/// One library folder and how files can be added to it.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ManagementRootPlacementView {
+    pub root_id: String,
+    pub mode: ManagementPlacementMode,
+}
+
+/// What checking one library folder found.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ManagementPlacementCheckView {
+    pub root_id: String,
+    /// The folder's mode now.
+    pub mode: ManagementPlacementMode,
+    /// False when the check could not tell, for example on a full or
+    /// read-only disk. `mode` is then the last result, which is kept.
+    pub answered: bool,
+}
+
+/// Every saved library folder DroppedNeedle can write to. Excluded
+/// folders are not listed.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ManagementPlacementView {
+    pub roots: Vec<ManagementRootPlacementView>,
+}
+
+/// How safely each library folder can be written to, as last checked.
+/// Reading this checks nothing.
+#[utoipa::path(
+    get,
+    path = "/api/v3/settings/library-management/placement",
+    responses(
+        (status = 200, description = "Placement mode of each library folder", body = ManagementPlacementView),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required"),
+    )
+)]
+pub async fn get_management_placement(
+    State(state): State<LibrarySetup>,
+    _caller: RequireAdmin,
+) -> Result<Json<ManagementPlacementView>, LibraryError> {
+    let management = Management::new(&state);
+    let roots = blocking(move || Ok(management.placement_modes()))
+        .await?
+        .into_iter()
+        .map(|(root_id, mode)| ManagementRootPlacementView {
+            root_id,
+            mode: mode.into(),
+        })
+        .collect();
+    Ok(Json(ManagementPlacementView { roots }))
+}
+
+/// Check one library folder now. The check creates a folder named
+/// `.droppedneedle-management-probe` at the top of the library folder
+/// and removes it again.
+#[utoipa::path(
+    post,
+    path = "/api/v3/settings/library-management/placement/{root_id}/check",
+    params(("root_id" = String, Path, description = "Library root id")),
+    responses(
+        (status = 200, description = "The folder's placement mode now", body = ManagementPlacementCheckView),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required"),
+        (status = 404, description = "Unknown or excluded library folder"),
+        (status = 409, description = "The library folders cannot be opened right now"),
+    )
+)]
+pub async fn check_management_placement(
+    State(state): State<LibrarySetup>,
+    _caller: RequireAdmin,
+    Path(root_id): Path<String>,
+) -> Result<Json<ManagementPlacementCheckView>, LibraryError> {
+    let management = Management::new(&state);
+    let checked = root_id.clone();
+    let check = blocking(move || management.check_placement(&checked)).await?;
+    Ok(Json(ManagementPlacementCheckView {
+        root_id,
+        mode: check.mode.into(),
+        answered: check.answered,
+    }))
 }
 
 // ---------------------------------------------------------------------------

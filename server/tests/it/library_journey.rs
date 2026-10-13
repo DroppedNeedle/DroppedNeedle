@@ -897,6 +897,136 @@ async fn library_journey_retag_apply_baseline_restore() {
     );
 }
 
+/// The settings page shows how safely each library folder can be written
+/// to. Reading it never probes: a folder nothing has written to stays
+/// "unknown" and untouched, and one whose probe found no safe method
+/// reads "check". Only "Check again" probes, and it cleans up after
+/// itself.
+#[tokio::test]
+async fn library_management_placement_read_never_probes() {
+    use droppedneedle::library::publish::PlacementMode;
+    use droppedneedle::runtime_config::secret_sections::IdentificationPolicy;
+
+    let lib = Lib::open("placement").await;
+    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
+    let auth = bearer(&admin);
+    let headers = [("authorization", auth.as_str())];
+    let music = lib.dir.join("music");
+    std::fs::create_dir_all(&music).expect("music dir");
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/roots",
+        &headers,
+        Some(json!({"id": "music", "path": music.to_string_lossy()})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    drain_scans(&lib.library).await;
+
+    let placement = "/api/v3/settings/library-management/placement";
+    let read = || async {
+        let (status, body) = call(lib.router(), "GET", placement, &headers, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body
+    };
+    let untouched = || std::fs::read_dir(&music).expect("music lists").count() == 0;
+
+    assert_eq!(
+        read().await,
+        json!({"roots": [{"root_id": "music", "mode": "unknown"}]})
+    );
+    lib.library
+        .placement
+        .set_mode("music", PlacementMode::Check);
+    assert_eq!(
+        read().await,
+        json!({"roots": [{"root_id": "music", "mode": "check"}]})
+    );
+    assert!(untouched(), "a read wrote into the library folder");
+
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        &format!("{placement}/music/check"),
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["root_id"], "music");
+    let mode = body["mode"].as_str().expect("mode").to_owned();
+    assert!(matches!(mode.as_str(), "rename" | "link"), "{body}");
+    assert_eq!(body["answered"], true, "{body}");
+    assert_eq!(read().await["roots"][0]["mode"], mode.as_str());
+    assert!(untouched(), "the probe left something behind");
+
+    // A folder excluded in Library settings after the session opened is
+    // no longer listed, and checking it writes nothing into it.
+    let set_policy = |policy| {
+        use droppedneedle::runtime_config::secret_sections::TypedLibrary;
+        let mut settings = lib
+            .store
+            .get_masked::<TypedLibrary>()
+            .expect("library settings read")
+            .into_inner();
+        settings.library_roots[0].policy = policy;
+        lib.store
+            .save_secret(settings)
+            .expect("library settings save");
+    };
+    let check = || async {
+        call(
+            lib.router(),
+            "POST",
+            &format!("{placement}/music/check"),
+            &headers,
+            None,
+        )
+        .await
+    };
+    set_policy(IdentificationPolicy::Excluded);
+    let (status, body) = check().await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(read().await, json!({"roots": []}));
+
+    // Included again, it reads "unknown". A probe that cannot answer (its
+    // folder holds someone else's file) keeps what was known and says so.
+    set_policy(IdentificationPolicy::Automatic);
+    assert_eq!(read().await["roots"][0]["mode"], "unknown");
+    assert!(untouched(), "an excluded folder was written to");
+    let probe_dir = music.join(".droppedneedle-management-probe");
+    std::fs::create_dir(&probe_dir).expect("probe folder planted");
+    std::fs::write(probe_dir.join("stray"), b"x").expect("stray file planted");
+    let (status, body) = check().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["mode"], "unknown", "{body}");
+    lib.library
+        .placement
+        .set_mode("music", PlacementMode::Check);
+    let (status, body) = check().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body,
+        json!({"root_id": "music", "mode": "check", "answered": false})
+    );
+    assert_eq!(read().await["roots"][0]["mode"], "check");
+    assert!(
+        probe_dir.join("stray").exists(),
+        "the stray file was removed"
+    );
+
+    let (status, _) = call(
+        lib.router(),
+        "POST",
+        &format!("{placement}/elsewhere/check"),
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
 /// A trusted user may write an album's edition tags into its files and
 /// nothing more: no destination, no tag values of their own, no undo and
 /// no restore. An admin's same calls go through.

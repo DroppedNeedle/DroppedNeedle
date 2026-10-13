@@ -281,3 +281,15 @@ export const getLibraryManagementActivationHealthQuery = (
 		queryFn: ({ signal }) =>
 			api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.activationHealth(), { signal })
 	}));
+
+// How safely each library folder can be written to, as last checked.
+// Reading it checks nothing.
+export const getLibraryManagementPlacementQuery = (
+	getUserId: Getter<string | null | undefined>,
+	enabled: Getter<boolean> = () => true
+) =>
+	createQuery(() => ({
+		enabled: enabled(),
+		queryKey: LibraryManagementQueryKeyFactory.placement(getUserId()),
+		queryFn: ({ signal }) => api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.placement(), { signal })
+	}));

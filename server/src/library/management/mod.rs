@@ -15,7 +15,8 @@
 //! purging them), `duplicates` (a file whose place is taken), `activation`
 //! (the dry run that turns automatic management on), `automatic` (runs
 //! after a scan or an import), `after_apply` (bookkeeping and media-server
-//! refreshes), and `recovery` (writes that need an administrator).
+//! refreshes), `recovery` (writes that need an administrator), and
+//! `placement` (how safely each library folder can be written to).
 
 pub mod activation;
 pub mod after_apply;
@@ -25,6 +26,7 @@ pub mod duplicates;
 pub mod enrich;
 pub mod genre;
 pub mod models;
+pub mod placement;
 pub mod planner;
 pub mod profile;
 pub mod reasons;

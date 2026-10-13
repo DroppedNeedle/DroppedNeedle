@@ -30,6 +30,11 @@ export const LIBRARY_MANAGEMENT_ENDPOINTS = {
 	impact: () => v3('/api/v3/settings/library-management/impact'),
 	validate: () => v3('/api/v3/settings/library-management/validate'),
 	activationHealth: () => v3('/api/v3/settings/library-management/activation-health'),
+	placement: () => v3('/api/v3/settings/library-management/placement'),
+	checkPlacement: (rootId: string) =>
+		v3('/api/v3/settings/library-management/placement/{root_id}/check', {
+			path: { root_id: rootId }
+		}),
 	profiles: () => v3('/api/v3/settings/library-management/profiles'),
 	profile: (profileId: string) =>
 		v3('/api/v3/settings/library-management/profiles/{profile_id}', {
