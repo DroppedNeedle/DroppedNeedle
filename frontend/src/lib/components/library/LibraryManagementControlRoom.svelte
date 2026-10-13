@@ -105,15 +105,20 @@
 					assignment.automatic_scan_discovered)
 		)
 	);
+	const needsAttentionBundles = $derived(recoveryQuery.data?.needs_attention_bundles ?? []);
+	const retryingBundles = $derived(recoveryQuery.data?.retrying_bundles ?? []);
+	const leftoverFiles = $derived(recoveryQuery.data?.leftover_files ?? []);
+	const leftoverFileCount = $derived(recoveryQuery.data?.leftover_file_count ?? 0);
 	const attentionCount = $derived(
 		(recoveryQuery.data?.needs_attention_count ?? 0) +
 			(recoveryQuery.data?.cleanup_pending_count ?? 0) +
+			retryingBundles.length +
+			leftoverFileCount +
 			history.filter(
 				(item) => item.operation.state === 'failed' && !isStaleInputTerminal(item.operation)
 			).length
 	);
 	const recoveryUnavailable = $derived(recoveryQuery.isError);
-	const needsAttentionBundles = $derived(recoveryQuery.data?.needs_attention_bundles ?? []);
 	const skippedQuery = getLibraryManagementAutomaticSkippedQuery(
 		() => authStore.user?.id,
 		() => authStore.isAdmin
@@ -617,6 +622,46 @@
 						><strong>Recovery status is unavailable</strong><br />Do not start new file writes until
 						diagnostics load successfully. Refresh this page or check the server logs.</span
 					>
+				</div>{/if}
+			{#if retryingBundles.length > 0}<div class="alert alert-warning items-start">
+					<TriangleAlert class="mt-0.5 h-5 w-5" /><span
+						><strong>Some file writes are still being retried</strong><br />{retryingBundles.length}
+						{retryingBundles.length === 1 ? 'write' : 'writes'} started more than a day ago and still
+						cannot be finished or undone. DroppedNeedle keeps retrying and has deleted nothing. This usually
+						means a library folder is missing, read-only or full: check the folders below and the server
+						logs.</span
+					>
+					<ul class="flex w-full flex-col gap-2">
+						{#each retryingBundles as bundle (bundle.bundle_id)}<li
+								class="rounded-md bg-base-100/60 p-2 text-sm"
+							>
+								{bundle.file_count ?? 0} files{#if bundle.sample_paths?.length}: <span
+										class="font-mono text-xs break-all">{bundle.sample_paths.join(', ')}</span
+									>{/if}
+							</li>{/each}
+					</ul>
+				</div>{/if}
+			{#if leftoverFileCount > 0}<div class="alert alert-warning items-start">
+					<TriangleAlert class="mt-0.5 h-5 w-5" /><span
+						><strong>Leftover temporary files found</strong><br />{leftoverFileCount} hidden
+						{leftoverFileCount === 1 ? 'file' : 'files'} in your library folders
+						{leftoverFileCount === 1 ? 'is a working copy' : 'are working copies'} from a file write that
+						was interrupted, with no record left of which write. One could be the only copy of a track
+						as it was before the write, so DroppedNeedle has not deleted or moved any of them. Compare
+						each with the track beside it. If the track plays, you can delete the hidden file. If the
+						track is missing or damaged, rename the hidden file to the track's name. This list is checked
+						again when the server starts.</span
+					>
+					<ul class="flex w-full flex-col gap-1">
+						{#each leftoverFiles as file (`${file.root_id}/${file.rel_path}`)}<li
+								class="rounded-md bg-base-100/60 p-2 font-mono text-xs break-all"
+							>
+								{file.rel_path}
+							</li>{/each}
+					</ul>
+					{#if leftoverFileCount > leftoverFiles.length}<span class="text-sm"
+							>Showing the first {leftoverFiles.length}.</span
+						>{/if}
 				</div>{/if}
 			{#if skippedAlbums.length > 0}<details class="rounded-lg border border-base-content/10 p-3">
 					<summary class="cursor-pointer text-sm font-semibold"
