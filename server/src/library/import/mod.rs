@@ -163,10 +163,7 @@ impl LibrarySetup {
             .ok()
             .filter(|template| !template.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_NAMING_TEMPLATE.to_owned());
-        let task_dir = format!(
-            "{HIDDEN_PREFIX}import/{}",
-            safe_name(import.staging.as_deref().unwrap_or(&import.task_id))
-        );
+        let task_dir = staging_rel(import.staging.as_deref().unwrap_or(&import.task_id));
         let mut sources = Vec::with_capacity(import.files.len() + import.extras.len());
         for file in &import.files {
             let track = import.release.tracks.get(file.track).ok_or_else(|| {
@@ -484,6 +481,13 @@ impl LibrarySetup {
             });
         }
     }
+}
+
+/// The hidden folder, relative to its library root, that an import
+/// staged under `name` copies its files into. Publish journal rows name
+/// it as their source, which is how a download task's writes are found.
+pub(crate) fn staging_rel(name: &str) -> String {
+    format!("{HIDDEN_PREFIX}import/{}", safe_name(name))
 }
 
 /// A task id as one folder name.
