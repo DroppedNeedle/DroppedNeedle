@@ -7,11 +7,14 @@
 use crate::common;
 
 use std::{
+    future::Future,
     path::PathBuf,
+    pin::Pin,
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
+    task::Poll,
     time::{Duration, Instant},
 };
 
@@ -44,6 +47,50 @@ async fn open_scratch(name: &str) -> (DbRuntime, ScratchDir) {
     let db = dir.join("library.db");
     let runtime = crate::common::scratch_runtime(&db).await;
     (runtime, dir)
+}
+
+/// Lets one write hold the lane until the test lets go of it.
+struct Hold {
+    entered: tokio::sync::oneshot::Sender<()>,
+    release: std::sync::mpsc::Receiver<()>,
+}
+
+impl Hold {
+    /// Called inside the write: report in, then block until released. A
+    /// test that fails first drops its end, which releases too.
+    fn wait(self) {
+        let _ = self.entered.send(());
+        let _ = self.release.recv();
+    }
+}
+
+/// A hold, the signal that the write is inside its transaction, and the
+/// release.
+fn hold() -> (
+    Hold,
+    tokio::sync::oneshot::Receiver<()>,
+    std::sync::mpsc::Sender<()>,
+) {
+    let (entered, inside) = tokio::sync::oneshot::channel();
+    let (let_go, release) = std::sync::mpsc::channel();
+    (Hold { entered, release }, inside, let_go)
+}
+
+type QueuedWrite = Pin<Box<dyn Future<Output = ()>>>;
+
+/// Poll each write once. `write` queues its closure on the first poll, so
+/// afterwards every one is waiting in the lane, in the order given.
+async fn admit(writes: &mut [QueuedWrite]) {
+    std::future::poll_fn(|cx| {
+        for write in writes.iter_mut() {
+            assert!(
+                write.as_mut().poll(cx).is_pending(),
+                "a write behind a held lane cannot finish"
+            );
+        }
+        Poll::Ready(())
+    })
+    .await;
 }
 
 /// Sidecar path for a database file.
@@ -298,9 +345,10 @@ async fn writer_fairness_burst_eight_then_one() {
     let order = Arc::new(Mutex::new(Vec::new()));
     let lane = runtime.lane().clone();
     let blocker_order = Arc::clone(&order);
+    let (held, inside, let_go) = hold();
     let blocker = tokio::spawn(async move {
         lane.write(Lane::Foreground, "brief-blocker", move |tx| {
-            std::thread::sleep(Duration::from_millis(500));
+            held.wait();
             tx.execute("INSERT INTO scratch_order (label) VALUES ('block')", [])?;
             blocker_order.lock().unwrap().push("block".to_owned());
             Ok(())
@@ -308,13 +356,13 @@ async fn writer_fairness_burst_eight_then_one() {
         .await
         .unwrap();
     });
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    inside.await.unwrap();
 
-    let mut handles = Vec::new();
+    let mut queued: Vec<QueuedWrite> = Vec::new();
     for index in 0..9 {
         let lane = runtime.lane().clone();
         let order = Arc::clone(&order);
-        handles.push(tokio::spawn(async move {
+        queued.push(Box::pin(async move {
             let label = format!("f{index}");
             lane.write(Lane::Foreground, "brief-fg", move |tx| {
                 tx.execute("INSERT INTO scratch_order (label) VALUES (?1)", [&label])?;
@@ -327,7 +375,7 @@ async fn writer_fairness_burst_eight_then_one() {
     }
     let lane = runtime.lane().clone();
     let order_bg = Arc::clone(&order);
-    handles.push(tokio::spawn(async move {
+    queued.push(Box::pin(async move {
         lane.write(Lane::Background, "brief-bg", move |tx| {
             tx.execute("INSERT INTO scratch_order (label) VALUES ('bg')", [])?;
             order_bg.lock().unwrap().push("bg".to_owned());
@@ -336,10 +384,12 @@ async fn writer_fairness_burst_eight_then_one() {
         .await
         .unwrap();
     }));
+    admit(&mut queued).await;
 
+    let_go.send(()).unwrap();
     blocker.await.unwrap();
-    for handle in handles {
-        handle.await.unwrap();
+    for write in queued {
+        write.await;
     }
     let order = order.lock().unwrap().clone();
     assert_eq!(
@@ -372,16 +422,17 @@ async fn busy_path_returns_503_with_retry_after_and_no_spin() {
         .unwrap();
 
     let lane = runtime.lane().clone();
+    let (held, inside, let_go) = hold();
     let holder = tokio::spawn(async move {
-        lane.write(Lane::Foreground, "brief-hold", |tx| {
+        lane.write(Lane::Foreground, "brief-hold", move |tx| {
             tx.execute("INSERT INTO scratch_busy (id) VALUES (1)", [])?;
-            std::thread::sleep(Duration::from_millis(800));
+            held.wait();
             Ok(())
         })
         .await
         .unwrap();
     });
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    inside.await.unwrap();
 
     let attempts = Arc::new(AtomicUsize::new(0));
     let started = Instant::now();
@@ -412,6 +463,7 @@ async fn busy_path_returns_503_with_retry_after_and_no_spin() {
         started.elapsed() < Duration::from_secs(5),
         "no in-process retry loop"
     );
+    let_go.send(()).unwrap();
     holder.await.unwrap();
 
     async fn busy_handler(Extension(RequestId(id)): Extension<RequestId>) -> Response {
@@ -619,21 +671,22 @@ async fn writer_lane_backpressure_fails_fast_when_full() {
         .unwrap();
 
     let lane = runtime.lane().clone();
+    let (held, inside, let_go) = hold();
     let blocker = tokio::spawn(async move {
-        lane.write(Lane::Foreground, "brief-blocker", |tx| {
-            std::thread::sleep(Duration::from_millis(3000));
+        lane.write(Lane::Foreground, "brief-blocker", move |tx| {
+            held.wait();
             tx.execute("INSERT INTO scratch_full (id) VALUES (1)", [])?;
             Ok(())
         })
         .await
         .unwrap();
     });
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    inside.await.unwrap();
 
-    let mut fillers = Vec::new();
+    let mut fillers: Vec<QueuedWrite> = Vec::new();
     for _ in 0..LANE_QUEUE_CAPACITY {
         let lane = runtime.lane().clone();
-        fillers.push(tokio::spawn(async move {
+        fillers.push(Box::pin(async move {
             lane.write(Lane::Foreground, "brief-fill", |tx| {
                 tx.execute("INSERT INTO scratch_full (id) VALUES (2)", [])?;
                 Ok(())
@@ -642,7 +695,7 @@ async fn writer_lane_backpressure_fails_fast_when_full() {
             .unwrap();
         }));
     }
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    admit(&mut fillers).await;
 
     match runtime
         .lane()
@@ -653,9 +706,10 @@ async fn writer_lane_backpressure_fails_fast_when_full() {
         other => panic!("full lane must fail fast with Busy, got {other:?}"),
     }
 
+    let_go.send(()).unwrap();
     blocker.await.unwrap();
     for filler in fillers {
-        filler.await.unwrap();
+        filler.await;
     }
     runtime.shutdown().await;
     std::fs::remove_dir_all(dir).ok();
