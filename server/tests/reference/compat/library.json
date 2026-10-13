@@ -1,0 +1,79 @@
+{
+  "fixtures": "server/tests/fixtures/library",
+  "artists": [
+    { "key": "radiohead", "name": "Radiohead" },
+    { "key": "u2", "name": "U2" },
+    { "key": "massive_attack", "name": "Massive Attack" },
+    { "key": "various_artists", "name": "Various Artists" },
+    { "key": "yuki", "name": "ユキ" }
+  ],
+  "albums": [
+    { "key": "ok_computer", "name": "OK Computer", "artist": "radiohead", "year": 1997 },
+    { "key": "achtung_baby", "name": "Achtung Baby", "artist": "u2", "year": 1991 },
+    { "key": "mezzanine", "name": "Mezzanine", "artist": "massive_attack", "year": 1998 },
+    { "key": "now_thats_music", "name": "Now Thats Music", "artist": "various_artists", "year": 2001 },
+    { "key": "bokou", "name": "望厚", "artist": "yuki", "year": 2015 }
+  ],
+  "tracks": [
+    {
+      "key": "airbag",
+      "fixture": "flac_full_01.flac",
+      "path": "Radiohead/OK Computer/01 Airbag.flac",
+      "title": "Airbag",
+      "artist": "Radiohead",
+      "album": "ok_computer",
+      "track": 1,
+      "genre": "Alternative Rock"
+    },
+    {
+      "key": "paranoid_android",
+      "fixture": "flac_full_02.flac",
+      "path": "Radiohead/OK Computer/02 Paranoid Android.flac",
+      "title": "Paranoid Android",
+      "artist": "Radiohead",
+      "album": "ok_computer",
+      "track": 2,
+      "genre": null
+    },
+    {
+      "key": "one",
+      "fixture": "mp3_full_01.mp3",
+      "path": "U2/Achtung Baby/03 One.mp3",
+      "title": "One",
+      "artist": "U2",
+      "album": "achtung_baby",
+      "track": 3,
+      "genre": "Rock"
+    },
+    {
+      "key": "teardrop",
+      "fixture": "m4a_full_01.m4a",
+      "path": "Massive Attack/Mezzanine/04 Teardrop.m4a",
+      "title": "Teardrop",
+      "artist": "Massive Attack",
+      "album": "mezzanine",
+      "track": 4,
+      "genre": null
+    },
+    {
+      "key": "song_a",
+      "fixture": "flac_compilation_01.flac",
+      "path": "Various Artists/Now Thats Music/01 Song A.flac",
+      "title": "Song A",
+      "artist": "Artist One",
+      "album": "now_thats_music",
+      "track": 1,
+      "genre": null
+    },
+    {
+      "key": "tougen_e",
+      "fixture": "flac_cjk_01.flac",
+      "path": "ユキ/望厚/01 桃源へ.flac",
+      "title": "桃源へ",
+      "artist": "ユキ",
+      "album": "bokou",
+      "track": 1,
+      "genre": null
+    }
+  ]
+}
