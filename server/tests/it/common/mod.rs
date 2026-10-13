@@ -385,6 +385,8 @@ pub fn outbound_at(origin: &str) -> droppedneedle::bootstrap::Outbound {
         geocoding: at("geocoding"),
         musicbrainz: at("musicbrainz"),
         brainzmash: at("brainzmash"),
+        identify_providers: droppedneedle::bootstrap::Port::live(),
+        contribution_providers: droppedneedle::bootstrap::Port::live(),
     }
 }
 

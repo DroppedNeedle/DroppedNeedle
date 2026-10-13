@@ -16,7 +16,7 @@ use std::sync::Arc;
 use axum::Router;
 use thiserror::Error;
 
-pub use outbound::Outbound;
+pub use outbound::{Outbound, Port};
 pub use serve::{Background, ServeError, bind, serve};
 
 use crate::{

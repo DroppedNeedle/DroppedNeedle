@@ -23,6 +23,7 @@ use super::clock::now_unix;
 use super::contrib::ContribProviders;
 use super::contrib::service::ContributionService;
 use super::contrib::worker::VerificationWorker;
+#[cfg(any(test, feature = "test-support"))]
 use super::identify::providers::FakeProviders;
 use super::identify::service::{IdentifyDeps, IdentifyService};
 use super::identify::sqlite::SqliteIdentifyStore;
@@ -152,6 +153,7 @@ pub struct LibrarySetup {
     /// Identify service.
     pub identify: Arc<IdentifyService>,
     /// Scripted providers (test bundles only).
+    #[cfg(any(test, feature = "test-support"))]
     pub test_providers: Option<Arc<FakeProviders>>,
     /// MusicBrainz releases for importing finished downloads: search and
     /// release lookups, identity-critical like identification. `None` in
@@ -254,16 +256,19 @@ impl LibrarySetup {
         // Contributions read MusicBrainz on both lanes (the curator's page
         // and the verification worker) and Discogs through the shared GET
         // port.
-        let contrib = ContribProviders {
-            discogs: Arc::new(super::adapters::LiveDiscogsContrib::new(
-                crate::providers::ReqwestGet::shared(http),
-                &outbound.discogs,
-            )),
-            musicbrainz: Arc::new(super::adapters::LiveMusicBrainzContrib::new(
-                mb_client(RequestPriority::UserInitiated),
-                mb_client(RequestPriority::BackgroundSync),
-            )),
-        };
+        let contrib = outbound
+            .contribution_providers
+            .get()
+            .unwrap_or_else(|| ContribProviders {
+                discogs: Arc::new(super::adapters::LiveDiscogsContrib::new(
+                    crate::providers::ReqwestGet::shared(http),
+                    &outbound.discogs,
+                )),
+                musicbrainz: Arc::new(super::adapters::LiveMusicBrainzContrib::new(
+                    mb_client(RequestPriority::UserInitiated),
+                    mb_client(RequestPriority::BackgroundSync),
+                )),
+            });
         let import_pacer = CorePacer::for_source(providers.clone(), "acoustid")
             .ok_or_else(|| "acoustid has no verified rate row".to_owned())?;
         let import_acoustid = AcoustIdClient::new(
@@ -276,21 +281,26 @@ impl LibrarySetup {
             .ok_or_else(|| "acoustid has no verified rate row".to_owned())?;
         let acoustid =
             AcoustIdClient::new(http.shared().clone(), &outbound.acoustid, pacer, health);
-        let make: ProviderFactory = Box::new(move |parts| {
-            let fingerprints = super::identify::sources::AcoustIdFingerprints::new(
-                acoustid,
-                parts.config,
-                parts.roots,
-                parts.pool,
-                parts.store.clone(),
-            );
-            Arc::new(super::identify::providers::LiveProviders::new(
-                musicbrainz,
-                parts.store,
-                fingerprints,
-            ))
-        });
-        let mut setup = Self::assemble(users, ids, make, None, contrib, db_path, config)?;
+        // Identification asks the port `outbound` gives, or the live
+        // clients when it gives none.
+        let make: ProviderFactory = match outbound.identify_providers.get() {
+            Some(given) => Box::new(move |_| given),
+            None => Box::new(move |parts| {
+                let fingerprints = super::identify::sources::AcoustIdFingerprints::new(
+                    acoustid,
+                    parts.config,
+                    parts.roots,
+                    parts.pool,
+                    parts.store.clone(),
+                );
+                Arc::new(super::identify::providers::LiveProviders::new(
+                    musicbrainz,
+                    parts.store,
+                    fingerprints,
+                ))
+            }),
+        };
+        let mut setup = Self::assemble(users, ids, make, contrib, db_path, config)?;
         setup.releases = Some(imports);
         setup.http = Some(http.shared().clone());
         let registry = setup.registry.clone();
@@ -317,11 +327,11 @@ impl LibrarySetup {
             users,
             ids,
             scripted_factory(scripted.clone()),
-            Some(scripted),
             contrib.providers(),
             &dir.path().join("app.db"),
             config,
         )?;
+        setup.test_providers = Some(scripted);
         setup.scratch = Some(dir);
         setup.test_contrib = Some(contrib);
         Ok(setup)
@@ -345,11 +355,11 @@ impl LibrarySetup {
             users,
             ids,
             scripted_factory(scripted.clone()),
-            Some(scripted),
             contrib.providers(),
             db_path,
             config,
         )?;
+        setup.test_providers = Some(scripted);
         setup.test_contrib = Some(contrib);
         Ok(setup)
     }
@@ -369,7 +379,6 @@ impl LibrarySetup {
             users,
             ids,
             Box::new(move |_| providers),
-            None,
             contrib.providers(),
             &dir.path().join("app.db"),
             config,
@@ -383,7 +392,6 @@ impl LibrarySetup {
         users: UsersDeps,
         ids: Arc<dyn IdGenerator>,
         make_providers: ProviderFactory,
-        test_providers: Option<Arc<FakeProviders>>,
         contrib_providers: ContribProviders,
         db_path: &Path,
         config: Arc<ConfigStore>,
@@ -484,7 +492,8 @@ impl LibrarySetup {
             wakeups,
             identify_store,
             identify,
-            test_providers,
+            #[cfg(any(test, feature = "test-support"))]
+            test_providers: None,
             releases: None,
             fingerprints: None,
             contrib,
