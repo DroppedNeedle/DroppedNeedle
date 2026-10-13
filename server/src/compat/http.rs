@@ -24,9 +24,10 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 
-use crate::auth::compat_auth::jellyfin::{JellyfinPasswordStore, JellyfinRequest, extract_token};
+use crate::auth::compat_auth::jellyfin::{JellyfinPasswordStore, extract_token};
 use crate::auth::session::middleware::TrustedProxies;
 use crate::client_ip::ClientIp;
+use crate::compat::jellyfin::QueryTokens;
 use crate::compat::settings::LiveSettings;
 use crate::compat::shared::{auth, cors, path_case, ratelimit, redact};
 use crate::compat::subsonic::auth::Principal;
@@ -258,21 +259,6 @@ fn limit_ip(request: &Request, trusted: &TrustedProxies) -> Option<IpAddr> {
         .map(|info| crate::client_ip::client_ip(info.0, request.headers(), trusted))
 }
 
-/// Exact-spelling query lookup for the two Jellyfin auth keys (v2 reads
-/// case-sensitive params: only `ApiKey` and `api_key`).
-fn query_exact<'a>(raw: Option<&'a str>, key: &str) -> Option<&'a str> {
-    for pair in raw.unwrap_or("").split('&') {
-        let (name, value) = match pair.find('=') {
-            Some(i) => (&pair[..i], &pair[i + 1..]),
-            None => (pair, ""),
-        };
-        if name == key {
-            return Some(value);
-        }
-    }
-    None
-}
-
 fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers.get(name).and_then(|value| value.to_str().ok())
 }
@@ -406,17 +392,9 @@ pub async fn limits_layer(
 /// Extract a Jellyfin request token for limit labeling. Synchronous: the
 /// request borrow never crosses an await (`Request<Body>` is not `Sync`).
 fn label_token(request: &Request) -> Option<String> {
-    let headers = request.headers();
-    let raw_query = request.uri().query();
-    let probe = JellyfinRequest {
-        authorization: header(headers, "authorization"),
-        emby_authorization: header(headers, "x-emby-authorization"),
-        emby_token: header(headers, "x-emby-token"),
-        mediabrowser_token: header(headers, "x-mediabrowser-token"),
-        query_apikey: query_exact(raw_query, "ApiKey"),
-        query_api_key: query_exact(raw_query, "api_key"),
-    };
-    extract_token(&probe)
+    // A malformed query token has no label: the handler answers it 401.
+    let query = QueryTokens::read(request.uri().query()).ok()?;
+    extract_token(&query.request(request.headers()))
 }
 
 /// Map a rendered Subsonic outcome onto a response. Non-empty bodies

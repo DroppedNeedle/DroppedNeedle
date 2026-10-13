@@ -1000,3 +1000,82 @@ async fn item_at_the_older_address_is_the_same_item() {
         assert_eq!((anonymous.status, anonymous.body.len()), (401, 0));
     }
 }
+
+/// A stream request with `token` written into the query as given.
+async fn play_with(fx: &Fx, key: &str, token: &str) -> u16 {
+    let uri = format!(
+        "/jellyfin/Audio/{}/stream?static=true&{key}={token}",
+        fx.track1
+    );
+    fx.get(&uri, None).await.status
+}
+
+/// An app password ends in `=`. A player may send it as written or as
+/// `%3D`, and both are the same token. The value is decoded once, and one
+/// that does not decode is refused.
+#[tokio::test]
+async fn query_token_is_percent_decoded_exactly_once() {
+    let fx = fixture().await;
+    fx.passwords.add_user(
+        "user-carol",
+        "carol",
+        "Carol",
+        "user",
+        "carol-pw",
+        &["carol-secret="],
+    );
+    for key in ["api_key", "ApiKey"] {
+        for played in [
+            "carol-secret=",
+            "carol-secret%3D",
+            "carol-secret%3d",
+            "%63arol-secret%3D",
+        ] {
+            assert_eq!(play_with(&fx, key, played).await, 200, "{key}={played}");
+        }
+        for refused in [
+            "wrong-secret%3D",
+            // Encoded twice: decoded once it is the text `%3D`.
+            "carol-secret%253D",
+            // No trimming, no case folding, no padding added.
+            "carol-secret",
+            "carol-secret%3D%20",
+            "Carol-secret%3D",
+            // Not percent-encoding, or not UTF-8 once decoded.
+            "carol-secret%3",
+            "carol-secret%zz",
+            "carol-secret%3D%ff",
+        ] {
+            assert_eq!(play_with(&fx, key, refused).await, 401, "{key}={refused}");
+        }
+    }
+    // A token in a header is taken as written.
+    let header = fx
+        .get("/jellyfin/Items?Limit=0", Some(&finamp("carol-secret%3D")))
+        .await;
+    assert_eq!(header.status, 401);
+    // A query token that does not decode refuses the request, even beside
+    // a header token that is good.
+    let good = finamp("carol-secret=");
+    let beside = fx.get("/jellyfin/Items?Limit=0", Some(&good)).await;
+    assert_eq!(beside.status, 200);
+    let beside = fx
+        .get("/jellyfin/Items?Limit=0&api_key=%zz", Some(&good))
+        .await;
+    assert_eq!(beside.status, 401);
+}
+
+#[tokio::test]
+async fn plus_in_a_query_token_stays_a_plus_and_is_never_a_space() {
+    let fx = fixture().await;
+    fx.passwords
+        .add_user("user-dave", "dave", "Dave", "user", "dave-pw", &["d+s="]);
+    fx.passwords
+        .add_user("user-erin", "erin", "Erin", "user", "erin-pw", &["d s="]);
+    for (token, name) in [("d+s=", "dave"), ("d%2Bs%3D", "dave"), ("d%20s%3D", "erin")] {
+        let me = fx
+            .json(&format!("/jellyfin/Users/Me?api_key={token}"), None)
+            .await;
+        assert_eq!(me["Name"], json!(name), "{token}");
+    }
+}

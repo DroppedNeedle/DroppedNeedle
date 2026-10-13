@@ -313,7 +313,7 @@ pub(super) fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> 
 
 /// Exact-spelling raw-query lookup for the two auth keys (v2 `auth.py`
 /// reads Starlette's case-sensitive params: only `ApiKey` and `api_key`).
-pub(super) fn query_exact<'a>(raw: Option<&'a str>, key: &str) -> Option<&'a str> {
+fn query_exact<'a>(raw: Option<&'a str>, key: &str) -> Option<&'a str> {
     for pair in raw.unwrap_or("").split('&') {
         let (name, value) = match pair.find('=') {
             Some(i) => (&pair[..i], &pair[i + 1..]),
@@ -326,20 +326,91 @@ pub(super) fn query_exact<'a>(raw: Option<&'a str>, key: &str) -> Option<&'a str
     None
 }
 
+/// A query token that is not valid percent-encoding.
+#[derive(Debug)]
+pub(crate) struct MalformedToken;
+
+/// Undo the percent-encoding of a query token, once: `%3D` is `=`, and
+/// `%253D` is the text `%3D`. An app password ends in `=`, which a player
+/// may send either way. Nothing else changes: a `+` stays a `+` and is
+/// never a space (app passwords are URL-safe base64 and hold neither),
+/// nothing is trimmed and case is kept. A `%` without two hex digits, or
+/// bytes that are not UTF-8, refuse the token.
+///
+/// Written here because no decoder among the dependencies is strict
+/// enough for a credential: `percent-encoding` keeps a bad escape as
+/// text, and the form decoders turn `+` into a space and replace bytes
+/// that are not UTF-8.
+fn decode_token(raw: &str) -> Result<String, MalformedToken> {
+    fn hex(byte: u8) -> Option<u8> {
+        match byte {
+            b'0'..=b'9' => Some(byte - b'0'),
+            b'a'..=b'f' => Some(byte - b'a' + 10),
+            b'A'..=b'F' => Some(byte - b'A' + 10),
+            _ => None,
+        }
+    }
+    let mut out = Vec::with_capacity(raw.len());
+    let mut rest = raw.as_bytes();
+    while let Some((&byte, tail)) = rest.split_first() {
+        if byte != b'%' {
+            out.push(byte);
+            rest = tail;
+            continue;
+        }
+        let [hi, lo, tail @ ..] = tail else {
+            return Err(MalformedToken);
+        };
+        let (Some(hi), Some(lo)) = (hex(*hi), hex(*lo)) else {
+            return Err(MalformedToken);
+        };
+        out.push(hi << 4 | lo);
+        rest = tail;
+    }
+    String::from_utf8(out).map_err(|_| MalformedToken)
+}
+
+/// The tokens a request carries in its query, decoded. The handlers and
+/// the rate limiter both read them here, so both see the same token.
+pub(crate) struct QueryTokens {
+    apikey: Option<String>,
+    api_key: Option<String>,
+}
+
+impl QueryTokens {
+    /// Fails when either value is malformed, even if a header token or the
+    /// other value would have been used: such a request is refused.
+    pub(crate) fn read(raw_query: Option<&str>) -> Result<Self, MalformedToken> {
+        let token = |key| query_exact(raw_query, key).map(decode_token).transpose();
+        Ok(Self {
+            apikey: token("ApiKey")?,
+            api_key: token("api_key")?,
+        })
+    }
+
+    /// The auth inputs of a request: its headers as sent, plus these.
+    pub(crate) fn request<'a>(&'a self, headers: &'a HeaderMap) -> JellyfinRequest<'a> {
+        JellyfinRequest {
+            authorization: header(headers, "authorization"),
+            emby_authorization: header(headers, "x-emby-authorization"),
+            emby_token: header(headers, "x-emby-token"),
+            mediabrowser_token: header(headers, "x-mediabrowser-token"),
+            query_apikey: self.apikey.as_deref(),
+            query_api_key: self.api_key.as_deref(),
+        }
+    }
+}
+
 /// Resolve the caller or return the 401 (empty body, never raises).
 pub(super) async fn authed<S: JellyfinPasswordStore>(
     passwords: &S,
     headers: &HeaderMap,
     raw_query: Option<&str>,
 ) -> Result<Authed, Response> {
-    let request = JellyfinRequest {
-        authorization: header(headers, "authorization"),
-        emby_authorization: header(headers, "x-emby-authorization"),
-        emby_token: header(headers, "x-emby-token"),
-        mediabrowser_token: header(headers, "x-mediabrowser-token"),
-        query_apikey: query_exact(raw_query, "ApiKey"),
-        query_api_key: query_exact(raw_query, "api_key"),
+    let Ok(query) = QueryTokens::read(raw_query) else {
+        return Err(error(StatusCode::UNAUTHORIZED));
     };
+    let request = query.request(headers);
     let token = extract_token(&request);
     let client = extract_client(&request);
     match resolve_token(passwords, token.as_deref()).await {
