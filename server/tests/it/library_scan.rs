@@ -11,6 +11,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::common::{ScratchDir, migrated_db};
+use droppedneedle::library::identify::models::RecallResult;
+use droppedneedle::library::identify::providers::FakeProviders;
+use droppedneedle::library::identify::service::{IdentifyDeps, IdentifyService};
+use droppedneedle::library::identify::sqlite::SqliteIdentifyStore;
 use droppedneedle::library::repairs::hygiene;
 use droppedneedle::library::scan::{
     BlockingPool, EffectivePolicy, LibraryRoot, LibraryScanCoordinator, NullTagReader,
@@ -956,4 +960,319 @@ async fn album_split_two_ways_offers_the_held_half() {
         "not offered while the old album still held tracks"
     );
     assert_eq!(rig.queued_jobs(&new_row), 1, "offered once it emptied");
+}
+
+/// A match written on an album, as SQL. `album` is a SQL expression.
+fn match_sql(album: &str, source: &str, release: &str) -> String {
+    format!(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
+         SELECT {album}, 'musicbrainz', 'rg-' || '{release}', '{release}', '{source}', 0, 4 \
+         WHERE {album} IS NOT NULL;"
+    )
+}
+
+/// The album's match: its release and who decided it.
+fn match_of(rig: &RegroupRig, album: &str) -> Option<(String, String)> {
+    use rusqlite::OptionalExtension as _;
+    droppedneedle::db::open_connection(&rig.db())
+        .expect("side connection opens")
+        .query_row(
+            "SELECT release_mbid, decision_source FROM local_album_external_identities \
+             WHERE local_album_id = ?1",
+            [album],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .expect("match reads")
+}
+
+fn matched(release: &str, source: &str) -> Option<(String, String)> {
+    Some((release.to_owned(), source.to_owned()))
+}
+
+/// Run the identification job waiting for the album, as the worker
+/// would, and return its verdict.
+async fn identify_now(rig: &RegroupRig, album: &str) -> String {
+    let store = Arc::new(SqliteIdentifyStore::open(&rig.db()).expect("identify store opens"));
+    let service = IdentifyService::new(IdentifyDeps {
+        identities: store.clone(),
+        facts: store.clone(),
+        proofs: store.clone(),
+        aliases: store.clone(),
+        queue: store.clone(),
+        reviews: store.clone(),
+        releases: store.clone(),
+        providers: Arc::new(FakeProviders::with_recall(RecallResult::default())),
+    });
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_millis() as u64
+        + 60_000;
+    let job = store.claim(now_ms, 60_000).expect("a job is waiting");
+    assert_eq!(job.local_album_id, album, "the waiting job is the album's");
+    service
+        .run_claimed_job(&job.id, now_ms)
+        .await
+        .expect("the job reports")
+        .reason_code
+}
+
+/// Retag a 300-file album across two windows. `old` is the match it
+/// holds before, as `(source, release)`; `on_new_row` is written between
+/// the two windows and takes the new row as a SQL expression.
+async fn retag_with_matches(
+    name: &str,
+    old: Option<(&str, &str)>,
+    on_new_row: impl Fn(&str) -> String,
+) -> (RegroupRig, String) {
+    let (mut rig, files, album) = big_album(name).await;
+    if let Some((source, release)) = old {
+        rig.run(&match_sql(&format!("'{album}'"), source, release));
+    }
+    let after = rig.after.clone();
+    rig.tag(&files, &after);
+    rig.meanwhile_sql(on_new_row(&new_row(&album)));
+    rig.scan().await;
+    (rig, album)
+}
+
+/// What an identification job leaves beside an automatic match: the
+/// "unsure" flag, an undo for the edition, a credit proof, a place in the
+/// automatic management queue and a review waiting for a person.
+fn automatic_leftovers(album: &str, tag: &str) -> String {
+    format!(
+        "INSERT INTO library_album_match_state (local_album_id, state, reason_code, updated_at) \
+         SELECT {album}, 'unconfirmed', '{tag}', 0 WHERE {album} IS NOT NULL; \
+         INSERT INTO library_automatic_edition_undo (id, local_album_id, \
+         expected_post_album_revision, expected_post_identity_revision, reason_code, created_at) \
+         SELECT 'undo-{tag}', {album}, 1, 4, 'AUTOMATIC_EXACT_EDITION', 0 \
+         WHERE {album} IS NOT NULL; \
+         INSERT INTO library_identify_credit_proofs (local_album_id, local_track_id, \
+         source_local_artist_id, artist_mbid, release_mbid, album_identity_revision, \
+         track_identity_revision) SELECT {album}, id, 'artist-{tag}', 'mbid', 'rel', 4, 1 \
+         FROM local_tracks WHERE relative_path = 'a/t000.flac' AND {album} IS NOT NULL; \
+         INSERT INTO library_management_automatic_queue (local_album_id, queued_at, not_before) \
+         SELECT {album}, 0, 0 WHERE {album} IS NOT NULL; \
+         INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
+         candidates_json, state, created_ms, updated_ms) \
+         SELECT 'pending-{tag}', {album}, 'R', '[]', 'pending', 0, 0 WHERE {album} IS NOT NULL;"
+    )
+}
+
+/// Rows left on `album` in the tables that hang on a match, in the order:
+/// flag, automatic undo, choice undo, credit proofs, remap queue,
+/// management queue, reviews.
+fn hanging_rows(rig: &RegroupRig, album: &str) -> [i64; 7] {
+    [
+        "library_album_match_state",
+        "library_automatic_edition_undo",
+        "library_edition_choice_undo",
+        "library_identify_credit_proofs",
+        "library_edition_remap_queue",
+        "library_management_automatic_queue",
+        "library_identify_reviews",
+    ]
+    .map(|table| {
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM {table} WHERE local_album_id = '{album}'"
+        ))
+    })
+}
+
+/// An automatic match that landed on the new row mid-scan (a job already
+/// running when the retag began) gives way to the match a person chose
+/// for the album. Everything the job left with it goes too, and a later
+/// identification pass leaves the person's match as it is.
+#[tokio::test]
+async fn automatic_match_made_mid_scan_yields_to_a_chosen_one() {
+    let (rig, album) = retag_with_matches(
+        "scan-regroup-auto-vs-chosen",
+        Some(("manual", "rel-1")),
+        |new_row| {
+            format!(
+                "{} {}",
+                match_sql(new_row, "automatic", "rel-half"),
+                automatic_leftovers(new_row, "half")
+            )
+        },
+    )
+    .await;
+
+    assert_eq!(rig.album_of("a/t000.flac"), album);
+    assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1);
+    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
+    assert_eq!(
+        hanging_rows(&rig, &album),
+        [0, 0, 0, 0, 0, 1, 0],
+        "only a fresh look by automatic management is left"
+    );
+    assert_eq!(identify_now(&rig, &album).await, "CHOSEN_EDITION_KEPT");
+    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
+}
+
+/// An automatic match that landed on the new row mid-scan is the later
+/// verdict on the files as they are now tagged. It replaces an automatic
+/// match on the old row (or fills an empty one) with its flag, stays
+/// revisable, and the whole album is offered again in the same window.
+/// Undo rows and proofs made for either earlier match are gone, a review
+/// still waiting on half the album is gone, and a review a person closed
+/// is kept.
+#[tokio::test]
+async fn automatic_match_made_mid_scan_replaces_a_revisable_one() {
+    for (name, old) in [
+        ("scan-regroup-auto-vs-auto", Some(("automatic", "rel-1"))),
+        ("scan-regroup-auto-vs-none", None),
+    ] {
+        let (mut rig, files, album) = big_album(name).await;
+        if let Some((source, release)) = old {
+            let quoted = format!("'{album}'");
+            rig.run(&format!(
+                "{} {} DELETE FROM library_identify_reviews; \
+                 DELETE FROM library_management_automatic_queue;",
+                match_sql(&quoted, source, release),
+                automatic_leftovers(&quoted, "old")
+            ));
+        }
+        let after = rig.after.clone();
+        rig.tag(&files, &after);
+        let new_row = new_row(&album);
+        rig.meanwhile_sql(format!(
+            "{} {} INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
+             candidates_json, state, created_ms, updated_ms) \
+             SELECT 'closed', {new_row}, 'R', '[]', 'dismissed', 0, 0;",
+            match_sql(&new_row, "automatic", "rel-half"),
+            automatic_leftovers(&new_row, "half"),
+        ));
+        rig.scan().await;
+
+        assert_eq!(rig.album_of("a/t000.flac"), album, "{name}");
+        assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1, "{name}");
+        assert_eq!(
+            match_of(&rig, &album),
+            matched("rel-half", "automatic"),
+            "{name}"
+        );
+        assert_eq!(
+            rig.count(&format!(
+                "SELECT COUNT(*) FROM local_album_external_identities i \
+                 JOIN library_album_match_state s ON s.local_album_id = i.local_album_id \
+                 WHERE i.local_album_id = '{album}' AND i.row_revision > 4 \
+                 AND s.reason_code = 'half'"
+            )),
+            1,
+            "{name}: the flag came with the match, at a revision neither row has had"
+        );
+        assert_eq!(hanging_rows(&rig, &album), [1, 0, 0, 0, 0, 1, 1], "{name}");
+        assert_eq!(
+            rig.count("SELECT COUNT(*) FROM library_identify_reviews WHERE id = 'closed'"),
+            1,
+            "{name}: the closed review is the one kept"
+        );
+        assert_eq!(rig.queued_jobs(&album), 1, "{name}: offered whole");
+    }
+}
+
+/// A match a person chose (or one imported from v2) for the new row
+/// mid-scan becomes the album's match when the old row held none or an
+/// automatic one. The edition still waiting to be placed on the files is
+/// queued for the kept row, the undo made for the new row is dropped, and
+/// a later identification pass leaves the match as it is.
+#[tokio::test]
+async fn chosen_match_made_mid_scan_moves_to_the_kept_row() {
+    for (name, old, source) in [
+        (
+            "scan-regroup-chosen-vs-auto",
+            Some(("embedded", "rel-1")),
+            "manual",
+        ),
+        ("scan-regroup-chosen-vs-none", None, "legacy_import"),
+    ] {
+        let (rig, album) = retag_with_matches(name, old, |new_row| {
+            format!(
+                "{} INSERT INTO library_edition_remap_queue (local_album_id, release_mbid, \
+                 queued_at, origin) SELECT {new_row}, 'rel-new', 0, 'group_pin'; \
+                 INSERT INTO library_edition_choice_undo (id, local_album_id, action_id, \
+                 expected_identity_revision, created_at) SELECT 'undo', {new_row}, 'a', 4, 0;",
+                match_sql(new_row, source, "rel-new")
+            )
+        })
+        .await;
+
+        assert_eq!(rig.album_of("a/t000.flac"), album, "{name}");
+        assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1, "{name}");
+        assert_eq!(match_of(&rig, &album), matched("rel-new", source), "{name}");
+        assert_eq!(hanging_rows(&rig, &album), [0, 0, 0, 0, 1, 1, 0], "{name}");
+        assert_eq!(
+            rig.count(&format!(
+                "SELECT COUNT(*) FROM library_edition_remap_queue WHERE local_album_id = '{album}' \
+                 AND release_mbid = 'rel-new' AND origin = 'group_pin' AND attempts = 0"
+            )),
+            1,
+            "{name}: the chosen edition is queued for the kept row"
+        );
+        assert_eq!(
+            identify_now(&rig, &album).await,
+            "CHOSEN_EDITION_KEPT",
+            "{name}"
+        );
+        assert_eq!(match_of(&rig, &album), matched("rel-new", source), "{name}");
+    }
+}
+
+/// The same release chosen by a person on both rows is one choice: the
+/// kept row's match stays exactly as it was and the new row's goes.
+#[tokio::test]
+async fn same_release_chosen_on_both_rows_is_kept_once() {
+    let (rig, album) = retag_with_matches(
+        "scan-regroup-chosen-same",
+        Some(("manual", "rel-1")),
+        |new_row| match_sql(new_row, "legacy_import", "rel-1"),
+    )
+    .await;
+
+    assert_eq!(rig.album_of("a/t000.flac"), album);
+    assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1);
+    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT row_revision FROM local_album_external_identities \
+             WHERE local_album_id = '{album}'"
+        )),
+        4,
+        "the kept match was not rewritten"
+    );
+    assert_eq!(identify_now(&rig, &album).await, "CHOSEN_EDITION_KEPT");
+    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
+}
+
+/// Different releases chosen by people on the two rows are not the scan's
+/// to pick between: both rows stay with their own match, nothing a
+/// listener made moves, and the log says which two albums were left
+/// apart.
+#[tokio::test]
+async fn different_releases_chosen_on_the_two_rows_stay_apart() {
+    retag_warnings();
+    let (mut rig, files, album) = big_album("scan-regroup-chosen-differ").await;
+    rig.run(&match_sql(&format!("'{album}'"), "manual", "rel-1"));
+    let after = rig.after.clone();
+    rig.tag(&files, &after);
+    rig.meanwhile_sql(format!(
+        "{} {}",
+        listener_acts(&album),
+        match_sql(&new_row(&album), "manual", "rel-2")
+    ));
+    rig.scan().await;
+
+    let new_row = rig.album_of("a/t000.flac");
+    assert_ne!(new_row, album, "the retag was not followed");
+    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
+    assert_eq!(match_of(&rig, &new_row), matched("rel-2", "manual"));
+    assert_eq!(
+        rig.listener_rows(&new_row),
+        (3, 3),
+        "the play, the favorite and the playlist entry still name the new row"
+    );
+    assert!(warned_both_kept(&album, &new_row), "the log names both");
 }

@@ -21,7 +21,9 @@
 //! the new name instead of being left behind.
 
 use super::*;
-use crate::library::identify::sqlite::{offer_album, retarget_references};
+use crate::library::identify::sqlite::{
+    chosen_matches_differ, offer_album, retarget_references, settle_followed_match,
+};
 use crate::library::scan::naming::{
     album_grouping_key, album_name_key, grouping_directory, parse_names_for_row,
 };
@@ -941,15 +943,25 @@ fn write_item(
 }
 
 /// An album this run emptied: when every track it lost went to one album,
-/// and that album holds nothing but those tracks and nothing of its own
-/// (identity, reviews), the whole album was retagged together. The old
-/// row then takes over the new name and key, keeping its id, identity,
-/// reviews and pins, and the new row goes, its plays, favorites and
-/// playlist entries passing to the old one. Returns the album that went.
+/// and that album holds nothing but those tracks, the whole album was
+/// retagged together. The old row then takes over the new name and key,
+/// keeping its id, reviews and pins, and the new row goes, its plays,
+/// favorites and playlist entries passing to the old one. Returns the
+/// album that went.
+///
+/// A match or a review that landed on the new row while the scan was half
+/// way through the album is settled by `settle_followed_match`: a
+/// person's match is never replaced, and two people's choices of
+/// different releases leave both rows as they are. Work a person started
+/// on the new row (a preview, a draft, an override, anything the audit
+/// log names) is never rewritten to name another row: it keeps the new
+/// row from being deleted, so both rows stay. Whenever both rows stay
+/// the log names the two.
 fn follow_regrouped(
-    tx: &Connection,
+    tx: &rusqlite::Transaction<'_>,
     run_id: &str,
     album_id: &str,
+    now: f64,
 ) -> rusqlite::Result<Option<String>> {
     let remaining: i64 = tx
         .prepare_cached("SELECT COUNT(*) FROM local_tracks WHERE local_album_id = ?1")?
@@ -971,16 +983,25 @@ fn follow_regrouped(
     if target == album_id {
         return Ok(None);
     }
+    // Retagged into an album that holds other tracks: not a retag of the
+    // whole album, and nothing to say about it.
     let foreign: bool = tx
         .prepare_cached(
             "SELECT EXISTS(SELECT 1 FROM local_tracks t WHERE t.local_album_id = ?2 \
              AND NOT EXISTS (SELECT 1 FROM library_scan_album_moves m WHERE m.run_id = ?1 \
-             AND m.local_track_id = t.id AND m.previous_album_id = ?3)) \
-             OR EXISTS(SELECT 1 FROM local_album_external_identities WHERE local_album_id = ?2) \
-             OR EXISTS(SELECT 1 FROM library_identify_reviews WHERE local_album_id = ?2)",
+             AND m.local_track_id = t.id AND m.previous_album_id = ?3))",
         )?
         .query_row(params![run_id, target, album_id], |row| row.get(0))?;
     if foreign {
+        return Ok(None);
+    }
+    if chosen_matches_differ(tx, target, album_id)? {
+        tracing::warn!(
+            album_id,
+            target,
+            "retagged album and its new row each hold a match a person chose, \
+             for different releases; both kept"
+        );
         return Ok(None);
     }
     tx.execute("SAVEPOINT follow_album", [])?;
@@ -1017,9 +1038,12 @@ fn follow_regrouped(
             "DELETE FROM library_identify_jobs WHERE local_album_id = ?1",
             params![target],
         )?;
+        settle_followed_match(tx, target, album_id, now)?;
         // What people made of the new row since an earlier window of this
-        // run created it. A play goes with its track, which is not always
-        // one of the tracks moved above.
+        // run created it. Every play filed under the new row names one of
+        // the tracks moved above, or no track, so each lands on the kept
+        // row. Written by track all the same: a play must never be parted
+        // from its track should the new row ever hold another album's.
         tx.execute(
             "UPDATE library_play_history SET local_album_id = COALESCE( \
              (SELECT t.local_album_id FROM local_tracks t \
@@ -1216,7 +1240,7 @@ fn mark_window(
 /// item runs in its own savepoint and a failing one is reported instead of
 /// failing the window.
 fn write_window(
-    tx: &Connection,
+    tx: &rusqlite::Transaction<'_>,
     window: &IndexWindow,
     isolate: bool,
 ) -> rusqlite::Result<WindowOutcome> {
@@ -1274,7 +1298,7 @@ fn write_window(
     emptied.sort();
     emptied.dedup();
     for album_id in emptied {
-        match follow_regrouped(tx, &window.run_id, &album_id)? {
+        match follow_regrouped(tx, &window.run_id, &album_id, window.now)? {
             Some(gone) => {
                 for offer in offered.iter_mut().filter(|offer| **offer == gone) {
                     offer.clone_from(&album_id);

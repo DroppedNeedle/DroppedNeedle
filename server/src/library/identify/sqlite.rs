@@ -1171,6 +1171,155 @@ pub(crate) fn retarget_references(
     Ok(())
 }
 
+/// Whether two rows of one album each hold a match a person chose (or an
+/// imported one) and the two name different releases. Nothing automatic
+/// picks between two people's choices.
+pub(crate) fn chosen_matches_differ(
+    conn: &Connection,
+    album_id: &str,
+    other_album_id: &str,
+) -> rusqlite::Result<bool> {
+    conn.query_row(
+        &format!(
+            "SELECT EXISTS(SELECT 1 FROM local_album_external_identities a \
+             JOIN local_album_external_identities b ON b.provider = a.provider \
+             WHERE a.local_album_id = ?1 AND b.local_album_id = ?2 AND a.provider = ?3 \
+             AND a.decision_source NOT IN {REVISABLE} \
+             AND b.decision_source NOT IN {REVISABLE} \
+             AND (lower(a.release_group_mbid) <> lower(b.release_group_mbid) \
+             OR lower(COALESCE(a.release_mbid, '')) <> lower(COALESCE(b.release_mbid, ''))))"
+        ),
+        params![album_id, other_album_id, PROVIDER],
+        |row| row.get(0),
+    )
+}
+
+/// Settle the matches of two rows of one album before `gone` is deleted
+/// and `kept` carries on: a scan made `gone` for the album while it was
+/// being retagged, and a match or a review landed on it before the scan
+/// had read the rest. Call only when [`chosen_matches_differ`] is false.
+///
+/// - A person's match on `kept` stays, untouched. The match on `gone`
+///   (automatic, or the same release chosen again) goes with its row.
+/// - Otherwise the match on `gone` becomes the match of `kept`, with its
+///   source and its "unsure" flag, replacing an automatic one. It is the
+///   later verdict on the files as they are now tagged, or a person's.
+/// - A review still waiting on `gone` goes with it. One a person closed
+///   moves to `kept`.
+///
+/// Rows made for a match that is no longer there are dropped, never
+/// pointed at another match: both kinds of edition undo and the credit
+/// proofs name the revisions of the match they were made for. The moved
+/// match takes a revision neither row has had, so nothing kept from
+/// either row reads as current against it. A chosen edition still waiting
+/// to be placed on the files is queued again for `kept`, and automatic
+/// management looks at `kept` afresh.
+pub(crate) fn settle_followed_match(
+    tx: &rusqlite::Transaction<'_>,
+    gone: &str,
+    kept: &str,
+    now: f64,
+) -> rusqlite::Result<()> {
+    let source = |album: &str| -> rusqlite::Result<Option<String>> {
+        tx.query_row(
+            "SELECT decision_source FROM local_album_external_identities \
+             WHERE local_album_id = ?1 AND provider = ?2",
+            params![album, PROVIDER],
+            |row| row.get(0),
+        )
+        .optional()
+    };
+    let revisable = |source: &str| matches!(source, "automatic" | "embedded");
+    let arriving = source(gone)?;
+    let kept_is_chosen = source(kept)?.is_some_and(|source| !revisable(&source));
+    let managed: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM library_management_automatic_queue \
+         WHERE local_album_id = ?1)",
+        params![gone],
+        |row| row.get(0),
+    )?;
+    let mut reviews = tx.execute(
+        "UPDATE library_identify_reviews SET local_album_id = ?2 \
+         WHERE local_album_id = ?1 AND state <> 'pending'",
+        params![gone, kept],
+    )?;
+    reviews += tx.execute(
+        "DELETE FROM library_identify_reviews WHERE local_album_id = ?1",
+        params![gone],
+    )?;
+    let moved = match arriving {
+        None => false,
+        Some(_) if kept_is_chosen => {
+            tx.execute(
+                "DELETE FROM local_album_external_identities WHERE local_album_id = ?1",
+                params![gone],
+            )?;
+            false
+        }
+        Some(arriving) => {
+            let remap: Option<(String, Option<String>, String)> = tx
+                .query_row(
+                    "SELECT release_mbid, chosen_by_user_id, origin \
+                     FROM library_edition_remap_queue WHERE local_album_id = ?1",
+                    params![gone],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()?
+                .filter(|_| !revisable(&arriving));
+            let revision: i64 = tx.query_row(
+                "SELECT MAX(row_revision) + 1 FROM local_album_external_identities \
+                 WHERE local_album_id IN (?1, ?2)",
+                params![gone, kept],
+                |row| row.get(0),
+            )?;
+            for table in [
+                "local_album_external_identities",
+                "library_album_match_state",
+                "library_edition_choice_undo",
+                "library_automatic_edition_undo",
+                "library_edition_remap_queue",
+                "library_identify_credit_proofs",
+            ] {
+                tx.execute(
+                    &format!("DELETE FROM {table} WHERE local_album_id = ?1"),
+                    params![kept],
+                )?;
+            }
+            tx.execute(
+                "UPDATE local_album_external_identities SET local_album_id = ?2, \
+                 row_revision = ?3 WHERE local_album_id = ?1",
+                params![gone, kept, revision],
+            )?;
+            tx.execute(
+                "UPDATE library_album_match_state SET local_album_id = ?2 \
+                 WHERE local_album_id = ?1",
+                params![gone, kept],
+            )?;
+            if let Some((release, chosen_by, origin)) = remap {
+                crate::library::operations::choice::queue_remap(
+                    tx,
+                    kept,
+                    &release,
+                    chosen_by.as_deref(),
+                    now,
+                )?;
+                tx.execute(
+                    "UPDATE library_edition_remap_queue SET origin = ?2 WHERE local_album_id = ?1",
+                    params![kept, origin],
+                )?;
+            }
+            true
+        }
+    };
+    if managed || moved {
+        crate::library::management::automatic::queue(tx, kept, now)?;
+    }
+    if reviews > 0 {
+        bump_identification_stream(tx)?;
+    }
+    Ok(())
+}
+
 fn release_input_hash() -> String {
     hex_sha256(RELEASE_DOCUMENT_VERSION.as_bytes())
 }
