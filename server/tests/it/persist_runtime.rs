@@ -14,7 +14,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
-    task::Poll,
+    task::{Context, Poll, Waker},
     time::{Duration, Instant},
 };
 
@@ -24,7 +24,8 @@ use axum::{
 use droppedneedle::{
     db::{
         BACKUP_KEEP, CancelFlag, CheckpointMode, DbConfig, DbError, DbRuntime, LANE_QUEUE_CAPACITY,
-        Lane, WakeupChannel, filesystem_is_local, map_sqlx_busy, open_runtime, sqlx_is_busy,
+        Lane, OpError, WakeupChannel, WriteLane, filesystem_is_local, map_sqlx_busy, open_runtime,
+        sqlx_is_busy,
     },
     error::{FIXED_INTERNAL_MESSAGE, INTERNAL_ERROR, busy_response},
     ids::{REQUEST_ID_HEADER, RequestId},
@@ -91,6 +92,43 @@ async fn admit(writes: &mut [QueuedWrite]) {
         Poll::Ready(())
     })
     .await;
+}
+
+/// A lane on a scratch database holding one table, with no pool beside it.
+fn scratch_lane(name: &str) -> (WriteLane, ScratchDir) {
+    let dir = scratch_dir(name);
+    let db = dir.join("library.db");
+    rusqlite::Connection::open(&db)
+        .unwrap()
+        .execute("CREATE TABLE scratch_turns (label TEXT)", [])
+        .unwrap();
+    let lane = WriteLane::open(&db).unwrap();
+    (lane, dir)
+}
+
+fn insert_label(tx: &rusqlite::Transaction, label: &str) -> Result<(), OpError> {
+    tx.execute("INSERT INTO scratch_turns (label) VALUES (?1)", [label])?;
+    Ok(())
+}
+
+/// Committed labels in the order they were written.
+fn labels(lane: &WriteLane) -> Vec<String> {
+    let connection = rusqlite::Connection::open_with_flags(
+        lane.db_path(),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let mut statement = connection
+        .prepare("SELECT label FROM scratch_turns ORDER BY rowid")
+        .unwrap();
+    let rows = statement.query_map([], |row| row.get(0)).unwrap();
+    rows.map(Result::unwrap).collect()
+}
+
+fn current_thread_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap()
 }
 
 /// Sidecar path for a database file.
@@ -716,13 +754,26 @@ async fn writer_lane_backpressure_fails_fast_when_full() {
 }
 
 /// A runaway write aborts at the hard budget and rolls back, lane intact.
+/// The timeout reports the rows that transaction changed, not the
+/// connection's running total.
 #[tokio::test]
 async fn runaway_write_aborts_at_hard_budget() {
-    let (runtime, dir) = open_scratch("abort").await;
+    let (lane, _dir) = scratch_lane("abort");
+    lane.write(Lane::Foreground, "brief-earlier", |tx| {
+        for label in ["a", "b", "c", "d", "e"] {
+            insert_label(tx, label)?;
+        }
+        Ok(())
+    })
+    .await
+    .unwrap();
+
     let started = Instant::now();
-    let outcome = runtime
-        .lane()
+    let outcome = lane
         .write(Lane::Foreground, "brief-runaway", |tx| {
+            for label in ["x", "y", "z"] {
+                insert_label(tx, label)?;
+            }
             let count: i64 = tx.query_row(
                 "WITH RECURSIVE c(x) AS (
                    SELECT 1 UNION ALL SELECT x + 1 FROM c LIMIT 100000
@@ -735,7 +786,10 @@ async fn runaway_write_aborts_at_hard_budget() {
         })
         .await;
     match outcome {
-        Err(DbError::TxTimeout { operation, .. }) => assert_eq!(operation, "brief-runaway"),
+        Err(DbError::TxTimeout { operation, changes }) => {
+            assert_eq!(operation, "brief-runaway");
+            assert_eq!(changes, 3);
+        }
         other => panic!("runaway write must abort, got {other:?}"),
     }
     assert!(
@@ -743,18 +797,302 @@ async fn runaway_write_aborts_at_hard_budget() {
         "abort must fire near the budget"
     );
 
-    let probe: i64 = runtime
-        .lane()
-        .write(Lane::Foreground, "brief-probe", |tx| {
-            tx.query_row("SELECT 1", [], |row| row.get(0))
-                .map_err(droppedneedle::db::OpError::from)
+    lane.write(Lane::Foreground, "brief-probe", |tx| {
+        insert_label(tx, "after")
+    })
+    .await
+    .unwrap();
+    assert_eq!(labels(&lane), ["a", "b", "c", "d", "e", "after"]);
+
+    lane.shutdown().await;
+}
+
+/// A blocking write issued on the only runtime thread gets its turn behind
+/// a running async write and a queued one: neither needs that thread.
+#[tokio::test]
+async fn blocking_write_on_the_runtime_thread_takes_its_turn() {
+    let (lane, _dir) = scratch_lane("blocking-turn");
+    let running = lane.clone();
+    let (held, inside, let_go) = hold();
+    let holder = tokio::spawn(async move {
+        running
+            .write(Lane::Foreground, "brief-running", move |tx| {
+                held.wait();
+                insert_label(tx, "running")
+            })
+            .await
+            .unwrap();
+    });
+    inside.await.unwrap();
+    let queued_lane = lane.clone();
+    let mut queued: Vec<QueuedWrite> = vec![Box::pin(async move {
+        queued_lane
+            .write(Lane::Foreground, "brief-queued", |tx| {
+                insert_label(tx, "queued")
+            })
+            .await
+            .unwrap();
+    })];
+    admit(&mut queued).await;
+
+    let_go.send(()).unwrap();
+    let ahead: i64 = lane
+        .write_blocking(Lane::Foreground, "brief-blocking", |tx| {
+            let ahead = tx.query_row("SELECT COUNT(*) FROM scratch_turns", [], |row| row.get(0))?;
+            insert_label(tx, "blocking")?;
+            Ok(ahead)
+        })
+        .unwrap();
+    assert_eq!(ahead, 2, "the queued write ran without the runtime thread");
+
+    holder.await.unwrap();
+    for write in queued {
+        write.await;
+    }
+    assert_eq!(labels(&lane), ["running", "queued", "blocking"]);
+    assert_eq!(lane.wait_times().admissions, 3);
+    lane.shutdown().await;
+}
+
+/// A blocking write runs on the caller's thread, so its closure may borrow.
+/// No runtime is involved.
+#[test]
+fn blocking_write_borrows_from_its_caller() {
+    let (lane, _dir) = scratch_lane("borrow");
+    let label = String::from("borrowed");
+    let mut written = 0;
+    lane.write_blocking(Lane::Foreground, "brief-borrow", |tx| {
+        insert_label(tx, &label)?;
+        written += 1;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(written, 1);
+    assert_eq!(labels(&lane), [label]);
+}
+
+/// Shutdown called with one write held and others queued, from threads and
+/// from async callers, waits for every accepted write to commit, then
+/// returns; a write issued afterwards is refused.
+#[test]
+fn shutdown_drains_accepted_writes_then_refuses() {
+    let (lane, _dir) = scratch_lane("shutdown");
+    let (held, inside, let_go) = hold();
+    let holder_lane = lane.clone();
+    let holder = std::thread::spawn(move || {
+        holder_lane.write_blocking(Lane::Foreground, "brief-held", move |tx| {
+            held.wait();
+            insert_label(tx, "held")
+        })
+    });
+    inside.blocking_recv().unwrap();
+
+    let threads: Vec<_> = (0..4)
+        .map(|index| {
+            let lane = lane.clone();
+            std::thread::spawn(move || {
+                let label = format!("thread-{index}");
+                let outcome = lane.write_blocking(Lane::Background, "brief-thread", |tx| {
+                    insert_label(tx, &label)
+                });
+                (label, outcome)
+            })
+        })
+        .collect();
+
+    // Async writes keep arriving until one is refused: by then shutdown has
+    // closed the lane and is waiting on the held write.
+    let mut cx = Context::from_waker(Waker::noop());
+    let mut queued = Vec::new();
+    let mut down = None;
+    loop {
+        let label = format!("task-{}", queued.len());
+        let row = label.clone();
+        let mut write = Box::pin(lane.write(Lane::Foreground, "brief-task", move |tx| {
+            insert_label(tx, &row)
+        }));
+        match write.as_mut().poll(&mut cx) {
+            Poll::Pending => queued.push((label, write)),
+            Poll::Ready(Err(DbError::LaneClosed)) => break,
+            Poll::Ready(Err(DbError::Busy { .. })) => std::thread::yield_now(),
+            Poll::Ready(other) => panic!("a write behind a held lane cannot finish: {other:?}"),
+        }
+        if down.is_none() {
+            let (down_tx, down_rx) = std::sync::mpsc::channel();
+            let lane = lane.clone();
+            std::thread::spawn(move || {
+                current_thread_runtime().block_on(lane.shutdown());
+                let _ = down_tx.send(());
+            });
+            down = Some(down_rx);
+        }
+    }
+
+    let_go.send(()).unwrap();
+    down.unwrap()
+        .recv_timeout(Duration::from_secs(10))
+        .expect("shutdown must return once the accepted writes have run");
+
+    holder.join().unwrap().unwrap();
+    let mut accepted = vec!["held".to_owned()];
+    for (label, mut write) in queued {
+        match write.as_mut().poll(&mut cx) {
+            Poll::Ready(Ok(())) => accepted.push(label),
+            other => panic!("an accepted write must be answered by shutdown: {other:?}"),
+        }
+    }
+    for thread in threads {
+        match thread.join().unwrap() {
+            (label, Ok(())) => accepted.push(label),
+            (_, Err(DbError::LaneClosed)) => {}
+            (label, other) => panic!("{label} must commit or be refused, got {other:?}"),
+        }
+    }
+    let mut written = labels(&lane);
+    written.sort();
+    accepted.sort();
+    assert_eq!(written, accepted);
+
+    let late = lane.write_blocking(Lane::Foreground, "brief-late", |tx| {
+        insert_label(tx, "late")
+    });
+    assert!(
+        matches!(late, Err(DbError::LaneClosed)),
+        "a closed lane refuses, got {late:?}"
+    );
+}
+
+/// A queued write whose future is dropped still commits, and the write
+/// behind it runs.
+#[tokio::test]
+async fn queued_write_outlives_its_dropped_future() {
+    let (lane, _dir) = scratch_lane("dropped-future");
+    let running = lane.clone();
+    let (held, inside, let_go) = hold();
+    let holder = tokio::spawn(async move {
+        running
+            .write(Lane::Foreground, "brief-running", move |tx| {
+                held.wait();
+                insert_label(tx, "running")
+            })
+            .await
+            .unwrap();
+    });
+    inside.await.unwrap();
+    let queued_lane = lane.clone();
+    let mut queued: Vec<QueuedWrite> = vec![Box::pin(async move {
+        let _ = queued_lane
+            .write(Lane::Foreground, "brief-dropped", |tx| {
+                insert_label(tx, "dropped")
+            })
+            .await;
+    })];
+    admit(&mut queued).await;
+    drop(queued);
+
+    let_go.send(()).unwrap();
+    holder.await.unwrap();
+    lane.write(Lane::Foreground, "brief-after", |tx| {
+        insert_label(tx, "after")
+    })
+    .await
+    .unwrap();
+    assert_eq!(labels(&lane), ["running", "dropped", "after"]);
+    lane.shutdown().await;
+}
+
+/// A runtime dropped with one write running and two queued shuts down, the
+/// three writes still commit, and the lane serves the next runtime.
+#[test]
+fn lane_outlives_a_runtime_dropped_with_writes_in_it() {
+    let first = current_thread_runtime();
+    let (lane, _dir, let_go) = first.block_on(async {
+        let (lane, dir) = scratch_lane("runtime-dropped");
+        let running = lane.clone();
+        let (held, inside, let_go) = hold();
+        tokio::spawn(async move {
+            let _ = running
+                .write(Lane::Foreground, "brief-running", move |tx| {
+                    held.wait();
+                    insert_label(tx, "running")
+                })
+                .await;
+        });
+        inside.await.unwrap();
+        for label in ["first", "second"] {
+            let queued_lane = lane.clone();
+            let mut write = Box::pin(async move {
+                let _ = queued_lane
+                    .write(Lane::Foreground, "brief-queued", move |tx| {
+                        insert_label(tx, label)
+                    })
+                    .await;
+            });
+            let pending =
+                std::future::poll_fn(|cx| Poll::Ready(write.as_mut().poll(cx).is_pending())).await;
+            assert!(pending, "a write behind a held lane cannot finish");
+            tokio::spawn(write);
+        }
+        (lane, dir, let_go)
+    });
+
+    let (down_tx, down) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        drop(first);
+        let _ = down_tx.send(());
+    });
+    down.recv_timeout(Duration::from_secs(10))
+        .expect("the runtime must shut down with writes in the lane");
+    let_go.send(()).unwrap();
+
+    current_thread_runtime().block_on(async {
+        lane.write(Lane::Foreground, "brief-after", |tx| {
+            insert_label(tx, "after")
         })
         .await
         .unwrap();
-    assert_eq!(probe, 1);
+        lane.shutdown().await;
+    });
+    assert_eq!(labels(&lane), ["running", "first", "second", "after"]);
+}
 
-    runtime.shutdown().await;
-    std::fs::remove_dir_all(dir).ok();
+/// A closure that panics rolls its rows back and leaves the lane usable.
+#[tokio::test]
+async fn panicking_write_rolls_back_and_frees_the_lane() {
+    let (lane, _dir) = scratch_lane("panic");
+    let failed = lane
+        .write(
+            Lane::Foreground,
+            "brief-panic-async",
+            |tx| -> Result<(), OpError> {
+                insert_label(tx, "async")?;
+                panic!("brief: an async closure panics")
+            },
+        )
+        .await;
+    assert!(
+        matches!(failed, Err(DbError::WriteFailed { .. })),
+        "an async caller gets a typed error, got {failed:?}"
+    );
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        lane.write_blocking(
+            Lane::Foreground,
+            "brief-panic-blocking",
+            |tx| -> Result<(), OpError> {
+                insert_label(tx, "blocking")?;
+                panic!("brief: a blocking closure panics")
+            },
+        )
+    }));
+    assert!(unwound.is_err(), "a blocking caller's panic is its own");
+
+    lane.write(Lane::Foreground, "brief-after", |tx| {
+        insert_label(tx, "after")
+    })
+    .await
+    .unwrap();
+    assert_eq!(labels(&lane), ["after"]);
+    lane.shutdown().await;
 }
 
 /// Chunked background writes commit per chunk and honor cancellation.
