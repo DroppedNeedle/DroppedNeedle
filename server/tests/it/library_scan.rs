@@ -1276,3 +1276,117 @@ async fn different_releases_chosen_on_the_two_rows_stay_apart() {
     );
     assert!(warned_both_kept(&album, &new_row), "the log names both");
 }
+
+/// A person who empties the old album by hand while the scan is half way
+/// through its retag leaves nothing for the scan to settle: no window
+/// sees the old album lose its last track. The half the scan did move was
+/// held back all the same, and is offered when the run ends.
+#[tokio::test]
+async fn held_album_is_offered_though_the_old_album_was_emptied_by_hand() {
+    let (mut rig, files, album) = big_album("scan-regroup-emptied-by-hand").await;
+    let after = rig.after.clone();
+    let before = rig.before.clone();
+    rig.tag(&files[..256], &after);
+    rig.tag(&files[256..], &before);
+    let new_row_sql = new_row(&album);
+    rig.meanwhile_sql(format!(
+        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_name, album_artist_name_folded, album_artist_id, grouping_source, \
+         created_at, updated_at) SELECT 'third', root_id, 'third', 'Third', 'third', \
+         album_artist_name, album_artist_name_folded, album_artist_id, 'automatic', 0, 0 \
+         FROM local_albums WHERE id = '{album}' AND {new_row_sql} IS NOT NULL; \
+         UPDATE local_tracks SET local_album_id = 'third', membership_source = 'manual', \
+         membership_locked = 1 WHERE local_album_id = '{album}' AND {new_row_sql} IS NOT NULL;"
+    ));
+    rig.scan().await;
+
+    let new_row = rig.album_of("a/t000.flac");
+    assert_ne!(new_row, album);
+    assert_eq!(
+        rig.album_of("a/t299.flac"),
+        "third",
+        "the rest was moved by hand"
+    );
+    assert_eq!(rig.queued_jobs(&new_row), 1, "offered when the scan ended");
+}
+
+/// Once a retagged album has been followed, its row is an ordinary album
+/// again, scan still running or not: cleanup retires an empty row of the
+/// same name into it. It used to pass the row by, and an empty row is
+/// only looked at once.
+#[tokio::test]
+async fn cleanup_does_not_skip_the_survivor_of_a_finished_follow() {
+    const OTHER: &str = "scan-regroup-cleanup-survivor other";
+    let mut rig = RegroupRig::new("scan-regroup-cleanup-survivor");
+    let small: Vec<String> = (0..10).map(|n| format!("0/s{n}.flac")).collect();
+    let big: Vec<String> = (0..300).map(|n| format!("a/t{n:03}.flac")).collect();
+    let (before, after) = (rig.before.clone(), rig.after.clone());
+    rig.tag(&small, &before);
+    rig.tag(&big, OTHER);
+    rig.scan().await;
+    let album = rig.album_of("0/s0.flac");
+
+    // The small album sorts first, so its retag is read and followed in
+    // the first window; the other album's files only keep the scan going.
+    rig.tag(&small, &after);
+    rig.tag(&big, OTHER);
+    let db = rig.db();
+    let survivor = album.clone();
+    let retired = Arc::new(std::sync::Mutex::new(None));
+    let cell = Arc::clone(&retired);
+    rig.meanwhile(LAST_FILE, move || {
+        let mut conn = droppedneedle::db::open_connection(&db).expect("side connection opens");
+        conn.execute_batch(&format!(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_name, album_artist_name_folded, album_artist_id, grouping_source, \
+             created_at, updated_at) SELECT 'shell', root_id, 'shell', title, title_folded, \
+             album_artist_name, album_artist_name_folded, album_artist_id, 'automatic', 0, 0 \
+             FROM local_albums WHERE id = '{survivor}' AND title = '{after}'; \
+             INSERT INTO library_operation_jobs (id, kind, state, created_at, updated_at) \
+             VALUES ('cleanup', 'repair', 'running', 0, 0);"
+        ))
+        .expect("an empty row of the followed album's name");
+        let tx = conn.transaction().expect("transaction");
+        let changed = hygiene::clean_album(&tx, "shell", "cleanup", 0.0).expect("cleanup runs");
+        tx.commit().expect("commit");
+        *cell.lock().expect("cell") = Some(changed.is_some());
+    });
+    rig.scan().await;
+
+    assert_eq!(rig.album_of("0/s0.flac"), album, "the retag was followed");
+    assert_eq!(
+        *retired.lock().expect("cell"),
+        Some(true),
+        "the empty row was retired into the followed album mid-scan"
+    );
+}
+
+/// A scan cancelled while it was still waiting is over. Starting the app
+/// again does not end it a second time.
+#[tokio::test]
+async fn run_cancelled_while_queued_is_not_ended_again_at_startup() {
+    let rig = RegroupRig::new("scan-cancelled-queued");
+    rig.coordinator
+        .request_run(&request(&rig.root))
+        .expect("requested");
+    let run = rig
+        .coordinator
+        .store()
+        .list_current()
+        .pop()
+        .expect("the run is waiting");
+    rig.coordinator
+        .control(&run.id, ScanControl::Stop, false, run.row_revision)
+        .expect("stop is taken");
+    let stamp = "SELECT CAST(terminal_at * 1000 AS INTEGER) + row_revision \
+                 FROM library_scan_runs WHERE state = 'cancelled'";
+    let ended = rig.count(stamp);
+
+    let later = rig.count("SELECT CAST(terminal_at AS INTEGER) FROM library_scan_runs") + 3600;
+    rig.coordinator.store().recover(later as f64);
+    assert_eq!(
+        rig.count(stamp),
+        ended,
+        "the run row is as the cancel left it"
+    );
+}

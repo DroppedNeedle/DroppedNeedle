@@ -22,6 +22,7 @@ use crate::db::fold::fold_text;
 use crate::library::corrections::membership::retire;
 use crate::library::identify::sqlite::offer_album;
 use crate::library::operations::decisions::{CatalogAction, bump_catalog, record_action};
+use crate::library::scan::sqlite_store::awaits_retag;
 
 const PROVIDER: &str = "musicbrainz";
 
@@ -173,21 +174,10 @@ fn retire_empty_shell(
     if busy(tx, &[&album.id])? {
         return Ok(None);
     }
-    // A scan still running moved tracks onto the receiver: it may be the
-    // new row of an album being retagged, which the album's old row takes
-    // over when the retag has been read to the end. A row retired into it
-    // would stop that.
-    let mid_scan: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM library_scan_runs run \
-         CROSS JOIN local_tracks t \
-         CROSS JOIN library_scan_album_moves m ON m.run_id = run.id \
-           AND m.root_id = t.root_id AND m.relative_path = t.relative_path \
-           AND m.local_track_id = t.id \
-         WHERE run.terminal_at IS NULL AND t.local_album_id = ?1)",
-        params![target],
-        |row| row.get(0),
-    )?;
-    if mid_scan {
+    // The receiver may be the new row of an album a running scan is half
+    // way through retagging. A row retired into it would stop the old row
+    // taking it over.
+    if awaits_retag(tx, target)? {
         return Ok(None);
     }
     let source = identity(tx, &album.id)?;

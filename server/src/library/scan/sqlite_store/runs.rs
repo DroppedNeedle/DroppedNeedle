@@ -628,8 +628,11 @@ fn prune_compat_orphans(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
 }
 
 /// End every run that was stopping, or was asked to stop, as cancelled.
+/// A run cancelled while it was waiting keeps its stop request and has
+/// ended already: it is left as it is.
 fn cancel_stopping(tx: &Connection, now: f64) -> rusqlite::Result<()> {
-    const STOPPING: &str = "state = 'stopping' OR requested_control = 'stop'";
+    const STOPPING: &str =
+        "(state = 'stopping' OR requested_control = 'stop') AND terminal_at IS NULL";
     let stopping: Vec<String> = tx
         .prepare(&format!(
             "SELECT id FROM library_scan_runs WHERE {STOPPING}"

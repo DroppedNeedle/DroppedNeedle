@@ -552,4 +552,4 @@ mod commit;
 mod inventory;
 mod runs;
 
-pub(crate) use commit::{adopt_file, adoptable_track_id, automatic_album_for};
+pub(crate) use commit::{adopt_file, adoptable_track_id, automatic_album_for, awaits_retag};

@@ -1126,6 +1126,28 @@ fn held_back(tx: &Connection, run_id: &str, album_id: &str) -> rusqlite::Result<
     .query_row(params![run_id, album_id], |row| row.get(0))
 }
 
+/// Whether a scan that has not ended moved a track onto this album from
+/// another album that still holds tracks: the album may be the new row of
+/// a retag the scan is half way through, which the old row takes over
+/// when the retag has been read to the end. Catalog cleanup asks before
+/// it retires a row into the album, which would stop that. The surviving
+/// row of a retag already followed answers no.
+pub(crate) fn awaits_retag(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM library_scan_runs run \
+         CROSS JOIN local_tracks t \
+         CROSS JOIN library_scan_album_moves m ON m.run_id = run.id \
+           AND m.root_id = t.root_id AND m.relative_path = t.relative_path \
+           AND m.local_track_id = t.id \
+         WHERE run.terminal_at IS NULL AND t.local_album_id = ?1 \
+         AND m.previous_album_id <> ?1 \
+         AND EXISTS (SELECT 1 FROM local_tracks left_behind \
+           WHERE left_behind.local_album_id = m.previous_album_id))",
+        params![album_id],
+        |row| row.get(0),
+    )
+}
+
 /// The automatic-policy albums this run moved tracks to from one album,
 /// when that album now holds no track: nothing more can arrive from it,
 /// so they are due their offer.
@@ -1144,9 +1166,11 @@ fn released_by(tx: &Connection, run_id: &str, album_id: &str) -> rusqlite::Resul
 }
 
 /// Offer the albums a run was still holding back when it ended, however
-/// it ended: the retag was partial, or the run stopped half way through
-/// it. Runs in the transaction that marks the run ended, while its move
-/// rows are still there.
+/// it ended: the retag was partial, the run stopped half way through it,
+/// or a person emptied the old album by hand in between. Every album that
+/// took a track from another in this run is offered; one offered already
+/// is not queued twice. Runs in the transaction that marks the run ended,
+/// while its move rows are still there.
 pub(super) fn offer_held_back(conn: &Connection, run_id: &str, now: f64) -> rusqlite::Result<()> {
     let albums: Vec<String> = conn
         .prepare_cached(
@@ -1155,9 +1179,7 @@ pub(super) fn offer_held_back(conn: &Connection, run_id: &str, now: f64) -> rusq
              JOIN library_scan_inventory i ON i.run_id = m.run_id AND i.root_id = m.root_id \
                AND i.relative_path = m.relative_path \
              WHERE m.run_id = ?1 AND t.local_album_id <> m.previous_album_id \
-             AND i.effective_policy = 'automatic' \
-             AND EXISTS (SELECT 1 FROM local_tracks left_behind \
-               WHERE left_behind.local_album_id = m.previous_album_id)",
+             AND i.effective_policy = 'automatic'",
         )?
         .query_map(params![run_id], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;

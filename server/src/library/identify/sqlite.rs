@@ -1197,7 +1197,9 @@ pub(crate) fn chosen_matches_differ(
 /// Settle the matches of two rows of one album before `gone` is deleted
 /// and `kept` carries on: a scan made `gone` for the album while it was
 /// being retagged, and a match or a review landed on it before the scan
-/// had read the rest. Call only when [`chosen_matches_differ`] is false.
+/// had read the rest. When each row holds a match a person chose and the
+/// two differ ([`chosen_matches_differ`]) it is refused with an error,
+/// before anything is written: the caller keeps both rows.
 ///
 /// - A person's match on `kept` stays, untouched. The match on `gone`
 ///   (automatic, or the same release chosen again) goes with its row.
@@ -1220,6 +1222,11 @@ pub(crate) fn settle_followed_match(
     kept: &str,
     now: f64,
 ) -> rusqlite::Result<()> {
+    if chosen_matches_differ(tx, gone, kept)? {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "the two rows hold different chosen matches".to_owned(),
+        ));
+    }
     let source = |album: &str| -> rusqlite::Result<Option<String>> {
         tx.query_row(
             "SELECT decision_source FROM local_album_external_identities \
@@ -1893,4 +1900,55 @@ pub(crate) fn map_review(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<Rev
         resolved_by_user_id: row.get(5)?,
         selected_candidate_key: row.get(6)?,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two rows of one album each hold a release a person chose, and the
+    /// two differ. Settling them is refused before anything is written:
+    /// neither match and no review changes.
+    #[test]
+    fn settling_two_different_chosen_matches_is_refused() {
+        let dir = crate::tooling::scratch::ScratchDir::new("settle-match").unwrap();
+        let path = dir.path().join("app.db");
+        crate::schema::template::copy_to(&path).unwrap();
+        let mut conn = crate::db::open_connection(&path).unwrap();
+        conn.execute_batch(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, grouping_source, created_at, updated_at) VALUES \
+             ('old', 'r', 'old', 'T', 't', '00000000-0000-4000-8000-000000000002', \
+              'automatic', 1, 1), \
+             ('new', 'r', 'new', 'T', 't', '00000000-0000-4000-8000-000000000002', \
+              'automatic', 1, 1); \
+             INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, release_mbid, decision_source, selected_at) VALUES \
+             ('old', 'musicbrainz', 'rg', 'rel-1', 'manual', 0), \
+             ('new', 'musicbrainz', 'rg', 'rel-2', 'legacy_import', 0); \
+             INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
+             candidates_json, state, created_ms, updated_ms) VALUES \
+             ('waiting', 'new', 'R', '[]', 'pending', 0, 0), \
+             ('closed', 'new', 'R', '[]', 'dismissed', 0, 0);",
+        )
+        .unwrap();
+        let state = |conn: &Connection| -> Vec<(String, String)> {
+            conn.prepare(
+                "SELECT local_album_id, release_mbid || ' ' || decision_source || ' ' \
+                 || row_revision FROM local_album_external_identities \
+                 UNION ALL SELECT local_album_id, id FROM library_identify_reviews ORDER BY 1, 2",
+            )
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+        };
+        let before = state(&conn);
+        assert_eq!(before.len(), 4);
+
+        let tx = conn.transaction().unwrap();
+        assert!(settle_followed_match(&tx, "new", "old", 1.0).is_err());
+        assert_eq!(state(&tx), before);
+    }
 }
