@@ -539,7 +539,7 @@ impl NavidromeAdapter {
             id: id.to_owned(),
             biography: info.biography.clone().unwrap_or_default(),
             musicbrainz_id: info.music_brainz_id.clone().unwrap_or_default(),
-            image_url: info.best_image(),
+            image_url: web_link(Some(&info.best_image())),
             lastfm_url: web_link(info.last_fm_url.as_deref()),
             similar_artists: info.similar_artist.iter().map(artist_view).collect(),
         })
@@ -559,7 +559,7 @@ impl NavidromeAdapter {
             id: id.to_owned(),
             biography: info.notes.clone().unwrap_or_default(),
             musicbrainz_id: info.music_brainz_id.clone().unwrap_or_default(),
-            image_url: info.best_image(),
+            image_url: web_link(Some(&info.best_image())),
             lastfm_url: web_link(info.last_fm_url.as_deref()),
             similar_artists: Vec::new(),
         })
@@ -1066,8 +1066,9 @@ impl NavidromeAdapter {
     }
 }
 
-/// A link the server supplied, kept only when it is a web address. The
-/// browser gets it as a link target, so any other scheme comes out empty.
+/// A link or image address the server supplied, kept only when it is a
+/// web address. The browser gets it as a link target or an image source,
+/// so any other scheme comes out empty.
 /// What is passed on is the parsed address, always `scheme://host/...`,
 /// never the server's own spelling: the parser accepts forms such as
 /// `https:/path` that a browser would resolve against this app's address.

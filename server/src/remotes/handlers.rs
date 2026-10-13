@@ -811,11 +811,12 @@ pub async fn get_image(
         .image(&user, source, id, query.clamped())
         .await
         .map_err(|failure| render(failure, deps.ids.as_ref()))?;
-    Ok(bytes_response(
+    bytes_response(
+        source,
         bytes,
         &content_type,
         "public, max-age=31536000, immutable",
-    ))
+    )
 }
 
 /// Playlist cover bytes. Never cached: playlist art follows membership.
@@ -836,28 +837,66 @@ pub async fn get_playlist_cover(
         .playlist_cover(&user, source, id, query.clamped())
         .await
         .map_err(|failure| render(failure, deps.ids.as_ref()))?;
-    Ok(bytes_response(bytes, &content_type, "private, no-store"))
+    bytes_response(source, bytes, &content_type, "private, no-store")
 }
 
-/// Upstream image content type, infallible: an unparseable one falls back
-/// to `application/octet-stream` instead of 500ing the download.
-fn image_content_type(content_type: &str) -> HeaderValue {
-    HeaderValue::from_str(content_type)
-        .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream"))
+/// The image types the routes relay, matched on the type alone without
+/// its parameters. Anything else the remote server sent is not an image
+/// here. SVG is left out because it can carry script.
+fn image_content_type(content_type: &str) -> Option<&'static str> {
+    let essence = content_type.split(';').next().unwrap_or_default().trim();
+    [
+        ("image/jpeg", "image/jpeg"),
+        ("image/jpg", "image/jpeg"),
+        ("image/png", "image/png"),
+        ("image/webp", "image/webp"),
+        ("image/gif", "image/gif"),
+        ("image/avif", "image/avif"),
+    ]
+    .into_iter()
+    .find(|(sent, _)| essence.eq_ignore_ascii_case(sent))
+    .map(|(_, served)| served)
 }
 
-fn bytes_response(bytes: Vec<u8>, content_type: &str, cache_control: &'static str) -> Response {
-    let content_type = image_content_type(content_type);
-    let cache = HeaderValue::from_static(cache_control);
-    (
+/// Relay image bytes from a remote server. The bytes are that server's
+/// and go out under this app's address, so the type is one of ours, never
+/// the server's own header, and the browser is told not to guess another
+/// and not to run anything in it if it is opened as a page.
+fn bytes_response(
+    source: SourceName,
+    bytes: Vec<u8>,
+    content_type: &str,
+    cache_control: &'static str,
+) -> Result<Response, RemotesError> {
+    let Some(content_type) = image_content_type(content_type) else {
+        let sent: String = content_type.chars().take(100).collect();
+        tracing::warn!(
+            source = source.as_str(),
+            content_type = %sent,
+            "remote image has a content type that is not an image, treating it as missing"
+        );
+        return Err(RemotesError::NotFound);
+    };
+    Ok((
         StatusCode::OK,
         [
-            (header::CONTENT_TYPE, content_type),
-            (header::CACHE_CONTROL, cache),
+            (header::CONTENT_TYPE, HeaderValue::from_static(content_type)),
+            (
+                header::CACHE_CONTROL,
+                HeaderValue::from_static(cache_control),
+            ),
+            (
+                header::X_CONTENT_TYPE_OPTIONS,
+                HeaderValue::from_static("nosniff"),
+            ),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                HeaderValue::from_static("sandbox"),
+            ),
         ],
         bytes,
     )
-        .into_response()
+        .into_response())
 }
 
 /// The remote album behind a MusicBrainz id.

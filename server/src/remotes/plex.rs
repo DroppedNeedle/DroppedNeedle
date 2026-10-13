@@ -840,9 +840,10 @@ impl PlexAdapter {
             .and_then(|playlist| playlist.composite.clone())
             .filter(|path| !path.is_empty())
             .unwrap_or_else(|| format!("/playlists/{id}/composite"));
+        let composite = validated_cover_path(&composite)?;
         let size = size.to_string();
         self.get_bytes(
-            &composite,
+            composite,
             &params(&[("width", &size), ("height", &size)]),
             true,
             "image/jpeg",
@@ -1423,6 +1424,26 @@ impl PlexServerTokens for PlexTokenProbe {
             probe.server_access_token(&self.plex_tv, &machine_id).await
         })
     }
+}
+
+/// A playlist cover path as the server listed it, kept only when it is a
+/// plain path on that server. It is joined onto the server's address, so
+/// `@host/x` would make the real host a username and send the request,
+/// Plex token and all, to `host`. Anything else is no image, without any
+/// request.
+fn validated_cover_path(raw: &str) -> Result<&str, AdapterError> {
+    let plain = raw.starts_with('/')
+        && !raw.starts_with("//")
+        && !raw.contains('\\')
+        && !raw.chars().any(|c| c.is_control() || c.is_whitespace())
+        && !raw.split(['/', '?', '#']).any(|segment| segment == "..");
+    if !plain {
+        tracing::warn!(
+            "plex listed a playlist cover path that is not a path, treating it as missing"
+        );
+        return Err(AdapterError::NotFound);
+    }
+    Ok(raw)
 }
 
 /// Validate a Plex part key exactly as v2 `proxy_get_stream` does: a

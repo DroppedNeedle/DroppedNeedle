@@ -972,6 +972,8 @@ async fn routes_serve_images_with_cache_contract() {
             .get("cache-control")
             .is_some_and(|value| value.contains("immutable"))
     );
+    assert_eq!(header_map.get("x-content-type-options"), Some(&"nosniff"));
+    assert_eq!(header_map.get("content-security-policy"), Some(&"sandbox"));
 
     let (status, headers, _) =
         get_bytes(app.clone(), "/remotes/plex/covers/playlists/px-pl-2").await;
@@ -980,6 +982,16 @@ async fn routes_serve_images_with_cache_contract() {
         headers
             .iter()
             .any(|(key, value)| key == "cache-control" && value == "private, no-store")
+    );
+    assert!(
+        headers
+            .iter()
+            .any(|(key, value)| key == "x-content-type-options" && value == "nosniff")
+    );
+    assert!(
+        headers
+            .iter()
+            .any(|(key, value)| key == "content-security-policy" && value == "sandbox")
     );
 }
 
@@ -1235,17 +1247,18 @@ async fn api_answers_over_the_cap_are_refused() {
     task.abort();
 }
 
-/// Navidrome's Last.fm link reaches the browser as a link address, so
-/// anything that is not a web address comes out absent.
+/// Navidrome's Last.fm link and image address reach the browser as a link
+/// and an image source, so anything that is not a web address comes out
+/// absent.
 #[tokio::test]
-async fn navidrome_last_fm_link_is_dropped_unless_it_is_a_web_address() {
+async fn navidrome_links_are_dropped_unless_they_are_web_addresses() {
     let info_with = |link: &'static str| {
         Router::new().fallback(move || async move {
             axum::Json(serde_json::json!({"subsonic-response": {
                 "status": "ok",
                 "version": "1.16.1",
-                "artistInfo2": {"biography": "bio", "lastFmUrl": link},
-                "albumInfo": {"notes": "notes", "lastFmUrl": link},
+                "artistInfo2": {"biography": "bio", "lastFmUrl": link, "largeImageUrl": link},
+                "albumInfo": {"notes": "notes", "lastFmUrl": link, "largeImageUrl": link},
             }}))
         })
     };
@@ -1271,7 +1284,104 @@ async fn navidrome_last_fm_link_is_dropped_unless_it_is_a_web_address() {
         let album = handle.album_info("al-1").await.expect("album info");
         assert_eq!(artist.lastfm_url, expected, "artist link {link:?}");
         assert_eq!(album.lastfm_url, expected, "album link {link:?}");
+        assert_eq!(artist.image_url, expected, "artist image {link:?}");
+        assert_eq!(album.image_url, expected, "album image {link:?}");
         assert_eq!(artist.biography, "bio");
         task.abort();
     }
+}
+
+/// The image route never relays a page: a server that answers an image id
+/// with markup or SVG gets the fixed 404, and none of its body goes out.
+#[tokio::test]
+async fn routes_refuse_image_answers_that_are_not_images() {
+    use axum::http::header::CONTENT_TYPE;
+    const PAGE: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>";
+    for content_type in ["text/html", "image/svg+xml", "IMAGE/SVG+XML; charset=utf-8"] {
+        let (base_url, task) = serve_fake(
+            Router::new().fallback(move || async move { ([(CONTENT_TYPE, content_type)], PAGE) }),
+        )
+        .await;
+        let (rig, user_id) = auth_bundle().await;
+        let servers = FixedServers::default()
+            .with(
+                SourceName::Jellyfin,
+                server(&base_url, "", JELLYFIN_KEY, "jf-user-1"),
+            )
+            .with(SourceName::Plex, server(&base_url, "", PLEX_TOKEN, ""));
+        let app = authed_app(deps_for(&rig, servers), &user_id);
+        for source in ["jellyfin", "plex"] {
+            let (status, headers, bytes) =
+                get_bytes(app.clone(), &format!("/remotes/{source}/images/any")).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{source} {content_type}");
+            let body = String::from_utf8_lossy(&bytes);
+            assert!(!body.contains("script"), "{source} relayed {body}");
+            assert_eq!(
+                serde_json::from_slice::<Value>(&bytes)
+                    .ok()
+                    .as_ref()
+                    .map(error_code),
+                Some("NOT_FOUND")
+            );
+            assert!(
+                headers
+                    .iter()
+                    .any(|(key, value)| key == "content-type" && value == "application/json")
+            );
+        }
+        task.abort();
+    }
+}
+
+/// A Plex playlist cover path comes from the server and is joined onto the
+/// server's address. One that would turn that address into another host
+/// (`@host/x` makes the real host the username) is no image, and nothing
+/// is sent to the other host.
+#[tokio::test]
+async fn plex_cover_path_cannot_point_at_another_host() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let hits = Arc::new(AtomicUsize::new(0));
+    let counter = hits.clone();
+    let (other, other_task) = serve_fake(Router::new().fallback(move || {
+        counter.fetch_add(1, Ordering::SeqCst);
+        async {
+            (
+                [(axum::http::header::CONTENT_TYPE, "image/jpeg")],
+                vec![0xFFu8, 0xD8],
+            )
+        }
+    }))
+    .await;
+    let other_host = other.trim_start_matches("http://").to_owned();
+
+    for composite in [
+        format!("@{other_host}/x"),
+        format!("//{other_host}/x"),
+        format!("{other}/x"),
+        format!("/\\{other_host}/x"),
+        "/playlists/../x".to_owned(),
+    ] {
+        let listed = composite.clone();
+        let (base_url, task) = serve_fake(Router::new().fallback(move || {
+            let listed = listed.clone();
+            async move {
+                axum::Json(serde_json::json!({"MediaContainer": {"Metadata": [{
+                    "ratingKey": "pl-1", "title": "Mix", "playlistType": "audio",
+                    "composite": listed,
+                }]}}))
+            }
+        }))
+        .await;
+        let outcome = plex_handle(&base_url, Vec::new())
+            .playlist_cover_bytes("pl-1", 300)
+            .await;
+        assert!(
+            matches!(outcome, Err(AdapterError::NotFound)),
+            "{composite:?} was fetched: {:?}",
+            outcome.map(|(bytes, kind)| (bytes.len(), kind))
+        );
+        task.abort();
+    }
+    assert_eq!(hits.load(Ordering::SeqCst), 0, "another host was asked");
+    other_task.abort();
 }
