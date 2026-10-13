@@ -5,6 +5,16 @@
 # areas may read it. A few tables are still written from more than one
 # area, and those writes are moving to the owner.
 #
+# Writes from outside the owning area that exist today, all by library
+# code inside its own transaction, when one album, artist or track row
+# takes the place of another (a merge, or a scan following a retagged
+# album onto its old row):
+#   library_user_favorites        catalog   moved to the surviving row
+#   library_user_favorite_names   catalog   moved with their favorite
+#   library_play_history          media     moved to the surviving row
+#   playlist_tracks               catalog   album_id set to the surviving
+#                                           album (a followed retag only)
+#
 # Add a table here in the commit that creates it and remove it in the
 # commit that drops it: the schema tests fail when this list and the
 # migrated schema disagree.
