@@ -22,8 +22,6 @@
 //!   `LibrarySetup::spawn_loops` starts it.
 
 pub mod error;
-#[cfg(any(test, feature = "test-support"))]
-pub mod memory;
 pub mod models;
 pub mod reasons;
 pub mod rules;

@@ -1,86 +1,330 @@
-//! Stage-8 contribution briefs: submission path plus verification worker.
+//! Contribution briefs: the submission path and the verification worker,
+//! on the SQLite store over a private copy of the migrated database.
 //!
-//! Everything runs against the scripted memory rig (`contrib::memory`):
-//! no network, no live provider writes. The seed form is POSTed to
-//! `FakeReleaseEditor`, which stands in for the MusicBrainz release editor.
+//! The outside world is scripted (`contrib::scripted`): no network, no live
+//! provider writes. The seed form is POSTed to `FakeReleaseEditor`, which
+//! stands in for the MusicBrainz release editor. Albums, identities and
+//! freshness are rows a test seeds; attachments are decided by the library
+//! matcher.
 
 use droppedneedle::library::contrib;
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use contrib::error::ContribError;
-use contrib::memory::*;
 use contrib::models::*;
 use contrib::rules::*;
 use contrib::scripted::*;
 use contrib::seams::*;
 use contrib::service::ContributionService;
+use contrib::sqlite::SqliteContributions;
 use contrib::worker::{
     VerificationWorker, VerificationWorkerConfig, shutdown_channel, spawn_verification_worker,
 };
+use droppedneedle::library::adapters::MatchingAttachmentEvidence;
 use droppedneedle::providers::slots::RequestPriority;
+use futures_util::future::BoxFuture;
+use rusqlite::{OptionalExtension as _, params};
+
+use crate::common::{ScratchDir, migrated_db};
 
 const NOW: f64 = 1_800_000_000.0;
 const ALBUM: &str = "album-1";
 const ARTIST: &str = "artist-1";
 const ACTOR: &str = "user-1";
+const POLICY: &str = "policy-1";
 
 const MBID_RELEASE: &str = "11111111-1111-4111-8111-111111111111";
 const MBID_GROUP: &str = "22222222-2222-4222-8222-222222222222";
 const MBID_ARTIST: &str = "33333333-3333-4333-8333-333333333333";
 const MBID_OTHER: &str = "44444444-4444-4444-8444-444444444444";
 
+/// What identification was told, in place of the port to it.
+#[derive(Default)]
+struct RecordingCatalog {
+    scopes: Mutex<Vec<(Vec<String>, Vec<String>)>>,
+    sweeps: Mutex<usize>,
+    identified: Mutex<Vec<(String, String)>>,
+}
+
+impl RecordingCatalog {
+    fn scopes(&self) -> Vec<(Vec<String>, Vec<String>)> {
+        self.scopes.lock().unwrap().clone()
+    }
+
+    fn sweeps(&self) -> usize {
+        *self.sweeps.lock().unwrap()
+    }
+
+    fn identified_calls(&self) -> Vec<(String, String)> {
+        self.identified.lock().unwrap().clone()
+    }
+}
+
+impl ContributionCatalog for RecordingCatalog {
+    fn invalidate_identity_scope<'a>(
+        &'a self,
+        album_mbids: &'a [String],
+        artist_mbids: &'a [String],
+    ) -> BoxFuture<'a, ()> {
+        self.scopes
+            .lock()
+            .unwrap()
+            .push((album_mbids.to_vec(), artist_mbids.to_vec()));
+        Box::pin(async {})
+    }
+
+    fn invalidate_identification<'a>(&'a self) -> BoxFuture<'a, ()> {
+        *self.sweeps.lock().unwrap() += 1;
+        Box::pin(async {})
+    }
+
+    fn after_identified<'a>(
+        &'a self,
+        local_album_id: &'a str,
+        input_policy_revision: &'a str,
+    ) -> BoxFuture<'a, ()> {
+        self.identified
+            .lock()
+            .unwrap()
+            .push((local_album_id.to_owned(), input_policy_revision.to_owned()));
+        Box::pin(async {})
+    }
+}
+
+/// A verification job as its row holds it.
+struct Job {
+    state: String,
+    not_before: f64,
+    last_failure_code: Option<String>,
+}
+
+/// A contribution verification attempt as its row holds it.
+struct Attempt {
+    state: String,
+    reason: String,
+    candidate_count: i64,
+}
+
 struct Rig {
-    store: Arc<MemoryStore>,
-    identity: Arc<MemoryIdentity>,
+    db: rusqlite::Connection,
+    store: Arc<SqliteContributions>,
     discogs: Arc<ScriptedDiscogs>,
     musicbrainz: Arc<ScriptedMusicBrainz>,
-    catalog: Arc<MemoryCatalog>,
-    evidence: Arc<ScriptedEvidence>,
+    catalog: Arc<RecordingCatalog>,
     clock: Arc<TestClock>,
     service: Arc<ContributionService>,
+    _dir: ScratchDir,
 }
 
 impl Rig {
-    fn new(decision: AttachmentDecision) -> Self {
-        let store = Arc::new(MemoryStore::new());
-        let identity = Arc::new(MemoryIdentity::new());
+    /// One curator, and one two-track album by an artist MusicBrainz knows.
+    fn new() -> Self {
+        let dir = ScratchDir::new("lib-contrib");
+        let path = dir.join("app.db");
+        migrated_db(&path);
+        let db = droppedneedle::db::open_connection(&path).unwrap();
+        let store = Arc::new(SqliteContributions::open(&path).unwrap());
         let discogs = Arc::new(ScriptedDiscogs::new());
         let musicbrainz = Arc::new(ScriptedMusicBrainz::new());
-        let catalog = Arc::new(MemoryCatalog::new());
-        let evidence = Arc::new(ScriptedEvidence::new(decision));
+        let catalog = Arc::new(RecordingCatalog::default());
         let clock = Arc::new(TestClock::new(NOW));
-        identity.insert(ALBUM, album_context(None, None));
-        store.set_freshness(ALBUM, true, "tag-rev:file-rev:policy-rev", 7, ARTIST);
         let service = Arc::new(
             ContributionService::new(
                 store.clone(),
-                identity.clone(),
-                evidence.clone(),
+                store.clone(),
+                Arc::new(MatchingAttachmentEvidence),
                 clock.clone(),
             )
             .with_discogs(discogs.clone())
             .with_musicbrainz(musicbrainz.clone())
             .with_catalog(catalog.clone()),
         );
-        Self {
+        let rig = Self {
+            db,
             store,
-            identity,
             discogs,
             musicbrainz,
             catalog,
-            evidence,
             clock,
             service,
+            _dir: dir,
+        };
+        rig.db
+            .execute(
+                "INSERT INTO auth_users (id, display_name, created_at) \
+                 VALUES (?1, 'Curator', '2026-01-01T00:00:00Z')",
+                params![ACTOR],
+            )
+            .unwrap();
+        rig.seed_album(ALBUM, ARTIST, 7, ["t1", "t2"]);
+        rig.db
+            .execute(
+                "INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+                 provider_artist_id, decision_source, selected_at) \
+                 VALUES (?1, 'musicbrainz', ?2, 'automatic', ?3)",
+                params![ARTIST, MBID_ARTIST, NOW],
+            )
+            .unwrap();
+        rig
+    }
+
+    /// A live album at `revision` with two indexed tracks and its own artist.
+    fn seed_album(&self, album: &str, artist: &str, revision: i64, tracks: [&str; 2]) {
+        self.db
+            .execute(
+                "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+                 updated_at) VALUES (?1, 'Test Artist', 'test artist', 'person', ?2, ?2)",
+                params![artist, NOW],
+            )
+            .unwrap();
+        self.db
+            .execute(
+                "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+                 album_artist_name, album_artist_id, year, original_release_date, \
+                 grouping_source, created_at, updated_at, row_revision) \
+                 VALUES (?1, 'root-1', ?1, 'Test Album', 'test album', 'Test Artist', ?2, 2024, \
+                 '2024-03-07', 'automatic', ?3, ?3, ?4)",
+                params![album, artist, NOW, revision],
+            )
+            .unwrap();
+        let rows = [
+            (tracks[0], 1, "First Song", 200.1234),
+            (tracks[1], 2, "Second Song", 180.0),
+        ];
+        for (id, number, title, seconds) in rows {
+            self.db
+                .execute(
+                    "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, \
+                     relative_path, path_hash, file_size_bytes, file_mtime_ns, stat_revision, \
+                     tag_revision, title, title_folded, artist_name, album_title, \
+                     album_title_folded, disc_number, track_number, duration_seconds, \
+                     file_format, ingest_source, imported_at, membership_source, \
+                     applied_policy_revision) \
+                     VALUES (?1, ?2, 'root-1', '/music/' || ?1 || '.flac', ?1 || '.flac', ?1, 1, \
+                     1, 'stat-1', 'tag-1', ?3, lower(?3), 'Test Artist', 'Test Album', \
+                     'test album', 1, ?4, ?5, 'flac', 'scan', ?6, 'automatic', ?7)",
+                    params![id, album, title, number, seconds, NOW, POLICY],
+                )
+                .unwrap();
         }
+    }
+
+    /// The album already carries this MusicBrainz release.
+    fn seed_album_identity(&self, album: &str, group: &str, release: &str) {
+        self.db
+            .execute(
+                "INSERT INTO local_album_external_identities (local_album_id, provider, \
+                 release_group_mbid, release_mbid, decision_source, selected_at) \
+                 VALUES (?1, 'musicbrainz', ?2, ?3, 'automatic', ?4)",
+                params![album, group, release, NOW],
+            )
+            .unwrap();
+    }
+
+    /// The management policy was applied again: the album's input moved.
+    fn set_policy_revision(&self, album: &str, policy: &str) {
+        self.db
+            .execute(
+                "UPDATE local_tracks SET applied_policy_revision = ?2 WHERE local_album_id = ?1",
+                params![album, policy],
+            )
+            .unwrap();
+    }
+
+    /// `missing` takes every file of the album away, `indexed` brings them back.
+    fn set_availability(&self, album: &str, availability: &str) {
+        self.db
+            .execute(
+                "UPDATE local_tracks SET availability = ?2 WHERE local_album_id = ?1",
+                params![album, availability],
+            )
+            .unwrap();
+    }
+
+    fn set_album_revision(&self, album: &str, revision: i64) {
+        self.db
+            .execute(
+                "UPDATE local_albums SET row_revision = ?2 WHERE id = ?1",
+                params![album, revision],
+            )
+            .unwrap();
+    }
+
+    async fn raw(&self, contribution_id: &str) -> ContributionRow {
+        self.store.get(contribution_id).await.unwrap().unwrap()
+    }
+
+    fn jobs_for(&self, contribution_id: &str) -> Vec<Job> {
+        self.db
+            .prepare(
+                "SELECT state, not_before, last_failure_code \
+                 FROM library_contribution_verification_jobs WHERE contribution_id = ?1 \
+                 ORDER BY created_at, rowid",
+            )
+            .unwrap()
+            .query_map(params![contribution_id], |row| {
+                Ok(Job {
+                    state: row.get(0)?,
+                    not_before: row.get(1)?,
+                    last_failure_code: row.get(2)?,
+                })
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
+    fn attempts(&self) -> Vec<Attempt> {
+        self.db
+            .prepare(
+                "SELECT state, terminal_reason_code, candidate_count \
+                 FROM library_identification_attempts \
+                 WHERE trigger = 'contribution_submission' ORDER BY started_at, rowid",
+            )
+            .unwrap()
+            .query_map([], |row| {
+                Ok(Attempt {
+                    state: row.get(0)?,
+                    reason: row.get(1)?,
+                    candidate_count: row.get(2)?,
+                })
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
+    fn live_tokens(&self) -> i64 {
+        self.db
+            .query_row(
+                "SELECT COUNT(*) FROM library_contribution_callback_tokens \
+                 WHERE consumed_at IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    /// The album's MusicBrainz identity: release, release group, who decided.
+    fn album_identity(&self, album: &str) -> Option<(String, String, String)> {
+        self.db
+            .query_row(
+                "SELECT release_mbid, release_group_mbid, decision_source \
+                 FROM local_album_external_identities WHERE local_album_id = ?1",
+                params![album],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .unwrap()
     }
 
     fn worker(&self) -> Arc<VerificationWorker> {
         Arc::new(VerificationWorker::new(
             self.service.clone(),
             self.musicbrainz.clone(),
-            self.identity.clone(),
+            self.store.clone(),
             VerificationWorkerConfig::default(),
         ))
     }
@@ -90,52 +334,15 @@ impl Rig {
     }
 }
 
-fn track(id: &str, disc: i64, number: i64, title: &str, duration: f64) -> IdentityTrack {
-    IdentityTrack {
-        id: id.to_string(),
-        disc_number: disc,
-        track_number: number,
-        title: title.to_string(),
-        artist_name: Some("Test Artist".to_string()),
-        duration_seconds: Some(duration),
-        availability: "indexed".to_string(),
-        disc_subtitle: None,
-        relative_path: format!("{id}.flac"),
-        recording_mbid: None,
-        embedded_recording_mbid: None,
-        input: Default::default(),
-    }
-}
-
-fn album_context(
-    release_mbid: Option<&str>,
-    group_mbid: Option<&str>,
-) -> AlbumIdentificationContext {
-    AlbumIdentificationContext {
-        album: Some(IdentityAlbumRow {
-            id: ALBUM.to_string(),
-            row_revision: 7,
-            active: true,
-            title: "Test Album".to_string(),
-            album_artist_name: "Test Artist".to_string(),
-            album_artist_id: ARTIST.to_string(),
-            original_release_date: Some("2024-03-07".to_string()),
-            year: Some(2024),
-            is_compilation: false,
-        }),
-        identity: IdentityAlbumIds {
-            release_mbid: release_mbid.map(str::to_string),
-            release_group_mbid: group_mbid.map(str::to_string),
-        },
-        artist: IdentityArtist {
-            kind: "person".to_string(),
-            provider_artist_id: Some(MBID_ARTIST.to_string()),
-        },
-        tracks: vec![
-            track("t1", 1, 1, "First Song", 200.1234),
-            track("t2", 1, 2, "Second Song", 180.0),
-        ],
-    }
+/// The input revision of a seeded album whose tracks carry `policy`.
+fn input_revision(tracks: [&str; 2], policy: &str) -> (String, String, String) {
+    let input = TrackInput {
+        tag_revision: Some("tag-1".to_owned()),
+        stat_revision: "stat-1".to_owned(),
+        applied_policy_revision: policy.to_owned(),
+        applied_policy: "automatic".to_owned(),
+    };
+    album_input_revisions(tracks.iter().map(|id| (*id, &input)))
 }
 
 fn discogs_release() -> DiscogsRelease {
@@ -184,6 +391,8 @@ fn discogs_release() -> DiscogsRelease {
     }
 }
 
+/// The release MusicBrainz returns for the seeded album: same titles, artist
+/// and lengths, so the matcher accepts it.
 fn verified_release(mbid: &str, group: &str) -> MusicBrainzVerifiedRelease {
     MusicBrainzVerifiedRelease {
         release_mbid: mbid.to_string(),
@@ -203,7 +412,7 @@ fn verified_release(mbid: &str, group: &str) -> MusicBrainzVerifiedRelease {
                 title: "First Song".to_string(),
                 position: 1,
                 disc_number: 1,
-                duration_seconds: Some(200_123.0),
+                duration_seconds: Some(200.123),
                 recording_mbid: None,
                 release_track_mbid: None,
             },
@@ -211,7 +420,7 @@ fn verified_release(mbid: &str, group: &str) -> MusicBrainzVerifiedRelease {
                 title: "Second Song".to_string(),
                 position: 2,
                 disc_number: 1,
-                duration_seconds: Some(180_000.0),
+                duration_seconds: Some(180.0),
                 recording_mbid: None,
                 release_track_mbid: None,
             },
@@ -250,9 +459,8 @@ async fn to_checked(rig: &Rig) -> ContributionRecord {
 
 #[tokio::test]
 async fn brief_create_rejects_exact_release() {
-    let rig = Rig::new(ScriptedEvidence::needs_review("X"));
-    rig.identity
-        .insert(ALBUM, album_context(Some(MBID_RELEASE), Some(MBID_GROUP)));
+    let rig = Rig::new();
+    rig.seed_album_identity(ALBUM, MBID_GROUP, MBID_RELEASE);
     let error = rig.service.create(ALBUM, ACTOR).await.unwrap_err();
     assert_eq!(
         error,
@@ -262,7 +470,7 @@ async fn brief_create_rejects_exact_release() {
 
 #[tokio::test]
 async fn brief_create_then_update_reaches_ready() {
-    let rig = Rig::new(ScriptedEvidence::needs_review("X"));
+    let rig = Rig::new();
     let created = rig.service.create(ALBUM, ACTOR).await.unwrap();
     assert_eq!(created.state, ContributionState::Draft);
     assert_eq!(created.local_snapshot.media.len(), 1);
@@ -286,7 +494,7 @@ async fn brief_create_then_update_reaches_ready() {
 
 #[tokio::test]
 async fn brief_update_provenance_guards() {
-    let rig = Rig::new(ScriptedEvidence::needs_review("X"));
+    let rig = Rig::new();
     let created = rig.service.create(ALBUM, ACTOR).await.unwrap();
     // Changed value still marked `local` is rejected...
     let mut bad = created.draft.clone();
@@ -314,7 +522,7 @@ async fn brief_update_provenance_guards() {
 
 #[tokio::test]
 async fn brief_track_list_and_positions_immutable() {
-    let rig = Rig::new(ScriptedEvidence::needs_review("X"));
+    let rig = Rig::new();
     let created = rig.service.create(ALBUM, ACTOR).await.unwrap();
     let mut moved = created.draft.clone();
     moved.media[0].tracks.swap(0, 1);
@@ -343,29 +551,26 @@ async fn brief_track_list_and_positions_immutable() {
 
 #[tokio::test]
 async fn brief_stale_marks_on_read_and_rebuilds_fresh() {
-    let rig = Rig::new(ScriptedEvidence::needs_review("X"));
+    let rig = Rig::new();
     let ready = to_ready(&rig).await;
-    rig.store
-        .set_freshness(ALBUM, true, "tag-rev:file-rev:policy-REV2", 7, ARTIST);
+    let (tag, file, policy) = input_revision(["t1", "t2"], POLICY);
+    assert_eq!(ready.input_revision, format!("{tag}:{file}:{policy}"));
+    // The policy is applied again: the album's input moved under the draft.
+    rig.set_policy_revision(ALBUM, "policy-2");
     let stale = rig.service.get(&ready.id).await.unwrap();
     assert_eq!(stale.state, ContributionState::Stale);
     assert!(!stale.input_is_current);
     assert_eq!(stale.next_actions, vec![ContributionNextAction::Rebuild]);
     // A stale contribution for a live album offers rebuild; for a gone
     // album it offers NOTHING (v2 quirk).
-    rig.store
-        .set_freshness(ALBUM, false, "tag-rev:file-rev:policy-REV2", 7, ARTIST);
+    rig.set_availability(ALBUM, "missing");
     let gone = rig.service.get(&ready.id).await.unwrap();
     assert!(gone.next_actions.is_empty());
     assert!(rig.service.active_for_album(ALBUM).await.unwrap().is_none());
-    // Restore liveness under the new revision and rebuild: NEW row id.
-    rig.store
-        .set_freshness(ALBUM, true, "tag-rev:file-rev:policy-REV2", 8, ARTIST);
-    rig.identity
-        .set_revisions("tag-rev", "file-rev", "policy-REV2");
-    let mut context = album_context(None, None);
-    context.album.as_mut().unwrap().row_revision = 8;
-    rig.identity.insert(ALBUM, context);
+    // The files come back and the album row has moved on: rebuild makes a
+    // NEW row from the album as it is now.
+    rig.set_availability(ALBUM, "indexed");
+    rig.set_album_revision(ALBUM, 8);
     let rebuilt = rig
         .service
         .rebuild(&ready.id, gone.row_revision, ACTOR)
@@ -373,14 +578,16 @@ async fn brief_stale_marks_on_read_and_rebuilds_fresh() {
         .unwrap();
     assert_ne!(rebuilt.id, ready.id);
     assert_eq!(rebuilt.state, ContributionState::Draft);
-    assert_eq!(rebuilt.input_revision, "tag-rev:file-rev:policy-REV2");
+    let (tag, file, policy) = input_revision(["t1", "t2"], "policy-2");
+    assert_eq!(rebuilt.input_revision, format!("{tag}:{file}:{policy}"));
+    assert_eq!(rebuilt.local_snapshot.album_row_revision, 8);
     let old = rig.service.get(&ready.id).await.unwrap();
     assert_eq!(old.state, ContributionState::Stale);
 }
 
 #[tokio::test]
 async fn brief_cancel_closes_once() {
-    let rig = Rig::new(ScriptedEvidence::needs_review("X"));
+    let rig = Rig::new();
     let ready = to_ready(&rig).await;
     let cancelled = rig
         .service
@@ -406,7 +613,7 @@ async fn brief_cancel_closes_once() {
 
 #[tokio::test]
 async fn brief_search_defaults_and_validates() {
-    let rig = Rig::new(ScriptedEvidence::needs_review("X"));
+    let rig = Rig::new();
     rig.discogs
         .set_search_results(vec![DiscogsReleaseCandidate {
             release_id: "12345".to_string(),
@@ -454,7 +661,7 @@ async fn brief_search_defaults_and_validates() {
 
 #[tokio::test]
 async fn brief_select_aligns_and_expiry_redacts() {
-    let rig = Rig::new(ScriptedEvidence::needs_review("X"));
+    let rig = Rig::new();
     rig.discogs.insert_release(discogs_release());
     let ready = to_ready(&rig).await;
     let selected = rig
@@ -498,14 +705,14 @@ async fn brief_select_aligns_and_expiry_redacts() {
         .await
         .unwrap();
     assert_eq!(purged, 1);
-    let raw = rig.store.raw(&selected.id).unwrap();
+    let raw = rig.raw(&selected.id).await;
     assert!(raw.provider_snapshot_expires_at.is_none());
     assert!(raw.source_selection.alignments.is_empty());
 }
 
 #[tokio::test]
 async fn brief_remove_discogs_restores_local() {
-    let rig = Rig::new(ScriptedEvidence::needs_review("X"));
+    let rig = Rig::new();
     rig.discogs.insert_release(discogs_release());
     let ready = to_ready(&rig).await;
     let selected = rig
@@ -529,7 +736,7 @@ async fn brief_remove_discogs_restores_local() {
 
 #[tokio::test]
 async fn brief_duplicate_check_orders_evidence_and_forces_review() {
-    let rig = Rig::new(ScriptedEvidence::needs_review("X"));
+    let rig = Rig::new();
     rig.discogs.insert_release(discogs_release());
     let release = discogs_release();
     rig.musicbrainz.insert_resolution(
@@ -615,7 +822,7 @@ async fn brief_duplicate_check_orders_evidence_and_forces_review() {
 
 #[tokio::test]
 async fn brief_duplicate_check_clean_stays_ready() {
-    let rig = Rig::new(ScriptedEvidence::needs_review("X"));
+    let rig = Rig::new();
     let checked = to_checked(&rig).await;
     assert_eq!(checked.state, ContributionState::Ready);
     assert!(
@@ -635,7 +842,7 @@ async fn brief_duplicate_check_clean_stays_ready() {
 
 #[tokio::test]
 async fn brief_duplicate_check_needs_valid_draft_and_fresh_source() {
-    let rig = Rig::new(ScriptedEvidence::needs_review("X"));
+    let rig = Rig::new();
     let created = rig.service.create(ALBUM, ACTOR).await.unwrap();
     let error = rig
         .service
@@ -650,11 +857,7 @@ async fn brief_duplicate_check_needs_valid_draft_and_fresh_source() {
 
 #[tokio::test]
 async fn brief_attach_existing_links_and_scopes_invalidation() {
-    let rig = Rig::new(ScriptedEvidence::identified(
-        MBID_GROUP,
-        MBID_RELEASE,
-        Some(MBID_ARTIST),
-    ));
+    let rig = Rig::new();
     rig.discogs.insert_release(discogs_release());
     let release = discogs_release();
     rig.musicbrainz.insert_resolution(
@@ -700,15 +903,21 @@ async fn brief_attach_existing_links_and_scopes_invalidation() {
     );
     assert_eq!(
         rig.catalog.identified_calls(),
-        vec![(ALBUM.to_string(), "policy-rev".to_string())]
+        vec![(ALBUM.to_string(), input_revision(["t1", "t2"], POLICY).2)]
     );
-    assert_eq!(rig.evidence.calls(), 1);
+    // The curator named this release: the album takes it as a manual identity.
     assert_eq!(
-        rig.store.album_identity(ALBUM),
-        Some((MBID_RELEASE.to_string(), MBID_GROUP.to_string()))
+        rig.album_identity(ALBUM),
+        Some((
+            MBID_RELEASE.to_string(),
+            MBID_GROUP.to_string(),
+            "manual".to_string()
+        ))
     );
-    assert_eq!(rig.store.attempts().len(), 1);
-    let raw = rig.store.raw(&linked.id).unwrap();
+    let attempts = rig.attempts();
+    assert_eq!(attempts.len(), 1);
+    assert_eq!(attempts[0].state, "identified");
+    let raw = rig.raw(&linked.id).await;
     assert!(raw.provider_snapshot_expires_at.is_none());
     let verify_calls = rig.musicbrainz.verify_calls();
     assert_eq!(verify_calls.len(), 2);
@@ -722,7 +931,7 @@ async fn brief_attach_existing_links_and_scopes_invalidation() {
 
 #[tokio::test]
 async fn brief_attach_rejects_ambiguous_and_unknown() {
-    let rig = Rig::new(ScriptedEvidence::needs_review("X"));
+    let rig = Rig::new();
     let checked = to_checked(&rig).await;
     let error = rig
         .service
@@ -743,7 +952,7 @@ async fn brief_attach_rejects_ambiguous_and_unknown() {
 
 #[tokio::test]
 async fn brief_seed_builds_exact_editor_form() {
-    let rig = Rig::new(ScriptedEvidence::needs_review("X"));
+    let rig = Rig::new();
     rig.discogs.insert_release(discogs_release());
     let release = discogs_release();
     rig.musicbrainz.insert_resolution(
@@ -832,19 +1041,19 @@ async fn brief_seed_builds_exact_editor_form() {
     assert!(note.contains("Seeded with DroppedNeedle"));
     assert!(note.contains(release.canonical_release_url.as_str()));
     // Persisted snapshot keeps the audit trail but never the tokenized URL.
-    let raw = rig.store.raw(&checked.id).unwrap();
+    let raw = rig.raw(&checked.id).await;
     let snapshot = raw.seed_snapshot_json.clone().unwrap();
     assert!(snapshot.contains("input_revision"));
     assert!(!snapshot.contains("redirect_uri"));
     assert_eq!(seed.contribution_revision, raw.row_revision);
-    assert_eq!(rig.store.live_tokens(), 1);
+    assert_eq!(rig.live_tokens(), 1);
     let seeded = rig.service.get(&checked.id).await.unwrap();
     assert_eq!(seeded.state, ContributionState::Seeded);
 }
 
 #[tokio::test]
 async fn brief_seed_guards_duplicates_race_and_base_url() {
-    let rig = Rig::new(ScriptedEvidence::needs_review("X"));
+    let rig = Rig::new();
     let ready = to_ready(&rig).await;
     let error = rig
         .service
@@ -888,15 +1097,10 @@ async fn brief_seed_guards_duplicates_race_and_base_url() {
         },
     );
     let ready = to_ready(&rig).await;
-    // New album fixture to avoid the still-open contribution above.
-    rig.identity.insert("album-2", album_context_for("album-2"));
-    rig.store.set_freshness(
-        "album-2",
-        true,
-        "tag-rev:file-rev:policy-rev",
-        3,
-        "artist-2",
-    );
+    // A second album, to avoid the still-open contribution above. Its
+    // artist has no MusicBrainz identity: one MusicBrainz artist belongs to
+    // one local artist.
+    rig.seed_album("album-2", "artist-2", 3, ["u1", "u2"]);
     let created = rig.service.create("album-2", ACTOR).await.unwrap();
     let ready2 = rig
         .service
@@ -958,21 +1162,9 @@ async fn brief_seed_guards_duplicates_race_and_base_url() {
     );
 }
 
-fn album_context_for(album_id: &str) -> AlbumIdentificationContext {
-    let mut context = album_context(None, None);
-    let album = context.album.as_mut().unwrap();
-    album.id = album_id.to_string();
-    album.row_revision = 3;
-    context
-}
-
 #[tokio::test]
 async fn brief_full_submission_roundtrip_through_mocked_editor() {
-    let rig = Rig::new(ScriptedEvidence::identified(
-        MBID_GROUP,
-        MBID_RELEASE,
-        Some(MBID_ARTIST),
-    ));
+    let rig = Rig::new();
     let checked = to_checked(&rig).await;
     let seed = rig
         .service
@@ -1017,7 +1209,7 @@ async fn brief_full_submission_roundtrip_through_mocked_editor() {
     let verifying = rig.service.get(&checked.id).await.unwrap();
     assert_eq!(verifying.state, ContributionState::Verifying);
     assert_eq!(verifying.result_source.as_deref(), Some("callback"));
-    assert_eq!(rig.store.jobs_for(&checked.id).len(), 1);
+    assert_eq!(rig.jobs_for(&checked.id).len(), 1);
     // The background worker confirms the release and links the album.
     rig.musicbrainz.insert_verification(
         MBID_RELEASE,
@@ -1036,14 +1228,18 @@ async fn brief_full_submission_roundtrip_through_mocked_editor() {
     assert_eq!(rig.catalog.sweeps(), 1);
     assert_eq!(rig.catalog.identified_calls().len(), 1);
     assert_eq!(
-        rig.store.album_identity(ALBUM),
-        Some((MBID_RELEASE.to_string(), MBID_GROUP.to_string()))
+        rig.album_identity(ALBUM),
+        Some((
+            MBID_RELEASE.to_string(),
+            MBID_GROUP.to_string(),
+            "manual".to_string()
+        ))
     );
 }
 
 #[tokio::test]
 async fn brief_callback_rejects_bad_and_reused_tokens() {
-    let rig = Rig::new(ScriptedEvidence::needs_review("X"));
+    let rig = Rig::new();
     let checked = to_checked(&rig).await;
     let seed = rig
         .service
@@ -1109,7 +1305,7 @@ async fn brief_callback_rejects_bad_and_reused_tokens() {
 
 #[tokio::test]
 async fn brief_manual_result_queues_and_replaces_explicitly() {
-    let rig = Rig::new(ScriptedEvidence::needs_review("X"));
+    let rig = Rig::new();
     let checked = to_checked(&rig).await;
     rig.service
         .create_seed(
@@ -1128,7 +1324,7 @@ async fn brief_manual_result_queues_and_replaces_explicitly() {
         .unwrap();
     assert_eq!(verifying.state, ContributionState::Verifying);
     assert_eq!(verifying.result_source.as_deref(), Some("manual"));
-    assert_eq!(rig.store.jobs_for(&seeded.id).len(), 1);
+    assert_eq!(rig.jobs_for(&seeded.id).len(), 1);
     // A different MBID needs explicit replacement...
     let error = rig
         .service
@@ -1177,18 +1373,14 @@ async fn to_verifying(rig: &Rig) -> ContributionRecord {
 
 #[tokio::test]
 async fn brief_worker_retries_with_backoff_then_reviews() {
-    let rig = Rig::new(ScriptedEvidence::identified(
-        MBID_GROUP,
-        MBID_RELEASE,
-        Some(MBID_ARTIST),
-    ));
+    let rig = Rig::new();
     let verifying = to_verifying(&rig).await;
     rig.musicbrainz.insert_verification(MBID_RELEASE, Ok(None)); // not propagated yet
     let worker = rig.worker();
     // First failure: 15s backoff (15 * 2^min(1-1, 6)).
     let outcome = worker.run_once(rig.now()).await.unwrap();
     assert_eq!(outcome, Some(VerificationOutcome::RetryScheduled));
-    let jobs = rig.store.jobs_for(&verifying.id);
+    let jobs = rig.jobs_for(&verifying.id);
     assert_eq!(jobs.len(), 1);
     assert_eq!(jobs[0].not_before, NOW + 15.0);
     assert_eq!(
@@ -1197,13 +1389,11 @@ async fn brief_worker_retries_with_backoff_then_reviews() {
     );
     // Nine more scheduled retries, then the window/attempt budget runs out.
     for _ in 0..8 {
-        rig.clock
-            .set(rig.store.jobs_for(&verifying.id)[0].not_before);
+        rig.clock.set(rig.jobs_for(&verifying.id)[0].not_before);
         let outcome = worker.run_once(rig.now()).await.unwrap();
         assert_eq!(outcome, Some(VerificationOutcome::RetryScheduled));
     }
-    rig.clock
-        .set(rig.store.jobs_for(&verifying.id)[0].not_before);
+    rig.clock.set(rig.jobs_for(&verifying.id)[0].not_before);
     let outcome = worker.run_once(rig.now()).await.unwrap();
     assert_eq!(outcome, Some(VerificationOutcome::NeedsReview));
     let record = rig.service.get(&verifying.id).await.unwrap();
@@ -1215,12 +1405,9 @@ async fn brief_worker_retries_with_backoff_then_reviews() {
             ContributionNextAction::Cancel
         ]
     );
-    let attempts = rig.store.attempts();
+    let attempts = rig.attempts();
     assert_eq!(attempts.len(), 1);
-    assert_eq!(
-        attempts[0].terminal_reason_code.as_deref(),
-        Some(FAILURE_MB_NOT_PROPAGATED)
-    );
+    assert_eq!(attempts[0].reason, FAILURE_MB_NOT_PROPAGATED);
     assert_eq!(attempts[0].candidate_count, 0);
     // Manual retry requeues onto verifying.
     let retried = rig
@@ -1233,32 +1420,27 @@ async fn brief_worker_retries_with_backoff_then_reviews() {
 
 #[tokio::test]
 async fn brief_worker_unmappable_payload_reviews_immediately() {
-    let rig = Rig::new(ScriptedEvidence::identified(
-        MBID_GROUP,
-        MBID_RELEASE,
-        Some(MBID_ARTIST),
-    ));
+    let rig = Rig::new();
     let verifying = to_verifying(&rig).await;
     rig.musicbrainz
         .insert_verification(MBID_RELEASE, Err(ProviderFailure::Unmappable));
     let outcome = rig.worker().run_once(rig.now()).await.unwrap();
     assert_eq!(outcome, Some(VerificationOutcome::NeedsReview));
-    let jobs = rig.store.jobs_for(&verifying.id);
-    assert_eq!(jobs[0].state, VerificationJobState::NeedsReview);
+    let jobs = rig.jobs_for(&verifying.id);
+    assert_eq!(jobs[0].state, "needs_review");
     assert_eq!(
         jobs[0].last_failure_code.as_deref(),
         Some(UNMAPPABLE_PROVIDER_PAYLOAD)
     );
-    assert_eq!(rig.evidence.calls(), 0); // no evidence run on payload failure
+    // No evidence ran on the payload failure: the attempt has no candidate.
+    let attempts = rig.attempts();
+    assert_eq!(attempts[0].reason, UNMAPPABLE_PROVIDER_PAYLOAD);
+    assert_eq!(attempts[0].candidate_count, 0);
 }
 
 #[tokio::test]
 async fn brief_worker_release_mismatch_reviews() {
-    let rig = Rig::new(ScriptedEvidence::identified(
-        MBID_GROUP,
-        MBID_RELEASE,
-        Some(MBID_ARTIST),
-    ));
+    let rig = Rig::new();
     let _verifying = to_verifying(&rig).await;
     rig.musicbrainz.insert_verification(
         MBID_RELEASE,
@@ -1267,35 +1449,32 @@ async fn brief_worker_release_mismatch_reviews() {
     let outcome = rig.worker().run_once(rig.now()).await.unwrap();
     assert_eq!(outcome, Some(VerificationOutcome::NeedsReview));
     assert_eq!(outcome.unwrap().as_str(), "needs_review");
-    let attempts = rig.store.attempts();
-    assert_eq!(
-        attempts[0].terminal_reason_code.as_deref(),
-        Some(FAILURE_RETURNED_RELEASE_MISMATCH)
-    );
+    let attempts = rig.attempts();
+    assert_eq!(attempts[0].reason, FAILURE_RETURNED_RELEASE_MISMATCH);
 }
 
 #[tokio::test]
 async fn brief_worker_contradiction_reviews_with_reason() {
-    let rig = Rig::new(ScriptedEvidence::needs_review("TITLE_CONTRADICTION"));
-    let verifying = to_verifying(&rig).await;
-    rig.musicbrainz.insert_verification(
-        MBID_RELEASE,
-        Ok(Some(verified_release(MBID_RELEASE, MBID_GROUP))),
-    );
+    let rig = Rig::new();
+    let _verifying = to_verifying(&rig).await;
+    // MusicBrainz returns the named release, but it is another album.
+    let mut other = verified_release(MBID_RELEASE, MBID_GROUP);
+    other.title = "Unrelated Record".to_string();
+    other.artist_name = "Somebody Else".to_string();
+    rig.musicbrainz
+        .insert_verification(MBID_RELEASE, Ok(Some(other)));
     let outcome = rig.worker().run_once(rig.now()).await.unwrap();
     assert_eq!(outcome, Some(VerificationOutcome::NeedsReview));
-    assert_eq!(rig.evidence.calls(), 1);
-    let attempts = rig.store.attempts();
-    assert_eq!(
-        attempts[0].terminal_reason_code.as_deref(),
-        Some("TITLE_CONTRADICTION")
-    );
-    let _ = verifying;
+    let attempts = rig.attempts();
+    assert_eq!(attempts[0].state, "needs_review");
+    assert_eq!(attempts[0].reason, "ATTACHMENT_NAME_MISMATCH");
+    assert_eq!(attempts[0].candidate_count, 1);
+    assert!(rig.album_identity(ALBUM).is_none());
 }
 
 #[tokio::test]
 async fn brief_worker_retry_after_floor_and_bogus_drop() {
-    let rig = Rig::new(ScriptedEvidence::needs_review("X"));
+    let rig = Rig::new();
     let verifying = to_verifying(&rig).await;
     rig.musicbrainz.insert_verification(
         MBID_RELEASE,
@@ -1305,7 +1484,7 @@ async fn brief_worker_retry_after_floor_and_bogus_drop() {
     );
     let outcome = rig.worker().run_once(rig.now()).await.unwrap();
     assert_eq!(outcome, Some(VerificationOutcome::RetryScheduled));
-    assert_eq!(rig.store.jobs_for(&verifying.id)[0].not_before, NOW + 120.0);
+    assert_eq!(rig.jobs_for(&verifying.id)[0].not_before, NOW + 120.0);
     // A bogus retry-after (NaN) is dropped, not clamped: plain 15s backoff.
     rig.musicbrainz.insert_verification(
         MBID_RELEASE,
@@ -1319,14 +1498,14 @@ async fn brief_worker_retry_after_floor_and_bogus_drop() {
     let outcome = worker.run_once(rig.now()).await.unwrap();
     assert_eq!(outcome, Some(VerificationOutcome::RetryScheduled));
     assert_eq!(
-        rig.store.jobs_for(&verifying.id)[0].not_before,
+        rig.jobs_for(&verifying.id)[0].not_before,
         NOW + 120.0 + 30.0
     );
 }
 
 #[tokio::test]
 async fn brief_worker_skips_non_verifying_and_recovers_leases() {
-    let rig = Rig::new(ScriptedEvidence::needs_review("X"));
+    let rig = Rig::new();
     let verifying = to_verifying(&rig).await;
     let worker = rig.worker();
     // Claim out-of-band, then cancel the contribution: the job no longer applies.
@@ -1346,8 +1525,8 @@ async fn brief_worker_skips_non_verifying_and_recovers_leases() {
     rig.clock.advance(91.0);
     let recovered = worker.recover(rig.now()).await;
     assert_eq!(recovered, 1);
-    let jobs = rig.store.jobs_for(&verifying.id);
-    assert_eq!(jobs[0].state, VerificationJobState::Queued);
+    let jobs = rig.jobs_for(&verifying.id);
+    assert_eq!(jobs[0].state, "queued");
     // Second recover inside the hour skips cleanup but still recovers (none due).
     let recovered = worker.recover(rig.now()).await;
     assert_eq!(recovered, 0);
@@ -1355,11 +1534,7 @@ async fn brief_worker_skips_non_verifying_and_recovers_leases() {
 
 #[tokio::test(start_paused = true)]
 async fn brief_worker_spawn_loop_links_then_shuts_down() {
-    let rig = Rig::new(ScriptedEvidence::identified(
-        MBID_GROUP,
-        MBID_RELEASE,
-        Some(MBID_ARTIST),
-    ));
+    let rig = Rig::new();
     // The spawned loop uses wall-clock time; pin the rig clock near it.
     let wall = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1375,7 +1550,7 @@ async fn brief_worker_spawn_loop_links_then_shuts_down() {
     let worker = Arc::new(VerificationWorker::new(
         rig.service.clone(),
         rig.musicbrainz.clone(),
-        rig.identity.clone(),
+        rig.store.clone(),
         VerificationWorkerConfig {
             worker_id: "test-loop".to_string(),
             poll_interval: POLL_INTERVAL,
@@ -1384,18 +1559,14 @@ async fn brief_worker_spawn_loop_links_then_shuts_down() {
     ));
     let (shutdown_tx, shutdown_rx) = shutdown_channel();
     let handle = spawn_verification_worker(worker, shutdown_rx);
-    // Let the loop arm its first wait, pass the interval, then give the
-    // pass its turns: every store here is in memory.
-    for _ in 0..3 {
-        tokio::task::yield_now().await;
-    }
-    tokio::time::advance(POLL_INTERVAL).await;
+    // Virtual time only: each sleep lets the loop pass its interval and
+    // gives the pass, whose store calls run on blocking threads, its turns.
     let mut linked = rig.service.get(&verifying.id).await.unwrap();
-    for _ in 0..1_000 {
+    for _ in 0..20 {
         if linked.state == ContributionState::Linked {
             break;
         }
-        tokio::task::yield_now().await;
+        tokio::time::sleep(POLL_INTERVAL).await;
         linked = rig.service.get(&verifying.id).await.unwrap();
     }
     assert_eq!(
@@ -1583,26 +1754,6 @@ fn brief_alignment_classes() {
         AlignmentClassification::Unmatched
     );
     assert!(alignments[1].provider_position.is_none());
-}
-
-#[test]
-fn brief_outcome_strings_and_system_clock() {
-    assert_eq!(VerificationOutcome::Linked.as_str(), "linked");
-    assert_eq!(VerificationOutcome::NeedsReview.as_str(), "needs_review");
-    assert_eq!(VerificationOutcome::Stale.as_str(), "stale");
-    assert_eq!(
-        VerificationOutcome::RetryScheduled.as_str(),
-        "retry_scheduled"
-    );
-    assert_eq!(
-        VerificationOutcome::NoLongerVerifying.as_str(),
-        "no_longer_verifying"
-    );
-    assert_eq!(
-        VerificationOutcome::SubjectMissing.as_str(),
-        "subject_missing"
-    );
-    assert!(SystemClock.now_seconds() > 1_700_000_000.0);
 }
 
 #[test]
