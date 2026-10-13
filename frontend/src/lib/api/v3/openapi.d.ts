@@ -18335,8 +18335,8 @@ export interface components {
              * @description Unix seconds.
              */
             installed_at: number;
-            /** @description `release`, `tag`, `branch` or `commit`. */
-            ref_kind: string;
+            /** @description What the install follows. */
+            ref_kind: components["schemas"]["PluginRefKind"];
             /** @description The release tag, tag, branch or commit asked for. */
             reference: string;
             /** @description `owner/repo`. */
@@ -18367,8 +18367,8 @@ export interface components {
             name: string;
             /** @description What the plugin asks to do, in plain words. */
             permissions: string[];
-            /** @description `release`, `tag`, `branch` or `commit`. */
-            ref_kind: string;
+            /** @description What the install follows. */
+            ref_kind: components["schemas"]["PluginRefKind"];
             /** @description The release tag, tag, branch or commit. */
             reference: string;
             /** @description `owner/repo`. */
@@ -18399,6 +18399,11 @@ export interface components {
             /** @description Every discovered plugin. */
             plugins: components["schemas"]["PluginInfo"][];
         };
+        /**
+         * @description What an install was asked to follow.
+         * @enum {string}
+         */
+        PluginRefKind: "release" | "tag" | "branch" | "commit";
         /** @description Health of one enabled plugin's process. */
         PluginRuntimeInfo: {
             /**

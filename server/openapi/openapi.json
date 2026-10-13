@@ -42445,8 +42445,8 @@
             "description": "Unix seconds."
           },
           "ref_kind": {
-            "type": "string",
-            "description": "`release`, `tag`, `branch` or `commit`."
+            "$ref": "#/components/schemas/PluginRefKind",
+            "description": "What the install follows."
           },
           "reference": {
             "type": "string",
@@ -42524,8 +42524,8 @@
             "description": "What the plugin asks to do, in plain words."
           },
           "ref_kind": {
-            "type": "string",
-            "description": "`release`, `tag`, `branch` or `commit`."
+            "$ref": "#/components/schemas/PluginRefKind",
+            "description": "What the install follows."
           },
           "reference": {
             "type": "string",
@@ -42587,6 +42587,16 @@
             "description": "Every discovered plugin."
           }
         }
+      },
+      "PluginRefKind": {
+        "type": "string",
+        "description": "What an install was asked to follow.",
+        "enum": [
+          "release",
+          "tag",
+          "branch",
+          "commit"
+        ]
       },
       "PluginRuntimeInfo": {
         "type": "object",

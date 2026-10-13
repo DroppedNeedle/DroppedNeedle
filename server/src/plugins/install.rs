@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use super::host::PluginHost;
 use super::manifest::{PluginManifest, load_manifest};
+use super::models::PluginRefKind;
 use super::runtime::BoxFuture;
 
 /// Largest install archive (32 MiB).
@@ -247,8 +248,8 @@ pub struct InstallRecord {
     pub repository_url: String,
     /// `owner/repo`.
     pub repository: String,
-    /// `release`, `tag`, `branch` or `commit`: what the admin asked for.
-    pub ref_kind: String,
+    /// What the admin asked for.
+    pub ref_kind: PluginRefKind,
     /// The release tag, tag, branch or commit asked for.
     pub reference: String,
     /// The exact commit installed.
@@ -260,8 +261,13 @@ pub struct InstallRecord {
 impl InstallRecord {
     /// Read the record in one plugin folder, when there is one.
     pub fn read(plugin_dir: &Path) -> Option<Self> {
-        let bytes = std::fs::read(plugin_dir.join(INSTALL_RECORD)).ok()?;
-        serde_json::from_slice(&bytes).ok()
+        let path = plugin_dir.join(INSTALL_RECORD);
+        let bytes = std::fs::read(&path).ok()?;
+        serde_json::from_slice(&bytes)
+            .inspect_err(|error| {
+                tracing::warn!(path = %path.display(), %error, "install record is unreadable");
+            })
+            .ok()
     }
 }
 
@@ -296,8 +302,8 @@ pub enum Wanted {
 pub struct ResolvedSource {
     /// The source.
     pub source: InstallSource,
-    /// `release`, `tag`, `branch` or `commit`.
-    pub ref_kind: String,
+    /// What the reference is.
+    pub ref_kind: PluginRefKind,
     /// The tag, branch or commit.
     pub reference: String,
     /// The exact commit.
@@ -447,22 +453,22 @@ pub async fn resolve(
                     if !valid_ref(&release.tag_name) {
                         return Err(InstallError::Download);
                     }
-                    ("release".to_owned(), release.tag_name)
+                    (PluginRefKind::Release, release.tag_name)
                 }
                 // No releases: take the default branch as it is now.
-                None => ("branch".to_owned(), "HEAD".to_owned()),
+                None => (PluginRefKind::Branch, "HEAD".to_owned()),
             }
         }
-        Wanted::Tag(tag) => ("tag".to_owned(), tag.clone()),
-        Wanted::Tree(reference) => ("branch".to_owned(), reference.clone()),
-        Wanted::Commit(sha) => ("commit".to_owned(), sha.to_ascii_lowercase()),
+        Wanted::Tag(tag) => (PluginRefKind::Tag, tag.clone()),
+        Wanted::Tree(reference) => (PluginRefKind::Branch, reference.clone()),
+        Wanted::Commit(sha) => (PluginRefKind::Commit, sha.to_ascii_lowercase()),
     };
     let commit = commit_for(fetcher, &source, &reference)
         .await?
         .ok_or_else(|| {
-            InstallError::RefNotFound(match ref_kind.as_str() {
-                "branch" if reference == "HEAD" => "default branch".to_owned(),
-                "commit" => format!("commit {reference}"),
+            InstallError::RefNotFound(match ref_kind {
+                PluginRefKind::Branch if reference == "HEAD" => "default branch".to_owned(),
+                PluginRefKind::Commit => format!("commit {reference}"),
                 _ => format!("release, tag or branch named {reference}"),
             })
         })?;
@@ -580,7 +586,7 @@ impl PluginHost {
                     "{}/{}",
                     staged.resolved.source.owner, staged.resolved.source.repo
                 ),
-                ref_kind: staged.resolved.ref_kind.clone(),
+                ref_kind: staged.resolved.ref_kind,
                 reference: staged.resolved.reference.clone(),
                 commit: staged.resolved.commit.clone(),
                 installed_at: std::time::SystemTime::now()

@@ -105,6 +105,20 @@ pub struct PluginRuntimeInfo {
     pub dropped_events: u64,
 }
 
+/// What an install was asked to follow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum PluginRefKind {
+    /// The newest release at install time.
+    Release,
+    /// One release tag.
+    Tag,
+    /// A branch, or the default branch when the reference is `HEAD`.
+    Branch,
+    /// One commit.
+    Commit,
+}
+
 /// The pinned GitHub source of one installed plugin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PluginInstallInfo {
@@ -112,8 +126,8 @@ pub struct PluginInstallInfo {
     pub repository_url: String,
     /// `owner/repo`.
     pub repository: String,
-    /// `release`, `tag`, `branch` or `commit`.
-    pub ref_kind: String,
+    /// What the install follows.
+    pub ref_kind: PluginRefKind,
     /// The release tag, tag, branch or commit asked for.
     pub reference: String,
     /// The exact commit installed.
@@ -146,8 +160,8 @@ pub struct PluginInstallPreview {
     pub permissions: Vec<String>,
     /// `owner/repo`.
     pub repository: String,
-    /// `release`, `tag`, `branch` or `commit`.
-    pub ref_kind: String,
+    /// What the install follows.
+    pub ref_kind: PluginRefKind,
     /// The release tag, tag, branch or commit.
     pub reference: String,
     /// The exact commit that will be installed. Send it back to install

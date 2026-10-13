@@ -36,10 +36,10 @@ use super::install::{
 };
 use super::models::{
     ConnectionStatus, ListenBrainzConnectRequest, PluginInfo, PluginInstallInfo,
-    PluginInstallPreview, PluginInstallRequest, PluginListResponse, PluginRuntimeInfo,
-    PluginSettingFieldInfo, PluginSourceUpdateRequest, PluginSourceUpdateResponse,
-    PluginSourcesResponse, PluginUpdateRequest, ScrobblePreferences, ScrobblePreferencesUpdate,
-    StatusMessage,
+    PluginInstallPreview, PluginInstallRequest, PluginListResponse, PluginRefKind,
+    PluginRuntimeInfo, PluginSettingFieldInfo, PluginSourceUpdateRequest,
+    PluginSourceUpdateResponse, PluginSourcesResponse, PluginUpdateRequest, ScrobblePreferences,
+    ScrobblePreferencesUpdate, StatusMessage,
 };
 use super::runtime::PluginRouteBody;
 use super::scrobble::{
@@ -390,7 +390,7 @@ pub async fn preview_plugin_install(
             "{}/{}",
             staged.resolved.source.owner, staged.resolved.source.repo
         ),
-        ref_kind: staged.resolved.ref_kind.clone(),
+        ref_kind: staged.resolved.ref_kind,
         reference: staged.resolved.reference.clone(),
         commit: staged.resolved.commit.clone(),
         installed_version,
@@ -469,15 +469,20 @@ pub async fn update_plugin_from_source(
         .host
         .install_record(&name)
         .ok_or_else(|| map_install(InstallError::NoSource, deps.ids.as_ref()))?;
-    let reference = match body.reference.as_deref().map(str::trim) {
-        Some(reference) if !reference.is_empty() => Some(reference.to_owned()),
+    let asked = body
+        .reference
+        .as_deref()
+        .map(str::trim)
+        .filter(|reference| !reference.is_empty());
+    let reference = match (asked, record.ref_kind) {
+        (Some(reference), _) => Some(reference.to_owned()),
         // Releases move to the newest release.
-        _ if record.ref_kind == "release" => None,
+        (None, PluginRefKind::Release) => None,
         // Branches move to their tip.
-        _ if record.ref_kind == "branch" && record.reference == "HEAD" => None,
-        _ if record.ref_kind == "branch" => Some(record.reference.clone()),
+        (None, PluginRefKind::Branch) if record.reference == "HEAD" => None,
+        (None, PluginRefKind::Branch) => Some(record.reference.clone()),
         // Tags and commits stay pinned.
-        _ => Some(record.commit.clone()),
+        (None, PluginRefKind::Tag | PluginRefKind::Commit) => Some(record.commit.clone()),
     };
     let url = format!("https://github.com/{}", record.repository);
     let staged = stage_request(&deps, &url, reference.as_deref()).await?;
