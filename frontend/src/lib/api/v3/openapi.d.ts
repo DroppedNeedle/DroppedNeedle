@@ -16543,6 +16543,17 @@ export interface components {
             worker_lease_expires_at?: number | null;
             worker_stalled: boolean;
         };
+        /** @description A hidden temporary file no write accounts for. */
+        ManagementLeftoverFileView: {
+            /**
+             * Format: int64
+             * @description When the file was last written, unix seconds.
+             */
+            modified_at: number;
+            /** @description Path under the library folder. */
+            rel_path: string;
+            root_id: string;
+        };
         /** @description One page of planned files. */
         ManagementPlanItemPage: {
             has_more: boolean;
@@ -16673,6 +16684,15 @@ export interface components {
         ManagementRecoveryView: {
             /** Format: int64 */
             cleanup_pending_count: number;
+            /**
+             * Format: int64
+             * @description Hidden temporary files under the library folders that no write
+             *     accounts for, as the check after startup found them. Nothing
+             *     removes them.
+             */
+            leftover_file_count: number;
+            /** @description The first hundred of them. */
+            leftover_files: components["schemas"]["ManagementLeftoverFileView"][];
             needs_attention_bundles: components["schemas"]["ManagementAttentionBundleView"][];
             /**
              * Format: int64
@@ -16688,6 +16708,11 @@ export interface components {
              * @description Writes recovery will still finish or unwind.
              */
             recoverable_bundle_count: number;
+            /**
+             * @description Writes recovery has been retrying for more than a day and is still
+             *     retrying.
+             */
+            retrying_bundles: components["schemas"]["ManagementAttentionBundleView"][];
             state_counts: {
                 [key: string]: number;
             };

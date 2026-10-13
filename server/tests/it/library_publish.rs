@@ -612,6 +612,69 @@ fn same_path_crash_keeps_original_until_commit() {
     );
 }
 
+/// Journal rows are synced to disk before the file moves they describe,
+/// on the publisher's connection and on recovery's.
+#[test]
+fn journal_connections_sync_every_commit() {
+    let fix = fixture("journal-full-sync");
+    let synchronous = |conn: &Connection| -> i64 {
+        conn.query_row("PRAGMA synchronous", [], |row| row.get(0))
+            .unwrap()
+    };
+    assert_eq!(synchronous(open_publisher(&fix).connection()), 2);
+    let recovery = publish::recovery::open_recovery_connection(&fix.db_path).unwrap();
+    assert_eq!(synchronous(&recovery), 2);
+}
+
+/// A set-aside original whose journal rows are gone is reported once it
+/// is more than a day old, and stays where it is. A file a row names, or
+/// one young enough to belong to a publish in flight, is not reported.
+#[test]
+fn leftover_pass_reports_old_unjournaled_hidden_files_and_keeps_them() {
+    let fix = fixture("leftover-pass");
+    let (bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::BeforeCatalogCommit));
+    publisher.publish(&sealed, &live, &docs).unwrap_err();
+    drop(publisher);
+    let hidden = hidden_leftovers(&fix.dir);
+    assert!(!hidden.is_empty(), "the crash left set-aside originals");
+
+    let conn = open_db(&fix);
+    let roots = [Root {
+        id: "music".to_string(),
+        dir: fix.dir.join("music"),
+    }];
+    let now = std::time::SystemTime::now();
+    let later = now + std::time::Duration::from_secs(2 * 86_400);
+    let pass = |at| {
+        publish::recovery::find_leftovers(&conn, &roots, at, &|| false)
+            .unwrap()
+            .expect("not cancelled")
+    };
+    assert_eq!(pass(later).count, 0, "the journal names every hidden file");
+
+    conn.execute("DELETE FROM library_publish_journal", [])
+        .unwrap();
+    assert_eq!(pass(now).count, 0, "a fresh hidden file is left alone");
+    let report = pass(later);
+    assert_eq!(report.count, hidden.len());
+    let mut reported: Vec<PathBuf> = report
+        .files
+        .iter()
+        .map(|file| roots[0].dir.join(&file.rel_path))
+        .collect();
+    reported.sort();
+    let mut expected = hidden.clone();
+    expected.sort();
+    assert_eq!(reported, expected);
+    assert!(
+        hidden.iter().all(|path| path.exists()),
+        "nothing is removed"
+    );
+}
+
 #[test]
 fn foreign_bytes_at_dest_flag_attention_without_deleting() {
     let fix = fixture("foreign-dest");

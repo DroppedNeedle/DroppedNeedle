@@ -173,6 +173,8 @@ pub struct LibrarySetup {
     /// Unsettled publish bundles, read from the journal; their tracks
     /// take no new managed writes until a pass settles them.
     pub held_bundles: super::manage::HeldBundles,
+    /// Hidden files no journal row names, from the pass after startup.
+    pub leftover_files: super::manage::LeftoverFiles,
     /// Sealed previews awaiting apply, keyed by token hash.
     pub previews: Arc<std::sync::Mutex<HashMap<String, PreviewEntry>>>,
     /// Watcher state across ticks.
@@ -483,6 +485,7 @@ impl LibrarySetup {
             test_contrib: None,
             publish: Arc::new(std::sync::Mutex::new(PublishCell::new(db_path))),
             held_bundles: super::manage::HeldBundles::new(db_path),
+            leftover_files: super::manage::LeftoverFiles::new(db_path),
             previews: Arc::new(std::sync::Mutex::new(HashMap::new())),
             watcher_state: Arc::new(std::sync::Mutex::new(WatcherState::new())),
             root_dirs,
@@ -629,10 +632,35 @@ impl LibrarySetup {
             super::operations::spawn_loop(self, shutdown.clone()),
             super::management::spawn_loop(self, shutdown.clone()),
             (
+                "library-leftovers",
+                tokio::spawn(leftover_pass(self.clone(), shutdown.clone())),
+            ),
+            (
                 "library-publish",
                 tokio::spawn(publish_loop(self.clone(), shutdown)),
             ),
         ]
+    }
+}
+
+/// Look once, after startup recovery, for hidden files no journal row
+/// names. The walk runs off the async runtime and gives up between two
+/// folders once shutdown starts.
+async fn leftover_pass(setup: LibrarySetup, shutdown: watch::Receiver<bool>) {
+    let walk = tokio::task::spawn_blocking(move || {
+        let registry = setup.live_registry();
+        setup
+            .leftover_files
+            .refresh(&registry, &|| *shutdown.borrow())
+    });
+    match walk.await {
+        Ok(Ok(Some(report))) if report.count > 0 => tracing::warn!(
+            count = report.count,
+            "hidden files no publish journal row names were found; nothing was removed"
+        ),
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => tracing::warn!(%error, "leftover pass failed"),
+        Err(error) => tracing::warn!(%error, "leftover pass panicked"),
     }
 }
 

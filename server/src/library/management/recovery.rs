@@ -1,9 +1,10 @@
 //! Writes that need an administrator: what the publish journal still
-//! holds (unfinished writes recovery will settle, cleanups to retry, and
-//! writes it could not decide about), and closing one of the last kind
-//! once its files are verified where the write put them. Closing changes
-//! no file and keeps the journal's evidence; it records that someone
-//! looked and everything was in place.
+//! holds (unfinished writes recovery will settle, cleanups to retry,
+//! writes it has been retrying for more than a day, and writes it could
+//! not decide about), the hidden files no journal row names, and closing
+//! a write of the undecided kind once its files are verified where the
+//! write put them. Closing changes no file and keeps the journal's
+//! evidence; it records that someone looked and everything was in place.
 
 use std::collections::BTreeMap;
 
@@ -11,7 +12,8 @@ use rusqlite::{OptionalExtension as _, params};
 
 use super::models::ManagementError;
 use super::service::Management;
-use crate::library::clock::now_unix;
+use crate::library::clock::{now_unix, today_day};
+use crate::library::publish::recovery::Leftover;
 use crate::library::publish::snapshots::sha256_hex;
 
 /// One write that needs an administrator.
@@ -33,6 +35,13 @@ pub struct Diagnostics {
     pub oldest_updated_at: Option<f64>,
     pub state_counts: BTreeMap<String, i64>,
     pub needs_attention_bundles: Vec<AttentionBundle>,
+    /// Writes recovery has been retrying for more than a day. It keeps
+    /// retrying them.
+    pub retrying_bundles: Vec<AttentionBundle>,
+    /// Hidden files no journal row names, as the pass after startup found
+    /// them. Zero until that pass has finished.
+    pub leftover_file_count: i64,
+    pub leftover_files: Vec<Leftover>,
 }
 
 /// A closed write.
@@ -48,6 +57,26 @@ pub struct Resolved {
 
 /// Most writes needing attention listed at once.
 const ATTENTION_LIST_MAX: i64 = 100;
+
+/// Unix days between a write's creation day and today before it counts as
+/// retried for more than 24 hours. The journal keeps the day a write was
+/// made and no time, so one day apart can be a few minutes either side of
+/// midnight; two days apart is always more than 24 hours.
+const RETRYING_AFTER_DAYS: i64 = 2;
+
+fn attention_bundle(row: &rusqlite::Row<'_>) -> rusqlite::Result<AttentionBundle> {
+    Ok(AttentionBundle {
+        bundle_id: row.get(0)?,
+        file_count: row.get(1)?,
+        sample_paths: row
+            .get::<_, Option<String>>(2)?
+            .unwrap_or_default()
+            .lines()
+            .take(5)
+            .map(str::to_owned)
+            .collect(),
+    })
+}
 
 /// What closing a write does, said plainly: it records that the files
 /// were checked, and changes nothing else.
@@ -99,26 +128,31 @@ impl Management {
                  FROM library_publish_journal WHERE {attention} \
                  GROUP BY bundle_id ORDER BY bundle_id LIMIT ?1"
             ))?;
-            for row in bundles.query_map(params![ATTENTION_LIST_MAX], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                ))
-            })? {
-                let (bundle_id, file_count, paths) = row?;
-                diagnostics.needs_attention_bundles.push(AttentionBundle {
-                    bundle_id,
-                    file_count,
-                    sample_paths: paths
-                        .unwrap_or_default()
-                        .lines()
-                        .take(5)
-                        .map(str::to_owned)
-                        .collect(),
-                });
+            for row in bundles.query_map(params![ATTENTION_LIST_MAX], attention_bundle)? {
+                diagnostics.needs_attention_bundles.push(row?);
+            }
+            // An open write this old has been through recovery at startup
+            // and on every maintenance tick since, and none settled it.
+            let mut retrying = conn.prepare(&format!(
+                "SELECT bundle_id, COUNT(*), GROUP_CONCAT(dest_rel, char(10)) \
+                 FROM library_publish_journal WHERE {open} AND bundle_id IN \
+                 (SELECT bundle_id FROM library_publish_operations WHERE created_day <= ?1) \
+                 GROUP BY bundle_id ORDER BY bundle_id LIMIT ?2"
+            ))?;
+            for row in retrying.query_map(
+                params![today_day() - RETRYING_AFTER_DAYS, ATTENTION_LIST_MAX],
+                attention_bundle,
+            )? {
+                diagnostics.retrying_bundles.push(row?);
             }
             Ok(diagnostics)
+        })
+        .map(|mut diagnostics| {
+            if let Some(report) = self.setup.leftover_files.latest() {
+                diagnostics.leftover_file_count = report.count as i64;
+                diagnostics.leftover_files = report.files;
+            }
+            diagnostics
         })
     }
 

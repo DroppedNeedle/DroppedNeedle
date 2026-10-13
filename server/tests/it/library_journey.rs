@@ -1132,7 +1132,7 @@ async fn library_loops_start_and_stop() {
     lib.library.run_recovery().await;
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let loops = lib.library.spawn_loops(shutdown_rx);
-    assert_eq!(loops.len(), 7);
+    assert_eq!(loops.len(), 8);
     let names: Vec<&str> = loops.iter().map(|(name, _)| *name).collect();
     assert_eq!(
         names,
@@ -1143,6 +1143,7 @@ async fn library_loops_start_and_stop() {
             "library-contrib",
             "library-operations",
             "library-management",
+            "library-leftovers",
             "library-publish",
         ]
     );
@@ -1913,6 +1914,38 @@ async fn journal_on_a_removed_root_waits() {
         "the bundle is left as it was"
     );
     library.publish_tick().expect("maintenance retries");
+    assert_eq!(
+        library.held_publish_bundles().expect("held reads"),
+        vec!["bundle-1".to_owned()]
+    );
+
+    // A write still retrying more than 24 hours after it was made is shown
+    // to the administrator, and goes on being retried. The journal keeps
+    // the day only, so yesterday's write is not yet provably that old.
+    let today = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs()
+        / 86_400) as i64;
+    let retrying = |created_day: i64| {
+        library
+            .scan_store
+            .execute_batch_for_tests(&format!(
+                "INSERT OR REPLACE INTO library_publish_operations (bundle_id, bundle_json, \
+                 created_day) VALUES ('bundle-1', '{{}}', {created_day});"
+            ))
+            .expect("operation seed");
+        droppedneedle::library::management::service::Management::new(&library)
+            .recovery_diagnostics()
+            .expect("diagnostics")
+            .retrying_bundles
+            .into_iter()
+            .map(|bundle| bundle.bundle_id)
+            .collect::<Vec<_>>()
+    };
+    assert!(retrying(today - 1).is_empty());
+    assert_eq!(retrying(today - 2), vec!["bundle-1".to_owned()]);
+    library.publish_tick().expect("maintenance still retries");
     assert_eq!(
         library.held_publish_bundles().expect("held reads"),
         vec!["bundle-1".to_owned()]

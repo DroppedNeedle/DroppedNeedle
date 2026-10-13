@@ -38414,6 +38414,29 @@
           }
         }
       },
+      "ManagementLeftoverFileView": {
+        "type": "object",
+        "description": "A hidden temporary file no write accounts for.",
+        "required": [
+          "root_id",
+          "rel_path",
+          "modified_at"
+        ],
+        "properties": {
+          "modified_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the file was last written, unix seconds."
+          },
+          "rel_path": {
+            "type": "string",
+            "description": "Path under the library folder."
+          },
+          "root_id": {
+            "type": "string"
+          }
+        }
+      },
       "ManagementPlanItemPage": {
         "type": "object",
         "description": "One page of planned files.",
@@ -38786,12 +38809,27 @@
           "needs_attention_count",
           "cleanup_pending_count",
           "state_counts",
-          "needs_attention_bundles"
+          "needs_attention_bundles",
+          "retrying_bundles",
+          "leftover_file_count",
+          "leftover_files"
         ],
         "properties": {
           "cleanup_pending_count": {
             "type": "integer",
             "format": "int64"
+          },
+          "leftover_file_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Hidden temporary files under the library folders that no write\naccounts for, as the check after startup found them. Nothing\nremoves them."
+          },
+          "leftover_files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagementLeftoverFileView"
+            },
+            "description": "The first hundred of them."
           },
           "needs_attention_bundles": {
             "type": "array",
@@ -38819,6 +38857,13 @@
             "type": "integer",
             "format": "int64",
             "description": "Writes recovery will still finish or unwind."
+          },
+          "retrying_bundles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagementAttentionBundleView"
+            },
+            "description": "Writes recovery has been retrying for more than a day and is still\nretrying."
           },
           "state_counts": {
             "type": "object",

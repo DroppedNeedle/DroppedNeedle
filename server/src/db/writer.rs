@@ -504,6 +504,17 @@ pub fn open_connection(path: &Path) -> Result<Connection, DbError> {
     Ok(connection)
 }
 
+/// [`open_connection`] with `synchronous=FULL`, for the connections that
+/// write the publish journal. A journal row has to be on disk before the
+/// file move it describes: under `NORMAL` a power cut can lose the last
+/// commits in the WAL, and the move would outlive its row. Each commit
+/// costs a sync, so nothing else opens a connection this way.
+pub fn open_journal_connection(path: &Path) -> Result<Connection, DbError> {
+    let connection = open_connection(path)?;
+    connection.execute_batch("PRAGMA synchronous=FULL;")?;
+    Ok(connection)
+}
+
 /// The canonical pragma set and busy timeout on one rusqlite connection,
 /// for the rare handle not opened from a path (an in-memory test store).
 pub fn apply_connection_pragmas(connection: &Connection) -> Result<(), DbError> {

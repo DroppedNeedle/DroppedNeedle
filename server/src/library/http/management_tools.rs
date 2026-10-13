@@ -26,7 +26,7 @@ use crate::library::management::duplicates::DuplicateRequest;
 use crate::library::management::models::{
     DuplicateAction, DuplicateIntent, ManagementError, TagEditMode,
 };
-use crate::library::management::recovery::{Diagnostics, Resolved};
+use crate::library::management::recovery::{AttentionBundle, Diagnostics, Resolved};
 use crate::library::management::restore::{
     PurgeImpact, PurgeOutcome, PurgeRequest, RestoreRequest,
 };
@@ -530,6 +530,35 @@ pub struct ManagementRecoveryView {
     pub oldest_updated_at: Option<f64>,
     pub state_counts: BTreeMap<String, i64>,
     pub needs_attention_bundles: Vec<ManagementAttentionBundleView>,
+    /// Writes recovery has been retrying for more than a day and is still
+    /// retrying.
+    pub retrying_bundles: Vec<ManagementAttentionBundleView>,
+    /// Hidden temporary files under the library folders that no write
+    /// accounts for, as the check after startup found them. Nothing
+    /// removes them.
+    pub leftover_file_count: i64,
+    /// The first hundred of them.
+    pub leftover_files: Vec<ManagementLeftoverFileView>,
+}
+
+/// A hidden temporary file no write accounts for.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ManagementLeftoverFileView {
+    pub root_id: String,
+    /// Path under the library folder.
+    pub rel_path: String,
+    /// When the file was last written, unix seconds.
+    pub modified_at: i64,
+}
+
+impl From<AttentionBundle> for ManagementAttentionBundleView {
+    fn from(bundle: AttentionBundle) -> Self {
+        Self {
+            bundle_id: bundle.bundle_id,
+            file_count: bundle.file_count,
+            sample_paths: bundle.sample_paths,
+        }
+    }
 }
 
 impl From<Diagnostics> for ManagementRecoveryView {
@@ -544,10 +573,21 @@ impl From<Diagnostics> for ManagementRecoveryView {
             needs_attention_bundles: diagnostics
                 .needs_attention_bundles
                 .into_iter()
-                .map(|bundle| ManagementAttentionBundleView {
-                    bundle_id: bundle.bundle_id,
-                    file_count: bundle.file_count,
-                    sample_paths: bundle.sample_paths,
+                .map(Into::into)
+                .collect(),
+            retrying_bundles: diagnostics
+                .retrying_bundles
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+            leftover_file_count: diagnostics.leftover_file_count,
+            leftover_files: diagnostics
+                .leftover_files
+                .into_iter()
+                .map(|file| ManagementLeftoverFileView {
+                    root_id: file.root_id,
+                    rel_path: file.rel_path,
+                    modified_at: file.modified_at,
                 })
                 .collect(),
         }

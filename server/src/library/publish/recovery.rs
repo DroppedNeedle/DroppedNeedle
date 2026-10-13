@@ -40,8 +40,9 @@
 //!   catalog still names the journaled destination with matching
 //!   bytes, then retries the pinned cleanup policy.
 
-use std::collections::BTreeSet;
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use rusqlite::Connection;
 
@@ -80,6 +81,152 @@ pub struct BundleRecovery {
     pub bundle_id: String,
     /// What happened.
     pub action: RecoveryAction,
+}
+
+/// Open the connection a recovery pass runs on, through the database
+/// factory. Recovery writes journal rows and then moves files, so its
+/// rows are synced like the publisher's.
+pub fn open_recovery_connection(db_path: &Path) -> Result<Connection, PublishError> {
+    crate::db::open_journal_connection(db_path)
+        .map_err(|error| PublishError::Store(error.to_string()))
+}
+
+/// A hidden file under a library root that no journal row names: a
+/// staged copy or a set-aside original whose row was lost.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Leftover {
+    pub root_id: String,
+    /// Path under the root.
+    pub rel_path: String,
+    /// When the file was last written, unix seconds.
+    pub modified_at: i64,
+}
+
+/// What one leftover pass found.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LeftoverReport {
+    /// Every leftover found, up to [`LEFTOVER_SCAN_MAX`].
+    pub count: usize,
+    /// The first [`LEFTOVER_LIST_MAX`] of them, by path.
+    pub files: Vec<Leftover>,
+}
+
+/// A hidden name younger than this may belong to a publish in flight.
+const LEFTOVER_MIN_AGE: Duration = Duration::from_secs(86_400);
+
+/// Hidden names one pass holds while it checks them against the journal.
+/// A pass that finds more stops walking and reports these.
+pub const LEFTOVER_SCAN_MAX: usize = 10_000;
+
+/// Leftovers a report lists.
+pub const LEFTOVER_LIST_MAX: usize = 100;
+
+/// Find hidden files under `roots` that no journal row names, as of
+/// `now`. Reads folder listings and the metadata of hidden names only:
+/// it opens no file, follows no symlink, and changes nothing. The import
+/// folder, the placement probe folder and plugin temps belong to their
+/// own cleanups and are skipped. `None` when `cancelled` turned true.
+/// Blocking.
+pub fn find_leftovers(
+    conn: &Connection,
+    roots: &[paths::Root],
+    now: SystemTime,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Option<LeftoverReport>, PublishError> {
+    let import_dir = format!("{}import", super::HIDDEN_PREFIX);
+    let plugin_temp = format!("{}{}", super::HIDDEN_PREFIX, super::plugin_files::TEMP_TAG);
+    // Keyed by the absolute path as the journal writes it.
+    let mut found: BTreeMap<String, Leftover> = BTreeMap::new();
+    'roots: for root in roots {
+        let mut folders: Vec<PathBuf> = vec![root.dir.clone()];
+        while let Some(folder) = folders.pop() {
+            if cancelled() {
+                return Ok(None);
+            }
+            let entries = match std::fs::read_dir(&folder) {
+                Ok(entries) => entries,
+                Err(error) => {
+                    tracing::warn!(folder = %folder.display(), %error, "leftover pass could not list a folder");
+                    continue;
+                }
+            };
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        tracing::warn!(folder = %folder.display(), %error, "leftover pass could not read a folder entry");
+                        continue;
+                    }
+                };
+                // Neither call follows a symlink.
+                let Ok(kind) = entry.file_type() else {
+                    continue;
+                };
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if !name.starts_with(super::HIDDEN_PREFIX) {
+                    if kind.is_dir() {
+                        folders.push(entry.path());
+                    }
+                    continue;
+                }
+                if kind.is_symlink()
+                    || name == import_dir
+                    || name == super::place::PROBE_DIR
+                    || name.starts_with(&plugin_temp)
+                {
+                    continue;
+                }
+                let Ok(modified) = entry.metadata().and_then(|meta| meta.modified()) else {
+                    continue;
+                };
+                if now
+                    .duration_since(modified)
+                    .is_ok_and(|age| age > LEFTOVER_MIN_AGE)
+                {
+                    let path = entry.path();
+                    let rel_path = path
+                        .strip_prefix(&root.dir)
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .into_owned();
+                    found.insert(
+                        path.to_string_lossy().into_owned(),
+                        Leftover {
+                            root_id: root.id.clone(),
+                            rel_path,
+                            modified_at: modified
+                                .duration_since(SystemTime::UNIX_EPOCH)
+                                .map_or(0, |since| since.as_secs() as i64),
+                        },
+                    );
+                    if found.len() >= LEFTOVER_SCAN_MAX {
+                        tracing::warn!(
+                            limit = LEFTOVER_SCAN_MAX,
+                            "leftover pass stopped early: too many hidden files to hold"
+                        );
+                        break 'roots;
+                    }
+                }
+            }
+        }
+    }
+    // The journal is read after the walk, so a row written while the walk
+    // ran still clears its file.
+    if !found.is_empty() {
+        let mut named = conn.prepare("SELECT staged, backup FROM library_publish_journal")?;
+        let mut rows = named.query([])?;
+        while let Some(row) = rows.next()? {
+            found.remove(&row.get::<_, String>(0)?);
+            if let Some(backup) = row.get::<_, Option<String>>(1)? {
+                found.remove(&backup);
+            }
+        }
+    }
+    Ok(Some(LeftoverReport {
+        count: found.len(),
+        files: found.into_values().take(LEFTOVER_LIST_MAX).collect(),
+    }))
 }
 
 /// Refuse mutable runtime when more than `STARTUP_RECOVERY_LIMIT`

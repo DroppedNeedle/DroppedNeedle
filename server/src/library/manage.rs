@@ -11,6 +11,7 @@ use super::publish::planner::{
     ReleaseIdentity, SealRecheck, SealedPreview,
 };
 use super::publish::publisher::{PublishOutcome, Publisher, SqliteCatalog};
+use super::publish::recovery::LeftoverReport;
 use super::publish::snapshots::{BaselineStore, BlobStore, SnapshotStore, sha256_hex};
 use super::publish::tags_seam::TagDocument;
 use super::publish::{PublishError, Sandbox};
@@ -142,6 +143,55 @@ impl HeldBundles {
     }
 }
 
+/// Hidden files under the library roots that no journal row names, as the
+/// last pass found them. Nothing here removes or adopts one.
+#[derive(Clone)]
+pub struct LeftoverFiles {
+    db_path: PathBuf,
+    report: std::sync::Arc<std::sync::Mutex<Option<LeftoverReport>>>,
+}
+
+impl LeftoverFiles {
+    pub(crate) fn new(db_path: &Path) -> Self {
+        Self {
+            db_path: db_path.to_owned(),
+            report: Default::default(),
+        }
+    }
+
+    /// Walk the usable roots once and keep what was found. `None`, with
+    /// the earlier report kept, when `cancelled` turned true. Blocking.
+    pub fn refresh(
+        &self,
+        registry: &RootRegistry,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Option<LeftoverReport>, PublishError> {
+        let conn = crate::db::open_connection(&self.db_path)
+            .map_err(|error| PublishError::Store(error.to_string()))?;
+        let found = super::publish::recovery::find_leftovers(
+            &conn,
+            &PublishCell::root_dirs(registry),
+            std::time::SystemTime::now(),
+            cancelled,
+        )?;
+        if let Some(report) = &found {
+            *self
+                .report
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(report.clone());
+        }
+        Ok(found)
+    }
+
+    /// What the last finished pass found. `None` before the first one.
+    pub fn latest(&self) -> Option<LeftoverReport> {
+        self.report
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
+
 impl PublishCell {
     /// An unopened cell over the application database at `db_path`.
     pub(crate) fn new(db_path: &Path) -> Self {
@@ -175,8 +225,7 @@ impl PublishCell {
         let Some(open) = self.cell.as_ref() else {
             return Ok(Vec::new());
         };
-        let mut conn = crate::db::open_connection(&self.db_path)
-            .map_err(|error| PublishError::Store(error.to_string()))?;
+        let mut conn = super::publish::recovery::open_recovery_connection(&self.db_path)?;
         super::publish::recovery::reconcile(&mut conn, &open.sandbox, &SqliteCatalog)
     }
 
@@ -216,8 +265,7 @@ impl PublishCell {
         // before it opens. The journal lives in the application
         // database, so root order never decides where it is.
         let recoveries = {
-            let mut conn = crate::db::open_connection(&self.db_path)
-                .map_err(|error| PublishError::Store(error.to_string()))?;
+            let mut conn = super::publish::recovery::open_recovery_connection(&self.db_path)?;
             super::publish::recovery::reconcile(&mut conn, &sandbox, &SqliteCatalog)?
         };
         let publisher = Publisher::open(

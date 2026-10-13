@@ -440,6 +440,18 @@ export interface LibraryManagementRecoveryDiagnosticsResponse {
 	oldest_updated_at: number | null;
 	state_counts: Record<string, number>;
 	needs_attention_bundles?: LibraryManagementNeedsAttentionBundle[];
+	// Writes recovery has been retrying for more than a day, and still is.
+	retrying_bundles?: LibraryManagementNeedsAttentionBundle[];
+	// Hidden temporary files no write accounts for. Nothing removes them.
+	leftover_file_count?: number;
+	leftover_files?: LibraryManagementLeftoverFile[];
+}
+
+export interface LibraryManagementLeftoverFile {
+	root_id: string;
+	// Path under the library folder.
+	rel_path: string;
+	modified_at: number;
 }
 
 export interface LibraryManagementNeedsAttentionBundle {

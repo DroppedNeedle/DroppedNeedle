@@ -424,7 +424,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         space: P,
         today_day: i64,
     ) -> Result<Self, PublishError> {
-        let conn = crate::db::open_connection(db_path)
+        let conn = crate::db::open_journal_connection(db_path)
             .map_err(|error| PublishError::Store(error.to_string()))?;
         Ok(Self {
             sandbox,
