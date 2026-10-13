@@ -1,0 +1,30 @@
+{
+  "Items": [
+    {
+      "BackdropImageTags": [],
+      "CollectionType": "music",
+      "Id": "<id-2>",
+      "ImageBlurHashes": {},
+      "ImageTags": {
+        "Primary": "<id-2>"
+      },
+      "IsFolder": true,
+      "LocationType": "FileSystem",
+      "MediaType": "Unknown",
+      "Name": "Music",
+      "ServerId": "<id-1>",
+      "SortName": "Music",
+      "Type": "CollectionFolder",
+      "UserData": {
+        "IsFavorite": false,
+        "ItemId": "<id-2>",
+        "Key": "<id-2>",
+        "PlayCount": 0,
+        "PlaybackPositionTicks": 0,
+        "Played": false
+      }
+    }
+  ],
+  "StartIndex": 0,
+  "TotalRecordCount": 1
+}

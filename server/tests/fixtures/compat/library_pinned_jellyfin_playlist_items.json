@@ -1,0 +1,57 @@
+{
+  "Items": [
+    {
+      "Album": "Mezzanine",
+      "AlbumArtist": "Massive Attack",
+      "AlbumArtists": [
+        {
+          "Id": "<id-7>",
+          "Name": "Massive Attack"
+        }
+      ],
+      "AlbumId": "<id-8>",
+      "ArtistItems": [
+        {
+          "Id": "<id-7>",
+          "Name": "Massive Attack"
+        }
+      ],
+      "Artists": [
+        "Massive Attack"
+      ],
+      "BackdropImageTags": [],
+      "Container": "m4a",
+      "DateCreated": "0000-00-00T00:00:00.0000000Z",
+      "Genres": [],
+      "Id": "<id-19>",
+      "ImageBlurHashes": {},
+      "ImageTags": {},
+      "IndexNumber": 4,
+      "IsFolder": false,
+      "LocationType": "FileSystem",
+      "MediaType": "Audio",
+      "Name": "Teardrop",
+      "ParentId": "<id-8>",
+      "ParentIndexNumber": 1,
+      "PlaylistItemId": "<id-22>",
+      "ProductionYear": 1998,
+      "ProviderIds": {
+        "MusicBrainzTrack": "rec-teardrop-0004"
+      },
+      "RunTimeTicks": 3230000,
+      "ServerId": "<id-1>",
+      "SortName": "Teardrop",
+      "Type": "Audio",
+      "UserData": {
+        "IsFavorite": false,
+        "ItemId": "<id-19>",
+        "Key": "<id-19>",
+        "PlayCount": 0,
+        "PlaybackPositionTicks": 0,
+        "Played": false
+      }
+    }
+  ],
+  "StartIndex": 0,
+  "TotalRecordCount": 1
+}

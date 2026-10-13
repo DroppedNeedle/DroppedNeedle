@@ -1,0 +1,595 @@
+{
+  "steps": [
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "serverVersion": "10.10.6",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/ping?u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "albumList2": {
+            "album": [
+              {
+                "artist": "ユキ",
+                "artistId": "ar-<id-1>",
+                "artists": [
+                  {
+                    "id": "ar-<id-1>",
+                    "name": "ユキ"
+                  }
+                ],
+                "coverArt": "al-<id-2>",
+                "created": "0000-00-00T00:00:00Z",
+                "displayArtist": "ユキ",
+                "duration": 0,
+                "id": "al-<id-2>",
+                "isCompilation": false,
+                "name": "望厚",
+                "releaseTypes": [
+                  "album"
+                ],
+                "songCount": 1,
+                "sortName": "望厚",
+                "year": 2015
+              },
+              {
+                "artist": "Various Artists",
+                "artistId": "ar-<id-3>",
+                "artists": [
+                  {
+                    "id": "ar-<id-3>",
+                    "name": "Various Artists"
+                  }
+                ],
+                "coverArt": "al-<id-4>",
+                "created": "0000-00-00T00:00:00Z",
+                "displayArtist": "Various Artists",
+                "duration": 0,
+                "id": "al-<id-4>",
+                "isCompilation": true,
+                "name": "Now Thats Music",
+                "releaseTypes": [
+                  "compilation"
+                ],
+                "songCount": 1,
+                "sortName": "Now Thats Music",
+                "year": 2001
+              },
+              {
+                "artist": "U2",
+                "artistId": "ar-<id-5>",
+                "artists": [
+                  {
+                    "id": "ar-<id-5>",
+                    "name": "U2"
+                  }
+                ],
+                "coverArt": "al-<id-6>",
+                "created": "0000-00-00T00:00:00Z",
+                "displayArtist": "U2",
+                "duration": 0,
+                "genre": "Rock",
+                "genres": [
+                  {
+                    "name": "Rock"
+                  }
+                ],
+                "id": "al-<id-6>",
+                "isCompilation": false,
+                "name": "Achtung Baby",
+                "releaseTypes": [
+                  "album"
+                ],
+                "songCount": 1,
+                "sortName": "Achtung Baby",
+                "year": 1991
+              },
+              {
+                "artist": "Radiohead",
+                "artistId": "ar-<id-7>",
+                "artists": [
+                  {
+                    "id": "ar-<id-7>",
+                    "name": "Radiohead"
+                  }
+                ],
+                "coverArt": "al-<id-8>",
+                "created": "0000-00-00T00:00:00Z",
+                "displayArtist": "Radiohead",
+                "duration": 1,
+                "genre": "Alternative Rock",
+                "genres": [
+                  {
+                    "name": "Alternative Rock"
+                  }
+                ],
+                "id": "al-<id-8>",
+                "isCompilation": false,
+                "name": "OK Computer",
+                "releaseTypes": [
+                  "album"
+                ],
+                "songCount": 2,
+                "sortName": "OK Computer",
+                "year": 1997
+              },
+              {
+                "artist": "Massive Attack",
+                "artistId": "ar-<id-9>",
+                "artists": [
+                  {
+                    "id": "ar-<id-9>",
+                    "name": "Massive Attack"
+                  }
+                ],
+                "coverArt": "al-<id-10>",
+                "created": "0000-00-00T00:00:00Z",
+                "displayArtist": "Massive Attack",
+                "duration": 0,
+                "id": "al-<id-10>",
+                "isCompilation": false,
+                "name": "Mezzanine",
+                "releaseTypes": [
+                  "album"
+                ],
+                "songCount": 1,
+                "sortName": "Mezzanine",
+                "year": 1998
+              }
+            ]
+          },
+          "openSubsonic": true,
+          "serverVersion": "10.10.6",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getAlbumList2?type=newest&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "album": {
+            "artist": "U2",
+            "artistId": "ar-<id-5>",
+            "artists": [
+              {
+                "id": "ar-<id-5>",
+                "name": "U2"
+              }
+            ],
+            "coverArt": "al-<id-6>",
+            "created": "0000-00-00T00:00:00Z",
+            "displayArtist": "U2",
+            "duration": 0,
+            "genre": "Rock",
+            "genres": [
+              {
+                "name": "Rock"
+              }
+            ],
+            "id": "al-<id-6>",
+            "isCompilation": false,
+            "name": "Achtung Baby",
+            "releaseTypes": [
+              "album"
+            ],
+            "song": [
+              {
+                "album": "Achtung Baby",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-5>",
+                    "name": "U2"
+                  }
+                ],
+                "albumId": "al-<id-6>",
+                "artist": "U2",
+                "artistId": "ar-<id-5>",
+                "artists": [
+                  {
+                    "id": "ar-<id-5>",
+                    "name": "U2"
+                  }
+                ],
+                "bitRate": 344,
+                "channelCount": 2,
+                "contentType": "audio/mpeg",
+                "coverArt": "al-<id-6>",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "U2",
+                "displayArtist": "U2",
+                "duration": 0,
+                "genre": "Rock",
+                "genres": [
+                  {
+                    "name": "Rock"
+                  }
+                ],
+                "id": "tr-<id-11>",
+                "isDir": false,
+                "mediaType": "song",
+                "musicBrainzId": "rec-one-0003",
+                "parent": "al-<id-6>",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 16008,
+                "sortName": "One",
+                "suffix": "mp3",
+                "title": "One",
+                "track": 3,
+                "type": "music",
+                "year": 1991
+              }
+            ],
+            "songCount": 1,
+            "sortName": "Achtung Baby",
+            "year": 1991
+          },
+          "openSubsonic": true,
+          "serverVersion": "10.10.6",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getAlbum?id=al-<id-6>&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "byte_len": 16008,
+        "head": [
+          73,
+          68,
+          51,
+          4,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "headers": {
+        "accept-ranges": "bytes",
+        "content-length": "16008",
+        "content-type": "audio/mpeg"
+      },
+      "request": "GET /subsonic/rest/stream?id=tr-<id-11>&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "byte_len": 50,
+        "head": [
+          73,
+          68,
+          51,
+          4,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "headers": {
+        "accept-ranges": "bytes",
+        "content-length": "50",
+        "content-range": "bytes 0-49/16008",
+        "content-type": "audio/mpeg"
+      },
+      "request": "GET /subsonic/rest/stream?id=tr-<id-11>&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 206
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "serverVersion": "10.10.6",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/star?id=tr-<id-11>&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "serverVersion": "10.10.6",
+          "starred2": {
+            "album": [],
+            "artist": [],
+            "song": [
+              {
+                "album": "Achtung Baby",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-5>",
+                    "name": "U2"
+                  }
+                ],
+                "albumId": "al-<id-6>",
+                "artist": "U2",
+                "artistId": "ar-<id-5>",
+                "artists": [
+                  {
+                    "id": "ar-<id-5>",
+                    "name": "U2"
+                  }
+                ],
+                "bitRate": 344,
+                "channelCount": 2,
+                "contentType": "audio/mpeg",
+                "coverArt": "al-<id-6>",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "U2",
+                "displayArtist": "U2",
+                "duration": 0,
+                "genre": "Rock",
+                "genres": [
+                  {
+                    "name": "Rock"
+                  }
+                ],
+                "id": "tr-<id-11>",
+                "isDir": false,
+                "mediaType": "song",
+                "musicBrainzId": "rec-one-0003",
+                "parent": "al-<id-6>",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 16008,
+                "sortName": "One",
+                "starred": "0000-00-00T00:00:00Z",
+                "suffix": "mp3",
+                "title": "One",
+                "track": 3,
+                "type": "music",
+                "year": 1991
+              }
+            ]
+          },
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getStarred2?u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "playlist": {
+            "changed": "0000-00-00T00:00:00Z",
+            "created": "0000-00-00T00:00:00Z",
+            "duration": 0,
+            "entry": [
+              {
+                "album": "Achtung Baby",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-5>",
+                    "name": "U2"
+                  }
+                ],
+                "albumId": "al-<id-6>",
+                "artist": "U2",
+                "artistId": "ar-<id-5>",
+                "artists": [
+                  {
+                    "id": "ar-<id-5>",
+                    "name": "U2"
+                  }
+                ],
+                "bitRate": 344,
+                "channelCount": 2,
+                "contentType": "audio/mpeg",
+                "coverArt": "al-<id-6>",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "U2",
+                "displayArtist": "U2",
+                "duration": 0,
+                "genre": "Rock",
+                "genres": [
+                  {
+                    "name": "Rock"
+                  }
+                ],
+                "id": "tr-<id-11>",
+                "isDir": false,
+                "mediaType": "song",
+                "musicBrainzId": "rec-one-0003",
+                "parent": "al-<id-6>",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 16008,
+                "sortName": "One",
+                "starred": "0000-00-00T00:00:00Z",
+                "suffix": "mp3",
+                "title": "One",
+                "track": 3,
+                "type": "music",
+                "year": 1991
+              }
+            ],
+            "id": "pl-<id-12>",
+            "name": "Journey Mix",
+            "owner": "alice",
+            "public": false,
+            "songCount": 1
+          },
+          "serverVersion": "10.10.6",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/createPlaylist?name=Journey+Mix&songId=tr-<id-11>&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "playlist": {
+            "changed": "0000-00-00T00:00:00Z",
+            "created": "0000-00-00T00:00:00Z",
+            "duration": 0,
+            "entry": [
+              {
+                "album": "Achtung Baby",
+                "albumArtists": [
+                  {
+                    "id": "ar-<id-5>",
+                    "name": "U2"
+                  }
+                ],
+                "albumId": "al-<id-6>",
+                "artist": "U2",
+                "artistId": "ar-<id-5>",
+                "artists": [
+                  {
+                    "id": "ar-<id-5>",
+                    "name": "U2"
+                  }
+                ],
+                "bitRate": 344,
+                "channelCount": 2,
+                "contentType": "audio/mpeg",
+                "coverArt": "al-<id-6>",
+                "created": "0000-00-00T00:00:00Z",
+                "discNumber": 1,
+                "displayAlbumArtist": "U2",
+                "displayArtist": "U2",
+                "duration": 0,
+                "genre": "Rock",
+                "genres": [
+                  {
+                    "name": "Rock"
+                  }
+                ],
+                "id": "tr-<id-11>",
+                "isDir": false,
+                "mediaType": "song",
+                "musicBrainzId": "rec-one-0003",
+                "parent": "al-<id-6>",
+                "replayGain": {},
+                "samplingRate": 44100,
+                "size": 16008,
+                "sortName": "One",
+                "starred": "0000-00-00T00:00:00Z",
+                "suffix": "mp3",
+                "title": "One",
+                "track": 3,
+                "type": "music",
+                "year": 1991
+              }
+            ],
+            "id": "pl-<id-12>",
+            "name": "Journey Mix",
+            "owner": "alice",
+            "public": false,
+            "songCount": 1
+          },
+          "serverVersion": "10.10.6",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getPlaylist?id=pl-<id-12>&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "serverVersion": "10.10.6",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/scrobble?id=tr-<id-11>&submission=false&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "nowPlaying": {
+            "entry": []
+          },
+          "openSubsonic": true,
+          "serverVersion": "10.10.6",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getNowPlaying?u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "serverVersion": "10.10.6",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/scrobble?id=tr-<id-11>&submission=true&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "status": 200
+    }
+  ]
+}

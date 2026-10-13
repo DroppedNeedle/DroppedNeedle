@@ -1,0 +1,235 @@
+{
+  "Items": [
+    {
+      "AlbumArtist": "U2",
+      "AlbumArtists": [
+        {
+          "Id": "<id-4>",
+          "Name": "U2"
+        }
+      ],
+      "ArtistItems": [
+        {
+          "Id": "<id-4>",
+          "Name": "U2"
+        }
+      ],
+      "Artists": [
+        "U2"
+      ],
+      "BackdropImageTags": [],
+      "ChildCount": 1,
+      "DateCreated": "0000-00-00T00:00:00.0000000Z",
+      "Genres": [
+        "Rock"
+      ],
+      "Id": "<id-5>",
+      "ImageBlurHashes": {},
+      "ImageTags": {},
+      "IsFolder": true,
+      "LocationType": "FileSystem",
+      "MediaType": "Unknown",
+      "Name": "Achtung Baby",
+      "ProductionYear": 1991,
+      "ProviderIds": {
+        "MusicBrainzReleaseGroup": "<id-6>"
+      },
+      "RunTimeTicks": 3400000,
+      "ServerId": "<id-1>",
+      "SortName": "Achtung Baby",
+      "Type": "MusicAlbum",
+      "UserData": {
+        "IsFavorite": false,
+        "ItemId": "<id-5>",
+        "Key": "<id-5>",
+        "PlayCount": 0,
+        "PlaybackPositionTicks": 0,
+        "Played": false
+      }
+    },
+    {
+      "AlbumArtist": "Massive Attack",
+      "AlbumArtists": [
+        {
+          "Id": "<id-7>",
+          "Name": "Massive Attack"
+        }
+      ],
+      "ArtistItems": [
+        {
+          "Id": "<id-7>",
+          "Name": "Massive Attack"
+        }
+      ],
+      "Artists": [
+        "Massive Attack"
+      ],
+      "BackdropImageTags": [],
+      "ChildCount": 1,
+      "DateCreated": "0000-00-00T00:00:00.0000000Z",
+      "Genres": [],
+      "Id": "<id-8>",
+      "ImageBlurHashes": {},
+      "ImageTags": {},
+      "IsFolder": true,
+      "LocationType": "FileSystem",
+      "MediaType": "Unknown",
+      "Name": "Mezzanine",
+      "ProductionYear": 1998,
+      "ProviderIds": {
+        "MusicBrainzReleaseGroup": "<id-9>"
+      },
+      "RunTimeTicks": 3230000,
+      "ServerId": "<id-1>",
+      "SortName": "Mezzanine",
+      "Type": "MusicAlbum",
+      "UserData": {
+        "IsFavorite": false,
+        "ItemId": "<id-8>",
+        "Key": "<id-8>",
+        "PlayCount": 0,
+        "PlaybackPositionTicks": 0,
+        "Played": false
+      }
+    },
+    {
+      "AlbumArtist": "Various Artists",
+      "AlbumArtists": [
+        {
+          "Id": "<id-10>",
+          "Name": "Various Artists"
+        }
+      ],
+      "ArtistItems": [
+        {
+          "Id": "<id-10>",
+          "Name": "Various Artists"
+        }
+      ],
+      "Artists": [
+        "Various Artists"
+      ],
+      "BackdropImageTags": [],
+      "ChildCount": 1,
+      "DateCreated": "0000-00-00T00:00:00.0000000Z",
+      "Genres": [],
+      "Id": "<id-11>",
+      "ImageBlurHashes": {},
+      "ImageTags": {},
+      "IsFolder": true,
+      "LocationType": "FileSystem",
+      "MediaType": "Unknown",
+      "Name": "Now Thats Music",
+      "ProductionYear": 2001,
+      "ProviderIds": {
+        "MusicBrainzReleaseGroup": "<id-12>"
+      },
+      "RunTimeTicks": 3000000,
+      "ServerId": "<id-1>",
+      "SortName": "Now Thats Music",
+      "Type": "MusicAlbum",
+      "UserData": {
+        "IsFavorite": false,
+        "ItemId": "<id-11>",
+        "Key": "<id-11>",
+        "PlayCount": 0,
+        "PlaybackPositionTicks": 0,
+        "Played": false
+      }
+    },
+    {
+      "AlbumArtist": "Radiohead",
+      "AlbumArtists": [
+        {
+          "Id": "<id-13>",
+          "Name": "Radiohead"
+        }
+      ],
+      "ArtistItems": [
+        {
+          "Id": "<id-13>",
+          "Name": "Radiohead"
+        }
+      ],
+      "Artists": [
+        "Radiohead"
+      ],
+      "BackdropImageTags": [],
+      "ChildCount": 2,
+      "DateCreated": "0000-00-00T00:00:00.0000000Z",
+      "Genres": [
+        "Alternative Rock"
+      ],
+      "Id": "<id-14>",
+      "ImageBlurHashes": {},
+      "ImageTags": {},
+      "IsFolder": true,
+      "LocationType": "FileSystem",
+      "MediaType": "Unknown",
+      "Name": "OK Computer",
+      "ProductionYear": 1997,
+      "ProviderIds": {
+        "MusicBrainzReleaseGroup": "<id-15>"
+      },
+      "RunTimeTicks": 6000000,
+      "ServerId": "<id-1>",
+      "SortName": "OK Computer",
+      "Type": "MusicAlbum",
+      "UserData": {
+        "IsFavorite": false,
+        "ItemId": "<id-14>",
+        "Key": "<id-14>",
+        "PlayCount": 0,
+        "PlaybackPositionTicks": 0,
+        "Played": false
+      }
+    },
+    {
+      "AlbumArtist": "ユキ",
+      "AlbumArtists": [
+        {
+          "Id": "<id-16>",
+          "Name": "ユキ"
+        }
+      ],
+      "ArtistItems": [
+        {
+          "Id": "<id-16>",
+          "Name": "ユキ"
+        }
+      ],
+      "Artists": [
+        "ユキ"
+      ],
+      "BackdropImageTags": [],
+      "ChildCount": 1,
+      "DateCreated": "0000-00-00T00:00:00.0000000Z",
+      "Genres": [],
+      "Id": "<id-17>",
+      "ImageBlurHashes": {},
+      "ImageTags": {},
+      "IsFolder": true,
+      "LocationType": "FileSystem",
+      "MediaType": "Unknown",
+      "Name": "望厚",
+      "ProductionYear": 2015,
+      "ProviderIds": {
+        "MusicBrainzReleaseGroup": "<id-18>"
+      },
+      "RunTimeTicks": 3000000,
+      "ServerId": "<id-1>",
+      "SortName": "望厚",
+      "Type": "MusicAlbum",
+      "UserData": {
+        "IsFavorite": false,
+        "ItemId": "<id-17>",
+        "Key": "<id-17>",
+        "PlayCount": 0,
+        "PlaybackPositionTicks": 0,
+        "Played": false
+      }
+    }
+  ],
+  "StartIndex": 0,
+  "TotalRecordCount": 5
+}

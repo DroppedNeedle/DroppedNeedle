@@ -1,0 +1,660 @@
+{
+  "steps": [
+    {
+      "body": {
+        "Id": "<id-1>",
+        "LocalAddress": "http://test.local/jellyfin",
+        "OperatingSystem": "",
+        "ProductName": "Jellyfin Server",
+        "ServerName": "DroppedNeedle",
+        "StartupWizardCompleted": true,
+        "Version": "10.10.6"
+      },
+      "headers": {
+        "content-length": "217",
+        "content-type": "application/json"
+      },
+      "request": "GET /jellyfin/System/Info/Public",
+      "status": 200
+    },
+    {
+      "body": {
+        "Items": [
+          {
+            "BackdropImageTags": [],
+            "CollectionType": "music",
+            "Id": "<id-2>",
+            "ImageBlurHashes": {},
+            "ImageTags": {
+              "Primary": "<id-2>"
+            },
+            "IsFolder": true,
+            "LocationType": "FileSystem",
+            "MediaType": "Unknown",
+            "Name": "Music",
+            "ServerId": "<id-1>",
+            "SortName": "Music",
+            "Type": "CollectionFolder",
+            "UserData": {
+              "IsFavorite": false,
+              "ItemId": "<id-2>",
+              "Key": "<id-2>",
+              "PlayCount": 0,
+              "PlaybackPositionTicks": 0,
+              "Played": false
+            }
+          }
+        ],
+        "StartIndex": 0,
+        "TotalRecordCount": 1
+      },
+      "headers": {
+        "content-length": "561",
+        "content-type": "application/json"
+      },
+      "request": "GET /jellyfin/Users/<id-3>/Views",
+      "status": 200
+    },
+    {
+      "body": {
+        "Items": [
+          {
+            "Album": "OK Computer",
+            "AlbumArtist": "Radiohead",
+            "AlbumArtists": [
+              {
+                "Id": "<id-4>",
+                "Name": "Radiohead"
+              }
+            ],
+            "AlbumId": "<id-5>",
+            "ArtistItems": [
+              {
+                "Id": "<id-4>",
+                "Name": "Radiohead"
+              }
+            ],
+            "Artists": [
+              "Radiohead"
+            ],
+            "BackdropImageTags": [],
+            "Container": "flac",
+            "DateCreated": "0000-00-00T00:00:00.0000000Z",
+            "Genres": [
+              "Alternative Rock"
+            ],
+            "Id": "<id-6>",
+            "ImageBlurHashes": {},
+            "ImageTags": {},
+            "IndexNumber": 1,
+            "IsFolder": false,
+            "LocationType": "FileSystem",
+            "MediaType": "Audio",
+            "Name": "Airbag",
+            "ParentId": "<id-5>",
+            "ParentIndexNumber": 1,
+            "ProductionYear": 1997,
+            "ProviderIds": {
+              "MusicBrainzTrack": "rec-airbag-0001"
+            },
+            "RunTimeTicks": 3000000,
+            "ServerId": "<id-1>",
+            "SortName": "Airbag",
+            "Type": "Audio",
+            "UserData": {
+              "IsFavorite": false,
+              "ItemId": "<id-6>",
+              "Key": "<id-6>",
+              "PlayCount": 0,
+              "PlaybackPositionTicks": 0,
+              "Played": false
+            }
+          },
+          {
+            "Album": "Achtung Baby",
+            "AlbumArtist": "U2",
+            "AlbumArtists": [
+              {
+                "Id": "<id-7>",
+                "Name": "U2"
+              }
+            ],
+            "AlbumId": "<id-8>",
+            "ArtistItems": [
+              {
+                "Id": "<id-7>",
+                "Name": "U2"
+              }
+            ],
+            "Artists": [
+              "U2"
+            ],
+            "BackdropImageTags": [],
+            "Container": "mp3",
+            "DateCreated": "0000-00-00T00:00:00.0000000Z",
+            "Genres": [
+              "Rock"
+            ],
+            "Id": "<id-9>",
+            "ImageBlurHashes": {},
+            "ImageTags": {},
+            "IndexNumber": 3,
+            "IsFolder": false,
+            "LocationType": "FileSystem",
+            "MediaType": "Audio",
+            "Name": "One",
+            "ParentId": "<id-8>",
+            "ParentIndexNumber": 1,
+            "ProductionYear": 1991,
+            "ProviderIds": {
+              "MusicBrainzTrack": "rec-one-0003"
+            },
+            "RunTimeTicks": 3400000,
+            "ServerId": "<id-1>",
+            "SortName": "One",
+            "Type": "Audio",
+            "UserData": {
+              "IsFavorite": false,
+              "ItemId": "<id-9>",
+              "Key": "<id-9>",
+              "PlayCount": 0,
+              "PlaybackPositionTicks": 0,
+              "Played": false
+            }
+          },
+          {
+            "Album": "OK Computer",
+            "AlbumArtist": "Radiohead",
+            "AlbumArtists": [
+              {
+                "Id": "<id-4>",
+                "Name": "Radiohead"
+              }
+            ],
+            "AlbumId": "<id-5>",
+            "ArtistItems": [
+              {
+                "Id": "<id-4>",
+                "Name": "Radiohead"
+              }
+            ],
+            "Artists": [
+              "Radiohead"
+            ],
+            "BackdropImageTags": [],
+            "Container": "flac",
+            "DateCreated": "0000-00-00T00:00:00.0000000Z",
+            "Genres": [],
+            "Id": "<id-10>",
+            "ImageBlurHashes": {},
+            "ImageTags": {},
+            "IndexNumber": 2,
+            "IsFolder": false,
+            "LocationType": "FileSystem",
+            "MediaType": "Audio",
+            "Name": "Paranoid Android",
+            "ParentId": "<id-5>",
+            "ParentIndexNumber": 1,
+            "ProductionYear": 1997,
+            "ProviderIds": {
+              "MusicBrainzTrack": "rec-paranoid-0002"
+            },
+            "RunTimeTicks": 3000000,
+            "ServerId": "<id-1>",
+            "SortName": "Paranoid Android",
+            "Type": "Audio",
+            "UserData": {
+              "IsFavorite": false,
+              "ItemId": "<id-10>",
+              "Key": "<id-10>",
+              "PlayCount": 0,
+              "PlaybackPositionTicks": 0,
+              "Played": false
+            }
+          },
+          {
+            "Album": "Now Thats Music",
+            "AlbumArtist": "Various Artists",
+            "AlbumArtists": [
+              {
+                "Id": "<id-11>",
+                "Name": "Various Artists"
+              }
+            ],
+            "AlbumId": "<id-12>",
+            "ArtistItems": [
+              {
+                "Id": "<id-13>",
+                "Name": "Artist One"
+              }
+            ],
+            "Artists": [
+              "Artist One"
+            ],
+            "BackdropImageTags": [],
+            "Container": "flac",
+            "DateCreated": "0000-00-00T00:00:00.0000000Z",
+            "Genres": [],
+            "Id": "<id-14>",
+            "ImageBlurHashes": {},
+            "ImageTags": {},
+            "IndexNumber": 1,
+            "IsFolder": false,
+            "LocationType": "FileSystem",
+            "MediaType": "Audio",
+            "Name": "Song A",
+            "ParentId": "<id-12>",
+            "ParentIndexNumber": 1,
+            "ProductionYear": 2001,
+            "ProviderIds": {
+              "MusicBrainzTrack": "rec-songa-0001"
+            },
+            "RunTimeTicks": 3000000,
+            "ServerId": "<id-1>",
+            "SortName": "Song A",
+            "Type": "Audio",
+            "UserData": {
+              "IsFavorite": false,
+              "ItemId": "<id-14>",
+              "Key": "<id-14>",
+              "PlayCount": 0,
+              "PlaybackPositionTicks": 0,
+              "Played": false
+            }
+          },
+          {
+            "Album": "Mezzanine",
+            "AlbumArtist": "Massive Attack",
+            "AlbumArtists": [
+              {
+                "Id": "<id-15>",
+                "Name": "Massive Attack"
+              }
+            ],
+            "AlbumId": "<id-16>",
+            "ArtistItems": [
+              {
+                "Id": "<id-15>",
+                "Name": "Massive Attack"
+              }
+            ],
+            "Artists": [
+              "Massive Attack"
+            ],
+            "BackdropImageTags": [],
+            "Container": "m4a",
+            "DateCreated": "0000-00-00T00:00:00.0000000Z",
+            "Genres": [],
+            "Id": "<id-17>",
+            "ImageBlurHashes": {},
+            "ImageTags": {},
+            "IndexNumber": 4,
+            "IsFolder": false,
+            "LocationType": "FileSystem",
+            "MediaType": "Audio",
+            "Name": "Teardrop",
+            "ParentId": "<id-16>",
+            "ParentIndexNumber": 1,
+            "ProductionYear": 1998,
+            "ProviderIds": {
+              "MusicBrainzTrack": "rec-teardrop-0004"
+            },
+            "RunTimeTicks": 3230000,
+            "ServerId": "<id-1>",
+            "SortName": "Teardrop",
+            "Type": "Audio",
+            "UserData": {
+              "IsFavorite": false,
+              "ItemId": "<id-17>",
+              "Key": "<id-17>",
+              "PlayCount": 0,
+              "PlaybackPositionTicks": 0,
+              "Played": false
+            }
+          },
+          {
+            "Album": "望厚",
+            "AlbumArtist": "ユキ",
+            "AlbumArtists": [
+              {
+                "Id": "<id-18>",
+                "Name": "ユキ"
+              }
+            ],
+            "AlbumId": "<id-19>",
+            "ArtistItems": [
+              {
+                "Id": "<id-18>",
+                "Name": "ユキ"
+              }
+            ],
+            "Artists": [
+              "ユキ"
+            ],
+            "BackdropImageTags": [],
+            "Container": "flac",
+            "DateCreated": "0000-00-00T00:00:00.0000000Z",
+            "Genres": [],
+            "Id": "<id-20>",
+            "ImageBlurHashes": {},
+            "ImageTags": {},
+            "IndexNumber": 1,
+            "IsFolder": false,
+            "LocationType": "FileSystem",
+            "MediaType": "Audio",
+            "Name": "桃源へ",
+            "ParentId": "<id-19>",
+            "ParentIndexNumber": 1,
+            "ProductionYear": 2015,
+            "ProviderIds": {
+              "MusicBrainzTrack": "rec-cjk-0001"
+            },
+            "RunTimeTicks": 3000000,
+            "ServerId": "<id-1>",
+            "SortName": "桃源へ",
+            "Type": "Audio",
+            "UserData": {
+              "IsFavorite": false,
+              "ItemId": "<id-20>",
+              "Key": "<id-20>",
+              "PlayCount": 0,
+              "PlaybackPositionTicks": 0,
+              "Played": false
+            }
+          }
+        ],
+        "StartIndex": 0,
+        "TotalRecordCount": 6
+      },
+      "headers": {
+        "content-length": "5872",
+        "content-type": "application/json"
+      },
+      "request": "GET /jellyfin/Users/<id-3>/Items?includeItemTypes=Audio",
+      "status": 200
+    },
+    {
+      "body": {
+        "MediaSources": [
+          {
+            "Bitrate": 344000,
+            "Container": "mp3",
+            "DefaultAudioStreamIndex": 0,
+            "DirectStreamUrl": "http://test.local/jellyfin/Audio/<id-9>/stream.mp3?static=true&mediaSourceId=<id-9>&api_key=***",
+            "GenPtsInput": false,
+            "Id": "<id-9>",
+            "IgnoreDts": false,
+            "IgnoreIndex": false,
+            "IsInfiniteStream": false,
+            "IsRemote": false,
+            "MediaStreams": [
+              {
+                "BitRate": 344000,
+                "ChannelLayout": "stereo",
+                "Channels": 2,
+                "Codec": "mp3",
+                "Index": 0,
+                "IsDefault": true,
+                "IsExternal": false,
+                "IsForced": false,
+                "IsInterlaced": false,
+                "IsTextSubtitleStream": false,
+                "SampleRate": 44100,
+                "SupportsExternalStream": false,
+                "Type": "Audio"
+              }
+            ],
+            "Protocol": "File",
+            "ReadAtNativeFramerate": false,
+            "RequiresClosing": false,
+            "RequiresLooping": false,
+            "RequiresOpening": false,
+            "RunTimeTicks": 3400000,
+            "Size": 16008,
+            "SupportsDirectPlay": true,
+            "SupportsDirectStream": true,
+            "SupportsProbing": false,
+            "SupportsTranscoding": false,
+            "Type": "Default"
+          }
+        ],
+        "PlaySessionId": "<id-21>"
+      },
+      "headers": {
+        "content-length": "1028",
+        "content-type": "application/json"
+      },
+      "request": "GET /jellyfin/Items/<id-9>/PlaybackInfo",
+      "status": 200
+    },
+    {
+      "body": {
+        "byte_len": 16008,
+        "head": [
+          73,
+          68,
+          51,
+          4,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "headers": {
+        "accept-ranges": "bytes",
+        "content-length": "16008",
+        "content-type": "audio/mpeg"
+      },
+      "request": "GET /jellyfin/Audio/<id-9>/stream.mp3?static=true&mediaSourceId=<id-9>&api_key=***",
+      "status": 200
+    },
+    {
+      "body": {
+        "byte_len": 100,
+        "head": [
+          73,
+          68,
+          51,
+          4,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "headers": {
+        "accept-ranges": "bytes",
+        "content-length": "100",
+        "content-range": "bytes 0-99/16008",
+        "content-type": "audio/mpeg"
+      },
+      "request": "GET /jellyfin/Audio/<id-9>/stream.mp3?static=true&mediaSourceId=<id-9>&api_key=***",
+      "status": 206
+    },
+    {
+      "body": {
+        "IsFavorite": true,
+        "ItemId": "<id-9>",
+        "Key": "<id-9>",
+        "PlayCount": 0,
+        "PlaybackPositionTicks": 0,
+        "Played": false
+      },
+      "headers": {
+        "content-length": "159",
+        "content-type": "application/json"
+      },
+      "request": "POST /jellyfin/Users/<id-3>/FavoriteItems/<id-9>",
+      "status": 200
+    },
+    {
+      "body": {
+        "Items": [
+          {
+            "Album": "Achtung Baby",
+            "AlbumArtist": "U2",
+            "AlbumArtists": [
+              {
+                "Id": "<id-7>",
+                "Name": "U2"
+              }
+            ],
+            "AlbumId": "<id-8>",
+            "ArtistItems": [
+              {
+                "Id": "<id-7>",
+                "Name": "U2"
+              }
+            ],
+            "Artists": [
+              "U2"
+            ],
+            "BackdropImageTags": [],
+            "Container": "mp3",
+            "DateCreated": "0000-00-00T00:00:00.0000000Z",
+            "Genres": [
+              "Rock"
+            ],
+            "Id": "<id-9>",
+            "ImageBlurHashes": {},
+            "ImageTags": {},
+            "IndexNumber": 3,
+            "IsFolder": false,
+            "LocationType": "FileSystem",
+            "MediaType": "Audio",
+            "Name": "One",
+            "ParentId": "<id-8>",
+            "ParentIndexNumber": 1,
+            "ProductionYear": 1991,
+            "ProviderIds": {
+              "MusicBrainzTrack": "rec-one-0003"
+            },
+            "RunTimeTicks": 3400000,
+            "ServerId": "<id-1>",
+            "SortName": "One",
+            "Type": "Audio",
+            "UserData": {
+              "IsFavorite": true,
+              "ItemId": "<id-9>",
+              "Key": "<id-9>",
+              "PlayCount": 0,
+              "PlaybackPositionTicks": 0,
+              "Played": false
+            }
+          }
+        ],
+        "StartIndex": 0,
+        "TotalRecordCount": 1
+      },
+      "headers": {
+        "content-length": "980",
+        "content-type": "application/json"
+      },
+      "request": "GET /jellyfin/Users/<id-3>/Items?includeItemTypes=Audio&IsFavorite=true",
+      "status": 200
+    },
+    {
+      "body": {
+        "Id": "<id-22>"
+      },
+      "headers": {
+        "content-length": "41",
+        "content-type": "application/json"
+      },
+      "request": "POST /jellyfin/Playlists",
+      "status": 200
+    },
+    {
+      "body": {
+        "Items": [
+          {
+            "Album": "Achtung Baby",
+            "AlbumArtist": "U2",
+            "AlbumArtists": [
+              {
+                "Id": "<id-7>",
+                "Name": "U2"
+              }
+            ],
+            "AlbumId": "<id-8>",
+            "ArtistItems": [
+              {
+                "Id": "<id-7>",
+                "Name": "U2"
+              }
+            ],
+            "Artists": [
+              "U2"
+            ],
+            "BackdropImageTags": [],
+            "Container": "mp3",
+            "DateCreated": "0000-00-00T00:00:00.0000000Z",
+            "Genres": [
+              "Rock"
+            ],
+            "Id": "<id-9>",
+            "ImageBlurHashes": {},
+            "ImageTags": {},
+            "IndexNumber": 3,
+            "IsFolder": false,
+            "LocationType": "FileSystem",
+            "MediaType": "Audio",
+            "Name": "One",
+            "ParentId": "<id-8>",
+            "ParentIndexNumber": 1,
+            "PlaylistItemId": "<id-23>",
+            "ProductionYear": 1991,
+            "ProviderIds": {
+              "MusicBrainzTrack": "rec-one-0003"
+            },
+            "RunTimeTicks": 3400000,
+            "ServerId": "<id-1>",
+            "SortName": "One",
+            "Type": "Audio",
+            "UserData": {
+              "IsFavorite": true,
+              "ItemId": "<id-9>",
+              "Key": "<id-9>",
+              "PlayCount": 0,
+              "PlaybackPositionTicks": 0,
+              "Played": false
+            }
+          }
+        ],
+        "StartIndex": 0,
+        "TotalRecordCount": 1
+      },
+      "headers": {
+        "content-length": "1036",
+        "content-type": "application/json"
+      },
+      "request": "GET /jellyfin/Playlists/<id-22>/Items",
+      "status": 200
+    },
+    {
+      "body": null,
+      "headers": {
+        "content-length": "0"
+      },
+      "request": "POST /jellyfin/Sessions/Playing",
+      "status": 204
+    },
+    {
+      "body": null,
+      "headers": {
+        "content-length": "0"
+      },
+      "request": "POST /jellyfin/Sessions/Playing/Progress",
+      "status": 204
+    },
+    {
+      "body": null,
+      "headers": {
+        "content-length": "0"
+      },
+      "request": "POST /jellyfin/Sessions/Playing/Stopped",
+      "status": 204
+    }
+  ]
+}

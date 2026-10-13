@@ -1,0 +1,69 @@
+{
+  "subsonic-response": {
+    "openSubsonic": true,
+    "playlist": {
+      "changed": "0000-00-00T00:00:00Z",
+      "created": "0000-00-00T00:00:00Z",
+      "duration": 0,
+      "entry": [
+        {
+          "album": "Achtung Baby",
+          "albumArtists": [
+            {
+              "id": "ar-<id-5>",
+              "name": "U2"
+            }
+          ],
+          "albumId": "al-<id-6>",
+          "artist": "U2",
+          "artistId": "ar-<id-5>",
+          "artists": [
+            {
+              "id": "ar-<id-5>",
+              "name": "U2"
+            }
+          ],
+          "bitRate": 344,
+          "channelCount": 2,
+          "contentType": "audio/mpeg",
+          "coverArt": "al-<id-6>",
+          "created": "0000-00-00T00:00:00Z",
+          "discNumber": 1,
+          "displayAlbumArtist": "U2",
+          "displayArtist": "U2",
+          "duration": 0,
+          "genre": "Rock",
+          "genres": [
+            {
+              "name": "Rock"
+            }
+          ],
+          "id": "tr-<id-11>",
+          "isDir": false,
+          "mediaType": "song",
+          "musicBrainzId": "rec-one-0003",
+          "parent": "al-<id-6>",
+          "replayGain": {},
+          "samplingRate": 44100,
+          "size": 16008,
+          "sortName": "One",
+          "starred": "0000-00-00T00:00:00Z",
+          "suffix": "mp3",
+          "title": "One",
+          "track": 3,
+          "type": "music",
+          "year": 1991
+        }
+      ],
+      "id": "pl-<id-12>",
+      "name": "Journey Mix",
+      "owner": "alice",
+      "public": false,
+      "songCount": 1
+    },
+    "serverVersion": "10.10.6",
+    "status": "ok",
+    "type": "DroppedNeedle",
+    "version": "1.16.1"
+  }
+}

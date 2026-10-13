@@ -1,0 +1,46 @@
+{
+  "MediaSources": [
+    {
+      "Bitrate": 2000,
+      "Container": "m4a",
+      "DefaultAudioStreamIndex": 0,
+      "DirectStreamUrl": "http://test.local/jellyfin/Audio/<id-19>/stream.m4a?static=true&mediaSourceId=<id-19>&api_key=***",
+      "GenPtsInput": false,
+      "Id": "<id-19>",
+      "IgnoreDts": false,
+      "IgnoreIndex": false,
+      "IsInfiniteStream": false,
+      "IsRemote": false,
+      "MediaStreams": [
+        {
+          "BitRate": 2000,
+          "ChannelLayout": "stereo",
+          "Channels": 2,
+          "Codec": "m4a",
+          "Index": 0,
+          "IsDefault": true,
+          "IsExternal": false,
+          "IsForced": false,
+          "IsInterlaced": false,
+          "IsTextSubtitleStream": false,
+          "SampleRate": 44100,
+          "SupportsExternalStream": false,
+          "Type": "Audio"
+        }
+      ],
+      "Protocol": "File",
+      "ReadAtNativeFramerate": false,
+      "RequiresClosing": false,
+      "RequiresLooping": false,
+      "RequiresOpening": false,
+      "RunTimeTicks": 3230000,
+      "Size": 2563,
+      "SupportsDirectPlay": true,
+      "SupportsDirectStream": true,
+      "SupportsProbing": false,
+      "SupportsTranscoding": false,
+      "Type": "Default"
+    }
+  ],
+  "PlaySessionId": "<id-20>"
+}
