@@ -315,6 +315,18 @@ pub trait PlayerCatalog: Send + Sync {
     /// Every `(kind, id)` a player can address: artists, albums and
     /// streamable tracks by local id, genres by display name.
     fn every_id<'a>(&'a self) -> BoxFuture<'a, Result<Vec<(&'static str, String)>, StoreError>>;
+
+    /// Every year at least one album with a streamable track has,
+    /// ascending.
+    fn album_years<'a>(&'a self) -> BoxFuture<'a, Result<Vec<i64>, StoreError>>;
+
+    /// For some artist ids, the summed length in seconds of the streamable
+    /// tracks on the albums each one leads. An artist leading no such album
+    /// is absent.
+    fn artist_durations<'a>(
+        &'a self,
+        ids: &'a [String],
+    ) -> BoxFuture<'a, Result<HashMap<String, f64>, StoreError>>;
 }
 
 const TRACK_SELECT: &str = "SELECT t.id AS id, t.title AS title, t.local_album_id AS album_id, \
@@ -1604,6 +1616,53 @@ impl PlayerCatalog for SqlitePlayerCatalog {
                     .await
                     .map_err(read_error("player.every_id"))?;
                 out.extend(ids.into_iter().map(|id| (kind, id)));
+            }
+            Ok(out)
+        })
+    }
+
+    fn album_years<'a>(&'a self) -> BoxFuture<'a, Result<Vec<i64>, StoreError>> {
+        Box::pin(async move {
+            sqlx::query_scalar(
+                "SELECT DISTINCT a.year FROM local_albums a \
+                 WHERE a.year IS NOT NULL AND a.retired_into_album_id IS NULL \
+                 AND EXISTS (SELECT 1 FROM local_tracks t \
+                 WHERE t.local_album_id = a.id AND t.availability = 'indexed') \
+                 ORDER BY a.year",
+            )
+            .fetch_all(self.pool()?)
+            .await
+            .map_err(read_error("player.album_years"))
+        })
+    }
+
+    fn artist_durations<'a>(
+        &'a self,
+        ids: &'a [String],
+    ) -> BoxFuture<'a, Result<HashMap<String, f64>, StoreError>> {
+        Box::pin(async move {
+            let pool = self.pool()?;
+            let mut out = HashMap::with_capacity(ids.len());
+            for chunk in ids.chunks(500) {
+                let sql = format!(
+                    "SELECT a.album_artist_id, COALESCE(SUM(t.duration_seconds), 0.0) \
+                     FROM local_albums a \
+                     JOIN local_tracks t ON t.local_album_id = a.id \
+                     AND t.availability = 'indexed' \
+                     WHERE a.retired_into_album_id IS NULL AND a.album_artist_id IN ({}) \
+                     GROUP BY a.album_artist_id",
+                    placeholders(chunk.len())
+                );
+                let mut query = sqlx::query_as::<_, (String, f64)>(&sql);
+                for id in chunk {
+                    query = query.bind(id);
+                }
+                out.extend(
+                    query
+                        .fetch_all(pool)
+                        .await
+                        .map_err(read_error("player.artist_durations"))?,
+                );
             }
             Ok(out)
         })

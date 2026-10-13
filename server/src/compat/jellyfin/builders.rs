@@ -52,6 +52,34 @@ pub fn iso_o(ts: Option<f64>) -> String {
     format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}.{micros:06}0Z")
 }
 
+/// `PremiereDate` in the format of `DateCreated`. Jellyfin 10.10.6 writes
+/// midnight on 1 January for an item it only knows the year of
+/// (`1997-01-01T00:00:00.0000000Z`, checked against its recorded answers).
+/// `release_date` is the catalog's `YYYY[-MM[-DD]]`; its month and day are
+/// used only when it is a real date in `year`, so the date never disagrees
+/// with `ProductionYear` or with the order a sort by this key gives.
+pub fn premiere_date(year: Option<i32>, release_date: Option<&str>) -> Option<String> {
+    let year = year.filter(|year| (1..=9999).contains(year))?;
+    let (month, day) = release_date
+        .and_then(|date| month_and_day(year, date))
+        .unwrap_or((1, 1));
+    Some(format!("{year:04}-{month:02}-{day:02}T00:00:00.0000000Z"))
+}
+
+fn month_and_day(year: i32, date: &str) -> Option<(u8, u8)> {
+    let mut parts = date.split('-');
+    if parts.next()?.parse::<i32>().ok()? != year {
+        return None;
+    }
+    let month: u8 = parts.next()?.parse().ok()?;
+    let day: u8 = match parts.next() {
+        Some(day) => day.parse().ok()?,
+        None => 1,
+    };
+    time::Date::from_calendar_date(year, time::Month::try_from(month).ok()?, day).ok()?;
+    Some((month, day))
+}
+
 /// Current UTC time in v2 `datetime.now(timezone.utc).isoformat()` shape
 /// (`2026-09-28T12:00:00.123456+00:00`) for `SessionInfo.LastActivityDate`.
 pub fn utc_now_iso() -> String {
@@ -121,6 +149,7 @@ fn base(id: String, name: String, server_id: &str) -> BaseItemDto {
         media_type: "Unknown".to_owned(),
         run_time_ticks: None,
         production_year: None,
+        premiere_date: None,
         index_number: None,
         parent_index_number: None,
         album: None,
@@ -198,6 +227,7 @@ impl<'a, I: IdMap> Builder<'a, I> {
         dto.sort_name = Some(t.title.clone());
         dto.run_time_ticks = ticks(t.duration_seconds);
         dto.production_year = t.year;
+        dto.premiere_date = premiere_date(t.year, None);
         dto.index_number = t.track_number.filter(|n| *n != 0);
         dto.parent_index_number = t.disc_number.filter(|n| *n != 0);
         dto.album = t.album_title.clone();
@@ -261,6 +291,7 @@ impl<'a, I: IdMap> Builder<'a, I> {
         dto.sort_name = Some(a.title.clone());
         dto.run_time_ticks = ticks(a.total_duration_seconds);
         dto.production_year = a.year;
+        dto.premiere_date = premiere_date(a.year, a.release_date.as_deref());
         dto.child_count = Some(a.track_count);
         dto.album_artist = a.artist_name.clone();
         let pair = match (&a.artist_name, artist_jf) {
@@ -295,6 +326,7 @@ impl<'a, I: IdMap> Builder<'a, I> {
         dto.item_type = "MusicArtist".to_owned();
         dto.is_folder = true;
         dto.child_count = Some(ar.album_count);
+        dto.run_time_ticks = ticks(Some(ar.total_duration_seconds));
         if let Some(tag) = tag {
             dto.image_tags.insert("Primary".to_owned(), tag);
         }

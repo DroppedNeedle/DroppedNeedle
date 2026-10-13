@@ -188,6 +188,12 @@ fn album_for(rows: &MemoryRows, user_id: &str, album: &AlbumView) -> AlbumView {
 
 fn artist_for(rows: &MemoryRows, user_id: &str, artist: &ArtistView) -> ArtistView {
     let mut artist = artist.clone();
+    artist.total_duration_seconds = rows
+        .albums
+        .iter()
+        .filter(|album| album.artist_id.as_deref() == Some(artist.id.as_str()))
+        .filter_map(|album| album.total_duration_seconds)
+        .sum();
     artist.starred = is_favorite(rows, user_id, "artist", &artist.id);
     artist.image_tag = rows
         .artist_images
@@ -456,6 +462,18 @@ impl LibraryRead for FakeLibrary {
             .unwrap_or_default()
     }
 
+    async fn years(&self) -> Vec<i32> {
+        self.with_rows(|rows| {
+            rows.albums
+                .iter()
+                .filter_map(|album| album.year)
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
     async fn playlists(&self, user_id: &str) -> Vec<PlaylistView> {
         let durations: HashMap<String, Option<f64>> = self
             .with_rows(|rows| {
@@ -484,7 +502,7 @@ impl LibraryRead for FakeLibrary {
                         id: p.id.clone(),
                         name: p.name.clone(),
                         track_count: streamable.len(),
-                        total_duration_seconds: if total > 0.0 { Some(total) } else { None },
+                        total_duration_seconds: Some(total),
                     }
                 })
                 .collect()

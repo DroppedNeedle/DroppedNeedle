@@ -93,6 +93,7 @@
             "Name": "Airbag",
             "ParentId": "<id-5>",
             "ParentIndexNumber": 1,
+            "PremiereDate": "0000-00-00T00:00:00.0000000Z",
             "ProductionYear": 1997,
             "ProviderIds": {
               "MusicBrainzTrack": "rec-airbag-0001"
@@ -145,6 +146,7 @@
             "Name": "One",
             "ParentId": "<id-8>",
             "ParentIndexNumber": 1,
+            "PremiereDate": "0000-00-00T00:00:00.0000000Z",
             "ProductionYear": 1991,
             "ProviderIds": {
               "MusicBrainzTrack": "rec-one-0003"
@@ -195,6 +197,7 @@
             "Name": "Paranoid Android",
             "ParentId": "<id-5>",
             "ParentIndexNumber": 1,
+            "PremiereDate": "0000-00-00T00:00:00.0000000Z",
             "ProductionYear": 1997,
             "ProviderIds": {
               "MusicBrainzTrack": "rec-paranoid-0002"
@@ -245,6 +248,7 @@
             "Name": "Song A",
             "ParentId": "<id-12>",
             "ParentIndexNumber": 1,
+            "PremiereDate": "0000-00-00T00:00:00.0000000Z",
             "ProductionYear": 2001,
             "ProviderIds": {
               "MusicBrainzTrack": "rec-songa-0001"
@@ -295,6 +299,7 @@
             "Name": "Teardrop",
             "ParentId": "<id-16>",
             "ParentIndexNumber": 1,
+            "PremiereDate": "0000-00-00T00:00:00.0000000Z",
             "ProductionYear": 1998,
             "ProviderIds": {
               "MusicBrainzTrack": "rec-teardrop-0004"
@@ -345,6 +350,7 @@
             "Name": "桃源へ",
             "ParentId": "<id-19>",
             "ParentIndexNumber": 1,
+            "PremiereDate": "0000-00-00T00:00:00.0000000Z",
             "ProductionYear": 2015,
             "ProviderIds": {
               "MusicBrainzTrack": "rec-cjk-0001"
@@ -367,7 +373,7 @@
         "TotalRecordCount": 6
       },
       "headers": {
-        "content-length": "5872",
+        "content-length": "6148",
         "content-type": "application/json"
       },
       "request": "GET /jellyfin/Users/<id-3>/Items?includeItemTypes=Audio",
@@ -526,6 +532,7 @@
             "Name": "One",
             "ParentId": "<id-8>",
             "ParentIndexNumber": 1,
+            "PremiereDate": "0000-00-00T00:00:00.0000000Z",
             "ProductionYear": 1991,
             "ProviderIds": {
               "MusicBrainzTrack": "rec-one-0003"
@@ -548,7 +555,7 @@
         "TotalRecordCount": 1
       },
       "headers": {
-        "content-length": "980",
+        "content-length": "1026",
         "content-type": "application/json"
       },
       "request": "GET /jellyfin/Users/<id-3>/Items?includeItemTypes=Audio&IsFavorite=true",
@@ -604,6 +611,7 @@
             "ParentId": "<id-8>",
             "ParentIndexNumber": 1,
             "PlaylistItemId": "<id-23>",
+            "PremiereDate": "0000-00-00T00:00:00.0000000Z",
             "ProductionYear": 1991,
             "ProviderIds": {
               "MusicBrainzTrack": "rec-one-0003"
@@ -626,7 +634,7 @@
         "TotalRecordCount": 1
       },
       "headers": {
-        "content-length": "1036",
+        "content-length": "1082",
         "content-type": "application/json"
       },
       "request": "GET /jellyfin/Playlists/<id-22>/Items",

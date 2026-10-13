@@ -7,7 +7,7 @@ use super::ids::{IdKind, decode, decode_expect};
 use super::models::{Render, SStreamDetails, STranscodeDecision};
 use super::store::{ClientInfo, Store};
 use super::stream::{
-    AudioBackend, AudioBody, MAX_OFFSET_SECONDS, PLACEHOLDER_SVG, ServeError, ServedAudio,
+    AudioBackend, AudioBody, MAX_OFFSET_SECONDS, PLACEHOLDER_COVER, ServeError, ServedAudio,
     StreamPlan, cover_bucket, decide, download_filename, estimate_transcode_length, serve_original,
     transcode_hint,
 };
@@ -65,7 +65,7 @@ pub fn serve_outcome(served: Result<ServedAudio, ServeError>) -> Result<Outcome,
 }
 
 /// Cover art: album/track -> release-group art, artist -> artist image,
-/// playlist -> playlist file (Feishin #287). Misses serve the gray SVG
+/// playlist -> playlist file (Feishin #287). Misses serve the gray WebP
 /// placeholder; non-playlist hits carry immutable cache headers; `size`
 /// buckets to 250/500/1200. HEAD is served by the HTTP layer (which
 /// strips bodies); only the playlist branch needs explicit headers.
@@ -78,12 +78,12 @@ pub async fn cover_art<P: Principal, S: Store, B: AudioBackend>(
     let bucket = cover_bucket(ctx.pint("size", None, Some(1), Some(2000))?);
     let placeholder = || Outcome::Binary {
         status: 200,
-        content_type: "image/svg+xml".to_owned(),
+        content_type: "image/webp".to_owned(),
         headers: vec![(
             "Cache-Control".to_owned(),
             "public, max-age=86400".to_owned(),
         )],
-        body: PLACEHOLDER_SVG.as_bytes().to_vec(),
+        body: PLACEHOLDER_COVER.to_vec(),
     };
     let immutable = |body: Vec<u8>, content_type: String| Outcome::Binary {
         status: 200,

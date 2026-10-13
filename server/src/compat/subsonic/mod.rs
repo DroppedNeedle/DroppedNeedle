@@ -24,7 +24,7 @@
 //! | getRandomSongs | randomSongs | yes | filters |
 //! | getMusicDirectory | directory | yes | 1 -> artists; artist -> albums; album -> songs |
 //! | search3/search2 | searchResult3/2 | yes | missing/empty/`""` query = match-all |
-//! | getCoverArt | bytes | yes | RG art/artist image/playlist file; miss -> SVG; size buckets |
+//! | getCoverArt | bytes | yes | RG art/artist image/playlist file; miss -> WebP; size buckets |
 //! | stream/download | bytes | yes | decide() policy; ranges; 416; HEAD |
 //! | getTranscodeDecision | transcodeDecision | yes | POST-only, JSON-only |
 //! | getTranscodeStream | bytes | yes | signed params |

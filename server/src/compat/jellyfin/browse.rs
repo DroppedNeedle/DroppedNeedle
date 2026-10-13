@@ -669,8 +669,8 @@ where
 }
 
 /// Manet's boot call: a 404 here can leave the library empty (v2
-/// `_items_filters`). Genres are the only facet modelled; the key name
-/// `OfficialRatings` is v2-verbatim.
+/// `_items_filters`). Genres and album years are the facets modelled; the
+/// key name `OfficialRatings` is v2-verbatim.
 pub(super) async fn filters<S, L, E, P, I>(
     State(state): State<JellyfinState<S, L, E, P, I>>,
     request: Request<Body>,
@@ -694,13 +694,14 @@ where
         return error(StatusCode::UNAUTHORIZED);
     }
     let genres = state.library.genres().await;
+    let years = state.library.years().await;
     json(
         StatusCode::OK,
         &serde_json::json!({
             "Genres": genres.iter().map(|g| &g.name).collect::<Vec<_>>(),
             "Tags": Vec::<String>::new(),
             "OfficialRatings": Vec::<String>::new(),
-            "Years": Vec::<u32>::new(),
+            "Years": years,
         }),
     )
 }

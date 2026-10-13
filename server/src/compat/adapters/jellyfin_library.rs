@@ -85,6 +85,7 @@ fn album_view(album: PlayerAlbum) -> AlbumView {
         artist_name: Some(record.artist_name),
         artist_id: Some(record.artist_id),
         year: record.year.and_then(|year| i32::try_from(year).ok()),
+        release_date: album.original_release_date,
         genre: album.genre,
         track_count: record.track_count as usize,
         total_duration_seconds: Some(record.total_duration_seconds),
@@ -106,6 +107,7 @@ fn artist_view(artist: ArtistRecord) -> ArtistView {
         artist_mbid: artist.artist_mbid,
         name: artist.name,
         album_count: artist.album_count as usize,
+        total_duration_seconds: 0.0,
         date_added: artist.date_added,
         starred: false,
         image_tag,
@@ -176,8 +178,10 @@ impl JellyfinLibrary {
     ) -> Result<Vec<ArtistView>, CompatError> {
         let ids = views.iter().map(|view| view.id.clone()).collect::<Vec<_>>();
         let starred = self.library.starred(user_id, "artist", &ids).await?;
+        let durations = self.library.player.artist_durations(&ids).await?;
         for view in &mut views {
             view.starred = starred.contains_key(&view.id);
+            view.total_duration_seconds = durations.get(&view.id).copied().unwrap_or(0.0);
         }
         Ok(views)
     }
@@ -429,6 +433,18 @@ impl LibraryRead for JellyfinLibrary {
         logged("genres", outcome)
     }
 
+    async fn years(&self) -> Vec<i32> {
+        let outcome = async {
+            let years = self.library.player.album_years().await?;
+            Ok(years
+                .into_iter()
+                .filter_map(|year| i32::try_from(year).ok())
+                .collect())
+        }
+        .await;
+        logged("years", outcome)
+    }
+
     async fn playlists(&self, user_id: &str) -> Vec<PlaylistView> {
         let outcome = self.library.playlists(user_id).await.map(|visible| {
             visible
@@ -438,8 +454,7 @@ impl LibraryRead for JellyfinLibrary {
                     id: visible.row.id,
                     name: visible.row.name,
                     track_count: visible.row.streamable_count,
-                    total_duration_seconds: (visible.row.streamable_duration > 0.0)
-                        .then_some(visible.row.streamable_duration),
+                    total_duration_seconds: Some(visible.row.streamable_duration),
                 })
                 .collect()
         });

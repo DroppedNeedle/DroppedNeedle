@@ -166,6 +166,8 @@ pub struct AlbumView {
     /// Local id of the album artist.
     pub artist_id: Option<String>,
     pub year: Option<i32>,
+    /// Original release date, `YYYY[-MM[-DD]]`, when the catalog has one.
+    pub release_date: Option<String>,
     pub genre: Option<String>,
     pub track_count: usize,
     pub total_duration_seconds: Option<f64>,
@@ -187,6 +189,8 @@ pub struct ArtistView {
     pub artist_mbid: Option<String>,
     pub name: String,
     pub album_count: usize,
+    /// Summed length of the playable tracks on the albums the artist leads.
+    pub total_duration_seconds: f64,
     /// Unix seconds added.
     pub date_added: Option<f64>,
     pub starred: bool,
@@ -351,6 +355,8 @@ pub trait LibraryRead: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = (Vec<ArtistView>, usize)> + Send;
     fn artist(&self, user_id: &str, mbid: &str) -> impl Future<Output = Option<ArtistView>> + Send;
     fn genres(&self) -> impl Future<Output = Vec<GenreView>> + Send;
+    /// Every year a playable album has, ascending.
+    fn years(&self) -> impl Future<Output = Vec<i32>> + Send;
     fn playlists(&self, user_id: &str) -> impl Future<Output = Vec<PlaylistView>> + Send;
     fn playlist(
         &self,

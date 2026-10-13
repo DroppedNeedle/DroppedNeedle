@@ -32,6 +32,7 @@
       "LocationType": "FileSystem",
       "MediaType": "Unknown",
       "Name": "First Light",
+      "PremiereDate": "2021-01-01T00:00:00.0000000Z",
       "ProductionYear": 2021,
       "ProviderIds": {
         "MusicBrainzReleaseGroup": "rg-1"
@@ -80,6 +81,7 @@
       "LocationType": "FileSystem",
       "MediaType": "Unknown",
       "Name": "Second Dawn",
+      "PremiereDate": "2023-01-01T00:00:00.0000000Z",
       "ProductionYear": 2023,
       "ProviderIds": {
         "MusicBrainzReleaseGroup": "rg-2"

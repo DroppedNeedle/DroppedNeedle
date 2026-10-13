@@ -446,7 +446,7 @@ async fn browse_query_dialects() {
     let filters = fx.json("/jellyfin/Items/Filters", Some(&auth)).await;
     assert_eq!(
         filters,
-        json!({"Genres": ["Rock"], "Tags": [], "OfficialRatings": [], "Years": []})
+        json!({"Genres": ["Rock"], "Tags": [], "OfficialRatings": [], "Years": [2021, 2023]})
     );
     // .NET "O" dates keep seven fractional digits even on whole seconds.
     let album = fx

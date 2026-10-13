@@ -258,8 +258,10 @@ pub fn cover_bucket(size: Option<i64>) -> &'static str {
     }
 }
 
-/// Gray SVG placeholder served on art misses (v2 `_PLACEHOLDER_SVG`).
-pub const PLACEHOLDER_SVG: &str = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 200\"><rect fill=\"#374151\" width=\"200\" height=\"200\"/><circle cx=\"100\" cy=\"100\" r=\"70\" fill=\"#1f2937\" stroke=\"#4B5563\" stroke-width=\"2\"/><circle cx=\"100\" cy=\"100\" r=\"12\" fill=\"#4B5563\"/></svg>";
+/// Gray record placeholder served on art misses, 500 pixels square. It is
+/// WebP, as Navidrome's is (0.62.0 recording): many phone apps cannot draw
+/// SVG.
+pub const PLACEHOLDER_COVER: &[u8] = include_bytes!("assets/placeholder.webp");
 
 /// Audio facts the backend reports for one file id.
 #[derive(Debug, Clone)]

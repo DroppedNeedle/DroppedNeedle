@@ -246,6 +246,8 @@ pub struct BaseItemDto {
     pub run_time_ticks: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub production_year: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub premiere_date: Option<String>,
     /// Track number.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub index_number: Option<i32>,

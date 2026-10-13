@@ -643,7 +643,7 @@ async fn cover_art_buckets_caching_and_misses() {
     assert_eq!(playlist.body, b"PLAYLIST-COVER");
     // A known album without art gets the placeholder; unknown ids 404 text.
     let placeholder = get("getCoverArt", &[("id", "al-rg-2")]).await;
-    assert_eq!(placeholder.content_type, "image/svg+xml");
+    assert_eq!(placeholder.content_type, "image/webp");
     assert_eq!(
         placeholder.header("Cache-Control"),
         Some("public, max-age=86400")

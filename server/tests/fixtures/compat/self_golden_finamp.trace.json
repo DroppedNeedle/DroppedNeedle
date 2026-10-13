@@ -96,6 +96,7 @@
             "Name": "Opener",
             "ParentId": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
             "ParentIndexNumber": 1,
+            "PremiereDate": "2021-01-01T00:00:00.0000000Z",
             "ProductionYear": 2021,
             "ProviderIds": {
               "MusicBrainzTrack": "rec-1"
@@ -152,6 +153,7 @@
             "Name": "Deep Cut",
             "ParentId": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
             "ParentIndexNumber": 1,
+            "PremiereDate": "2021-01-01T00:00:00.0000000Z",
             "ProductionYear": 2021,
             "RunTimeTicks": 2000000000,
             "ServerId": "2f54b621b8fde6d933fab26bd6378f85",
@@ -201,6 +203,7 @@
             "Name": "Late Bloomer",
             "ParentId": "6f43dcd675678c621ef59371a060a637",
             "ParentIndexNumber": 1,
+            "PremiereDate": "2023-01-01T00:00:00.0000000Z",
             "ProductionYear": 2023,
             "RunTimeTicks": 2400000000,
             "ServerId": "2f54b621b8fde6d933fab26bd6378f85",
@@ -220,7 +223,7 @@
         "TotalRecordCount": 3
       },
       "headers": {
-        "content-length": "3034",
+        "content-length": "3172",
         "content-type": "application/json"
       },
       "request": "GET /jellyfin/Users/user-alice/Items?includeItemTypes=Audio",
@@ -382,6 +385,7 @@
             "Name": "Opener",
             "ParentId": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
             "ParentIndexNumber": 1,
+            "PremiereDate": "2021-01-01T00:00:00.0000000Z",
             "ProductionYear": 2021,
             "ProviderIds": {
               "MusicBrainzTrack": "rec-1"
@@ -405,7 +409,7 @@
         "TotalRecordCount": 1
       },
       "headers": {
-        "content-length": "1114",
+        "content-length": "1160",
         "content-type": "application/json"
       },
       "request": "GET /jellyfin/Users/user-alice/Items?includeItemTypes=Audio&IsFavorite=true",
@@ -464,6 +468,7 @@
             "ParentId": "79fd0dc9b5e0e2d2fbd2bca858f0a2cf",
             "ParentIndexNumber": 1,
             "PlaylistItemId": "e1",
+            "PremiereDate": "2021-01-01T00:00:00.0000000Z",
             "ProductionYear": 2021,
             "ProviderIds": {
               "MusicBrainzTrack": "rec-1"
@@ -487,7 +492,7 @@
         "TotalRecordCount": 1
       },
       "headers": {
-        "content-length": "1136",
+        "content-length": "1182",
         "content-type": "application/json"
       },
       "request": "GET /jellyfin/Playlists/0a9350aa48863de03a0040cd77209f02/Items",
