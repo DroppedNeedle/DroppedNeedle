@@ -181,8 +181,6 @@ impl LibrarySetup {
         kind: IdentifyKind,
         user_id: &str,
     ) -> Result<IdentifyJob, ServiceError> {
-        use super::identify::stores::FactsSource as _;
-
         if self.identify_store.album_facts(album_id).is_none() {
             return Err(ServiceError::NotFound);
         }
@@ -215,8 +213,6 @@ impl LibrarySetup {
         user_id: &str,
         candidate_key: &str,
     ) -> Result<(super::identify::models::ReviewItem, Option<AlbumIdentity>), ServiceError> {
-        use super::identify::stores::{IdentityStore, ReviewStore};
-
         let Some(review) = self.identify_store.get(review_id) else {
             return Err(ServiceError::NotFound);
         };
@@ -252,8 +248,6 @@ impl LibrarySetup {
         review_id: &str,
         user_id: &str,
     ) -> Result<super::identify::models::ReviewItem, ServiceError> {
-        use super::identify::stores::ReviewStore;
-
         let Some(review) = self.identify_store.get(review_id) else {
             return Err(ServiceError::NotFound);
         };

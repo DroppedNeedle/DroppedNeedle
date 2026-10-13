@@ -23,10 +23,8 @@ use super::rules::{
     retracts_on_contradiction,
 };
 use super::sources::{EditionPage, EditionQuery, SourceError};
-use super::stores::{
-    AliasStore, Approval, AttemptLanding, FactsSource, IdentityStore, ProofStore, QueueStore,
-    ReleaseStore, ReviewStore, StoreError, keep_releases, land_job,
-};
+use super::sqlite::SqliteIdentifyStore;
+use super::stores::{Approval, AttemptLanding, StoreError, keep_releases, land_job};
 use crate::library::edition_prefs::Preferences;
 use crate::library::matching::decide::{EDITION_COHORT, eligible};
 use crate::library::matching::{
@@ -35,13 +33,13 @@ use crate::library::matching::{
 
 /// Every dependency the identify service needs, injected by constructor.
 pub struct IdentifyDeps {
-    pub identities: Arc<dyn IdentityStore>,
-    pub facts: Arc<dyn FactsSource>,
-    pub proofs: Arc<dyn ProofStore>,
-    pub aliases: Arc<dyn AliasStore>,
-    pub queue: Arc<dyn QueueStore>,
-    pub reviews: Arc<dyn ReviewStore>,
-    pub releases: Arc<dyn ReleaseStore>,
+    pub identities: Arc<SqliteIdentifyStore>,
+    pub facts: Arc<SqliteIdentifyStore>,
+    pub proofs: Arc<SqliteIdentifyStore>,
+    pub aliases: Arc<SqliteIdentifyStore>,
+    pub queue: Arc<SqliteIdentifyStore>,
+    pub reviews: Arc<SqliteIdentifyStore>,
+    pub releases: Arc<SqliteIdentifyStore>,
     pub providers: Arc<dyn IdentifyProviders>,
 }
 

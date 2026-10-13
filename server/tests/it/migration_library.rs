@@ -13,7 +13,6 @@ use std::sync::Arc;
 
 use droppedneedle::ids::{IdGenerator, UuidGenerator};
 use droppedneedle::library::identify::models::DecisionSource;
-use droppedneedle::library::identify::stores::IdentityStore as _;
 use droppedneedle::library::scan::CatalogStore as _;
 use droppedneedle::library::tags::save::{TagEdit, save_tags};
 use droppedneedle::library::tags::{TagField, read_fields};

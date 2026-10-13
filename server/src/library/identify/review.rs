@@ -1,11 +1,11 @@
 //! Review operations: ambiguous cases wait on a curator, never on a guess.
 
 use super::models::{CandidateEvidence, ReviewItem, ReviewState};
-use super::stores::ReviewStore;
+use super::sqlite::SqliteIdentifyStore;
 
 /// File one review for an ambiguous album. Returns the stored item.
 pub fn file_review(
-    store: &dyn ReviewStore,
+    store: &SqliteIdentifyStore,
     id: &str,
     local_album_id: &str,
     reason_code: &str,
@@ -26,7 +26,7 @@ pub fn file_review(
 
 /// Reject a pending review: the candidates are wrong, keep the album
 /// tagged as-is. Rejecting a settled review is a no-op returning false.
-pub fn reject_review(store: &dyn ReviewStore, review_id: &str, by_user_id: &str) -> bool {
+pub fn reject_review(store: &SqliteIdentifyStore, review_id: &str, by_user_id: &str) -> bool {
     let Some(review) = store.get(review_id) else {
         return false;
     };

@@ -20,7 +20,6 @@ use super::profile::{self, CompiledScripts, NamingFacts};
 use super::reasons::{self, ItemReason};
 use super::script;
 use super::selection::{AlbumScope, CatalogTrack};
-use crate::library::identify::stores::{IdentityStore as _, ReleaseStore as _};
 use crate::library::matching::model::Release;
 use crate::library::publish::planner::{
     Capability, CollisionGate, DiskPreflight, FileFingerprint, PlanBundle, PlanItem, PlanKind,

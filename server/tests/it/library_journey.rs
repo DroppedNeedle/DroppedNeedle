@@ -263,7 +263,6 @@ async fn drain_scans(library: &LibrarySetup) {
 /// files carry (as if MusicBrainz had folded it into each), so the
 /// album id cannot pick one.
 fn ambiguous_recall(store: &SqliteIdentifyStore, album_id: &str) -> RecallResult {
-    use droppedneedle::library::identify::stores::FactsSource as _;
     ambiguous_from(&store.album_facts(album_id).expect("album facts"))
 }
 
@@ -427,14 +426,12 @@ async fn library_journey_scan_identify_review_organize_undo() {
         "identify reads wrote files"
     );
     {
-        use droppedneedle::library::identify::stores::IdentityStore as _;
         assert!(
             rig.identify_store.album_identity(album_key).is_some(),
             "identification picks a best guess"
         );
     }
     {
-        use droppedneedle::library::identify::stores::ReviewStore as _;
         assert!(rig.identify_store.pending_for_album(album_key).is_empty());
     }
     // A correction that drops the album's editions leaves a review.
@@ -544,7 +541,6 @@ async fn library_journey_scan_identify_review_organize_undo() {
     app.scan_library().await;
     rig.identified(1).await;
     {
-        use droppedneedle::library::identify::stores::IdentityStore as _;
         use droppedneedle::library::scan::CatalogStore as _;
         for track in [&track_a, &track_b] {
             assert_eq!(
@@ -1569,7 +1565,6 @@ async fn retagged_album_keeps_its_identity() {
 #[tokio::test]
 async fn automatic_write_keeps_a_manual_identity() {
     use droppedneedle::library::identify::models::{AlbumIdentity, DecisionSource, TrackIdentity};
-    use droppedneedle::library::identify::stores::IdentityStore as _;
     use droppedneedle::library::scan::CatalogStore as _;
 
     let (_scratch, library, music) = bare_library("lib-manual-identity");
@@ -1737,7 +1732,6 @@ async fn journal_on_a_removed_root_waits() {
 #[tokio::test]
 async fn identification_survives_restarts() {
     use droppedneedle::library::identify::models::DecisionSource;
-    use droppedneedle::library::identify::stores::IdentityStore as _;
     use droppedneedle::library::scan::CatalogStore as _;
 
     let rig = Rig::start("lib-identify-restart").await;
@@ -1930,7 +1924,6 @@ async fn baseline_restore_removes_fields_added_later() {
 /// replaces every row and still answers to them.
 #[test]
 fn release_documents_answer_to_merged_ids() {
-    use droppedneedle::library::identify::stores::ReleaseStore as _;
     let (_scratch, library, _music) = bare_library("lib-merged-release");
     let store = &library.identify_store;
     let mut release = Release {
@@ -2244,7 +2237,6 @@ async fn library_contribution_seed_callback_verify_links_album() {
 /// The release the planted files name, built from their own tags so every
 /// id agrees.
 fn tagged_release(store: &SqliteIdentifyStore, album_id: &str) -> Release {
-    use droppedneedle::library::identify::stores::FactsSource as _;
     tagged_from(&store.album_facts(album_id).expect("album facts"))
 }
 
@@ -2320,7 +2312,6 @@ fn track_row(db: &Path, track_id: &str) -> TrackRow {
 #[tokio::test]
 async fn library_journey_undo_edition_then_reidentify() {
     use droppedneedle::library::identify::sources::{Edition, EditionPage};
-    use droppedneedle::library::identify::stores::IdentityStore as _;
     use droppedneedle::library::operations::decisions::live_automatic_edition_undo;
 
     let rig = Rig::start("lib-operations").await;
@@ -2351,7 +2342,6 @@ async fn library_journey_undo_edition_then_reidentify() {
     let album = body["album_id"].as_str().expect("album id").to_owned();
     let release = tagged_release(&rig.identify_store, &album);
     let (manual_track, auto_track) = {
-        use droppedneedle::library::identify::stores::FactsSource as _;
         let facts = rig.identify_store.album_facts(&album).expect("facts");
         (
             facts.tracks[0].local_track_id.clone(),
@@ -2797,8 +2787,6 @@ async fn put_back_refuses_an_occupied_path() {
 /// "Let DroppedNeedle choose" returns the album to its best fit.
 #[tokio::test]
 async fn library_journey_choose_edition() {
-    use droppedneedle::library::identify::stores::IdentityStore as _;
-
     const OTHER: &str = "0f6e7a1c-2b3d-4e5f-8a9b-1c2d3e4f5a6b";
     let rig = Rig::start("lib-edition").await;
     let app = &rig.app;
@@ -3522,8 +3510,6 @@ async fn settle_repair(app: &TestApp, headers: &[(&str, &str)], path: &str) -> V
 
 #[tokio::test]
 async fn library_journey_identity_repair_and_preparation() {
-    use droppedneedle::library::identify::stores::IdentityStore as _;
-
     let rig = Rig::start("lib-repairs").await;
     let app = &rig.app;
     let auth = app.login_admin().await;

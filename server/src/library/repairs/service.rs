@@ -26,7 +26,6 @@ use crate::library::clock::now_unix;
 use crate::library::identify::models::{LocalAlbumFacts, RecallResult};
 use crate::library::identify::service::IdentifyService;
 use crate::library::identify::sqlite::SqliteIdentifyStore;
-use crate::library::identify::stores::FactsSource as _;
 use crate::library::operations::models::{
     Control, OperationDetail, OperationError, OperationJob, OperationKind,
     ReidentificationCandidate,

@@ -606,8 +606,6 @@ impl LibrarySetup {
         album_id: &str,
         track_id: &str,
     ) -> Result<ReleaseIdentity, ServiceError> {
-        use super::identify::stores::IdentityStore;
-
         let missing = |message: String| ServiceError::Conflict { message };
         let album = self
             .identify_store
@@ -739,8 +737,6 @@ impl LibrarySetup {
         rel_path: &str,
         explicit: &BTreeMap<String, Vec<String>>,
     ) -> BTreeMap<String, Vec<String>> {
-        use super::identify::stores::ReleaseStore as _;
-
         let writable = super::tags::format_for_path(PathBuf::from(rel_path).as_path())
             .is_ok_and(super::tags::save::writable);
         if !writable {
@@ -801,7 +797,6 @@ impl LibrarySetup {
         album_id: &str,
         items: Vec<PreviewItemInput>,
     ) -> Result<PreviewSealed, ServiceError> {
-        use super::identify::stores::IdentityStore as _;
         use super::publish::publisher::Catalog as _;
 
         if items.is_empty() {

@@ -16,7 +16,7 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 
 use super::models::LocalTrackFacts;
-use super::stores::FingerprintStore;
+use super::sqlite::SqliteIdentifyStore;
 use crate::library::matching::model::{VARIOUS_ARTISTS_MBID, credit_text};
 use crate::library::matching::{CreditedArtist, Genre, Release, ReleaseMedium, ReleaseTrack};
 use crate::library::scan::pool::BlockingPool;
@@ -500,7 +500,7 @@ pub struct AcoustIdFingerprints<P, S> {
     config: Arc<ConfigStore>,
     roots: Roots,
     pool: BlockingPool,
-    store: Arc<dyn FingerprintStore>,
+    store: Arc<SqliteIdentifyStore>,
 }
 
 impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
@@ -509,7 +509,7 @@ impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
         config: Arc<ConfigStore>,
         roots: Roots,
         pool: BlockingPool,
-        store: Arc<dyn FingerprintStore>,
+        store: Arc<SqliteIdentifyStore>,
     ) -> Self {
         Self {
             client,

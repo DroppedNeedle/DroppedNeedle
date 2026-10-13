@@ -604,10 +604,7 @@ impl LibrarySetup {
             super::import::sweep_import_leftovers(&roots, settled);
             recoveries
         };
-        let requeued = {
-            use super::identify::stores::QueueStore as _;
-            self.identify_store.recover()
-        };
+        let requeued = { self.identify_store.recover() };
         if requeued > 0 {
             tracing::info!(requeued, "identify jobs from the previous run requeued");
         }

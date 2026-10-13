@@ -29,9 +29,7 @@ use identify::rules::{
 };
 use identify::service::{IdentifyDeps, IdentifyService};
 use identify::sqlite::SqliteIdentifyStore;
-use identify::stores::{
-    AliasStore, AttemptLanding, IdentityStore, ProofStore, QueueStore, ReviewStore, land_job,
-};
+use identify::stores::{AttemptLanding, land_job};
 use rusqlite::params;
 
 use crate::common::{ScratchDir, migrated_db};

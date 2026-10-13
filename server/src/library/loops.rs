@@ -6,7 +6,6 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 use super::clock::{now_ms, now_unix, today_day};
-use super::identify::stores::QueueStore;
 use super::publish::PublishError;
 use super::publish::snapshots::SnapshotStore;
 use super::scan::coordinator::ResolverSource as _;

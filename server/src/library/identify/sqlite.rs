@@ -28,10 +28,7 @@ use super::models::{
     PriorTrackIdentity, ReviewItem, ReviewState, TrackIdentity,
 };
 use super::queue::PRIORITY_NEW_OR_CHANGED;
-use super::stores::{
-    AliasStore, Approval, FactsSource, FingerprintStore, IdentityStore, ProofStore, QueueStore,
-    RELEASE_FRESH_SECS, ReleaseStore, ReviewStore, StoreError,
-};
+use super::stores::{Approval, RELEASE_FRESH_SECS, StoreError};
 use crate::library::matching::Release;
 
 const PROVIDER: &str = "musicbrainz";
@@ -318,8 +315,9 @@ impl SqliteIdentifyStore {
     }
 }
 
-impl IdentityStore for SqliteIdentifyStore {
-    fn album_identity(&self, local_album_id: &str) -> Option<AlbumIdentity> {
+/// Durable identity rows plus the facts the matcher reads.
+impl SqliteIdentifyStore {
+    pub fn album_identity(&self, local_album_id: &str) -> Option<AlbumIdentity> {
         self.read("album identity", |conn| {
             conn.query_row(
                 "SELECT release_group_mbid, release_mbid, decision_source, row_revision \
@@ -342,7 +340,7 @@ impl IdentityStore for SqliteIdentifyStore {
         .flatten()
     }
 
-    fn save_album_identity(&self, identity: AlbumIdentity) {
+    pub fn save_album_identity(&self, identity: AlbumIdentity) {
         let Some(group) = identity.release_group_mbid.clone() else {
             tracing::warn!(
                 album = identity.local_album_id,
@@ -385,7 +383,7 @@ impl IdentityStore for SqliteIdentifyStore {
         }
     }
 
-    fn clear_album_identity(&self, local_album_id: &str) {
+    pub fn clear_album_identity(&self, local_album_id: &str) {
         // Only automatic passes retract; a curator's row is never removed
         // here, even if one landed after the attempt read the album.
         self.write("clear album identity", |tx| {
@@ -400,7 +398,7 @@ impl IdentityStore for SqliteIdentifyStore {
         });
     }
 
-    fn track_identity(&self, local_track_id: &str) -> Option<TrackIdentity> {
+    pub fn track_identity(&self, local_track_id: &str) -> Option<TrackIdentity> {
         self.read("track identity", |conn| {
             conn.query_row(
                 "SELECT recording_mbid, release_track_mbid, decision_source, row_revision \
@@ -423,7 +421,7 @@ impl IdentityStore for SqliteIdentifyStore {
         .flatten()
     }
 
-    fn save_track_identity(&self, identity: TrackIdentity) {
+    pub fn save_track_identity(&self, identity: TrackIdentity) {
         let Some(recording) = identity.recording_mbid.clone() else {
             tracing::warn!(
                 track = identity.local_track_id,
@@ -465,7 +463,7 @@ impl IdentityStore for SqliteIdentifyStore {
         }
     }
 
-    fn artist_identity(&self, local_artist_id: &str) -> Option<ArtistIdentity> {
+    pub fn artist_identity(&self, local_artist_id: &str) -> Option<ArtistIdentity> {
         self.read("artist identity", |conn| {
             conn.query_row(
                 "SELECT provider_artist_id, decision_source, row_revision \
@@ -487,7 +485,7 @@ impl IdentityStore for SqliteIdentifyStore {
         .flatten()
     }
 
-    fn save_artist_identity(&self, identity: ArtistIdentity) {
+    pub fn save_artist_identity(&self, identity: ArtistIdentity) {
         let Some(mbid) = identity.provider_artist_mbid.clone() else {
             tracing::warn!(
                 artist = identity.local_artist_id,
@@ -516,7 +514,7 @@ impl IdentityStore for SqliteIdentifyStore {
         });
     }
 
-    fn owned_artist_by_mbid(&self, artist_mbid: &str) -> Option<String> {
+    pub fn owned_artist_by_mbid(&self, artist_mbid: &str) -> Option<String> {
         self.read("owned artist", |conn| {
             conn.query_row(
                 "SELECT local_artist_id FROM local_artist_external_identities \
@@ -529,7 +527,7 @@ impl IdentityStore for SqliteIdentifyStore {
         .flatten()
     }
 
-    fn save_owned_artist(&self, artist_mbid: &str, local_artist_id: &str) {
+    pub fn save_owned_artist(&self, artist_mbid: &str, local_artist_id: &str) {
         self.save_artist_identity(ArtistIdentity {
             local_artist_id: local_artist_id.to_owned(),
             provider: PROVIDER.to_owned(),
@@ -539,7 +537,7 @@ impl IdentityStore for SqliteIdentifyStore {
         });
     }
 
-    fn track_credits(&self, local_track_id: &str) -> Vec<ArtistCredit> {
+    pub fn track_credits(&self, local_track_id: &str) -> Vec<ArtistCredit> {
         self.read("track credits", |conn| {
             let mut stmt = conn.prepare(
                 "SELECT position, artist_mbid, canonical_name, credited_name \
@@ -559,7 +557,7 @@ impl IdentityStore for SqliteIdentifyStore {
         .unwrap_or_default()
     }
 
-    fn save_track_credits(&self, local_track_id: &str, credits: Vec<ArtistCredit>) {
+    pub fn save_track_credits(&self, local_track_id: &str, credits: Vec<ArtistCredit>) {
         self.write("save track credits", |tx| {
             tx.execute(
                 "DELETE FROM library_identify_track_credits WHERE local_track_id = ?1",
@@ -582,7 +580,9 @@ impl IdentityStore for SqliteIdentifyStore {
         });
     }
 
-    fn accepted_release_mbid_for_artist(&self, source_local_artist_id: &str) -> Option<String> {
+    /// Accepted MusicBrainz release MBID on the artist's albums, if any,
+    /// from the credits join.
+    pub fn accepted_release_mbid_for_artist(&self, source_local_artist_id: &str) -> Option<String> {
         self.read("accepted release for artist", |conn| {
             conn.query_row(
                 "SELECT e.release_mbid FROM local_album_external_identities e \
@@ -597,12 +597,17 @@ impl IdentityStore for SqliteIdentifyStore {
         .flatten()
     }
 
-    fn seal_automatic(&self, seal: &AutomaticSeal) -> bool {
+    /// Seal an automatic win: the album row and the given track rows, never
+    /// over a curator's row, in one transaction. For an exact edition it
+    /// keeps what it replaced so an administrator can undo it. `false`
+    /// when a curator's row holds the album (nothing is written).
+    pub fn seal_automatic(&self, seal: &AutomaticSeal) -> bool {
         self.write("seal automatic identity", |tx| seal_automatic_tx(tx, seal))
             .unwrap_or(false)
     }
 
-    fn match_flag(&self, local_album_id: &str) -> Option<MatchFlag> {
+    /// The album's match flag, if identification is unsure of it.
+    pub fn match_flag(&self, local_album_id: &str) -> Option<MatchFlag> {
         self.read("match flag", |conn| {
             conn.query_row(
                 "SELECT state, reason_code, release_mbid, candidates_json \
@@ -628,7 +633,8 @@ impl IdentityStore for SqliteIdentifyStore {
         .flatten()
     }
 
-    fn set_match_flag(
+    /// Record (or with `None`, clear) the album's match flag.
+    pub fn set_match_flag(
         &self,
         local_album_id: &str,
         flag: Option<&MatchFlag>,
@@ -840,8 +846,11 @@ fn seal_automatic_tx(
     Ok(true)
 }
 
-impl FactsSource for SqliteIdentifyStore {
-    fn album_facts(&self, local_album_id: &str) -> Option<LocalAlbumFacts> {
+/// Local album facts the matcher reads, from the catalog the scan
+/// writes.
+impl SqliteIdentifyStore {
+    /// `None` means the album does not exist.
+    pub fn album_facts(&self, local_album_id: &str) -> Option<LocalAlbumFacts> {
         self.read("album facts", |conn| {
             let album = conn
                 .query_row(
@@ -936,8 +945,11 @@ impl FactsSource for SqliteIdentifyStore {
 /// track's rows here before the track itself.
 const FINGERPRINTER_VERSION: &str = "chromaprint-test2-120s";
 
-impl FingerprintStore for SqliteIdentifyStore {
-    fn fingerprint(&self, local_track_id: &str, stat_revision: &str) -> Option<(String, u32)> {
+/// Fingerprints already taken, keyed by track and its file's stat
+/// revision, so an unchanged file is never decoded twice.
+impl SqliteIdentifyStore {
+    /// The stored print and its duration in seconds.
+    pub fn fingerprint(&self, local_track_id: &str, stat_revision: &str) -> Option<(String, u32)> {
         self.read("stored fingerprint", |conn| {
             conn.query_row(
                 "SELECT fingerprint, duration_seconds FROM audio_fingerprint_outcomes \
@@ -956,7 +968,8 @@ impl FingerprintStore for SqliteIdentifyStore {
         .flatten()
     }
 
-    fn save_fingerprint(
+    /// Keep a print; `matched` says whether AcoustID knew it.
+    pub fn save_fingerprint(
         &self,
         local_track_id: &str,
         stat_revision: &str,
@@ -999,8 +1012,13 @@ impl FingerprintStore for SqliteIdentifyStore {
     }
 }
 
-impl ReleaseStore for SqliteIdentifyStore {
-    fn release(&self, release_mbid: &str, max_age_secs: Option<u64>) -> Option<Release> {
+/// Release documents identification fetched or sealed against. Recall
+/// reuses fresh ones instead of asking MusicBrainz again, and the
+/// publisher tags files from the one an album's identity names.
+impl SqliteIdentifyStore {
+    /// The stored document for one release, if it was saved no more than
+    /// `max_age_secs` ago (`None` accepts any age).
+    pub fn release(&self, release_mbid: &str, max_age_secs: Option<u64>) -> Option<Release> {
         let oldest = max_age_secs.map_or(0.0, |age| now_secs() - age as f64);
         let payload: Option<String> = self
             .read("release document", |conn| {
@@ -1031,7 +1049,7 @@ impl ReleaseStore for SqliteIdentifyStore {
         }
     }
 
-    fn save_release(&self, release: &Release) {
+    pub fn save_release(&self, release: &Release) {
         // A refetch by the canonical id carries no redirect, so it would
         // forget the merged ids an earlier lookup learned: keep them.
         let canonical = release.id.trim().to_ascii_lowercase();
@@ -1164,8 +1182,9 @@ fn hex_sha256(bytes: &[u8]) -> String {
         .collect()
 }
 
-impl ProofStore for SqliteIdentifyStore {
-    fn proofs_for_artist(&self, source_local_artist_id: &str) -> Vec<CreditProof> {
+/// Durable credit proof rows.
+impl SqliteIdentifyStore {
+    pub fn proofs_for_artist(&self, source_local_artist_id: &str) -> Vec<CreditProof> {
         self.read("credit proofs", |conn| {
             let mut stmt = conn.prepare(
                 "SELECT local_album_id, local_track_id, artist_mbid, release_mbid, \
@@ -1188,7 +1207,7 @@ impl ProofStore for SqliteIdentifyStore {
         .unwrap_or_default()
     }
 
-    fn save_proof(&self, proof: CreditProof) {
+    pub fn save_proof(&self, proof: CreditProof) {
         self.write("save credit proof", |tx| {
             tx.execute(
                 "INSERT OR REPLACE INTO library_identify_credit_proofs (local_album_id, \
@@ -1208,13 +1227,13 @@ impl ProofStore for SqliteIdentifyStore {
         });
     }
 
-    fn album_revision(&self, local_album_id: &str) -> u64 {
+    pub fn album_revision(&self, local_album_id: &str) -> u64 {
         self.album_identity(local_album_id)
             .map(|identity| identity.row_revision)
             .unwrap_or(0)
     }
 
-    fn track_revision(&self, local_track_id: &str) -> u64 {
+    pub fn track_revision(&self, local_track_id: &str) -> u64 {
         self.track_identity(local_track_id)
             .map(|identity| identity.row_revision)
             .unwrap_or(0)
@@ -1231,8 +1250,9 @@ fn alias_table(kind: AliasKind) -> (&'static str, &'static str, &'static str) {
 
 const ALIAS_KINDS: [AliasKind; 2] = [AliasKind::MergedAlbum, AliasKind::MergedArtist];
 
-impl AliasStore for SqliteIdentifyStore {
-    fn save_alias(&self, alias: Alias) {
+/// Retired-id aliases plus the live references that follow them.
+impl SqliteIdentifyStore {
+    pub fn save_alias(&self, alias: Alias) {
         let (table, owner, label) = alias_table(alias.kind);
         self.write("save alias", |tx| {
             tx.execute(
@@ -1245,7 +1265,7 @@ impl AliasStore for SqliteIdentifyStore {
         });
     }
 
-    fn resolve(&self, id: &str) -> String {
+    pub fn resolve(&self, id: &str) -> String {
         for kind in ALIAS_KINDS {
             let (table, owner, _) = alias_table(kind);
             let found: Option<String> = self
@@ -1265,7 +1285,7 @@ impl AliasStore for SqliteIdentifyStore {
         id.to_owned()
     }
 
-    fn aliases_for(&self, surviving_id: &str) -> Vec<Alias> {
+    pub fn aliases_for(&self, surviving_id: &str) -> Vec<Alias> {
         let mut out = Vec::new();
         for kind in ALIAS_KINDS {
             let (table, owner, _) = alias_table(kind);
@@ -1287,7 +1307,7 @@ impl AliasStore for SqliteIdentifyStore {
         out
     }
 
-    fn retarget(&self, retired_id: &str, surviving_id: &str) {
+    pub fn retarget(&self, retired_id: &str, surviving_id: &str) {
         let kind = ALIAS_KINDS.into_iter().find(|kind| {
             let (table, _, _) = alias_table(*kind);
             self.read("alias kind", |conn| {
@@ -1312,7 +1332,7 @@ impl AliasStore for SqliteIdentifyStore {
         });
     }
 
-    fn favorite_holds(&self, user_id: &str, item_kind: &str, item_id: &str) -> bool {
+    pub fn favorite_holds(&self, user_id: &str, item_kind: &str, item_id: &str) -> bool {
         self.read("favorite", |conn| {
             conn.query_row(
                 "SELECT EXISTS(SELECT 1 FROM library_user_favorites \
@@ -1324,7 +1344,7 @@ impl AliasStore for SqliteIdentifyStore {
         .unwrap_or(false)
     }
 
-    fn add_favorite(&self, user_id: &str, item_kind: &str, item_id: &str) {
+    pub fn add_favorite(&self, user_id: &str, item_kind: &str, item_id: &str) {
         self.write("add favorite", |tx| {
             tx.execute(
                 "INSERT OR IGNORE INTO library_user_favorites (user_id, item_kind, item_id, \
@@ -1335,8 +1355,12 @@ impl AliasStore for SqliteIdentifyStore {
     }
 }
 
-impl QueueStore for SqliteIdentifyStore {
-    fn enqueue(&self, job: IdentifyJob) -> Option<IdentifyJob> {
+/// Durable identification queue.
+impl SqliteIdentifyStore {
+    /// Store a job. When a live job already holds the same album and
+    /// input revision, that job comes back instead; `None` means the
+    /// store could not record anything.
+    pub fn enqueue(&self, job: IdentifyJob) -> Option<IdentifyJob> {
         let key = idempotency_key(&job.local_album_id, &job.input_revision);
         self.write("enqueue identify job", |tx| {
             let now = now_ms();
@@ -1376,7 +1400,7 @@ impl QueueStore for SqliteIdentifyStore {
         })
     }
 
-    fn claim(&self, now_ms: u64, lease_ms: u64) -> Option<IdentifyJob> {
+    pub fn claim(&self, now_ms: u64, lease_ms: u64) -> Option<IdentifyJob> {
         self.write("claim identify job", |tx| {
             let now = now_ms as i64;
             // While identification is paused nothing is claimed, lapsed
@@ -1411,7 +1435,7 @@ impl QueueStore for SqliteIdentifyStore {
         .flatten()
     }
 
-    fn update(&self, job: IdentifyJob) {
+    pub fn update(&self, job: IdentifyJob) {
         let key = idempotency_key(&job.local_album_id, &job.input_revision);
         self.write("update identify job", |tx| {
             tx.execute(
@@ -1436,7 +1460,7 @@ impl QueueStore for SqliteIdentifyStore {
         });
     }
 
-    fn job(&self, job_id: &str) -> Option<IdentifyJob> {
+    pub fn job(&self, job_id: &str) -> Option<IdentifyJob> {
         self.read("identify job", |conn| {
             conn.query_row(
                 &format!("SELECT {JOB_COLUMNS} FROM library_identify_jobs WHERE id = ?1"),
@@ -1448,7 +1472,7 @@ impl QueueStore for SqliteIdentifyStore {
         .flatten()
     }
 
-    fn jobs_for_album(&self, local_album_id: &str) -> Vec<IdentifyJob> {
+    pub fn jobs_for_album(&self, local_album_id: &str) -> Vec<IdentifyJob> {
         self.read("album jobs", |conn| {
             let mut stmt = conn.prepare(&format!(
                 "SELECT {JOB_COLUMNS} FROM library_identify_jobs \
@@ -1460,7 +1484,9 @@ impl QueueStore for SqliteIdentifyStore {
         .unwrap_or_default()
     }
 
-    fn recover(&self) -> usize {
+    /// Boot recovery: jobs a previous process left running go back to
+    /// the queue. Returns how many.
+    pub fn recover(&self) -> usize {
         self.write("recover identify jobs", |tx| {
             let requeued = tx.execute(
                 "UPDATE library_identify_jobs SET state = 'queued', lease_expires_ms = NULL, \
@@ -1476,8 +1502,9 @@ impl QueueStore for SqliteIdentifyStore {
     }
 }
 
-impl ReviewStore for SqliteIdentifyStore {
-    fn file(&self, review: ReviewItem) {
+/// Curator review queue.
+impl SqliteIdentifyStore {
+    pub fn file(&self, review: ReviewItem) {
         let candidates = match serde_json::to_string(&review.candidates) {
             Ok(json) => json,
             Err(error) => {
@@ -1507,7 +1534,7 @@ impl ReviewStore for SqliteIdentifyStore {
         });
     }
 
-    fn get(&self, review_id: &str) -> Option<ReviewItem> {
+    pub fn get(&self, review_id: &str) -> Option<ReviewItem> {
         self.read("review", |conn| {
             conn.query_row(
                 &format!("SELECT {REVIEW_COLUMNS} FROM library_identify_reviews WHERE id = ?1"),
@@ -1520,7 +1547,7 @@ impl ReviewStore for SqliteIdentifyStore {
         .flatten()
     }
 
-    fn pending_for_album(&self, local_album_id: &str) -> Vec<ReviewItem> {
+    pub fn pending_for_album(&self, local_album_id: &str) -> Vec<ReviewItem> {
         self.read("pending reviews", |conn| {
             let mut stmt = conn.prepare(&format!(
                 "SELECT {REVIEW_COLUMNS} FROM library_identify_reviews \
@@ -1535,7 +1562,7 @@ impl ReviewStore for SqliteIdentifyStore {
         .collect()
     }
 
-    fn set_state(
+    pub fn set_state(
         &self,
         review_id: &str,
         state: ReviewState,
@@ -1562,7 +1589,10 @@ impl ReviewStore for SqliteIdentifyStore {
         .is_some_and(|changed| changed == 1)
     }
 
-    fn approve(&self, approval: &Approval) -> Result<bool, StoreError> {
+    /// Settle a pending review as approved and seal the identities it
+    /// chose, all or nothing. `Ok(false)` when the review is no longer
+    /// pending. Each sealed row takes its stored revision plus one.
+    pub fn approve(&self, approval: &Approval) -> Result<bool, StoreError> {
         let mut conn = self.lock();
         let outcome = (|| {
             let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;

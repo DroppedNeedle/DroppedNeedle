@@ -31,7 +31,8 @@ use super::sources::{
     AlbumQuery, EditionPage, EditionQuery, FingerprintSource, ReleaseHit, ReleaseSource,
     SourceError,
 };
-use super::stores::{ReleaseStore, fresh_release, keep_releases};
+use super::sqlite::SqliteIdentifyStore;
+use super::stores::{fresh_release, keep_releases};
 use crate::library::matching::decide::STRONG;
 use crate::library::matching::strings::fold;
 use crate::library::matching::{LocalAlbum, Release, match_release, should_fingerprint};
@@ -96,12 +97,12 @@ pub struct RecallOutcome {
 /// fingerprint source.
 pub struct LiveProviders<R, F> {
     releases: R,
-    store: Arc<dyn ReleaseStore>,
+    store: Arc<SqliteIdentifyStore>,
     audio: F,
 }
 
 impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
-    pub fn new(releases: R, store: Arc<dyn ReleaseStore>, audio: F) -> Self {
+    pub fn new(releases: R, store: Arc<SqliteIdentifyStore>, audio: F) -> Self {
         Self {
             releases,
             store,

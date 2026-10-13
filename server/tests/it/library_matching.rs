@@ -27,7 +27,6 @@ use identify::providers::LiveProviders;
 use identify::service::{IdentifyDeps, IdentifyService};
 use identify::sources::NoFingerprints;
 use identify::sqlite::SqliteIdentifyStore;
-use identify::stores::{IdentityStore, QueueStore, ReleaseStore};
 use rusqlite::params;
 
 use crate::common::{ScratchDir, migrated_db};

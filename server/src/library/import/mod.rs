@@ -31,7 +31,6 @@ use std::path::{Path, PathBuf};
 use self::naming::NamingFields;
 use super::clock::today_day;
 use super::identify::models::{AlbumIdentity, DecisionSource, TrackIdentity};
-use super::identify::stores::{IdentityStore as _, ReleaseStore as _};
 use super::matching::Release;
 use super::matching::model::credit_text;
 use super::publish::planner::{

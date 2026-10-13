@@ -7,7 +7,6 @@ use super::models::{JobMode, ManagementError};
 use super::service::Management;
 use super::store::{self, ManagedMark, Snapshot};
 use crate::library::clock::now_unix;
-use crate::library::identify::stores::IdentityStore as _;
 use crate::runtime_config::secret_sections::JellyfinConnection;
 
 impl Management {

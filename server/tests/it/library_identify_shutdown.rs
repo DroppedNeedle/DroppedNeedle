@@ -29,7 +29,6 @@ use droppedneedle::library::identify::models::{
     IdentifyKind, JobState, LocalAlbumFacts, RecallResult,
 };
 use droppedneedle::library::identify::providers::{IdentifyProviders, RecallOutcome};
-use droppedneedle::library::identify::stores::QueueStore;
 use droppedneedle::library::wiring::LibrarySetup;
 use droppedneedle::providers::musicbrainz::Criticality;
 use droppedneedle::runtime_config::{ConfigStore, Crypto};

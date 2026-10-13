@@ -16,7 +16,6 @@ use super::models::{
 use super::profile;
 use super::reasons;
 use super::service::{JobSpec, Management};
-use crate::library::identify::stores::IdentityStore as _;
 use crate::library::tags::fields::FieldKind;
 use crate::library::tags::{TagEdit, TagField, save};
 

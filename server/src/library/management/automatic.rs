@@ -20,7 +20,6 @@ use super::reasons::{self, ItemReason};
 use super::service::{JobSpec, Management};
 use super::{planner, profile, store};
 use crate::library::clock::now_unix;
-use crate::library::identify::stores::IdentityStore as _;
 use crate::library::publish::Sandbox;
 use crate::library::publish::snapshots::sha256_hex;
 use crate::settings::management::{activation_is_current, migration_carry_applies};

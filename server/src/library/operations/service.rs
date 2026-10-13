@@ -28,7 +28,6 @@ use crate::library::identify::service::IdentifyService;
 use crate::library::identify::sources::EditionQuery;
 use crate::library::identify::sqlite::SqliteIdentifyStore;
 use crate::library::identify::sqlite::album_identity_row;
-use crate::library::identify::stores::{FactsSource as _, IdentityStore as _};
 use crate::library::matching::model::Release;
 use crate::library::wiring::{LibrarySetup, ScanCoordinator};
 
