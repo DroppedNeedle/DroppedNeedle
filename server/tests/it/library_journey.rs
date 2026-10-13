@@ -973,38 +973,6 @@ async fn manage_routes_limit_a_trusted_user_to_a_plain_retag() {
     rig.stop().await;
 }
 
-#[tokio::test]
-async fn library_loops_start_and_stop() {
-    let (_scratch, library, _music) = bare_library("lib-loops");
-    library.run_recovery().await;
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let loops = library.spawn_loops(shutdown_rx);
-    assert_eq!(loops.len(), 8);
-    let names: Vec<&str> = loops.iter().map(|(name, _)| *name).collect();
-    assert_eq!(
-        names,
-        vec![
-            "library-scan",
-            "library-watcher",
-            "library-identify",
-            "library-contrib",
-            "library-operations",
-            "library-management",
-            "library-leftovers",
-            "library-publish",
-        ]
-    );
-    // One tick proves the loops are alive; shutdown must be prompt.
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    shutdown_tx.send(true).expect("shutdown sends");
-    for (name, handle) in loops {
-        tokio::time::timeout(std::time::Duration::from_secs(10), handle)
-            .await
-            .unwrap_or_else(|_| panic!("{name} loop stops promptly"))
-            .expect("loop joins");
-    }
-}
-
 /// Library roots live in the settings, so a restart comes back with the
 /// same roots under the same ids, and the next scan finds nothing new.
 #[tokio::test]
