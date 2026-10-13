@@ -108,7 +108,7 @@ use crate::auth::session::{cookies, extract::Transport, login::NO_STORE};
 /// session cookie and keeps the token out of the body. Always `no-store`.
 pub fn login_handoff(
     base_path: &str,
-    secure: bool,
+    secure: cookies::SecureMark,
     mut user_json: serde_json::Value,
     transport: Transport,
     raw_token: &str,

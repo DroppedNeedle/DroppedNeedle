@@ -40,9 +40,10 @@ impl StatedAddresses {
                     tracing::warn!(
                         %error,
                         "The public address list in the settings file cannot be read and is \
-                         being ignored, so changes are accepted only from the address this \
-                         server works out for itself. Stop the server and rewrite the list \
-                         with `droppedneedle-tool public-address`."
+                         being ignored: until it is rewritten no address counts as stated, \
+                         so a change from a page at one is refused and a sign-in there gets \
+                         no `Secure` cookie on its account. Stop the server and rewrite the \
+                         list with `droppedneedle-tool public-address`."
                     );
                 }
                 Vec::new()

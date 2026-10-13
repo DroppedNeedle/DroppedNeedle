@@ -44,6 +44,24 @@ pub(super) fn is_secure_trusted(
         .is_some_and(|first| first.eq_ignore_ascii_case("https"))
 }
 
+/// Whether a cookie is marked `Secure`. Only [`secure_for_sign_in`] says
+/// yes, so a route that sets a cookie cannot decide it any other way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SecureMark(bool);
+
+impl SecureMark {
+    /// Unmarked, for a `Set-Cookie` that only clears a cookie. Over HTTPS
+    /// a browser lets an unmarked clear remove a `Secure` cookie too.
+    pub const fn for_clearing() -> Self {
+        Self(false)
+    }
+
+    /// What the mark adds to the end of a `Set-Cookie` value.
+    pub fn attribute(self) -> &'static str {
+        if self.0 { "; Secure" } else { "" }
+    }
+}
+
 /// Whether the cookies a sign-in sets are marked `Secure`. True when the
 /// request arrived over HTTPS ([`is_secure_trusted`]), and also when the
 /// page that sent it is at a stated address whose scheme is `https`: behind
@@ -73,8 +91,10 @@ pub fn secure_for_sign_in(
     headers: &HeaderMap,
     from_trusted_proxy: bool,
     stated: &StatedAddresses,
-) -> bool {
-    secure_given(scheme, headers, from_trusted_proxy, || stated.origins())
+) -> SecureMark {
+    SecureMark(secure_given(scheme, headers, from_trusted_proxy, || {
+        stated.origins()
+    }))
 }
 
 /// [`secure_for_sign_in`] over a list that is fetched only when needed.
@@ -96,15 +116,12 @@ pub fn cookie_path(base_path: &str) -> String {
 
 /// One `Set-Cookie` value attaching the session. The raw token travels only
 /// here in cookie mode, never in the response body.
-pub fn set_cookie_value(raw_token: &str, base_path: &str, secure: bool) -> String {
-    let mut value = format!(
-        "{COOKIE_NAME}={raw_token}; Path={}; Max-Age={SESSION_MAX_AGE_SECS}; HttpOnly; SameSite=Lax",
+pub fn set_cookie_value(raw_token: &str, base_path: &str, secure: SecureMark) -> String {
+    format!(
+        "{COOKIE_NAME}={raw_token}; Path={}; Max-Age={SESSION_MAX_AGE_SECS}; HttpOnly; SameSite=Lax{}",
         cookie_path(base_path),
-    );
-    if secure {
-        value.push_str("; Secure");
-    }
-    value
+        secure.attribute(),
+    )
 }
 
 /// One `Set-Cookie` value clearing the session (logout): same path, dead age.
@@ -148,14 +165,14 @@ mod tests {
 
     #[test]
     fn cookie_flags_and_base_path() {
-        let lan = set_cookie_value("tok", "", false);
+        let lan = set_cookie_value("tok", "", SecureMark(false));
         assert!(lan.starts_with("droppedneedle_session=tok; "));
         assert!(lan.contains("Path=/api/v3; "));
         assert!(lan.contains("Max-Age=2592000; "));
         assert!(lan.contains("HttpOnly; SameSite=Lax"));
         assert!(!lan.contains("Secure"));
 
-        let tls = set_cookie_value("tok", "/music/", true);
+        let tls = set_cookie_value("tok", "/music/", SecureMark(true));
         assert!(tls.contains("Path=/music/api/v3; "));
         assert!(tls.ends_with("; Secure"));
 

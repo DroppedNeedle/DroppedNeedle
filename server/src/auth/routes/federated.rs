@@ -207,15 +207,17 @@ pub const OIDC_STATE_COOKIE: &str = "droppedneedle_oidc_state";
 
 /// One `Set-Cookie` value for the state cookie. The path covers both the
 /// v3 callback and the v2 one kept for migrated providers.
-fn oidc_state_cookie(base_path: &str, value: &str, max_age: u64, secure: bool) -> String {
-    let mut cookie = format!(
-        "{OIDC_STATE_COOKIE}={value}; Path={}/api; Max-Age={max_age}; HttpOnly; SameSite=Lax",
+fn oidc_state_cookie(
+    base_path: &str,
+    value: &str,
+    max_age: u64,
+    secure: cookies::SecureMark,
+) -> String {
+    format!(
+        "{OIDC_STATE_COOKIE}={value}; Path={}/api; Max-Age={max_age}; HttpOnly; SameSite=Lax{}",
         base_path.trim_end_matches('/'),
-    );
-    if secure {
-        cookie.push_str("; Secure");
-    }
-    cookie
+        secure.attribute(),
+    )
 }
 
 /// One cookie's value from the request.
@@ -337,7 +339,7 @@ where
             response_headers.insert(axum::http::header::LOCATION, value);
             cookies::push_set_cookie(
                 response_headers,
-                &oidc_state_cookie(&state.base_path, "", 0, false),
+                &oidc_state_cookie(&state.base_path, "", 0, cookies::SecureMark::for_clearing()),
             );
             insert_no_store(response_headers);
             Ok(response)
@@ -919,7 +921,7 @@ fn federated_unavailable(error: &FederatedError, ids: &dyn IdGenerator) -> AuthR
 struct Handoff<'a> {
     base_path: &'a str,
     /// Mark the cookie `Secure`, as `cookies::secure_for_sign_in` decided.
-    secure: bool,
+    secure: cookies::SecureMark,
     transport: TransportDto,
 }
 

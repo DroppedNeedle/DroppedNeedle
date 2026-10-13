@@ -13,7 +13,10 @@ use axum::{body::Body, routing::get};
 use droppedneedle::{
     AppConfig, bootstrap,
     db::{DbConfig, open_runtime},
-    runtime_config::{ConfigStore, Crypto, sections::SecuritySettings},
+    runtime_config::{
+        ConfigStore, Crypto,
+        sections::{PublicAddress, SecuritySettings},
+    },
 };
 use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
 use tower::ServiceExt as _;
@@ -39,6 +42,15 @@ fn config_in(dir: &Path) -> AppConfig {
     security.hibp_check = false;
     store.save(security).unwrap();
     config
+}
+
+/// The settings file of a server that is not running.
+fn stored_settings(config: &AppConfig) -> ConfigStore {
+    ConfigStore::open(
+        &config.config_file,
+        Crypto::load_or_generate(&config.config_dir()).unwrap(),
+    )
+    .unwrap()
 }
 
 /// The production graph with nothing listening at any outside address.
@@ -245,21 +257,52 @@ async fn login_behind_a_trusted_tls_proxy_sets_a_secure_cookie() {
 /// they share a cookie, and a browser that holds the `Secure` one drops the
 /// plain cookie the http address is answered with: it cannot sign in there
 /// until it signs out at the https address.
+///
+/// First-run setup stands for the other places that set the cookie: the
+/// address is stated from the host before the first boot.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_answer_to_a_login_from_a_stated_https_address_sets_a_secure_cookie() {
     const HTTPS_PAGE: &str = "https://music.test";
     const HTTP_PAGE: &str = "http://music.test:8080";
+    const ADMIN: &str = r#"{"username": "admin", "password": "correct horse battery"}"#;
     let dir = scratch("stated-https");
-    let (router, background) = build(config_in(&dir)).await.unwrap();
+    let config = config_in(&dir);
+    stored_settings(&config)
+        .save(PublicAddress {
+            origins: vec![HTTPS_PAGE.to_owned()],
+        })
+        .unwrap();
+    let (router, background) = build(config).await.unwrap();
     let running = start(router, background).await;
-    let admin = admin_cookie(running.address).await;
     let direct = format!("http://{}", running.address);
     let client = reqwest::Client::new();
+
+    let setup = client
+        .post(format!("{direct}/api/v3/auth/setup"))
+        .header("origin", HTTPS_PAGE)
+        .header("content-type", "application/json")
+        .body(ADMIN)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(setup.status(), 201);
+    let cookie = setup.headers()["set-cookie"].to_str().unwrap();
+    assert!(cookie.contains("; Secure"), "setup: {cookie}");
+    let admin = cookie.split(';').next().unwrap().to_owned();
+    let state = |origins: &'static [&'static str]| {
+        let save = client
+            .put(format!("{direct}/api/v3/settings/public-address"))
+            .header("origin", &direct)
+            .header("cookie", &admin)
+            .header("content-type", "application/json")
+            .body(serde_json::json!({"origins": origins}).to_string());
+        async move { assert_eq!(save.send().await.unwrap().status(), 200) }
+    };
     let secure_from = |origin: Option<&'static str>| {
         let mut login = client
             .post(format!("{direct}/api/v3/auth/login"))
             .header("content-type", "application/json")
-            .body(r#"{"username": "admin", "password": "correct horse battery"}"#);
+            .body(ADMIN);
         if let Some(origin) = origin {
             login = login.header("origin", origin);
         }
@@ -272,18 +315,9 @@ async fn the_answer_to_a_login_from_a_stated_https_address_sets_a_secure_cookie(
         }
     };
 
-    assert!(!secure_from(Some(HTTPS_PAGE)).await, "nothing stated yet");
-
-    let stated = client
-        .put(format!("{direct}/api/v3/settings/public-address"))
-        .header("origin", &direct)
-        .header("cookie", &admin)
-        .header("content-type", "application/json")
-        .body(serde_json::json!({"origins": [HTTPS_PAGE, HTTP_PAGE]}).to_string())
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(stated.status(), 200);
+    state(&[]).await;
+    assert!(!secure_from(Some(HTTPS_PAGE)).await, "nothing stated");
+    state(&[HTTPS_PAGE, HTTP_PAGE]).await;
 
     assert!(secure_from(Some(HTTPS_PAGE)).await);
     // A browser on a plain-HTTP page would throw a `Secure` cookie away, so
@@ -668,6 +702,34 @@ async fn a_stated_public_address_is_the_only_thing_that_widens_the_origin_check(
 
     drop(router);
     running.shut_down().await;
+}
+
+/// A settings file with no public address section, or `null` in its
+/// place, states no address. A section without `origins` is unreadable,
+/// never an empty list: a save cannot write one, so it is a hand edit.
+#[test]
+fn a_stored_public_address_without_origins_is_unreadable_not_empty() {
+    let dir = scratch("public-address-stored");
+    let config = config_in(&dir);
+    let read = |section: Option<serde_json::Value>| {
+        let mut file: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config.config_file).unwrap()).unwrap();
+        let sections = file.as_object_mut().unwrap();
+        match section {
+            Some(section) => sections.insert("public_address".to_owned(), section),
+            None => sections.remove("public_address"),
+        };
+        std::fs::write(&config.config_file, file.to_string()).unwrap();
+        stored_settings(&config).get::<PublicAddress>()
+    };
+    assert_eq!(read(None).unwrap(), PublicAddress::default());
+    assert_eq!(
+        read(Some(serde_json::Value::Null)).unwrap(),
+        PublicAddress::default()
+    );
+    assert!(read(Some(serde_json::json!({}))).is_err());
+    let kept = read(Some(serde_json::json!({"origins": ["https://music.test"]})));
+    assert_eq!(kept.unwrap().origins, ["https://music.test"]);
 }
 
 /// An admin who can only reach the app through the proxy states the address
