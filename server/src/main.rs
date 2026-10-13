@@ -28,15 +28,18 @@ const TOOLING_ROUTES_ARG: &str = "--tooling-routes";
 /// RSS falls from ~265 MB to ~111 MB with no scan-throughput or read-
 /// latency regression (mimalloc+override was trialled and reverted: +20 MB
 /// boot overhead and worse bench retention on this workload). Runs first
-/// so the cap lands before worker threads allocate; a non-glibc platform
-/// reports failure and keeps running on defaults.
+/// so the cap lands before worker threads allocate; other platforms
+/// (macOS dev builds) keep their allocator defaults.
 fn tune_allocator() {
-    // Safety: mallopt only adjusts global tuning knobs; the parameters
-    // are valid and failure is a non-fatal 0 return.
-    let arena_result = unsafe { libc::mallopt(libc::M_ARENA_MAX, 1) };
-    let trim_result = unsafe { libc::mallopt(libc::M_TRIM_THRESHOLD, 128 * 1024) };
-    if arena_result == 0 || trim_result == 0 {
-        tracing::debug!("allocator tuning not applied; running on malloc defaults");
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        // Safety: mallopt only adjusts global tuning knobs; the parameters
+        // are valid and failure is a non-fatal 0 return.
+        let arena_result = unsafe { libc::mallopt(libc::M_ARENA_MAX, 1) };
+        let trim_result = unsafe { libc::mallopt(libc::M_TRIM_THRESHOLD, 128 * 1024) };
+        if arena_result == 0 || trim_result == 0 {
+            tracing::debug!("allocator tuning not applied; running on malloc defaults");
+        }
     }
 }
 

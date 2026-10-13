@@ -118,7 +118,10 @@ pub fn free_bytes_for(dir: &Path) -> Result<u64, PublishError> {
             dir.display()
         )));
     }
-    Ok(stat.f_bavail * stat.f_frsize)
+    // The field widths differ by platform (u32 blocks on macOS).
+    #[allow(clippy::unnecessary_cast)]
+    let free = stat.f_bavail as u64 * stat.f_frsize as u64;
+    Ok(free)
 }
 
 // ---------------------------------------------------------------------------

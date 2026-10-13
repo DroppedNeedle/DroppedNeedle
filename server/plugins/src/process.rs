@@ -599,6 +599,7 @@ async fn run_child(shared: &Arc<Shared>, spec: &ChildSpec) -> RunEnd {
                 rlim_max: 0,
             };
             libc::setrlimit(libc::RLIMIT_CORE, &no_core);
+            #[cfg(target_os = "linux")]
             libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
             Ok(())
         });
