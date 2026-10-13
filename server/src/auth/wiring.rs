@@ -162,23 +162,23 @@ impl LastFmSwitch for StoreLastFmSwitch {
     }
 }
 
-/// Where the plex.tv and Last.fm clients send their calls. Production uses
-/// the real services; the integration tests point both at local mocks.
-/// OIDC and Jellyfin need no entry: their URLs come from the settings.
+/// Where the plex.tv, Last.fm and breach-check clients send their calls.
+/// Production uses the real services; the integration tests point them at
+/// local mocks. OIDC and Jellyfin need no entry: their URLs come from the
+/// settings.
 #[derive(Debug, Clone)]
 pub struct Upstreams {
     /// plex.tv account API root.
     pub plex_tv: String,
     /// Last.fm web service root.
     pub lastfm: String,
+    /// The breach check's range URL, up to the hash prefix.
+    pub pwned_passwords: String,
 }
 
 impl Default for Upstreams {
     fn default() -> Self {
-        Self {
-            plex_tv: crate::remotes::plex::PLEX_TV_BASE.to_owned(),
-            lastfm: crate::providers::lastfm::DEFAULT_BASE_URL.to_owned(),
-        }
+        crate::bootstrap::Outbound::live().sign_in()
     }
 }
 
@@ -256,7 +256,8 @@ fn sign_in_links(
 }
 
 impl AuthSetup {
-    /// Build the production bundle. `http` is the outbound client factory:
+    /// Build the bundle against the real plex.tv, Last.fm and breach
+    /// check. `http` is the outbound client factory:
     /// the sign-in clients use its shared client, OIDC its no-redirect one;
     /// `ids` mints row ids; `clock` drives management-side expiry.
     #[allow(clippy::too_many_arguments)]
@@ -281,7 +282,8 @@ impl AuthSetup {
         )
     }
 
-    /// [`AuthSetup::build`] with the plex.tv and Last.fm roots given.
+    /// [`AuthSetup::build`] with the plex.tv, Last.fm and breach-check
+    /// addresses given. Production builds through this.
     #[allow(clippy::too_many_arguments)]
     pub fn build_with_upstreams(
         auth: ProdAuth,
@@ -311,6 +313,7 @@ impl AuthSetup {
             passwords: Arc::new(auth.hasher.clone()),
             screen: Arc::new(HibpScreen::new(Arc::new(PwnedPasswordsHttp {
                 client: http.clone(),
+                range_url: upstreams.pwned_passwords.clone(),
             }))),
             clock: clock.clone(),
             ids: ids.clone(),
@@ -485,7 +488,8 @@ impl AuthSetup {
         let http = factory.shared().clone();
         let db = AuthDb::unwired();
         let hasher = Argon2idHasher::new();
-        let plex_tv = PlexTv::new(http.clone(), store.clone());
+        let upstreams = Upstreams::default();
+        let plex_tv = PlexTv::with_base(http.clone(), store.clone(), &upstreams.plex_tv);
         let jellyfin_http = JellyfinHttp::new(http.clone(), store.clone());
         let users = UsersDeps {
             users: Arc::new(SqliteUserStore::new(&db)),
@@ -497,11 +501,12 @@ impl AuthSetup {
             passwords: Arc::new(hasher.clone()),
             screen: Arc::new(HibpScreen::new(Arc::new(PwnedPasswordsHttp {
                 client: http.clone(),
+                range_url: upstreams.pwned_passwords.clone(),
             }))),
             clock,
             ids: ids.clone(),
             crypto: crypto.clone(),
-            lastfm_client: Arc::new(LastFmAuthHttp::new(http.clone())),
+            lastfm_client: Arc::new(LastFmAuthHttp::with_base(http.clone(), &upstreams.lastfm)),
             lastfm_switch: Arc::new(StoreLastFmSwitch::new(store.clone())),
             lastfm_pending: Arc::default(),
             security: Arc::new(StoreSecurityPolicy::new(store.clone())),

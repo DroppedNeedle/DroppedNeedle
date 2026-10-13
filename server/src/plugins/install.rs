@@ -35,9 +35,19 @@ pub const INSTALL_RECORD: &str = ".droppedneedle-install.json";
 /// Shown with every install preview.
 pub const TRUST_WARNING: &str = "Only install plugins you trust. A plugin runs as its own program on your server with the same access to files and the network as DroppedNeedle itself. It is not sandboxed.";
 
-/// GitHub endpoints. Tests point these at a scripted fetcher.
-const API_BASE: &str = "https://api.github.com";
-const CODELOAD_BASE: &str = "https://codeload.github.com";
+/// GitHub API origin.
+pub const API_BASE: &str = "https://api.github.com";
+/// GitHub archive download origin.
+pub const CODELOAD_BASE: &str = "https://codeload.github.com";
+
+/// Where installs reach GitHub.
+#[derive(Debug, Clone)]
+pub struct GitHubHosts {
+    /// API origin; production uses [`API_BASE`].
+    pub api: String,
+    /// Archive download origin; production uses [`CODELOAD_BASE`].
+    pub codeload: String,
+}
 
 /// What GitHub answered for one URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -507,12 +517,13 @@ fn body_of(answer: Result<Fetched, FetchError>) -> Result<Option<Vec<u8>>, Insta
 /// Resolve a commit-ish (tag, branch or SHA) to a commit SHA.
 async fn commit_for(
     fetcher: &dyn ArchiveFetcher,
+    hosts: &GitHubHosts,
     source: &InstallSource,
     reference: &str,
 ) -> Result<Option<String>, InstallError> {
     let url = format!(
-        "{API_BASE}/repos/{}/{}/commits/{reference}",
-        source.owner, source.repo
+        "{}/repos/{}/{}/commits/{reference}",
+        hosts.api, source.owner, source.repo
     );
     let answer = fetcher.fetch(&url).await;
     // This endpoint answers 422, not 404, for a tag, branch or commit the
@@ -535,13 +546,14 @@ async fn commit_for(
 /// Resolve what the admin asked for to an exact commit.
 pub async fn resolve(
     fetcher: &dyn ArchiveFetcher,
+    hosts: &GitHubHosts,
     source: InstallSource,
 ) -> Result<ResolvedSource, InstallError> {
     let (ref_kind, reference) = match &source.wanted {
         Wanted::LatestRelease => {
             let url = format!(
-                "{API_BASE}/repos/{}/{}/releases/latest",
-                source.owner, source.repo
+                "{}/repos/{}/{}/releases/latest",
+                hosts.api, source.owner, source.repo
             );
             match body_of(fetcher.fetch(&url).await)? {
                 Some(body) => {
@@ -560,7 +572,7 @@ pub async fn resolve(
         Wanted::Tree(reference) => (PluginRefKind::Branch, reference.clone()),
         Wanted::Commit(sha) => (PluginRefKind::Commit, sha.to_ascii_lowercase()),
     };
-    let commit = commit_for(fetcher, &source, &reference)
+    let commit = commit_for(fetcher, hosts, &source, &reference)
         .await?
         .ok_or_else(|| {
             InstallError::RefNotFound(match ref_kind {
@@ -581,11 +593,12 @@ pub async fn resolve(
 pub async fn stage(
     fetcher: &dyn ArchiveFetcher,
     unpacker: &dyn ArchiveUnpacker,
+    hosts: &GitHubHosts,
     resolved: ResolvedSource,
 ) -> Result<StagedPlugin, InstallError> {
     let url = format!(
-        "{CODELOAD_BASE}/{}/{}/zip/{}",
-        resolved.source.owner, resolved.source.repo, resolved.commit
+        "{}/{}/{}/zip/{}",
+        hosts.codeload, resolved.source.owner, resolved.source.repo, resolved.commit
     );
     let archive = body_of(fetcher.fetch(&url).await)?
         .ok_or_else(|| InstallError::RefNotFound(format!("commit {}", resolved.commit)))?;

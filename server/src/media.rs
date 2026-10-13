@@ -18,9 +18,7 @@ use crate::auth::users::UsersDeps;
 use crate::config::AppConfig;
 use crate::db::WriteLane;
 use crate::ids::IdGenerator;
-use crate::playback::forwarding::{
-    Endpoints, ForwardWorker, ScrobbleForwarder, StoredScrobbleCredentials,
-};
+use crate::playback::forwarding::{ForwardWorker, ScrobbleForwarder, StoredScrobbleCredentials};
 use crate::playback::ports::SystemClock;
 use crate::playback::reports::{ReportQueue, run_report_worker};
 use crate::playback::services::{
@@ -111,6 +109,7 @@ impl MediaSetup {
         lane: WriteLane,
         config: Arc<ConfigStore>,
         imports: Arc<dyn ImportSink>,
+        outbound: &crate::bootstrap::Outbound,
     ) -> Result<(Self, MediaWorkers), String> {
         let http = http_factory.shared().clone();
         crate::stream::plugin_url::sweep_stale_spools();
@@ -127,7 +126,10 @@ impl MediaSetup {
                 Arc::new(CredentialCoder::new(crypto.clone())),
                 Arc::new(ConfigServers::new(config.clone())),
             )
-            .with_plex_tokens(Arc::new(PlexTokenProbe::new(http.clone()))),
+            .with_plex_tokens(Arc::new(PlexTokenProbe::with_plex_tv(
+                http.clone(),
+                outbound.plex_tv.clone(),
+            ))),
         );
         let credentials = Arc::new(StoredScrobbleCredentials::new(
             Arc::new(SqliteListenBrainzLinkStore::new(
@@ -178,7 +180,7 @@ impl MediaSetup {
         let (forwarder, forwards) =
             ScrobbleForwarder::channel(db.clone(), remotes.auth.lastfm_switch.clone());
         let forwards =
-            ForwardWorker::new(forwards, http.clone(), credentials, Endpoints::default());
+            ForwardWorker::new(forwards, http.clone(), credentials, outbound.scrobbles());
         let playback = PlaybackDeps {
             catalog: db.clone(),
             sinks: Arc::new(forwarder),

@@ -1416,12 +1416,7 @@ pub struct PlexTokenProbe {
 }
 
 impl PlexTokenProbe {
-    /// A probe against the real plex.tv.
-    pub fn new(http: reqwest::Client) -> Self {
-        Self::with_plex_tv(http, PLEX_TV_BASE.to_owned())
-    }
-
-    /// A probe against another plex.tv root (tests).
+    /// A probe against the given plex.tv root.
     pub fn with_plex_tv(http: reqwest::Client, plex_tv: String) -> Self {
         Self { http, plex_tv }
     }

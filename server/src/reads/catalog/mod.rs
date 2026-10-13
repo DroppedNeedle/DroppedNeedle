@@ -138,7 +138,7 @@ impl Catalog {
         self.follows.as_ref()
     }
 
-    fn upstream(&self) -> &Upstream {
+    pub(crate) fn upstream(&self) -> &Upstream {
         &self.inner.upstream
     }
 

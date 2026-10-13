@@ -152,6 +152,7 @@ impl E2e {
             Arc::new(droppedneedle::remotes::adapter::PlaylistImportSink::new(
                 reads.collections.clone(),
             )),
+            &droppedneedle::bootstrap::Outbound::live(),
         )
         .expect("media bundle builds");
         let acquire = AcquireSetup::build(
@@ -162,6 +163,7 @@ impl E2e {
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             Arc::clone(&self.store),
             &mut reads.collections,
+            &droppedneedle::bootstrap::Outbound::live(),
         )
         .expect("acquire bundle builds");
         let compat = droppedneedle::compat::CompatSetup::build(

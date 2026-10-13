@@ -12,12 +12,23 @@ use crate::reads::discover::{
 /// Live previews over the shared HTTP client.
 pub struct LivePreviews {
     http: ReqwestGet,
+    deezer: String,
+    itunes: String,
 }
 
 impl LivePreviews {
-    /// Previews over one GET transport.
-    pub fn new(http: ReqwestGet) -> Self {
-        Self { http }
+    /// Previews over one GET transport, at the Deezer and iTunes addresses
+    /// in `endpoints`.
+    pub fn new(http: ReqwestGet, endpoints: &crate::reads::catalog::upstream::Endpoints) -> Self {
+        Self {
+            http,
+            deezer: endpoints.deezer.clone(),
+            itunes: endpoints.itunes.clone(),
+        }
+    }
+
+    fn client(&self) -> PreviewClient<'_, ReqwestGet> {
+        PreviewClient::with_bases(&self.http, &self.deezer, &self.itunes)
     }
 }
 
@@ -38,7 +49,7 @@ impl PreviewSource for LivePreviews {
         track: &'a str,
     ) -> BoxFuture<'a, Result<TrackPreviewResponse, ProviderFailure>> {
         Box::pin(async move {
-            let client = PreviewClient::new(&self.http);
+            let client = self.client();
             let (found, provider) = client.get_track_preview(artist, track).await;
             Ok(match found {
                 Some(found) => TrackPreviewResponse {
@@ -64,7 +75,7 @@ impl PreviewSource for LivePreviews {
         count: i64,
     ) -> BoxFuture<'a, Result<AlbumSamples, ProviderFailure>> {
         Box::pin(async move {
-            let client = PreviewClient::new(&self.http);
+            let client = self.client();
             let limit = usize::try_from(count).unwrap_or(0);
             let (tracks, provider) = client.get_album_preview_tracks(artist, album, limit).await;
             Ok((

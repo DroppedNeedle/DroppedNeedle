@@ -96,12 +96,7 @@ pub struct GeocodingClient {
 }
 
 impl GeocodingClient {
-    /// Client against the production endpoint.
-    pub fn new(http: reqwest::Client) -> Self {
-        Self::with_base_url(http, GEOCODING_API_URL)
-    }
-
-    /// Client against an override endpoint (scripted fakes in tests).
+    /// Client against the given endpoint.
     pub fn with_base_url(http: reqwest::Client, base_url: impl Into<String>) -> Self {
         Self {
             http,

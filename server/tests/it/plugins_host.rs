@@ -98,6 +98,7 @@ fn deps_for(rig: &Rig, fetcher: Arc<FakeFetcher>, unpacker: Arc<FakeUnpacker>) -
         config: Arc::clone(&rig.config),
         roles,
         ids: Arc::new(FixedIds),
+        github: droppedneedle::bootstrap::Outbound::live().plugin_hosts(),
         fetcher,
         unpacker,
         tick_sync: Arc::new(NoopTickSync),
@@ -418,7 +419,15 @@ async fn a_github_refusal_never_falls_back_to_the_default_branch() {
         default_branch(&fetcher);
         fetcher.answer(LATEST_RELEASE, answer.clone());
         let source = parse_source("https://github.com/acme/toy", None).unwrap();
-        assert_eq!(resolve(fetcher.as_ref(), source).await, Err(kind));
+        assert_eq!(
+            resolve(
+                fetcher.as_ref(),
+                &droppedneedle::bootstrap::Outbound::live().plugin_hosts(),
+                source
+            )
+            .await,
+            Err(kind)
+        );
 
         let admin = admin_app(deps_for(&rig, Arc::clone(&fetcher), toy_archive()));
         let body = json!({"repository_url": "https://github.com/acme/toy"});

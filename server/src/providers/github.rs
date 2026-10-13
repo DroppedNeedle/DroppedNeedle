@@ -94,12 +94,7 @@ pub struct GitHubClient {
 }
 
 impl GitHubClient {
-    /// Client against the production endpoint.
-    pub fn new(http: reqwest::Client) -> Self {
-        Self::with_base_url(http, GITHUB_RELEASES_URL)
-    }
-
-    /// Client against an override endpoint (scripted fakes in tests).
+    /// Client against the given releases endpoint.
     pub fn with_base_url(http: reqwest::Client, base_url: impl Into<String>) -> Self {
         Self {
             http,

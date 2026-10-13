@@ -75,16 +75,7 @@ impl std::fmt::Debug for LiveListenBrainz {
 }
 
 impl LiveListenBrainz {
-    /// Popularity reads against the live service.
-    pub fn new(http: reqwest::Client, pacer: CorePacer) -> Self {
-        Self::with_base(
-            http,
-            crate::providers::listenbrainz::DEFAULT_BASE_URL,
-            pacer,
-        )
-    }
-
-    /// Popularity reads against a scripted or mirrored origin.
+    /// Popularity reads against the given origin.
     pub fn with_base(http: reqwest::Client, base_url: &str, pacer: CorePacer) -> Self {
         Self {
             client: ListenBrainzClient::new(http, base_url, pacer, CoreSink),
@@ -178,12 +169,7 @@ pub struct LiveLrclib {
 }
 
 impl LiveLrclib {
-    /// Lyrics reads against the live service.
-    pub fn new(transport: ReqwestGet) -> Self {
-        Self::with_base(transport, crate::providers::lrclib::API_BASE)
-    }
-
-    /// Lyrics reads against a scripted or mirrored origin.
+    /// Lyrics reads against the given origin.
     pub fn with_base(transport: ReqwestGet, base_url: &str) -> Self {
         Self {
             transport,
@@ -466,17 +452,22 @@ impl enrich::LyricsClient for UnconfiguredLyrics {
 pub fn production_enrichment(
     http: &reqwest::Client,
     providers: &Arc<Providers>,
+    endpoints: &crate::reads::catalog::upstream::Endpoints,
     listenbrainz_enabled: Switch,
     lyrics_enabled: Switch,
 ) -> ProductionEnrichment {
     let lb: Arc<dyn enrich::ListenBrainzClient> =
         match CorePacer::for_source(providers.clone(), "listenbrainz") {
             Some(pacer) => Arc::new(
-                LiveListenBrainz::new(http.clone(), pacer).with_switch(listenbrainz_enabled),
+                LiveListenBrainz::with_base(http.clone(), &endpoints.listenbrainz, pacer)
+                    .with_switch(listenbrainz_enabled),
             ),
             None => Arc::new(UnconfiguredListenBrainz),
         };
-    let live_lyrics = Arc::new(LiveLrclib::new(ReqwestGet::new(http.clone())));
+    let live_lyrics = Arc::new(LiveLrclib::with_base(
+        ReqwestGet::new(http.clone()),
+        &endpoints.lrclib,
+    ));
     let lyrics_role: Arc<dyn enrich::LyricsClient> = Arc::new(SwitchedLyrics::new(
         live_lyrics.clone(),
         lyrics_enabled.clone(),
@@ -677,6 +668,7 @@ mod tests {
         let pair = production_enrichment(
             http.shared(),
             &providers,
+            &Default::default(),
             Arc::new(|| false),
             Arc::new(|| false),
         );

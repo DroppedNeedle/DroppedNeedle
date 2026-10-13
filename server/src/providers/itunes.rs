@@ -221,15 +221,7 @@ pub struct ITunesClient<'h, H: HttpPort> {
 }
 
 impl<'h, H: HttpPort> ITunesClient<'h, H> {
-    /// Build a client against the live endpoint.
-    pub fn new(http: &'h H) -> Self {
-        Self {
-            http,
-            search_url: SEARCH_URL.to_owned(),
-        }
-    }
-
-    /// Build a client against a scripted or mirrored endpoint.
+    /// Build a client against the given endpoint.
     pub fn with_search_url(http: &'h H, search_url: &str) -> Self {
         Self {
             http,

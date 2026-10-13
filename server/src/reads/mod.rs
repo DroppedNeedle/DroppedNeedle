@@ -359,8 +359,8 @@ pub struct ReadsInputs {
     pub lastfm_key: catalog::upstream::InstanceLastFmKey,
     /// Whether the discover warm cycle runs (`DISCOVER_WARMER_ENABLED`).
     pub discover_warmer: bool,
-    /// Base URLs of the chart, discovery and wrapped upstreams. Production
-    /// uses the real hosts; tests point them at a closed local port.
+    /// Base URLs of the upstreams fixed in code. Production uses the real
+    /// hosts; tests point them at a closed local port.
     pub endpoints: catalog::upstream::Endpoints,
 }
 
@@ -404,9 +404,10 @@ fn platform_state(
     let artwork = ArtworkService::new(
         ArtworkCache::new(inputs.covers_dir, inputs.cover_cache_max_bytes),
         LocalArtwork::new(pool.clone()),
-        Some(Arc::new(cover_client(ReqwestCaaTransport::new(
-            inputs.no_redirect.clone(),
-        )))),
+        Some(Arc::new(
+            cover_client(ReqwestCaaTransport::new(inputs.no_redirect.clone()))
+                .with_base(&inputs.endpoints.cover_art_archive),
+        )),
         prefer_local,
     )
     .with_images(Arc::new(HttpImages::new(inputs.no_redirect)));
@@ -429,8 +430,9 @@ fn platform_state(
         };
     let state = platform::PlatformState::new(
         CoversState::new(Arc::new(artwork.clone())),
-        VersionState::new(Arc::new(GitHubReleases::new(GitHubClient::new(
+        VersionState::new(Arc::new(GitHubReleases::new(GitHubClient::with_base_url(
             inputs.http,
+            inputs.endpoints.github_releases,
         )))),
         WrappedState::new(ConfigWrappedKey::new(inputs.config), wrapped),
     );

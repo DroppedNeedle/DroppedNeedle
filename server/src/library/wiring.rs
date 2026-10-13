@@ -216,6 +216,7 @@ impl LibrarySetup {
     /// Identification reads MusicBrainz identity-critical and keeps the
     /// release documents it fetches; AcoustID runs only for albums whose
     /// tags are weak, with the key read from the settings per job.
+    #[allow(clippy::too_many_arguments)]
     pub fn build(
         users: UsersDeps,
         http: &crate::http_client::HttpClientFactory,
@@ -224,9 +225,10 @@ impl LibrarySetup {
         mb_source: crate::providers::musicbrainz::SourceFn,
         db_path: &Path,
         config: Arc<ConfigStore>,
+        outbound: &crate::bootstrap::Outbound,
     ) -> Result<Self, String> {
         use crate::providers::RequestPriority;
-        use crate::providers::acoustid::{AcoustIdClient, DEFAULT_BASE_URL};
+        use crate::providers::acoustid::AcoustIdClient;
         use crate::providers::adapters::{CorePacer, HealthSink};
         use crate::providers::musicbrainz::{MbPacing, MusicBrainzClient, ReqwestMbTransport};
 
@@ -255,6 +257,7 @@ impl LibrarySetup {
         let contrib = ContribProviders {
             discogs: Arc::new(super::adapters::LiveDiscogsContrib::new(
                 crate::providers::ReqwestGet::shared(http),
+                &outbound.discogs,
             )),
             musicbrainz: Arc::new(super::adapters::LiveMusicBrainzContrib::new(
                 mb_client(RequestPriority::UserInitiated),
@@ -265,13 +268,14 @@ impl LibrarySetup {
             .ok_or_else(|| "acoustid has no verified rate row".to_owned())?;
         let import_acoustid = AcoustIdClient::new(
             http.shared().clone(),
-            DEFAULT_BASE_URL,
+            &outbound.acoustid,
             import_pacer,
             health.clone(),
         );
         let pacer = CorePacer::for_source(providers, "acoustid")
             .ok_or_else(|| "acoustid has no verified rate row".to_owned())?;
-        let acoustid = AcoustIdClient::new(http.shared().clone(), DEFAULT_BASE_URL, pacer, health);
+        let acoustid =
+            AcoustIdClient::new(http.shared().clone(), &outbound.acoustid, pacer, health);
         let make: ProviderFactory = Box::new(move |parts| {
             let fingerprints = super::identify::sources::AcoustIdFingerprints::new(
                 acoustid,

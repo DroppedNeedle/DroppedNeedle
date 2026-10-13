@@ -60,19 +60,20 @@ struct Live {
 
 impl ConcertsSetup {
     /// Production wiring over the serving runtime, the shared outbound
-    /// client and the settings store. `concerts_new` goes nowhere until the
+    /// client, the settings store and the sources' addresses. `concerts_new` goes nowhere until the
     /// event stream is wired through [`ConcertsSetup::with_events`].
     pub fn from_runtime(
         runtime: &DbRuntime,
         http: &HttpClientFactory,
         config: &Arc<ConfigStore>,
+        endpoints: Endpoints,
     ) -> Self {
         Self::new(
             runtime.pool().clone(),
             runtime.lane().clone(),
             http.shared().clone(),
             Arc::clone(config),
-            Endpoints::default(),
+            endpoints,
         )
     }
 

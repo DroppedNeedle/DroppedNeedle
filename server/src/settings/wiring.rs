@@ -28,6 +28,7 @@ use crate::auth::{
     session::middleware::CurrentSession,
     users::{UsersDeps, roles::Role},
 };
+use crate::bootstrap::Outbound;
 use crate::ids::IdGenerator;
 use crate::runtime_config::ConfigStore;
 use crate::settings::effects::SaveEffects;
@@ -76,6 +77,7 @@ impl SettingsSetup {
         users: UsersDeps,
         http: reqwest::Client,
         timezone: Option<String>,
+        outbound: &Outbound,
     ) -> Self {
         Self::assemble(
             store,
@@ -84,6 +86,7 @@ impl SettingsSetup {
             users,
             Arc::new(LiveProbes::new(http)),
             timezone,
+            outbound.clone(),
         )
     }
 
@@ -94,10 +97,17 @@ impl SettingsSetup {
         users: UsersDeps,
         probes: Arc<dyn VerifyProbes>,
         timezone: Option<String>,
+        outbound: Outbound,
     ) -> Self {
         let service = Arc::new(
-            SettingsService::new(store.clone(), effects.clone(), ids.clone(), probes)
-                .with_timezone(timezone),
+            SettingsService::new(
+                store.clone(),
+                effects.clone(),
+                ids.clone(),
+                probes,
+                outbound.clone(),
+            )
+            .with_timezone(timezone),
         );
         Self {
             policy: Arc::new(LibraryPolicyService::new(service.clone(), None)),
@@ -107,6 +117,7 @@ impl SettingsSetup {
                 store.clone(),
                 ids.clone(),
                 effects,
+                outbound,
             )),
             management: Arc::new(LibraryManagementService::new(
                 store,
@@ -191,7 +202,7 @@ impl SettingsSetup {
         let cache: Arc<dyn ProviderCache> = Arc::new(InMemoryProviderCache::new());
         let effects: Arc<dyn SaveEffects> =
             Arc::new(LiveSaveEffects::new(cache, Arc::new(NoopKick)));
-        let mut setup = Self::assemble(store, effects, ids, users, probes, None);
+        let mut setup = Self::assemble(store, effects, ids, users, probes, None, Outbound::live());
         setup.prefs = Some(Arc::new(SectionPrefsDeps {
             store: Arc::new(MemorySectionPrefsStore::new()),
             links: Arc::new(StaticLinkStatus {

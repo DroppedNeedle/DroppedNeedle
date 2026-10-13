@@ -9,7 +9,7 @@ use std::time::Duration;
 use super::lastfm_models::{ErrorWire, SessionWire, TokenWire};
 use super::stores::{BoxFuture, LastFmAuthClient, LastFmError};
 use crate::auth::federated::oidc::form_encode;
-use crate::providers::lastfm::{DEFAULT_BASE_URL, api_sig};
+use crate::providers::lastfm::api_sig;
 
 /// Where the user approves a token.
 pub const AUTH_PAGE: &str = "https://www.last.fm/api/auth/";
@@ -24,12 +24,7 @@ pub struct LastFmAuthHttp {
 }
 
 impl LastFmAuthHttp {
-    /// Build against the real Last.fm API.
-    pub fn new(http: reqwest::Client) -> Self {
-        Self::with_base(http, DEFAULT_BASE_URL)
-    }
-
-    /// Build against another API root (tests point this at a mock).
+    /// Build against the given API root.
     pub fn with_base(http: reqwest::Client, base: &str) -> Self {
         Self {
             http,

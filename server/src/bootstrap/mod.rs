@@ -8,6 +8,7 @@
 //! parses arguments, tunes the allocator, starts the runtime and hands in
 //! the stop signal.
 
+mod outbound;
 mod serve;
 
 use std::sync::Arc;
@@ -15,6 +16,7 @@ use std::sync::Arc;
 use axum::Router;
 use thiserror::Error;
 
+pub use outbound::Outbound;
 pub use serve::{Background, ServeError, bind, serve};
 
 use crate::{
@@ -101,8 +103,33 @@ fn stage(stage: &'static str) -> impl FnOnce(String) -> BootError {
     move |message| BootError::Stage { stage, message }
 }
 
-/// Build the production graph and start its background work.
+/// What [`build_with`] hands back.
+///
+/// Some workers stop when the last handle on their queue is dropped, not
+/// on the stop signal, and `state` holds those handles. Drop `state`, and
+/// any clone of the router, before stopping: while one is alive, [`serve`]
+/// waits out the whole shutdown grace and then aborts those workers.
+pub struct Built {
+    /// The app, ready to serve.
+    pub router: Router,
+    /// The dependencies the router serves from.
+    pub state: AppState,
+    /// The background work, for [`serve`] to stop.
+    pub background: Background,
+}
+
+/// Build the production graph against the real outside services and start
+/// its background work.
 pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError> {
+    let built = build_with(config, Outbound::live()).await?;
+    Ok((built.router, built.background))
+}
+
+/// Build the production graph and start its background work, reaching
+/// every outside service with an address fixed in code at the one
+/// `outbound` gives.
+pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, BootError> {
+    let endpoints = outbound.catalog();
     let http = HttpClientFactory::with_settings(&config.http)?;
     // Held until shutdown, and taken before the database opens (so before
     // the pre-upgrade backup and the migrations): the offline import and
@@ -139,7 +166,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         clock.clone(),
         &config.cache_dir,
     );
-    let auth = AuthSetup::build(
+    let auth = AuthSetup::build_with_upstreams(
         auth_bundle,
         config_store.clone(),
         crypto.clone(),
@@ -147,6 +174,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         ids.clone(),
         clock,
         &config.base_path,
+        &outbound.sign_in(),
     )?
     .with_trusted_proxies(config.trusted_proxies.clone());
 
@@ -180,6 +208,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
     let enrichment = production_enrichment(
         http.shared(),
         &providers,
+        &endpoints,
         listenbrainz_enabled,
         lyrics_enabled,
     );
@@ -203,7 +232,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
             youtube_quota_path: config.cache_dir.join(QUOTA_FILE_NAME),
             lastfm_key: instance_lastfm_key(auth.users.lastfm_switch.clone()),
             discover_warmer: config.discover_warmer,
-            endpoints: Default::default(),
+            endpoints: endpoints.clone(),
         },
         Some(enrichment),
     )
@@ -219,7 +248,8 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
                 config_store.clone(),
                 auth.users.clone(),
             )
-            .with_instance_lastfm_key(instance_lastfm_key(auth.users.lastfm_switch.clone())),
+            .with_instance_lastfm_key(instance_lastfm_key(auth.users.lastfm_switch.clone()))
+            .with_endpoints(endpoints.clone()),
             LocalCatalog::new(runtime.pool().clone()),
         )
         .with_purchase_links(Arc::new(
@@ -229,21 +259,26 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
             crate::plugins::capabilities::metadata::PluginDetailsSource(plugin_host.clone()),
         )),
     );
-    let mb_settings = config_store.clone();
+    // Read per request, so a source switch in Settings reaches the
+    // long-lived clients without a restart.
+    let mb_source: crate::providers::musicbrainz::SourceFn = {
+        let settings = config_store.clone();
+        let outbound = outbound.clone();
+        Arc::new(move || {
+            outbound.musicbrainz_source(
+                &crate::reads::catalog::upstream::CatalogSettings::musicbrainz(settings.as_ref()),
+            )
+        })
+    };
     let library = LibrarySetup::build(
         auth.users.clone(),
         &http,
         ids.clone(),
         providers.clone(),
-        Arc::new(move || {
-            crate::providers::musicbrainz::MbSource::from_settings(
-                &crate::reads::catalog::upstream::CatalogSettings::musicbrainz(
-                    mb_settings.as_ref(),
-                ),
-            )
-        }),
+        mb_source.clone(),
         &config.library_db_path,
         config_store.clone(),
+        &outbound,
     )
     .map_err(stage("library setup"))?;
     // Plugin library writes hold the same root leases as the publisher.
@@ -268,6 +303,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         config_store.clone(),
         // Remote playlist imports land in the user's playlists.
         Arc::new(PlaylistImportSink::new(reads.collections.clone())),
+        &outbound,
     )
     .map_err(stage("media setup"))?;
     let media = media.with_play_events(Arc::new(
@@ -285,37 +321,20 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         ids.clone(),
         config_store.clone(),
         &mut reads.collections,
+        &outbound,
     )
     .map_err(stage("acquire setup"))?
     .with_plugins(plugin_host.clone())
-    .with_release_poll({
-        let mb_settings = config_store.clone();
-        Arc::new(crate::acquire::search::live_release_poll(
-            &http,
-            providers.clone(),
-            Arc::new(move || {
-                crate::providers::musicbrainz::MbSource::from_settings(
-                    &crate::reads::catalog::upstream::CatalogSettings::musicbrainz(
-                        mb_settings.as_ref(),
-                    ),
-                )
-            }),
-        ))
-    })
-    .with_album_lookup({
-        let mb_settings = config_store.clone();
-        Arc::new(crate::acquire::target::lookup::live_albums(
-            &http,
-            providers.clone(),
-            Arc::new(move || {
-                crate::providers::musicbrainz::MbSource::from_settings(
-                    &crate::reads::catalog::upstream::CatalogSettings::musicbrainz(
-                        mb_settings.as_ref(),
-                    ),
-                )
-            }),
-        ))
-    });
+    .with_release_poll(Arc::new(crate::acquire::search::live_release_poll(
+        &http,
+        providers.clone(),
+        mb_source.clone(),
+    )))
+    .with_album_lookup(Arc::new(crate::acquire::target::lookup::live_albums(
+        &http,
+        providers.clone(),
+        mb_source,
+    )));
     // Finished downloads reach the library through its import seam.
     let acquire = match library.releases.clone() {
         Some(releases) => acquire.with_library(Arc::new(
@@ -413,8 +432,13 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         Ok(loaded) => tracing::info!(loaded, "quota overrides reloaded"),
         Err(error) => tracing::warn!(%error, "quota overrides failed to reload; defaults apply"),
     }
-    let concerts = crate::concerts::ConcertsSetup::from_runtime(&runtime, &http, &config_store)
-        .with_events(Arc::new(events.clone()));
+    let concerts = crate::concerts::ConcertsSetup::from_runtime(
+        &runtime,
+        &http,
+        &config_store,
+        outbound.concerts(),
+    )
+    .with_events(Arc::new(events.clone()));
     // Your Weekly Mix: one builder behind the refresh route, the daily
     // loop and the scrobble-settings toggle.
     let mix_events = crate::events::EventSink::default();
@@ -434,6 +458,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         )),
         reads.collections.stores.playlists.clone(),
         mix_events,
+        &outbound.listenbrainz,
     ) && acquire.requests.mixer.set(builder).is_err()
     {
         tracing::warn!("personal mix builder was already set");
@@ -470,7 +495,8 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
             config_store.clone(),
             auth.users.clone(),
         )
-        .with_instance_lastfm_key(instance_lastfm_key(auth.users.lastfm_switch.clone())),
+        .with_instance_lastfm_key(instance_lastfm_key(auth.users.lastfm_switch.clone()))
+        .with_endpoints(endpoints),
         http: http.shared().clone(),
         artwork: reads.artwork.clone(),
         lrclib: Default::default(),
@@ -502,6 +528,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         auth.users.clone(),
         http.shared().clone(),
         config.timezone.clone(),
+        &outbound,
     )
     .with_section_prefs(
         Arc::new(SqliteSectionPrefsStore {
@@ -538,6 +565,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         jobs.registry().clone(),
         runtime.pool().clone(),
         runtime.lane().clone(),
+        &outbound,
     )
     .with_presence(Arc::new(media.playback.presence.clone()))
     .with_mix_grants(mix_hooks.clone(), mix_hooks);
@@ -614,15 +642,16 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
     // Registry jobs stop through the registry at shutdown, not the watch.
     jobs.spawn_loops().await.map_err(stage("jobs loops"))?;
 
-    let router = create_app_with_web(state, web);
-    Ok((
+    let router = create_app_with_web(state.clone(), web);
+    Ok(Built {
         router,
-        background
+        state,
+        background: background
             .with_events(events)
             .with_jobs(jobs)
             .with_runtime(runtime)
             .with_data_lock(data_lock),
-    ))
+    })
 }
 
 /// Refuse a v2 data directory, or one an upgrade left halfway, before the

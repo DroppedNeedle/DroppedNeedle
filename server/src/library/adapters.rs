@@ -785,6 +785,7 @@ const DISCOGS_MAX_INLINE_WAIT: Duration = Duration::from_secs(4);
 /// never wait, so a slow Discogs cannot hold up the contribution page.
 pub struct LiveDiscogsContrib {
     http: ReqwestGet,
+    base_url: String,
     next_slot: tokio::sync::Mutex<Instant>,
     blocked_until: Mutex<Option<Instant>>,
     releases: TtlCache<Option<DiscogsRelease>>,
@@ -792,10 +793,11 @@ pub struct LiveDiscogsContrib {
 }
 
 impl LiveDiscogsContrib {
-    /// Read Discogs through `http`.
-    pub fn new(http: ReqwestGet) -> Self {
+    /// Read Discogs at `base_url` through `http`.
+    pub fn new(http: ReqwestGet, base_url: &str) -> Self {
         Self {
             http,
+            base_url: base_url.to_owned(),
             next_slot: tokio::sync::Mutex::new(Instant::now()),
             blocked_until: Mutex::new(None),
             releases: TtlCache::new(DISCOGS_CACHE),
@@ -978,7 +980,7 @@ impl DiscogsContrib for LiveDiscogsContrib {
             }
             let candidates = self
                 .with_retry(priority, || async {
-                    discogs::DiscogsClient::new(&self.http)
+                    discogs::DiscogsClient::with_base(&self.http, &self.base_url)
                         .search_releases(query, bounded, now_seconds())
                         .await
                 })
@@ -1016,7 +1018,7 @@ impl DiscogsContrib for LiveDiscogsContrib {
             }
             let release = self
                 .with_retry(priority, || async {
-                    discogs::DiscogsClient::new(&self.http)
+                    discogs::DiscogsClient::with_base(&self.http, &self.base_url)
                         .get_release(release_id, now_seconds())
                         .await
                 })

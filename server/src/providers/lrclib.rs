@@ -228,20 +228,12 @@ pub fn normalize_exact(body: &[u8]) -> Result<LyricsLookup, FetchError> {
 pub struct LrclibClient<'h, H: HttpPort> {
     /// Transport port (scripted fake in tests, real HTTP in wiring).
     pub http: &'h H,
-    /// API origin; defaults to the live base.
+    /// API origin.
     pub base_url: String,
 }
 
 impl<'h, H: HttpPort> LrclibClient<'h, H> {
-    /// Build a client against the live origin.
-    pub fn new(http: &'h H) -> Self {
-        Self {
-            http,
-            base_url: API_BASE.to_owned(),
-        }
-    }
-
-    /// Build a client against a scripted or mirrored origin.
+    /// Build a client against the given origin.
     pub fn with_base(http: &'h H, base_url: &str) -> Self {
         Self {
             http,

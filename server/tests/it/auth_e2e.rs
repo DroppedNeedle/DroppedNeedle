@@ -115,10 +115,12 @@ impl E2e {
             bundle,
             store,
             // Nothing listens on the discard port: no test reaches the real
-            // plex.tv or Last.fm unless it points these at its own mock.
+            // plex.tv, Last.fm or breach check unless it points these at
+            // its own mock.
             upstreams: Upstreams {
                 plex_tv: "http://127.0.0.1:9".to_owned(),
                 lastfm: "http://127.0.0.1:9/".to_owned(),
+                pwned_passwords: "http://127.0.0.1:9/range/".to_owned(),
             },
             crypto,
             http,
@@ -219,6 +221,7 @@ impl E2e {
             Arc::new(droppedneedle::remotes::adapter::PlaylistImportSink::new(
                 reads.collections.clone(),
             )),
+            &droppedneedle::bootstrap::Outbound::live(),
         )
         .expect("media bundle builds");
         let mut reads = reads;
@@ -230,6 +233,7 @@ impl E2e {
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             Arc::clone(&self.store),
             &mut reads.collections,
+            &droppedneedle::bootstrap::Outbound::live(),
         )
         .expect("acquire bundle builds");
         let compat = droppedneedle::compat::CompatSetup::build(

@@ -136,6 +136,13 @@ impl Fixtures {
             wikipedia: format!("{}/wikipedia-{{lang}}", self.base),
             commons: format!("{}/commons", self.base),
             itunes: format!("{}/itunes/search", self.base),
+            deezer: format!("{}/deezer", self.base),
+            cover_art_archive: format!("{}/coverart", self.base),
+            lrclib: format!("{}/lrclib", self.base),
+            github_releases: format!("{}/releases", self.base),
+            youtube: format!("{}/youtube", self.base),
+            musicbrainz: format!("{}/musicbrainz", self.base),
+            brainzmash: format!("{}/brainzmash", self.base),
         }
     }
 }

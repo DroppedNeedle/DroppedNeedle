@@ -46,10 +46,6 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 pub const LISTENBRAINZ_SPACING: Duration = Duration::from_secs(1);
 /// Last.fm pacing (provider policy: 5 requests per second).
 pub const LASTFM_SPACING: Duration = Duration::from_millis(200);
-/// Production ListenBrainz API root.
-pub const LISTENBRAINZ_BASE_URL: &str = "https://api.listenbrainz.org";
-/// Production Last.fm API endpoint.
-pub const LASTFM_API_URL: &str = "https://ws.audioscrobbler.com/2.0/";
 
 /// One external scrobble service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -328,15 +324,6 @@ pub struct Endpoints {
     pub listenbrainz: String,
     /// Last.fm API endpoint.
     pub lastfm: String,
-}
-
-impl Default for Endpoints {
-    fn default() -> Self {
-        Self {
-            listenbrainz: LISTENBRAINZ_BASE_URL.to_owned(),
-            lastfm: LASTFM_API_URL.to_owned(),
-        }
-    }
 }
 
 /// How one delivery ended.

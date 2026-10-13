@@ -227,6 +227,11 @@ impl LiveRadio {
         }
     }
 
+    fn preview_client(&self) -> PreviewClient<'_, ReqwestGet> {
+        let endpoints = self.catalog.upstream().endpoints();
+        PreviewClient::with_bases(&self.previews, &endpoints.deezer, &endpoints.itunes)
+    }
+
     /// One pool of albums per seed from its similar artists.
     async fn similar_pools(
         &self,
@@ -605,7 +610,7 @@ impl LiveRadio {
         if name.is_empty() {
             return Vec::new();
         }
-        PreviewClient::new(&self.previews)
+        self.preview_client()
             .get_artist_top_tracks(name, TRACKS_PER_ARTIST)
             .await
             .into_iter()
@@ -759,7 +764,7 @@ impl LiveRadio {
         if let Some(found) = self.lookups.get(&key) {
             return found;
         }
-        let client = PreviewClient::new(&self.previews);
+        let client = self.preview_client();
         let found = timed("radio album samples", async {
             Ok(client
                 .get_album_preview_tracks(&item.artist_name, &item.album_name, per_album)

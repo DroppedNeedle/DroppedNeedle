@@ -67,6 +67,7 @@ fn scratch_service() -> (SettingsService, Arc<RecorderEffects>, ScratchDir) {
             effects.clone(),
             ids,
             Arc::new(FakeProbes::passing()),
+            droppedneedle::bootstrap::Outbound::live(),
         ),
         effects,
         dir,

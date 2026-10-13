@@ -485,7 +485,7 @@ impl EnrichmentPort for LiveEnrichment {
             self.lrclib.check_held()?;
             self.lrclib.pace().await;
             let transport = crate::providers::adapters::ReqwestGet::new(self.http.clone());
-            let client = LrclibClient::new(&transport);
+            let client = LrclibClient::with_base(&transport, &self.upstream.endpoints().lrclib);
             let found = match client
                 .get_exact_lyrics(&query.title, &query.artist, &query.album, duration as u32)
                 .await

@@ -20,6 +20,7 @@ use super::models::{
     MusicBrainzSettingsView, MusicBrainzVerifyRequest,
 };
 use super::verify::{VerifyProbes, require_service_url};
+use crate::bootstrap::Outbound;
 use crate::ids::IdGenerator;
 use crate::runtime_config::ConfigStore;
 use crate::runtime_config::sections::{
@@ -116,14 +117,18 @@ pub struct MusicBrainzLifecycle {
     pub ids: std::sync::Arc<dyn IdGenerator>,
     /// Post-save fan-out (source changes invalidate the cache root).
     pub effects: std::sync::Arc<dyn SaveEffects>,
+    /// Where the two built-in sources are probed.
+    outbound: Outbound,
 }
 
 impl MusicBrainzLifecycle {
-    /// Build over the shared store, ids, and save fan-out.
+    /// Build over the shared store, ids, and save fan-out. `outbound`
+    /// says where the two built-in sources are probed.
     pub fn new(
         store: std::sync::Arc<ConfigStore>,
         ids: std::sync::Arc<dyn IdGenerator>,
         effects: std::sync::Arc<dyn SaveEffects>,
+        outbound: Outbound,
     ) -> Self {
         Self {
             store,
@@ -131,6 +136,7 @@ impl MusicBrainzLifecycle {
             pending: Mutex::new(None),
             ids,
             effects,
+            outbound,
         }
     }
 
@@ -518,7 +524,7 @@ impl MusicBrainzLifecycle {
                     });
                 }
                 self.check_verify_binding(binding)?;
-                let verdict = probes.musicbrainz(BRAINZMASH_ENDPOINT).await;
+                let verdict = probes.musicbrainz(&self.outbound.brainzmash).await;
                 if !verdict.valid {
                     return Err(SettingsError::Upstream {
                         message: verdict.message,
@@ -549,7 +555,7 @@ impl MusicBrainzLifecycle {
                     .api_url
                     .clone()
                     .filter(|url| !url.trim().is_empty())
-                    .unwrap_or_else(|| OFFICIAL_MB_API_BASE.to_owned());
+                    .unwrap_or_else(|| self.outbound.musicbrainz.clone());
                 let api_url = require_service_url(&api_url, "MusicBrainz API URL")?;
                 let verdict = probes.musicbrainz(&api_url).await;
                 if !verdict.valid {

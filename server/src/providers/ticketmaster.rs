@@ -341,12 +341,7 @@ pub struct TicketmasterClient {
 }
 
 impl TicketmasterClient {
-    /// Client against the production endpoint.
-    pub fn new(http: reqwest::Client, api_key: impl Into<String>) -> Self {
-        Self::with_base_url(http, api_key, TICKETMASTER_API_URL)
-    }
-
-    /// Client against an override endpoint (scripted fakes in tests).
+    /// Client against the given endpoint.
     pub fn with_base_url(
         http: reqwest::Client,
         api_key: impl Into<String>,

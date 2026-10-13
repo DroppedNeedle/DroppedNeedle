@@ -248,18 +248,9 @@ pub struct YouTubeClient {
 }
 
 impl YouTubeClient {
-    /// Client against the production host with `quota_path` as its durable
+    /// Client against the given host with `quota_path` as its durable
     /// budget file (wire `<cache_dir>/youtube_quota.json`). Fails when the
     /// settings are invalid or a present quota file cannot be decoded.
-    pub fn new(
-        http: reqwest::Client,
-        quota_path: PathBuf,
-        settings: YouTubeSettings,
-    ) -> Result<Self, YoutubeError> {
-        Self::with_base_url(http, quota_path, settings, YOUTUBE_API_HOST)
-    }
-
-    /// Client against an override host (scripted fakes in tests).
     pub fn with_base_url(
         http: reqwest::Client,
         quota_path: PathBuf,

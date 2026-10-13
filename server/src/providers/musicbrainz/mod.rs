@@ -68,6 +68,8 @@ pub enum MbSource {
     },
     /// Community mirror behind the pinned endpoint and lifecycle gate.
     BrainzMash {
+        /// API root; production uses [`BRAINZMASH_API_BASE`].
+        base_url: String,
         /// False until the active binding validates; requests fail closed.
         binding_valid: bool,
     },
@@ -84,8 +86,9 @@ impl MbSource {
     /// API root for request building.
     pub fn base_url(&self) -> &str {
         match self {
-            Self::Official { base_url } | Self::Mirror { base_url, .. } => base_url,
-            Self::BrainzMash { .. } => BRAINZMASH_API_BASE,
+            Self::Official { base_url }
+            | Self::Mirror { base_url, .. }
+            | Self::BrainzMash { base_url, .. } => base_url,
         }
     }
 
@@ -95,16 +98,24 @@ impl MbSource {
 
     /// The source the saved settings select. A "mirror" on a public
     /// MusicBrainz host still obeys the official 1 req/s rule, whatever
-    /// rate was typed in.
-    pub fn from_settings(settings: &crate::runtime_config::sections::MusicBrainzSettings) -> Self {
+    /// rate was typed in. `official` and `brainzmash` are the roots of the
+    /// two built-in sources.
+    pub fn from_settings(
+        settings: &crate::runtime_config::sections::MusicBrainzSettings,
+        official: &str,
+        brainzmash: &str,
+    ) -> Self {
         use crate::runtime_config::sections::{MbSourceMode, is_mb_rate_policy_public_host};
         match settings.source_mode {
             MbSourceMode::Brainzmash => Self::BrainzMash {
+                base_url: brainzmash.to_owned(),
                 binding_valid: crate::settings::musicbrainz::is_brainzmash_active_binding_valid(
                     settings,
                 ),
             },
-            MbSourceMode::Official => Self::official(),
+            MbSourceMode::Official => Self::Official {
+                base_url: official.to_owned(),
+            },
             MbSourceMode::Mirror | MbSourceMode::Community
                 if is_mb_rate_policy_public_host(&settings.api_url) =>
             {

@@ -27,12 +27,9 @@ use super::models::{
     VerifyConnectionResponse,
 };
 use super::quality;
-use super::verify::{
-    SKIDDLE_BASE_URL, TICKETMASTER_BASE_URL, VerifyProbes, YOUTUBE_BASE_URL, check_hibp_file,
-    require_service_url,
-};
+use super::verify::{VerifyProbes, check_hibp_file, require_service_url};
+use crate::bootstrap::Outbound;
 use crate::ids::IdGenerator;
-use crate::providers::listenbrainz::DEFAULT_BASE_URL as LISTENBRAINZ_BASE_URL;
 use crate::runtime_config::secret_sections::{
     AdvancedSettings, DownloadClients, EventsSettings, IdentificationPolicy, JellyfinConnection,
     LibraryRoot, ListenBrainzConnection, NavidromeConnection, NewznabIndexer, OidcConnection,
@@ -60,15 +57,19 @@ pub struct SettingsService {
     pub timezone: Option<String>,
     /// Connection probes behind the verify methods.
     probes: Arc<dyn VerifyProbes>,
+    /// Where the probes of services with a fixed address are sent.
+    outbound: Outbound,
 }
 
 impl SettingsService {
-    /// Build over the shared store, effects, ids, and probes.
+    /// Build over the shared store, effects, ids, and probes. `outbound`
+    /// says where the probes of services with a fixed address are sent.
     pub fn new(
         store: Arc<ConfigStore>,
         effects: Arc<dyn SaveEffects>,
         ids: Arc<dyn IdGenerator>,
         probes: Arc<dyn VerifyProbes>,
+        outbound: Outbound,
     ) -> Self {
         Self {
             store,
@@ -76,6 +77,7 @@ impl SettingsService {
             ids,
             timezone: None,
             probes,
+            outbound,
         }
     }
 
@@ -670,7 +672,7 @@ impl SettingsService {
         let verdict = self
             .probes
             .listenbrainz(
-                LISTENBRAINZ_BASE_URL,
+                &self.outbound.listenbrainz,
                 &resolved.username,
                 resolved.user_token.expose(),
             )
@@ -693,7 +695,7 @@ impl SettingsService {
         let resolved = self.unmask(incoming)?;
         let verdict = self
             .probes
-            .youtube(YOUTUBE_BASE_URL, resolved.api_key.expose())
+            .youtube(&self.outbound.youtube, resolved.api_key.expose())
             .await;
         Ok(verdict_response(verdict.valid, verdict.message))
     }
@@ -707,7 +709,7 @@ impl SettingsService {
         let verdict = self
             .probes
             .ticketmaster(
-                TICKETMASTER_BASE_URL,
+                &self.outbound.ticketmaster,
                 resolved.ticketmaster_api_key.expose(),
             )
             .await;
@@ -722,7 +724,7 @@ impl SettingsService {
         let resolved = self.unmask(incoming)?;
         let verdict = self
             .probes
-            .skiddle(SKIDDLE_BASE_URL, resolved.skiddle_api_key.expose())
+            .skiddle(&self.outbound.skiddle, resolved.skiddle_api_key.expose())
             .await;
         Ok(verdict_response(verdict.valid, verdict.message))
     }

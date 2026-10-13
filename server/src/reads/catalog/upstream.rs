@@ -91,9 +91,9 @@ impl CatalogSettings for ConfigStore {
     }
 }
 
-/// Base URLs for the non-MusicBrainz upstreams. MusicBrainz follows its
-/// own settings section; tests point everything else at a loopback
-/// fixture server.
+/// Base URLs of the upstreams whose address is fixed in code. A
+/// MusicBrainz mirror follows its own settings section; tests point
+/// everything here at a loopback fixture server.
 #[derive(Debug, Clone)]
 pub struct Endpoints {
     /// ListenBrainz API root.
@@ -110,19 +110,25 @@ pub struct Endpoints {
     pub commons: String,
     /// iTunes Search endpoint.
     pub itunes: String,
+    /// Deezer API origin.
+    pub deezer: String,
+    /// Cover Art Archive origin.
+    pub cover_art_archive: String,
+    /// LRCLIB origin.
+    pub lrclib: String,
+    /// The releases list behind the version check.
+    pub github_releases: String,
+    /// YouTube Data API host.
+    pub youtube: String,
+    /// Official MusicBrainz API root.
+    pub musicbrainz: String,
+    /// BrainzMash API root.
+    pub brainzmash: String,
 }
 
 impl Default for Endpoints {
     fn default() -> Self {
-        Self {
-            listenbrainz: listenbrainz::DEFAULT_BASE_URL.to_owned(),
-            lastfm: lastfm::DEFAULT_BASE_URL.to_owned(),
-            audiodb: audiodb::DEFAULT_BASE_URL.to_owned(),
-            wikidata: crate::providers::wikidata::WIKIDATA_BASE.to_owned(),
-            wikipedia: crate::providers::wikidata::WIKIPEDIA_PATTERN.to_owned(),
-            commons: crate::providers::wikidata::COMMONS_BASE.to_owned(),
-            itunes: crate::providers::itunes::SEARCH_URL.to_owned(),
-        }
+        crate::bootstrap::Outbound::live().catalog()
     }
 }
 
@@ -240,7 +246,7 @@ impl Upstream {
         self
     }
 
-    /// Point the non-MusicBrainz upstreams elsewhere (tests, mirrors).
+    /// Point the upstreams elsewhere.
     #[must_use]
     pub fn with_endpoints(mut self, endpoints: Endpoints) -> Self {
         self.endpoints = endpoints;
@@ -269,7 +275,11 @@ impl Upstream {
     /// never served as another's.
     pub fn musicbrainz(&self, priority: RequestPriority) -> (CatalogMusicBrainz, String) {
         let settings = self.settings.musicbrainz();
-        let source = MbSource::from_settings(&settings);
+        let source = MbSource::from_settings(
+            &settings,
+            &self.endpoints.musicbrainz,
+            &self.endpoints.brainzmash,
+        );
         let namespace = format!("{}:g{}", settings.source_id, settings.generation);
         let client = MusicBrainzClient::new(
             ReqwestMbTransport::new(self.no_redirect.clone()),

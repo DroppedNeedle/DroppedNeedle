@@ -100,6 +100,9 @@ pub struct HibpHttpError;
 pub struct PwnedPasswordsHttp {
     /// Factory-built client (owns timeouts and TLS behavior).
     pub client: reqwest::Client,
+    /// The range URL up to the hash prefix; production passes
+    /// [`RANGE_URL_PREFIX`].
+    pub range_url: String,
 }
 
 impl HibpHttp for PwnedPasswordsHttp {
@@ -110,7 +113,7 @@ impl HibpHttp for PwnedPasswordsHttp {
         Box::pin(async move {
             let response = self
                 .client
-                .get(format!("{RANGE_URL_PREFIX}{prefix}"))
+                .get(format!("{}{prefix}", self.range_url))
                 .header("Add-Padding", "true")
                 .send()
                 .await

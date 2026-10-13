@@ -713,20 +713,12 @@ pub fn retry_after_secs(value: Option<&str>) -> f64 {
 pub struct DiscogsClient<'h, H: HttpPort> {
     /// Transport port (scripted fake in tests, real HTTP in wiring).
     pub http: &'h H,
-    /// API origin; defaults to the live base.
+    /// API origin.
     pub base_url: String,
 }
 
 impl<'h, H: HttpPort> DiscogsClient<'h, H> {
-    /// Build a client against the live API origin.
-    pub fn new(http: &'h H) -> Self {
-        Self {
-            http,
-            base_url: API_BASE.to_owned(),
-        }
-    }
-
-    /// Build a client against a scripted or mirrored origin.
+    /// Build a client against the given API origin.
     pub fn with_base(http: &'h H, base_url: &str) -> Self {
         Self {
             http,

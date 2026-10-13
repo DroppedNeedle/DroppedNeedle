@@ -17,7 +17,7 @@ use super::plex_models::{AccountListWire, AccountWire, PinPollWire, PinWire};
 use super::settings::{InstallIds, plex_login_enabled};
 use super::users::PROVIDER_PLEX;
 use crate::auth::users::stores::{BoxFuture, DirectoryError, DirectoryUser, UserDirectory};
-use crate::remotes::plex::{PLEX_TV_BASE, PlexAdapter};
+use crate::remotes::plex::PlexAdapter;
 use crate::remotes::plex_models::Resource;
 use crate::runtime_config::ConfigStore;
 use crate::runtime_config::secret_sections::PlexConnection;
@@ -37,12 +37,7 @@ pub struct PlexTv {
 }
 
 impl PlexTv {
-    /// Build against the real plex.tv.
-    pub fn new(http: reqwest::Client, store: Arc<ConfigStore>) -> Self {
-        Self::with_base(http, store, PLEX_TV_BASE)
-    }
-
-    /// Build against another plex.tv root (tests point this at a mock).
+    /// Build against the given plex.tv root.
     pub fn with_base(http: reqwest::Client, store: Arc<ConfigStore>, base: &str) -> Self {
         Self {
             ids: InstallIds::new(store.clone()),

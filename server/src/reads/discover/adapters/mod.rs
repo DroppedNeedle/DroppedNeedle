@@ -113,7 +113,7 @@ pub fn production_deps(inputs: DiscoverInputs, ids: Arc<dyn IdGenerator>) -> Rea
                 Arc::new(unbuilt::UnavailableCharts)
             }
         };
-    let youtube: Arc<dyn YouTubeSource> = match YouTubeClient::new(
+    let youtube: Arc<dyn YouTubeSource> = match YouTubeClient::with_base_url(
         inputs.http.clone(),
         inputs.youtube_quota_path.clone(),
         YouTubeSettings {
@@ -122,6 +122,7 @@ pub fn production_deps(inputs: DiscoverInputs, ids: Arc<dyn IdGenerator>) -> Rea
             api_enabled: false,
             daily_quota_limit: DEFAULT_DAILY_QUOTA_LIMIT,
         },
+        inputs.endpoints.youtube.as_str(),
     ) {
         Ok(client) => Arc::new(youtube::LiveYouTube::new(client, inputs.config.clone())),
         Err(error) => {
@@ -171,7 +172,10 @@ pub fn production_deps(inputs: DiscoverInputs, ids: Arc<dyn IdGenerator>) -> Rea
         queues,
         batches: Arc::new(batches),
         charts,
-        previews: Arc::new(previews::LivePreviews::new(ReqwestGet::new(inputs.http))),
+        previews: Arc::new(previews::LivePreviews::new(
+            ReqwestGet::new(inputs.http),
+            &inputs.endpoints,
+        )),
         youtube,
         radio: Arc::new(radio),
         now_playing: Arc::new(unbuilt::NoPresence),

@@ -165,14 +165,15 @@ pub fn live_builder(
     prefs: Arc<dyn crate::plugins::scrobble::ScrobblePrefsStore>,
     playlists: crate::reads::collections::store::playlists::PlaylistStore,
     events: crate::events::EventSink,
+    listenbrainz: &str,
 ) -> Option<Arc<super::mix::PersonalMixBuilder>> {
-    use crate::providers::listenbrainz::{DEFAULT_BASE_URL, SOURCE};
+    use crate::providers::listenbrainz::SOURCE;
 
     let Some(pacer) = CorePacer::for_source(providers, SOURCE) else {
         tracing::error!("no listenbrainz rate limit row; Weekly Mix is off");
         return None;
     };
-    let client = ListenBrainzClient::new(http, DEFAULT_BASE_URL, pacer, CoreSink);
+    let client = ListenBrainzClient::new(http, listenbrainz, pacer, CoreSink);
     let sources = Arc::new(LiveMixSources::new(
         client,
         links,

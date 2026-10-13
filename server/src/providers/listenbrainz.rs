@@ -1344,11 +1344,6 @@ impl HttpListenBrainzVerifier {
         }
     }
 
-    /// Check against the production API.
-    pub fn prod(http: reqwest::Client) -> Self {
-        Self::new(http, DEFAULT_BASE_URL)
-    }
-
     async fn verify_token(&self, token: &str, username: &str) -> VerifyOutcome {
         if !header_safe_token(token) {
             return VerifyOutcome {

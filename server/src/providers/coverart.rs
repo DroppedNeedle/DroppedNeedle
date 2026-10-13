@@ -657,6 +657,7 @@ fn is_image_content_type(content_type: &str) -> bool {
 /// stalling the hot path).
 pub struct CaaClient<T: CaaTransport> {
     transport: T,
+    base_url: String,
     gate: RateGate,
     max_backoff: Duration,
     fallback_backoff: Duration,
@@ -667,10 +668,17 @@ impl<T: CaaTransport> CaaClient<T> {
     pub fn new(transport: T) -> Self {
         Self {
             transport,
+            base_url: COVER_ART_ARCHIVE_BASE.to_owned(),
             gate: RateGate::coverart(),
             max_backoff: DEFAULT_MAX_BACKOFF,
             fallback_backoff: Duration::from_secs(1),
         }
+    }
+
+    /// Reach the archive at another origin.
+    pub fn with_base(mut self, base_url: &str) -> Self {
+        self.base_url = base_url.trim_end_matches('/').to_owned();
+        self
     }
 
     /// Swap the pacing gate (tests pace faster than production).
@@ -699,7 +707,7 @@ impl<T: CaaTransport> CaaClient<T> {
         if !is_valid_mbid(&normalized) {
             return Err(CaaError::InvalidMbid(format!("invalid {entity:?} MBID")));
         }
-        let url = format!("{}/{}/{normalized}", COVER_ART_ARCHIVE_BASE, entity.path());
+        let url = format!("{}/{}/{normalized}", self.base_url, entity.path());
         let response = self.get(&url).await?;
         if response.status == 404 {
             return Ok(Vec::new());
@@ -805,7 +813,8 @@ impl<T: CaaTransport> CaaClient<T> {
             other => format!("-{}", other.label()),
         };
         let mut url = format!(
-            "{COVER_ART_ARCHIVE_BASE}/{}/{normalized}/front{suffix}",
+            "{}/{}/{normalized}/front{suffix}",
+            self.base_url,
             entity.path()
         );
         let mut response = self.get(&url).await?;

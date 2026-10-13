@@ -18,6 +18,7 @@ use std::sync::Arc;
 use axum::Router;
 
 use crate::auth::users::{UsersDeps, roles::Role};
+use crate::bootstrap::Outbound;
 use crate::db::WriteLane;
 use crate::ids::IdGenerator;
 use crate::jobs::plugin_ticks::SqliteTickStore;
@@ -167,11 +168,13 @@ impl PluginsSetup {
         registry: JobRegistry<StoreKind>,
         pool: sqlx::SqlitePool,
         lane: WriteLane,
+        outbound: &Outbound,
     ) -> Self {
         Self::assemble(
             host,
             users,
             http,
+            outbound,
             ids,
             cache,
             registry,
@@ -225,6 +228,7 @@ impl PluginsSetup {
             host,
             users,
             http.shared().clone(),
+            &Outbound::live(),
             ids,
             cache,
             registry,
@@ -243,6 +247,7 @@ impl PluginsSetup {
         host: Arc<PluginHost>,
         users: UsersDeps,
         http: reqwest::Client,
+        outbound: &Outbound,
         ids: Arc<dyn IdGenerator>,
         cache: Arc<dyn ProviderCache>,
         registry: JobRegistry<StoreKind>,
@@ -261,6 +266,7 @@ impl PluginsSetup {
             config: Arc::clone(host.config()),
             roles: Arc::clone(&roles),
             ids: Arc::clone(&ids),
+            github: outbound.plugin_hosts(),
             fetcher: Arc::new(ReqwestFetcher::new(http.clone())),
             unpacker: Arc::new(ZipUnpacker),
             tick_sync: Arc::clone(&ticks) as Arc<dyn TickLoopSync>,
@@ -270,7 +276,7 @@ impl PluginsSetup {
             deps: ScrobbleDeps::new(
                 prefs,
                 links,
-                Arc::new(HttpListenBrainzVerifier::prod(http)),
+                Arc::new(HttpListenBrainzVerifier::new(http, &outbound.listenbrainz)),
                 Arc::new(NoopMixApprovalHook),
                 Arc::new(ListenBrainzCacheHook { cache }),
             ),

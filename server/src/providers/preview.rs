@@ -24,8 +24,6 @@ use super::client::HttpPort;
 
 /// Live Deezer API origin.
 pub const DEEZER_API_BASE: &str = "https://api.deezer.com";
-/// Live iTunes Search API endpoint.
-pub const ITUNES_SEARCH_URL: &str = "https://itunes.apple.com/search";
 /// Preview length v2 stamps on every result.
 pub const PREVIEW_DURATION_S: u32 = 30;
 
@@ -215,23 +213,14 @@ pub fn names_match(wanted: &str, got: &str) -> bool {
 pub struct PreviewClient<'h, H: HttpPort> {
     /// Transport port (scripted fake in tests, real HTTP in wiring).
     pub http: &'h H,
-    /// Deezer API origin; defaults to the live base.
+    /// Deezer API origin.
     pub deezer_base: String,
-    /// iTunes Search endpoint; defaults to the live URL.
+    /// iTunes Search endpoint.
     pub itunes_url: String,
 }
 
 impl<'h, H: HttpPort> PreviewClient<'h, H> {
-    /// Build a client against the live origins.
-    pub fn new(http: &'h H) -> Self {
-        Self {
-            http,
-            deezer_base: DEEZER_API_BASE.to_owned(),
-            itunes_url: ITUNES_SEARCH_URL.to_owned(),
-        }
-    }
-
-    /// Build a client against scripted or mirrored origins.
+    /// Build a client against the given origins.
     pub fn with_bases(http: &'h H, deezer_base: &str, itunes_url: &str) -> Self {
         Self {
             http,

@@ -440,3 +440,99 @@ async fn hsts_is_sent_only_over_https_and_only_while_the_setting_is_on() {
     }
     running.shut_down().await;
 }
+
+/// Every outside service at its own path under one origin.
+fn outbound_at(origin: &str) -> bootstrap::Outbound {
+    let at = |path: &str| format!("{origin}/{path}");
+    bootstrap::Outbound {
+        listenbrainz: at("listenbrainz"),
+        lastfm: at("lastfm/"),
+        audiodb: at("audiodb"),
+        wikidata: at("wikidata"),
+        wikipedia: at("wikipedia-{lang}"),
+        commons: at("commons"),
+        itunes: at("itunes/search"),
+        deezer: at("deezer"),
+        cover_art_archive: at("coverart"),
+        discogs: at("discogs"),
+        lrclib: at("lrclib"),
+        github_releases: at("releases"),
+        github_api: at("github"),
+        github_codeload: at("codeload"),
+        youtube: at("youtube"),
+        acoustid: at("acoustid"),
+        pwned_passwords: at("pwned/range/"),
+        plex_tv: at("plex"),
+        spotify_api: at("spotify"),
+        spotify_accounts: at("spotify-accounts"),
+        ticketmaster: at("ticketmaster"),
+        skiddle: at("skiddle"),
+        geocoding: at("geocoding"),
+        musicbrainz: at("musicbrainz"),
+        brainzmash: at("brainzmash"),
+    }
+}
+
+async fn set_up(address: SocketAddr) -> reqwest::StatusCode {
+    reqwest::Client::new()
+        .post(format!("http://{address}/api/v3/auth/setup"))
+        .header("content-type", "application/json")
+        .body(r#"{"username": "admin", "password": "correct horse battery"}"#)
+        .send()
+        .await
+        .unwrap()
+        .status()
+}
+
+/// The graph reaches an outside service where `Outbound` says: with breach
+/// screening on, setup asks the listener standing in for the breach check.
+/// With nothing listening at any address the server still sets up and
+/// answers.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn outside_calls_go_where_outbound_points() {
+    let hits = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let seen = hits.clone();
+    let provider = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", provider.local_addr().unwrap());
+    let stand_in = tokio::spawn(async move {
+        let record = axum::Router::new().fallback(move |uri: axum::http::Uri| {
+            seen.lock().unwrap().push(uri.path().to_owned());
+            async { "" }
+        });
+        axum::serve(provider, record).await
+    });
+
+    let dir = scratch("outbound");
+    let bootstrap::Built {
+        router, background, ..
+    } = bootstrap::build_with(AppConfig::with_root(0, &dir), outbound_at(&origin))
+        .await
+        .unwrap();
+    let running = start(router, background).await;
+    assert_eq!(set_up(running.address).await, 201);
+    let hits = hits.lock().unwrap().clone();
+    assert!(
+        hits.iter().any(|path| path.starts_with("/pwned/range/")),
+        "{hits:?}"
+    );
+    running.shut_down().await;
+    stand_in.abort();
+
+    // Nothing listens on the discard port.
+    let dir = scratch("outbound-closed");
+    let bootstrap::Built {
+        router, background, ..
+    } = bootstrap::build_with(
+        AppConfig::with_root(0, &dir),
+        outbound_at("http://127.0.0.1:9"),
+    )
+    .await
+    .unwrap();
+    let running = start(router, background).await;
+    assert_eq!(set_up(running.address).await, 201);
+    let health = reqwest::get(format!("http://{}/health", running.address))
+        .await
+        .unwrap();
+    assert_eq!(health.status(), 200);
+    running.shut_down().await;
+}

@@ -67,6 +67,8 @@ pub struct PluginsDeps {
     pub roles: Arc<dyn UserRoles>,
     /// Error ids.
     pub ids: Arc<dyn IdGenerator>,
+    /// Where installs reach GitHub.
+    pub github: super::install::GitHubHosts,
     /// Install archive fetcher.
     pub fetcher: Arc<dyn ArchiveFetcher>,
     /// Install archive unpacker.
@@ -346,12 +348,17 @@ async fn stage_request(
 ) -> Result<StagedPlugin, PluginError> {
     let ids = deps.ids.as_ref();
     let source = parse_source(url, reference).map_err(|error| map_install(error, ids))?;
-    let resolved = resolve(deps.fetcher.as_ref(), source)
+    let resolved = resolve(deps.fetcher.as_ref(), &deps.github, source)
         .await
         .map_err(|error| map_install(error, ids))?;
-    stage(deps.fetcher.as_ref(), deps.unpacker.as_ref(), resolved)
-        .await
-        .map_err(|error| map_install(error, ids))
+    stage(
+        deps.fetcher.as_ref(),
+        deps.unpacker.as_ref(),
+        &deps.github,
+        resolved,
+    )
+    .await
+    .map_err(|error| map_install(error, ids))
 }
 
 /// Write a staged plugin to disk off the async workers, then re-sync ticks.

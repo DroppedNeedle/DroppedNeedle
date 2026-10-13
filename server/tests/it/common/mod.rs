@@ -350,7 +350,14 @@ pub fn closed_endpoints() -> droppedneedle::reads::catalog::upstream::Endpoints 
         wikidata: closed.clone(),
         wikipedia: closed.clone(),
         commons: closed.clone(),
-        itunes: closed,
+        itunes: closed.clone(),
+        deezer: closed.clone(),
+        cover_art_archive: closed.clone(),
+        lrclib: closed.clone(),
+        github_releases: closed.clone(),
+        youtube: closed.clone(),
+        musicbrainz: closed.clone(),
+        brainzmash: closed,
     }
 }
 

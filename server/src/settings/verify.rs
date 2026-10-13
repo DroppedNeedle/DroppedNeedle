@@ -23,13 +23,6 @@ use super::error::SettingsError;
 /// Per-probe HTTP budget, matching the v2 repositories.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// YouTube Data API root.
-pub const YOUTUBE_BASE_URL: &str = "https://www.googleapis.com";
-/// Ticketmaster Discovery API root.
-pub const TICKETMASTER_BASE_URL: &str = "https://app.ticketmaster.com/discovery/v2";
-/// Skiddle events API root.
-pub const SKIDDLE_BASE_URL: &str = "https://www.skiddle.com/api/v1";
-
 /// Plain connection-test verdict.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProbeVerdict {

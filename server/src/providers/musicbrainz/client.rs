@@ -69,7 +69,14 @@ impl<T: MbTransport> MusicBrainzClient<T, NoopSink> {
     /// request is sent; otherwise calls fail closed without touching the
     /// wire (v2 raises "BrainzMash active binding is not valid").
     pub fn brainzmash(transport: T, binding_valid: bool, pacing: MbPacing) -> Self {
-        Self::new(transport, MbSource::BrainzMash { binding_valid }, pacing)
+        Self::new(
+            transport,
+            MbSource::BrainzMash {
+                base_url: super::BRAINZMASH_API_BASE.to_owned(),
+                binding_valid,
+            },
+            pacing,
+        )
     }
 }
 
@@ -583,7 +590,7 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         criticality: Criticality,
     ) -> Result<WireOutcome, MbError> {
         let source = self.source();
-        if let MbSource::BrainzMash { binding_valid } = &source
+        if let MbSource::BrainzMash { binding_valid, .. } = &source
             && !binding_valid
         {
             return Err(MbError::Misconfigured(

@@ -34,16 +34,6 @@ pub struct Endpoints {
     pub geocoding: String,
 }
 
-impl Default for Endpoints {
-    fn default() -> Self {
-        Self {
-            ticketmaster: ticketmaster::TICKETMASTER_API_URL.to_owned(),
-            skiddle: skiddle::SKIDDLE_API_URL.to_owned(),
-            geocoding: geocoding::GEOCODING_API_URL.to_owned(),
-        }
-    }
-}
-
 /// Fails fast after repeated failures so an outage does not cost three
 /// attempts per artist for the whole sweep. After the open window, calls
 /// go through again; one success closes it.

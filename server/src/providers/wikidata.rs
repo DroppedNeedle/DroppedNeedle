@@ -322,17 +322,7 @@ pub struct WikidataClient<'h, H: HttpPort> {
 }
 
 impl<'h, H: HttpPort> WikidataClient<'h, H> {
-    /// Build a client against the live origins.
-    pub fn new(http: &'h H) -> Self {
-        Self {
-            http,
-            wikidata_base: WIKIDATA_BASE.to_owned(),
-            wikipedia_pattern: WIKIPEDIA_PATTERN.to_owned(),
-            commons_base: COMMONS_BASE.to_owned(),
-        }
-    }
-
-    /// Build a client against scripted or mirrored origins.
+    /// Build a client against the given origins.
     pub fn with_bases(
         http: &'h H,
         wikidata_base: &str,
