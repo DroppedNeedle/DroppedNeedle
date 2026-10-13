@@ -20,6 +20,7 @@
 //! of an album is retagged into a new album in one run, the old row takes
 //! the new name instead of being left behind.
 
+use super::retag_pairs::{self, RetagPairReason};
 use super::*;
 use crate::library::identify::sqlite::{
     chosen_matches_differ, offer_album, retarget_references, settle_followed_match,
@@ -983,12 +984,20 @@ fn holds(track: &str, run: &str) -> String {
 ///
 /// A match or a review that landed on the new row while the scan was half
 /// way through the album is settled by `settle_followed_match`: a
-/// person's match is never replaced, and two people's choices of
-/// different releases leave both rows as they are. Work a person started
-/// on the new row (a preview, a draft, an override, anything the audit
-/// log names) is never rewritten to name another row: it keeps the new
-/// row from being deleted, so both rows stay. Whenever both rows stay
-/// the log names the two.
+/// person's match is never replaced, and two people's different choices
+/// leave both rows as they are. Work a person started on the new row (a
+/// preview, a draft, an override, anything the audit log names) is never
+/// rewritten to name another row: it keeps the new row from being
+/// deleted, so both rows stay.
+///
+/// When the two rows look like one retagged album and both stay, the pair
+/// is recorded with the reason and the log names the two, once
+/// ([`RetagPair::leave_apart`]): the album lost most of its tracks, a
+/// file was added with the retag, two chosen matches differ, or the new
+/// row could not be deleted. A pair on record is not tried again, unless the store failed
+/// the last time. Nothing is recorded when the tracks went to an album
+/// that was there before or that holds tracks from elsewhere (a person
+/// joining albums), or to more than one album (a split).
 fn follow_regrouped(
     tx: &rusqlite::Transaction<'_>,
     run_id: &str,
@@ -1018,18 +1027,46 @@ fn follow_regrouped(
     if target == album_id {
         return Ok(None);
     }
-    // Retagged into an album that holds other tracks: not a retag of the
-    // whole album, and nothing to say about it.
-    let foreign: bool = tx
-        .prepare_cached(
-            "SELECT EXISTS(SELECT 1 FROM local_tracks t WHERE t.local_album_id = ?2 \
-             AND NOT EXISTS (SELECT 1 FROM library_scan_album_moves m WHERE m.run_id = ?1 \
-             AND m.local_track_id = t.id AND m.previous_album_id = ?3))",
-        )?
-        .query_row(params![run_id, target, album_id], |row| row.get(0))?;
-    if foreign {
+    let pair = RetagPair {
+        old: album_id,
+        new: target,
+        now,
+    };
+    if retag_pairs::recorded(tx, album_id, target)?
+        .is_some_and(|reason| reason != RetagPairReason::StoreError)
+    {
         return Ok(None);
     }
+    // The new row holds tracks that did not come from this album. When
+    // the row or one of those tracks was there before this run, a person
+    // retagged the album into another one: nothing to say about it. When
+    // this run made the row and first indexed every one of those tracks,
+    // files were added along with the retag.
+    let (foreign, older): (bool, bool) = tx
+        .prepare_cached(
+            "WITH run AS (SELECT started_at FROM library_scan_runs WHERE id = ?1), \
+             other AS (SELECT t.imported_at, t.root_id, t.relative_path FROM local_tracks t \
+               WHERE t.local_album_id = ?2 AND NOT EXISTS ( \
+                 SELECT 1 FROM library_scan_album_moves m WHERE m.run_id = ?1 \
+                 AND m.local_track_id = t.id AND m.previous_album_id = ?3)) \
+             SELECT EXISTS(SELECT 1 FROM other), \
+             EXISTS(SELECT 1 FROM local_albums a, run WHERE a.id = ?2 \
+               AND a.created_at < run.started_at) \
+             OR EXISTS(SELECT 1 FROM other, run WHERE other.imported_at < run.started_at \
+               OR NOT EXISTS (SELECT 1 FROM library_scan_inventory i WHERE i.run_id = ?1 \
+                 AND i.root_id = other.root_id AND i.relative_path = other.relative_path))",
+        )?
+        .query_row(params![run_id, target, album_id], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+    if foreign {
+        if !older {
+            pair.leave_apart(tx, RetagPairReason::NewFilesAdded, None)?;
+        }
+        return Ok(None);
+    }
+    // Every row on the new album came from this one, so they are the
+    // tracks that moved.
     let (moved, stayed): (i64, i64) = tx
         .prepare_cached(
             "SELECT (SELECT COUNT(*) FROM local_tracks WHERE local_album_id = ?1), \
@@ -1039,15 +1076,11 @@ fn follow_regrouped(
             Ok((row.get(0)?, row.get(1)?))
         })?;
     if moved <= stayed {
+        pair.leave_apart(tx, RetagPairReason::MostlyMissing, None)?;
         return Ok(None);
     }
     if chosen_matches_differ(tx, target, album_id)? {
-        tracing::warn!(
-            album_id,
-            target,
-            "retagged album and its new row each hold a match a person chose, \
-             for different releases; both kept"
-        );
+        pair.leave_apart(tx, RetagPairReason::ChosenMatchesDiffer, None)?;
         return Ok(None);
     }
     tx.execute("SAVEPOINT follow_album", [])?;
@@ -1110,16 +1143,65 @@ fn follow_regrouped(
             Ok(Some(target.clone()))
         }
         Err(error) => {
-            tracing::warn!(
-                %error,
-                album_id,
-                target,
-                "retagged album could not take over its new row; both kept"
-            );
             tx.execute("ROLLBACK TO follow_album", [])?;
             tx.execute("RELEASE follow_album", [])?;
+            let reason = if foreign_key_refused(&error) {
+                RetagPairReason::WorkOnNewRow
+            } else {
+                RetagPairReason::StoreError
+            };
+            pair.leave_apart(tx, reason, Some(&error))?;
             Ok(None)
         }
+    }
+}
+
+/// Whether a statement failed because a row elsewhere still names the row
+/// it would delete or re-point. SQLite reports a plain foreign key as
+/// `SQLITE_CONSTRAINT_FOREIGNKEY` and one with `ON DELETE RESTRICT` as
+/// `SQLITE_CONSTRAINT_TRIGGER` with the message "FOREIGN KEY constraint
+/// failed" (checked on SQLite 3.46.1).
+fn foreign_key_refused(error: &rusqlite::Error) -> bool {
+    let rusqlite::Error::SqliteFailure(failure, message) = error else {
+        return false;
+    };
+    failure.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY
+        || (failure.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_TRIGGER
+            && message
+                .as_deref()
+                .is_some_and(|message| message.contains("FOREIGN KEY")))
+}
+
+/// An album's old row and the new row its retagged files sit on, when the
+/// two are not joined.
+struct RetagPair<'a> {
+    old: &'a str,
+    new: &'a str,
+    now: f64,
+}
+
+impl RetagPair<'_> {
+    /// Record the pair with the reason both rows stay, and say so in the
+    /// log, once: a pair already on record is neither written nor logged
+    /// again. Runs in the window's transaction, outside the follow's
+    /// savepoint, so it lands with the rows it describes.
+    fn leave_apart(
+        &self,
+        tx: &Connection,
+        reason: RetagPairReason,
+        error: Option<&rusqlite::Error>,
+    ) -> rusqlite::Result<()> {
+        let now_ms = (self.now * 1000.0) as i64;
+        if retag_pairs::record(tx, self.old, self.new, reason, now_ms)? {
+            tracing::warn!(
+                album_id = self.old,
+                target = self.new,
+                reason = reason.as_str(),
+                error = error.map(tracing::field::display),
+                "retagged album was not joined with its new row; both kept"
+            );
+        }
+        Ok(())
     }
 }
 

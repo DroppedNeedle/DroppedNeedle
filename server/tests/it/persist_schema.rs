@@ -61,7 +61,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 149);
+    assert_eq!(table_names(&pool).await.len(), 150);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -798,6 +798,116 @@ async fn play_history_gains_the_listener_and_track_index() {
     .await
     .unwrap();
     assert_eq!(older, 4);
+}
+
+/// Migration 0043 adds the table that records two album rows which look
+/// like one retagged album. A database from before it keeps its albums
+/// and gains the table, empty. A pair goes with either of its albums and
+/// never keeps one from being deleted.
+#[tokio::test]
+async fn retag_pairs_arrive_empty_and_go_with_their_albums() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 43)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+         ('old', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1), \
+         ('new', 'r1', 'g2', 'T', 't', 'a1', 'automatic', 1, 1), \
+         ('third', 'r1', 'g3', 'T', 't', 'a1', 'automatic', 1, 1);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let count = |sql: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(sql)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(count("SELECT COUNT(*) FROM local_albums").await, 3);
+    assert_eq!(count("SELECT COUNT(*) FROM library_retag_pairs").await, 0);
+
+    sqlx::raw_sql(
+        "PRAGMA foreign_keys = ON; \
+         INSERT INTO library_retag_pairs (old_album_id, new_album_id, reason, state, \
+         recorded_at, updated_at) VALUES \
+         ('old', 'new', 'mostly_missing', 'open', 1000, 1000), \
+         ('third', 'old', 'store_error', 'open', 1000, 1000); \
+         DELETE FROM local_albums WHERE id = 'new';",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count("SELECT COUNT(*) FROM library_retag_pairs").await, 1);
+    sqlx::raw_sql("DELETE FROM local_albums WHERE id = 'third'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count("SELECT COUNT(*) FROM library_retag_pairs").await, 0);
+    assert_eq!(count("SELECT COUNT(*) FROM local_albums").await, 1);
+}
+
+/// The reasons and states a retag pair may carry in the database are
+/// exactly the ones the code names, in both directions.
+#[tokio::test]
+async fn retag_pair_checks_list_exactly_the_code_values() {
+    use droppedneedle::library::scan::sqlite_store::retag_pairs::{
+        RetagPairReason, RetagPairState,
+    };
+
+    let pool = migrated_pool().await;
+    let sql: String =
+        sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE name = 'library_retag_pairs'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let listed = |column: &str| -> Vec<String> {
+        let marker = format!("CHECK({column} IN (");
+        let values = &sql[sql.find(&marker).expect("the column has a CHECK") + marker.len()..];
+        values[..values.find(')').expect("the list ends")]
+            .split(',')
+            .map(|value| value.trim().trim_matches('\'').to_owned())
+            .collect()
+    };
+
+    assert_eq!(
+        listed("reason"),
+        RetagPairReason::ALL.map(|reason| reason.as_str().to_owned())
+    );
+    assert_eq!(
+        listed("state"),
+        RetagPairState::ALL.map(|state| state.as_str().to_owned())
+    );
+    for reason in RetagPairReason::ALL {
+        assert_eq!(RetagPairReason::parse(reason.as_str()), Some(reason));
+    }
+    for state in RetagPairState::ALL {
+        assert_eq!(RetagPairState::parse(state.as_str()), Some(state));
+    }
+    assert_eq!(RetagPairReason::parse("open"), None);
+    assert_eq!(RetagPairState::parse("store_error"), None);
 }
 
 /// Every table in the migrated schema is listed once in

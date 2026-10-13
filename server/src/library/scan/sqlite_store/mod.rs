@@ -550,6 +550,7 @@ pub use artwork::ArtworkSweep;
 mod catalog;
 mod commit;
 mod inventory;
+pub mod retag_pairs;
 mod runs;
 
 pub(crate) use commit::{adopt_file, adoptable_track_id, automatic_album_for, awaits_retag};

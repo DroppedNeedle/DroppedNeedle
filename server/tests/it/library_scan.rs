@@ -696,13 +696,18 @@ fn retag_warnings() -> &'static std::sync::Mutex<Vec<String>> {
     LINES.get_or_init(Default::default)
 }
 
-/// Whether a warning that both rows were kept names these two albums.
-fn warned_both_kept(album: &str, new_row: &str) -> bool {
+/// How many warnings that both rows were kept name these two albums.
+fn warnings_naming(album: &str, new_row: &str) -> usize {
     retag_warnings()
         .lock()
         .expect("lines")
         .iter()
-        .any(|line| line.contains("both kept") && line.contains(album) && line.contains(new_row))
+        .filter(|line| line.contains("both kept") && line.contains(album) && line.contains(new_row))
+        .count()
+}
+
+fn warned_both_kept(album: &str, new_row: &str) -> bool {
+    warnings_naming(album, new_row) > 0
 }
 
 /// A retagged album keeps its row and its accepted match when someone
@@ -738,7 +743,7 @@ async fn retagged_album_keeps_its_match_when_played_mid_scan() {
 /// A management preview someone made of the new row while the scan was
 /// half way through the album names that row and its revisions. The scan
 /// does not rewrite it: both rows stay, every play and favorite stays
-/// where it was, and the log says which two albums were left apart.
+/// where it was, and the pair is recorded and logged, once.
 #[tokio::test]
 async fn retag_with_a_plan_on_the_new_row_is_left_apart_and_logged() {
     retag_warnings();
@@ -783,6 +788,19 @@ async fn retag_with_a_plan_on_the_new_row_is_left_apart_and_logged() {
         "the play, the favorite and the playlist entry still name the new row"
     );
     assert!(warned_both_kept(&album, &new_row), "the log names both");
+    assert_eq!(
+        retag_pairs(&rig),
+        open_pair(&album, &new_row, "work_on_new_row")
+    );
+
+    let warned = warnings_naming(&album, &new_row);
+    rig.scan().await;
+    assert_eq!(retag_pairs(&rig).len(), 1, "a later scan records it once");
+    assert_eq!(
+        warnings_naming(&album, &new_row),
+        warned,
+        "and says it once"
+    );
 }
 
 /// Catalog cleanup retires an empty album row into the one live album of
@@ -1249,8 +1267,7 @@ async fn same_release_chosen_on_both_rows_is_kept_once() {
 
 /// Different releases chosen by people on the two rows are not the scan's
 /// to pick between: both rows stay with their own match, nothing a
-/// listener made moves, and the log says which two albums were left
-/// apart.
+/// listener made moves, and the pair is recorded and logged.
 #[tokio::test]
 async fn different_releases_chosen_on_the_two_rows_stay_apart() {
     retag_warnings();
@@ -1275,6 +1292,10 @@ async fn different_releases_chosen_on_the_two_rows_stay_apart() {
         "the play, the favorite and the playlist entry still name the new row"
     );
     assert!(warned_both_kept(&album, &new_row), "the log names both");
+    assert_eq!(
+        retag_pairs(&rig),
+        open_pair(&album, &new_row, "chosen_matches_differ")
+    );
 }
 
 /// A person who empties the old album by hand while the scan is half way
@@ -1550,4 +1571,147 @@ async fn imported_group_match_and_a_chosen_release_of_it_are_one_album() {
     assert_eq!(rig.album_of("a/t000.flac"), album, "followed");
     assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1);
     assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
+}
+
+/// The pairs of album rows recorded as looking like one retagged album,
+/// as (old row, new row, reason, state).
+fn retag_pairs(rig: &RegroupRig) -> Vec<(String, String, String, String)> {
+    let conn = droppedneedle::db::open_connection(&rig.db()).expect("side connection opens");
+    let mut stmt = conn
+        .prepare("SELECT old_album_id, new_album_id, reason, state FROM library_retag_pairs")
+        .expect("pairs read");
+    stmt.query_map([], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+    })
+    .expect("pairs read")
+    .collect::<rusqlite::Result<_>>()
+    .expect("pairs read")
+}
+
+fn open_pair(album: &str, new_row: &str, reason: &str) -> Vec<(String, String, String, String)> {
+    vec![(
+        album.to_owned(),
+        new_row.to_owned(),
+        reason.to_owned(),
+        "open".to_owned(),
+    )]
+}
+
+/// What is left of an album that lost most of its tracks long ago is not
+/// followed when it is retagged: the last files of a pruned album given a
+/// new name may be a new album. The chosen match stays where it was and
+/// the two rows are recorded for a person to look at. A tie counts as
+/// most.
+#[tokio::test]
+async fn mostly_missing_album_is_recorded_not_followed() {
+    retag_warnings();
+    for (name, count, kept) in [
+        ("scan-regroup-mostly-missing", 12, 5),
+        ("scan-regroup-missing-tie", 2, 1),
+    ] {
+        let (mut rig, files, album) = chosen_album(name, count).await;
+        rig.lose(&files[kept..]).await;
+        let after = rig.after.clone();
+        rig.tag(&files[..kept], &after);
+        rig.scan().await;
+
+        let new_row = rig.album_of("a/t000.flac");
+        assert_ne!(new_row, album, "{name}: not followed");
+        assert_eq!(
+            retag_pairs(&rig),
+            open_pair(&album, &new_row, "mostly_missing"),
+            "{name}"
+        );
+        assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"), "{name}");
+        assert_eq!(match_of(&rig, &new_row), None, "{name}");
+        assert!(
+            warned_both_kept(&album, &new_row),
+            "{name}: the log names both"
+        );
+    }
+}
+
+/// An album retagged to a new name with a file added in the same go is
+/// not followed, because the new row holds a track the album never had.
+/// The new row and that file are both this scan's, so the two rows are
+/// recorded: otherwise the chosen match would sit on a row with no files
+/// and nothing would say so.
+#[tokio::test]
+async fn retag_with_a_file_added_is_recorded_not_followed() {
+    retag_warnings();
+    let (mut rig, mut files, album) = chosen_album("scan-regroup-file-added", 10).await;
+    files.push("a/t010.flac".to_owned());
+    let after = rig.after.clone();
+    rig.tag(&files, &after);
+    rig.scan().await;
+
+    let new_row = rig.album_of("a/t000.flac");
+    assert_ne!(new_row, album, "not followed");
+    assert_eq!(rig.rows_on(&new_row), 11);
+    assert_eq!(
+        retag_pairs(&rig),
+        open_pair(&album, &new_row, "new_files_added")
+    );
+    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
+    assert!(warned_both_kept(&album, &new_row), "the log names both");
+}
+
+/// Files retagged into an album that was already there are a person
+/// joining two albums. Nothing is followed and nothing is recorded.
+#[tokio::test]
+async fn retag_into_an_album_that_was_there_is_not_a_pair() {
+    let mut rig = RegroupRig::new("scan-regroup-joined");
+    let files: Vec<String> = (0..10).map(|n| format!("a/t{n:03}.flac")).collect();
+    let there: Vec<String> = (0..3).map(|n| format!("a/u{n}.flac")).collect();
+    let (before, after) = (rig.before.clone(), rig.after.clone());
+    rig.tag(&files, &before);
+    rig.tag(&there, &after);
+    rig.scan().await;
+    let album = rig.album_of("a/t000.flac");
+    let other = rig.album_of("a/u0.flac");
+    assert_ne!(album, other);
+    rig.accept_match(&album);
+
+    rig.tag(&files, &after);
+    rig.scan().await;
+
+    assert_eq!(rig.album_of("a/t000.flac"), other);
+    assert_eq!(retag_pairs(&rig), vec![]);
+    assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
+    assert_eq!(match_of(&rig, &other), None);
+}
+
+/// "Leave unmanaged" and a custom edition are stored as a match a person
+/// made that names no release. Against a release a person chose for the
+/// other row that is a different choice, of the same release group or
+/// not: both rows stay as they are and the pair is recorded.
+#[tokio::test]
+async fn no_release_choice_and_a_chosen_release_stay_apart() {
+    let (mut rig, files, album) = big_album("scan-regroup-no-release").await;
+    rig.run(&format!(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, decision_source, selected_at, row_revision) \
+         VALUES ('{album}', 'musicbrainz', 'rg-rel-1', 'manual', 0, 4);"
+    ));
+    let after = rig.after.clone();
+    rig.tag(&files, &after);
+    rig.meanwhile_sql(match_sql(&new_row(&album), "legacy_import", "rel-1"));
+    rig.scan().await;
+
+    let new_row = rig.album_of("a/t000.flac");
+    assert_ne!(new_row, album, "not followed");
+    assert_eq!(
+        retag_pairs(&rig),
+        open_pair(&album, &new_row, "chosen_matches_differ")
+    );
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM local_album_external_identities \
+             WHERE local_album_id = '{album}' AND release_mbid IS NULL \
+             AND decision_source = 'manual' AND row_revision = 4"
+        )),
+        1,
+        "the choice on the old row is untouched"
+    );
+    assert_eq!(match_of(&rig, &new_row), matched("rel-1", "legacy_import"));
 }
