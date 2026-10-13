@@ -653,13 +653,29 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             if journals.get(&journal_id)?.is_none() {
                 journals.insert(&journal)?;
             }
-            write_staged_temp(&temp, &staged_bytes)?;
+            // The file this one stands in for lends its permission bits:
+            // the one it replaces at the destination, else its own source
+            // in the library. A download coming in keeps the default.
+            let mode = if item.replaces.is_some() {
+                Some(paths::permission_bits(&dest)?)
+            } else if item.adopt.is_none() {
+                Some(paths::permission_bits(&source)?)
+            } else {
+                None
+            };
+            write_staged_temp(&temp, &staged_bytes, mode)?;
             journals.transition(&journal_id, JournalState::Prepared, JournalState::Staged)?;
             if item.adopt.is_none() {
                 self.capture_before(bundle, item, before)?;
             }
             for (side_ordinal, sidecar) in item.sidecars.iter().enumerate() {
-                self.prepare_sidecar(bundle, &journal_id, side_ordinal, sidecar)?;
+                self.prepare_sidecar(
+                    bundle,
+                    &journal_id,
+                    side_ordinal,
+                    sidecar,
+                    item.adopt.is_none(),
+                )?;
             }
             for (index, output) in item.outputs.iter().enumerate() {
                 self.prepare_output(bundle, &journal_id, index, output)?;
@@ -787,12 +803,15 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
     }
 
     /// Stage one sidecar as a verified byte copy with its own journal.
+    /// `keep_mode` gives the copy its source's permission bits (a sidecar
+    /// already in the library, not one arriving with a download).
     fn prepare_sidecar(
         &mut self,
         bundle: &PlanBundle,
         audio_journal_id: &str,
         side_ordinal: usize,
         sidecar: &super::planner::SidecarPlan,
+        keep_mode: bool,
     ) -> Result<(), PublishError> {
         let source = self
             .sandbox
@@ -837,7 +856,10 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 replaces: None,
             })?;
         }
-        write_staged_temp(&temp, &bytes)?;
+        let mode = keep_mode
+            .then(|| paths::permission_bits(&source))
+            .transpose()?;
+        write_staged_temp(&temp, &bytes, mode)?;
         journals.transition(&journal_id, JournalState::Prepared, JournalState::Staged)?;
         Ok(())
     }
@@ -888,7 +910,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 replaces: None,
             })?;
         }
-        write_staged_temp(&temp, &bytes)?;
+        write_staged_temp(&temp, &bytes, None)?;
         journals.transition(&journal_id, JournalState::Prepared, JournalState::Staged)?;
         Ok(())
     }
@@ -1354,11 +1376,18 @@ fn journal_id(bundle_id: &str, ordinal: usize, kind: &str) -> String {
 /// fsync the directory. An existing temp with identical bytes is
 /// reused so crashed attempts retry idempotently; mismatched bytes
 /// fail closed. Anything else under the name (a symlink) is unlinked and
-/// the temp created new.
-fn write_staged_temp(temp: &Path, bytes: &[u8]) -> Result<(), PublishError> {
+/// the temp created new. `mode` is the permission bits of the file this
+/// one replaces; a file that replaces nothing keeps the default.
+fn write_staged_temp(temp: &Path, bytes: &[u8], mode: Option<u32>) -> Result<(), PublishError> {
     use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
     if let Ok(current) = paths::read_regular_file(temp) {
         if current == bytes {
+            let reopened = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(temp);
+            lend_mode(reopened, mode, temp);
             return Ok(());
         }
         let name = temp
@@ -1373,7 +1402,7 @@ fn write_staged_temp(temp: &Path, bytes: &[u8]) -> Result<(), PublishError> {
         let mut file = paths::create_hidden(temp).map_err(PublishError::from)?;
         file.write_all(bytes).map_err(PublishError::from)?;
         super::journal::fsync_file(&file)?;
-        drop(file);
+        lend_mode(Ok(file), mode, temp);
         let reread = paths::read_regular_file(temp)?;
         if reread != bytes {
             return Err(PublishError::Validation(
@@ -1395,6 +1424,24 @@ fn write_staged_temp(temp: &Path, bytes: &[u8]) -> Result<(), PublishError> {
         }
     }
     written
+}
+
+/// Give a staged file the permission bits of the file it stands in for.
+/// The bits go on the open file, never on the name, so a link swapped in
+/// at the name is not followed. A folder that refuses the change does not
+/// fail the write: the file keeps the default bits.
+fn lend_mode(file: std::io::Result<std::fs::File>, mode: Option<u32>, temp: &Path) {
+    use std::os::unix::fs::PermissionsExt as _;
+    let Some(bits) = mode else {
+        return;
+    };
+    let set = file.and_then(|file| {
+        file.set_permissions(std::fs::Permissions::from_mode(bits))?;
+        file.sync_all()
+    });
+    if let Err(error) = set {
+        tracing::warn!(temp = %temp.display(), %error, "staged file keeps the default permission bits");
+    }
 }
 
 /// Prune newly empty source parents up to (not including) the root.

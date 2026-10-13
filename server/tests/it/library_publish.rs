@@ -2582,6 +2582,34 @@ fn a_symlink_at_a_hidden_working_name_is_never_written_through() {
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 
+/// A retag keeps the permission bits of the file it replaces. Two modes,
+/// so one of them is never what a new file gets by default here.
+#[test]
+fn a_retag_keeps_the_files_permission_bits() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let fix = fixture("keep-mode");
+    write_fixture_source(&fix, "music", "staging/s.flac", "management_full.flac");
+    let dest = fix.sandbox.resolve("music", "staging/s.flac").unwrap();
+    let mut publisher = open_publisher(&fix);
+    for bits in [0o664, 0o640] {
+        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(bits)).unwrap();
+        let title = format!("Retagged {bits:o}");
+        let (bundle, docs) = retag_bundle(
+            &fix,
+            &format!("bundle-mode-{bits:o}"),
+            "staging/s.flac",
+            &title,
+        );
+        let (sealed, live) = seal(&bundle);
+        publisher.publish(&sealed, &live, &docs).unwrap();
+
+        let tag = tags::read::read_tag_only(&dest, tags::AudioFormat::Flac).unwrap();
+        assert_eq!(tag.title, title);
+        let mode = std::fs::metadata(&dest).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, bits, "{bits:o}");
+    }
+}
+
 /// A bundle journaled before hidden names changed still resumes: recovery
 /// keeps the backup name its row holds, so a link an interrupted put-back
 /// left under that name is recognised and removed, not stranded.

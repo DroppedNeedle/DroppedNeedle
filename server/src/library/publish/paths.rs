@@ -455,3 +455,10 @@ pub fn create_hidden(path: &Path) -> std::io::Result<std::fs::File> {
         .create_new(true)
         .open(path)
 }
+
+/// Permission bits of the file a staged copy stands in for.
+pub fn permission_bits(path: &Path) -> Result<u32, PublishError> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let meta = std::fs::symlink_metadata(path).map_err(PublishError::from)?;
+    Ok(meta.permissions().mode() & 0o777)
+}
