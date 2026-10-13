@@ -19,7 +19,7 @@
 //! placed.
 //!
 //! The other direction, a user's file moved out of the way under a hidden
-//! name, is [`set_original_aside`]. It never links then unlinks, because
+//! name, is `set_aside_with`. It never links then unlinks, because
 //! there the name to unlink would be the user's.
 
 use std::path::Path;
@@ -283,15 +283,9 @@ impl SetAsideError {
 ///    file can be a whole album old, and a file saved since by another
 ///    program is not the one this journal is about: it goes straight back
 ///    to `home` through [`place_from_hidden`].
-pub fn set_original_aside(
-    mode: PlacementMode,
-    original: Original<'_>,
-) -> Result<(), SetAsideError> {
-    set_aside_with(mode, original, Seams::default(), None)
-}
-
-/// [`set_original_aside`] with test seams. `before_move` runs with the
-/// visible name after the first link test, just before the file moves.
+///
+/// `before_move` is a test seam: it runs with the visible name after the
+/// first link test, just before the file moves.
 pub(super) fn set_aside_with(
     mode: PlacementMode,
     original: Original<'_>,
