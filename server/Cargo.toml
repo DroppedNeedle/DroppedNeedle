@@ -52,6 +52,10 @@ hmac = "0.12"
 toml = "1"
 time = { version = "0.3", default-features = false, features = ["std", "formatting"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+# Tokenises Newznab indexer responses, which are untrusted XML. MIT, one
+# dependency (memchr, already in the tree). No features: it never touches
+# the network, never reads a DTD and expands no declared entities.
+quick-xml = { version = "0.42", default-features = false }
 
 [features]
 # Fakes, mocks, memory stores and test constructors for the test suite.

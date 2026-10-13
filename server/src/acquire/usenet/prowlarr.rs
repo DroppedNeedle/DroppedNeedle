@@ -21,6 +21,7 @@ use thiserror::Error;
 use super::newznab::{
     IndexerHealth, IndexerResult, UsenetRelease, normalize_newznab_query, parse_rfc2822_date,
 };
+use super::{BodyError, MAX_INDEXER_BODY_BYTES, read_indexer_body};
 use crate::http_client::transport_error;
 
 // ---------------------------------------------------------------------------
@@ -170,7 +171,8 @@ pub enum ProwlarrError {
         /// `Retry-After` seconds, when the header carried a number.
         retry_after: Option<f64>,
     },
-    /// A 200 body that isn't the documented JSON (proxy/login page).
+    /// A 200 body that isn't the documented JSON (proxy/login page), or
+    /// is too large to read.
     #[error("Prowlarr response decode failed: {0}")]
     Decode(String),
 }
@@ -345,11 +347,14 @@ impl ProwlarrClient {
                 code: status,
             });
         }
-        response
-            .bytes()
+        read_indexer_body(response)
             .await
-            .map(|bytes| bytes.to_vec())
-            .map_err(|err| ProwlarrError::Transport(transport_error(err)))
+            .map_err(|error| match error {
+                BodyError::TooLarge => ProwlarrError::Decode(format!(
+                    "response is larger than {MAX_INDEXER_BODY_BYTES} bytes"
+                )),
+                BodyError::Transport(detail) => ProwlarrError::Transport(detail),
+            })
     }
 
     fn api_base(&self) -> String {

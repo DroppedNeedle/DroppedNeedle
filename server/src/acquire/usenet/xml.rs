@@ -1,12 +1,31 @@
-//! A minimal XML reader for the Newznab feed shapes.
+//! Reads a Newznab response into a small element tree.
 //!
 //! Newznab is XML-only (v2 `newznab_client.py`: neither Lidarr nor Prowlarr
-//! ever sends `o=json`), but the crate carries no XML dependency and this
-//! code adds none, so the reader here covers exactly what the responses
-//! need: elements, attributes, text, comments, processing instructions,
-//! CDATA, and entity decoding. Failures surface as typed errors, never
-//! panics, and the v2 hardening (illegal-character strip, bare-ampersand
-//! escape a la Prowlarr's `XmlCleaner`) runs before parsing.
+//! ever sends `o=json`). quick-xml does the tokenising. It fetches nothing,
+//! hands a DOCTYPE over as one opaque event and knows only the five
+//! predefined entities and numeric character references, so a document
+//! cannot grow by entity expansion. The tree is built here with a stack
+//! instead of recursion, and its depth and size are bounded, so a hostile
+//! indexer gets an error back and nothing else.
+//!
+//! Real feeds are not always well formed. [`strip_illegal`] and
+//! [`escape_bare_amps`] carry the v2 hardening (illegal-character strip,
+//! bare-ampersand escape a la Prowlarr's `XmlCleaner`) that the caller
+//! applies around [`parse`].
+
+use quick_xml::Reader;
+use quick_xml::escape::{resolve_predefined_entity, unescape};
+use quick_xml::events::{BytesStart, Event};
+
+/// Deepest nesting accepted. A feed is `rss > channel > item > attr` and
+/// caps is `caps > categories > category > subcat`: four levels.
+pub const MAX_DEPTH: usize = 64;
+
+/// Most elements and attributes accepted in one document. A full page of
+/// 1000 items with extended attributes is tens of thousands; the bound keeps a
+/// body made of nothing but tiny tags or empty attributes from costing
+/// many times its size in memory.
+pub const MAX_NODES: usize = 200_000;
 
 /// One element: tag, attributes, child elements, and direct text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +74,8 @@ impl Element {
     }
 }
 
+/// Recursion here is at most [`MAX_DEPTH`] deep: [`parse`] builds no
+/// deeper tree.
 fn collect_descendants<'a>(element: &'a Element, name: &str, out: &mut Vec<&'a Element>) {
     for child in &element.children {
         if local(&child.tag) == name {
@@ -74,7 +95,7 @@ pub fn local(tag: &str) -> &str {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
     /// Byte offset where parsing stopped.
-    pub offset: usize,
+    pub offset: u64,
     /// Human-readable cause.
     pub message: String,
 }
@@ -98,309 +119,188 @@ pub fn strip_illegal(text: &str) -> String {
         .collect()
 }
 
-/// Escape bare `&` and non-predefined `&name;` entities (v2 `_BARE_AMP`).
+/// Escape every `&` that does not start a reference the parser resolves:
+/// a bare one, `&nbsp;` and other undeclared names (v2 `_BARE_AMP`). They
+/// come out as literal text. CDATA sections are left as they are.
 pub fn escape_bare_amps(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    let bytes = text.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] != b'&' {
-            out.push(bytes[index] as char);
-            index += 1;
-            continue;
-        }
-        let rest = &text[index..];
-        if is_predefined_entity(rest) {
-            out.push('&');
-            index += 1;
-            continue;
-        }
-        out.push_str("&amp;");
-        index += 1;
+    let mut rest = text;
+    while let Some(start) = rest.find("<![CDATA[") {
+        let end = rest[start..]
+            .find("]]>")
+            .map_or(rest.len(), |at| start + at + "]]>".len());
+        escape_amps_into(&rest[..start], &mut out);
+        out.push_str(&rest[start..end]);
+        rest = &rest[end..];
     }
+    escape_amps_into(rest, &mut out);
     out
 }
 
-fn is_predefined_entity(rest: &str) -> bool {
-    for entity in ["&amp;", "&lt;", "&gt;", "&quot;", "&apos;"] {
-        if rest.starts_with(entity) {
-            return true;
-        }
-    }
-    if let Some(end) = rest.find(';') {
-        let body = &rest[1..end];
-        if let Some(hex) = body.strip_prefix("#x").or_else(|| body.strip_prefix("#X")) {
-            return !hex.is_empty()
-                && hex.len() <= 6
-                && hex.chars().all(|ch| ch.is_ascii_hexdigit());
-        }
-        if let Some(decimal) = body.strip_prefix('#') {
-            return !decimal.is_empty()
-                && decimal.len() <= 7
-                && decimal.chars().all(|ch| ch.is_ascii_digit());
-        }
-    }
-    false
-}
+/// The longest reference the parser resolves, `&#x10FFFF;`, is 10 bytes.
+/// Looking no further for the `;` keeps the escape pass linear: a body of
+/// nothing but ampersands would otherwise be rescanned to its end from
+/// every one of them.
+const REFERENCE_WINDOW: usize = 12;
 
-/// Decode the predefined + numeric entities in character data.
-pub fn decode_entities(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
+fn escape_amps_into(text: &str, out: &mut String) {
     let mut rest = text;
-    while let Some(amp) = rest.find('&') {
-        out.push_str(&rest[..amp]);
-        rest = &rest[amp..];
-        let Some(end) = rest.find(';') else {
-            out.push_str(rest);
-            break;
-        };
-        let entity = &rest[..=end];
-        if let Some(decoded) = decode_entity(entity) {
-            out.push_str(&decoded);
-        } else {
-            out.push_str(entity);
-        }
-        rest = &rest[end + 1..];
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        let resolves = rest
+            .bytes()
+            .take(REFERENCE_WINDOW)
+            .position(|byte| byte == b';')
+            .is_some_and(|end| unescape(&rest[..=end]).is_ok());
+        out.push_str(if resolves { "&" } else { "&amp;" });
+        rest = &rest[1..];
     }
     out.push_str(rest);
-    out
 }
 
-fn decode_entity(entity: &str) -> Option<String> {
-    match entity {
-        "&amp;" => Some("&".to_owned()),
-        "&lt;" => Some("<".to_owned()),
-        "&gt;" => Some(">".to_owned()),
-        "&quot;" => Some("\"".to_owned()),
-        "&apos;" => Some("'".to_owned()),
-        _ => {
-            let body = entity.strip_prefix("&#")?.strip_suffix(';')?;
-            let value = if let Some(hex) = body.strip_prefix('x').or_else(|| body.strip_prefix('X'))
-            {
-                u32::from_str_radix(hex, 16).ok()?
-            } else {
-                body.parse::<u32>().ok()?
-            };
-            char::from_u32(value).map(|ch| ch.to_string())
-        }
-    }
-}
-
-/// Parse one document; the XML declaration, comments, processing
-/// instructions, and DOCTYPE are skipped, CDATA lands in the text.
+/// Parse one document into its root element. The XML declaration,
+/// comments, processing instructions and any DOCTYPE are skipped, CDATA
+/// lands in the text, and anything after the root is ignored.
 pub fn parse(text: &str) -> Result<Element, ParseError> {
-    let mut parser = Parser {
-        bytes: text.as_bytes(),
-        text,
-        index: 0,
-    };
-    parser.parse_document()
-}
-
-struct Parser<'a> {
-    bytes: &'a [u8],
-    text: &'a str,
-    index: usize,
-}
-
-impl<'a> Parser<'a> {
-    fn parse_document(&mut self) -> Result<Element, ParseError> {
-        loop {
-            self.skip_space();
-            if self.at_end() {
-                return self.fail("empty document");
-            }
-            if self.consume("<!--") {
-                self.skip_until("-->")?;
-                continue;
-            }
-            if self.consume("<?") {
-                self.skip_until("?>")?;
-                continue;
-            }
-            if self.consume("<!DOCTYPE") || self.consume("<!doctype") {
-                self.skip_until(">")?;
-                continue;
-            }
-            if self.peek() == Some(b'<') {
-                break;
-            }
-            return self.fail("expected an element");
-        }
-        self.parse_element()
-    }
-
-    fn parse_element(&mut self) -> Result<Element, ParseError> {
-        if !self.consume("<") {
-            return self.fail("expected '<'");
-        }
-        let tag = self.parse_name()?;
-        let mut attrs = Vec::new();
-        loop {
-            self.skip_space();
-            if self.at_end() {
-                return self.fail("unterminated start tag");
-            }
-            if self.consume("/>") {
-                return Ok(Element {
-                    tag,
-                    attrs,
-                    children: Vec::new(),
-                    text: String::new(),
-                });
-            }
-            if self.consume(">") {
-                break;
-            }
-            let name = self.parse_name()?;
-            self.skip_space();
-            if !self.consume("=") {
-                return self.fail("expected '=' after attribute name");
-            }
-            self.skip_space();
-            let value = self.parse_attr_value()?;
-            attrs.push((name, value));
-        }
-        let mut children = Vec::new();
-        let mut text = String::new();
-        loop {
-            if self.at_end() {
-                return self.fail("unterminated element");
-            }
-            if self.bytes[self.index] == b'<' {
-                if self.consume("</") {
-                    let closing = self.parse_name()?;
-                    if closing != tag {
-                        return self.fail(format!("mismatched close tag '{closing}'"));
-                    }
-                    self.skip_space();
-                    if !self.consume(">") {
-                        return self.fail("expected '>' after close tag");
-                    }
-                    break;
-                }
-                if self.consume("<!--") {
-                    self.skip_until("-->")?;
-                    continue;
-                }
-                if self.consume("<?") {
-                    self.skip_until("?>")?;
-                    continue;
-                }
-                if self.consume("<![CDATA[") {
-                    text.push_str(&self.read_until("]]>")?);
-                    continue;
-                }
-                children.push(self.parse_element()?);
-                continue;
-            }
-            text.push_str(&self.read_text());
-        }
-        Ok(Element {
-            tag,
-            attrs,
-            children,
-            text: decode_entities(text.trim()).trim().to_owned(),
-        })
-    }
-
-    fn parse_name(&mut self) -> Result<String, ParseError> {
-        let start = self.index;
-        while let Some(byte) = self.peek() {
-            if byte.is_ascii_whitespace() || matches!(byte, b'/' | b'>' | b'=' | b'<' | b'?' | b'!')
-            {
-                break;
-            }
-            self.index += 1;
-        }
-        if start == self.index {
-            return self.fail("expected a name");
-        }
-        self.text
-            .get(start..self.index)
-            .map(str::to_owned)
-            .ok_or_else(|| self.error_at(start, "name is not valid UTF-8"))
-    }
-
-    fn parse_attr_value(&mut self) -> Result<String, ParseError> {
-        let quote = match self.peek() {
-            Some(b'"') => b'"',
-            Some(b'\'') => b'\'',
-            _ => return self.fail("expected a quoted attribute value"),
+    let mut reader = Reader::from_str(text);
+    let mut open: Vec<Element> = Vec::new();
+    let mut nodes = 0_usize;
+    loop {
+        let event = reader.read_event().map_err(|error| ParseError {
+            offset: reader.error_position(),
+            message: error.to_string(),
+        })?;
+        let fail = |message: &str| ParseError {
+            offset: reader.buffer_position(),
+            message: message.to_owned(),
         };
-        self.index += 1;
-        let start = self.index;
-        while let Some(byte) = self.peek() {
-            if byte == quote {
-                let raw = self
-                    .text
-                    .get(start..self.index)
-                    .ok_or_else(|| self.error_at(start, "attribute is not valid UTF-8"))?;
-                self.index += 1;
-                return Ok(decode_entities(raw));
+        let closed = match event {
+            Event::Start(start) => {
+                let element = element_from(&start, open.len(), &mut nodes)
+                    .map_err(|message| fail(&message))?;
+                open.push(element);
+                continue;
             }
-            self.index += 1;
-        }
-        self.fail("unterminated attribute value")
-    }
-
-    fn read_text(&mut self) -> String {
-        let start = self.index;
-        while let Some(byte) = self.peek() {
-            if byte == b'<' {
-                break;
+            Event::Empty(start) => {
+                element_from(&start, open.len(), &mut nodes).map_err(|message| fail(&message))?
             }
-            self.index += 1;
+            Event::End(_) => {
+                let mut element = open.pop().ok_or_else(|| fail("unexpected close tag"))?;
+                element.text = element.text.trim().to_owned();
+                element
+            }
+            Event::Text(chunk) => {
+                match open.last_mut() {
+                    Some(element) => element.text.push_str(&chunk),
+                    None if chunk.trim().is_empty() => {}
+                    None => return Err(fail("expected an element")),
+                }
+                continue;
+            }
+            Event::CData(chunk) => {
+                let element = open.last_mut().ok_or_else(|| fail("expected an element"))?;
+                element.text.push_str(&chunk);
+                continue;
+            }
+            Event::GeneralRef(reference) => {
+                let element = open.last_mut().ok_or_else(|| fail("expected an element"))?;
+                match reference.resolve_char_ref() {
+                    Ok(Some(ch)) => element.text.push(ch),
+                    Ok(None) => match resolve_predefined_entity(&reference) {
+                        Some(value) => element.text.push_str(value),
+                        None => return Err(fail("unknown entity")),
+                    },
+                    Err(_) => return Err(fail("invalid character reference")),
+                }
+                continue;
+            }
+            Event::Eof if open.is_empty() => return Err(fail("empty document")),
+            Event::Eof => return Err(fail("unterminated element")),
+            Event::Comment(_) | Event::Decl(_) | Event::PI(_) | Event::DocType(_) => continue,
+        };
+        match open.last_mut() {
+            Some(parent) => parent.children.push(closed),
+            None => return Ok(closed),
         }
-        self.text.get(start..self.index).unwrap_or("").to_owned()
     }
+}
 
-    fn read_until(&mut self, end: &str) -> Result<String, ParseError> {
-        let start = self.index;
-        if let Some(offset) = self.text[start..].find(end) {
-            let out = self.text[start..start + offset].to_owned();
-            self.index = start + offset + end.len();
-            Ok(out)
-        } else {
-            self.fail(format!("unterminated section, expected '{end}'"))
+/// A start tag as an element with no children yet, refused when it would
+/// take the tree past its bounds. Repeated attribute names are kept, as
+/// feeds in the wild are not always tidy.
+fn element_from(
+    start: &BytesStart<'_>,
+    depth: usize,
+    nodes: &mut usize,
+) -> Result<Element, String> {
+    if depth >= MAX_DEPTH {
+        return Err("nested too deeply".to_owned());
+    }
+    *nodes += 1;
+    if *nodes > MAX_NODES {
+        return Err("too many elements".to_owned());
+    }
+    let mut attributes = start.attributes();
+    attributes.with_checks(false);
+    let mut attrs = Vec::new();
+    for attribute in attributes {
+        let attribute = attribute.map_err(|error| error.to_string())?;
+        *nodes += 1;
+        if *nodes > MAX_NODES {
+            return Err("too many attributes".to_owned());
         }
+        let value = unescape(&attribute.value).map_err(|error| error.to_string())?;
+        attrs.push((attribute.key.0.to_owned(), value.into_owned()));
+    }
+    Ok(Element {
+        tag: start.name().0.to_owned(),
+        attrs,
+        children: Vec::new(),
+        text: String::new(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The retry path must not damage what was already fine: text outside
+    /// ASCII, real references, and CDATA, which is literal by definition.
+    #[test]
+    fn escaping_bare_ampersands_leaves_the_rest_alone() {
+        let raw = "<t a=\"x?a=1&b=2\">Beyoncé & Jay-Z &amp; more&nbsp;&#233;<![CDATA[R&B]]></t>";
+        assert!(parse(raw).is_err(), "not well formed as sent");
+        let root = parse(&escape_bare_amps(raw)).expect("parses once escaped");
+        assert_eq!(root.attr("a"), Some("x?a=1&b=2"));
+        assert_eq!(root.text, "Beyoncé & Jay-Z & more&nbsp;éR&B");
     }
 
-    fn skip_until(&mut self, end: &str) -> Result<(), ParseError> {
-        self.read_until(end).map(|_| ())
+    /// Attributes cost memory like elements do, so one tag cannot carry
+    /// more of them than a whole document may hold elements.
+    #[test]
+    fn attributes_count_toward_the_size_bound() {
+        let within = format!("<t{}/>", " a=\"\"".repeat(1000));
+        assert_eq!(
+            parse(&within).expect("a wide tag is fine").attrs.len(),
+            1000
+        );
+        let beyond = format!("<t{}/>", " a=\"\"".repeat(MAX_NODES));
+        let error = parse(&beyond).expect_err("too many attributes");
+        assert!(error.message.contains("too many"), "{error}");
     }
 
-    fn skip_space(&mut self) {
-        while matches!(self.peek(), Some(byte) if byte.is_ascii_whitespace()) {
-            self.index += 1;
-        }
-    }
+    /// The escape pass looks only a few bytes past each `&` for its `;`,
+    /// so its work grows with the input and not with its square. A `;`
+    /// further off than any real reference is not found at all, and a
+    /// megabyte of ampersands comes out escaped one by one.
+    #[test]
+    fn escaping_looks_a_bounded_distance_for_the_semicolon() {
+        let far = format!("&{};", "x".repeat(REFERENCE_WINDOW));
+        assert_eq!(escape_bare_amps(&far), format!("&amp;{}", &far[1..]));
+        assert_eq!(escape_bare_amps("&#x10FFFF;"), "&#x10FFFF;");
 
-    fn consume(&mut self, token: &str) -> bool {
-        if self.text[self.index..].starts_with(token) {
-            self.index += token.len();
-            true
-        } else {
-            false
-        }
-    }
-
-    fn peek(&self) -> Option<u8> {
-        self.bytes.get(self.index).copied()
-    }
-
-    fn at_end(&self) -> bool {
-        self.index >= self.bytes.len()
-    }
-
-    fn fail<T>(&self, message: impl Into<String>) -> Result<T, ParseError> {
-        Err(self.error_at(self.index, message))
-    }
-
-    fn error_at(&self, offset: usize, message: impl Into<String>) -> ParseError {
-        ParseError {
-            offset,
-            message: message.into(),
-        }
+        let flood = "&".repeat(1024 * 1024);
+        assert_eq!(escape_bare_amps(&flood), "&amp;".repeat(1024 * 1024));
     }
 }

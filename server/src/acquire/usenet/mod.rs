@@ -27,3 +27,43 @@ pub mod prowlarr;
 pub mod sabnzbd;
 pub mod sabnzbd_models;
 pub mod xml;
+
+/// The most an indexer response may weigh before it is refused. A search
+/// page is at most a few megabytes even from an indexer that allows 1000
+/// results a page (about 3 KB an item with extended attributes), and a
+/// caps document is tens of kilobytes, so 10 MB refuses nothing real and
+/// still stops an indexer from filling memory.
+pub const MAX_INDEXER_BODY_BYTES: usize = 10 * 1024 * 1024;
+
+/// Why an indexer body could not be read.
+pub(crate) enum BodyError {
+    /// The body is larger than [`MAX_INDEXER_BODY_BYTES`].
+    TooLarge,
+    /// The connection broke part-way. Never holds the request URL.
+    Transport(String),
+}
+
+/// Read an indexer body, giving up as soon as it passes the cap, whether
+/// or not the indexer declared its length.
+pub(crate) async fn read_indexer_body(
+    mut response: reqwest::Response,
+) -> Result<Vec<u8>, BodyError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_INDEXER_BODY_BYTES as u64)
+    {
+        return Err(BodyError::TooLarge);
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| BodyError::Transport(crate::http_client::transport_error(error)))?
+    {
+        if body.len() + chunk.len() > MAX_INDEXER_BODY_BYTES {
+            return Err(BodyError::TooLarge);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}

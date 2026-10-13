@@ -15,11 +15,11 @@ use usenet::mocks::{
     NewznabMock, NewznabScenario, ProwlarrMock, ProwlarrScenario, SabnzbdMock, serve_loopback,
 };
 use usenet::newznab::{
-    NewznabClient, NewznabIndexer, NewznabIndexerEntry, UsenetRelease, normalize_newznab_query,
-    usenet_identity,
+    NewznabClient, NewznabError, NewznabIndexer, NewznabIndexerEntry, UsenetRelease,
+    normalize_newznab_query, usenet_identity,
 };
 use usenet::policy::UsenetPolicy;
-use usenet::prowlarr::{ProwlarrClient, ProwlarrRelease};
+use usenet::prowlarr::{ProwlarrClient, ProwlarrError, ProwlarrRelease};
 use usenet::sabnzbd::{
     HistorySlot, NzbFetchError, SabnzbdClient, SabnzbdError, SabnzbdQueue, TaskHandle,
     redact_query_secrets,
@@ -1213,6 +1213,63 @@ async fn prowlarr_apikey_never_logged() {
         .await
         .expect("search");
     assert_eq!(releases.len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Hostile indexer responses: too deep, too large.
+// ---------------------------------------------------------------------------
+
+/// An indexer that answers every path with `body`, streamed in pieces
+/// with no `Content-Length`, the way a hostile one would hide its size.
+async fn serve_streamed(body: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
+    let body = std::sync::Arc::new(body);
+    let router = axum::Router::new().fallback(move || {
+        let body = body.clone();
+        async move {
+            let pieces: Vec<Result<axum::body::Bytes, std::io::Error>> = body
+                .chunks(64 * 1024)
+                .map(|piece| Ok(axum::body::Bytes::copy_from_slice(piece)))
+                .collect();
+            axum::body::Body::from_stream(futures_util::stream::iter(pieces))
+        }
+    });
+    serve_loopback(router).await.expect("mock serves")
+}
+
+/// A document nested far deeper than any feed is an error, not a stack
+/// overflow that takes the server down.
+#[tokio::test]
+async fn newznab_deeply_nested_document_is_refused() {
+    let depth = 100_000;
+    let body = format!("{}{}", "<a>".repeat(depth), "</a>".repeat(depth));
+    let (base, _server) = serve_streamed(body.into_bytes()).await;
+    let err = newznab_client(&base, "deep", "Deep")
+        .caps(TIMEOUT)
+        .await
+        .expect_err("too deep");
+    assert!(matches!(err, NewznabError::Unparseable(_)), "{err:?}");
+}
+
+/// A body past the cap is refused while it is being read, whatever it
+/// holds: here a well-formed feed padded with one long comment.
+#[tokio::test]
+async fn oversized_indexer_bodies_are_refused() {
+    let padding = "x".repeat(usenet::MAX_INDEXER_BODY_BYTES);
+    let feed = format!("<rss><channel><!-- {padding} --></channel></rss>");
+    let (base, _server) = serve_streamed(feed.into_bytes()).await;
+    let err = newznab_client(&base, "big", "Big")
+        .search("x", &[], 0, 100, TIMEOUT)
+        .await
+        .expect_err("too large");
+    assert!(matches!(err, NewznabError::Unparseable(_)), "{err:?}");
+
+    let rows = format!("[{}]", " ".repeat(usenet::MAX_INDEXER_BODY_BYTES));
+    let (base, _server) = serve_streamed(rows.into_bytes()).await;
+    let err = prowlarr_client(&base)
+        .search("x", &[], &[], 100, TIMEOUT)
+        .await
+        .expect_err("too large");
+    assert!(matches!(err, ProwlarrError::Decode(_)), "{err:?}");
 }
 
 // ---------------------------------------------------------------------------

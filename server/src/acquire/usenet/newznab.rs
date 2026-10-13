@@ -18,6 +18,7 @@ use reqwest::Client;
 use thiserror::Error;
 
 use super::xml::{self, Element};
+use super::{BodyError, MAX_INDEXER_BODY_BYTES, read_indexer_body};
 use crate::http_client::transport_error;
 
 // ---------------------------------------------------------------------------
@@ -223,7 +224,8 @@ pub enum NewznabError {
         /// `Retry-After` seconds, when the header carried an integer.
         retry_after: Option<f64>,
     },
-    /// The body survived hardening but still isn't XML.
+    /// The body isn't XML even after hardening, or it is nested too
+    /// deeply or too large to read.
     #[error("newznab returned unparseable XML: {0}")]
     Unparseable(String),
 }
@@ -537,23 +539,22 @@ impl NewznabClient {
         }
         if response.status().as_u16() >= 400 {
             let status = response.status().as_u16();
-            let snippet = response
-                .text()
-                .await
-                .unwrap_or_default()
-                .chars()
-                .take(200)
-                .collect();
+            let body = read_indexer_body(response).await.unwrap_or_default();
+            let snippet = String::from_utf8_lossy(&body).chars().take(200).collect();
             return Err(NewznabError::Http {
                 status,
                 snippet,
                 code: status,
             });
         }
-        let bytes = response
-            .bytes()
+        let bytes = read_indexer_body(response)
             .await
-            .map_err(|err| NewznabError::Transport(transport_error(err)))?;
+            .map_err(|error| match error {
+                BodyError::TooLarge => NewznabError::Unparseable(format!(
+                    "response is larger than {MAX_INDEXER_BODY_BYTES} bytes"
+                )),
+                BodyError::Transport(detail) => NewznabError::Transport(detail),
+            })?;
         safe_parse(&bytes)
     }
 }
@@ -577,7 +578,7 @@ fn safe_parse(raw: &[u8]) -> Result<Element, NewznabError> {
     }
     let hardened = xml::escape_bare_amps(&cleaned);
     xml::parse(&hardened)
-        .map_err(|err| NewznabError::Unparseable(format!("{err} (offset {})", err.offset)))
+        .map_err(|err| NewznabError::Unparseable(err.to_string().chars().take(200).collect()))
 }
 
 /// `<error code= description=>`: HTTP may still be 200. 100-199 / apikey
