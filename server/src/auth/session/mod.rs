@@ -45,5 +45,6 @@ pub mod login;
 pub mod middleware;
 pub mod origin;
 pub mod rate_limit;
+pub mod stated;
 pub mod store;
 pub mod tokens;

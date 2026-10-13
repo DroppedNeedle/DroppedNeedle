@@ -18815,13 +18815,15 @@ export interface components {
          *     them, on top of the address it works out for itself.
          *
          *     A section of its own, so that saving another one can never empty it.
+         *     `origins` has no default for the same reason: a save that misspells the
+         *     field is refused, where a default would store an empty list. A settings
+         *     file with no such section still reads as the empty list.
          */
         PublicAddress: {
             /**
              * @description Up to eight origins such as `https://music.example.com` or
              *     `http://192.168.1.5:8688`: scheme, host and optional port, no path.
              *     Stored the way a browser sends `Origin`.
-             * @default []
              */
             origins: string[];
         };

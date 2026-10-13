@@ -583,6 +583,23 @@ async fn a_stated_public_address_is_the_only_thing_that_widens_the_origin_check(
     assert_eq!(status(PROXY, OTHER_APP, &[]).await, 403);
     assert_eq!(status(PROXY, PAGE, &[]).await, 200);
 
+    // A wildcard is refused however it is spelt, and a body without
+    // `origins` is a mistake, never a request to clear the list.
+    let spelt_out = public_address(&["https://%2A.music.test"]);
+    let (code, body) = save(PROXY, PAGE, &[], spelt_out).await;
+    assert_eq!(code, 400, "{body}");
+    for body in [
+        serde_json::json!({}),
+        serde_json::json!({"origin": [OTHER_APP]}),
+    ] {
+        let (code, body) = save(PROXY, PAGE, &[], ("public-address", body)).await;
+        assert_eq!(code, 400, "{body}");
+        assert_eq!(body["error"]["code"], "INVALID_INPUT", "{body}");
+        let message = body["error"]["message"].as_str().unwrap_or_default();
+        assert!(message.contains("origins"), "{body}");
+        assert_eq!(status(PROXY, PAGE, &[]).await, 200, "the list was emptied");
+    }
+
     // Cleared from the stated page itself, which is then refused again.
     let (code, body) = save(PROXY, PAGE, &[], public_address(&[])).await;
     assert_eq!(code, 200, "{body}");

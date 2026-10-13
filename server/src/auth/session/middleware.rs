@@ -47,7 +47,8 @@
 //! The `public_address` setting is the way out: the gate reads its list for
 //! each cookie-authenticated write and hands it to the origin check, which
 //! compares it with the browser's `Origin` or `Referer` only. A list that
-//! cannot be read counts as empty, which is the strict check.
+//! cannot be read counts as empty, which is the strict check, and the log
+//! says so once ([`StatedAddresses`]).
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
@@ -60,14 +61,13 @@ use axum::{
 };
 use thiserror::Error;
 
-use crate::runtime_config::{ConfigStore, sections::PublicAddress};
-
 use super::{
     allowlist::is_public,
     cookies::is_secure_trusted,
     extract::{Transport, forbidden_response, unauthorized_response},
     origin::{Origin, OriginDecision, check_origin, is_unsafe_method, named_origin},
     rate_limit::{AUTH_FAILURE_CLASS, RateLimiter, rate_limited_response},
+    stated::StatedAddresses,
     store::{SessionKind, SessionStore, now_unix},
     tokens::hash_token,
 };
@@ -248,7 +248,7 @@ pub struct WarnOnce(Arc<AtomicBool>);
 
 impl WarnOnce {
     /// True for the first caller only.
-    fn claim(&self) -> bool {
+    pub(super) fn claim(&self) -> bool {
         !self.0.load(Ordering::Relaxed) && !self.0.swap(true, Ordering::Relaxed)
     }
 }
@@ -267,9 +267,8 @@ pub struct SessionAuth<S> {
     /// Shared limiter; failed authentications are charged per client
     /// address, since the request limiter runs after this gate.
     pub limits: Arc<RateLimiter>,
-    /// The runtime settings, read for the stated public addresses. `None`
-    /// means no address is stated.
-    config: Option<Arc<ConfigStore>>,
+    /// The saved public addresses. None is stated by default.
+    stated: StatedAddresses,
     /// Spent by the first refused request that looks like a proxy
     /// misreporting this server's address.
     origin_mismatch_warned: WarnOnce,
@@ -288,7 +287,7 @@ impl<S> SessionAuth<S> {
             base_path: base_path.to_owned(),
             trusted_proxies: TrustedProxies::default(),
             limits: Arc::new(RateLimiter::new()),
-            config: None,
+            stated: StatedAddresses::default(),
             origin_mismatch_warned: WarnOnce::default(),
             other_host_warned: WarnOnce::default(),
             unlisted_proxy_warned: WarnOnce::default(),
@@ -308,26 +307,11 @@ impl<S> SessionAuth<S> {
         self
     }
 
-    /// Read the stated public addresses from `config`. Without it the list
-    /// is empty and only the address the server works out is accepted.
-    pub fn with_public_address(mut self, config: Arc<ConfigStore>) -> Self {
-        self.config = Some(config);
+    /// Accept a change from the stated public addresses. Without them
+    /// only the address the server works out is accepted.
+    pub fn with_stated_addresses(mut self, stated: StatedAddresses) -> Self {
+        self.stated = stated;
         self
-    }
-
-    /// The addresses an admin stated as this server's own. Empty when the
-    /// setting cannot be read: an unreadable list never widens the check.
-    fn stated_origins(&self) -> Vec<Origin> {
-        let Some(config) = &self.config else {
-            return Vec::new();
-        };
-        match config.get::<PublicAddress>() {
-            Ok(section) => section.stated(),
-            Err(error) => {
-                tracing::debug!(%error, "public address unreadable; no stated address");
-                Vec::new()
-            }
-        }
     }
 }
 
@@ -374,7 +358,7 @@ where
     };
     let target = effective_origin(&request, &auth.trusted_proxies);
     let stated = if transport == Transport::Cookie && is_unsafe_method(request.method()) {
-        auth.stated_origins()
+        auth.stated.origins()
     } else {
         Vec::new()
     };
@@ -449,27 +433,66 @@ fn warn_unlisted_proxy(warned: &WarnOnce, request: &Request, trusted: &TrustedPr
     }
 }
 
-/// Log a refused change, once per process for each of two cases, so a
+/// Which of the two one-time warnings a refused change may claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RefusalHint {
+    /// The page is on this server's host with another scheme or port: the
+    /// proxy drops the port or hides HTTPS.
+    SchemeOrPort,
+    /// The page is on another host: the proxy replaces `Host`. A real
+    /// cross-site attempt looks the same.
+    OtherHost,
+}
+
+/// The longest host a warning writes out: the longest DNS name.
+const LONGEST_LOGGED_HOST: usize = 253;
+
+/// The warning a refused change may claim, with the origin it named.
+/// None when the request carried `Sec-Fetch-Site`: a value that did not
+/// pass is the browser saying the page is not the address it sent the
+/// request to, so no proxy stands between the two, and the one line is
+/// kept for a refusal a proxy can explain. None for a host too long to be
+/// a name, which is not worth a log line.
+fn refusal_hint(
+    headers: &axum::http::HeaderMap,
+    target: Option<&Origin>,
+) -> Option<(RefusalHint, Origin)> {
+    if headers.contains_key("sec-fetch-site") {
+        return None;
+    }
+    let (target, source) = (target?, named_origin(headers)?);
+    if [target, &source]
+        .iter()
+        .any(|origin| origin.host().len() > LONGEST_LOGGED_HOST)
+    {
+        return None;
+    }
+    let hint = if source.same_host(target) {
+        RefusalHint::SchemeOrPort
+    } else {
+        RefusalHint::OtherHost
+    };
+    Some((hint, source))
+}
+
+/// Log a refused change, once per process for each [`RefusalHint`], so a
 /// proxy that misreports this server's address shows up as more than 403s
-/// in the browser. On this server's host with another scheme or port, the
-/// proxy drops the port or hides HTTPS. On another host it replaces `Host`,
-/// which is also what a real cross-site attempt looks like. The line names
-/// the parsed origin, never the header's own text.
+/// in the browser. The line names the parsed origin, never the header's
+/// own text.
 fn warn_refused_origin<S>(
     auth: &SessionAuth<S>,
     headers: &axum::http::HeaderMap,
     target: Option<&Origin>,
 ) {
-    let (Some(target), Some(source)) = (target, named_origin(headers)) else {
+    let (Some(target), Some((hint, source))) = (target, refusal_hint(headers, target)) else {
         return;
     };
-    let (warned, fault) = if source.same_host(target) {
-        (
+    let (warned, fault) = match hint {
+        RefusalHint::SchemeOrPort => (
             &auth.origin_mismatch_warned,
             "is dropping the port or hiding HTTPS",
-        )
-    } else {
-        (&auth.other_host_warned, "is replacing the Host header")
+        ),
+        RefusalHint::OtherHost => (&auth.other_host_warned, "is replacing the Host header"),
     };
     if warned.claim() {
         tracing::warn!(
@@ -574,6 +597,50 @@ mod tests {
         assert!(loopback.is_trusted(peer("127.0.0.1:9")));
         assert!(!loopback.is_trusted(peer("192.168.1.2:9")));
         assert!(loopback.is_trusted(peer("[::ffff:127.0.0.1]:9")));
+    }
+
+    #[test]
+    fn a_refused_change_claims_a_warning_only_when_the_proxy_may_be_at_fault() {
+        fn hint_for(target: &str, sent: &[(&str, &str)]) -> Option<RefusalHint> {
+            let mut headers = axum::http::HeaderMap::new();
+            for (name, value) in sent {
+                headers.insert(
+                    axum::http::HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                    value.parse().unwrap(),
+                );
+            }
+            let target = Origin::from_host("http", target);
+            assert!(target.is_some());
+            refusal_hint(&headers, target.as_ref()).map(|(hint, _)| hint)
+        }
+        let hint = |sent: &[(&str, &str)]| hint_for("music.test", sent);
+        let port_dropped = ("origin", "http://music.test:8080");
+        let https_hidden = ("referer", "https://music.test/albums");
+        let other_host = ("origin", "https://music.example");
+        assert_eq!(hint(&[port_dropped]), Some(RefusalHint::SchemeOrPort));
+        assert_eq!(hint(&[https_hidden]), Some(RefusalHint::SchemeOrPort));
+        assert_eq!(hint(&[other_host]), Some(RefusalHint::OtherHost));
+        assert_eq!(hint(&[]), None);
+        assert_eq!(hint(&[("origin", "null")]), None);
+
+        // The browser has said the page is not the address it sent the
+        // request to, so the proxy is not what stands between them.
+        for site in ["cross-site", "same-site", "none", ""] {
+            let said = ("sec-fetch-site", site);
+            assert_eq!(hint(&[said, port_dropped]), None, "{site:?}");
+            assert_eq!(hint(&[said, other_host]), None, "{site:?}");
+        }
+
+        // No host longer than a DNS name is written to the log.
+        let long = "a".repeat(300);
+        assert_eq!(hint(&[("origin", &format!("https://{long}"))]), None);
+        assert_eq!(hint(&[("origin", &format!("http://{long}:8080"))]), None);
+        assert_eq!(hint_for(&long, &[port_dropped]), None);
+        let longest_name = "a".repeat(253);
+        assert_eq!(
+            hint(&[("origin", &format!("https://{longest_name}"))]),
+            Some(RefusalHint::OtherHost)
+        );
     }
 
     #[test]

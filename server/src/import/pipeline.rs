@@ -44,8 +44,9 @@ use crate::runtime_config::Crypto;
 
 /// Sections the export may carry (kept whole or in part). Present
 /// sections replace the v3 config wholesale; absent ones reset to v3
-/// defaults. v3-only keys outside this set (today: `lyrics_settings`)
-/// are left untouched: the export cannot speak for state v2 never had.
+/// defaults. v3-only keys outside this set (today: `lyrics_settings` and
+/// `public_address`) are left untouched: the export cannot speak for state
+/// v2 never had.
 /// Shared with the validator, which warns on anything outside it.
 pub(crate) const REPLACE_UNIVERSE: &[&str] = &[
     "user_preferences",

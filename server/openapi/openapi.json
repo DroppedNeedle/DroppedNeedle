@@ -43404,15 +43404,17 @@
       },
       "PublicAddress": {
         "type": "object",
-        "description": "The addresses at which this DroppedNeedle is served, for a deployment\nwhose reverse proxy leaves the server with the wrong idea of its own\naddress. The session origin check accepts a change from a page at one of\nthem, on top of the address it works out for itself.\n\nA section of its own, so that saving another one can never empty it.",
+        "description": "The addresses at which this DroppedNeedle is served, for a deployment\nwhose reverse proxy leaves the server with the wrong idea of its own\naddress. The session origin check accepts a change from a page at one of\nthem, on top of the address it works out for itself.\n\nA section of its own, so that saving another one can never empty it.\n`origins` has no default for the same reason: a save that misspells the\nfield is refused, where a default would store an empty list. A settings\nfile with no such section still reads as the empty list.",
+        "required": [
+          "origins"
+        ],
         "properties": {
           "origins": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Up to eight origins such as `https://music.example.com` or\n`http://192.168.1.5:8688`: scheme, host and optional port, no path.\nStored the way a browser sends `Origin`.",
-            "default": []
+            "description": "Up to eight origins such as `https://music.example.com` or\n`http://192.168.1.5:8688`: scheme, host and optional port, no path.\nStored the way a browser sends `Origin`."
           }
         }
       },

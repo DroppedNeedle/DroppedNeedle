@@ -88,6 +88,7 @@ impl Origin {
     pub fn from_stated(text: &str) -> Result<Self, String> {
         const NOT_AN_ADDRESS: &str = "is not a web address";
         const NO_SCHEME: &str = "must start with http:// or https://";
+        const WILDCARD: &str = "has a wildcard in it: list each address in full";
         let text = text.trim();
         if text.is_empty() {
             return Err("is empty".to_owned());
@@ -96,7 +97,7 @@ impl Origin {
             return Err("has a space in it".to_owned());
         }
         if text.contains('*') {
-            return Err("has a wildcard in it: list each address in full".to_owned());
+            return Err(WILDCARD.to_owned());
         }
         let lower = text.to_ascii_lowercase();
         if !lower.starts_with("http://") && !lower.starts_with("https://") {
@@ -122,6 +123,10 @@ impl Origin {
         let (Some(host), Some(port)) = (url.host_str(), url.port_or_known_default()) else {
             return Err(NOT_AN_ADDRESS.to_owned());
         };
+        // The parser decodes `%2A` in a host to `*`.
+        if host.contains('*') {
+            return Err(WILDCARD.to_owned());
+        }
         // Through the parser the check itself uses, so a saved address is
         // one a request's `Origin` can equal.
         Self::from_url(&format!("{}://{host}:{port}", url.scheme()))
@@ -140,6 +145,11 @@ impl Origin {
         } else {
             self.to_string()
         }
+    }
+
+    /// The host, lower-cased, an IPv6 address in its brackets.
+    pub fn host(&self) -> &str {
+        &self.host
     }
 
     /// True when both are on the same host, whatever the scheme and port.
@@ -406,10 +416,18 @@ mod tests {
         assert_eq!(put(&[("origin", "https://music.example.evil.test")]), Deny);
         assert_eq!(put(&[("origin", "https://music.example@evil.test")]), Deny);
         assert_eq!(put(&[("origin", "https://evil.test")]), Deny);
+        // A subdomain of a stated host, and that host with a trailing dot.
+        assert_eq!(put(&[("origin", "https://evil.music.example")]), Deny);
+        assert_eq!(put(&[("origin", "https://music.example.")]), Deny);
         assert_eq!(put(&[("origin", "null")]), Deny);
         assert_eq!(put(&[]), Deny);
         // Referer stands in only when Origin is absent.
         assert_eq!(put(&[("referer", "https://music.example/albums")]), Allow);
+        // A stated address in the query names nothing.
+        assert_eq!(
+            put(&[("referer", "https://evil.test/?next=https://music.example")]),
+            Deny
+        );
         assert_eq!(
             put(&[
                 ("origin", "https://evil.test"),
@@ -485,6 +503,8 @@ mod tests {
             "https://music.example.com@evil.test",
             "https://*.example.com",
             "https://*",
+            "https://%2A.example.com",
+            "https://%2a.example.com",
             "http://music.lan:0",
             "http://music.lan:65536",
             "http://music.lan:port",

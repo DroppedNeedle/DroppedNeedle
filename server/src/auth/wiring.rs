@@ -27,6 +27,7 @@ use super::routes::native::NativeAuthState;
 use super::session::middleware::SessionAuth;
 use super::session::middleware::TrustedProxies;
 use super::session::rate_limit::RateLimiter;
+use super::session::stated::StatedAddresses;
 use super::users::lastfm_http::LastFmAuthHttp;
 use super::users::stores::{Clock, HibpPolicy, LastFmKeys, LastFmSwitch, SecurityPolicy};
 use super::users::{UsersDeps, admin_router, public_router, users_router};
@@ -378,7 +379,7 @@ impl AuthSetup {
             users,
             session_auth: SessionAuth::new(auth.sessions.clone(), base_path)
                 .with_limits(limits.clone())
-                .with_public_address(config_store.clone()),
+                .with_stated_addresses(StatedAddresses::from_config(config_store.clone())),
             limits,
             native,
             oidc,
