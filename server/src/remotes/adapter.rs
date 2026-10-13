@@ -65,6 +65,13 @@ impl std::fmt::Display for AdapterError {
 /// then shows as a missing cover.
 pub const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 
+/// The most one API answer may weigh. Paged calls ask for 500 items at
+/// most, a few megabytes. Three lists come whole: a playlist's tracks,
+/// the starred items and Navidrome's artist index. At 1 to 3 KB a track
+/// that is tens of megabytes for a playlist of ten thousand tracks, so
+/// 128 MiB leaves room for a far larger one and still bounds the read.
+pub const MAX_API_BYTES: usize = 128 * 1024 * 1024;
+
 /// Read one image body under [`MAX_IMAGE_BYTES`]. An oversized image is
 /// no image: the caller answers as it does for a missing one.
 pub(crate) async fn read_image(
@@ -82,6 +89,30 @@ pub(crate) async fn read_image(
                 "remote image is over the size cap, treating it as missing"
             );
             Err(AdapterError::NotFound)
+        }
+        Err(BodyError::Transport(detail)) => Err(AdapterError::Transport(detail)),
+    }
+}
+
+/// Read one API answer under [`MAX_API_BYTES`]. One over the cap is an
+/// upstream error like any other answer the adapter cannot use.
+pub(crate) async fn read_api_body(
+    source: SourceName,
+    endpoint: &str,
+    response: reqwest::Response,
+) -> Result<Vec<u8>, AdapterError> {
+    match read_capped(response, MAX_API_BYTES).await {
+        Ok(bytes) => Ok(bytes),
+        Err(BodyError::TooLarge) => {
+            tracing::warn!(
+                source = source.as_str(),
+                endpoint,
+                cap_bytes = MAX_API_BYTES,
+                "remote API answer is over the size cap"
+            );
+            Err(AdapterError::Api(format!(
+                "{endpoint} answer is over the size cap"
+            )))
         }
         Err(BodyError::Transport(detail)) => Err(AdapterError::Transport(detail)),
     }

@@ -24,7 +24,7 @@
 use std::time::Duration;
 
 use super::adapter::{
-    AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse, read_image,
+    AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse, read_api_body, read_image,
 };
 use super::models::{
     AlbumView, ArtistIndexEntry, ArtistView, FavoritesView, HistoryPage, HubView, InfoView,
@@ -1000,10 +1000,7 @@ impl NavidromeAdapter {
                 "GET {endpoint} failed ({status})"
             )));
         }
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
+        let bytes = read_api_body(SourceName::Navidrome, endpoint, response).await?;
         let envelope: Envelope = serde_json::from_slice(&bytes).map_err(|error| {
             AdapterError::Api(format!(
                 "Navidrome returned an unreadable {endpoint} payload: {error}"

@@ -30,7 +30,7 @@ use std::sync::RwLock;
 use std::time::Duration;
 
 use super::adapter::{
-    AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse, read_image,
+    AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse, read_api_body, read_image,
 };
 use super::connections::{PlexServerTokens, ServerSettings};
 use super::models::{
@@ -166,10 +166,7 @@ impl PlexAdapter {
                 "GET /resources failed ({status})"
             )));
         }
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
+        let bytes = read_api_body(SourceName::Plex, "/resources", response).await?;
         // Lenient per device: client devices without a token still list.
         let devices: Vec<serde_json::Value> = serde_json::from_slice(&bytes).map_err(|_| {
             AdapterError::Api("Plex returned an unreadable /resources payload".to_owned())
@@ -1114,10 +1111,7 @@ impl PlexAdapter {
                 "GET {endpoint} failed ({status})"
             )));
         }
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
+        let bytes = read_api_body(SourceName::Plex, endpoint, response).await?;
         let envelope: Envelope = serde_json::from_slice(&bytes).map_err(|error| {
             AdapterError::Api(format!(
                 "Plex returned an unreadable {endpoint} payload: {error}"

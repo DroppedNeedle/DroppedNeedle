@@ -1196,6 +1196,45 @@ async fn images_streaming_past_the_cap_are_cut_off() {
     task.abort();
 }
 
+/// An API answer that declares a length over the cap is an upstream
+/// error on every source, before any of it is read. The session poller
+/// makes this call on a timer.
+#[tokio::test]
+async fn api_answers_over_the_cap_are_refused() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("fake binds");
+    let base_url = format!(
+        "http://{}",
+        listener.local_addr().expect("fake has an address")
+    );
+    let task = tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut request = [0u8; 4096];
+                let _ = socket.read(&mut request).await;
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{{",
+                    remotes::adapter::MAX_API_BYTES + 1
+                );
+                let _ = socket.write_all(head.as_bytes()).await;
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            });
+        }
+    });
+    for (source, handle) in every_source(&base_url) {
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(2), handle.sessions())
+            .await
+            .map(|outcome| outcome.map(|_| ()));
+        assert!(
+            matches!(outcome, Ok(Err(AdapterError::Api(_)))),
+            "{source} waited for an oversized answer: {outcome:?}"
+        );
+    }
+    task.abort();
+}
+
 /// Navidrome's Last.fm link reaches the browser as a link address, so
 /// anything that is not a web address comes out absent.
 #[tokio::test]

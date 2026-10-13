@@ -24,7 +24,7 @@ use std::time::Duration;
 use serde::de::DeserializeOwned;
 
 use super::adapter::{
-    AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse, read_image,
+    AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse, read_api_body, read_image,
 };
 use super::jellyfin_models::{
     AuthenticationResult, Item, ItemPage, Lyrics, NamedPage, PlaybackReport, QueryFilters,
@@ -648,10 +648,8 @@ impl JellyfinAdapter {
                 response.status()
             )));
         }
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
+        let bytes =
+            read_api_body(SourceName::Jellyfin, "/Users/AuthenticateByName", response).await?;
         let result: AuthenticationResult = decode("/Users/AuthenticateByName", &bytes)?;
         if result.user.id.is_empty() || result.access_token.is_empty() {
             return Err(AdapterError::Api(
@@ -1086,10 +1084,7 @@ impl JellyfinAdapter {
                 "GET {endpoint} failed ({status})"
             )));
         }
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
+        let bytes = read_api_body(SourceName::Jellyfin, endpoint, response).await?;
         if bytes.is_empty() {
             return Ok(None);
         }
