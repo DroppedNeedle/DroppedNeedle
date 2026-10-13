@@ -450,7 +450,7 @@ fn diff_golden(expected: &Value, actual: &Value, path: &str, out: &mut Vec<Strin
 /// `COMPAT_BLESS=1`.
 fn assert_golden(name: &str, actual: &Value) {
     let path = fixtures_dir().join(name);
-    if std::env::var("COMPAT_BLESS").is_ok() {
+    if crate::common::compat::blessing() {
         let text = serde_json::to_string_pretty(actual).expect("serializes");
         std::fs::write(path, format!("{text}\n")).expect("bless writes");
         return;
