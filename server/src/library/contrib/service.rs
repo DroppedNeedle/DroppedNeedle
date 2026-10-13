@@ -4,7 +4,7 @@
 //! Ports v2 `LibraryContributionService`. Submission performs no provider
 //! write: `create_seed` returns a form the curator's browser POSTs to the
 //! release editor, and the editor calls back here. Tests post that form to a
-//! scripted fake editor instead (see `memory::FakeReleaseEditor`).
+//! scripted fake editor instead (see `scripted::FakeReleaseEditor`).
 
 use std::collections::HashMap;
 use std::sync::Arc;

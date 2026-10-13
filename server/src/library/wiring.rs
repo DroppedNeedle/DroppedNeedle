@@ -88,8 +88,8 @@ fn scripted_factory(scripted: Arc<FakeProviders>) -> ProviderFactory {
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Default)]
 pub struct TestContribProviders {
-    pub discogs: Arc<super::contrib::memory::ScriptedDiscogs>,
-    pub musicbrainz: Arc<super::contrib::memory::ScriptedMusicBrainz>,
+    pub discogs: Arc<super::contrib::scripted::ScriptedDiscogs>,
+    pub musicbrainz: Arc<super::contrib::scripted::ScriptedMusicBrainz>,
 }
 
 #[cfg(any(test, feature = "test-support"))]

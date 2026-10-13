@@ -13,6 +13,7 @@ use contrib::error::ContribError;
 use contrib::memory::*;
 use contrib::models::*;
 use contrib::rules::*;
+use contrib::scripted::*;
 use contrib::seams::*;
 use contrib::service::ContributionService;
 use contrib::worker::{

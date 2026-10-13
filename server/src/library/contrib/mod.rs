@@ -27,6 +27,8 @@ pub mod memory;
 pub mod models;
 pub mod reasons;
 pub mod rules;
+#[cfg(any(test, feature = "test-support"))]
+pub mod scripted;
 pub mod seams;
 pub mod service;
 pub mod sqlite;
