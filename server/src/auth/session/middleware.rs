@@ -439,14 +439,24 @@ fn warn_origin_mismatch(
 /// is on the scheme's default port, so a proxy on any other port has to
 /// pass the browser's `Host` through unchanged.
 pub fn effective_origin(request: &Request, trusted: &TrustedProxies) -> Option<Origin> {
-    let secure = is_secure_trusted(
+    Origin::from_host(
+        if arrived_over_https(request, trusted) {
+            "https"
+        } else {
+            "http"
+        },
+        &effective_host(request, trusted),
+    )
+}
+
+/// True when the browser reached this request over HTTPS: direct TLS, or
+/// `X-Forwarded-Proto: https` set by a trusted proxy. The origin check and
+/// the HSTS header both decide by this.
+pub fn arrived_over_https(request: &Request, trusted: &TrustedProxies) -> bool {
+    is_secure_trusted(
         request.uri().scheme_str().unwrap_or("http"),
         request.headers(),
         trusted.is_trusted(peer_of(request)),
-    );
-    Origin::from_host(
-        if secure { "https" } else { "http" },
-        &effective_host(request, trusted),
     )
 }
 

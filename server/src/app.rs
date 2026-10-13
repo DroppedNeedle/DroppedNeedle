@@ -29,6 +29,11 @@
 //! set: the prefix is stripped once, up front, so routes, the session gate
 //! and the UI all see the same base-relative path, and requests outside
 //! the base get the 404 envelope.
+//!
+//! The HSTS layer is the outermost of all, outside the base-path split, so
+//! every response can carry the header: routes, fallbacks, the web UI, the
+//! compat shims and the 404 outside the base. It only adds a header and
+//! only when the Security settings ask for it.
 
 use axum::{Router, extract::Request, middleware, response::IntoResponse, routing::get};
 use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
@@ -37,7 +42,7 @@ use crate::{
     auth::session::{middleware::require_session, rate_limit::rate_limit},
     compat::http::fallback_redispatch,
     handlers,
-    middleware::request_scope,
+    middleware::{TransportSecurity, request_scope, strict_transport_security},
     state::AppState,
     web::WebUi,
 };
@@ -54,8 +59,12 @@ pub fn create_app_with_web(state: AppState, web: Option<WebUi>) -> Router {
     let outside_base = Router::new()
         .fallback(handlers::fallback_404)
         .layer(middleware::from_fn_with_state(state.clone(), request_scope));
+    let hsts = middleware::from_fn_with_state(
+        TransportSecurity::from_state(&state),
+        strict_transport_security,
+    );
     let app = base_relative_app(state, web);
-    if base_path.is_empty() {
+    let app = if base_path.is_empty() {
         app
     } else {
         // Strip the base by hand rather than with `Router::nest`, which
@@ -76,7 +85,8 @@ pub fn create_app_with_web(state: AppState, web: Option<WebUi>) -> Router {
                 Err(never) => match never {},
             }
         })
-    }
+    };
+    app.layer(hsts)
 }
 
 /// `uri` with the base path removed, on a segment boundary: `{base}` and

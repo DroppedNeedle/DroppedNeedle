@@ -12,6 +12,9 @@
 //! are exempt from the body rewrite (their shapes are fixed by the
 //! protocols), though panics there still become the fixed 500. Handler code can
 //! therefore return raw 5xx bodies only by accident, never to the wire.
+//!
+//! The HSTS layer lives here too. It wraps the request scope and adds one
+//! response header, see [`strict_transport_security`].
 
 use axum::{
     extract::{Request, State},
@@ -19,12 +22,14 @@ use axum::{
     response::Response,
 };
 use futures_util::FutureExt as _;
-use std::panic::AssertUnwindSafe;
+use std::{panic::AssertUnwindSafe, sync::Arc};
 use tracing::Instrument as _;
 
 use crate::{
+    auth::session::middleware::{TrustedProxies, arrived_over_https},
     error::ApiError,
     ids::{REQUEST_ID_HEADER, RequestId},
+    runtime_config::{ConfigStore, sections::SecuritySettings},
     state::AppState,
 };
 
@@ -86,6 +91,71 @@ pub async fn request_scope(
 
     set_request_id_header(&mut response, &request_id);
     response
+}
+
+/// What the HSTS layer needs: the live settings and the proxies whose
+/// forwarded scheme counts.
+#[derive(Debug, Clone)]
+pub struct TransportSecurity {
+    config: Arc<ConfigStore>,
+    trusted_proxies: TrustedProxies,
+}
+
+impl TransportSecurity {
+    /// Read the settings and the trusted proxies the session gate uses.
+    pub fn from_state(state: &AppState) -> Self {
+        Self {
+            config: state.auth.config_store.clone(),
+            trusted_proxies: state.auth.session_auth.trusted_proxies.clone(),
+        }
+    }
+}
+
+/// Add `Strict-Transport-Security` to the response when the Security
+/// settings ask for it and the request arrived over HTTPS.
+///
+/// A browser that has seen the header refuses plain HTTP to this host for
+/// `max-age` seconds, so it is never sent on a plain-HTTP request, on a
+/// forwarded scheme from a peer that is not a trusted proxy, or when the
+/// settings cannot be read. The settings are read after the handler ran, so
+/// the response to the save that turns HSTS off already goes without it.
+pub async fn strict_transport_security(
+    State(security): State<TransportSecurity>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let https = arrived_over_https(&request, &security.trusted_proxies);
+    let mut response = next.run(request).await;
+    if !https {
+        return response;
+    }
+    match security.config.get::<SecuritySettings>() {
+        Ok(settings) => {
+            if let Some(value) = hsts_value(&settings) {
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::STRICT_TRANSPORT_SECURITY, value);
+            }
+        }
+        Err(error) => tracing::debug!(%error, "security settings unreadable; no HSTS header"),
+    }
+    response
+}
+
+/// The header value for these settings, the v2 format. `None` when HSTS is
+/// off: a max-age of zero or less.
+fn hsts_value(settings: &SecuritySettings) -> Option<axum::http::HeaderValue> {
+    if settings.hsts_max_age <= 0 {
+        return None;
+    }
+    let mut value = format!("max-age={}", settings.hsts_max_age);
+    if settings.hsts_include_subdomains {
+        value.push_str("; includeSubDomains");
+    }
+    if settings.hsts_preload {
+        value.push_str("; preload");
+    }
+    axum::http::HeaderValue::from_str(&value).ok()
 }
 
 /// Longest caller-supplied request id kept; longer ones are replaced.

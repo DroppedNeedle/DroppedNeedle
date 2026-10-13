@@ -15,6 +15,7 @@ use droppedneedle::{
     runtime_config::{ConfigStore, Crypto, sections::SecuritySettings},
 };
 use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
+use tower::ServiceExt as _;
 
 use crate::common::ScratchDir;
 
@@ -265,4 +266,142 @@ async fn held_open_stream_does_not_keep_background_loops_running() {
     assert!(stopped_at.duration_since(signalled) < Duration::from_secs(1));
     shutdown.await.unwrap();
     drop(stream);
+}
+
+/// A listed reverse proxy (loopback is trusted by default).
+const PROXY: &str = "127.0.0.1:40000";
+/// Any other client.
+const STRANGER: &str = "203.0.113.7:40000";
+
+/// Answer `request` as if `peer` had sent it.
+async fn answer_from(
+    router: &axum::Router,
+    peer: &str,
+    mut request: axum::http::Request<Body>,
+) -> axum::response::Response {
+    let peer: SocketAddr = peer.parse().unwrap();
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(peer));
+    router.clone().oneshot(request).await.unwrap()
+}
+
+/// The `Strict-Transport-Security` value on the answer to a GET from
+/// `peer`. `forwarded_https` adds the header a TLS proxy sets.
+async fn hsts_header(
+    router: &axum::Router,
+    peer: &str,
+    forwarded_https: bool,
+    uri: &str,
+) -> Option<String> {
+    let mut request = axum::http::Request::builder()
+        .uri(uri)
+        .header("host", "music.test");
+    if forwarded_https {
+        request = request.header("x-forwarded-proto", "https");
+    }
+    let response = answer_from(router, peer, request.body(Body::empty()).unwrap()).await;
+    response
+        .headers()
+        .get("strict-transport-security")
+        .map(|value| value.to_str().unwrap().to_owned())
+}
+
+/// Save the HSTS fields as the signed-in admin, through the proxy.
+async fn save_hsts(router: &axum::Router, cookie: &str, max_age: i64, flags: bool) {
+    let body = serde_json::json!({
+        "hibp_check": false,
+        "hsts_max_age": max_age,
+        "hsts_include_subdomains": flags,
+        "hsts_preload": flags,
+    });
+    let request = axum::http::Request::builder()
+        .method("PUT")
+        .uri("/api/v3/settings/security")
+        .header("host", "music.test")
+        .header("x-forwarded-proto", "https")
+        .header("sec-fetch-site", "same-origin")
+        .header("cookie", cookie)
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    assert_eq!(answer_from(router, PROXY, request).await.status(), 200);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hsts_is_sent_only_over_https_and_only_while_the_setting_is_on() {
+    let dir = scratch("hsts");
+    let config = config_in(&dir);
+    std::fs::create_dir_all(config.static_dir.join("_app")).unwrap();
+    std::fs::write(config.static_dir.join("index.html"), "<html></html>").unwrap();
+    std::fs::write(config.static_dir.join("_app/app.js"), "console.log(1);").unwrap();
+    let (router, background) = bootstrap::build(config).await.unwrap();
+    let running = start(router.clone(), background).await;
+
+    let setup = reqwest::Client::new()
+        .post(format!("http://{}/api/v3/auth/setup", running.address))
+        .header("content-type", "application/json")
+        .body(r#"{"username": "admin", "password": "correct horse battery"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(setup.status(), 201);
+    let cookie = setup.headers()["set-cookie"].to_str().unwrap();
+    let cookie = cookie.split(';').next().unwrap().to_owned();
+
+    // An API answer, a web UI file, the SPA page, a 401, a 404 and a compat
+    // path.
+    let everywhere = [
+        "/api/v3/auth/setup/status",
+        "/_app/app.js",
+        "/library",
+        "/api/v3/auth/sessions",
+        "/api/v3/no-such-route",
+        "/subsonic/rest/ping",
+    ];
+
+    for uri in everywhere {
+        assert_eq!(
+            hsts_header(&router, PROXY, true, uri).await,
+            None,
+            "off: {uri}"
+        );
+    }
+
+    save_hsts(&router, &cookie, 31_536_000, false).await;
+    for uri in everywhere {
+        assert_eq!(
+            hsts_header(&router, PROXY, true, uri).await.as_deref(),
+            Some("max-age=31536000"),
+            "{uri}"
+        );
+        assert_eq!(
+            hsts_header(&router, PROXY, false, uri).await,
+            None,
+            "plain HTTP: {uri}"
+        );
+        assert_eq!(
+            hsts_header(&router, STRANGER, true, uri).await,
+            None,
+            "forwarded scheme from an unlisted peer: {uri}"
+        );
+    }
+
+    save_hsts(&router, &cookie, 300, true).await;
+    assert_eq!(
+        hsts_header(&router, PROXY, true, "/library")
+            .await
+            .as_deref(),
+        Some("max-age=300; includeSubDomains; preload")
+    );
+
+    save_hsts(&router, &cookie, 0, true).await;
+    for uri in everywhere {
+        assert_eq!(
+            hsts_header(&router, PROXY, true, uri).await,
+            None,
+            "off again: {uri}"
+        );
+    }
+    running.shut_down().await;
 }
