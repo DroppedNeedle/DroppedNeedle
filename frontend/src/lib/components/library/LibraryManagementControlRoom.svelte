@@ -626,10 +626,11 @@
 			{#if retryingBundles.length > 0}<div class="alert alert-warning items-start">
 					<TriangleAlert class="mt-0.5 h-5 w-5" /><span
 						><strong>Some file writes are still being retried</strong><br />{retryingBundles.length}
-						{retryingBundles.length === 1 ? 'write' : 'writes'} started more than a day ago and still
-						cannot be finished or undone. DroppedNeedle keeps retrying and has deleted nothing. This usually
-						means a library folder is missing, read-only or full: check the folders below and the server
-						logs.</span
+						{retryingBundles.length === 1 ? 'write' : 'writes'} started more than a day ago
+						{retryingBundles.length === 1 ? 'has' : 'have'} not gone through and could not be undone either.
+						DroppedNeedle tries again every hour and at each start, and has deleted nothing. The usual
+						cause is a library folder that is missing, read-only or full: check the folders these files
+						are in, and the server log.</span
 					>
 					<ul class="flex w-full flex-col gap-2">
 						{#each retryingBundles as bundle (bundle.bundle_id)}<li
@@ -645,18 +646,22 @@
 					<TriangleAlert class="mt-0.5 h-5 w-5" /><span
 						><strong>Leftover temporary files found</strong><br />{leftoverFileCount} hidden
 						{leftoverFileCount === 1 ? 'file' : 'files'} in your library folders
-						{leftoverFileCount === 1 ? 'is a working copy' : 'are working copies'} from a file write that
-						was interrupted, with no record left of which write. One could be the only copy of a track
-						as it was before the write, so DroppedNeedle has not deleted or moved any of them. Compare
-						each with the track beside it. If the track plays, you can delete the hidden file. If the
-						track is missing or damaged, rename the hidden file to the track's name. This list is checked
-						again when the server starts.</span
+						{leftoverFileCount === 1 ? 'was' : 'were'} left by a file write that was interrupted, and
+						no record says which write. DroppedNeedle has not deleted or moved any of them and will not.
+						Each name is a normal file name with <code>.droppedneedle-management-</code> and an id
+						in front, and an ending that says what it is: <code>.bak</code> is a file as it was
+						before the write and is complete; <code>.tmp</code>, or <code>.staging</code> before the file
+						type, is a copy that was still being made and may be cut short. Look in the same folder for
+						the file with the normal name. If it is there and plays, the hidden file is spare: delete
+						it. If it is missing, copy the hidden file to the normal name and check the copy plays before
+						you delete the hidden one. If the normal file is there but broken, keep both until one of
+						them plays. This list is from the last server start and is checked again at the next one.</span
 					>
 					<ul class="flex w-full flex-col gap-1">
 						{#each leftoverFiles as file (`${file.root_id}/${file.rel_path}`)}<li
 								class="rounded-md bg-base-100/60 p-2 font-mono text-xs break-all"
 							>
-								{file.rel_path}
+								{file.root_path}/{file.rel_path}
 							</li>{/each}
 					</ul>
 					{#if leftoverFileCount > leftoverFiles.length}<span class="text-sm"
