@@ -1084,6 +1084,76 @@ fn drop_if_empty(tx: &Connection, album_id: &str) -> rusqlite::Result<()> {
     }
 }
 
+/// An album that received tracks in this run from an album that still
+/// holds tracks may be half of a retag the scan has not finished reading.
+/// It is not offered for identification yet: a job would judge half an
+/// album, and a match written on this row keeps the old row from taking
+/// it over. Read from the run's move rows, so a resumed run holds the
+/// same albums.
+fn held_back(tx: &Connection, run_id: &str, album_id: &str) -> rusqlite::Result<bool> {
+    tx.prepare_cached(
+        "SELECT EXISTS(SELECT 1 FROM local_tracks t \
+         CROSS JOIN library_scan_album_moves m ON m.run_id = ?1 AND m.root_id = t.root_id \
+           AND m.relative_path = t.relative_path AND m.local_track_id = t.id \
+         WHERE t.local_album_id = ?2 AND m.previous_album_id <> ?2 \
+         AND EXISTS (SELECT 1 FROM local_tracks left_behind \
+           WHERE left_behind.local_album_id = m.previous_album_id))",
+    )?
+    .query_row(params![run_id, album_id], |row| row.get(0))
+}
+
+/// The automatic-policy albums this run moved tracks to from one album,
+/// when that album now holds no track: nothing more can arrive from it,
+/// so they are due their offer.
+fn released_by(tx: &Connection, run_id: &str, album_id: &str) -> rusqlite::Result<Vec<String>> {
+    tx.prepare_cached(
+        "SELECT DISTINCT t.local_album_id FROM library_scan_album_moves m \
+         JOIN local_tracks t ON t.id = m.local_track_id \
+         JOIN library_scan_inventory i ON i.run_id = m.run_id AND i.root_id = m.root_id \
+           AND i.relative_path = m.relative_path \
+         WHERE m.run_id = ?1 AND m.previous_album_id = ?2 AND t.local_album_id <> ?2 \
+         AND i.effective_policy = 'automatic' \
+         AND NOT EXISTS (SELECT 1 FROM local_tracks WHERE local_album_id = ?2)",
+    )?
+    .query_map(params![run_id, album_id], |row| row.get(0))?
+    .collect()
+}
+
+/// Offer the albums a run was still holding back when it ended, however
+/// it ended: the retag was partial, or the run stopped half way through
+/// it. Runs in the transaction that marks the run ended, while its move
+/// rows are still there.
+pub(super) fn offer_held_back(conn: &Connection, run_id: &str, now: f64) -> rusqlite::Result<()> {
+    let albums: Vec<String> = conn
+        .prepare_cached(
+            "SELECT DISTINCT t.local_album_id FROM library_scan_album_moves m \
+             JOIN local_tracks t ON t.id = m.local_track_id \
+             JOIN library_scan_inventory i ON i.run_id = m.run_id AND i.root_id = m.root_id \
+               AND i.relative_path = m.relative_path \
+             WHERE m.run_id = ?1 AND t.local_album_id <> m.previous_album_id \
+             AND i.effective_policy = 'automatic' \
+             AND EXISTS (SELECT 1 FROM local_tracks left_behind \
+               WHERE left_behind.local_album_id = m.previous_album_id)",
+        )?
+        .query_map(params![run_id], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut enqueued = 0i64;
+    for album_id in &albums {
+        if offer_album(conn, album_id, (now * 1000.0) as i64)? {
+            enqueued += 1;
+        }
+    }
+    if enqueued > 0
+        && let Some(column) = counter_column(counter_names::IDENTIFICATION_ENQUEUED)
+    {
+        conn.execute(
+            &format!("UPDATE library_scan_runs SET {column} = {column} + ?1 WHERE id = ?2"),
+            params![enqueued, run_id],
+        )?;
+    }
+    Ok(())
+}
+
 /// Inventory and counter part of a window: specific marks for the rows
 /// the window wrote or failed, then every other pending row in the
 /// window's key range marks skipped. Counter deltas land with the marks.
@@ -1210,14 +1280,17 @@ fn write_window(
                     offer.clone_from(&album_id);
                 }
             }
-            None => drop_if_empty(tx, &album_id)?,
+            None => {
+                drop_if_empty(tx, &album_id)?;
+                offered.extend(released_by(tx, &window.run_id, &album_id)?);
+            }
         }
     }
     offered.sort();
     offered.dedup();
     let now_ms = (window.now * 1000.0) as i64;
     for album_id in &offered {
-        if offer_album(tx, album_id, now_ms)? {
+        if !held_back(tx, &window.run_id, album_id)? && offer_album(tx, album_id, now_ms)? {
             outcome.enqueued += 1;
         }
     }

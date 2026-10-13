@@ -14,9 +14,9 @@ use crate::common::{ScratchDir, migrated_db};
 use droppedneedle::library::repairs::hygiene;
 use droppedneedle::library::scan::{
     BlockingPool, EffectivePolicy, LibraryRoot, LibraryScanCoordinator, NullTagReader,
-    RootRegistry, RootSeamError, ScanKind, ScanRequest, ScanRun, ScanScope, ScanState, ScanTrigger,
-    ScannedTags, SqliteScanStore, StaticResolver, StreamRootSeam, TagReadError, TagReader,
-    WorkWakeups, counter_names, failure_codes,
+    RootRegistry, RootSeamError, ScanControl, ScanKind, ScanRequest, ScanRun, ScanScope, ScanState,
+    ScanTrigger, ScannedTags, SqliteScanStore, StaticResolver, StreamRootSeam, TagReadError,
+    TagReader, WorkWakeups, counter_names, failure_codes,
 };
 use droppedneedle::library::wiring::LibrarySetup;
 use sha2::{Digest, Sha256};
@@ -829,4 +829,131 @@ async fn cleanup_leaves_a_half_retagged_album_alone_mid_scan() {
         1,
         "the retagged album keeps its row and its match"
     );
+}
+
+/// The first file of the second window of a 300-file album.
+const SECOND_WINDOW: &str = "t256.flac";
+
+/// Counts the identification jobs waiting for an album. `album` is a SQL
+/// expression.
+fn queued_jobs_sql(album: &str) -> String {
+    format!(
+        "SELECT COUNT(*) FROM library_identify_jobs WHERE state = 'queued' \
+         AND local_album_id = {album}"
+    )
+}
+
+impl RegroupRig {
+    /// Identification jobs waiting for the album.
+    fn queued_jobs(&self, album: &str) -> i64 {
+        self.count(&queued_jobs_sql(&format!("'{album}'")))
+    }
+}
+
+/// Half a retagged album is not offered for identification: a job on it
+/// would judge half an album and could match it, parting it from the row
+/// that holds its match. Here a job, had one been queued, would have
+/// matched the new row between the two windows. None was, so the album
+/// keeps its row and its match and is offered once, whole.
+#[tokio::test]
+async fn half_retagged_album_is_not_identified_before_the_retag_lands() {
+    let (rig, album) = retag_across_two_windows("scan-regroup-held-offer", |album| {
+        let new_row = new_row(album);
+        format!(
+            "INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, release_mbid, decision_source, selected_at) \
+             SELECT {new_row}, 'musicbrainz', 'rg-half', 'rel-half', 'automatic', 0 \
+             WHERE ({}) > 0;",
+            queued_jobs_sql(&new_row)
+        )
+    })
+    .await;
+
+    assert_eq!(rig.album_of("a/t000.flac"), album);
+    assert_eq!(rig.album_of("a/t299.flac"), album);
+    assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1);
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM local_album_external_identities WHERE local_album_id = '{album}' \
+             AND release_mbid = 'rel-1' AND decision_source = 'manual'"
+        )),
+        1,
+        "the match a person chose is the album's match"
+    );
+    assert_eq!(rig.queued_jobs(&album), 1, "offered once, whole");
+}
+
+/// Jobs waiting for the new row at the moment `at` is read, counted into
+/// the returned cell.
+fn count_new_row_jobs_at(
+    rig: &RegroupRig,
+    album: &str,
+    at: &str,
+    then: impl FnOnce() + Send + 'static,
+) -> Arc<std::sync::Mutex<Option<i64>>> {
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let store = Arc::clone(rig.coordinator.store());
+    let sql = queued_jobs_sql(&new_row(album));
+    let cell = Arc::clone(&seen);
+    rig.meanwhile(at, move || {
+        *cell.lock().expect("cell") = Some(store.query_i64_for_tests(&sql).expect("count"));
+        then();
+    });
+    seen
+}
+
+/// A scan stopped half way through a retagged album leaves the album in
+/// two rows for good. The new one is held back while the scan runs and
+/// offered for identification when the scan ends.
+#[tokio::test]
+async fn stopped_scan_offers_the_half_retagged_album() {
+    let (mut rig, files, album) = big_album("scan-regroup-stopped").await;
+    let after = rig.after.clone();
+    rig.tag(&files, &after);
+    let coordinator = Arc::clone(&rig.coordinator);
+    let waiting = count_new_row_jobs_at(&rig, &album, SECOND_WINDOW, move || {
+        let run = coordinator
+            .store()
+            .list_current()
+            .pop()
+            .expect("the scan is running");
+        coordinator
+            .control(&run.id, ScanControl::Stop, false, run.row_revision)
+            .expect("stop is taken");
+    });
+    let run = rig.scan_to_its_end().await;
+    assert_eq!(run.state, ScanState::Cancelled);
+
+    let new_row = rig.album_of("a/t000.flac");
+    assert_ne!(new_row, album);
+    assert_eq!(rig.album_of("a/t299.flac"), album, "the retag is half done");
+    assert_eq!(
+        *waiting.lock().expect("cell"),
+        Some(0),
+        "not offered while the scan was on it"
+    );
+    assert_eq!(rig.queued_jobs(&new_row), 1, "offered when the scan ended");
+}
+
+/// When the rest of the old album goes somewhere else, the old album is
+/// empty but nothing follows: the tracks went two ways. The album held
+/// back since the first window is offered in the window that settled it.
+#[tokio::test]
+async fn album_split_two_ways_offers_the_held_half() {
+    let (mut rig, files, album) = big_album("scan-regroup-two-ways").await;
+    let after = rig.after.clone();
+    rig.tag(&files[..256], &after);
+    rig.tag(&files[256..], "scan-regroup-two-ways third");
+    let waiting = count_new_row_jobs_at(&rig, &album, LAST_FILE, || {});
+    rig.scan().await;
+
+    let new_row = rig.album_of("a/t000.flac");
+    assert_ne!(new_row, album);
+    assert_ne!(rig.album_of("a/t299.flac"), new_row);
+    assert_eq!(
+        *waiting.lock().expect("cell"),
+        Some(0),
+        "not offered while the old album still held tracks"
+    );
+    assert_eq!(rig.queued_jobs(&new_row), 1, "offered once it emptied");
 }

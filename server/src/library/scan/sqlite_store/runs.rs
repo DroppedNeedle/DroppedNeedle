@@ -435,13 +435,7 @@ impl SqliteScanStore {
             let tx = guard
                 .conn
                 .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            tx.execute(
-                "UPDATE library_scan_runs SET state = 'cancelled', terminal_at = ?1, \
-                 updated_at = ?1, requested_control = 'none', \
-                 row_revision = row_revision + 1, event_revision = event_revision + 1 \
-                 WHERE state = 'stopping' OR requested_control = 'stop'",
-                params![now],
-            )?;
+            cancel_stopping(&tx, now)?;
             tx.execute(
                 "UPDATE library_scan_runs SET state = 'paused', requested_control = 'none', \
                  updated_at = ?1, row_revision = row_revision + 1, \
@@ -476,13 +470,7 @@ impl SqliteScanStore {
             let tx = guard
                 .conn
                 .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            tx.execute(
-                "UPDATE library_scan_runs SET state = 'cancelled', terminal_at = ?1, \
-                 updated_at = ?1, requested_control = 'none', \
-                 row_revision = row_revision + 1, event_revision = event_revision + 1 \
-                 WHERE state = 'stopping' OR requested_control = 'stop'",
-                params![now],
-            )?;
+            cancel_stopping(&tx, now)?;
             let runs: Vec<ScanRun> = {
                 let mut stmt = tx.prepare(&format!(
                     "SELECT {RUN_COLUMNS} FROM library_scan_runs \
@@ -639,6 +627,30 @@ fn prune_compat_orphans(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// End every run that was stopping, or was asked to stop, as cancelled.
+fn cancel_stopping(tx: &Connection, now: f64) -> rusqlite::Result<()> {
+    const STOPPING: &str = "state = 'stopping' OR requested_control = 'stop'";
+    let stopping: Vec<String> = tx
+        .prepare(&format!(
+            "SELECT id FROM library_scan_runs WHERE {STOPPING}"
+        ))?
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    tx.execute(
+        &format!(
+            "UPDATE library_scan_runs SET state = 'cancelled', terminal_at = ?1, \
+             updated_at = ?1, requested_control = 'none', \
+             row_revision = row_revision + 1, event_revision = event_revision + 1 \
+             WHERE {STOPPING}"
+        ),
+        params![now],
+    )?;
+    for run_id in &stopping {
+        super::commit::offer_held_back(tx, run_id, now)?;
+    }
+    Ok(())
+}
+
 fn transition_inner(
     conn: &Connection,
     run_id: &str,
@@ -673,6 +685,7 @@ fn transition_inner(
             params![state_to_str(new_state), now, terminal_code, run_id],
         )
         .map_err(internal)?;
+        super::commit::offer_held_back(conn, run_id, now).map_err(internal)?;
     } else {
         conn.execute(
             "UPDATE library_scan_runs SET state = ?1, updated_at = ?2, \
@@ -786,6 +799,7 @@ fn request_control_inner(
             params![now, run_id],
         )
         .map_err(internal)?;
+        super::commit::offer_held_back(conn, run_id, now).map_err(internal)?;
     } else if matches!(
         run_state,
         ScanState::Queued
@@ -802,6 +816,7 @@ fn request_control_inner(
                 params![now, run_id],
             )
             .map_err(internal)?;
+            super::commit::offer_held_back(conn, run_id, now).map_err(internal)?;
         } else {
             conn.execute(
                 "UPDATE library_scan_runs SET state = 'stopping', requested_control = 'stop', \
