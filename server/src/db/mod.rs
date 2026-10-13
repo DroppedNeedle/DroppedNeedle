@@ -6,6 +6,11 @@
 //! no async API on the write path, so holding a write transaction across an
 //! await is unrepresentable.
 //!
+//! Writes take turns on the lane's one connection. Async code calls
+//! `write`, whose closure runs on the lane's own thread; synchronous code on
+//! a blocking thread calls `write_blocking` and runs its closure itself, so
+//! it may borrow. Neither needs a runtime to make progress.
+//!
 //! Layout: [`factory`] builds the runtime, [`checkpoint`] runs the GH-293
 //! checkpoint policy with TRUNCATE reclaim, [`writer`] serializes writes with
 //! foreground-burst-8 fairness, [`backup`] copies the live database out with
@@ -44,6 +49,7 @@ pub use fold::{fold_text, register_fold};
 pub use fs::{filesystem_is_local, reject_remote_filesystem, reject_symlink, same_filesystem};
 pub use writer::{
     BACKGROUND_CHUNK_ROWS, CancelFlag, FOREGROUND_BURST, FOREGROUND_SOFT_BUDGET,
-    LANE_QUEUE_CAPACITY, Lane, LaneIdle, OpError, WRITE_HARD_BUDGET, WriteLane,
-    apply_connection_pragmas, decide_lane, open_connection, open_journal_connection,
+    LANE_QUEUE_CAPACITY, Lane, LaneIdle, OpError, WAIT_BUCKET_BOUNDS_MS, WRITE_HARD_BUDGET,
+    WaitTimes, WriteLane, apply_connection_pragmas, decide_lane, open_connection,
+    open_journal_connection,
 };

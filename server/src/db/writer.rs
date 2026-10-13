@@ -1,34 +1,49 @@
-//! The dedicated writer lane: two queues, one transaction at a time.
+//! The writer lane: every write in the process takes a turn on one connection.
 //!
 //! SQLite serializes writers regardless, so this module makes the
-//! serialization explicit and fair. Request-path writes arrive on the
-//! foreground lane, job writes on the background lane; while both lanes are
-//! busy the scheduler grants eight foreground admissions, then one
-//! background admission, then repeats. That is the v2
-//! `PriorityWriteLock(foreground_burst=8)` rule, ported to an async
-//! scheduler; the decision itself is the pure [`decide_lane`] function so
-//! the fairness test pins it without threads.
+//! serialization explicit and fair. Request-path writes wait in the
+//! foreground queue, job writes in the background queue; while both are busy
+//! the lane grants eight foreground turns, then one background turn, then
+//! repeats. That is the v2 `PriorityWriteLock(foreground_burst=8)` rule; the
+//! decision itself is the pure [`decide_lane`] function so the fairness test
+//! pins it without threads.
 //!
-//! One admission runs one transaction on the single writer connection, which
-//! lives on its own thread. The admitted closure is synchronous
-//! (`FnOnce`, never `async`), so awaiting inside a write transaction is
-//! unrepresentable: there is no async API on the write path to await with.
-//! Foreground transactions carry a 250 ms soft budget (logged) and a 2 s
-//! hard abort through the SQLite progress handler; background work commits
-//! in chunks of at most 500 rows with a cancellation check between chunks.
+//! The lane owns the single write connection. A turn is a [`Turn`]: it holds
+//! the connection for one `IMMEDIATE` transaction and, when dropped for any
+//! reason, puts the connection back and hands the turn to the next waiter.
+//! A blocking caller ([`WriteLane::write_blocking`]) receives its turn over
+//! a channel and runs its closure on its own thread, so the closure may
+//! borrow. An async caller's closure ([`WriteLane::write`]) is queued and
+//! runs on the lane's own thread; the waiting future only receives the
+//! answer. A turn therefore never depends on a runtime polling anything, and
+//! the lane holds no runtime handle.
+//!
+//! The lane's mutex guards bookkeeping only and is never held while a
+//! closure runs. A closure that panics rolls back and its turn passes on.
+//! The lane's thread is not restarted: if it ever died, blocking writes
+//! would carry on and every async write would answer `LaneClosed`.
+//! Closures are synchronous (`FnOnce`, never `async`), so awaiting inside a
+//! write transaction is unrepresentable: there is no async API on the write
+//! path to await with. Every transaction carries a 2 s hard abort through
+//! the SQLite progress handler, foreground ones a 250 ms soft budget
+//! (logged); chunked background work commits at most 500 rows at a time with
+//! a cancellation check between chunks.
 
 use std::{
-    any::Any,
+    collections::VecDeque,
+    panic::{AssertUnwindSafe, catch_unwind},
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Condvar, Mutex, MutexGuard, PoisonError,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        mpsc,
     },
+    thread::JoinHandle,
     time::{Duration, Instant},
 };
 
 use rusqlite::{Connection, Transaction, TransactionBehavior};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 
 use super::{
     error::{DbError, rusqlite_is_busy},
@@ -38,7 +53,7 @@ use super::{
 /// Foreground admissions granted before one background admission while both
 /// lanes are busy. The v2 `foreground_burst=8` value, unchanged.
 pub const FOREGROUND_BURST: u32 = 8;
-/// Maximum queued admissions per lane. Past this, `write` fails fast with
+/// Maximum queued admissions per lane. Past this, a write fails fast with
 /// `Busy` (HTTP 503 with `Retry-After` at the handler layer) instead of
 /// growing memory without bound.
 pub const LANE_QUEUE_CAPACITY: usize = 128;
@@ -52,6 +67,9 @@ pub const WRITE_HARD_BUDGET: Duration = Duration::from_secs(2);
 const PROGRESS_OPS: std::os::raw::c_int = 10_000;
 /// Largest chunk a background write commits at once.
 pub const BACKGROUND_CHUNK_ROWS: usize = 500;
+/// Upper bounds, in milliseconds, of the buckets [`WaitTimes`] counts into.
+/// 250 ms is the wait the architecture's trip condition is stated against.
+pub const WAIT_BUCKET_BOUNDS_MS: [u64; 7] = [1, 5, 25, 100, 250, 1_000, 5_000];
 
 /// Which queue a write admission waits in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,8 +118,8 @@ pub fn decide_lane(
     }
 }
 
-/// Shared liveness counters the checkpoint gate reads without touching the
-/// scheduler.
+/// Shared liveness counters the checkpoint gate reads without taking the
+/// lane's mutex.
 #[derive(Debug, Default)]
 pub struct LaneIdle {
     queued: AtomicUsize,
@@ -115,19 +133,60 @@ impl LaneIdle {
     }
 }
 
-type BoxedValue = Box<dyn Any + Send>;
-type BoxedOp = Box<dyn FnOnce(&Transaction) -> Result<BoxedValue, OpError> + Send>;
-
-struct QueuedOp {
-    name: &'static str,
-    op: BoxedOp,
-    reply: oneshot::Sender<LaneOutcome>,
+/// How long admissions waited for their turn since the lane opened.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WaitTimes {
+    /// Turns granted.
+    pub admissions: u64,
+    /// The longest any admission waited.
+    pub longest: Duration,
+    /// Admissions per bucket of [`WAIT_BUCKET_BOUNDS_MS`]; the last entry
+    /// counts waits past the largest bound.
+    pub buckets: [u64; WAIT_BUCKET_BOUNDS_MS.len() + 1],
 }
 
-struct LaneOutcome {
-    value: Result<BoxedValue, OpError>,
+impl WaitTimes {
+    fn record(&mut self, waited: Duration) {
+        self.admissions += 1;
+        self.longest = self.longest.max(waited);
+        let bucket = WAIT_BUCKET_BOUNDS_MS
+            .iter()
+            .position(|bound| waited <= Duration::from_millis(*bound))
+            .unwrap_or(WAIT_BUCKET_BOUNDS_MS.len());
+        self.buckets[bucket] += 1;
+    }
+}
+
+/// What one transaction did, before its failure is mapped for the caller.
+struct Outcome<R> {
+    value: Result<R, OpError>,
     changes: u64,
     elapsed: Duration,
+}
+
+/// A queued async write: runs its transaction on the turn it is given and
+/// answers its caller.
+type AsyncWrite = Box<dyn FnOnce(Turn) + Send>;
+
+/// Who a turn goes to.
+enum Grantee {
+    /// A caller parked in `write_blocking`, which runs its own closure.
+    Blocking(mpsc::Sender<Turn>),
+    /// A boxed async write, which the lane's thread runs.
+    Async(AsyncWrite),
+}
+
+struct Waiter {
+    name: &'static str,
+    queued_at: Instant,
+    grantee: Grantee,
+}
+
+/// An async write and the turn it was granted, on its way to the lane's
+/// thread.
+struct Granted {
+    write: AsyncWrite,
+    turn: Turn,
 }
 
 /// Cooperative stop flag for chunked background writes and backups.
@@ -153,61 +212,252 @@ impl CancelFlag {
     }
 }
 
-/// The single writer. A cloneable handle over shared state: the scheduler
-/// task and the writer thread are owned jointly, and every write in the
-/// process funnels through them. Clones are cheap; every module shares one
-/// lane through `AppState`.
-#[derive(Clone, Debug)]
+/// The single writer. A cloneable handle over shared state; every write in
+/// the process takes its turn through it. Clones are cheap; every module
+/// shares one lane through `AppState`.
+#[derive(Clone)]
 pub struct WriteLane {
     shared: Arc<Shared>,
 }
 
-#[derive(Debug)]
+impl std::fmt::Debug for WriteLane {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WriteLane")
+            .field("db_path", &self.shared.db_path)
+            .finish_non_exhaustive()
+    }
+}
+
 struct Shared {
     db_path: PathBuf,
-    foreground: std::sync::Mutex<Option<mpsc::Sender<QueuedOp>>>,
-    background: std::sync::Mutex<Option<mpsc::Sender<QueuedOp>>>,
+    state: Mutex<State>,
+    /// Signalled when no turn is out and nobody waits.
+    drained: Condvar,
     idle: Arc<LaneIdle>,
-    scheduler: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
-    thread: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
+}
+
+/// The lane's bookkeeping. Locked briefly, never while a closure runs.
+struct State {
+    foreground: VecDeque<Waiter>,
+    background: VecDeque<Waiter>,
+    /// The write connection while no turn is out. Gone after shutdown.
+    connection: Option<WriterConnection>,
+    turn_out: bool,
+    grants: u32,
+    bg_was_pending: bool,
+    closed: bool,
+    /// The way to the thread that runs async writes.
+    runner: Option<mpsc::Sender<Granted>>,
+    runner_thread: Option<JoinHandle<()>>,
+    waits: WaitTimes,
+}
+
+impl State {
+    /// Take the next waiter in fairness order.
+    fn next_waiter(&mut self) -> Option<Waiter> {
+        let fg_pending = !self.foreground.is_empty();
+        let bg_pending = !self.background.is_empty();
+        let (choice, grants) = decide_lane(
+            fg_pending,
+            bg_pending,
+            self.grants,
+            bg_pending && !self.bg_was_pending,
+        );
+        self.bg_was_pending = bg_pending;
+        self.grants = grants;
+        match choice? {
+            Lane::Foreground => self.foreground.pop_front(),
+            Lane::Background => self.background.pop_front(),
+        }
+    }
+}
+
+impl Shared {
+    fn state(&self) -> MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Queue a waiter and, if the lane is free, grant it at once.
+    fn enqueue(
+        self: &Arc<Self>,
+        lane: Lane,
+        name: &'static str,
+        grantee: Grantee,
+    ) -> Result<(), DbError> {
+        // A refused closure is dropped by the caller, after the lock.
+        let mut state = self.state();
+        if state.closed {
+            drop(state);
+            return Err(DbError::LaneClosed);
+        }
+        let queue = match lane {
+            Lane::Foreground => &mut state.foreground,
+            Lane::Background => &mut state.background,
+        };
+        if queue.len() >= LANE_QUEUE_CAPACITY {
+            drop(state);
+            return Err(DbError::Busy {
+                operation: name.to_owned(),
+            });
+        }
+        queue.push_back(Waiter {
+            name,
+            queued_at: Instant::now(),
+            grantee,
+        });
+        self.idle.queued.fetch_add(1, Ordering::AcqRel);
+        drop(state);
+        self.grant_next();
+        Ok(())
+    }
+
+    /// Hand the turn to the next waiter, if the lane is free and anyone
+    /// waits. A waiter that cannot take its turn gives the connection back
+    /// here and the loop moves on, so passing a turn never recurses.
+    fn grant_next(self: &Arc<Self>) {
+        loop {
+            let (waiter, connection, runner, waited) = {
+                let mut state = self.state();
+                if state.turn_out {
+                    return;
+                }
+                let Some(connection) = state.connection.take() else {
+                    return;
+                };
+                let Some(waiter) = state.next_waiter() else {
+                    state.connection = Some(connection);
+                    self.idle.active.store(false, Ordering::Release);
+                    self.drained.notify_all();
+                    return;
+                };
+                state.turn_out = true;
+                self.idle.active.store(true, Ordering::Release);
+                self.idle.queued.fetch_sub(1, Ordering::AcqRel);
+                let waited = waiter.queued_at.elapsed();
+                state.waits.record(waited);
+                (waiter, connection, state.runner.clone(), waited)
+            };
+            tracing::debug!(
+                operation = waiter.name,
+                waited_ms = waited.as_millis() as u64,
+                "writer turn granted"
+            );
+            let turn = Turn {
+                shared: Arc::clone(self),
+                connection: Some(connection),
+            };
+            let refused = match waiter.grantee {
+                Grantee::Blocking(parked) => parked.send(turn).err().map(|unsent| unsent.0),
+                Grantee::Async(write) => match runner {
+                    Some(runner) => runner
+                        .send(Granted { write, turn })
+                        .err()
+                        .map(|unsent| unsent.0.turn),
+                    None => Some(turn),
+                },
+            };
+            let Some(mut turn) = refused else {
+                return;
+            };
+            tracing::error!(
+                operation = waiter.name,
+                "writer turn could not be delivered; passing it on"
+            );
+            if let Some(connection) = turn.connection.take() {
+                self.take_back(connection);
+            }
+        }
+    }
+
+    /// Put the connection back at the end of a turn.
+    fn take_back(&self, connection: WriterConnection) {
+        let mut state = self.state();
+        state.connection = Some(connection);
+        state.turn_out = false;
+    }
+
+    /// Refuse new writes, wait for queued ones to finish, close the
+    /// connection and stop the lane's thread. False if that thread did not
+    /// stop cleanly.
+    fn close(&self) -> bool {
+        let (connection, runner, runner_thread) = {
+            let mut state = self.state();
+            state.closed = true;
+            while state.turn_out || !state.foreground.is_empty() || !state.background.is_empty() {
+                state = self
+                    .drained
+                    .wait(state)
+                    .unwrap_or_else(PoisonError::into_inner);
+            }
+            (
+                state.connection.take(),
+                state.runner.take(),
+                state.runner_thread.take(),
+            )
+        };
+        drop(connection);
+        drop(runner);
+        runner_thread.is_none_or(|thread| thread.join().is_ok())
+    }
+}
+
+/// One turn on the write connection. Dropping it, for any reason, puts the
+/// connection back and passes the turn on, so a turn cannot be lost.
+struct Turn {
+    shared: Arc<Shared>,
+    connection: Option<WriterConnection>,
+}
+
+impl Turn {
+    fn transact<R>(&mut self, op: impl FnOnce(&Transaction) -> Result<R, OpError>) -> Outcome<R> {
+        match self.connection.as_mut() {
+            Some(connection) => connection.transact(op),
+            None => Outcome {
+                value: Err(OpError::Abort("the turn holds no connection".to_owned())),
+                changes: 0,
+                elapsed: Duration::ZERO,
+            },
+        }
+    }
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        if let Some(connection) = self.connection.take() {
+            self.shared.take_back(connection);
+            self.shared.grant_next();
+        }
+    }
 }
 
 impl WriteLane {
-    /// Open the writer on an existing database file. Spawns the scheduler on
-    /// the current runtime and the writer thread behind it; returns once the
-    /// writer connection is open with its pragmas set. Call from async code.
+    /// Open the writer on an existing database file: the write connection
+    /// with its pragmas set, and the thread that runs async writes. Needs no
+    /// runtime.
     pub fn open(db_path: &Path) -> Result<Self, DbError> {
-        let (foreground_tx, foreground_rx) = mpsc::channel(LANE_QUEUE_CAPACITY);
-        let (background_tx, background_rx) = mpsc::channel(LANE_QUEUE_CAPACITY);
-        let (exec_tx, exec_rx) = std::sync::mpsc::channel::<QueuedOp>();
-        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), DbError>>();
-        let idle = Arc::new(LaneIdle::default());
-        let worker_idle = Arc::clone(&idle);
-
-        let path = db_path.to_owned();
-        let thread = std::thread::Builder::new()
+        let connection = WriterConnection::open(db_path)?;
+        let (runner, granted) = mpsc::channel();
+        let runner_thread = std::thread::Builder::new()
             .name("droppedneedle-writer".to_owned())
-            .spawn(move || writer_loop(&path, exec_rx, ready_tx))
+            .spawn(move || run_async_writes(granted))
             .map_err(DbError::Io)?;
-
-        let scheduler = tokio::spawn(scheduler_loop(
-            foreground_rx,
-            background_rx,
-            exec_tx,
-            worker_idle,
-        ));
-        ready_rx
-            .recv_timeout(Duration::from_secs(30))
-            .map_err(|_| DbError::LaneClosed)??;
-
         Ok(Self {
             shared: Arc::new(Shared {
                 db_path: db_path.to_owned(),
-                foreground: std::sync::Mutex::new(Some(foreground_tx)),
-                background: std::sync::Mutex::new(Some(background_tx)),
-                idle,
-                scheduler: std::sync::Mutex::new(Some(scheduler)),
-                thread: std::sync::Mutex::new(Some(thread)),
+                state: Mutex::new(State {
+                    foreground: VecDeque::new(),
+                    background: VecDeque::new(),
+                    connection: Some(connection),
+                    turn_out: false,
+                    grants: 0,
+                    bg_was_pending: false,
+                    closed: false,
+                    runner: Some(runner),
+                    runner_thread: Some(runner_thread),
+                    waits: WaitTimes::default(),
+                }),
+                drained: Condvar::new(),
+                idle: Arc::new(LaneIdle::default()),
             }),
         })
     }
@@ -222,82 +472,64 @@ impl WriteLane {
         Arc::clone(&self.shared.idle)
     }
 
+    /// How long admissions have waited for their turn so far.
+    pub fn wait_times(&self) -> WaitTimes {
+        self.shared.state().waits
+    }
+
     /// Run one synchronous closure inside one `IMMEDIATE` transaction.
     ///
     /// The closure receives the transaction and returns a value; commit
-    /// follows a returned `Ok`, rollback follows `Err` or an abort. The
-    /// closure is plain `FnOnce`: holding the lock across an await is
-    /// impossible because there is nothing to await with. A full lane fails
-    /// fast with `Busy` rather than queueing without bound.
+    /// follows a returned `Ok`, rollback follows `Err`, an abort or a panic.
+    /// The closure is plain `FnOnce`: holding the lock across an await is
+    /// impossible because there is nothing to await with. It is queued on
+    /// the first poll and runs on the lane's thread when its turn comes,
+    /// whether or not this future is still polled. A full lane fails fast
+    /// with `Busy` rather than queueing without bound.
     pub async fn write<F, R>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, DbError>
     where
         F: FnOnce(&Transaction) -> Result<R, OpError> + Send + 'static,
         R: Send + 'static,
     {
-        let (reply_tx, reply_rx) = oneshot::channel();
-        let boxed: BoxedOp = Box::new(move |tx| op(tx).map(|value| Box::new(value) as BoxedValue));
-        let queued = QueuedOp {
-            name,
-            op: boxed,
-            reply: reply_tx,
-        };
-        self.shared.idle.queued.fetch_add(1, Ordering::AcqRel);
-        let sender = match lane {
-            Lane::Foreground => self
-                .shared
-                .foreground
-                .lock()
-                .ok()
-                .and_then(|guard| guard.clone()),
-            Lane::Background => self
-                .shared
-                .background
-                .lock()
-                .ok()
-                .and_then(|guard| guard.clone()),
-        };
-        match sender {
-            Some(sender) => match sender.try_send(queued) {
-                Ok(()) => {}
-                Err(mpsc::error::TrySendError::Full(_)) => {
-                    self.shared.idle.queued.fetch_sub(1, Ordering::AcqRel);
-                    return Err(DbError::Busy {
-                        operation: name.to_owned(),
-                    });
-                }
-                Err(mpsc::error::TrySendError::Closed(_)) => {
-                    self.shared.idle.queued.fetch_sub(1, Ordering::AcqRel);
-                    return Err(DbError::LaneClosed);
-                }
-            },
-            None => {
-                self.shared.idle.queued.fetch_sub(1, Ordering::AcqRel);
-                return Err(DbError::LaneClosed);
+        let (reply, answer) = oneshot::channel();
+        let write: AsyncWrite = Box::new(move |mut turn| {
+            let outcome = catch_unwind(AssertUnwindSafe(|| turn.transact(op)));
+            // The turn goes back before the caller hears, so a caller that
+            // was just answered finds the lane idle.
+            drop(turn);
+            if outcome.is_err() {
+                tracing::error!(operation = name, "write closure panicked; rolled back");
             }
-        }
-        let outcome = reply_rx.await.map_err(|_| DbError::LaneClosed)?;
-        if lane == Lane::Foreground && outcome.elapsed > FOREGROUND_SOFT_BUDGET {
-            tracing::warn!(
-                operation = name,
-                elapsed_ms = outcome.elapsed.as_millis() as u64,
-                changes = outcome.changes,
-                "foreground write exceeded its soft budget"
-            );
-        }
-        match outcome.value {
-            Ok(value) => match value.downcast::<R>() {
-                Ok(typed) => Ok(*typed),
-                Err(_) => Err(DbError::WriteFailed {
-                    operation: name.to_owned(),
-                    cause: "result type mismatch".to_owned(),
-                }),
-            },
-            Err(OpError::Abort(cause)) => Err(DbError::WriteFailed {
+            let _ = reply.send(outcome.ok());
+        });
+        self.shared.enqueue(lane, name, Grantee::Async(write))?;
+        match answer.await {
+            Ok(Some(outcome)) => finish(lane, name, outcome),
+            Ok(None) => Err(DbError::WriteFailed {
                 operation: name.to_owned(),
-                cause,
+                cause: "the write closure panicked".to_owned(),
             }),
-            Err(OpError::Sql(error)) => Err(map_write_error(name, outcome.changes, error)),
+            Err(_) => Err(DbError::LaneClosed),
         }
+    }
+
+    /// [`WriteLane::write`] for synchronous code: wait for the turn on the
+    /// calling thread and run the closure there, so it may borrow from the
+    /// caller. A panic in the closure rolls back, passes the turn on and
+    /// continues up the caller's thread.
+    ///
+    /// This parks the calling thread until its turn. Call it from a blocking
+    /// thread, not from async code, and never from inside a write closure.
+    pub fn write_blocking<F, R>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, DbError>
+    where
+        F: FnOnce(&Transaction) -> Result<R, OpError>,
+    {
+        let (parked, granted) = mpsc::channel();
+        self.shared.enqueue(lane, name, Grantee::Blocking(parked))?;
+        let mut turn = granted.recv().map_err(|_| DbError::LaneClosed)?;
+        let outcome = turn.transact(op);
+        drop(turn);
+        finish(lane, name, outcome)
     }
 
     /// Commit `items` in chunks of at most 500 rows with a cancellation
@@ -351,144 +583,45 @@ impl WriteLane {
         Ok(committed)
     }
 
-    /// Drain and stop: close both lanes, let queued work finish, then
-    /// join the scheduler and the writer thread. Idempotent: the first call
-    /// wins, later calls find nothing to join.
+    /// Drain and stop: refuse new writes, let queued ones finish, then
+    /// close the connection and join the lane's thread. Idempotent: the
+    /// first call wins, later calls find nothing to close.
     pub async fn shutdown(&self) {
-        if let Ok(mut guard) = self.shared.foreground.lock() {
-            drop(guard.take());
-        }
-        if let Ok(mut guard) = self.shared.background.lock() {
-            drop(guard.take());
-        }
-        let scheduler = self
-            .shared
-            .scheduler
-            .lock()
-            .ok()
-            .and_then(|mut guard| guard.take());
-        if let Some(scheduler) = scheduler {
-            let _ = scheduler.await;
-        }
-        let thread = self
-            .shared
-            .thread
-            .lock()
-            .ok()
-            .and_then(|mut guard| guard.take());
-        if let Some(thread) = thread {
-            let joined = tokio::task::spawn_blocking(move || thread.join()).await;
-            if !matches!(joined, Ok(Ok(()))) {
-                tracing::error!("writer thread did not stop cleanly");
-            }
+        let shared = Arc::clone(&self.shared);
+        let closed = tokio::task::spawn_blocking(move || shared.close()).await;
+        if !matches!(closed, Ok(true)) {
+            tracing::error!("writer thread did not stop cleanly");
         }
     }
 }
 
-/// Pick admissions in fairness order and run each against the writer thread.
-async fn scheduler_loop(
-    mut foreground_rx: mpsc::Receiver<QueuedOp>,
-    mut background_rx: mpsc::Receiver<QueuedOp>,
-    exec_tx: std::sync::mpsc::Sender<QueuedOp>,
-    idle: Arc<LaneIdle>,
-) {
-    let mut grants: u32 = 0;
-    let mut bg_was_pending = false;
-    loop {
-        let fg_pending = !foreground_rx.is_empty();
-        let bg_pending = !background_rx.is_empty();
-        let (choice, next_grants) = decide_lane(
-            fg_pending,
-            bg_pending,
-            grants,
-            bg_pending && !bg_was_pending,
+/// The lane's thread: run each granted async write. The write drops its
+/// turn itself, which passes the lane on.
+fn run_async_writes(granted: mpsc::Receiver<Granted>) {
+    for Granted { write, turn } in granted {
+        write(turn);
+    }
+}
+
+/// Map one transaction's outcome for its caller and log a slow foreground
+/// write.
+fn finish<R>(lane: Lane, name: &'static str, outcome: Outcome<R>) -> Result<R, DbError> {
+    if lane == Lane::Foreground && outcome.elapsed > FOREGROUND_SOFT_BUDGET {
+        tracing::warn!(
+            operation = name,
+            elapsed_ms = outcome.elapsed.as_millis() as u64,
+            changes = outcome.changes,
+            "foreground write exceeded its soft budget"
         );
-        bg_was_pending = bg_pending;
-        match choice {
-            Some(Lane::Foreground) => {
-                grants = next_grants;
-                match foreground_rx.recv().await {
-                    Some(op) => dispatch(&exec_tx, &idle, op).await,
-                    None => {
-                        if background_rx.is_closed() {
-                            break;
-                        }
-                    }
-                }
-            }
-            Some(Lane::Background) => {
-                grants = next_grants;
-                match background_rx.recv().await {
-                    Some(op) => dispatch(&exec_tx, &idle, op).await,
-                    None => {
-                        if foreground_rx.is_closed() {
-                            break;
-                        }
-                    }
-                }
-            }
-            None => {
-                if foreground_rx.is_closed() && background_rx.is_closed() {
-                    break;
-                }
-                tokio::select! {
-                    biased;
-                    arrived = foreground_rx.recv() => match arrived {
-                        Some(op) => {
-                            grants = grants.saturating_add(1);
-                            dispatch(&exec_tx, &idle, op).await;
-                        }
-                        None => {
-                            if background_rx.is_closed() {
-                                break;
-                            }
-                        }
-                    },
-                    arrived = background_rx.recv() => match arrived {
-                        Some(op) => {
-                            grants = 0;
-                            dispatch(&exec_tx, &idle, op).await;
-                        }
-                        None => {
-                            if foreground_rx.is_closed() {
-                                break;
-                            }
-                        }
-                    },
-                }
-            }
-        }
     }
-}
-
-/// Run one admission on the writer thread and forward its outcome, tracking
-/// liveness for the checkpoint gate. If the thread is gone the caller learns
-/// `LaneClosed` instead of hanging.
-async fn dispatch(
-    exec_tx: &std::sync::mpsc::Sender<QueuedOp>,
-    idle: &Arc<LaneIdle>,
-    mut op: QueuedOp,
-) {
-    idle.queued.fetch_sub(1, Ordering::AcqRel);
-    idle.active.store(true, Ordering::Release);
-    tracing::debug!(operation = op.name, "writer admission dispatched");
-    let caller = std::mem::replace(&mut op.reply, oneshot::channel().0);
-    let (watch_tx, watch_rx) = oneshot::channel();
-    op.reply = watch_tx;
-    if exec_tx.send(op).is_err() {
-        drop(caller);
-        idle.active.store(false, Ordering::Release);
-        return;
+    match outcome.value {
+        Ok(value) => Ok(value),
+        Err(OpError::Abort(cause)) => Err(DbError::WriteFailed {
+            operation: name.to_owned(),
+            cause,
+        }),
+        Err(OpError::Sql(error)) => Err(map_write_error(name, outcome.changes, error)),
     }
-    match watch_rx.await {
-        Ok(outcome) => {
-            let _ = caller.send(outcome);
-        }
-        Err(_) => {
-            drop(caller);
-        }
-    }
-    idle.active.store(false, Ordering::Release);
 }
 
 /// Open a dedicated rusqlite connection with the same pragma set as the
@@ -534,68 +667,46 @@ pub fn apply_connection_pragmas(connection: &Connection) -> Result<(), DbError> 
     Ok(())
 }
 
-/// Writer thread: open the single write connection, arm the abort clock, and
-/// run one `IMMEDIATE` transaction per admission until the scheduler leaves.
-fn writer_loop(
-    path: &Path,
-    exec_rx: std::sync::mpsc::Receiver<QueuedOp>,
-    ready_tx: std::sync::mpsc::Sender<Result<(), DbError>>,
-) {
-    let clock = Arc::new(AbortClock::new());
-    let opened = (|| -> Result<Connection, DbError> {
+/// The write connection and the abort clock its progress handler reads.
+struct WriterConnection {
+    connection: Connection,
+    clock: Arc<AbortClock>,
+}
+
+impl WriterConnection {
+    fn open(path: &Path) -> Result<Self, DbError> {
         let connection = open_connection(path)?;
         register_fold(&connection)?;
-        Ok(connection)
-    })();
-    let connection = match opened {
-        Ok(connection) => connection,
-        Err(error) => {
-            let _ = ready_tx.send(Err(error));
-            return;
+        let clock = Arc::new(AbortClock::new());
+        let handler_clock = Arc::clone(&clock);
+        connection.progress_handler(PROGRESS_OPS, Some(move || handler_clock.expired()));
+        Ok(Self { connection, clock })
+    }
+
+    /// One turn, one transaction. The abort clock is armed for exactly the
+    /// transaction; commit follows `Ok`, rollback follows anything else,
+    /// a panic included.
+    fn transact<R>(&mut self, op: impl FnOnce(&Transaction) -> Result<R, OpError>) -> Outcome<R> {
+        let started = Instant::now();
+        let before = self.connection.total_changes();
+        let _armed = self.clock.arm(WRITE_HARD_BUDGET);
+        let value = run_transaction(&mut self.connection, op);
+        Outcome {
+            value,
+            changes: self.connection.total_changes().saturating_sub(before),
+            elapsed: started.elapsed(),
         }
-    };
-    let handler_clock = Arc::clone(&clock);
-    connection.progress_handler(PROGRESS_OPS, Some(move || handler_clock.expired()));
-    let _ = ready_tx.send(Ok(()));
-    let mut connection = connection;
-    for req in exec_rx {
-        run_one(&mut connection, &clock, req);
     }
 }
 
-/// One admission, one transaction. The abort clock is armed for exactly the
-/// transaction body; commit follows `Ok`, rollback follows anything else.
-fn run_one(connection: &mut Connection, clock: &AbortClock, req: QueuedOp) {
-    let started = Instant::now();
-    clock.arm(WRITE_HARD_BUDGET);
-    let transaction = match connection.transaction_with_behavior(TransactionBehavior::Immediate) {
-        Ok(transaction) => transaction,
-        Err(error) => {
-            clock.disarm();
-            let _ = req.reply.send(LaneOutcome {
-                value: Err(OpError::Sql(error)),
-                changes: 0,
-                elapsed: started.elapsed(),
-            });
-            return;
-        }
-    };
-    let (value, changes) = match (req.op)(&transaction) {
-        Ok(value) => match transaction.commit() {
-            Ok(()) => (Ok(value), connection.total_changes()),
-            Err(error) => (Err(OpError::Sql(error)), connection.total_changes()),
-        },
-        Err(error) => {
-            drop(transaction);
-            (Err(error), connection.total_changes())
-        }
-    };
-    clock.disarm();
-    let _ = req.reply.send(LaneOutcome {
-        value,
-        changes,
-        elapsed: started.elapsed(),
-    });
+fn run_transaction<R>(
+    connection: &mut Connection,
+    op: impl FnOnce(&Transaction) -> Result<R, OpError>,
+) -> Result<R, OpError> {
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let value = op(&transaction)?;
+    transaction.commit()?;
+    Ok(value)
 }
 
 /// Deadline the SQLite progress handler reads, on the monotonic clock so a
@@ -618,18 +729,25 @@ impl AbortClock {
         u64::try_from(self.epoch.elapsed().as_micros()).unwrap_or(u64::MAX)
     }
 
-    fn arm(&self, budget: Duration) {
+    /// Start the budget. The returned guard disarms the clock when dropped,
+    /// on every way out of the transaction.
+    fn arm(&self, budget: Duration) -> Armed<'_> {
         let budget = u64::try_from(budget.as_micros()).unwrap_or(u64::MAX);
         self.deadline_micros
             .store(self.now_micros().saturating_add(budget), Ordering::Release);
-    }
-
-    fn disarm(&self) {
-        self.deadline_micros.store(u64::MAX, Ordering::Release);
+        Armed(self)
     }
 
     fn expired(&self) -> bool {
         self.now_micros() > self.deadline_micros.load(Ordering::Acquire)
+    }
+}
+
+struct Armed<'a>(&'a AbortClock);
+
+impl Drop for Armed<'_> {
+    fn drop(&mut self) {
+        self.0.deadline_micros.store(u64::MAX, Ordering::Release);
     }
 }
 

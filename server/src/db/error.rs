@@ -41,7 +41,7 @@ pub enum DbError {
     TxTimeout {
         /// Operation name for the log line. Never SQL text or a path.
         operation: String,
-        /// Rows changed before the abort fired.
+        /// Rows this transaction changed before the abort fired.
         changes: u64,
     },
     /// Cooperative cancellation stopped a chunked background write.
@@ -76,7 +76,7 @@ pub enum DbError {
         /// The staging path that was refused.
         path: PathBuf,
     },
-    /// The writer lane shut down while an admission was queued.
+    /// The writer lane is shut down, or went away before it answered.
     #[error("write lane is closed")]
     LaneClosed,
     /// A write closure failed inside its transaction. The transaction rolled
