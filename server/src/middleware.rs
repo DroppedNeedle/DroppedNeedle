@@ -29,7 +29,10 @@ use crate::{
     auth::session::middleware::{TrustedProxies, arrived_over_https},
     error::ApiError,
     ids::{REQUEST_ID_HEADER, RequestId},
-    runtime_config::{ConfigStore, sections::SecuritySettings},
+    runtime_config::{
+        ConfigStore,
+        sections::{HSTS_MAX_AGE_LIMIT, SecuritySettings},
+    },
     state::AppState,
 };
 
@@ -143,12 +146,16 @@ pub async fn strict_transport_security(
 }
 
 /// The header value for these settings, the v2 format. `None` when HSTS is
-/// off: a max-age of zero or less.
+/// off: a max-age of zero or less. Saves refuse a max-age outside
+/// `0..=HSTS_MAX_AGE_LIMIT`, but a config file written before that check,
+/// or by hand, can still hold one: a negative reads as off and anything
+/// above the limit is sent as the limit.
 fn hsts_value(settings: &SecuritySettings) -> Option<axum::http::HeaderValue> {
     if settings.hsts_max_age <= 0 {
         return None;
     }
-    let mut value = format!("max-age={}", settings.hsts_max_age);
+    let max_age = settings.hsts_max_age.min(HSTS_MAX_AGE_LIMIT);
+    let mut value = format!("max-age={max_age}");
     if settings.hsts_include_subdomains {
         value.push_str("; includeSubDomains");
     }
@@ -190,7 +197,21 @@ fn set_request_id_header(response: &mut Response, request_id: &str) {
 
 #[cfg(test)]
 mod tests {
+    use super::{HSTS_MAX_AGE_LIMIT, SecuritySettings, hsts_value};
     use super::{is_compat_path, is_safe_request_id};
+
+    #[test]
+    fn stored_max_age_out_of_range_is_off_or_capped() {
+        let stored = |hsts_max_age| SecuritySettings {
+            hsts_max_age,
+            ..SecuritySettings::default()
+        };
+        assert_eq!(hsts_value(&stored(-1)), None);
+        assert_eq!(
+            hsts_value(&stored(i64::MAX)).unwrap(),
+            format!("max-age={HSTS_MAX_AGE_LIMIT}").as_str()
+        );
+    }
 
     #[test]
     fn request_ids_are_short_and_plain() {

@@ -333,21 +333,26 @@
 				<div class="alert alert-warning alert-soft text-sm">
 					<CircleAlert class="h-4 w-4 shrink-0" />
 					<span>
-						<strong>Only enable if you are serving DroppedNeedle over HTTPS.</strong> Enabling HSTS on
-						a plain HTTP install will lock users out until the HSTS header expires in their browser.
+						<strong>Only enable if nothing on this hostname is reached over plain HTTP.</strong> A browser
+						that has seen the header refuses plain HTTP to this hostname, on every port, for as long as
+						Max-Age says. That covers any other service on the same hostname too. The header is only sent
+						on requests that arrive over HTTPS.
 					</span>
 				</div>
 
 				<div class="form-control w-full">
 					<label class="label" for="hsts-max-age">
 						<span class="label-text font-medium">Max-Age (seconds)</span>
-						<span class="label-text-alt text-base-content/40">0 = disabled</span>
+						<span class="label-text-alt text-base-content/40"
+							>0 = disabled, 63072000 (two years) at most</span
+						>
 					</label>
 					<div class="flex gap-2 items-center flex-wrap">
 						<input
 							id="hsts-max-age"
 							type="number"
 							min="0"
+							max="63072000"
 							class="input w-40"
 							bind:value={form.data.hsts_max_age}
 						/>

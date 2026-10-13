@@ -307,13 +307,20 @@ async fn hsts_header(
         .map(|value| value.to_str().unwrap().to_owned())
 }
 
-/// Save the HSTS fields as the signed-in admin, through the proxy.
-async fn save_hsts(router: &axum::Router, cookie: &str, max_age: i64, flags: bool) {
+/// Save the HSTS fields as the signed-in admin, through the proxy. Returns
+/// the status and the `Strict-Transport-Security` value of that response.
+async fn save_hsts(
+    router: &axum::Router,
+    cookie: &str,
+    max_age: i64,
+    include_subdomains: bool,
+    preload: bool,
+) -> (u16, Option<String>) {
     let body = serde_json::json!({
         "hibp_check": false,
         "hsts_max_age": max_age,
-        "hsts_include_subdomains": flags,
-        "hsts_preload": flags,
+        "hsts_include_subdomains": include_subdomains,
+        "hsts_preload": preload,
     });
     let request = axum::http::Request::builder()
         .method("PUT")
@@ -325,7 +332,12 @@ async fn save_hsts(router: &axum::Router, cookie: &str, max_age: i64, flags: boo
         .header("content-type", "application/json")
         .body(Body::from(body.to_string()))
         .unwrap();
-    assert_eq!(answer_from(router, PROXY, request).await.status(), 200);
+    let response = answer_from(router, PROXY, request).await;
+    let header = response
+        .headers()
+        .get("strict-transport-security")
+        .map(|value| value.to_str().unwrap().to_owned());
+    (response.status().as_u16(), header)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -368,7 +380,8 @@ async fn hsts_is_sent_only_over_https_and_only_while_the_setting_is_on() {
         );
     }
 
-    save_hsts(&router, &cookie, 31_536_000, false).await;
+    let (status, _) = save_hsts(&router, &cookie, 31_536_000, false, false).await;
+    assert_eq!(status, 200);
     for uri in everywhere {
         assert_eq!(
             hsts_header(&router, PROXY, true, uri).await.as_deref(),
@@ -387,7 +400,25 @@ async fn hsts_is_sent_only_over_https_and_only_while_the_setting_is_on() {
         );
     }
 
-    save_hsts(&router, &cookie, 300, true).await;
+    // Refused at save, so the header keeps its last good value: a negative
+    // max-age, one above two years, and preload without subdomains.
+    for (max_age, include_subdomains, preload) in [
+        (-1, false, false),
+        (63_072_001, false, false),
+        (300, false, true),
+    ] {
+        let (status, _) = save_hsts(&router, &cookie, max_age, include_subdomains, preload).await;
+        assert_eq!(status, 400, "{max_age} {include_subdomains} {preload}");
+    }
+    assert_eq!(
+        hsts_header(&router, PROXY, true, "/library")
+            .await
+            .as_deref(),
+        Some("max-age=31536000")
+    );
+
+    let (status, _) = save_hsts(&router, &cookie, 300, true, true).await;
+    assert_eq!(status, 200);
     assert_eq!(
         hsts_header(&router, PROXY, true, "/library")
             .await
@@ -395,7 +426,11 @@ async fn hsts_is_sent_only_over_https_and_only_while_the_setting_is_on() {
         Some("max-age=300; includeSubDomains; preload")
     );
 
-    save_hsts(&router, &cookie, 0, true).await;
+    // The save that turns it off is itself answered without the header.
+    assert_eq!(
+        save_hsts(&router, &cookie, 0, false, false).await,
+        (200, None)
+    );
     for uri in everywhere {
         assert_eq!(
             hsts_header(&router, PROXY, true, uri).await,

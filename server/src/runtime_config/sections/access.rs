@@ -64,8 +64,30 @@ impl SecuritySettings {
     }
 }
 
+/// Longest HSTS max-age a save accepts: two years, in seconds. A typo
+/// with extra digits would otherwise pin browsers to HTTPS for good.
+pub const HSTS_MAX_AGE_LIMIT: i64 = 63_072_000;
+
 impl Section for SecuritySettings {
     const KEY: &'static str = "security_settings";
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        check_range(
+            Self::KEY,
+            "hsts_max_age",
+            self.hsts_max_age,
+            0,
+            HSTS_MAX_AGE_LIMIT,
+        )?;
+        if self.hsts_preload && !self.hsts_include_subdomains {
+            return Err(ConfigError::Validation {
+                section: Self::KEY,
+                field: "hsts_preload",
+                reason: "needs hsts_include_subdomains".to_owned(),
+            });
+        }
+        Ok(())
+    }
 }
 
 // --- connect_apps ---------------------------------------------------------
