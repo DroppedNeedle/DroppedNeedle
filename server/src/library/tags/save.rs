@@ -26,11 +26,15 @@
 //! `TOTALTRACKS`/`TOTALDISCS` spelling, the vendor string, MP4 freeforms,
 //! the order of MP4 items and of their values, each MP4 item's data
 //! type, pictures, `CUSTOM_KEEP` everywhere,
-//! and byte-identical audio. Refused: mixed v2.3 tags, present empty
+//! and byte-identical audio. Refused: present empty
 //! Vorbis values, values a field cannot hold (see [`Refusal`]), a
 //! performer or arranger in MP4 (which has no home for either), a NUL
 //! in a credit or comment, unparseable tag bytes, and any post-save
 //! delta outside the edit.
+//!
+//! An MP3 keeps its ID3 version, except an ID3v2.3 tag that also holds
+//! ID3v2.4 frames: lofty's v2.3 writer would drop those, so such a tag is
+//! read and saved whole as ID3v2.4 (see [`upgrade_to_v24`]).
 //!
 //! `WAV` and `AAC` are read-only (the ID3-chunk fork and the never-persist
 //! APE tag, per the measured format matrix), and WMA is unrecognized like everywhere.
@@ -146,8 +150,6 @@ pub enum Refusal {
     UnencodableItem { field: TagField, reason: String },
     #[error("empty Vorbis value present under '{key}'; lofty drops empties on save")]
     EmptyVorbisValue { key: String },
-    #[error("mixed ID3v2.3 tag: {detail}")]
-    MixedId3v23 { detail: String },
     #[error("post-save verify found an out-of-edit delta: {detail}")]
     VerifyMismatch { detail: String },
     #[error("no byte inventory possible: {detail}")]
@@ -255,8 +257,11 @@ pub fn save_tags_with_pictures(
         path: path.display().to_string(),
         reason: error.to_string(),
     })?;
-    let snapshot =
+    let mut snapshot =
         Snapshot::capture(format, &original_bytes).map_err(|refusal| refused(path, refusal))?;
+    snapshot
+        .upgrade_mixed_id3()
+        .map_err(|refusal| refused(path, refusal))?;
     snapshot
         .check_file_state()
         .map_err(|refusal| refused(path, refusal))?;
@@ -334,6 +339,7 @@ pub fn read_document(path: &Path) -> Result<FieldDocument, TagsError> {
     let reads: Vec<(TagField, FieldRead)> = match format {
         AudioFormat::Mp3 => match parse_id3_deep(&bytes).map_err(unreadable)? {
             Some(tag) => {
+                let tag = as_saved(tag).map_err(unreadable)?;
                 document.native = id3_native(&tag);
                 TagField::ALL
                     .into_iter()
@@ -863,10 +869,13 @@ pub fn document_from_captured(
     }
     let reads: Vec<(TagField, FieldRead)> = match (format, captured) {
         (AudioFormat::Mp3, CapturedTags::Id3(bytes)) => match parse_id3_deep(bytes)? {
-            Some(tag) => TagField::ALL
-                .into_iter()
-                .map(|field| (field, id3_read(&tag, field)))
-                .collect(),
+            Some(tag) => {
+                let tag = as_saved(tag)?;
+                TagField::ALL
+                    .into_iter()
+                    .map(|field| (field, id3_read(&tag, field)))
+                    .collect()
+            }
             None => Vec::new(),
         },
         (AudioFormat::Flac | AudioFormat::Ogg | AudioFormat::Opus, CapturedTags::Vorbis(pairs)) => {
@@ -934,13 +943,18 @@ pub fn read_fields(path: &Path) -> Result<BTreeMap<TagField, Vec<String>>, TagsE
 // ---------------------------------------------------------------------------
 
 /// Frame ids that only exist in ID3v2.4. Any of them inside a v2.3 tag
-/// means a mixed tag lofty would silently rewrite. `TSO2` is not on the
-/// list: Picard writes it in v2.3 tags too and lofty's v2.3 writer keeps
-/// it. lofty drops `TSOA`, `TSOP`, `TSOT`, and `TSST` from v2.3 tags, so
-/// a v2.3 file carrying them is refused before anything is written.
+/// makes it a mixed tag, saved whole as ID3v2.4 ([`upgrade_to_v24`]).
+/// Probed against lofty 0.25.4 (2026-10-14): its v2.3 writer drops
+/// `ASPI`, `EQU2`, `RVA2`, `SEEK`, `SIGN`, `TDEN`, `TDRL`, `TDTG`,
+/// `TMOO`, `TPRO`, `TSOA`, `TSOP`, `TSOT` and `TSST`, shortens `TDOR` to
+/// a year, and drops the `TDRC`, `TIPL` and `TMCL` frames the wrapper
+/// puts back itself; its v2.4 writer keeps every frame, the v2.3-only
+/// ones included. `POSS` and `TRSN` are ID3v2.4 frames too. `TSO2` is not on the list:
+/// Picard and iTunes write it in v2.3 tags, and lofty's v2.3 writer
+/// keeps it.
 const V24_ONLY_IDS: &[&str] = &[
-    "ASPI", "EQU2", "POSS", "RVA2", "SEEK", "SIGN", "TDOR", "TDRC", "TDRL", "TIPL", "TMCL", "TMOO",
-    "TPRO", "TRSN", "TSOA", "TSOP", "TSOT", "TSST",
+    "ASPI", "EQU2", "POSS", "RVA2", "SEEK", "SIGN", "TDEN", "TDOR", "TDRC", "TDRL", "TDTG", "TIPL",
+    "TMCL", "TMOO", "TPRO", "TRSN", "TSOA", "TSOP", "TSOT", "TSST",
 ];
 
 /// True when the field can hold these values (dates parse, counts are
@@ -1076,18 +1090,21 @@ fn syncsafe_u32(bytes: &[u8]) -> u32 {
 
 /// One frame's truth: raw payload bytes plus decoded text when the frame
 /// is a text kind this wrapper rebuilds.
+#[derive(Clone)]
 struct Id3FrameTruth {
     id: String,
     payload: Vec<u8>,
     text: Option<Id3TextTruth>,
 }
 
+#[derive(Clone)]
 struct Id3TextTruth {
     /// Description for `TXXX`, `None` for plain text frames.
     desc: Option<String>,
     values: Vec<String>,
 }
 
+#[derive(Clone)]
 struct DeepId3 {
     major: u8,
     minor: u8,
@@ -1956,6 +1973,380 @@ fn read_boxes(bytes: &[u8], mut offset: usize, end: usize) -> Result<Vec<Mp4Box>
 }
 
 // ---------------------------------------------------------------------------
+// A v2.3 tag holding v2.4 frames, saved whole as ID3v2.4.
+// ---------------------------------------------------------------------------
+
+/// The first note on a mixed tag, as the preview shows it.
+const UPGRADE_NOTE: &str =
+    "Its ID3v2.3 tag also holds newer ID3v2.4 tags, so it is saved as ID3v2.4.";
+
+/// The fields held as text whose v2.3 home differs from their v2.4 one,
+/// with the words a conflict note uses for two of their values.
+const MOVED_FIELDS: &[(TagField, &str)] = &[
+    (TagField::Date, "recording dates"),
+    (TagField::OriginalDate, "original release dates"),
+    (TagField::TitleSort, "title sort names"),
+    (TagField::ArtistSort, "artist sort names"),
+    (TagField::AlbumSort, "album sort names"),
+    (TagField::DiscSubtitle, "disc subtitles"),
+];
+
+/// The credits read from people frames, checked pair by pair instead.
+const PEOPLE_FIELDS: &[TagField] = &[TagField::Performer, TagField::Arranger, TagField::Producer];
+
+fn is_mixed_v23(tag: &DeepId3) -> bool {
+    tag.major == 3
+        && tag
+            .frames
+            .iter()
+            .any(|frame| V24_ONLY_IDS.contains(&frame.id.as_str()))
+}
+
+/// The tag as a save writes it: a mixed v2.3 tag as its ID3v2.4 form,
+/// any other as it is.
+fn as_saved(tag: DeepId3) -> Result<DeepId3, Refusal> {
+    if is_mixed_v23(&tag) {
+        Ok(upgrade_to_v24(&tag)?.tag)
+    } else {
+        Ok(tag)
+    }
+}
+
+/// What a save does to the file's ID3 version: nothing unless its v2.3
+/// tag also holds v2.4 frames. Then the first note says it is saved as
+/// ID3v2.4, and one more names each value the tag holds twice, in a
+/// v2.3 and a v2.4 frame, differently.
+pub fn id3_upgrade_notes(path: &Path) -> Result<Vec<String>, TagsError> {
+    if format_for_path(path)? != AudioFormat::Mp3 {
+        return Ok(Vec::new());
+    }
+    let bytes = fs::read(path).map_err(|source| TagsError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    let unreadable = |refusal: Refusal| TagsError::TagRead {
+        path: path.display().to_string(),
+        reason: refusal.to_string(),
+    };
+    let Some(tag) = parse_id3_deep(&bytes).map_err(unreadable)? else {
+        return Ok(Vec::new());
+    };
+    if !is_mixed_v23(&tag) {
+        return Ok(Vec::new());
+    }
+    let upgrade = upgrade_to_v24(&tag).map_err(unreadable)?;
+    let mut notes = vec![UPGRADE_NOTE.to_owned()];
+    notes.extend(upgrade.conflicts);
+    Ok(notes)
+}
+
+/// A mixed tag as ID3v2.4, and its conflict notes.
+struct Upgrade {
+    tag: DeepId3,
+    conflicts: Vec<String>,
+}
+
+/// The frames a field's home holds in `tag`, in file order: the first
+/// `TXXX` with the description (the one the field reads), the date's
+/// `TYER`, `TDAT` and `TIME`, or the text frame.
+fn home_frames(tag: &DeepId3, target: Id3Target) -> Vec<usize> {
+    let position = |id: &str| tag.frames.iter().position(|frame| frame.id == id);
+    match target {
+        Id3Target::Text(id) => position(id).into_iter().collect(),
+        Id3Target::SplitDate => ["TYER", "TDAT", "TIME"]
+            .into_iter()
+            .filter_map(position)
+            .collect(),
+        Id3Target::User(desc) => tag
+            .frames
+            .iter()
+            .position(|frame| {
+                frame
+                    .text
+                    .as_ref()
+                    .and_then(|text| text.desc.as_ref())
+                    .is_some_and(|held| held.eq_ignore_ascii_case(desc))
+            })
+            .into_iter()
+            .collect(),
+        Id3Target::Ufid(_)
+        | Id3Target::Lyrics
+        | Id3Target::Pair(..)
+        | Id3Target::People(..)
+        | Id3Target::Comment => Vec::new(),
+    }
+}
+
+/// Whether a v2.3 value says the same as the v2.4 one: equal, or for a
+/// date the same date with less detail (a year, or a day without its
+/// time).
+fn values_agree(field: TagField, old: &[String], new: &[String]) -> bool {
+    if old == new {
+        return true;
+    }
+    let dated = matches!(field, TagField::Date | TagField::OriginalDate);
+    match (old, new) {
+        ([old], [new]) if dated && date_parts(new).is_some() => {
+            let rest = new.strip_prefix(old.as_str());
+            match date_parts(old) {
+                Some((_, None, None)) => rest.is_some_and(|rest| rest.starts_with('-')),
+                Some((_, Some(_), None)) => rest.is_some_and(|rest| rest.starts_with('T')),
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// A text frame holding `values`, as this writer builds one in v2.4.
+fn v24_text_frame(id: &str, values: Vec<String>) -> Id3FrameTruth {
+    let parts: Vec<&str> = values.iter().map(String::as_str).collect();
+    let (encoding, body) = encode_id3_strings(false, &parts);
+    let mut payload = vec![encoding];
+    payload.extend_from_slice(&body);
+    Id3FrameTruth {
+        id: id.to_owned(),
+        payload,
+        text: Some(Id3TextTruth { desc: None, values }),
+    }
+}
+
+/// The people pairs `TIPL` holds after `IPLS` joins it: its own pairs,
+/// then each `IPLS` pair not already among them.
+fn merged_people(held: &[(String, String)], extra: &[(String, String)]) -> People {
+    let mut out = held.to_vec();
+    for pair in extra {
+        if !out.contains(pair) {
+            out.push(pair.clone());
+        }
+    }
+    out
+}
+
+/// Where an upgrade moves the credits: the `IPLS` frame that goes, the
+/// `TIPL` frame it joins (none when the tag has none), and their pairs.
+struct PeopleMove {
+    ipls: usize,
+    tipl: Option<usize>,
+    held: People,
+    pairs: People,
+}
+
+/// The credit move for `tag`, when there is one: a single `IPLS` that
+/// decodes to pairs, and at most one `TIPL`, which decodes. Otherwise
+/// both stay as they are.
+fn people_move(tag: &DeepId3) -> Option<PeopleMove> {
+    let positions = |id: &str| -> Vec<usize> {
+        tag.frames
+            .iter()
+            .enumerate()
+            .filter(|(_, frame)| frame.id == id)
+            .map(|(index, _)| index)
+            .collect()
+    };
+    let [ipls] = positions("IPLS")[..] else {
+        return None;
+    };
+    let extra = decode_people(&tag.frames[ipls].payload).ok()?;
+    if extra.is_empty() {
+        return None;
+    }
+    let (tipl, held) = match positions("TIPL")[..] {
+        [] => (None, Vec::new()),
+        [tipl] => (Some(tipl), decode_people(&tag.frames[tipl].payload).ok()?),
+        _ => return None,
+    };
+    Some(PeopleMove {
+        ipls,
+        tipl,
+        pairs: merged_people(&held, &extra),
+        held,
+    })
+}
+
+/// A mixed v2.3 tag as the ID3v2.4 tag it is saved as. Every frame stays
+/// as it was, except that a v2.3 frame whose value has a v2.4 home moves
+/// there:
+/// - `TXXX` sort names and disc subtitle go to `TSOT`, `TSOP`, `TSOA` and
+///   `TSST`, `TYER`/`TDAT`/`TIME` to one `TDRC`, `TORY` to `TDOR`, filling
+///   an empty v2.4 frame in place or adding one. When the v2.4 frame
+///   already says the same, the v2.3 frames just go.
+/// - When the two differ, both stay, the field reads the v2.4 frame as
+///   v2.4 readers do, and a conflict note says so. Which is newer cannot
+///   be known, so neither value is dropped.
+/// - The `IPLS` pairs join `TIPL` after its own, and `IPLS` goes.
+/// - A `TSRC` joined with '/' splits into separate values.
+///
+/// The result checks itself: everything that did not move is unchanged,
+/// and every field reads what the rules above promise. A failure is a bug
+/// here, refused as [`Refusal::VerifyMismatch`] before any write.
+fn upgrade_to_v24(tag: &DeepId3) -> Result<Upgrade, Refusal> {
+    let count = tag.frames.len();
+    let mut frames: Vec<Option<Id3FrameTruth>> = tag.frames.iter().cloned().map(Some).collect();
+    // Frames added before the frame at an index, in order.
+    let mut added: Vec<(usize, Id3FrameTruth)> = Vec::new();
+    let mut moved: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut conflicts = Vec::new();
+
+    for (field, noun) in MOVED_FIELDS.iter().copied() {
+        let FieldRead::Values(old) = id3_read_as(tag, field, true) else {
+            continue;
+        };
+        let Id3Target::Text(home) = field.id3(false) else {
+            continue;
+        };
+        let sources = home_frames(tag, field.id3(true));
+        if let FieldRead::Values(new) = id3_read_as(tag, field, false) {
+            if !values_agree(field, &old, &new) {
+                let label: Vec<String> = sources
+                    .iter()
+                    .map(|index| frame_key(&tag.frames[*index]))
+                    .collect();
+                let now = new.join("; ");
+                conflicts.push(format!(
+                    "It holds two different {noun} ({home} {now}, {} {}). It now reads as \
+                     {now}; the other value stays in its own frame, which most players ignore.",
+                    label.join("/"),
+                    old.join("; "),
+                ));
+                continue;
+            }
+        } else {
+            let frame = v24_text_frame(home, old);
+            match tag.frames.iter().position(|frame| frame.id == home) {
+                Some(index) => frames[index] = Some(frame),
+                None => added.push((sources.first().copied().unwrap_or(count), frame)),
+            }
+            moved.insert(home.to_owned());
+        }
+        for index in sources {
+            moved.insert(frame_key(&tag.frames[index]));
+            frames[index] = None;
+        }
+    }
+
+    if let FieldRead::Values(split) = id3_read_as(tag, TagField::Isrc, true)
+        && let Some(index) = tag.frames.iter().position(|frame| frame.id == "TSRC")
+        && id3_text(tag, "TSRC") != Some(&split)
+    {
+        frames[index] = Some(v24_text_frame("TSRC", split));
+        moved.insert("TSRC".to_owned());
+    }
+
+    let people = people_move(tag).filter(|people| {
+        decode_people(&people_payload(false, &people.pairs))
+            .ok()
+            .as_ref()
+            == Some(&people.pairs)
+    });
+    if let Some(people) = &people {
+        let frame = Id3FrameTruth {
+            id: "TIPL".to_owned(),
+            payload: people_payload(false, &people.pairs),
+            text: None,
+        };
+        match people.tipl {
+            // Every IPLS pair was there already: TIPL keeps its bytes.
+            Some(_) if people.pairs == people.held => {}
+            Some(index) => frames[index] = Some(frame),
+            None => added.push((people.ipls, frame)),
+        }
+        frames[people.ipls] = None;
+        moved.extend(["IPLS".to_owned(), "TIPL".to_owned()]);
+    }
+
+    let mut out = Vec::with_capacity(count + added.len());
+    for (index, frame) in frames.into_iter().enumerate() {
+        out.extend(
+            added
+                .iter()
+                .filter(|(at, _)| *at == index)
+                .map(|(_, frame)| frame.clone()),
+        );
+        out.extend(frame);
+    }
+    out.extend(
+        added
+            .iter()
+            .filter(|(at, _)| *at >= count)
+            .map(|(_, frame)| frame.clone()),
+    );
+    let upgraded = DeepId3 {
+        major: 4,
+        minor: 0,
+        frames: out,
+    };
+    check_upgrade(tag, &upgraded, &moved, people.as_ref())?;
+    Ok(Upgrade {
+        tag: upgraded,
+        conflicts,
+    })
+}
+
+/// The upgrade's promises, checked: frames outside `moved` are as they
+/// were, every field reads its v2.4 value or else the moved v2.3 one (an
+/// ISRC its split values), and the credits are the merged pairs.
+fn check_upgrade(
+    original: &DeepId3,
+    upgraded: &DeepId3,
+    moved: &std::collections::BTreeSet<String>,
+    people: Option<&PeopleMove>,
+) -> Result<(), Refusal> {
+    let fail = |detail: String| Refusal::VerifyMismatch {
+        detail: format!("ID3v2.4 upgrade: {detail}"),
+    };
+    let strip = |frames: &[Id3FrameTruth]| {
+        let mut ids = key_multiset(frames);
+        let mut text = text_map(frames);
+        let mut raw = raw_map(frames);
+        for key in moved {
+            ids.remove(key);
+            text.remove(key);
+            raw.remove(key);
+        }
+        (ids, text, raw)
+    };
+    if strip(&original.frames) != strip(&upgraded.frames) {
+        return Err(fail("frames changed outside the moved ones".to_owned()));
+    }
+    for field in TagField::ALL {
+        if PEOPLE_FIELDS.contains(&field) {
+            continue;
+        }
+        let old = id3_read_as(original, field, true);
+        let new = id3_read_as(original, field, false);
+        let expected = match (field, &old, &new) {
+            (TagField::Isrc, FieldRead::Values(_), _)
+            | (_, FieldRead::Values(_), FieldRead::Absent) => old,
+            _ => new,
+        };
+        if id3_read_as(upgraded, field, false) != expected {
+            return Err(fail(format!("{field:?} does not read as promised")));
+        }
+    }
+    if let Some(people) = people {
+        let tipl: Vec<&Id3FrameTruth> = upgraded
+            .frames
+            .iter()
+            .filter(|frame| frame.id == "TIPL")
+            .collect();
+        let held = match tipl.as_slice() {
+            [one] => decode_people(&one.payload).ok(),
+            _ => None,
+        };
+        let expected = people_move(original).map(|again| again.pairs);
+        if held.is_none()
+            || held != expected
+            || Some(&people.pairs) != expected.as_ref()
+            || upgraded.frames.iter().any(|frame| frame.id == "IPLS")
+        {
+            return Err(fail("the credits did not merge as promised".to_owned()));
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Snapshots and verify.
 // ---------------------------------------------------------------------------
 
@@ -2006,25 +2397,19 @@ impl Snapshot {
         }
     }
 
+    /// A mixed v2.3 tag's truth becomes the ID3v2.4 tag it is saved as:
+    /// edits resolve to v2.4 homes, and the verify expects version 2.4.
+    fn upgrade_mixed_id3(&mut self) -> Result<(), Refusal> {
+        if let Snapshot::Id3 { tag: Some(tag), .. } = self
+            && is_mixed_v23(tag)
+        {
+            *tag = upgrade_to_v24(tag)?.tag;
+        }
+        Ok(())
+    }
+
     fn check_file_state(&self) -> Result<(), Refusal> {
         match self {
-            Snapshot::Id3 { tag, .. } => {
-                let Some(tag) = tag else {
-                    return Ok(());
-                };
-                let report = Id3ByteReport {
-                    version_major: tag.major,
-                    version_minor: tag.minor,
-                    frame_ids: tag.frames.iter().map(|frame| frame.id.clone()).collect(),
-                    unsynchronised: false,
-                    extended_header: false,
-                    truncated: false,
-                };
-                if let Some(detail) = mixed_v23_detail(&report) {
-                    return Err(Refusal::MixedId3v23 { detail });
-                }
-                Ok(())
-            }
             Snapshot::Vorbis { truth, .. } => {
                 let Some(truth) = truth else {
                     return Ok(());
@@ -2051,7 +2436,7 @@ impl Snapshot {
                 }
                 Ok(())
             }
-            Snapshot::Mp4 { .. } => Ok(()),
+            Snapshot::Id3 { .. } | Snapshot::Mp4 { .. } => Ok(()),
         }
     }
 
@@ -2792,6 +3177,7 @@ fn vorbis_write_keys(field: TagField, truth: Option<&VorbisTruth>) -> Vec<&'stat
 }
 
 /// What a file holds for one field.
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum FieldRead {
     Absent,
     Values(Vec<String>),
@@ -2809,7 +3195,12 @@ fn values_or_absent(values: Vec<String>) -> FieldRead {
 
 /// A field's values as the file's ID3 tag holds them.
 fn id3_read(tag: &DeepId3, field: TagField) -> FieldRead {
-    let v23 = tag.major == 3;
+    id3_read_as(tag, field, tag.major == 3)
+}
+
+/// A field's values read from its v2.3 home (`v23`) or its v2.4 one,
+/// whatever the tag's own version.
+fn id3_read_as(tag: &DeepId3, field: TagField, v23: bool) -> FieldRead {
     match field.id3(v23) {
         // ID3v2.3 has one text value per frame, so several ISRCs are
         // written joined with '/'; no ISRC holds one, so split it back.
@@ -3166,8 +3557,17 @@ fn verify_id3(
                 return mismatch("untouched text changed".to_owned());
             }
             // Every other payload byte-identical.
-            if strip(raw_map(&before.frames)) != strip(raw_map(&after.frames)) {
-                return mismatch("untouched frame payload changed".to_owned());
+            let (before_raw, after_raw) = (
+                strip(raw_map(&before.frames)),
+                strip(raw_map(&after.frames)),
+            );
+            if before_raw != after_raw {
+                let changed: Vec<&String> = before_raw
+                    .iter()
+                    .filter(|(key, payloads)| after_raw.get(*key) != Some(*payloads))
+                    .map(|(key, _)| key)
+                    .collect();
+                return mismatch(format!("untouched frame payload changed: {changed:?}"));
             }
         }
         (true, _, None) if removal_only => return Ok(()),
@@ -3683,7 +4083,10 @@ fn apply_edits(
                         }
                     }
                     NativeEdit::Id3Lyrics { text } => {
-                        native.retain(|frame| !matches!(frame, Frame::UnsynchronizedText(_)));
+                        // By id: the frame may be one put back raw.
+                        let _ = native
+                            .remove(&FrameId::Valid(std::borrow::Cow::Borrowed("USLT")))
+                            .count();
                         if let Some(text) = text {
                             native.insert(Frame::UnsynchronizedText(UnsynchronizedTextFrame::new(
                                 TextEncoding::UTF8,
@@ -3697,7 +4100,9 @@ fn apply_edits(
                 }
             }
             if let Some(pictures) = pictures {
-                native.retain(|frame| !matches!(frame, Frame::Picture(_)));
+                let _ = native
+                    .remove(&FrameId::Valid(std::borrow::Cow::Borrowed("APIC")))
+                    .count();
                 for spec in pictures {
                     native.insert(Frame::Picture(lofty::id3::v2::AttachedPictureFrame::new(
                         TextEncoding::UTF8,
@@ -3705,8 +4110,11 @@ fn apply_edits(
                     )));
                 }
             }
-            let pin_v23 = truth.is_some_and(|tag| tag.major == 3)
-                || matches!(native.original_version(), Id3v2Version::V3);
+            // The truth decides: an upgraded mixed tag is saved as 2.4.
+            let pin_v23 = match truth {
+                Some(tag) => tag.major == 3,
+                None => matches!(native.original_version(), Id3v2Version::V3),
+            };
             native
                 .save_to_path(temp, WriteOptions::new().use_id3v23(pin_v23))
                 .map_err(save_failed)
@@ -4057,12 +4465,20 @@ fn repair_id3_text(native: &mut Id3v2Tag, truth: Option<&DeepId3>) {
     }
     // People and comment frames go back as the bytes they were: the
     // generic round-trip re-encodes them, and on v2.3 reads `IPLS` as a
-    // `TIPL` the sweep above removes.
+    // `TIPL` the sweep above removes. So do v2.4 picture and lyrics
+    // frames whose text is not UTF-8, as a v2.3 tag saved as v2.4 holds:
+    // lofty 0.25.4 writes them back as UTF-8 (seen 2026-10-14). An edit
+    // of either replaces them after this.
+    let reencoded = |frame: &Id3FrameTruth| {
+        truth.major == 4
+            && matches!(frame.id.as_str(), "APIC" | "USLT")
+            && frame.payload.first() != Some(&3)
+    };
     let mut raw_ids: Vec<&str> = truth
         .frames
         .iter()
+        .filter(|frame| is_people_id(&frame.id) || frame.id == "COMM" || reencoded(frame))
         .map(|frame| frame.id.as_str())
-        .filter(|id| is_people_id(id) || *id == "COMM")
         .collect();
     raw_ids.sort_unstable();
     raw_ids.dedup();

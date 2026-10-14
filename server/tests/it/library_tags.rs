@@ -841,20 +841,417 @@ fn save_m4a_audio_bytes_identical() {
     assert_eq!(m4a_mdat(&std::fs::read(&path).unwrap()), audio_before);
 }
 
+// ---------------------------------------------------------------------------
+// Save wrapper: an ID3v2.3 tag holding ID3v2.4 frames is saved as v2.4
+// ---------------------------------------------------------------------------
+
+const MIXED_V23: &str = "management_full_v23.mp3";
+
+/// One ID3 frame as compared here: user text keyed `TXXX:<description>`
+/// and text frames by their values, any other frame by its payload.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum FrameBody {
+    Text(Vec<String>),
+    Raw(Vec<u8>),
+}
+
+/// A file's ID3 version and its frames, sorted, as [`FrameBody`] sees them.
+fn id3_view(path: &Path) -> (u8, Vec<(String, FrameBody)>) {
+    let (major, frames) = id3_frames(path);
+    let mut view: Vec<(String, FrameBody)> = frames
+        .into_iter()
+        .map(|(id, payload)| {
+            if id == "TXXX" {
+                let mut strings = id3_strings(&payload);
+                let description = strings.remove(0);
+                (format!("TXXX:{description}"), FrameBody::Text(strings))
+            } else if id.starts_with('T') && id != "TIPL" && id != "TMCL" {
+                let values = id3_strings(&payload);
+                (id, FrameBody::Text(values))
+            } else {
+                (id, FrameBody::Raw(payload))
+            }
+        })
+        .collect();
+    view.sort();
+    (major, view)
+}
+
+/// The view without the frames keyed `skip`.
+fn view_without(view: &[(String, FrameBody)], skip: &[&str]) -> Vec<(String, FrameBody)> {
+    view.iter()
+        .filter(|(key, _)| !skip.contains(&key.as_str()))
+        .cloned()
+        .collect()
+}
+
+/// Everything after the ID3v2 tag: the audio and any ID3v1 trailer.
+fn after_id3v2(path: &Path) -> Vec<u8> {
+    let bytes = std::fs::read(path).unwrap();
+    let size = bytes[6..10]
+        .iter()
+        .fold(0usize, |acc, byte| (acc << 7) | usize::from(byte & 0x7F));
+    bytes[10 + size..].to_vec()
+}
+
+/// A Latin-1 text payload holding these strings.
+fn latin1(parts: &[&str]) -> Vec<u8> {
+    let mut payload = vec![0];
+    payload.extend_from_slice(parts.join("\0").as_bytes());
+    payload
+}
+
+/// A copy of the mixed v2.3 fixture with `frames` written into its tag's
+/// padding as v2.3 frames (big-endian size, no flags). The tag size and
+/// the audio stay as they were.
+fn mixed_v23_with(test: &str, frames: &[(&str, &[u8])]) -> (ScratchDir, PathBuf) {
+    let (dir, path) = temp_copy(MIXED_V23, test);
+    let mut bytes = std::fs::read(&path).unwrap();
+    assert_eq!(bytes[3], 3);
+    let tag_end = 10
+        + bytes[6..10]
+            .iter()
+            .fold(0usize, |acc, byte| (acc << 7) | usize::from(byte & 0x7F));
+    let mut offset = 10;
+    while bytes[offset] != 0 {
+        let size = u32::from_be_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize;
+        offset += 10 + size;
+    }
+    for (id, payload) in frames {
+        let mut frame = id.as_bytes().to_vec();
+        frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&[0, 0]);
+        frame.extend_from_slice(payload);
+        assert!(offset + frame.len() < tag_end, "the padding holds {id}");
+        bytes[offset..offset + frame.len()].copy_from_slice(&frame);
+        offset += frame.len();
+    }
+    std::fs::write(&path, bytes).unwrap();
+    (dir, path)
+}
+
+/// What the mixed v2.3 fixture reads as: its v2.4 frames count.
+fn mixed_v23_values() -> Vec<(TagField, Vec<String>)> {
+    vec![
+        (TagField::Date, texts(&["2024-03-02"])),
+        (TagField::OriginalDate, texts(&["2020"])),
+        (TagField::AlbumSort, texts(&["Management Album, The"])),
+        (TagField::ArtistSort, texts(&["Alpha, The; Beta, The"])),
+        (TagField::TitleSort, texts(&["Management Track, The"])),
+        (TagField::DiscSubtitle, texts(&["Main Programme"])),
+        (TagField::Producer, texts(&["Example Producer"])),
+        (TagField::Isrc, texts(&["GBABC2400001"])),
+    ]
+}
+
+fn assert_mixed_values(fields: &std::collections::BTreeMap<TagField, Vec<String>>) {
+    for (field, values) in mixed_v23_values() {
+        assert_eq!(fields.get(&field), Some(&values), "{field:?}");
+    }
+}
+
+/// A mixed v2.3 tag reads by the v2.4 rules wherever it holds a v2.4
+/// frame, from the file and from tags captured away from it.
 #[test]
-fn save_refuses_mixed_v23_fixture() {
-    // The committed v2.3 fixture actually carries v2.4-only frames
-    // (TDRC, TSOP, ...), so the wrapper must refuse it untouched.
-    let (refusal, before, after) = save_refused(
-        "management_full_v23.mp3",
-        "v23",
-        &[TagEdit::set_title("WRAP TITLE")],
+fn mixed_v23_reads_its_v24_frames() {
+    assert_mixed_values(&tags::read_fields(&fixture(MIXED_V23)).unwrap());
+    let bytes = std::fs::read(fixture(MIXED_V23)).unwrap();
+    let size = bytes[6..10]
+        .iter()
+        .fold(0usize, |acc, byte| (acc << 7) | usize::from(byte & 0x7F));
+    let captured = tags::CapturedTags::Id3(bytes[..10 + size].to_vec());
+    let document = tags::document_from_captured(AudioFormat::Mp3, &captured).unwrap();
+    assert_mixed_values(&document.values);
+}
+
+/// A title edit saves the mixed fixture as ID3v2.4: every other frame
+/// keeps its payload or values, and everything after the tag, an ID3v1
+/// trailer included, stays byte for byte. A second save stays v2.4.
+#[test]
+fn mixed_v23_is_saved_as_v24() {
+    let (_scratch, path) = temp_copy(MIXED_V23, "mixed-upgrade");
+    let mut trailer = b"TAG".to_vec();
+    trailer.resize(128, b'v');
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes.extend_from_slice(&trailer);
+    std::fs::write(&path, &bytes).unwrap();
+    let tail = after_id3v2(&path);
+    let (_, before) = id3_view(&path);
+
+    let report = tags::save_tags(&path, &[TagEdit::set_title("WRAP TITLE")]).unwrap();
+    assert_eq!(report.id3_version.as_deref(), Some("2.4"));
+    let (major, after) = id3_view(&path);
+    assert_eq!(major, 4);
+    assert_eq!(
+        view_without(&after, &["TIT2"]),
+        view_without(&before, &["TIT2"])
+    );
+    for id in ["UFID", "APIC", "TIPL"] {
+        assert!(after.iter().any(|(key, _)| key == id), "{id}");
+    }
+    assert_eq!(id3_text_values(&path, "TIT2"), texts(&["WRAP TITLE"]));
+    assert_eq!(after_id3v2(&path), tail);
+    let fields = tags::read_fields(&path).unwrap();
+    assert_mixed_values(&fields);
+    assert_eq!(fields[&TagField::Title], texts(&["WRAP TITLE"]));
+
+    let report = tags::save_tags(&path, &[TagEdit::set_title("Again")]).unwrap();
+    assert_eq!(report.id3_version.as_deref(), Some("2.4"));
+    let (major, again) = id3_view(&path);
+    assert_eq!(major, 4);
+    assert_eq!(
+        view_without(&again, &["TIT2"]),
+        view_without(&after, &["TIT2"])
+    );
+    assert_eq!(id3_text_values(&path, "TIT2"), texts(&["Again"]));
+    assert_eq!(after_id3v2(&path), tail);
+}
+
+/// The v2.3 frames with a v2.4 home move there: the date and time to
+/// `TDRC`, the original year to `TDOR`, the credits to `TIPL`, a sort
+/// name to its `TSO*` frame, and an ISRC list joined with '/' splits.
+#[test]
+fn mixed_v23_frames_move_to_their_v24_homes() {
+    let (_scratch, path) = v23_file(
+        "tags-mixed-moves",
+        &[
+            ("TIT2", &latin1(&["Moves"])),
+            ("TYER", &latin1(&["2019"])),
+            ("TDAT", &latin1(&["0103"])),
+            ("TORY", &latin1(&["2018"])),
+            ("IPLS", &latin1(&["arranger", "X"])),
+            ("TXXX", &latin1(&["ARTISTSORT", "S"])),
+            ("TSRC", &latin1(&["AA/BB"])),
+            ("TSOA", &latin1(&["Z"])),
+        ],
+    );
+    let audio = mp3_audio_tail(&std::fs::read(&path).unwrap()).to_vec();
+    let check = |fields: std::collections::BTreeMap<TagField, Vec<String>>| {
+        assert_eq!(fields[&TagField::Date], texts(&["2019-03-01"]));
+        assert_eq!(fields[&TagField::OriginalDate], texts(&["2018"]));
+        assert_eq!(fields[&TagField::Arranger], texts(&["X"]));
+        assert_eq!(fields[&TagField::ArtistSort], texts(&["S"]));
+        assert_eq!(fields[&TagField::Isrc], texts(&["AA", "BB"]));
+        assert_eq!(fields[&TagField::AlbumSort], texts(&["Z"]));
+    };
+    check(tags::read_fields(&path).unwrap());
+
+    tags::save_tags(&path, &[TagEdit::set_title("Moved")]).unwrap();
+    check(tags::read_fields(&path).unwrap());
+    let (major, view) = id3_view(&path);
+    assert_eq!(major, 4);
+    assert_eq!(id3_text_values(&path, "TDRC"), texts(&["2019-03-01"]));
+    assert_eq!(id3_text_values(&path, "TDOR"), texts(&["2018"]));
+    assert_eq!(id3_people(&path, "TIPL"), vec![pair("arranger", "X")]);
+    assert_eq!(id3_text_values(&path, "TSOP"), texts(&["S"]));
+    assert_eq!(id3_text_values(&path, "TSRC"), texts(&["AA", "BB"]));
+    assert_eq!(id3_text_values(&path, "TSOA"), texts(&["Z"]));
+    for gone in ["TYER", "TDAT", "TORY", "IPLS", "TXXX:ARTISTSORT"] {
+        assert!(view.iter().all(|(key, _)| key != gone), "{gone}");
+    }
+    assert_eq!(mp3_audio_tail(&std::fs::read(&path).unwrap()), audio);
+}
+
+/// A v2.3 date that agrees with the v2.4 one (its year) gives way to it.
+#[test]
+fn mixed_v23_agreeing_dates_give_way() {
+    let (_scratch, path) = mixed_v23_with(
+        "mixed-agree",
+        &[("TYER", &latin1(&["2024"])), ("TORY", &latin1(&["2020"]))],
+    );
+    tags::save_tags(&path, &[TagEdit::set_title("Agreed")]).unwrap();
+    let (major, view) = id3_view(&path);
+    assert_eq!(major, 4);
+    for gone in ["TYER", "TORY"] {
+        assert!(view.iter().all(|(key, _)| key != gone), "{gone}");
+    }
+    assert_eq!(id3_text_values(&path, "TDRC"), texts(&["2024-03-02"]));
+    assert_eq!(id3_text_values(&path, "TDOR"), texts(&["2020"]));
+}
+
+/// Two different dates both stay, and the date reads the v2.4 one.
+#[test]
+fn mixed_v23_conflicting_dates_both_stay() {
+    let (_scratch, path) = mixed_v23_with("mixed-conflict", &[("TYER", &latin1(&["2023"]))]);
+    tags::save_tags(&path, &[TagEdit::set_title("Conflict")]).unwrap();
+    assert_eq!(id3_frames(&path).0, 4);
+    assert_eq!(id3_text_values(&path, "TDRC"), texts(&["2024-03-02"]));
+    assert_eq!(id3_text_values(&path, "TYER"), texts(&["2023"]));
+    assert_eq!(
+        tags::read_fields(&path).unwrap()[&TagField::Date],
+        texts(&["2024-03-02"])
+    );
+}
+
+/// What the preview says about a mixed tag: that it is saved as v2.4,
+/// and each value it holds twice.
+#[test]
+fn mixed_v23_upgrade_notes() {
+    let first = "Its ID3v2.3 tag also holds newer ID3v2.4 tags, so it is saved as ID3v2.4.";
+    let (_scratch, path) = mixed_v23_with("mixed-notes", &[("TYER", &latin1(&["2023"]))]);
+    assert_eq!(
+        tags::save::id3_upgrade_notes(&path).unwrap(),
+        vec![
+            first.to_owned(),
+            "It holds two different recording dates (TDRC 2024-03-02, TYER 2023). It now \
+             reads as 2024-03-02; the other value stays in its own frame, which most players \
+             ignore."
+                .to_owned(),
+        ]
+    );
+    let (_scratch, path) = mixed_v23_with(
+        "mixed-notes-agree",
+        &[("TYER", &latin1(&["2024"])), ("TORY", &latin1(&["2020"]))],
+    );
+    assert_eq!(
+        tags::save::id3_upgrade_notes(&path).unwrap(),
+        vec![first.to_owned()]
     );
     assert!(
-        matches!(refusal, Refusal::MixedId3v23 { .. }),
-        "{refusal:?}"
+        tags::save::id3_upgrade_notes(&fixture("management_full.mp3"))
+            .unwrap()
+            .is_empty()
     );
-    assert_eq!(before, after);
+}
+
+/// Frames with no v2.4 home, and the frames lofty writes again itself,
+/// survive the upgrade with the same payload or values.
+#[test]
+fn mixed_v23_keeps_frames_it_does_not_move() {
+    let rvad: &[u8] = &[0x03, 0x10, 0, 1, 0, 2, 0, 0, 0, 0];
+    let poss: &[u8] = &[2, 0, 0, 0, 10];
+    let rva2: &[u8] = b"track\0\x01\x00\x10\x00";
+    let mut uslt = vec![1];
+    uslt.extend_from_slice(b"deu");
+    for part in ["d", "Worte"] {
+        uslt.extend_from_slice(&[0xFF, 0xFE]);
+        for unit in part.encode_utf16() {
+            uslt.extend_from_slice(&unit.to_le_bytes());
+        }
+        uslt.extend_from_slice(&[0, 0]);
+    }
+    let private: &[u8] = b"com.example\0opaque";
+    let geob: &[u8] = b"\0text/plain\0a.txt\0obj\0data";
+    let wxxx: &[u8] = b"\0link\0https://example.invalid/";
+    let woar: &[u8] = b"https://example.invalid/artist";
+    let popm: &[u8] = b"a@example.invalid\0\x80\0\0\0\x05";
+    let comm: &[u8] = b"\0franote\0bonjour";
+    let raw: [(&str, &[u8]); 10] = [
+        ("RVAD", rvad),
+        ("POSS", poss),
+        ("RVA2", rva2),
+        ("USLT", &uslt),
+        ("PRIV", private),
+        ("GEOB", geob),
+        ("WXXX", wxxx),
+        ("WOAR", woar),
+        ("POPM", popm),
+        ("COMM", comm),
+    ];
+    let mut planted: Vec<(&str, &[u8])> = raw.to_vec();
+    let size = latin1(&["123"]);
+    let station = latin1(&["Radio"]);
+    let mood = latin1(&["Calm"]);
+    planted.extend([
+        ("TSIZ", size.as_slice()),
+        ("TRSN", station.as_slice()),
+        ("TMOO", mood.as_slice()),
+    ]);
+    let (_scratch, path) = mixed_v23_with("mixed-kept", &planted);
+    let (_, before) = id3_view(&path);
+
+    tags::save_tags(&path, &[TagEdit::set_title("Kept")]).unwrap();
+    let (major, after) = id3_view(&path);
+    assert_eq!(major, 4);
+    for (id, payload) in raw {
+        assert!(
+            after.contains(&(id.to_owned(), FrameBody::Raw(payload.to_vec()))),
+            "{id} kept byte for byte"
+        );
+    }
+    assert_eq!(id3_text_values(&path, "TSIZ"), texts(&["123"]));
+    assert_eq!(id3_text_values(&path, "TRSN"), texts(&["Radio"]));
+    assert_eq!(id3_text_values(&path, "TMOO"), texts(&["Calm"]));
+    assert_eq!(
+        view_without(&after, &["TIT2"]),
+        view_without(&before, &["TIT2"])
+    );
+}
+
+/// The v2.3 credits join the `TIPL` pairs, an exact duplicate once, and
+/// every credit reads as before. An edit of one role keeps the others.
+#[test]
+fn mixed_v23_credits_merge_into_tipl() {
+    let frames: [(&str, Vec<u8>); 4] = [
+        ("TIT2", latin1(&["Credits"])),
+        ("TIPL", latin1(&["producer", "Z"])),
+        (
+            "IPLS",
+            latin1(&[
+                "arranger", "X", "producer", "Z", "guitar", "W", "engineer", "E",
+            ]),
+        ),
+        ("TSOP", latin1(&["S"])),
+    ];
+    let frames: Vec<(&str, &[u8])> = frames
+        .iter()
+        .map(|(id, payload)| (*id, payload.as_slice()))
+        .collect();
+    let credits = |path: &Path| {
+        let fields = tags::read_fields(path).unwrap();
+        assert_eq!(fields[&TagField::Performer], texts(&["W (guitar)"]));
+        assert_eq!(fields[&TagField::Producer], texts(&["Z"]));
+        assert_eq!(fields[&TagField::Arranger], texts(&["X"]));
+    };
+
+    let (_scratch, path) = v23_file("tags-mixed-credits", &frames);
+    credits(&path);
+    tags::save_tags(&path, &[TagEdit::set_title("Merged")]).unwrap();
+    assert_eq!(id3_frames(&path).0, 4);
+    assert_eq!(
+        id3_people(&path, "TIPL"),
+        vec![
+            pair("producer", "Z"),
+            pair("arranger", "X"),
+            pair("guitar", "W"),
+            pair("engineer", "E"),
+        ]
+    );
+    assert!(id3_people(&path, "IPLS").is_empty());
+    credits(&path);
+
+    let (_scratch, path) = v23_file("tags-mixed-credits-edit", &frames);
+    tags::save_tags(&path, &[TagEdit::new(TagField::Producer, texts(&["P2"]))]).unwrap();
+    assert_eq!(
+        id3_people(&path, "TIPL"),
+        vec![
+            pair("producer", "P2"),
+            pair("arranger", "X"),
+            pair("guitar", "W"),
+            pair("engineer", "E"),
+        ]
+    );
+}
+
+/// An edit of a moved field writes its v2.4 home only.
+#[test]
+fn mixed_v23_edits_write_v24_homes() {
+    let (_scratch, path) = temp_copy(MIXED_V23, "mixed-edit");
+    tags::save_tags(
+        &path,
+        &[
+            TagEdit::new(TagField::ArtistSort, texts(&["New"])),
+            TagEdit::new(TagField::Date, texts(&["2025"])),
+        ],
+    )
+    .unwrap();
+    assert_eq!(id3_text_values(&path, "TSOP"), texts(&["New"]));
+    assert_eq!(id3_text_values(&path, "TDRC"), texts(&["2025"]));
+    assert!(id3_txxx_values(&path, "ARTISTSORT").is_empty());
+    let (_, view) = id3_view(&path);
+    for gone in ["TYER", "TDAT", "TIME"] {
+        assert!(view.iter().all(|(key, _)| key != gone), "{gone}");
+    }
 }
 
 #[test]
@@ -1592,6 +1989,26 @@ fn mixed_v23_detector() {
     let report = inspect_id3_bytes(&mixed).unwrap();
     let detail = mixed_v23_detail(&report).unwrap();
     assert!(detail.contains("TDRC"), "{detail}");
+
+    // lofty's v2.3 writer drops TDEN and TDTG too.
+    let mixed = id3v2_bytes(3, &[("TDEN", b"2024"), ("TDTG", b"2024")]);
+    let detail = mixed_v23_detail(&inspect_id3_bytes(&mixed).unwrap()).unwrap();
+    assert!(
+        detail.contains("TDEN") && detail.contains("TDTG"),
+        "{detail}"
+    );
+
+    // iTunes' and the legacy sort frames alone are not v2.4 frames.
+    let itunes = id3v2_bytes(
+        3,
+        &[
+            ("TSO2", b"Alpha"),
+            ("TCMP", b"1"),
+            ("GRP1", b"Group"),
+            ("XSOP", b"Alpha"),
+        ],
+    );
+    assert_eq!(mixed_v23_detail(&inspect_id3_bytes(&itunes).unwrap()), None);
 
     // v2.4 tags are never "mixed".
     let modern = id3v2_bytes(4, &[("TDRC", b"2024-03-02"), ("TSOP", b"Alpha")]);
