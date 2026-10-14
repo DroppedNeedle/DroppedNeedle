@@ -36,10 +36,15 @@ from repositories.musicbrainz_base import (
 )
 from services.native.musicbrainz_matcher import MusicBrainzMatcher
 from repositories.async_playlist_repository import AsyncPlaylistRepository
+from models.release_home import release_group_cover_url
+from repositories.playlist_repository import TrackResolution
 
 if TYPE_CHECKING:
     from repositories.musicbrainz_repository import MusicBrainzRepository
-    from repositories.playlist_repository import PlaylistRepository
+    from repositories.playlist_repository import (
+        PlaylistRepository,
+        PlaylistTrackRecord,
+    )
     from services.per_user_client_factory import PerUserClientFactory
     from services.playlist_service import PlaylistService
 
@@ -64,6 +69,35 @@ def _best_image_url(images: list[dict], min_size: int = 250) -> str | None:
         if (img.get("width") or 0) >= min_size:
             return img.get("url")
     return sorted_imgs[-1].get("url")
+
+def _resync_key(isrc: str | None, track_name: str, artist_name: str) -> str:
+    """Identity of a playlist entry across Spotify re-syncs (#204)."""
+    if isrc:
+        return f"isrc:{isrc}"
+    return f"name:{track_name.casefold()}\x1f{artist_name.casefold()}"
+
+
+def _carried_resolutions(
+    existing: list[PlaylistTrackRecord],
+) -> dict[str, PlaylistTrackRecord]:
+    """Entries whose song identity or resolution must survive a re-sync, so a
+    re-import neither re-pays MusicBrainz nor discards a user's chosen home."""
+    carried: dict[str, PlaylistTrackRecord] = {}
+    for track in existing:
+        if track.recording_mbid or track.resolution_status:
+            carried.setdefault(
+                _resync_key(track.isrc, track.track_name, track.artist_name), track
+            )
+    return carried
+
+
+def _filed_album(track: PlaylistTrackRecord) -> dict[str, str | None]:
+    """Row album fields for a resolved or chosen track (#204)."""
+    album = track.target_release_group_mbid
+    if not album or track.resolution_status not in ("resolved", "chosen"):
+        return {}
+    return {"album_id": album, "cover_url": release_group_cover_url(album)}
+
 
 def _playlist_track_count(playlist: dict) -> int:
     """Track count from a GET /me/playlists playlist item.
@@ -301,6 +335,7 @@ class SpotifyImportService:
         album_to_mbid = await self._resolve_album_mbids(raw_tracks)
 
         existing_tracks = await self._async_repo.get_tracks(playlist_id)
+        carried = _carried_resolutions(existing_tracks)
         if existing_tracks:
             await self._async_repo.remove_tracks(
                 playlist_id, [t.id for t in existing_tracks]
@@ -319,6 +354,9 @@ class SpotifyImportService:
             else:
                 cover_url = _best_image_url(album.get("images") or [])
             duration_ms = track.get("duration_ms")
+            # Kept per track so "Request all tracks" (#204) can resolve each
+            # song's recording later without re-reading Spotify.
+            isrc = ((track.get("external_ids") or {}).get("isrc") or "").strip().upper()
             track_dicts.append(
                 {
                     "track_name": track.get("name") or "",
@@ -330,10 +368,39 @@ class SpotifyImportService:
                     "disc_number": track.get("disc_number"),
                     "duration": duration_ms // 1000 if duration_ms else None,
                     "cover_url": cover_url,
+                    "isrc": isrc if is_valid_isrc(isrc) else None,
                 }
             )
 
-        await self._async_repo.add_tracks(playlist_id, track_dicts)
+        previous: list[PlaylistTrackRecord | None] = []
+        for track_dict in track_dicts:
+            match = carried.get(
+                _resync_key(
+                    track_dict["isrc"],
+                    track_dict["track_name"],
+                    track_dict["artist_name"],
+                )
+            )
+            previous.append(match)
+            if match is not None:
+                track_dict["recording_mbid"] = match.recording_mbid
+
+        created = await self._async_repo.add_tracks(playlist_id, track_dicts)
+        restored = {
+            record.id: TrackResolution(
+                target_release_group_mbid=match.target_release_group_mbid,
+                home_tier=match.home_tier,
+                resolution_status=match.resolution_status,
+                flag_options=match.flag_options,
+                # Keep showing the album the track is filed under, not the
+                # one the import just picked again.
+                **_filed_album(match),
+            )
+            for record, match in zip(created or [], previous)
+            if match is not None and match.resolution_status
+        }
+        if restored:
+            await self._async_repo.batch_update_resolutions(playlist_id, restored)
         await self._persist_playlist_cover(
             user_id, spotify_playlist_id, playlist_id, _pl_info
         )

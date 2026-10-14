@@ -1,3 +1,5 @@
+from typing import Annotated, Literal
+
 import msgspec
 from infrastructure.msgspec_fastapi import AppStruct
 
@@ -21,6 +23,12 @@ class PlaylistTrackResponse(AppStruct):
     created_at: str = ""
     plex_rating_key: str | None = None
     library_file_id: str | None = None
+    # "Request all tracks" resolution (#204); all optional for older clients.
+    recording_mbid: str | None = None
+    target_release_group_mbid: str | None = None
+    home_tier: str | None = None
+    resolution_status: str | None = None
+    flag_options: list[dict] | None = None
 
 
 class PlaylistSummaryResponse(AppStruct):
@@ -150,3 +158,37 @@ class CheckTrackMembershipResponse(AppStruct):
 
 class ResolveSourcesResponse(AppStruct):
     sources: dict[str, list[str]]
+
+
+CompilationPolicyName = Literal["match_playlist", "studio", "flag"]
+
+
+class ResolveTracksRequest(AppStruct):
+    """Body of POST /playlists/{id}/resolve-tracks; omitted fields use the
+    configured defaults."""
+
+    compilation_policy: CompilationPolicyName | None = None
+
+
+class RequestTracksRequest(AppStruct):
+    """Body of POST /playlists/{id}/request-tracks. ``auto`` resolves then
+    requests; ``review`` requests what an earlier resolve stored."""
+
+    mode: Literal["auto", "review"] | None = None
+    compilation_policy: CompilationPolicyName | None = None
+
+
+class TrackRequestJobResponse(AppStruct):
+    """Accepted background job; the outcome arrives as an SSE event."""
+
+    playlist_id: str
+    status: Literal["started", "already_running"]
+    job: Literal["resolve", "request", "resolve_and_request"]
+    # Echoed in the job's SSE payload so a client matches the outcome of the
+    # job it started, not a replayed earlier one. None when already running.
+    job_id: str | None = None
+
+
+class ChooseTrackHomeRequest(AppStruct):
+    recording_mbid: Annotated[str, msgspec.Meta(min_length=1, max_length=64)]
+    release_group_mbid: Annotated[str, msgspec.Meta(min_length=1, max_length=64)]

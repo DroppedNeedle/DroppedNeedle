@@ -726,3 +726,18 @@ async def test_unknown_scope_falls_back_to_public_only(tmp_path: Path):
 
     assert result.written == 1
     assert not list(tmp_path.glob("Private*"))
+
+
+@pytest.mark.asyncio
+async def test_linking_by_recording_failure_still_exports(tmp_path: Path):
+    service = _service(
+        [_playlist("p1", "Alpha")], {"p1": [_entry(1, str(tmp_path / "a.flac"))]}
+    )
+    service._store.link_target_playlist_tracks_by_recording = AsyncMock(
+        side_effect=RuntimeError("db busy")
+    )
+
+    result = await service.sync(target_dir=str(tmp_path))
+
+    assert result.written == 1
+    service._store.link_target_playlist_tracks_by_recording.assert_awaited_once()

@@ -16,6 +16,7 @@ from repositories.playlist_repository import (
     PlaylistRecord,
     PlaylistSummaryRecord,
     PlaylistTrackRecord,
+    TrackResolution,
     _UNSET,
 )
 from services.native.target_catalog_writer_service import TargetCatalogWriterService
@@ -170,7 +171,25 @@ def _playlist_track_record(row: dict[str, Any]) -> PlaylistTrackRecord:
         created_at=str(row["created_at"]),
         plex_rating_key=row.get("plex_rating_key"),
         library_file_id=local_track_id or row.get("library_file_id"),
+        recording_mbid=row.get("recording_mbid"),
+        isrc=row.get("isrc"),
+        target_release_group_mbid=row.get("target_release_group_mbid"),
+        home_tier=row.get("home_tier"),
+        resolution_status=row.get("resolution_status"),
+        flag_options=_flag_options(row.get("flag_options")),
     )
+
+
+def _flag_options(raw: Any) -> list[dict] | None:
+    if isinstance(raw, list):
+        return raw
+    if not isinstance(raw, str):
+        return None
+    try:
+        decoded = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return decoded if isinstance(decoded, list) else None
 
 
 class TargetPlaylistRepository:
@@ -319,6 +338,31 @@ class TargetPlaylistRepository:
     ) -> int:
         return await self._store.link_target_playlist_tracks(
             playlist_id, updates, self._now()
+        )
+
+    async def batch_update_resolutions(
+        self, playlist_id: str, updates: dict[str, TrackResolution]
+    ) -> int:
+        return await self._store.update_target_playlist_track_resolutions(
+            playlist_id,
+            {
+                track_id: {
+                    "recording_mbid": resolution.recording_mbid,
+                    "target_release_group_mbid": resolution.target_release_group_mbid,
+                    "home_tier": resolution.home_tier,
+                    "resolution_status": resolution.resolution_status,
+                    "flag_options": resolution.flag_options,
+                    "album_id": resolution.album_id,
+                    "cover_url": resolution.cover_url,
+                }
+                for track_id, resolution in updates.items()
+            },
+        )
+
+    async def link_tracks_by_recording(self, playlist_id: str) -> int:
+        """Link unlinked entries to library tracks by recording (#204)."""
+        return await self._store.link_target_playlist_tracks_by_recording(
+            playlist_id, self._now()
         )
 
     async def get_streamable_counts(self) -> dict[str, tuple[int, int]]:

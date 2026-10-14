@@ -1,0 +1,609 @@
+"""Target playlist tables carry "Request all tracks" state (#204).
+
+Production serves target_main, whose playlists live in library_playlist_tracks
+behind TargetPlaylistRepository, so the identity/resolution columns and the
+Spotify re-sync carry-over must work there, not only in the legacy table.
+"""
+
+import sqlite3
+import threading
+from pathlib import Path
+from unittest.mock import AsyncMock
+
+import pytest
+
+from infrastructure.cache.memory_cache import InMemoryCache
+from infrastructure.persistence.native_library_store import NativeLibraryStore
+from models.local_catalog import (
+    CatalogMembership,
+    LocalAlbum,
+    LocalArtist,
+    LocalArtistCredit,
+    LocalTrack,
+)
+from repositories.playlist_repository import TrackResolution
+from services.native.target_reference_adapters import TargetPlaylistRepository
+from services.playlist_service import PlaylistService
+from services.playlist_track_resolver import is_owned
+from services.spotify_import_service import SpotifyImportService
+
+_COLUMNS = {
+    "recording_mbid",
+    "isrc",
+    "target_release_group_mbid",
+    "home_tier",
+    "resolution_status",
+    "flag_options",
+}
+
+
+def _store(tmp_path: Path) -> NativeLibraryStore:
+    auth = tmp_path / "auth.db"
+    if not auth.exists():
+        with sqlite3.connect(auth) as conn:
+            conn.execute("CREATE TABLE auth_users (id TEXT PRIMARY KEY)")
+    return NativeLibraryStore(tmp_path / "target.db", threading.Lock())
+
+
+def _columns(db: Path) -> set[str]:
+    with sqlite3.connect(db) as conn:
+        return {
+            row[1] for row in conn.execute("PRAGMA table_info(library_playlist_tracks)")
+        }
+
+
+def test_columns_are_added_idempotently(tmp_path):
+    store = _store(tmp_path)
+    assert _COLUMNS <= _columns(store.db_path)
+    _store(tmp_path)  # reopening an upgraded database must not fail
+    assert _COLUMNS <= _columns(store.db_path)
+
+
+@pytest.mark.asyncio
+async def test_identity_and_resolution_round_trip(tmp_path):
+    repo = TargetPlaylistRepository(_store(tmp_path))
+    playlist = await repo.create_playlist("CCR", user_id="user-1")
+    (track,) = await repo.add_tracks(
+        playlist.id,
+        [
+            {
+                "track_name": "Fortunate Son",
+                "artist_name": "Creedence Clearwater Revival",
+                "album_name": "Chronicle",
+                "source_type": "",
+                "isrc": "USFI86900049",
+                "recording_mbid": "rec-1",
+            }
+        ],
+    )
+    assert (track.isrc, track.recording_mbid, track.resolution_status) == (
+        "USFI86900049",
+        "rec-1",
+        None,
+    )
+    before = (await repo.get_playlist(playlist.id)).updated_at
+
+    options = [{"kind": "compilation", "release_group_mbid": "rg-chronicle"}]
+    updated = await repo.batch_update_resolutions(
+        playlist.id,
+        {
+            track.id: TrackResolution(
+                None, None, "flagged", recording_mbid="rec-2", flag_options=options
+            ),
+            "missing": TrackResolution("rg", "album", "resolved"),
+        },
+    )
+    assert updated == 1
+    stored = await repo.get_track(playlist.id, track.id)
+    assert (stored.recording_mbid, stored.resolution_status, stored.flag_options) == (
+        "rec-2",
+        "flagged",
+        options,
+    )
+    assert (await repo.get_playlist(playlist.id)).updated_at == before
+
+    # A source update (the post-import auto-link) keeps the verdict.
+    relinked = await repo.update_track_source(
+        playlist.id, track.id, available_sources=["navidrome"]
+    )
+    assert relinked.resolution_status == "flagged"
+    assert relinked.flag_options == options
+
+    # Another playlist cannot be written through this one's id.
+    other = await repo.create_playlist("Other", user_id="user-1")
+    assert (
+        await repo.batch_update_resolutions(
+            other.id, {track.id: TrackResolution("rg", "album", "resolved")}
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_spotify_resync_keeps_resolutions_on_target_tables(tmp_path):
+    repo = TargetPlaylistRepository(_store(tmp_path))
+    playlists = PlaylistService(repo=None, cache_dir=tmp_path, async_repo=repo)
+    client = AsyncMock()
+    client.get_playlist.return_value = {"id": "spot-1", "name": "Mix", "images": []}
+    base = {
+        "artists": [{"name": "Creedence Clearwater Revival"}],
+        "album": {"id": "", "name": "Chronicle", "images": []},
+        "duration_ms": 140_000,
+    }
+    song = {**base, "name": "Fortunate Son", "external_ids": {"isrc": "USFI86900049"}}
+    client.get_playlist_tracks.return_value = [song]
+    factory = AsyncMock()
+    factory.resolve_spotify.return_value = client
+    svc = SpotifyImportService(
+        client_factory=factory,
+        playlist_repo=None,
+        async_playlist_repo=repo,
+        mb_repo=AsyncMock(),
+        playlist_service=playlists,
+        cache=InMemoryCache(),
+    )
+
+    playlist_id = await svc.ensure_playlist_record("user-1", "spot-1", "Mix")
+    await svc.populate_playlist("user-1", "spot-1", playlist_id)
+    (first,) = await repo.get_tracks(playlist_id)
+    assert first.isrc == "USFI86900049"
+    await repo.batch_update_resolutions(
+        playlist_id,
+        {
+            first.id: TrackResolution(
+                "rg-willy", "album", "chosen", recording_mbid="rec-fs"
+            )
+        },
+    )
+
+    await svc.populate_playlist("user-1", "spot-1", playlist_id)
+
+    (second,) = await repo.get_tracks(playlist_id)
+    assert second.id != first.id
+    assert (
+        second.recording_mbid,
+        second.target_release_group_mbid,
+        second.resolution_status,
+    ) == ("rec-fs", "rg-willy", "chosen")
+    # The row keeps showing the album the track is filed under, not the one
+    # the import picked again.
+    assert second.album_id == "rg-willy"
+    assert second.cover_url == "/api/v1/covers/release-group/rg-willy?size=250"
+
+
+# --- linking by recording (#204 follow-up) ------------------------------------
+
+
+async def _seed_local_track(
+    store: NativeLibraryStore,
+    track_id: str,
+    *,
+    recording: str | None,
+    album_id: str = "album-1",
+    title: str = "Fortunate Son",
+    artist_name: str = "Creedence Clearwater Revival",
+    duration: int | None = 140,
+) -> None:
+    artist = LocalArtist(
+        id=f"artist-{artist_name.lower().replace(' ', '-')}",
+        display_name=artist_name,
+        folded_name=artist_name.lower(),
+        normalized_name=artist_name.lower(),
+        kind="group",
+        created_at=1,
+        updated_at=1,
+    )
+    album = LocalAlbum(
+        id=album_id,
+        root_id="root",
+        grouping_key=f"group-{album_id}",
+        title="Willy and the Poor Boys",
+        album_artist_id=artist.id,
+        album_artist_name=artist.display_name,
+        created_at=1,
+        updated_at=1,
+    )
+    track = LocalTrack(
+        id=track_id,
+        local_album_id=album.id,
+        root_id="root",
+        file_path=f"/music/{track_id}.flac",
+        relative_path=f"{track_id}.flac",
+        path_hash=f"hash-{track_id}",
+        file_size_bytes=1,
+        file_mtime_ns=2,
+        stat_revision="stat-1",
+        tag_revision=f"tag-{track_id}",
+        title=title,
+        artist_name=artist.display_name,
+        album_title=album.title,
+        album_artist_name=artist.display_name,
+        track_number=6,
+        duration_seconds=duration,
+        file_format="flac",
+        imported_at=1,
+        embedded_recording_mbid=recording,
+    )
+    await store.create_catalog_membership(
+        CatalogMembership(
+            album=album,
+            artists=[artist],
+            tracks=[track],
+            album_credits=[LocalArtistCredit(local_artist_id=artist.id, position=0)],
+            track_credits={
+                track.id: [LocalArtistCredit(local_artist_id=artist.id, position=0)]
+            },
+        )
+    )
+
+
+async def _entry_playlist(repo, *entries):
+    playlist = await repo.create_playlist("CCR", user_id="user-1")
+    base = {
+        "artist_name": "Creedence Clearwater Revival",
+        "album_name": "Chronicle",
+        "source_type": "",
+    }
+    await repo.add_tracks(playlist.id, [{**base, **entry} for entry in entries])
+    return playlist.id, {t.track_name: t for t in await repo.get_tracks(playlist.id)}
+
+
+@pytest.mark.asyncio
+async def test_links_by_embedded_recording_and_heals_unknown_source(tmp_path):
+    store = _store(tmp_path)
+    repo = TargetPlaylistRepository(store)
+    await _seed_local_track(store, "track-fs", recording="REC-FS")
+    pid, _before = await _entry_playlist(
+        repo,
+        {"track_name": "Fortunate Son", "recording_mbid": "rec-fs"},
+        {"track_name": "Not downloaded", "recording_mbid": "rec-none"},
+        {"track_name": "No recording"},
+    )
+
+    assert await repo.link_tracks_by_recording(pid) == 1
+
+    after = {t.track_name: t for t in await repo.get_tracks(pid)}
+    linked = after["Fortunate Son"]
+    assert (linked.library_file_id, linked.source_type, linked.track_source_id) == (
+        "track-fs",
+        "local",
+        "track-fs",
+    )
+    assert linked.available_sources == ["local"]
+    assert after["Not downloaded"].library_file_id is None
+    assert after["No recording"].source_type == ""
+    # The export now sees the file.
+    rows = await store.list_target_playlist_export_rows(pid)
+    assert [r["file_path"] for r in rows] == ["/music/track-fs.flac", None, None]
+    # Idempotent.
+    assert await repo.link_tracks_by_recording(pid) == 0
+
+
+@pytest.mark.asyncio
+async def test_links_by_identity_row_and_keeps_an_existing_source(tmp_path):
+    store = _store(tmp_path)
+    repo = TargetPlaylistRepository(store)
+    await _seed_local_track(store, "track-fs", recording=None)
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute(
+            "INSERT INTO local_track_external_identities "
+            "(local_track_id, recording_mbid, decision_source, selected_at) "
+            "VALUES ('track-fs', 'rec-fs', 'manual', 1)"
+        )
+    pid, _ = await _entry_playlist(
+        repo,
+        {
+            "track_name": "Fortunate Son",
+            "recording_mbid": "rec-fs",
+            "source_type": "navidrome",
+            "available_sources": ["navidrome"],
+        },
+    )
+
+    assert await repo.link_tracks_by_recording(pid) == 1
+
+    (track,) = await repo.get_tracks(pid)
+    assert track.library_file_id == "track-fs"
+    assert track.source_type == "navidrome"  # never clobbered
+    assert track.available_sources == ["navidrome"]
+
+
+@pytest.mark.asyncio
+async def test_ignores_unavailable_tracks_and_other_playlists(tmp_path):
+    store = _store(tmp_path)
+    repo = TargetPlaylistRepository(store)
+    await _seed_local_track(store, "track-gone", recording="rec-fs")
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute("UPDATE local_tracks SET availability = 'missing'")
+    pid, _ = await _entry_playlist(
+        repo, {"track_name": "Fortunate Son", "recording_mbid": "rec-fs"}
+    )
+    other, _ = await _entry_playlist(
+        repo, {"track_name": "Fortunate Son", "recording_mbid": "rec-fs"}
+    )
+
+    assert await repo.link_tracks_by_recording(pid) == 0
+
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute("UPDATE local_tracks SET availability = 'indexed'")
+    assert await repo.link_tracks_by_recording(pid) == 1
+    (untouched,) = await repo.get_tracks(other)
+    assert untouched.library_file_id is None
+
+
+@pytest.mark.asyncio
+async def test_navidrome_export_writes_a_recording_linked_entry(tmp_path):
+    """The reported bug: requested tracks never reached Navidrome because the
+    export only writes linked entries; it now links by recording first."""
+    from services.navidrome_playlist_export_service import (
+        NavidromePlaylistExportService,
+    )
+
+    store = _store(tmp_path)
+    repo = TargetPlaylistRepository(store)
+    await _seed_local_track(store, "track-fs", recording="rec-fs")
+    pid, _ = await _entry_playlist(
+        repo, {"track_name": "Fortunate Son", "recording_mbid": "rec-fs"}
+    )
+    out = tmp_path / "playlists"
+    out.mkdir()
+
+    result = await NavidromePlaylistExportService(store).sync(
+        target_dir=str(out), scope="all"
+    )
+
+    assert (result.written, result.skipped_empty) == (1, 0)
+    (exported,) = out.glob("*.m3u8")
+    assert "track-fs.flac" in exported.read_text()
+
+
+@pytest.mark.asyncio
+async def test_same_song_links_a_different_recording_of_the_song(tmp_path):
+    """The reported case: "Ordinary" was fetched from its album page, so the
+    library holds the album's recording while the playlist entry resolved to
+    the single's. Same artist, title and length: link it."""
+    store = _store(tmp_path)
+    repo = TargetPlaylistRepository(store)
+    await _seed_local_track(
+        store,
+        "track-ordinary",
+        recording="rec-album-version",
+        title="Ordinary",
+        artist_name="Alex Warren",
+        duration=186,
+    )
+    pid, _ = await _entry_playlist(
+        repo,
+        {
+            "track_name": "Ordinary",
+            "artist_name": "Alex Warren",
+            "recording_mbid": "rec-single-version",
+            "duration": 187,
+        },
+    )
+
+    assert await repo.link_tracks_by_recording(pid) == 1
+
+    (track,) = await repo.get_tracks(pid)
+    assert (track.library_file_id, track.source_type) == ("track-ordinary", "local")
+
+
+@pytest.mark.parametrize(
+    ("local_title", "local_seconds", "entry", "linked"),
+    [
+        # Remaster qualifiers do not change the song.
+        (
+            "Fortunate Son",
+            140,
+            {"track_name": "Fortunate Son - Remastered 1985", "duration": 141},
+            True,
+        ),
+        # Lead artist of a Spotify multi-artist credit.
+        (
+            "Fortunate Son",
+            140,
+            {
+                "track_name": "Fortunate Son",
+                "artist_name": "Creedence Clearwater Revival, John Fogerty",
+                "duration": 140,
+            },
+            True,
+        ),
+        # No length on the entry: an exact title is enough.
+        ("Fortunate Son", 140, {"track_name": "Fortunate Son", "duration": None}, True),
+        # A live take is a different version.
+        (
+            "Fortunate Son - Live",
+            140,
+            {"track_name": "Fortunate Son", "duration": 140},
+            False,
+        ),
+        # More than 3 s apart: a different take or edit.
+        ("Fortunate Son", 180, {"track_name": "Fortunate Son", "duration": 140}, False),
+        # Same title by someone else.
+        (
+            "Fortunate Son",
+            140,
+            {
+                "track_name": "Fortunate Son",
+                "artist_name": "Pearl Jam",
+                "duration": 140,
+            },
+            False,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_same_song_rules(tmp_path, local_title, local_seconds, entry, linked):
+    store = _store(tmp_path)
+    repo = TargetPlaylistRepository(store)
+    await _seed_local_track(
+        store, "track-1", recording=None, title=local_title, duration=local_seconds
+    )
+    pid, _ = await _entry_playlist(repo, entry)
+
+    assert await repo.link_tracks_by_recording(pid) == (1 if linked else 0)
+
+
+@pytest.mark.asyncio
+async def test_recording_match_wins_over_same_song(tmp_path):
+    store = _store(tmp_path)
+    repo = TargetPlaylistRepository(store)
+    await _seed_local_track(
+        store, "track-a-song", recording="rec-other", album_id="album-a"
+    )
+    # Credited elsewhere, so only the recording pass can pick it.
+    await _seed_local_track(
+        store,
+        "track-b-exact",
+        recording="rec-fs",
+        album_id="album-b",
+        artist_name="Tribute Band",
+    )
+    pid, _ = await _entry_playlist(
+        repo,
+        {"track_name": "Fortunate Son", "recording_mbid": "rec-fs", "duration": 140},
+    )
+
+    await repo.link_tracks_by_recording(pid)
+
+    (track,) = await repo.get_tracks(pid)
+    assert track.library_file_id == "track-b-exact"
+
+
+@pytest.mark.asyncio
+async def test_rows_resolved_earlier_get_their_filed_album_shown(tmp_path):
+    """Rows resolved before the filed album was stored on them keep the
+    import's cover (e.g. a compilation's); linking refreshes them."""
+    repo = TargetPlaylistRepository(_store(tmp_path))
+    stale = "/api/v1/covers/release-group/rg-muchdance?size=250"
+    pid, by_name = await _entry_playlist(
+        repo,
+        {"track_name": "Resolved", "album_id": "rg-muchdance", "cover_url": stale},
+        {"track_name": "Chosen", "album_id": "rg-muchdance", "cover_url": stale},
+        {"track_name": "Flagged", "album_id": "rg-muchdance", "cover_url": stale},
+        {"track_name": "Untouched", "album_id": "rg-muchdance", "cover_url": stale},
+    )
+    await repo.batch_update_resolutions(
+        pid,
+        {
+            by_name["Resolved"].id: TrackResolution("rg-layers", "album", "resolved"),
+            by_name["Chosen"].id: TrackResolution("rg-layers", "album", "chosen"),
+            by_name["Flagged"].id: TrackResolution(None, None, "flagged"),
+        },
+    )
+
+    assert await repo.link_tracks_by_recording(pid) == 2
+
+    after = {t.track_name: t for t in await repo.get_tracks(pid)}
+    for name in ("Resolved", "Chosen"):
+        assert (
+            after[name].cover_url == "/api/v1/covers/release-group/rg-layers?size=250"
+        )
+        assert after[name].album_id == "rg-layers"
+    for name in ("Flagged", "Untouched"):
+        assert (after[name].cover_url, after[name].album_id) == (stale, "rg-muchdance")
+    assert await repo.link_tracks_by_recording(pid) == 0  # idempotent
+
+
+# --- removed library tracks (manual-test follow-up) ---------------------------
+
+
+def _set_availability(store, track_id, availability):
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute(
+            "UPDATE local_tracks SET availability = ? WHERE id = ?",
+            (availability, track_id),
+        )
+
+
+@pytest.mark.parametrize("availability", ["excluded", "missing"])
+@pytest.mark.asyncio
+async def test_removed_library_track_is_unlinked_from_the_playlist(
+    tmp_path, availability
+):
+    """The reported case: a song removed from the library still offered
+    Local and Navidrome on the playlist, failed to play, and was skipped by
+    "Request all tracks" as owned."""
+    store = _store(tmp_path)
+    repo = TargetPlaylistRepository(store)
+    await _seed_local_track(store, "track-fs", recording="rec-fs")
+    pid, before = await _entry_playlist(
+        repo,
+        {
+            "track_name": "Fortunate Son",
+            "recording_mbid": "rec-fs",
+            "source_type": "local",
+            "library_file_id": "track-fs",
+            "available_sources": ["local", "navidrome"],
+        },
+    )
+    assert is_owned(before["Fortunate Son"])
+
+    _set_availability(store, "track-fs", availability)
+    assert await repo.link_tracks_by_recording(pid) == 1
+
+    (track,) = await repo.get_tracks(pid)
+    assert track.library_file_id is None
+    assert (track.source_type, track.track_source_id) == ("", None)
+    assert track.available_sources is None  # Navidrome served the same file
+    assert not is_owned(track)  # "Request all tracks" requests it again
+    rows = await store.list_target_playlist_export_rows(pid)
+    assert rows[0]["file_path"] is None
+    assert await repo.link_tracks_by_recording(pid) == 0  # idempotent
+
+
+@pytest.mark.asyncio
+async def test_another_servers_source_is_kept_when_unlinking(tmp_path):
+    store = _store(tmp_path)
+    repo = TargetPlaylistRepository(store)
+    await _seed_local_track(store, "track-fs", recording=None)
+    pid, _ = await _entry_playlist(
+        repo,
+        {
+            "track_name": "Fortunate Son",
+            "source_type": "jellyfin",
+            "library_file_id": "track-fs",
+            "available_sources": ["jellyfin", "local", "navidrome"],
+        },
+    )
+    _set_availability(store, "track-fs", "excluded")
+
+    await repo.link_tracks_by_recording(pid)
+
+    (track,) = await repo.get_tracks(pid)
+    assert track.library_file_id is None
+    assert (track.source_type, track.available_sources) == ("jellyfin", ["jellyfin"])
+
+
+@pytest.mark.asyncio
+async def test_a_redownloaded_song_relinks_in_the_same_pass(tmp_path):
+    store = _store(tmp_path)
+    repo = TargetPlaylistRepository(store)
+    await _seed_local_track(
+        store, "track-old", recording="rec-fs", album_id="album-old"
+    )
+    pid, _ = await _entry_playlist(
+        repo,
+        {
+            "track_name": "Fortunate Son",
+            "recording_mbid": "rec-fs",
+            "source_type": "local",
+            "library_file_id": "track-old",
+        },
+    )
+    _set_availability(store, "track-old", "excluded")
+    # The album-page download (credited separately so the seeded artist
+    # is not created twice).
+    await _seed_local_track(
+        store,
+        "track-new",
+        recording="rec-fs",
+        album_id="album-new",
+        artist_name="CCR Again",
+    )
+
+    await repo.link_tracks_by_recording(pid)
+
+    (track,) = await repo.get_tracks(pid)
+    assert (track.library_file_id, track.source_type) == ("track-new", "local")

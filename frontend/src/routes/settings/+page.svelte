@@ -32,7 +32,8 @@
 		Landmark,
 		Blocks,
 		PanelLeft,
-		Activity
+		Activity,
+		ListMusic
 	} from 'lucide-svelte';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
@@ -94,6 +95,16 @@
 			? [{ id: 'get-it', label: 'Get it', tier: 'setup', icon: ShoppingBag }]
 			: []),
 		{ id: 'settings', label: 'Release Types', tier: 'personalize', icon: Settings2 },
+		...(authStore.isAdmin
+			? [
+					{
+						id: 'playlist-requests',
+						label: 'Playlist Requests',
+						tier: 'personalize',
+						icon: ListMusic
+					}
+				]
+			: []),
 		{ id: 'home', label: 'Home', tier: 'personalize', icon: House },
 		{ id: 'discover', label: 'Discover', tier: 'personalize', icon: Compass },
 		{ id: 'sidebar', label: 'Sidebar', tier: 'personalize', icon: PanelLeft },

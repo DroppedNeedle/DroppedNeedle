@@ -59,6 +59,7 @@ from api.v1.schemas.settings import (
     EventsSettings,
     FreeMusicSettings,
     GetItSettings,
+    PlaylistTrackRequestSettings,
     PluginConfig,
     TICKETMASTER_KEY_MASK,
     SKIDDLE_KEY_MASK,
@@ -1434,6 +1435,18 @@ class PreferencesService:
         except Exception as e:  # noqa: BLE001
             logger.error(f"Failed to save Get it settings: {e}")
             raise ConfigurationError("Failed to save Get it settings")
+
+    def get_playlist_track_request_settings(self) -> PlaylistTrackRequestSettings:
+        """Defaults for "Request all tracks" (#204); invalid stored values fall
+        back to the struct defaults."""
+        return self._get_section(
+            "playlist_track_requests", PlaylistTrackRequestSettings
+        )
+
+    def save_playlist_track_request_settings(
+        self, settings: PlaylistTrackRequestSettings
+    ) -> None:
+        self._save_section("playlist_track_requests", settings)
 
     def _normalize_get_it_settings(self) -> None:
         """Remove fields retired from the purchase-link settings section."""

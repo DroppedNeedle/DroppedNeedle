@@ -653,6 +653,18 @@ class FreeMusicSettings(AppStruct):
     preferred_format: Literal["flac", "mp3"] = "flac"
 
 
+class PlaylistTrackRequestSettings(AppStruct):
+    """Defaults for a playlist's "Request all tracks" action (#204).
+
+    ``mode``: ``auto`` resolves and requests in one step; ``review`` resolves
+    first so the user confirms the album summary. ``compilation_policy``:
+    what to do with a track whose exact recording is only on compilations.
+    """
+
+    mode: Literal["auto", "review"] = "auto"
+    compilation_policy: Literal["match_playlist", "studio", "flag"] = "match_playlist"
+
+
 class GetItSettings(AppStruct):
     """ "Get it" purchase links (phase 01). ``store_region`` feeds the iTunes
     Search ``country`` storefront parameter."""

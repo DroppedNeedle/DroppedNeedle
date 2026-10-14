@@ -22,6 +22,9 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 backend/.ruff*
+# Local virtualenvs (e.g. `make backend-venv`): their interpreter symlinks point
+# outside the build context, which fails the build on Docker Desktop over WSL.
+**/.venv/
 
 # Dev-only files
 backend/requirements-dev.txt

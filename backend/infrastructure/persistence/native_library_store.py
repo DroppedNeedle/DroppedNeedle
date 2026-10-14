@@ -40,6 +40,8 @@ from infrastructure.persistence.native_library_schema import SCHEMA_SQL
 from infrastructure.queue.durable_work_wakeup import DurableWorkWakeups
 from infrastructure.validators import is_valid_mbid
 from models.audio import AudioArtistCredit
+from models.release_home import release_group_cover_url
+from models.song_identity import same_song_title
 from models.artist_reconciliation import (
     ProviderAlbumArtistProjection,
     ProviderArtistCredit,
@@ -836,6 +838,15 @@ class ReferenceProvenanceBatchResult(NamedTuple):
     def __int__(self) -> int:
         return self.inserted
 
+
+
+# Sources a removed library file takes with it from playlist rows (#204):
+# this library's own file (#181/#381 healing) and Navidrome, which serves the
+# same files when it scans DroppedNeedle's library. If a separate Navidrome
+# copy exists, album-based source resolution re-adds it on page load.
+_REMOVED_WITH_LIBRARY_FILE = frozenset(
+    {"local", "droppedneedle-local", "howler", "navidrome"}
+)
 
 class NativeLibraryStore(PersistenceBase):
     """Own every target catalog, job, review, scan, and migration transaction."""
@@ -1917,6 +1928,14 @@ class NativeLibraryStore(PersistenceBase):
                 "ADD COLUMN reidentification_attempt_count INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE library_identification_jobs ADD COLUMN attention_cause TEXT",
                 "ALTER TABLE local_tracks ADD COLUMN release_type TEXT",
+                # "Request all tracks" song identity + resolution (#204).
+                "ALTER TABLE library_playlist_tracks ADD COLUMN recording_mbid TEXT",
+                "ALTER TABLE library_playlist_tracks ADD COLUMN isrc TEXT",
+                "ALTER TABLE library_playlist_tracks "
+                "ADD COLUMN target_release_group_mbid TEXT",
+                "ALTER TABLE library_playlist_tracks ADD COLUMN home_tier TEXT",
+                "ALTER TABLE library_playlist_tracks ADD COLUMN resolution_status TEXT",
+                "ALTER TABLE library_playlist_tracks ADD COLUMN flag_options TEXT",
                 "ALTER TABLE local_tracks ADD COLUMN title_provenance TEXT NOT NULL DEFAULT 'absent' CHECK(title_provenance IN ('tag','parsed','placeholder','absent'))",
                 "ALTER TABLE local_tracks ADD COLUMN album_title_provenance TEXT NOT NULL DEFAULT 'absent' CHECK(album_title_provenance IN ('tag','parsed','placeholder','absent'))",
                 "ALTER TABLE local_tracks ADD COLUMN album_artist_provenance TEXT NOT NULL DEFAULT 'absent' CHECK(album_artist_provenance IN ('tag','parsed','placeholder','absent'))",
@@ -5770,6 +5789,8 @@ class NativeLibraryStore(PersistenceBase):
                     local_album_id,
                     local_artist_id,
                     None,
+                    track.get("recording_mbid"),
+                    track.get("isrc"),
                 )
                 connection.execute(
                     "INSERT INTO library_playlist_tracks "
@@ -5777,8 +5798,9 @@ class NativeLibraryStore(PersistenceBase):
                     "album_id, artist_id, track_source_id, cover_url, source_type, "
                     "available_sources, format, track_number, disc_number, duration, "
                     "created_at, plex_rating_key, library_file_id, local_track_id, "
-                    "local_album_id, local_artist_id, reference_tombstone_id) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "local_album_id, local_artist_id, reference_tombstone_id, "
+                    "recording_mbid, isrc) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     values,
                 )
                 created.append(
@@ -5799,6 +5821,49 @@ class NativeLibraryStore(PersistenceBase):
         if result:
             await self._invalidate()
         return result
+
+    async def update_target_playlist_track_resolutions(
+        self, playlist_id: str, updates: dict[str, dict[str, Any]]
+    ) -> int:
+        """Store "Request all tracks" verdicts (#204), track_id -> fields.
+
+        ``recording_mbid`` of None keeps the stored recording. Derived state:
+        neither ``updated_at`` nor the library revision moves.
+        """
+        if not updates:
+            return 0
+
+        def operation(connection: sqlite3.Connection) -> int:
+            updated = 0
+            for track_id, fields in updates.items():
+                cursor = connection.execute(
+                    "UPDATE library_playlist_tracks SET "
+                    "recording_mbid = COALESCE(?, recording_mbid), "
+                    "album_id = COALESCE(?, album_id), "
+                    "cover_url = COALESCE(?, cover_url), "
+                    "target_release_group_mbid = ?, home_tier = ?, "
+                    "resolution_status = ?, flag_options = ? "
+                    "WHERE id = ? AND playlist_id = ?",
+                    (
+                        fields.get("recording_mbid"),
+                        fields.get("album_id"),
+                        fields.get("cover_url"),
+                        fields.get("target_release_group_mbid"),
+                        fields.get("home_tier"),
+                        fields.get("resolution_status"),
+                        (
+                            json.dumps(fields["flag_options"])
+                            if fields.get("flag_options") is not None
+                            else None
+                        ),
+                        track_id,
+                        playlist_id,
+                    ),
+                )
+                updated += cursor.rowcount
+            return updated
+
+        return await self._write(operation)
 
     async def list_target_playlist_tracks(
         self, playlist_id: str
@@ -6091,6 +6156,219 @@ class NativeLibraryStore(PersistenceBase):
                         playlist_track_id,
                         playlist_id,
                     ),
+                ).rowcount
+            if updated:
+                connection.execute(
+                    "UPDATE library_playlists SET updated_at = ? WHERE id = ?",
+                    (changed_at, playlist_id),
+                )
+            return updated
+
+        result = await self._write(operation)
+        if result:
+            await self._invalidate()
+        return result
+
+    async def link_target_playlist_tracks_by_recording(
+        self, playlist_id: str, changed_at: str
+    ) -> int:
+        """Link unlinked entries to the library track that holds their song (#204).
+
+        Album-based source resolution only finds files in the album an entry
+        was imported against, once that album is identified. A track requested
+        on its own lands in the album the planner chose, often waits in
+        identification review, or was fetched from an album page as that
+        album's own recording. Two passes, each only for entries still unlinked:
+
+        1. **Recording:** the import records the downloaded recording on
+           ``local_tracks.embedded_recording_mbid`` regardless of review, so
+           match the entry's ``recording_mbid`` (or an identity row).
+        2. **Same song:** same artist, same song title (remaster/mono
+           qualifiers ignored, live/demo/remix kept) and, when both are known,
+           a length within 3 s (:func:`models.song_identity.same_song_title`).
+
+        An entry with no source becomes ``local`` (the #381 healing rule); one
+        that has a source keeps it.
+
+        3. **Display:** a resolved or chosen entry shows the album it is filed
+           under; rows resolved before that was stored get their cover and
+           album refreshed here, from the database alone.
+
+        First, entries linked to a library track that is no longer available
+        (removed: ``missing`` or ``excluded``) are unlinked, so the playlist
+        stops offering a file that is gone, "Request all tracks" counts it
+        missing again, and the export leaves it out. An unavailable library
+        root never marks its tracks missing, so an offline disk does not
+        unlink anything. A re-downloaded song relinks in the passes below.
+        """
+
+        def apply(connection: sqlite3.Connection, entry: sqlite3.Row, match: sqlite3.Row) -> int:
+            local_track_id = str(match["id"])
+            assignments = (
+                "library_file_id = ?, local_track_id = ?, local_album_id = ?, "
+                "local_artist_id = ?, reference_tombstone_id = NULL"
+            )
+            params: list[Any] = [
+                local_track_id,
+                local_track_id,
+                match["local_album_id"],
+                match["artist_id"],
+            ]
+            if not entry["source_type"]:
+                sources: list[str] = []
+                raw = entry["available_sources"]
+                if raw:
+                    try:
+                        decoded = json.loads(raw)
+                    except json.JSONDecodeError:
+                        decoded = []
+                    if isinstance(decoded, list):
+                        sources = [str(item) for item in decoded]
+                if "local" not in sources:
+                    sources.append("local")
+                assignments += (
+                    ", source_type = 'local', track_source_id = ?, available_sources = ?"
+                )
+                params += [local_track_id, json.dumps(sorted(sources))]
+            return connection.execute(
+                f"UPDATE library_playlist_tracks SET {assignments} "
+                "WHERE id = ? AND playlist_id = ? AND local_track_id IS NULL",
+                (*params, entry["id"], playlist_id),
+            ).rowcount
+
+        track_columns = (
+            "SELECT t.id, t.local_album_id, t.title, t.duration_seconds, "
+            "COALESCE(ta.local_artist_id, a.album_artist_id) AS artist_id "
+            "FROM local_tracks t JOIN local_albums a ON a.id = t.local_album_id "
+            "LEFT JOIN local_track_artists ta "
+            "ON ta.local_track_id = t.id AND ta.position = 0 "
+            "WHERE t.availability = 'indexed' AND "
+        )
+
+        def unlink_unavailable(connection: sqlite3.Connection) -> int:
+            gone = connection.execute(
+                "SELECT pt.id, pt.source_type, pt.available_sources "
+                "FROM library_playlist_tracks pt "
+                "JOIN local_tracks t ON t.id = pt.local_track_id "
+                "WHERE pt.playlist_id = ? AND t.availability <> 'indexed'",
+                (playlist_id,),
+            ).fetchall()
+            unlinked = 0
+            for entry in gone:
+                sources: list[str] = []
+                raw = entry["available_sources"]
+                if raw:
+                    try:
+                        decoded = json.loads(raw)
+                    except json.JSONDecodeError:
+                        decoded = []
+                    if isinstance(decoded, list):
+                        sources = [
+                            str(item)
+                            for item in decoded
+                            if item not in _REMOVED_WITH_LIBRARY_FILE
+                        ]
+                lost_source = (entry["source_type"] or "") in _REMOVED_WITH_LIBRARY_FILE
+                unlinked += connection.execute(
+                    "UPDATE library_playlist_tracks SET local_track_id = NULL, "
+                    "library_file_id = NULL, local_album_id = NULL, "
+                    "local_artist_id = NULL, available_sources = ?, "
+                    "source_type = CASE WHEN ? THEN '' ELSE source_type END, "
+                    "track_source_id = CASE WHEN ? THEN NULL ELSE track_source_id END "
+                    "WHERE id = ? AND playlist_id = ?",
+                    (
+                        json.dumps(sorted(sources)) if sources else None,
+                        int(lost_source),
+                        int(lost_source),
+                        entry["id"],
+                        playlist_id,
+                    ),
+                ).rowcount
+            return unlinked
+
+        def operation(connection: sqlite3.Connection) -> int:
+            updated = unlink_unavailable(connection)
+            by_recording = connection.execute(
+                "SELECT id, recording_mbid, source_type, available_sources "
+                "FROM library_playlist_tracks WHERE playlist_id = ? "
+                "AND local_track_id IS NULL AND recording_mbid IS NOT NULL "
+                "AND recording_mbid <> ''",
+                (playlist_id,),
+            ).fetchall()
+            for entry in by_recording:
+                recording = str(entry["recording_mbid"]).casefold()
+                match = connection.execute(
+                    track_columns
+                    + "(LOWER(t.embedded_recording_mbid) = ? OR t.id IN ("
+                    "SELECT identity.local_track_id "
+                    "FROM local_track_external_identities identity "
+                    "WHERE LOWER(identity.recording_mbid) = ?)) ORDER BY t.id LIMIT 1",
+                    (recording, recording),
+                ).fetchone()
+                if match is not None:
+                    updated += apply(connection, entry, match)
+
+            by_song = connection.execute(
+                "SELECT id, track_name, artist_name, duration, source_type, "
+                "available_sources FROM library_playlist_tracks "
+                "WHERE playlist_id = ? AND local_track_id IS NULL",
+                (playlist_id,),
+            ).fetchall()
+            for entry in by_song:
+                artist = str(entry["artist_name"] or "").strip()
+                if not artist or not entry["track_name"]:
+                    continue
+                # Spotify joins several artists with ", "; the lead artist is
+                # what a downloaded file credits.
+                names = sorted({artist.lower(), artist.split(", ")[0].strip().lower()})
+                placeholders = ",".join("?" for _ in names)
+                candidates = connection.execute(
+                    track_columns
+                    + f"(LOWER(t.artist_name) IN ({placeholders}) "
+                    f"OR LOWER(t.album_artist_name) IN ({placeholders})) ORDER BY t.id",
+                    (*names, *names),
+                ).fetchall()
+                seconds = entry["duration"]
+                same = [
+                    candidate
+                    for candidate in candidates
+                    if same_song_title(
+                        str(entry["track_name"]),
+                        seconds,
+                        str(candidate["title"] or ""),
+                        candidate["duration_seconds"],
+                    )
+                ]
+                if not same:
+                    continue
+                best = min(
+                    same,
+                    key=lambda candidate: (
+                        abs((candidate["duration_seconds"] or 0) - (seconds or 0))
+                        if seconds and candidate["duration_seconds"]
+                        else 0,
+                        str(candidate["id"]),
+                    ),
+                )
+                updated += apply(connection, entry, best)
+
+            filed = connection.execute(
+                "SELECT id, target_release_group_mbid, cover_url "
+                "FROM library_playlist_tracks WHERE playlist_id = ? "
+                "AND resolution_status IN ('resolved', 'chosen') "
+                "AND target_release_group_mbid IS NOT NULL "
+                "AND target_release_group_mbid <> ''",
+                (playlist_id,),
+            ).fetchall()
+            for entry in filed:
+                album = str(entry["target_release_group_mbid"])
+                cover = release_group_cover_url(album)
+                if entry["cover_url"] == cover:
+                    continue
+                updated += connection.execute(
+                    "UPDATE library_playlist_tracks SET cover_url = ?, album_id = ? "
+                    "WHERE id = ? AND playlist_id = ?",
+                    (cover, album, entry["id"], playlist_id),
                 ).rowcount
             if updated:
                 connection.execute(

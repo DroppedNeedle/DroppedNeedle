@@ -37,6 +37,7 @@ from infrastructure.cache.cache_keys import (
 from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.resilience.retry import CircuitOpenError
 from models.musicbrainz import recording_release_group_rank
+from models.release_home import HomeCandidate, RecordingHome, is_various_artist_credit
 from models.release_type_policy import should_include_release
 from repositories.musicbrainz_base import (
     MbSourceContext,
@@ -153,6 +154,13 @@ class _RecordingReleaseGroupPayload(msgspec.Struct):
     releases: list[dict[str, Any]] = msgspec.field(default_factory=list)
 
 
+class _RecordingReleaseBrowsePayload(msgspec.Struct):
+    # /release?recording=X is the browse that lists *every* release of a
+    # recording; a recording lookup's inc=releases caps linked entities at 25.
+    releases: list[dict[str, Any]] = msgspec.field(default_factory=list)
+    release_count: int = msgspec.field(name="release-count", default=0)
+
+
 class _RecordingSearchPayload(msgspec.Struct):
     recordings: list[dict[str, Any]] = msgspec.field(default_factory=list)
 
@@ -233,6 +241,104 @@ def _release_rank(release: dict, rg: dict) -> tuple[int, int, int, int, str, str
         release_date=release.get("date") or rg.get("first-release-date"),
         release_group_mbid=rg.get("id", ""),
     )
+
+
+_RECORDING_HOMES_PAGE_SIZE = 100
+# Bounds one browse to 10 requests; a recording on >1000 releases keeps the
+# first 1000, which still carries its original album in practice.
+_RECORDING_HOMES_MAX_PAGES = 10
+_RECORDING_HOMES_MAX_AGE_SECONDS = 30 * 86400
+# Only these statuses make a release unofficial. Many older releases carry no
+# status at all; treating that as unofficial would sink an artist's original
+# album below the compilations that do have one.
+_UNOFFICIAL_RELEASE_STATUSES = frozenset({"bootleg", "cancelled"})
+
+
+def _artist_credit_phrase(artist_credit: list[dict[str, Any]]) -> str:
+    return "".join(
+        f"{credit.get('name') or (credit.get('artist') or {}).get('name') or ''}"
+        f"{credit.get('joinphrase') or ''}"
+        for credit in artist_credit
+        if isinstance(credit, dict)
+    ).strip()
+
+
+def _recording_homes_from_releases(
+    releases: list[dict[str, Any]],
+) -> list[RecordingHome]:
+    """Collapse a recording's releases to one home per release group.
+
+    A group counts as official unless every one of the recording's releases
+    in it is a bootleg (or cancelled); a missing status is not evidence. Each
+    home keeps the edition best placed to supply the recording: Official,
+    then no status, then others; earliest date; lowest MBID.
+    """
+    homes: dict[str, RecordingHome] = {}
+    edition_rank: dict[str, tuple[int, str, str]] = {}
+    for release in releases:
+        rg = release.get("release-group") or {}
+        rg_id = normalize_mb_id(rg.get("id"))
+        if not rg_id:
+            continue
+        status = (release.get("status") or "").casefold()
+        official = status not in _UNOFFICIAL_RELEASE_STATUSES
+        release_id = normalize_mb_id(release.get("id")) or None
+        rank = (
+            0 if status == "official" else 1 if not status else 2 if official else 3,
+            release.get("date") or "9999-99-99",
+            release_id or "~",
+        )
+        current = homes.get(rg_id)
+        if current is not None:
+            if official and not current.official:
+                current = msgspec.structs.replace(current, official=True)
+            if release_id and rank < edition_rank[rg_id]:
+                current = msgspec.structs.replace(current, release_mbid=release_id)
+                edition_rank[rg_id] = rank
+            homes[rg_id] = current
+            continue
+        edition_rank[rg_id] = rank
+        credit = rg.get("artist-credit") or release.get("artist-credit") or []
+        homes[rg_id] = RecordingHome(
+            release_group_mbid=rg_id,
+            title=rg.get("title") or "",
+            primary_type=rg.get("primary-type"),
+            secondary_types=tuple(rg.get("secondary-types") or ()),
+            official=official,
+            is_various=is_various_artist_credit(credit),
+            artist_credit=_artist_credit_phrase(credit),
+            first_release_date=rg.get("first-release-date") or None,
+            artist_mbids=tuple(
+                artist_id
+                for entry in credit
+                if isinstance(entry, dict)
+                and (artist_id := normalize_mb_id((entry.get("artist") or {}).get("id")))
+            ),
+            release_mbid=release_id,
+        )
+    return [homes[key] for key in sorted(homes)]
+
+
+def recording_home_candidates(
+    homes: list[RecordingHome], track_artist: str | None
+) -> list[HomeCandidate]:
+    """Bind a recording's homes to the artist of the track being placed.
+
+    Blank or Various Artists track artists credit every home, keeping the
+    tiering purely type-based. So does an artist matching no home at all (a
+    "CCR" spelling, a transliteration): otherwise every album would fall to
+    OTHER, below the compilations, inverting the preference.
+    """
+    credits = [
+        _artist_name_matches(track_artist or "", home.artist_credit)
+        for home in homes
+    ]
+    if not _artist_preference_active(track_artist) or not any(credits):
+        credits = [True] * len(homes)
+    return [
+        home.to_candidate(credits_track_artist=credited)
+        for home, credited in zip(homes, credits, strict=True)
+    ]
 
 
 def _pick_best_release_group(
@@ -1730,6 +1836,104 @@ class MusicBrainzAlbumMixin:
                 logger.error("MusicBrainz recording-to-group lookup failed")
             _record_mb_degradation("recording-to-rg lookup failed")
             return None
+
+    async def get_recording_homes(
+        self,
+        recording_mbid: str,
+        *,
+        priority: RequestPriority = RequestPriority.USER_INITIATED,
+    ) -> list[RecordingHome] | None:
+        """Every release group a recording appears on (#204).
+
+        Reads through the durable ``recording_release_groups`` map (30-day
+        freshness) before browsing ``/release?recording=``. ``None`` means the
+        lookup failed and nothing was banked; ``[]`` is an authoritative empty.
+        """
+        clear_mb_response_context()
+        source_context = capture_mb_source_context()
+        recording_mbid = normalize_mb_id(recording_mbid)
+        if not is_valid_mbid(recording_mbid):
+            _record_mb_degradation("recording invalid mbid", deterministic=True)
+            return None
+        recording_mbid = await resolve_redirect_mbid(
+            "recording",
+            recording_mbid,
+            source_context,
+            self._cache,
+            getattr(self, "_mb_canonical_store", None),
+        )
+        canonical_store = getattr(self, "_mb_canonical_store", None)
+        if canonical_store is not None:
+            try:
+                stored = await canonical_store.get_recording_release_groups(
+                    [recording_mbid],
+                    source_context=source_context,
+                    max_age_seconds=_RECORDING_HOMES_MAX_AGE_SECONDS,
+                )
+                if recording_mbid in stored:
+                    return stored[recording_mbid]
+            except Exception:  # noqa: BLE001 - store miss falls to wire
+                logger.warning("MusicBrainz recording homes store read failed")
+
+        return await mb_deduplicator.dedupe(
+            f"mb:recording_homes:{recording_mbid}:g{source_context.generation}",
+            lambda: self._browse_recording_homes(
+                recording_mbid, source_context=source_context, priority=priority
+            ),
+        )
+
+    async def _browse_recording_homes(
+        self,
+        recording_mbid: str,
+        *,
+        source_context: MbSourceContext,
+        priority: RequestPriority,
+    ) -> list[RecordingHome] | None:
+        releases: list[dict[str, Any]] = []
+        total = 0
+        try:
+            for _page in range(_RECORDING_HOMES_MAX_PAGES):
+                result = await mb_api_get(
+                    "/release",
+                    params={
+                        "recording": recording_mbid,
+                        "inc": "release-groups+artist-credits",
+                        "limit": _RECORDING_HOMES_PAGE_SIZE,
+                        "offset": len(releases),
+                    },
+                    priority=priority,
+                    decode_type=_RecordingReleaseBrowsePayload,
+                    source_context=source_context,
+                )
+                releases.extend(result.releases)
+                total = int(result.release_count)
+                if not result.releases or len(releases) >= total:
+                    break
+        except Exception as e:  # noqa: BLE001
+            # Same F-MATCH-05 policy as the recording-to-group lookup: a
+            # transient failure is recorded and never banked.
+            if not isinstance(e, CircuitOpenError):
+                logger.error("MusicBrainz recording homes browse failed")
+            _record_mb_degradation("recording homes browse failed")
+            return None
+        if len(releases) < total:
+            logger.info(
+                "MusicBrainz recording homes truncated at %s of %s releases",
+                len(releases),
+                total,
+            )
+        homes = _recording_homes_from_releases(releases)
+        canonical_store = getattr(self, "_mb_canonical_store", None)
+        if canonical_store is not None:
+            try:
+                await canonical_store.save_recording_release_groups(
+                    recording_mbid,
+                    homes,
+                    source_context=get_mb_response_context() or source_context,
+                )
+            except Exception:  # noqa: BLE001 - banking is best-effort
+                logger.warning("MusicBrainz recording homes store write failed")
+        return homes
 
     async def get_recording_position_on_release(
         self,

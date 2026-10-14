@@ -9,6 +9,7 @@
 		isRedactedPlaylist,
 		type PlaylistDetail,
 		type PlaylistDetailItem,
+		type PlaylistTrack,
 		type RedactedPlaylist
 	} from '$lib/api/playlists';
 	import { playlistTrackToQueueItem } from '$lib/player/queueHelpers';
@@ -30,6 +31,7 @@
 	import PlaylistHeader from './PlaylistHeader.svelte';
 	import PlaylistTrackList from './PlaylistTrackList.svelte';
 	import DeletePlaylistModal from './DeletePlaylistModal.svelte';
+	import RequestTracksPanel from './RequestTracksPanel.svelte';
 
 	let { data }: { data: PageData } = $props();
 
@@ -164,8 +166,25 @@
 		return false;
 	}
 
+	// Local playback needs the row's library link, so a cached "local" for a
+	// row the server reports without one is stale: the file was removed
+	// (#204). Re-applying it would offer a source that can't play and hide
+	// the track from "Request all tracks".
+	function cacheContradictsLive(
+		cached: Record<string, string[]>,
+		tracks: PlaylistTrack[]
+	): boolean {
+		return tracks.some((t) => !t.library_file_id && (cached[t.id] ?? []).includes('local'));
+	}
+
 	async function resolveAndCacheSources(playlistId: string) {
-		const cached = getSourcesFromCache(playlistId);
+		let cached = getSourcesFromCache(playlistId);
+		if (cached && playlist && playlist.id === playlistId) {
+			if (cacheContradictsLive(cached, playlist.tracks)) {
+				invalidateSourcesCache(playlistId);
+				cached = null;
+			}
+		}
 		if (cached && playlist && playlist.id === playlistId) {
 			const ids = new Set(playlist.tracks.map((t) => t.id));
 			if (hasUsableSourcesForPlaylist(cached, ids)) {
@@ -253,6 +272,21 @@
 		}
 		const startIndex = Math.min(index, items.length - 1);
 		playerStore.playQueue(items, startIndex, false);
+	}
+
+	function refreshDetail() {
+		if (!playlist) return;
+		void invalidateQueriesWithPersister({
+			queryKey: PlaylistQueryKeyFactory.detail(authStore.user?.id, playlist.id)
+		});
+	}
+
+	function handleTrackUpdate(updated: PlaylistTrack) {
+		if (!playlist) return;
+		playlist = {
+			...playlist,
+			tracks: playlist.tracks.map((t) => (t.id === updated.id ? { ...t, ...updated } : t))
+		};
 	}
 
 	function handleSourceChange() {
@@ -438,6 +472,14 @@
 						Request {missingAlbumCount === 1 ? 'album' : missingAlbumCount + ' albums'}
 					</button>
 				</div>
+			{/if}
+
+			{#if isOwner}
+				<RequestTracksPanel
+					{playlist}
+					onrefresh={refreshDetail}
+					ontrackupdate={handleTrackUpdate}
+				/>
 			{/if}
 
 			<PlaylistTrackList

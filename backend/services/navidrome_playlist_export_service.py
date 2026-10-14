@@ -18,6 +18,7 @@ import re
 import unicodedata
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path, PurePath
 
 from infrastructure.persistence.native_library_store import NativeLibraryStore
@@ -194,6 +195,16 @@ class NavidromePlaylistExportService:
             if not playlist_id:
                 continue
             name = str(playlist.get("name") or "Playlist")
+
+            try:
+                # Tracks requested one by one (#204) land in the album their
+                # recording was planned into, which album-based linking can't
+                # see; link them by recording so they export.
+                await self._store.link_target_playlist_tracks_by_recording(
+                    playlist_id, datetime.now(timezone.utc).isoformat()
+                )
+            except Exception:  # noqa: BLE001 - linking is best-effort; export what's linked
+                logger.warning("Playlist export could not link %s by recording", playlist_id)
 
             try:
                 entries = await self._store.list_target_playlist_export_rows(

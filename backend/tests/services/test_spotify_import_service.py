@@ -629,3 +629,78 @@ def test_cover_fetcher_alias_shape():
 
     typed: CoverFetcher = fetcher
     assert typed is fetcher
+
+
+@pytest.mark.asyncio
+async def test_populate_persists_normalized_isrc_per_track(tmp_path):
+    """#204: every track keeps its ISRC (upper-cased); malformed or missing
+    ISRCs are stored as NULL rather than garbage."""
+    cdn = SpotifyCdnMock()
+    svc, playlists = _real_service(tmp_path, cdn, images=[])
+    client = await svc._client_factory.resolve_spotify("user-1")
+    client.get_playlist_tracks.return_value = [
+        {**_TRACK, "name": "Valid", "external_ids": {"isrc": " usum71703861 "}},
+        {**_TRACK, "name": "Malformed", "external_ids": {"isrc": "nope"}},
+        {**_TRACK, "name": "Missing"},
+    ]
+
+    record = await _import_one(svc, playlists, tmp_path)
+
+    tracks = await playlists.get_tracks(record.id)
+    assert [(t.track_name, t.isrc) for t in tracks] == [
+        ("Valid", "USUM71703861"),
+        ("Malformed", None),
+        ("Missing", None),
+    ]
+    assert all(t.recording_mbid is None for t in tracks)
+
+
+@pytest.mark.asyncio
+async def test_resync_keeps_song_identity_and_resolution(tmp_path):
+    """#204: a Spotify re-sync re-creates every entry; resolved/flagged state
+    (including a user's chosen home) follows the song by ISRC, then by name,
+    and dropped songs are not resurrected."""
+    from repositories.playlist_repository import TrackResolution
+
+    cdn = SpotifyCdnMock()
+    svc, playlists = _real_service(tmp_path, cdn, images=[])
+    client = await svc._client_factory.resolve_spotify("user-1")
+    by_isrc = {**_TRACK, "name": "Fortunate Son", "external_ids": {"isrc": "USFI86900049"}}
+    by_name = {**_TRACK, "name": "Proud Mary"}
+    dropped = {**_TRACK, "name": "Gone", "external_ids": {"isrc": "USFI86900050"}}
+    client.get_playlist_tracks.return_value = [by_isrc, by_name, dropped]
+    record = await _import_one(svc, playlists, tmp_path)
+
+    first = {t.track_name: t for t in await playlists.get_tracks(record.id)}
+    options = [{"recording_mbid": "rec-a", "release_group_mbid": "rg-a"}]
+    await svc._async_repo.batch_update_resolutions(
+        record.id,
+        {
+            first["Fortunate Son"].id: TrackResolution(
+                "rg-willy", "album", "resolved", recording_mbid="rec-fs"
+            ),
+            first["Proud Mary"].id: TrackResolution(
+                None, None, "flagged", recording_mbid="rec-pm", flag_options=options
+            ),
+            first["Gone"].id: TrackResolution("rg-x", "album", "resolved"),
+        },
+    )
+
+    # Re-sync: order changes, "Gone" is removed from the Spotify playlist.
+    client.get_playlist_tracks.return_value = [by_name, by_isrc]
+    await svc.populate_playlist("user-1", "spot-1", record.id)
+
+    tracks = await playlists.get_tracks(record.id)
+    assert [t.track_name for t in tracks] == ["Proud Mary", "Fortunate Son"]
+    proud, fortunate = tracks
+    assert proud.id != first["Proud Mary"].id  # rows are re-created...
+    assert (proud.recording_mbid, proud.resolution_status, proud.flag_options) == (
+        "rec-pm",
+        "flagged",
+        options,
+    )  # ...but the verdict follows the song
+    assert (
+        fortunate.recording_mbid,
+        fortunate.target_release_group_mbid,
+        fortunate.home_tier,
+    ) == ("rec-fs", "rg-willy", "album")
