@@ -29,6 +29,7 @@ use super::models::{
 };
 use super::queue::PRIORITY_NEW_OR_CHANGED;
 use super::stores::{Approval, RELEASE_FRESH_SECS, StoreError};
+use crate::library::corrections::continuation::{Scope, continue_tracks};
 use crate::library::matching::Release;
 use crate::library::operations::choice::RemapOrigin;
 
@@ -432,7 +433,7 @@ impl SqliteIdentifyStore {
         };
         // Guarded like the album row.
         let written = self.write("save track identity", |tx| {
-            tx.execute(
+            let written = tx.execute(
                 &format!(
                     "INSERT INTO local_track_external_identities (local_track_id, provider, \
                      recording_mbid, release_track_mbid, decision_source, selected_at, row_revision) \
@@ -454,7 +455,16 @@ impl SqliteIdentifyStore {
                     now_secs(),
                     identity.row_revision.max(1) as i64,
                 ],
-            )
+            )?;
+            if written == 1 {
+                let album: String = tx.query_row(
+                    "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+                    params![identity.local_track_id],
+                    |row| row.get(0),
+                )?;
+                continue_tracks(tx, Scope::Album(&album), now_secs())?;
+            }
+            Ok(written)
         });
         if written == Some(0) {
             tracing::warn!(
@@ -815,10 +825,21 @@ fn seal_automatic_tx(
             ],
         )?;
     }
-    if seal.release_mbid.is_none() {
-        return Ok(true);
+    if seal.release_mbid.is_some() {
+        keep_automatic_undo(tx, album, prior.as_ref(), &prior_tracks, now)?;
     }
-    // One live undo per album: a later automatic seal replaces it.
+    continue_tracks(tx, Scope::Album(album), now)?;
+    Ok(true)
+}
+
+/// One live undo per album: a later automatic seal replaces it.
+fn keep_automatic_undo(
+    tx: &rusqlite::Transaction<'_>,
+    album: &str,
+    prior: Option<&PriorAlbumIdentity>,
+    prior_tracks: &[PriorTrackIdentity],
+    now: f64,
+) -> rusqlite::Result<()> {
     tx.execute(
         "INSERT INTO library_automatic_edition_undo (id, local_album_id, \
          prior_identity_json, prior_track_identities_json, expected_post_album_revision, \
@@ -837,14 +858,14 @@ fn seal_automatic_tx(
          consumed_at = NULL, consumed_action_id = NULL",
         params![
             uuid::Uuid::new_v4().to_string(),
-            prior.as_ref().map(to_json).transpose()?,
+            prior.map(to_json).transpose()?,
             to_json(&prior_tracks)?,
             now,
             album,
             PROVIDER,
         ],
     )?;
-    Ok(true)
+    Ok(())
 }
 
 /// Local album facts the matcher reads, from the catalog the scan
@@ -1975,6 +1996,11 @@ impl SqliteIdentifyStore {
             )
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
             bump_identification_stream(&tx)?;
+            continue_tracks(
+                &tx,
+                Scope::Album(&approval.album.local_album_id),
+                crate::library::clock::now_unix(),
+            )?;
             tx.commit()?;
             Ok(true)
         })();

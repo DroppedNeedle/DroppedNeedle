@@ -244,9 +244,12 @@ impl Catalog for SqliteCatalog {
 }
 
 /// Retire the track whose file a commit replaced: it stays in the
-/// catalog (history and playlists keep pointing at it) as a missing
-/// track whose file is in the recycle bin. Its path moves to a hidden
-/// name under the bundle, so the new file can hold the real one.
+/// catalog as a missing track whose file is in the recycle bin. When the
+/// file that took its place is on the same album and mapped to the same
+/// release track, the end of the next scan moves its plays, favorites and
+/// playlist entries to that track and its id opens it. Its path
+/// moves to a hidden name under the bundle, so the new file can hold the
+/// real one.
 fn retire_replaced(
     conn: &Connection,
     track: &TrackCommit,

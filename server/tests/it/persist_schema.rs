@@ -61,7 +61,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 152);
+    assert_eq!(table_names(&pool).await.len(), 153);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -655,7 +655,6 @@ async fn empty_tables_drop_and_aliases_survive() {
         "library_playlists",
         "library_compat_id_map",
         "library_edition_conversion_jobs",
-        "local_track_aliases",
         "library_scan_grouping_groups",
         "library_scan_grouping_contexts",
         "library_management_blob_references",
@@ -1077,6 +1076,87 @@ async fn departures_arrive_empty_and_merge_chains_end_on_a_live_album() {
         .await
         .unwrap();
     assert_eq!(departures, 0);
+}
+
+/// Migration 0047 adds the track aliases, empty, on a database that had
+/// none: a strict table whose alias belongs to its old track and whose
+/// target must outlive it, an index on the target, and the version stamp.
+#[tokio::test]
+async fn track_aliases_arrive_empty_and_strict() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 47)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    assert!(
+        !table_names(&pool)
+            .await
+            .contains(&"local_track_aliases".to_owned())
+    );
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(version >= 47, "{version}");
+    let strict: i64 = sqlx::query_scalar(
+        "SELECT strict FROM pragma_table_list WHERE name = 'local_track_aliases'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(strict, 1);
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_track_aliases")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+    let mut keys: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT \"from\", \"table\", \"to\", on_delete \
+         FROM pragma_foreign_key_list('local_track_aliases')",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    keys.sort();
+    assert_eq!(
+        keys,
+        vec![
+            (
+                "alias".to_owned(),
+                "local_tracks".to_owned(),
+                "id".to_owned(),
+                "CASCADE".to_owned()
+            ),
+            (
+                "local_track_id".to_owned(),
+                "local_tracks".to_owned(),
+                "id".to_owned(),
+                "RESTRICT".to_owned()
+            ),
+        ]
+    );
+    let indexed: Vec<String> = sqlx::query_scalar(
+        "SELECT i.name FROM pragma_index_list('local_track_aliases') i \
+         JOIN pragma_index_info(i.name) c WHERE c.name = 'local_track_id'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(indexed, vec!["idx_local_track_aliases_track".to_owned()]);
 }
 
 /// The causes a takeover may carry in the database are exactly the ones

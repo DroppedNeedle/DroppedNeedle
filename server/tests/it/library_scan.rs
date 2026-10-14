@@ -672,7 +672,7 @@ fn retag_warnings() -> &'static std::sync::Mutex<Vec<String>> {
     impl std::io::Write for Capture {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
             let line = String::from_utf8_lossy(buf);
-            if line.contains("retagged album") {
+            if line.contains("retagged album") || line.contains("tracks not continued") {
                 retag_warnings()
                     .lock()
                     .expect("lines")
@@ -3312,4 +3312,492 @@ async fn hand_merge_removes_an_open_pair() {
         query(&library, "SELECT COUNT(*) FROM library_retag_pairs"),
         0
     );
+}
+
+// ---------------------------------------------------------------------------
+// A missing track continuing into the track that took its place.
+// ---------------------------------------------------------------------------
+
+/// The release the continuation briefs' albums are matched to, and one of
+/// its tracks.
+const REL_R: &str = "rel-r";
+const TRACK_X: &str = "rt-x";
+
+/// One album of `count` files, matched by a person to [`REL_R`]. Returns
+/// the rig, the album and the track rows of `a/t000.flac` onwards.
+async fn continuation_album(name: &str, count: usize) -> (RegroupRig, String, Vec<String>) {
+    let mut rig = RegroupRig::new(name);
+    let files: Vec<String> = (0..count).map(|n| format!("a/t{n:03}.flac")).collect();
+    let before = rig.before.clone();
+    rig.tag(&files, &before);
+    rig.scan().await;
+    let album = rig.album_of("a/t000.flac");
+    rig.run(&format!(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_at) \
+         VALUES ('{album}', 'musicbrainz', 'rg-r', '{REL_R}', 'manual', 0);"
+    ));
+    let store = rig.coordinator.store();
+    let tracks = files
+        .iter()
+        .map(|file| store.track_at("music", file).expect("track indexed"))
+        .collect();
+    (rig, album, tracks)
+}
+
+/// A track identity naming `release` (or none) and `release_track` (or
+/// none), with the recording `rec-x`.
+fn map_track(track: &str, release: Option<&str>, release_track: Option<&str>) -> String {
+    let quote = |value: Option<&str>| value.map_or("NULL".to_owned(), |v| format!("'{v}'"));
+    format!(
+        "INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_mbid, release_track_mbid, decision_source, selected_at) \
+         VALUES ('{track}', 'musicbrainz', 'rec-x', {}, {}, 'manual', 0) \
+         ON CONFLICT (local_track_id, provider) DO UPDATE SET \
+         release_mbid = excluded.release_mbid, \
+         release_track_mbid = excluded.release_track_mbid;",
+        quote(release),
+        quote(release_track)
+    )
+}
+
+/// A listener's star on the track.
+fn star(track: &str) -> String {
+    format!(
+        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('listener', 'track', '{track}', 1);"
+    )
+}
+
+impl RegroupRig {
+    /// Stars on the track, and how many aliases exist.
+    fn stars_and_aliases(&self, track: &str) -> (i64, i64) {
+        (
+            self.count(&format!(
+                "SELECT COUNT(*) FROM library_user_favorites WHERE item_id = '{track}'"
+            )),
+            self.count("SELECT COUNT(*) FROM local_track_aliases"),
+        )
+    }
+
+    /// The alias rows, as (old, new), in order.
+    fn aliases(&self) -> Vec<(String, String)> {
+        let rows = self.count("SELECT COUNT(*) FROM local_track_aliases");
+        (0..rows)
+            .map(|n| {
+                let pick = |column: &str| {
+                    self.text(&format!(
+                        "SELECT {column} FROM local_track_aliases ORDER BY alias LIMIT 1 OFFSET {n}"
+                    ))
+                    .expect("alias row")
+                };
+                (pick("alias"), pick("local_track_id"))
+            })
+            .collect()
+    }
+
+    /// Continuation audit rows written so far.
+    fn continuations(&self) -> i64 {
+        self.count(
+            "SELECT COUNT(*) FROM library_catalog_actions WHERE action_kind = 'continue_tracks'",
+        )
+    }
+}
+
+/// When the proof is not there, nothing moves and no alias is made. Each
+/// case is an album matched to release R whose first file is starred and
+/// then deleted; the rows and mappings are as the case says.
+#[tokio::test]
+async fn a_missing_track_does_not_continue_without_proof() {
+    struct Case {
+        name: &'static str,
+        files: usize,
+        /// Statements over the album and its rows, run before the delete.
+        setup: fn(&str, &[String]) -> String,
+        /// The first file is deleted (otherwise it stays: two copies).
+        delete: bool,
+    }
+    let cases = [
+        Case {
+            name: "one missing and two present",
+            files: 3,
+            setup: |_, t| {
+                [&t[0], &t[1], &t[2]]
+                    .iter()
+                    .map(|track| map_track(track, Some(REL_R), Some(TRACK_X)))
+                    .collect()
+            },
+            delete: true,
+        },
+        Case {
+            name: "the same recording on another release track",
+            files: 2,
+            setup: |_, t| {
+                map_track(&t[0], Some(REL_R), Some(TRACK_X))
+                    + &map_track(&t[1], Some(REL_R), Some("rt-other"))
+            },
+            delete: true,
+        },
+        Case {
+            name: "a best guess",
+            files: 2,
+            setup: |album, t| {
+                map_track(&t[0], Some(REL_R), Some(TRACK_X))
+                    + &map_track(&t[1], Some(REL_R), Some(TRACK_X))
+                    + &format!(
+                        "INSERT INTO library_album_match_state (local_album_id, state, \
+                         reason_code, release_mbid, updated_at) \
+                         VALUES ('{album}', 'unconfirmed', 'EDITION_UNCERTAIN', '{REL_R}', 0);"
+                    )
+            },
+            delete: true,
+        },
+        Case {
+            name: "a match naming no release",
+            files: 2,
+            setup: |album, t| {
+                map_track(&t[0], None, Some(TRACK_X))
+                    + &map_track(&t[1], None, Some(TRACK_X))
+                    + &format!(
+                        "UPDATE local_album_external_identities SET release_mbid = NULL \
+                         WHERE local_album_id = '{album}';"
+                    )
+            },
+            delete: true,
+        },
+        Case {
+            name: "a custom edition",
+            files: 2,
+            setup: |album, t| {
+                map_track(&t[0], Some(REL_R), Some(TRACK_X))
+                    + &map_track(&t[1], Some(REL_R), Some(TRACK_X))
+                    + &format!(
+                        "INSERT INTO auth_users (id, display_name, role, created_at) \
+                         VALUES ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'); \
+                         INSERT INTO library_custom_edition_manifests (id, local_album_id, \
+                         version, release_group_mbid, album_title, album_artist_name, \
+                         source_album_revision, input_revision, content_hash, \
+                         sealed_by_user_id, sealed_at) VALUES ('m1', '{album}', 1, 'rg-r', \
+                         'T', 'A', 1, 'in', 'hash', 'curator', 0); \
+                         INSERT INTO library_custom_edition_active (local_album_id, \
+                         manifest_id, activated_at) VALUES ('{album}', 'm1', 0);"
+                    )
+            },
+            delete: true,
+        },
+        Case {
+            name: "the old row's mapping naming another release",
+            files: 2,
+            setup: |_, t| {
+                map_track(&t[0], Some("rel-other"), Some(TRACK_X))
+                    + &map_track(&t[1], Some(REL_R), Some(TRACK_X))
+            },
+            delete: true,
+        },
+        Case {
+            name: "the new row's mapping naming another release",
+            files: 2,
+            setup: |_, t| {
+                map_track(&t[0], Some(REL_R), Some(TRACK_X))
+                    + &map_track(&t[1], Some("rel-other"), Some(TRACK_X))
+            },
+            delete: true,
+        },
+        Case {
+            name: "the old row present (two copies)",
+            files: 2,
+            setup: |_, t| {
+                map_track(&t[0], Some(REL_R), Some(TRACK_X))
+                    + &map_track(&t[1], Some(REL_R), Some(TRACK_X))
+            },
+            delete: false,
+        },
+        Case {
+            name: "same names and recording, no release track on the old row",
+            files: 2,
+            setup: |_, t| {
+                map_track(&t[0], Some(REL_R), None) + &map_track(&t[1], Some(REL_R), Some(TRACK_X))
+            },
+            delete: true,
+        },
+    ];
+    for (index, case) in cases.iter().enumerate() {
+        let (rig, album, tracks) =
+            continuation_album(&format!("scan-continue-refused-{index}"), case.files).await;
+        rig.run(&(case.setup)(&album, &tracks));
+        rig.run(&star(&tracks[0]));
+        if case.delete {
+            rig.lose(&["a/t000.flac".to_owned()]).await;
+        } else {
+            rig.scan().await;
+        }
+        assert_eq!(rig.stars_and_aliases(&tracks[0]), (1, 0), "{}", case.name);
+        assert_eq!(rig.continuations(), 0, "{}", case.name);
+    }
+
+    // The old row on another album row of the same release.
+    let mut rig = RegroupRig::new("scan-continue-refused-other-album");
+    let (first, second) = ("first".to_owned(), "second".to_owned());
+    rig.tag(&["a/t000.flac".to_owned()], &first);
+    rig.tag(&["b/t001.flac".to_owned()], &second);
+    rig.scan().await;
+    let store = rig.coordinator.store();
+    let old = store.track_at("music", "a/t000.flac").expect("indexed");
+    let new = store.track_at("music", "b/t001.flac").expect("indexed");
+    for album in [rig.album_of("a/t000.flac"), rig.album_of("b/t001.flac")] {
+        rig.run(&format!(
+            "INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, release_mbid, decision_source, selected_at) \
+             VALUES ('{album}', 'musicbrainz', 'rg-r', '{REL_R}', 'manual', 0);"
+        ));
+    }
+    rig.run(
+        &(map_track(&old, Some(REL_R), Some(TRACK_X))
+            + &map_track(&new, Some(REL_R), Some(TRACK_X))
+            + &star(&old)),
+    );
+    rig.lose(&["a/t000.flac".to_owned()]).await;
+    assert_eq!(rig.stars_and_aliases(&old), (1, 0), "another album row");
+}
+
+/// Where the proof is there, the missing rows on the release track all
+/// continue into the one present row at the end of the scan: two missing
+/// rows into one, an excluded row on the same track left as it is, and
+/// rows that name no release (an approval or an import wrote them).
+#[tokio::test]
+async fn missing_tracks_continue_into_the_one_present_row() {
+    let (rig, _, t) = continuation_album("scan-continue-two-missing", 3).await;
+    for track in &t {
+        rig.run(&map_track(track, Some(REL_R), Some(TRACK_X)));
+    }
+    rig.run(&(star(&t[0]) + &star(&t[1])));
+    rig.lose(&["a/t000.flac".to_owned(), "a/t001.flac".to_owned()])
+        .await;
+    assert_eq!(rig.stars_and_aliases(&t[2]), (1, 2));
+    assert_eq!(rig.aliases(), {
+        let mut expected = vec![(t[0].clone(), t[2].clone()), (t[1].clone(), t[2].clone())];
+        expected.sort();
+        expected
+    });
+    assert_eq!(rig.continuations(), 1);
+
+    let (rig, _, t) = continuation_album("scan-continue-excluded", 3).await;
+    for track in &t {
+        rig.run(&map_track(track, Some(REL_R), Some(TRACK_X)));
+    }
+    rig.run(&format!(
+        "UPDATE local_tracks SET availability = 'excluded', manual_excluded = 1, \
+         excluded_at = 1 WHERE id = '{}';",
+        t[2]
+    ));
+    rig.run(&(star(&t[0]) + &star(&t[2])));
+    rig.lose(&["a/t000.flac".to_owned()]).await;
+    assert_eq!(rig.aliases(), vec![(t[0].clone(), t[1].clone())]);
+    assert_eq!(rig.stars_and_aliases(&t[1]).0, 1);
+    assert_eq!(
+        rig.stars_and_aliases(&t[2]).0,
+        1,
+        "the excluded row keeps its own"
+    );
+
+    let (rig, _, t) = continuation_album("scan-continue-no-release", 2).await;
+    rig.run(
+        &(map_track(&t[0], None, Some(TRACK_X))
+            + &map_track(&t[1], None, Some(TRACK_X))
+            + &star(&t[0])),
+    );
+    rig.lose(&["a/t000.flac".to_owned()]).await;
+    assert_eq!(rig.aliases(), vec![(t[0].clone(), t[1].clone())]);
+    assert_eq!(rig.stars_and_aliases(&t[1]).0, 1);
+}
+
+/// After a move the old file can come back, go again, or the new one can
+/// go. The old row answers for itself again while its file is there and
+/// keeps nothing it gave; what it gathers meanwhile moves when it goes
+/// again. A chain ends on the last row and no alias names an alias. When
+/// the new row goes instead, both ids end on the old row.
+#[tokio::test]
+async fn continued_tracks_follow_their_files_back_and_forth() {
+    let (mut rig, _, t) = continuation_album("scan-continue-back-and-forth", 2).await;
+    let (old, new) = (t[0].clone(), t[1].clone());
+    rig.run(
+        &(map_track(&old, Some(REL_R), Some(TRACK_X))
+            + &map_track(&new, Some(REL_R), Some(TRACK_X))
+            + &star(&old)),
+    );
+    let first = ["a/t000.flac".to_owned()];
+    rig.lose(&first).await;
+    assert_eq!(rig.aliases(), vec![(old.clone(), new.clone())]);
+
+    let before = rig.before.clone();
+    rig.tag(&first, &before);
+    rig.scan().await;
+    assert_eq!(
+        rig.coordinator.store().track_at("music", "a/t000.flac"),
+        Some(old.clone()),
+        "the old row has its file again"
+    );
+    assert_eq!(rig.aliases(), vec![], "it answers for itself");
+    assert_eq!(rig.stars_and_aliases(&new).0, 1, "what moved stays");
+    rig.run(&format!(
+        "INSERT INTO library_play_history (id, user_id, local_track_id, track_name, \
+         artist_name, played_at) VALUES ('back', 'listener', '{old}', 'T', 'A', '2026');"
+    ));
+    rig.lose(&first).await;
+    assert_eq!(rig.aliases(), vec![(old.clone(), new.clone())]);
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM library_play_history WHERE id = 'back' AND local_track_id = '{new}'"
+        )),
+        1,
+        "the play made while it was back moves"
+    );
+
+    // A flip: the old file back again, then the new one deleted. Both ids
+    // end on the old row.
+    rig.tag(&first, &before);
+    rig.scan().await;
+    rig.lose(&["a/t001.flac".to_owned()]).await;
+    assert_eq!(rig.aliases(), vec![(new.clone(), old.clone())]);
+    assert_eq!(rig.stars_and_aliases(&old).0, 1);
+
+    // A chain: O1 into O2, then O2 into N. Both old ids name N.
+    let (rig, _, t) = continuation_album("scan-continue-chain", 3).await;
+    rig.run(
+        &(map_track(&t[0], Some(REL_R), Some(TRACK_X))
+            + &map_track(&t[1], Some(REL_R), Some(TRACK_X))
+            + &star(&t[0])),
+    );
+    rig.lose(&["a/t000.flac".to_owned()]).await;
+    assert_eq!(rig.aliases(), vec![(t[0].clone(), t[1].clone())]);
+    rig.run(&map_track(&t[2], Some(REL_R), Some(TRACK_X)));
+    rig.lose(&["a/t001.flac".to_owned()]).await;
+    assert_eq!(
+        rig.aliases(),
+        vec![(t[0].clone(), t[2].clone()), (t[1].clone(), t[2].clone())]
+    );
+    assert_eq!(rig.stars_and_aliases(&t[2]).0, 1);
+    assert_eq!(rig.continuations(), 2);
+}
+
+/// A store error while tracks continue leaves the identification seal
+/// that started it in place, moves nothing and logs one warning. The next
+/// scan's end continues them.
+#[tokio::test]
+async fn a_store_error_holds_the_continuation_not_the_seal() {
+    use droppedneedle::library::identify::models::{AutomaticSeal, DecisionSource, TrackIdentity};
+
+    retag_warnings();
+    let (rig, album, t) = continuation_album("scan-continue-store-error", 2).await;
+    let (old, new) = (t[0].clone(), t[1].clone());
+    rig.run(&format!(
+        "UPDATE local_album_external_identities SET decision_source = 'automatic' \
+         WHERE local_album_id = '{album}';"
+    ));
+    rig.run(&(map_track(&old, Some(REL_R), Some(TRACK_X)) + &star(&old)));
+    rig.lose(&["a/t000.flac".to_owned()]).await;
+    rig.run(
+        "CREATE TRIGGER refuse_alias BEFORE INSERT ON local_track_aliases \
+         BEGIN SELECT RAISE(ABORT, 'refused for the test'); END;",
+    );
+    let identify = SqliteIdentifyStore::open(&rig.db()).expect("identify store opens");
+    assert!(identify.seal_automatic(&AutomaticSeal {
+        local_album_id: album.clone(),
+        release_group_mbid: "rg-r".to_owned(),
+        release_mbid: Some(REL_R.to_owned()),
+        tracks: vec![TrackIdentity {
+            local_track_id: new.clone(),
+            provider: "musicbrainz".to_owned(),
+            recording_mbid: Some("rec-x".to_owned()),
+            release_track_mbid: Some(TRACK_X.to_owned()),
+            decision_source: DecisionSource::Automatic,
+            row_revision: 1,
+        }],
+        flag: None,
+    }));
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM local_track_external_identities \
+             WHERE local_track_id = '{new}' AND release_track_mbid = '{TRACK_X}'"
+        )),
+        1,
+        "the seal lands"
+    );
+    assert_eq!(rig.stars_and_aliases(&old), (1, 0), "nothing moves");
+    let warned = || {
+        retag_warnings()
+            .lock()
+            .expect("lines")
+            .iter()
+            .filter(|line| {
+                line.contains("tracks not continued")
+                    && line.contains(&album)
+                    && line.contains(&old)
+                    && line.contains(&new)
+            })
+            .count()
+    };
+    assert_eq!(warned(), 1);
+
+    rig.run("DROP TRIGGER refuse_alias");
+    rig.scan().await;
+    assert_eq!(rig.aliases(), vec![(old.clone(), new.clone())]);
+    assert_eq!(rig.stars_and_aliases(&new).0, 1);
+    assert_eq!(warned(), 1);
+}
+
+/// An edition choice that leaves a file which was on the release track as
+/// an extra, and places no file on it, moves nothing onto that file: the
+/// continuation runs after the extras are cleared.
+#[tokio::test]
+async fn an_edition_choice_moves_nothing_onto_a_file_it_leaves_out() {
+    use droppedneedle::library::operations::models::ReidentificationCandidate;
+
+    let (rig, album, t) = continuation_album("scan-continue-choice-extra", 3).await;
+    let (old, extra, placed) = (t[0].clone(), t[1].clone(), t[2].clone());
+    rig.run(&(map_track(&old, Some(REL_R), Some(TRACK_X)) + &star(&old)));
+    rig.lose(&["a/t000.flac".to_owned()]).await;
+    // A stale mapping on the file the edition is about to leave out.
+    rig.run(&map_track(&extra, Some(REL_R), Some(TRACK_X)));
+
+    let candidate: ReidentificationCandidate = serde_json::from_value(serde_json::json!({
+        "candidate_key": "c1",
+        "automatic_safe": true,
+        "evidence": {
+            "candidate_key": "c1",
+            "release_group_mbid": "rg-r",
+            "release_mbid": REL_R,
+            "album_title": "T",
+            "album_artist_name": "Artist",
+            "track_evidence": [{
+                "local_track_id": placed,
+                "classification": "supported",
+                "evidence_kinds": [],
+                "recording_mbid": "rec-y",
+                "release_track_mbid": "rt-y",
+            }],
+            "score": 1.0,
+            "reason_code": "SUPPORTED",
+        },
+        "artist_mbid": null,
+        "release_type": null,
+        "release_date": null,
+        "local_album_title": "T",
+        "local_album_artist_name": "Artist",
+        "album_title_classification": "supported",
+        "album_artist_classification": "supported",
+        "tracks": [{"local_track_id": placed, "title": "Y", "disc_number": 1, "position": 2}],
+        "unmatched_expected_tracks": [],
+    }))
+    .expect("candidate");
+    let mut db = droppedneedle::db::open_connection(&rig.db()).expect("db opens");
+    let tx = db.transaction().expect("transaction");
+    let choice = droppedneedle::library::operations::choice::apply_choice(
+        &tx, &album, &candidate, None, None, 1.0,
+    )
+    .expect("edition chosen");
+    tx.commit().expect("committed");
+    assert_eq!(choice.extra_track_ids, vec![extra.clone()]);
+    assert_eq!(rig.stars_and_aliases(&old), (1, 0));
+    assert_eq!(rig.stars_and_aliases(&extra).0, 0);
 }

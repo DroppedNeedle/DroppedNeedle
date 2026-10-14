@@ -26,6 +26,7 @@ use std::collections::BTreeMap;
 
 use super::retag_pairs::{self, RetagPairReason, RetagPairState};
 use super::*;
+use crate::library::corrections::continuation::{Scope, continue_tracks};
 use crate::library::corrections::retag_merge::{MergeOutcome, album_has_record, merge_retagged};
 use crate::library::identify::sqlite::{
     chosen_matches_differ, match_chosen, offer_album, release_chosen, retarget_references,
@@ -1416,6 +1417,7 @@ pub(super) fn settle_ended_run(
     let mut enqueued = join_across_scans(tx, run_id, now)?;
     carry_to_first_half(tx, run_id, now)?;
     keep_departures(tx, run_id, now)?;
+    continue_tracks(tx, Scope::Library, now)?;
     enqueued += offer_held_back(tx, run_id, now)?;
     if enqueued > 0
         && let Some(column) = counter_column(counter_names::IDENTIFICATION_ENQUEUED)

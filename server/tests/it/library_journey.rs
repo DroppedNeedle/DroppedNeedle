@@ -9287,3 +9287,669 @@ async fn a_joined_album_gets_its_files_placed_and_stays_the_users() {
     assert_eq!(bytes(), edited, "nothing written");
     assert_eq!(choice_row(&db, &new), chosen, "the match is as it was");
 }
+
+// ---------------------------------------------------------------------------
+// A track retagged and renamed keeps what people made of it.
+// ---------------------------------------------------------------------------
+
+/// An album of `count` tracks scanned into a library with no app around
+/// it, `album/01.flac` onwards, each with its own title and number.
+/// Returns the scratch folder, the library, the music folder, the album
+/// and its tracks.
+async fn album_at_rest(
+    tag: &str,
+    count: usize,
+) -> (ScratchDir, LibrarySetup, PathBuf, String, Vec<String>) {
+    use droppedneedle::library::tags::TagField;
+    use droppedneedle::library::tags::save::{TagEdit, save_tags};
+
+    let (scratch, library, music) = bare_library(tag);
+    plant(&music, "album/01.flac", "flac_full_01.flac");
+    plant(&music, "album/02.flac", "flac_full_02.flac");
+    for number in 3..=count {
+        let file = plant(
+            &music,
+            &format!("album/{number:02}.flac"),
+            "flac_full_02.flac",
+        );
+        save_tags(
+            &file,
+            &[
+                TagEdit::verbatim(TagField::Title, vec![format!("Track {number}")]),
+                TagEdit::verbatim(TagField::TrackNumber, vec![number.to_string()]),
+                TagEdit::verbatim(TagField::MusicBrainzRecordingId, Vec::new()),
+                TagEdit::verbatim(TagField::MusicBrainzReleaseTrackId, Vec::new()),
+            ],
+        )
+        .expect("track tagged");
+    }
+    add_music_root(&library, &music).await;
+    let tracks: Vec<String> = (1..=count)
+        .map(|number| {
+            library
+                .scan_store
+                .track_at("music", &format!("album/{number:02}.flac"))
+                .expect("track indexed")
+        })
+        .collect();
+    let album = library
+        .scan_store
+        .album_for_track(&tracks[0])
+        .expect("album");
+    (scratch, library, music, album, tracks)
+}
+
+/// Retag `album/NN.flac` to the album `title`, with or without its
+/// MusicBrainz ids, and when `rename` give it a new name in its folder.
+/// Returns where it is now.
+fn retag_outside(music: &Path, number: usize, title: &str, keep_ids: bool, rename: bool) -> String {
+    use droppedneedle::library::tags::TagField;
+    use droppedneedle::library::tags::save::{TagEdit, save_tags};
+
+    let from = format!("album/{number:02}.flac");
+    let mut edits = vec![TagEdit::verbatim(TagField::Album, vec![title.to_owned()])];
+    if !keep_ids {
+        edits.extend(
+            [
+                TagField::MusicBrainzReleaseId,
+                TagField::MusicBrainzReleaseGroupId,
+                TagField::MusicBrainzReleaseTrackId,
+                TagField::MusicBrainzRecordingId,
+            ]
+            .map(|field| TagEdit::verbatim(field, Vec::new())),
+        );
+    }
+    save_tags(&music.join(&from), &edits).expect("retagged outside the app");
+    if !rename {
+        return from;
+    }
+    let to = format!("album/{number:02} renamed.flac");
+    std::fs::rename(music.join(&from), music.join(&to)).expect("renamed outside the app");
+    to
+}
+
+/// The album row a track is on, whether its file is there or not.
+fn album_row(db: &rusqlite::Connection, track: &str) -> String {
+    db.query_row(
+        "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+        [track],
+        |row| row.get(0),
+    )
+    .expect("track row")
+}
+
+fn indexed_at(library: &LibrarySetup, relative: &str) -> String {
+    library
+        .scan_store
+        .track_at("music", relative)
+        .expect("track indexed")
+}
+
+/// What people made on one track: plays, stars, playlist entries,
+/// bookmarks, saved queue entries and track overrides.
+fn holdings(db: &rusqlite::Connection, track: &str) -> [i64; 6] {
+    [
+        "SELECT COUNT(*) FROM library_play_history WHERE local_track_id = ?1",
+        "SELECT COUNT(*) FROM library_user_favorites WHERE item_kind = 'track' AND item_id = ?1",
+        "SELECT COUNT(*) FROM playlist_tracks WHERE library_file_id = ?1 \
+         AND track_source_id = ?1",
+        "SELECT COUNT(*) FROM compat_bookmarks WHERE file_id = ?1",
+        "SELECT COUNT(*) FROM compat_play_queue_items WHERE file_id = ?1",
+        "SELECT COUNT(*) FROM library_management_overrides WHERE local_track_id = ?1",
+    ]
+    .map(|sql| {
+        db.query_row(sql, [track], |row| row.get(0))
+            .unwrap_or_else(|error| panic!("{sql}: {error}"))
+    })
+}
+
+fn continuations(db: &rusqlite::Connection) -> i64 {
+    db.query_row(
+        "SELECT COUNT(*) FROM library_catalog_actions WHERE action_kind = 'continue_tracks'",
+        [],
+        |row| row.get(0),
+    )
+    .expect("actions read")
+}
+
+/// The old row's own record: id, path, availability, when it went
+/// missing, and its management and identity rows.
+type OldRow = (String, String, String, Option<f64>, i64);
+
+fn old_row(db: &rusqlite::Connection, track: &str) -> OldRow {
+    db.query_row(
+        "SELECT id, relative_path, availability, missing_since, \
+         (SELECT COUNT(*) FROM library_track_management_state s WHERE s.local_track_id = t.id) \
+         + (SELECT COUNT(*) FROM local_track_external_identities i WHERE i.local_track_id = t.id) \
+         FROM local_tracks t WHERE id = ?1",
+        [track],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
+    )
+    .expect("old row reads")
+}
+
+/// An album whose edition a person chose is retagged to a new name with
+/// its release ids removed: three files in place, two also renamed. The
+/// scan after next joins the album and the app places the new files on
+/// the edition; then what people made on each old track is on the track
+/// that took its place: plays, stars (a star a person already had on the
+/// new track keeps its date, the old one goes), a playlist entry,
+/// bookmarks (the later of two stays), a saved queue in its order and at
+/// its place, and track overrides (the new track's own for a field wins).
+/// The old rows keep their ids, paths, the day they went missing and
+/// their records, and one audit row tells it, with every row it deleted.
+/// A second scan moves nothing more; a star and a playlist entry a stale
+/// client writes against an old id move at the next scan's end.
+#[tokio::test]
+async fn a_retagged_and_renamed_album_keeps_what_people_made() {
+    let (scratch, library, music, album, tracks) = album_at_rest("lib-continue-chosen", 5).await;
+    let db = scratch_db(&scratch);
+    db.execute_batch(&format!(
+        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
+         ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'), \
+         ('listener', 'Listener', 'user', '2026-01-01T00:00:00Z'); \
+         INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
+         selected_at, row_revision) VALUES ('{album}', 'musicbrainz', 'rg-1', '{REL_1}', \
+         'manual', 'curator', 1234.5, 7);"
+    ))
+    .expect("edition chosen");
+    queue_remap_row(&library, &album, "place_only");
+    remap_once(&library, fitting_release(&library, &album)).await;
+    for track in &tracks {
+        assert_eq!(placement(&db, track).0.as_deref(), Some(REL_1), "placed");
+    }
+    let (o3, o4, o5) = (&tracks[2], &tracks[3], &tracks[4]);
+    db.execute_batch(&format!(
+        "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+         track_name, artist_name, played_at) VALUES \
+         ('p1', 'curator', '{o4}', '{album}', 'Four', 'A', '2026-01-01T00:00:00Z'), \
+         ('p2', 'curator', '{o4}', '{album}', 'Four', 'A', '2026-01-02T00:00:00Z'); \
+         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) VALUES \
+         ('curator', 'track', '{o4}', 10), ('listener', 'track', '{o4}', 11); \
+         INSERT INTO library_user_favorite_names (user_id, item_kind, item_id, display_name) \
+         VALUES ('curator', 'track', '{o4}', 'Four'), ('listener', 'track', '{o4}', 'Four'); \
+         INSERT INTO playlists (id, name, created_at, updated_at) VALUES ('list', 'List', '', ''); \
+         INSERT INTO playlist_tracks (id, playlist_id, position, track_name, artist_name, \
+         album_name, album_id, track_source_id, library_file_id, source_type, created_at) \
+         VALUES ('entry', 'list', 0, 'Five', 'A', 'B', '{album}', '{o5}', '{o5}', 'local', ''); \
+         INSERT INTO compat_bookmarks (user_id, file_id, position_ms, comment, created_at, \
+         changed_at) VALUES ('curator', '{o4}', 1000, 'mine', 1, 1), \
+         ('listener', '{o4}', 2000, 'later', 1, 30); \
+         INSERT INTO compat_play_queues (user_id, current_index, position_ms, updated_at) \
+         VALUES ('curator', 1, 500, 1); \
+         INSERT INTO compat_play_queue_items (user_id, item_index, file_id) VALUES \
+         ('curator', 0, '{o3}'), ('curator', 1, '{o4}'), ('curator', 2, '{o5}'); \
+         INSERT INTO library_management_overrides (id, subject_kind, local_track_id, \
+         field_name, value_json, mode, subject_revision, created_at, updated_at) VALUES \
+         ('ov-title', 'track', '{o4}', 'title', '\"Mine\"', 'replace', 1, 1, 1), \
+         ('ov-old', 'track', '{o5}', 'comment', '\"Old\"', 'replace', 1, 1, 1);"
+    ))
+    .expect("people made things");
+
+    for number in 1..=3 {
+        retag_outside(&music, number, "Renamed", false, false);
+    }
+    let renamed: Vec<String> = (4..=5)
+        .map(|number| retag_outside(&music, number, "Renamed", false, true))
+        .collect();
+    rescan(&library).await;
+    rescan(&library).await;
+    let (n4, n5) = (
+        indexed_at(&library, &renamed[0]),
+        indexed_at(&library, &renamed[1]),
+    );
+    let joined = album_row(&db, &n4);
+    for track in [o4, o5, &n5] {
+        assert_eq!(album_row(&db, track), joined, "the album is joined");
+    }
+    assert_eq!(choice_row(&db, &joined).0, "manual");
+    assert_eq!(continuations(&db), 0, "unplaced files carry nothing");
+    db.execute_batch(&format!(
+        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) VALUES \
+         ('listener', 'track', '{n4}', 99); \
+         INSERT INTO compat_bookmarks (user_id, file_id, position_ms, comment, created_at, \
+         changed_at) VALUES ('listener', '{n4}', 3000, 'earlier', 1, 20); \
+         INSERT INTO library_management_overrides (id, subject_kind, local_track_id, \
+         field_name, value_json, mode, subject_revision, created_at, updated_at) VALUES \
+         ('ov-new', 'track', '{n5}', 'comment', '\"New\"', 'replace', 1, 1, 1);"
+    ))
+    .expect("the listener starred and bookmarked the new track");
+    let records = [old_row(&db, o4), old_row(&db, o5)];
+    remap_once(&library, fitting_release(&library, &joined)).await;
+
+    for track in [&n4, &n5] {
+        assert_eq!(placement(&db, track).0.as_deref(), Some(REL_1), "placed");
+    }
+    assert_eq!(holdings(&db, &n4), [2, 2, 0, 2, 1, 1]);
+    assert_eq!(holdings(&db, &n5), [0, 0, 1, 0, 1, 1]);
+    assert_eq!(holdings(&db, o4), [0; 6]);
+    assert_eq!(
+        holdings(&db, o5),
+        [0, 0, 0, 0, 0, 1],
+        "the losing override stays"
+    );
+    assert_eq!(
+        holdings(&db, o3)[4],
+        1,
+        "a track kept in place keeps its own"
+    );
+    let stars: Vec<(String, f64, Option<String>)> = db
+        .prepare(
+            "SELECT f.user_id, f.created_at, n.display_name FROM library_user_favorites f \
+             LEFT JOIN library_user_favorite_names n ON n.user_id = f.user_id \
+             AND n.item_kind = f.item_kind AND n.item_id = f.item_id \
+             WHERE f.item_id = ?1 ORDER BY f.user_id",
+        )
+        .expect("prepare")
+        .query_map([&n4], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .expect("stars")
+        .collect::<Result<_, _>>()
+        .expect("stars read");
+    assert_eq!(
+        stars,
+        vec![
+            ("curator".to_owned(), 10.0, Some("Four".to_owned())),
+            ("listener".to_owned(), 99.0, Some("Four".to_owned()))
+        ]
+    );
+    let bookmarks: Vec<(String, String)> = db
+        .prepare("SELECT user_id, comment FROM compat_bookmarks ORDER BY user_id")
+        .expect("prepare")
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .expect("bookmarks")
+        .collect::<Result<_, _>>()
+        .expect("bookmarks read");
+    assert_eq!(
+        bookmarks,
+        vec![
+            ("curator".to_owned(), "mine".to_owned()),
+            ("listener".to_owned(), "later".to_owned())
+        ]
+    );
+    let queue: Vec<String> = db
+        .prepare("SELECT file_id FROM compat_play_queue_items ORDER BY item_index")
+        .expect("prepare")
+        .query_map([], |row| row.get(0))
+        .expect("queue")
+        .collect::<Result<_, _>>()
+        .expect("queue read");
+    assert_eq!(queue, vec![o3.clone(), n4.clone(), n5.clone()]);
+    let current: i64 = db
+        .query_row("SELECT current_index FROM compat_play_queues", [], |row| {
+            row.get(0)
+        })
+        .expect("queue index");
+    assert_eq!(current, 1);
+    let comment: String = db
+        .query_row(
+            "SELECT value_json FROM library_management_overrides WHERE local_track_id = ?1",
+            [&n5],
+            |row| row.get(0),
+        )
+        .expect("override");
+    assert_eq!(comment, "\"New\"");
+    assert_eq!(
+        [old_row(&db, o4), old_row(&db, o5)],
+        records,
+        "the old rows keep their ids, paths, days and records"
+    );
+    assert_eq!(continuations(&db), 1);
+    let audit: String = db
+        .query_row(
+            "SELECT after_json FROM library_catalog_actions WHERE action_kind = 'continue_tracks'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("audit row");
+    let audit: Value = serde_json::from_str(&audit).expect("audit json");
+    assert_eq!(audit["new_pairs"], json!(2), "{audit}");
+    let pair = audit["pairs"]
+        .as_array()
+        .expect("pairs")
+        .iter()
+        .find(|pair| pair["old_track_id"] == json!(o4))
+        .expect("pair of track four")
+        .clone();
+    assert_eq!(pair["new_track_id"], json!(n4), "{audit}");
+    assert_eq!(
+        pair["moved"]["play_history_ids"],
+        json!(["p1", "p2"]),
+        "{audit}"
+    );
+    assert_eq!(
+        pair["deleted"]["stars"][0]["created_at"],
+        json!(11.0),
+        "{audit}"
+    );
+    assert_eq!(
+        pair["deleted"]["stars"][0]["display_name"],
+        json!("Four"),
+        "{audit}"
+    );
+    assert_eq!(
+        pair["deleted"]["bookmarks"][0]["comment"],
+        json!("earlier"),
+        "{audit}"
+    );
+    assert_eq!(
+        pair["moved"]["star_names_copied"],
+        json!([{"user_id": "listener", "display_name": "Four"}]),
+        "{audit}"
+    );
+    assert_eq!(
+        pair["moved"]["overrides"],
+        json!([{"id": "ov-title", "updated_at": 1.0, "row_revision": 1}]),
+        "{audit}"
+    );
+
+    rescan(&library).await;
+    assert_eq!(continuations(&db), 1, "a second scan moves nothing");
+
+    db.execute_batch(&format!(
+        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) VALUES \
+         ('stale', 'track', '{o5}', 5); \
+         INSERT INTO playlist_tracks (id, playlist_id, position, track_name, artist_name, \
+         album_name, track_source_id, library_file_id, source_type, created_at) \
+         VALUES ('late', 'list', 1, 'Five', 'A', 'B', '{o5}', '{o5}', 'local', '');"
+    ))
+    .expect("a stale client wrote against an old id");
+    rescan(&library).await;
+    assert_eq!(holdings(&db, o5)[..3], [0, 0, 0]);
+    assert_eq!(holdings(&db, &n5)[1..3], [1, 2]);
+}
+
+/// An album the app chose by itself, retagged to a new name with its
+/// release kept and renamed: the new files land beside the old ones, one
+/// identification pass maps them, and their history is on them without
+/// another scan.
+#[tokio::test]
+async fn an_automatic_album_retagged_and_renamed_keeps_its_history() {
+    let (scratch, library, music, album, old) = album_at_rest("lib-continue-automatic", 3).await;
+    let db = scratch_db(&scratch);
+    let providers = library.test_providers.as_ref().expect("scripted providers");
+    providers.set_recall(fitting_release(&library, &album));
+    while library.identify_tick().await > 0 {}
+    assert_eq!(choice_row(&db, &album).0, "automatic");
+    assert_eq!(placement(&db, &old[0]).0.as_deref(), Some(REL_1));
+    db.execute_batch(&format!(
+        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('listener', 'track', '{}', 1);",
+        old[0]
+    ))
+    .expect("starred");
+
+    let renamed: Vec<String> = (1..=3)
+        .map(|number| retag_outside(&music, number, "Renamed", true, true))
+        .collect();
+    rescan(&library).await;
+    let new = indexed_at(&library, &renamed[0]);
+    assert_eq!(
+        library.scan_store.album_for_track(&new).as_deref(),
+        Some(album.as_str())
+    );
+    assert_eq!(
+        holdings(&db, &new)[1],
+        0,
+        "nothing before the files are mapped"
+    );
+    providers.set_recall(fitting_release(&library, &album));
+    library.identify_tick().await;
+    assert_eq!(holdings(&db, &new)[1], 1);
+    assert_eq!(holdings(&db, &old[0])[1], 0);
+}
+
+/// The same album retagged and renamed without any of its MusicBrainz
+/// ids. The new files make an album row of their own, which
+/// identification seals to the same release by itself; the old tracks
+/// stay missing on the old row, so nothing moves.
+#[tokio::test]
+async fn an_automatic_album_retagged_without_its_ids_keeps_its_history_apart() {
+    let (scratch, library, music, album, old) = album_at_rest("lib-continue-no-ids", 3).await;
+    let db = scratch_db(&scratch);
+    let providers = library.test_providers.as_ref().expect("scripted providers");
+    providers.set_recall(fitting_release(&library, &album));
+    while library.identify_tick().await > 0 {}
+    db.execute_batch(&format!(
+        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('listener', 'track', '{}', 1);",
+        old[0]
+    ))
+    .expect("starred");
+
+    let renamed: Vec<String> = (1..=3)
+        .map(|number| retag_outside(&music, number, "Renamed", false, true))
+        .collect();
+    rescan(&library).await;
+    let new = indexed_at(&library, &renamed[0]);
+    let own_row = library.scan_store.album_for_track(&new).expect("album");
+    assert_ne!(own_row, album, "an album row of its own");
+    providers.set_recall(fitting_release(&library, &own_row));
+    library.identify_tick().await;
+    rescan(&library).await;
+    let (source, release, ..) = choice_row(&db, &own_row);
+    assert_eq!(
+        (source.as_str(), release.as_deref()),
+        ("automatic", Some(REL_1))
+    );
+    assert_eq!(match_state(&db, &own_row), None);
+    assert_eq!(placement(&db, &new).0.as_deref(), Some(REL_1));
+    assert_eq!(album_row(&db, &old[0]), album);
+    assert_eq!((holdings(&db, &old[0])[1], holdings(&db, &new)[1]), (1, 0));
+}
+
+/// Two copies of a track, both mapped to its release track (as an import
+/// maps a download beside the old file): nothing moves while both are
+/// there. The original deleted, its history is on the copy at that scan's
+/// end.
+#[tokio::test]
+async fn a_deleted_copy_leaves_its_history_with_the_copy_that_stays() {
+    let (scratch, library, music, album, old) = album_at_rest("lib-continue-copy", 3).await;
+    let db = scratch_db(&scratch);
+    library
+        .test_providers
+        .as_ref()
+        .expect("scripted providers")
+        .set_recall(fitting_release(&library, &album));
+    while library.identify_tick().await > 0 {}
+    let release_track = placement(&db, &old[1]).1.expect("original mapped");
+    std::fs::copy(
+        music.join("album/02.flac"),
+        music.join("album/02 copy.flac"),
+    )
+    .expect("copied");
+    rescan(&library).await;
+    let copy = indexed_at(&library, "album/02 copy.flac");
+    assert_eq!(
+        library.scan_store.album_for_track(&copy).as_deref(),
+        Some(album.as_str())
+    );
+    db.execute_batch(&format!(
+        "INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_track_mbid, decision_source, selected_at) VALUES \
+         ('{copy}', 'musicbrainz', 'rec-copy', '{release_track}', 'automatic', 1) \
+         ON CONFLICT (local_track_id, provider) DO UPDATE SET \
+         release_track_mbid = excluded.release_track_mbid; \
+         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('listener', 'track', '{}', 1);",
+        old[1]
+    ))
+    .expect("both copies mapped");
+    rescan(&library).await;
+    assert_eq!(holdings(&db, &old[1])[1], 1, "both there: nothing moves");
+
+    std::fs::remove_file(music.join("album/02.flac")).expect("original deleted");
+    rescan(&library).await;
+    assert_eq!(holdings(&db, &copy)[1], 1);
+    assert_eq!(holdings(&db, &old[1])[1], 0);
+}
+
+/// A download that brings back a track whose file was deleted maps the
+/// new file in the import itself, and the old track's history is on it
+/// without a scan.
+#[tokio::test]
+async fn an_imported_track_takes_the_history_of_the_one_it_replaces() {
+    use droppedneedle::library::import::{DownloadImport, ImportOrigin, ImportSource};
+
+    let (scratch, library, _, album, _) = album_at_rest("lib-continue-import", 3).await;
+    let db = scratch_db(&scratch);
+    library
+        .test_providers
+        .as_ref()
+        .expect("scripted providers")
+        .set_recall(fitting_release(&library, &album));
+    while library.identify_tick().await > 0 {}
+    let release = library
+        .identify_store
+        .release(REL_1, None)
+        .expect("release stored");
+    let import = |task: &str, tracks: &[usize], fixture: &str| {
+        let extension = Path::new(fixture).extension().expect("extension");
+        let files = tracks
+            .iter()
+            .map(|&track| {
+                let source = scratch
+                    .to_path_buf()
+                    .join(format!("incoming/{task}/{track}"))
+                    .with_extension(extension);
+                std::fs::create_dir_all(source.parent().expect("parent")).expect("mkdir");
+                std::fs::copy(fixtures_dir().join(fixture), &source).expect("download planted");
+                ImportSource {
+                    path: source,
+                    track,
+                }
+            })
+            .collect();
+        library
+            .import_download(&DownloadImport {
+                task_id: task.to_owned(),
+                origin: ImportOrigin::Download,
+                staging: None,
+                release: release.clone(),
+                files,
+                extras: Vec::new(),
+            })
+            .expect("imported")
+    };
+    let first = import("task-1", &[0, 1, 2], "flac_full_02.flac");
+    let tracks: Vec<String> = first
+        .paths
+        .iter()
+        .map(|path| {
+            let relative = path
+                .strip_prefix(scratch.to_path_buf().join("music"))
+                .expect("under the root")
+                .to_string_lossy()
+                .into_owned();
+            indexed_at(&library, &relative)
+        })
+        .collect();
+    std::fs::remove_file(&first.paths[1]).expect("file deleted");
+    rescan(&library).await;
+    db.execute_batch(&format!(
+        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('listener', 'track', '{}', 1);",
+        tracks[1]
+    ))
+    .expect("starred");
+
+    // In another format, so the new file has a path of its own.
+    let again = import("task-2", &[1], "mp3_full_01.mp3");
+    assert_eq!(
+        again.album_id, first.album_id,
+        "the download joins the album"
+    );
+    let relative = again.paths[0]
+        .strip_prefix(scratch.to_path_buf().join("music"))
+        .expect("under the root")
+        .to_string_lossy()
+        .into_owned();
+    let new = indexed_at(&library, &relative);
+    assert_ne!(new, tracks[1]);
+    assert_eq!(holdings(&db, &new)[1], 1);
+    assert_eq!(holdings(&db, &tracks[1])[1], 0);
+}
+
+/// A review approval that maps a copy of a track whose original is gone to
+/// the original's release track moves the original's history to it at the
+/// approval, with no scan. An approval records no release on its tracks.
+#[tokio::test]
+async fn an_approval_continues_a_track_at_once() {
+    use droppedneedle::library::identify::models::{
+        CandidateEvidence, EvidenceClass, TrackEvidence,
+    };
+
+    let (scratch, library, music, album, old) = album_at_rest("lib-continue-approve", 3).await;
+    let db = scratch_db(&scratch);
+    library
+        .test_providers
+        .as_ref()
+        .expect("scripted providers")
+        .set_recall(fitting_release(&library, &album));
+    while library.identify_tick().await > 0 {}
+    let release_track = placement(&db, &old[1]).1.expect("original mapped");
+    std::fs::copy(
+        music.join("album/02.flac"),
+        music.join("album/02 copy.flac"),
+    )
+    .expect("copied");
+    rescan(&library).await;
+    std::fs::remove_file(music.join("album/02.flac")).expect("original deleted");
+    rescan(&library).await;
+    let copy = indexed_at(&library, "album/02 copy.flac");
+    assert_eq!(album_row(&db, &copy), album);
+    assert_eq!(placement(&db, &copy).1, None, "the copy is not mapped yet");
+    db.execute_batch(&format!(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'); \
+         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('listener', 'track', '{}', 1);",
+        old[1]
+    ))
+    .expect("starred");
+
+    let key = format!("rg-1:{REL_1}");
+    droppedneedle::library::identify::review::file_review(
+        &library.identify_store,
+        "rev-approve",
+        &album,
+        "EDITION_CLEARED_CONFLICT",
+        vec![CandidateEvidence {
+            candidate_key: key.clone(),
+            release_group_mbid: "rg-1".to_owned(),
+            release_mbid: Some(REL_1.to_owned()),
+            album_title: "Album".to_owned(),
+            album_artist_name: String::new(),
+            track_evidence: vec![TrackEvidence {
+                local_track_id: copy.clone(),
+                classification: EvidenceClass::Supported,
+                evidence_kinds: Vec::new(),
+                recording_mbid: Some("rec-copy".to_owned()),
+                release_track_mbid: Some(release_track.clone()),
+            }],
+            score: 1.0,
+            reason_code: "EDITION_CLEARED_CONFLICT".to_owned(),
+            distance: 0.0,
+            penalties: Vec::new(),
+        }],
+    );
+    library
+        .approve_review("rev-approve", "curator", &key)
+        .expect("approved");
+    let (release, mapped, _) = placement(&db, &copy);
+    assert_eq!(
+        (release, mapped),
+        (None, Some(release_track)),
+        "mapped with no release"
+    );
+    assert_eq!(holdings(&db, &copy)[1], 1);
+    assert_eq!(holdings(&db, &old[1])[1], 0);
+}

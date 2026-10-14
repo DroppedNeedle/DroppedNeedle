@@ -16,6 +16,17 @@
 #                                           album (a followed retag, or a
 #                                           retag joined across two scans)
 #
+# And when a missing track continues into the track that took its place
+# (the same release track of the same album):
+#   library_user_favorites        catalog   moved to the track it continues
+#   library_user_favorite_names   catalog   moved with their favorite
+#   library_play_history          media     moved to the track it continues
+#   playlist_tracks               catalog   library_file_id and
+#                                           track_source_id of local entries
+#                                           moved to the track it continues
+#   compat_bookmarks              compat    moved to the track it continues
+#   compat_play_queue_items       compat    moved to the track it continues
+#
 # One more, also by library code in its own transaction: the repair that
 # files plays naming no track, album or artist under the one track they
 # fit. It fills those three columns of such a row and changes nothing
@@ -187,6 +198,7 @@ local_artist_external_identities
 local_artist_merge_candidates
 local_artists
 local_entity_source_links
+local_track_aliases
 local_track_artists
 local_track_edition_tags
 local_track_external_identities
