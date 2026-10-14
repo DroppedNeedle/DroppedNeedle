@@ -64,6 +64,24 @@ pub(crate) fn match_gate(
     })
 }
 
+/// Whether the album's chosen edition is still being placed. Its queue row
+/// stays until the files are placed or the album goes back to automatic
+/// choice, and its files are about to move, so nothing may be prepared for
+/// them yet.
+pub(crate) fn remap_gate(
+    conn: &Connection,
+    album_id: &str,
+) -> rusqlite::Result<Option<ItemReason>> {
+    let attempts: Option<i64> = conn
+        .query_row(
+            "SELECT attempts FROM library_edition_remap_queue WHERE local_album_id = ?1",
+            params![album_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(attempts.map(reasons::edition_remap_pending))
+}
+
 /// Whether management may touch unconfirmed matches, read per call.
 pub(crate) fn manage_unconfirmed(setup: &LibrarySetup) -> bool {
     setup
@@ -211,8 +229,22 @@ enum AlbumState {
     },
 }
 
-fn album_state(ctx: &PlanContext<'_>, album_id: &str) -> Result<AlbumState, ManagementError> {
+fn album_state(
+    ctx: &PlanContext<'_>,
+    album_id: &str,
+    person: bool,
+) -> Result<AlbumState, ManagementError> {
     let store = &ctx.setup.identify_store;
+    if person
+        && let Some(reason) = store
+            .with_connection(|conn| remap_gate(conn, album_id))
+            .map_err(|error| {
+                tracing::error!(%error, album = album_id, "edition remap state unreadable; management refused");
+                ManagementError::from(error)
+            })?
+    {
+        return Ok(AlbumState::Blocked(reason));
+    }
     if ctx.wide
         && store
             .with_connection(|conn| takeover::is_marked(conn, album_id))
@@ -1390,13 +1422,15 @@ fn check_collisions(ctx: &PlanContext<'_>, items: &mut [PlannedItem]) {
 }
 
 /// Plan every selected file of one album, numbering items from
-/// `first_ordinal`.
+/// `first_ordinal`. `person` is set when a person started the job, which
+/// holds back an album whose chosen edition is still being placed.
 pub fn plan_album(
     ctx: &PlanContext<'_>,
     scope: &AlbumScope,
     tracks: &[CatalogTrack],
     bundle_ordinal: i64,
     first_ordinal: i64,
+    person: bool,
 ) -> Result<Vec<PlannedItem>, ManagementError> {
     let mut items: Vec<PlannedItem> = tracks
         .iter()
@@ -1410,7 +1444,7 @@ pub fn plan_album(
         return Ok(items);
     }
     let (release, release_mbid, release_group_mbid, album_identity_revision) =
-        match album_state(ctx, &scope.album_id)? {
+        match album_state(ctx, &scope.album_id, person)? {
             AlbumState::Blocked(reason) => {
                 for item in &mut items {
                     item.block(reason.clone());
@@ -1519,7 +1553,8 @@ pub fn plan_one(
     ordinal: i64,
 ) -> Result<PlannedItem, ManagementError> {
     let mut item = base_item(track, scope, ordinal, 0);
-    match album_state(ctx, &scope.album_id)? {
+    // Duplicate resolution is not held back by an edition being placed.
+    match album_state(ctx, &scope.album_id, false)? {
         AlbumState::Blocked(reason) => item.block(reason),
         AlbumState::Ready {
             release,

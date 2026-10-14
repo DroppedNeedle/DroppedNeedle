@@ -359,7 +359,7 @@ pub async fn enqueue_identify(
         (status = 400, description = "Bad kind, fields, or items"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required; admin role for anything but a plain retag"),
-        (status = 409, description = "Missing identity, collision, or no space"),
+        (status = 409, description = "Missing identity, collision, no space, or the album's chosen edition is still being placed"),
     )
 )]
 pub async fn manage_preview(

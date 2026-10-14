@@ -166,7 +166,8 @@ impl Rig {
     /// there it places them, or hands the album back to automatic choice,
     /// and either way moves the album's identity and the catalog revision:
     /// a preview sealed before then is stale, and an Undo after it is
-    /// blocked.
+    /// blocked. A manage preview asked for before then is refused with the
+    /// message a person sees, so a journey waits here before it previews.
     async fn edition_settled(&self, album: &str) {
         let db = self.app.db();
         self.app
@@ -7662,4 +7663,235 @@ async fn library_journey_review_exclude_restore_dismiss() {
         json!("REVIEW_ALBUM_PINNED")
     );
     rig.stop().await;
+}
+
+/// Approving an edition that names only a release queues the placing of
+/// the album's files. Until that is done a manage preview of the album is
+/// refused with a message that says so; once the queue is clear it goes
+/// through.
+#[tokio::test]
+async fn manage_preview_waits_while_the_chosen_edition_is_placed() {
+    let rig = Rig::start("lib-remap-preview").await;
+    rig.identify.recall_from(ambiguous_from);
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    plant(&music, "album-w/01.flac", "management_full.flac");
+    app.add_library_folder("music", &music).await;
+    let track_id = rig
+        .scan_store
+        .track_at("music", "album-w/01.flac")
+        .expect("track indexed");
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/tracks/{track_id}"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let album = body["album_id"].as_str().expect("album id").to_owned();
+    let album_key = album.as_str();
+    rig.identified(1).await;
+    file_edition_review(&rig.identify_store, album_key);
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/reviews?album_id={album_key}"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let review_id = body["reviews"][0]["id"]
+        .as_str()
+        .expect("review")
+        .to_owned();
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/reviews/{review_id}/approve"),
+            &headers,
+            Some(json!({"candidate_key": format!("rg-1:{REL_1}")})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    rig.edition_settled(album_key).await;
+
+    // The queue row an approval leaves while the files are placed. It is
+    // seeded by hand with a far-off `not_before`, so the loop never takes it.
+    let db = app.db();
+    db.execute(
+        "INSERT INTO library_edition_remap_queue \
+         (local_album_id, release_mbid, queued_at, attempts, not_before, origin) \
+         VALUES (?1, ?2, 0, 0, 1e12, 'album_pin')",
+        rusqlite::params![album_key, REL_1],
+    )
+    .expect("remap row queued");
+    let preview = json!({
+        "kind": "retag",
+        "album_id": album_key,
+        "items": [{
+            "root_id": "music",
+            "rel_path": "album-w/01.flac",
+            "managed_updates": {"title": ["Waiting Title"]},
+        }],
+    });
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/preview",
+            &headers,
+            Some(preview.clone()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        body["error"]["message"],
+        json!("Still matching this album to the edition you chose. Try again in a moment.")
+    );
+
+    db.execute(
+        "UPDATE library_edition_remap_queue SET attempts = 1 WHERE local_album_id = ?1",
+        [album_key],
+    )
+    .expect("row updated");
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/preview",
+            &headers,
+            Some(preview.clone()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        body["error"]["message"],
+        json!(
+            "Still matching this album to the edition you chose. \
+             MusicBrainz is not answering, so this waits until it does."
+        )
+    );
+
+    db.execute(
+        "DELETE FROM library_edition_remap_queue WHERE local_album_id = ?1",
+        [album_key],
+    )
+    .expect("row removed");
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/preview",
+            &headers,
+            Some(preview),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    rig.stop().await;
+}
+
+/// A Library Management preview a person starts does not plan an album
+/// whose chosen edition is still being placed: each of its files is blocked
+/// with EDITION_REMAP_PENDING, and the other album of the preview plans.
+#[tokio::test]
+async fn management_preview_blocks_an_album_whose_edition_is_being_placed() {
+    use droppedneedle::library::management::models::{ItemFilter, Selection, SelectionKind};
+    use droppedneedle::library::management::service::PreviewRequest;
+    use droppedneedle::settings::management as lm;
+
+    let managed = ManagedLibrary::start("lib-remap-management", |_| {}).await;
+    let (waiting, _) = managed.add_album("waiting", 2).await;
+    let (other, _) = managed.add_album("other", 2).await;
+    managed
+        .db()
+        .execute(
+            "INSERT INTO library_edition_remap_queue \
+             (local_album_id, release_mbid, queued_at, attempts, not_before, origin) \
+             VALUES (?1, ?2, 0, 0, 1e12, 'album_pin')",
+            rusqlite::params![waiting, REL_1],
+        )
+        .expect("remap row queued");
+    let management = managed.management();
+    let handle = management
+        .create_preview(
+            PreviewRequest {
+                selection: Selection {
+                    kind: SelectionKind::Albums,
+                    ids: vec![waiting.clone(), other.clone()],
+                    catalog_filter: None,
+                },
+                profile_id: lm::PICARD_ORGANIZER_PROFILE_ID.to_owned(),
+                expected_settings_revision: managed.settings_revision(),
+                expected_policy_revision: managed
+                    .library
+                    .live_registry()
+                    .policy_revision()
+                    .to_owned(),
+                idempotency_key: Some("preview-remap".to_owned()),
+                target_root_id: None,
+                overrides: None,
+            },
+            "admin",
+        )
+        .expect("preview queued");
+    assert!(management_step(&managed.library).await, "planning runs");
+    let page = management
+        .items(&handle.job_id, -1, 100, &ItemFilter::default())
+        .expect("items page");
+    assert_eq!(page.items.len(), 4, "two files of each album");
+    for item in &page.items {
+        let reason = item.facts.reason.as_ref();
+        if item.album_id == waiting {
+            let reason = reason.expect("the waiting album has a reason");
+            assert_eq!(reason.code, "EDITION_REMAP_PENDING");
+            assert_eq!(
+                reason.message,
+                "Still matching this album to the edition you chose."
+            );
+            assert_eq!(reason.action, "Try again in a moment.");
+        } else {
+            assert_eq!(reason, None, "the other album plans as before");
+        }
+    }
+}
+
+/// Automatic management is not held back by a queued edition: the run
+/// goes ahead and no file carries EDITION_REMAP_PENDING.
+#[tokio::test]
+async fn automatic_run_is_not_held_by_an_edition_being_placed() {
+    use droppedneedle::library::management::models::ItemFilter;
+
+    let managed = ManagedLibrary::start("lib-remap-automatic", |_| {}).await;
+    let (album, _) = managed.add_album("automatic", 2).await;
+    managed
+        .db()
+        .execute(
+            "INSERT INTO library_edition_remap_queue \
+             (local_album_id, release_mbid, queued_at, attempts, not_before, origin) \
+             VALUES (?1, ?2, 0, 0, 1e12, 'album_pin')",
+            rusqlite::params![album, REL_1],
+        )
+        .expect("remap row queued");
+    managed.activate().await;
+    managed.look(&album).await;
+    let last = managed.automatic_runs().pop().expect("a run");
+    assert_eq!(last.0, "succeeded");
+    let management = managed.management();
+    let (history, _) = management.history(Default::default()).expect("history");
+    let run = history
+        .iter()
+        .find(|item| item.origin == "scan_discovered")
+        .expect("an automatic run");
+    let page = management
+        .items(&run.job.id, -1, 100, &ItemFilter::default())
+        .expect("items page");
+    assert!(!page.items.is_empty(), "the run planned the album");
+    assert!(page.items.iter().all(|item| {
+        item.facts
+            .reason
+            .as_ref()
+            .is_none_or(|reason| reason.code != "EDITION_REMAP_PENDING")
+    }));
 }

@@ -9887,7 +9887,7 @@
             "description": "Curator role required; admin role for anything but a plain retag"
           },
           "409": {
-            "description": "Missing identity, collision, or no space"
+            "description": "Missing identity, collision, no space, or the album's chosen edition is still being placed"
           }
         }
       }

@@ -32610,7 +32610,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Missing identity, collision, or no space */
+            /** @description Missing identity, collision, no space, or the album's chosen edition is still being placed */
             409: {
                 headers: {
                     [name: string]: unknown;

@@ -81,6 +81,21 @@ pub fn unmatched_album() -> ItemReason {
     )
 }
 
+/// The album's chosen edition is still being placed. The wording changes
+/// once MusicBrainz has failed to answer, since the wait can then be long.
+pub fn edition_remap_pending(attempts: i64) -> ItemReason {
+    let action = if attempts > 0 {
+        "MusicBrainz is not answering, so this waits until it does."
+    } else {
+        "Try again in a moment."
+    };
+    ItemReason::new(
+        "EDITION_REMAP_PENDING",
+        "Still matching this album to the edition you chose.",
+        action,
+    )
+}
+
 pub fn release_unavailable() -> ItemReason {
     ItemReason::new(
         "METADATA_UNAVAILABLE",

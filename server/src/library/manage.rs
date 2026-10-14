@@ -598,6 +598,24 @@ impl LibrarySetup {
         }
     }
 
+    /// An album whose chosen edition is still being placed has files that
+    /// are about to move, so no preview of them is made until that is done.
+    fn remap_gate(&self, album_id: &str) -> Result<(), ServiceError> {
+        let reason = self
+            .identify_store
+            .with_connection(|conn| super::management::planner::remap_gate(conn, album_id))
+            .map_err(|error| {
+                tracing::error!(%error, album = album_id, "edition remap state unreadable; management refused");
+                ServiceError::internal(&error)
+            })?;
+        match reason {
+            Some(reason) => Err(ServiceError::Conflict {
+                message: format!("{} {}", reason.message, reason.action),
+            }),
+            None => Ok(()),
+        }
+    }
+
     /// Accepted exact identity for one track (management needs an
     /// accepted exact MusicBrainz release plus a full track mapping).
     fn resolve_identity(
@@ -843,6 +861,7 @@ impl LibrarySetup {
             });
         }
         self.unconfirmed_gate(album_id)?;
+        self.remap_gate(album_id)?;
         let mut plan_items = Vec::with_capacity(items.len());
         let mut docs = BTreeMap::new();
         let mut files = Vec::with_capacity(items.len());

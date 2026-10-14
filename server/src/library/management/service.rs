@@ -1098,6 +1098,7 @@ impl Management {
                 scope.track_ids = None;
             }
         }
+        let person = snapshot.origin == Origin::Manual.as_str();
         let mut summary = Summary::default();
         let mut ordinal = 0;
         for (bundle_ordinal, scope) in albums.iter().enumerate() {
@@ -1105,7 +1106,7 @@ impl Management {
             if tracks.is_empty() {
                 continue;
             }
-            let held = ctx.wide && snapshot.origin == Origin::Manual.as_str();
+            let held = ctx.wide && person;
             let before = if held {
                 self.read(|conn| {
                     Ok(takeover::state_revisions(
@@ -1117,7 +1118,7 @@ impl Management {
                 Default::default()
             };
             let mut items =
-                planner::plan_album(&ctx, scope, &tracks, bundle_ordinal as i64, ordinal)?;
+                planner::plan_album(&ctx, scope, &tracks, bundle_ordinal as i64, ordinal, person)?;
             if held {
                 self.hold_changed(&scope.album_id, &snapshot.job.id, &mut items, &before)?;
             }
