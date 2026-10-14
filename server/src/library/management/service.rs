@@ -23,7 +23,7 @@ use crate::library::manage::SealPins;
 use crate::library::operations::models::OperationJob;
 use crate::library::operations::store as ops;
 use crate::library::publish::publisher::Catalog as _;
-use crate::library::publish::{SqliteCatalog, snapshots::sha256_hex};
+use crate::library::publish::{JournalStore, SqliteCatalog, snapshots::sha256_hex};
 use crate::library::wiring::LibrarySetup;
 use crate::runtime_config::sections::{LibraryManagement, LibraryManagementRootOverrides};
 
@@ -880,6 +880,10 @@ impl Management {
         } else {
             Default::default()
         };
+        let takeover::Changed {
+            counted: changed,
+            accepted,
+        } = changed;
         let now = now_unix();
         let (finished, stepped_back) = self.write(|tx| {
             if !store::finish_planning(tx, job_id, worker, &summary, now)? {
@@ -895,6 +899,10 @@ impl Management {
                 }
             }
             if changed.is_empty() {
+                // Changed only where the profile does not reach: those
+                // bytes are now as the app wants them, so this run's own
+                // write records what it places.
+                takeover::accept(tx, &accepted)?;
                 return Ok((true, false));
             }
             // A file the app wrote was changed outside it, and this run
@@ -936,21 +944,22 @@ impl Management {
     }
 
     /// The albums a planned job covers, and its files that were changed
-    /// outside the app and that the plan would rewrite, as (album, track).
-    /// `before` is each track's state revision before planning.
-    #[allow(clippy::type_complexity)]
+    /// since the app wrote them. `before` is each track's state revision
+    /// before planning.
     fn changed_outside(
         &self,
         job_id: &str,
         before: &std::collections::HashMap<String, i64>,
-    ) -> Result<(Vec<String>, Vec<(String, String)>), ManagementError> {
+    ) -> Result<(Vec<String>, takeover::Changed), ManagementError> {
         self.read(|conn| {
             let mut albums = Vec::new();
-            let mut changed = Vec::new();
+            let mut changed = takeover::Changed::default();
             for ordinal in store::bundle_ordinals(conn, job_id)? {
                 let items = store::bundle_items(conn, job_id, ordinal)?;
                 albums.extend(items.iter().map(|item| item.album_id.clone()));
-                changed.extend(takeover::changed_outside(conn, &items, before)?);
+                let found = takeover::changed_outside(conn, &items, before)?;
+                changed.counted.extend(found.counted);
+                changed.accepted.extend(found.accepted);
             }
             albums.sort_unstable();
             albums.dedup();
@@ -1324,6 +1333,11 @@ impl Management {
     fn apply_work(&self, job_id: &str, worker: &str) -> Result<(), ManagementError> {
         let snapshot = self.snapshot(job_id)?;
         let undo = snapshot.job_mode().is_some_and(JobMode::restores);
+        // A profile run writes every managed field of the files it writes.
+        let whole_profile = matches!(
+            snapshot.job_mode(),
+            Some(JobMode::Apply | JobMode::AutomaticApply)
+        ) && snapshot.intent().tag_edit.is_none();
         // Whether the job moves files: then an album must still be
         // exactly the files that were planned.
         // A duplicate resolution moves one file of an album on purpose.
@@ -1373,6 +1387,29 @@ impl Management {
             {
                 result.extend(extra);
             }
+            let bundle_id = result
+                .get("bundle_id")
+                .and_then(|id| id.as_str())
+                .map(str::to_owned);
+            if failure.is_none()
+                && whole_profile
+                && let Some(bundle_id) = &bundle_id
+            {
+                let before = self.record_applied(job_id, ordinal, bundle_id)?;
+                if !before.is_empty()
+                    && let Some(result) = result.as_object_mut()
+                {
+                    result.insert("records_before".to_owned(), before.into());
+                }
+            }
+            // An undo of a profile run gives back the records that run
+            // replaced, with the bytes from before it.
+            if failure.is_none()
+                && snapshot.job_mode() == Some(JobMode::Undo)
+                && let Some(source) = snapshot.linked_job_id.as_deref()
+            {
+                self.write(|tx| Ok(takeover::restore_records(tx, source, ordinal)?))?;
+            }
             self.write(|tx| {
                 Ok(store::finish_work(
                     tx,
@@ -1384,6 +1421,34 @@ impl Management {
                 )?)
             })?;
         }
+    }
+
+    /// Record the bytes a profile run placed for one album as the app's
+    /// (see [`takeover::record_applied`]). Runs again with the album when
+    /// a crash came between the commit and here.
+    fn record_applied(
+        &self,
+        job_id: &str,
+        ordinal: i64,
+        bundle_id: &str,
+    ) -> Result<serde_json::Map<String, serde_json::Value>, ManagementError> {
+        let written: std::collections::HashSet<String> = self
+            .read(|conn| Ok(store::bundle_items(conn, job_id, ordinal)?))?
+            .into_iter()
+            .filter(|item| item.desired.plan.is_some() && item.eligibility.writes())
+            .filter_map(|item| item.track_id)
+            .collect();
+        let placed: Vec<(String, String)> = self
+            .read(|conn| {
+                JournalStore::new(conn)
+                    .bundle(bundle_id)
+                    .map_err(|error| ManagementError::Store(error.to_string()))
+            })?
+            .into_iter()
+            .filter_map(|journal| Some((journal.track_id?, journal.staged_sha256)))
+            .filter(|(track_id, _)| written.contains(track_id))
+            .collect();
+        self.write(|tx| Ok(takeover::record_applied(tx, job_id, ordinal, &placed)?))
     }
 
     /// Whether the publisher committed `bundle_id`. An unreadable journal

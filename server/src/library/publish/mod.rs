@@ -87,6 +87,7 @@ pub mod place;
 pub mod planner;
 pub mod plugin_files;
 pub mod publisher;
+pub mod record;
 pub mod recovery;
 pub mod snapshots;
 pub mod staging;

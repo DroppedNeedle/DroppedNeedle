@@ -540,6 +540,18 @@ fn crash_at_every_phase_resumes_without_half_state() {
     for point in CrashPoint::all() {
         let fix = fixture(&format!("crash-{}", point.as_str()));
         let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+        // The app recorded other bytes for track-a's file than the write
+        // reads: it was changed outside since, and keeps its record.
+        // track-b's record is the bytes the write reads: it records what
+        // it places.
+        let elsewhere = sha256_hex(b"bytes the app wrote earlier");
+        open_db(&fix)
+            .execute(
+                "INSERT INTO library_track_management_state (local_track_id, written_sha256) \
+                 VALUES ('track-a', ?1), ('track-b', ?2)",
+                [&elsewhere, &bundle.items[1].fingerprint.sha256],
+            )
+            .unwrap();
         let (sealed, live) = seal(&bundle);
         let mut publisher = open_publisher(&fix);
         publisher.set_crash_point(Some(point));
@@ -562,7 +574,8 @@ fn crash_at_every_phase_resumes_without_half_state() {
             // Full staged bytes, never half: the planned title is in
             // the tags and the file still decodes.
             assert_staged(&dest, &item.track_id);
-            // The roll-forward records the bytes it placed as the app's.
+            // The roll-forward records the bytes it placed as the app's,
+            // except over a file changed since the app wrote it.
             let recorded: Option<String> = conn
                 .query_row(
                     "SELECT written_sha256 FROM library_track_management_state \
@@ -571,13 +584,19 @@ fn crash_at_every_phase_resumes_without_half_state() {
                     |row| row.get(0),
                 )
                 .unwrap();
-            assert_eq!(
-                recorded,
-                Some(droppedneedle::library::publish::snapshots::sha256_hex(
-                    &std::fs::read(&dest).unwrap()
-                )),
-                "{point:?}: the placed bytes are recorded"
-            );
+            if item.track_id == "track-a" {
+                assert_eq!(
+                    recorded.as_deref(),
+                    Some(elsewhere.as_str()),
+                    "{point:?}: the record is left"
+                );
+            } else {
+                assert_eq!(
+                    recorded,
+                    Some(sha256_hex(&std::fs::read(&dest).unwrap())),
+                    "{point:?}: the placed bytes are recorded"
+                );
+            }
         }
         let marks: i64 = conn
             .query_row("SELECT COUNT(*) FROM library_album_takeovers", [], |row| {
@@ -1584,6 +1603,13 @@ fn replacement_recycles_only_after_commit() {
         track_id: Some("track-s".to_string()),
         recycle_to: bin.display().to_string(),
     });
+    open_db(&fix)
+        .execute(
+            "INSERT INTO library_track_management_state (local_track_id, written_sha256) \
+             VALUES ('track-s', ?1)",
+            [sha256_hex(b"replaced-library-file")],
+        )
+        .unwrap();
     let (sealed, live) = seal(&bundle);
     let mut publisher = open_publisher(&fix);
     publisher.set_crash_point(Some(CrashPoint::AfterFirstRename));
@@ -1615,6 +1641,36 @@ fn replacement_recycles_only_after_commit() {
         )
         .unwrap();
     assert_eq!(retired, ("missing".to_string(), bin.display().to_string()));
+
+    // The retired row's record goes with its file, so a file added by hand
+    // to the album ('t', no record) does not stand in for it; nor for an
+    // excluded row. A row whose file went missing still counts.
+    let recorded: Option<String> = conn
+        .query_row(
+            "SELECT written_sha256 FROM library_track_management_state \
+             WHERE local_track_id = 'track-s'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(recorded, None, "the retired row keeps no record");
+    let stands_in = |conn: &Connection| {
+        publish::record::changed_since_written(conn, "t", "music", "s.flac", "added-by-hand")
+            .unwrap()
+    };
+    assert!(!stands_in(&conn));
+    conn.execute(
+        "UPDATE local_tracks SET availability = 'excluded' WHERE id = 'track-b'",
+        [],
+    )
+    .unwrap();
+    assert!(!stands_in(&conn), "an excluded row is no stand-in");
+    conn.execute(
+        "UPDATE local_tracks SET availability = 'missing' WHERE id = 'track-b'",
+        [],
+    )
+    .unwrap();
+    assert!(stands_in(&conn), "a missing written file is");
 }
 
 /// A generated file lands only on an empty path, and a later bundle takes

@@ -39,6 +39,12 @@ pub struct TrackCommit {
     pub file_path: String,
     /// SHA-256 the catalog must record.
     pub fingerprint: String,
+    /// Where the write read the file it replaces, and the SHA-256 it
+    /// verified there. The commit keeps the app's old record instead of
+    /// `fingerprint` when those bytes were changed since the app wrote
+    /// them (see [`super::record::written_after`]).
+    pub source: Option<(String, String)>,
+    pub source_sha256: Option<String>,
     /// Management state after commit.
     pub mgmt_state: String,
     /// The track is new to the catalog: index the published file instead
@@ -168,7 +174,29 @@ impl Catalog for SqliteCatalog {
             )));
         }
         let now = now_secs();
+        // `written_sha256` is the app's record of the bytes it placed: a
+        // file that no longer has them was changed outside the app. A write
+        // over a file already changed outside (a person's rename, say)
+        // keeps the old record, so the change stays the user's. Judged
+        // before any row of the bundle moves.
+        let mut written = Vec::with_capacity(commit.tracks.len());
         for track in &commit.tracks {
+            written.push(if track.adopt.is_some() {
+                Some(track.fingerprint.clone())
+            } else {
+                super::record::written_after(
+                    conn,
+                    &track.track_id,
+                    track
+                        .source
+                        .as_ref()
+                        .map(|(root, rel)| (root.as_str(), rel.as_str())),
+                    track.source_sha256.as_deref(),
+                    &track.fingerprint,
+                )?
+            });
+        }
+        for (track, written) in commit.tracks.iter().zip(&written) {
             if let Some((replaced, recycle_to)) = &track.replaces {
                 retire_replaced(conn, track, replaced, recycle_to, now)?;
             }
@@ -177,12 +205,10 @@ impl Catalog for SqliteCatalog {
             } else {
                 move_track(conn, track)?;
             }
-            // `written_sha256` is the app's record of the bytes it placed:
-            // a file that no longer has them was changed outside the app.
             conn.execute(
                 "INSERT INTO library_track_management_state (local_track_id, managed_root_id, \
                  applied_projection_hash, written_sha256, last_outcome, last_managed_at) \
-                 VALUES (?1, ?2, ?3, ?3, ?4, ?5) \
+                 VALUES (?1, ?2, ?3, ?6, ?4, ?5) \
                  ON CONFLICT (local_track_id) DO UPDATE SET \
                  managed_root_id = excluded.managed_root_id, \
                  applied_projection_hash = excluded.applied_projection_hash, \
@@ -195,7 +221,8 @@ impl Catalog for SqliteCatalog {
                     track.root_id,
                     track.fingerprint,
                     track.mgmt_state,
-                    now
+                    now,
+                    written
                 ],
             )?;
         }
@@ -246,6 +273,14 @@ fn retire_replaced(
             recycle_to,
             sha256_hex(retired.as_bytes())
         ],
+    )?;
+    // Its file is in the recycle bin: no record of it may make a file on
+    // its album look like it took its place.
+    conn.execute(
+        "UPDATE library_track_management_state SET written_sha256 = NULL, \
+         managed_path_revision = NULL, row_revision = row_revision + 1 \
+         WHERE local_track_id = ?1",
+        rusqlite::params![replaced],
     )?;
     Ok(())
 }
@@ -1159,6 +1194,8 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 rel_path: item.dest_rel.clone(),
                 file_path: dest.to_string_lossy().into_owned(),
                 fingerprint: file.staged_sha256.clone(),
+                source: Some((item.source_root.clone(), item.source_rel.clone())),
+                source_sha256: Some(item.fingerprint.sha256.clone()),
                 mgmt_state: mgmt_state_for(item.adopt.is_some(), bundle.profile_revision),
                 adopt: item.adopt.clone(),
                 replaces: item.replaces.as_ref().and_then(|replaced| {

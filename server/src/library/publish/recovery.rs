@@ -672,6 +672,8 @@ fn resume_precommit<C: Catalog>(
                 rel_path: journal.dest_rel.clone(),
                 file_path: dest.to_string_lossy().into_owned(),
                 fingerprint: journal.staged_sha256.clone(),
+                source: journal.source.clone(),
+                source_sha256: journal.source_sha256.clone(),
                 mgmt_state: mgmt.to_string(),
                 adopt: mgmt.starts_with(super::publisher::ADOPTED_STATE).then(|| {
                     let provenance = journal

@@ -5301,7 +5301,7 @@ fn file_sha256(path: &Path) -> String {
 /// every album v2 managed would read as changed after an upgrade.
 #[test]
 fn v2_path_revision_matches_v2() {
-    use droppedneedle::library::management::takeover::v2_path_revision;
+    use droppedneedle::library::publish::record::v2_path_revision;
     let cases = [
         (
             "music",
@@ -5698,7 +5698,7 @@ async fn a_blocked_file_does_not_hide_a_hand_edit() {
 /// A v2 row that holds no file hash is no record at all.
 #[tokio::test]
 async fn a_file_v2_wrote_is_recognised() {
-    use droppedneedle::library::management::takeover::v2_path_revision;
+    use droppedneedle::library::publish::record::v2_path_revision;
 
     let managed = ManagedLibrary::start("lib-takeover-v2", |_| {}).await;
     let (untouched, untouched_tracks) = managed.add_album("untouched", 1).await;
@@ -6662,6 +6662,497 @@ async fn a_hand_renamed_album_is_marked_only_where_the_folder_is_managed() {
     for track in &tracks {
         assert_eq!(album_tag(&managed.path(track)), vec!["Renamed"]);
     }
+}
+
+impl ManagedLibrary {
+    /// The track's path inside the music folder.
+    fn relative(&self, track: &str) -> String {
+        self.db()
+            .query_row(
+                "SELECT relative_path FROM local_tracks WHERE id = ?1",
+                [track],
+                |row| row.get(0),
+            )
+            .expect("track path")
+    }
+
+    /// Rename the track's file in the app, as the album page does: a move
+    /// with no tag values.
+    fn rename_in_app(&self, album: &str, track: &str, dest_rel: &str) {
+        publish_one(
+            &self.library,
+            droppedneedle::library::publish::planner::PlanKind::Move,
+            album,
+            &self.relative(track),
+            Some(dest_rel),
+            &[],
+        );
+        assert!(self.path(track).ends_with(dest_rel));
+    }
+
+    /// Change the folder's rules for when it manages albums by itself.
+    fn set_automatic(&self, scan_discovered: bool, acquisitions: bool) {
+        use droppedneedle::runtime_config::sections::LibraryManagement;
+        let mut settings = self
+            .library
+            .config
+            .get::<LibraryManagement>()
+            .expect("settings read");
+        for assignment in settings
+            .root_assignments
+            .iter_mut()
+            .filter(|assignment| assignment.root_id == "music")
+        {
+            assignment.automatic_scan_discovered = scan_discovered;
+            assignment.automatic_acquisitions = acquisitions;
+        }
+        self.library.config.save(settings).expect("settings saved");
+    }
+
+    /// A person's preview with the folder's profile, planned and applied.
+    async fn apply(
+        &self,
+        kind: droppedneedle::library::management::models::SelectionKind,
+        ids: &[&str],
+        key: &str,
+    ) -> String {
+        use droppedneedle::library::management::models::Selection;
+        use droppedneedle::library::management::service::PreviewRequest;
+        management_run(
+            &self.library,
+            PreviewRequest {
+                selection: Selection {
+                    kind,
+                    ids: ids.iter().map(|id| (*id).to_owned()).collect(),
+                    catalog_filter: None,
+                },
+                profile_id: droppedneedle::settings::management::PICARD_ORGANIZER_PROFILE_ID
+                    .to_owned(),
+                expected_settings_revision: self.settings_revision(),
+                expected_policy_revision: self.library.live_registry().policy_revision().to_owned(),
+                idempotency_key: Some(key.to_owned()),
+                target_root_id: None,
+                overrides: None,
+            },
+        )
+        .await
+    }
+}
+
+/// A person's rename or tag edit in the app over a file changed outside
+/// does not take that change over: the app keeps its old record, so the
+/// worker's next look leaves the album unmanaged and writes nothing. A
+/// preview made before the change is refused when applied after it.
+#[tokio::test]
+async fn a_persons_write_over_a_hand_edit_leaves_it_the_users() {
+    use droppedneedle::library::manage::PreviewItemInput;
+    use droppedneedle::library::publish::planner::PlanKind;
+    use droppedneedle::library::tags::{TagField, read_fields};
+
+    let managed = ManagedLibrary::start("lib-takeover-own-write", |_| {}).await;
+    let (renamed, renamed_tracks) = managed.add_album("first", 1).await;
+    let (edited, edited_tracks) = managed.add_album("second", 1).await;
+    let (stale, stale_tracks) = managed.add_album("third", 1).await;
+    managed.activate().await;
+    for album in [&renamed, &edited, &stale] {
+        managed.look(album).await;
+    }
+    let title = |path: &Path| read_fields(path).expect("tags read")[&TagField::Title].clone();
+
+    // A managed tag changed by hand, then the file renamed in the app.
+    let track = &renamed_tracks[0];
+    managed.edit_outside(track, title_edit("By Hand")).await;
+    managed.rename_in_app(&renamed, track, "moved/01.flac");
+    let file = managed.path(track);
+    let bytes = file_sha256(&file);
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&renamed).as_deref(), Some("files_changed"));
+    assert_eq!(managed.path(track), file);
+    assert_eq!(file_sha256(&file), bytes, "nothing written");
+    assert_eq!(title(&file), vec!["By Hand".to_owned()]);
+
+    // A tag edit of another field made in the app writes the edition's
+    // whole tag set, so it puts the hand-edited title back itself, as its
+    // preview showed. The app keeps its old record all the same, and the
+    // worker's look then marks nothing: no managed tag differs any more.
+    let track = &edited_tracks[0];
+    managed.edit_outside(track, title_edit("By Hand")).await;
+    let recorded = managed.recorded(track);
+    publish_one(
+        &managed.library,
+        PlanKind::SamePath,
+        &edited,
+        &managed.relative(track),
+        None,
+        &[("date", "2001")],
+    );
+    assert_eq!(managed.recorded(track), recorded, "the old record kept");
+    assert_eq!(title(&managed.path(track)), vec!["second 1".to_owned()]);
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&edited), None);
+    assert_eq!(
+        managed.recorded(track),
+        Some(file_sha256(&managed.path(track))),
+        "the worker's look took the bytes as the app's"
+    );
+
+    // A preview sealed before the hand edit.
+    let track = &stale_tracks[0];
+    let sealed = managed
+        .library
+        .plan_preview(
+            PlanKind::Move,
+            &stale,
+            vec![PreviewItemInput {
+                root_id: "music".to_owned(),
+                rel_path: managed.relative(track),
+                dest_rel: Some("moved/03.flac".to_owned()),
+                managed_updates: Default::default(),
+            }],
+        )
+        .expect("preview seals");
+    managed.edit_outside(track, title_edit("By Hand")).await;
+    let file = managed.path(track);
+    let bytes = file_sha256(&file);
+    assert!(managed.library.apply_preview(&sealed.token).is_err());
+    assert_eq!(managed.path(track), file);
+    assert_eq!(file_sha256(&file), bytes, "the file untouched");
+}
+
+/// A person's run of the whole profile over a hand edit writes every
+/// managed field from the edition, so it records what it placed: a later
+/// change of edition is the app's to write, and nothing marks the album.
+#[tokio::test]
+async fn a_persons_profile_run_takes_the_files_back() {
+    use droppedneedle::library::management::models::SelectionKind;
+
+    let managed = ManagedLibrary::start("lib-takeover-own-apply", |_| {}).await;
+    let (album, tracks) = managed.add_album("first", 1).await;
+    managed.activate().await;
+    managed.look(&album).await;
+    let track = &tracks[0];
+    managed.edit_outside(track, title_edit("By Hand")).await;
+    managed.apply(SelectionKind::Albums, &[&album], "own").await;
+    let file = managed.path(track);
+    assert_eq!(managed.recorded(track), Some(file_sha256(&file)));
+
+    let chosen: String = managed
+        .db()
+        .query_row(
+            "SELECT release_mbid FROM local_album_external_identities WHERE local_album_id = ?1",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("edition");
+    let other = if chosen == REL_1 { REL_2 } else { REL_1 };
+    droppedneedle::library::operations::service::Operations::new(&managed.library)
+        .choose_edition(&album, other, Some("admin"))
+        .await
+        .expect("edition chosen");
+    managed.look(&album).await;
+    assert_eq!(managed.mark(&album), None);
+    let last = managed.automatic_runs().pop().expect("a run");
+    assert_eq!(last.1.as_deref(), Some("MANAGEMENT_APPLIED"), "it wrote");
+}
+
+/// A change only to what the app does not manage stays accepted through a
+/// person's rename in the app and through the app's own runs: no mark, and
+/// the record follows the bytes.
+#[tokio::test]
+async fn an_unmanaged_change_stays_accepted_through_every_write() {
+    use droppedneedle::library::tags::save::read_document;
+    use droppedneedle::library::tags::{TagEdit, save_tags};
+
+    let managed = ManagedLibrary::start("lib-takeover-unmanaged-write", |_| {}).await;
+    let (moved, moved_tracks) = managed.add_album("first", 1).await;
+    let (album, tracks) = managed.add_album("second", 1).await;
+    managed.activate().await;
+    managed.look(&album).await;
+    managed.look(&moved).await;
+    let calm = || TagEdit::native("vorbis:MOOD", vec!["Calm".to_owned()]);
+    let mood = |path: &Path| {
+        read_document(path)
+            .expect("tags read")
+            .native
+            .get("vorbis:MOOD")
+            .cloned()
+    };
+
+    // Changed by hand where the profile does not reach, then renamed in
+    // the app.
+    let track = &tracks[0];
+    managed.edit_outside(track, calm()).await;
+    managed.rename_in_app(&album, track, "moved/01.flac");
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&album), None);
+    let file = managed.path(track);
+    assert_eq!(
+        managed.recorded(track),
+        Some(file_sha256(&file)),
+        "the bytes as found"
+    );
+    assert_eq!(mood(&file), Some(vec!["Calm".to_owned()]));
+
+    // What the app wants changes: the worker writes, and marks nothing.
+    let chosen: String = managed
+        .db()
+        .query_row(
+            "SELECT release_mbid FROM local_album_external_identities WHERE local_album_id = ?1",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("edition");
+    // The album's two editions differ only in their second id group.
+    let other = if chosen.contains("-0000-") {
+        chosen.replacen("-0000-", "-0001-", 1)
+    } else {
+        chosen.replacen("-0001-", "-0000-", 1)
+    };
+    droppedneedle::library::operations::service::Operations::new(&managed.library)
+        .choose_edition(&album, &other, Some("admin"))
+        .await
+        .expect("edition chosen");
+    managed.look(&album).await;
+    let last = managed.automatic_runs().pop().expect("a run");
+    assert_eq!(last.0, "succeeded");
+    assert_ne!(last.1.as_deref(), Some("MANAGEMENT_UNCHANGED"), "it wrote");
+    assert_eq!(managed.mark(&album), None);
+    let file = managed.path(track);
+    assert_eq!(managed.recorded(track), Some(file_sha256(&file)));
+    assert_eq!(mood(&file), Some(vec!["Calm".to_owned()]));
+
+    // Moved by hand and changed where the profile does not reach: the
+    // worker puts the file back and records the bytes it placed.
+    let track = &moved_tracks[0];
+    let placed = managed.path(track);
+    save_tags(&placed, &[calm()]).expect("changed outside the app");
+    let elsewhere = managed.music.join("elsewhere/moved.flac");
+    std::fs::create_dir_all(elsewhere.parent().expect("parent")).expect("mkdir");
+    std::fs::rename(&placed, &elsewhere).expect("moved by hand");
+    rescan(&managed.library).await;
+    assert_eq!(managed.path(track), elsewhere, "the track follows the file");
+    managed.look(&moved).await;
+    assert_eq!(managed.path(track), placed, "put back by the naming rules");
+    assert_eq!(managed.mark(&moved), None);
+    assert_eq!(managed.recorded(track), Some(file_sha256(&placed)));
+    assert_eq!(mood(&placed), Some(vec!["Calm".to_owned()]));
+}
+
+/// A file retagged and renamed together comes back as a new track row
+/// with no record, beside the row of the file the app wrote. It still
+/// counts as changed since the app wrote it: the album is left unmanaged
+/// and nothing is written. Files that only went away mark nothing.
+#[tokio::test]
+async fn a_file_retagged_and_renamed_together_is_still_the_users() {
+    use droppedneedle::library::mutations::Mutations;
+    use droppedneedle::library::tags::{TagEdit, TagField, save_tags};
+
+    let managed = ManagedLibrary::start("lib-takeover-retag-rename", |_| {}).await;
+    let (whole, whole_tracks) = managed.add_album("first", 2).await;
+    let (one, one_tracks) = managed.add_album("second", 2).await;
+    let (pruned, pruned_tracks) = managed.add_album("third", 2).await;
+    managed.activate().await;
+    for album in [&whole, &one, &pruned] {
+        managed.look(album).await;
+    }
+    // The scan after the app's own write files each album under the
+    // release it wrote.
+    rescan(&managed.library).await;
+    managed.worker_looks().await;
+    let retag_and_rename = |track: &str, edit: TagEdit, to: &str| -> PathBuf {
+        let from = managed.path(track);
+        save_tags(&from, &[edit]).expect("retagged outside the app");
+        let to = managed.music.join(to);
+        std::fs::create_dir_all(to.parent().expect("parent")).expect("mkdir");
+        std::fs::rename(&from, &to).expect("renamed by hand");
+        to
+    };
+
+    // Every file of the album: its release kept, the album retitled.
+    let files: Vec<PathBuf> = whole_tracks
+        .iter()
+        .enumerate()
+        .map(|(index, track)| {
+            retag_and_rename(
+                track,
+                TagEdit::verbatim(TagField::Album, vec!["Retagged".to_owned()]),
+                &format!("retagged/{:02}.flac", index + 1),
+            )
+        })
+        .collect();
+    // One file of another album retitled and renamed, the rest untouched.
+    let retitled = retag_and_rename(&one_tracks[0], title_edit("By Hand"), "second/by-hand.flac");
+    // One file of a third album deleted, none added.
+    std::fs::remove_file(managed.path(&pruned_tracks[1])).expect("file removed");
+    rescan(&managed.library).await;
+    while managed.library.identify_tick().await > 0 {}
+    let new_row = |file: &Path| -> String {
+        let relative = file
+            .strip_prefix(&managed.music)
+            .expect("under the root")
+            .to_string_lossy()
+            .into_owned();
+        managed
+            .library
+            .scan_store
+            .track_at("music", &relative)
+            .expect("track indexed")
+    };
+    for file in &files {
+        let track = new_row(file);
+        assert!(!whole_tracks.contains(&track), "a new track row");
+        assert_eq!(managed.album_of(&track), whole, "beside the old rows");
+        assert_eq!(managed.recorded(&track), None);
+    }
+    assert_eq!(managed.album_of(&new_row(&retitled)), one);
+    let bytes =
+        |paths: &[PathBuf]| -> Vec<String> { paths.iter().map(|p| file_sha256(p)).collect() };
+    let whole_bytes = bytes(&files);
+    let one_bytes = bytes(std::slice::from_ref(&retitled));
+
+    for album in [&whole, &one, &pruned] {
+        managed.look(album).await;
+    }
+    // The whole album's new rows never get track matches here, so the
+    // worker waits for them and writes nothing.
+    let skipped = managed.management().automatic_skipped(10).expect("skipped");
+    assert!(
+        skipped
+            .iter()
+            .any(|album| album.album_id == whole && album.reason.code == "TRACK_NOT_MAPPED"),
+        "{skipped:?}"
+    );
+    assert_eq!(bytes(&files), whole_bytes, "nothing written");
+    // Mapped the way the old rows were, as identification would map
+    // them: the worker counts the new rows as changed and steps back.
+    for (old, file) in whole_tracks.iter().zip(&files) {
+        managed
+            .db()
+            .execute(
+                "INSERT INTO local_track_external_identities (local_track_id, provider, \
+                 recording_mbid, release_mbid, release_track_mbid, medium_position, \
+                 release_track_position, decision_source, selected_at) \
+                 SELECT ?2, provider, recording_mbid, release_mbid, release_track_mbid, \
+                 medium_position, release_track_position, 'automatic', selected_at \
+                 FROM local_track_external_identities WHERE local_track_id = ?1",
+                [old, &new_row(file)],
+            )
+            .expect("track mapped");
+    }
+    managed.look(&whole).await;
+    assert_eq!(managed.mark(&whole).as_deref(), Some("files_changed"));
+    assert_eq!(bytes(&files), whole_bytes, "nothing written");
+    assert_eq!(album_tag(&files[0]), vec!["Retagged"]);
+    assert_eq!(managed.mark(&one).as_deref(), Some("files_changed"));
+    assert_eq!(bytes(std::slice::from_ref(&retitled)), one_bytes);
+    assert_eq!(
+        managed.mark(&pruned),
+        None,
+        "files that went away mark nothing"
+    );
+
+    // Handed back: the rows left behind lose their record with it, so the
+    // album is not marked again.
+    assert!(
+        Mutations::new(&managed.library)
+            .hand_back_management(&whole, "admin")
+            .expect("hand-back answers")
+    );
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&whole), None);
+    rescan(&managed.library).await;
+    managed.look(&whole).await;
+    assert_eq!(managed.mark(&whole), None, "not marked again");
+}
+
+/// An import that brings back a track the app wrote and that went missing
+/// marks nothing: the app wrote the new file too.
+#[tokio::test]
+async fn an_import_in_place_of_a_missing_track_marks_nothing() {
+    use droppedneedle::library::import::{DownloadImport, ImportOrigin, ImportSource};
+
+    let managed = ManagedLibrary::start("lib-takeover-import-missing", |_| {}).await;
+    let (album, tracks) = managed.add_album("first", 2).await;
+    managed.activate().await;
+    managed.set_automatic(true, true);
+    managed.look(&album).await;
+    rescan(&managed.library).await;
+    managed.worker_looks().await;
+    std::fs::remove_file(managed.path(&tracks[1])).expect("file removed");
+    rescan(&managed.library).await;
+
+    let release_mbid: String = managed
+        .db()
+        .query_row(
+            "SELECT release_mbid FROM local_album_external_identities WHERE local_album_id = ?1",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("edition");
+    let release = managed
+        .library
+        .identify_store
+        .release(&release_mbid, None)
+        .expect("release stored");
+    let source = managed.scratch.to_path_buf().join("incoming/02.flac");
+    std::fs::create_dir_all(source.parent().expect("parent")).expect("mkdir");
+    std::fs::copy(fixtures_dir().join("management_full.flac"), &source).expect("download planted");
+    let imported = managed
+        .library
+        .import_download(&DownloadImport {
+            task_id: "task-1".to_owned(),
+            origin: ImportOrigin::Download,
+            staging: None,
+            release,
+            files: vec![ImportSource {
+                path: source,
+                track: 1,
+            }],
+            extras: Vec::new(),
+        })
+        .expect("imported");
+    rescan(&managed.library).await;
+    managed.look(&album).await;
+    managed.look(&imported.album_id).await;
+    assert_eq!(managed.mark(&album), None);
+    assert_eq!(managed.mark(&imported.album_id), None);
+    assert_eq!(managed.count(STEPPED_BACK), 0);
+}
+
+/// A file v2 tagged, changed by hand since, then renamed in the app: the
+/// rename keeps v2's record, so the worker still leaves the album to the
+/// user.
+#[tokio::test]
+async fn a_rename_in_the_app_keeps_v2s_record() {
+    use droppedneedle::library::publish::record::v2_path_revision;
+
+    let managed = ManagedLibrary::start("lib-takeover-v2-renamed", |_| {}).await;
+    let (album, tracks) = managed.add_album("first", 1).await;
+    managed.activate().await;
+    let track = &tracks[0];
+    managed
+        .db()
+        .execute(
+            "INSERT INTO library_track_management_state (local_track_id, managed_root_id, \
+             managed_path_revision, last_outcome, last_managed_at) \
+             VALUES (?1, 'music', ?2, 'succeeded', 1)",
+            rusqlite::params![
+                track,
+                v2_path_revision(
+                    "music",
+                    &managed.relative(track),
+                    &file_sha256(&managed.path(track))
+                ),
+            ],
+        )
+        .expect("v2 row");
+    managed.edit_outside(track, title_edit("By Hand")).await;
+    managed.rename_in_app(&album, track, "moved/01.flac");
+    let file = managed.path(track);
+    let bytes = file_sha256(&file);
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&album).as_deref(), Some("files_changed"));
+    assert_eq!(file_sha256(&file), bytes, "nothing written");
 }
 
 /// Every file below `dir`.

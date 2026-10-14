@@ -9,30 +9,17 @@
 //! The mark never touches the album's match, plays, favorites or
 //! playlists, and the app never lifts it by itself.
 //!
-//! Files v2 wrote: v2 kept `managed_path_revision`, the SHA-256 of
-//! `root_id NUL relative_path NUL sha256_of_the_file` in hex. A row the
-//! upgrade carried over (no `written_sha256`, no job, an outcome v2 wrote
-//! under that formula) is a record too, checked by computing the formula
-//! again from the bytes just read.
-//!
-//! Verified 2026-10-14 against v2's code at `main` cf7278a1, not against
-//! rows a running v2 wrote (no v2 database with managed rows was at
-//! hand). v2's `_hash_file` (`library_management_publisher.py` 4155) and
-//! both formula sites (`native_library_store.py` 26439 for an import,
-//! 28142 for every other managed write and for an undo) were run on three
-//! committed fixtures, one of them under a non-ASCII path, and
-//! [`v2_path_revision`] gives the same values. Those two sites store the
-//! outcomes `succeeded` and `undone`. A `recycled` row holds a path hash
-//! instead and counts as no record. A value that cannot be reproduced,
-//! for whatever reason (a writer nobody traced, a root or a path spelled
-//! differently), reads as "changed since": the album steps back and
-//! nothing is overwritten.
+//! The record itself, and whether a file was changed since the app wrote
+//! it, are in [`crate::library::publish::record`]: the publisher's commit
+//! asks the same question.
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
 use super::models::{ManagementError, PlannedItem};
 use crate::library::clock::now_unix;
 use crate::library::operations::decisions::{CatalogAction, bump_catalog, record_action};
+pub use crate::library::publish::record::record_sql;
+use crate::library::publish::record::{V2_ROW_SQL, changed_since_written};
 use crate::library::publish::snapshots::sha256_hex;
 use crate::library::wiring::LibrarySetup;
 
@@ -41,7 +28,6 @@ pub const TAKEN_OVER: &str = "TAKEN_OVER";
 /// Terminal code of an automatic run that wrote nothing because the
 /// album's files were changed outside the app.
 pub const FILES_CHANGED_OUTSIDE: &str = "FILES_CHANGED_OUTSIDE";
-
 /// Why the app stepped back from an album.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cause {
@@ -67,68 +53,6 @@ impl Cause {
     pub fn parse(value: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|cause| cause.as_str() == value)
     }
-}
-
-/// True for a state row (alias `s`) that came from v2 with its record.
-/// Every v3 writer of `managed_path_revision` sets the job too, and the
-/// upgrade leaves v2's job behind.
-const V2_ROW_SQL: &str = "s.written_sha256 IS NULL AND s.managed_path_revision IS NOT NULL \
-     AND s.last_operation_job_id IS NULL AND s.last_outcome IN ('succeeded', 'undone')";
-
-/// SQL condition on a `library_track_management_state` row (alias `s`):
-/// the app has a record of the file's bytes.
-pub fn record_sql() -> String {
-    format!("(s.written_sha256 IS NOT NULL OR ({V2_ROW_SQL}))")
-}
-
-/// What the app recorded about one file.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Record {
-    pub written_sha256: Option<String>,
-    /// v2's value, kept only for a row that came from v2.
-    v2_path_revision: Option<String>,
-}
-
-impl Record {
-    /// Whether the app has a record of the file's bytes at all.
-    pub fn exists(&self) -> bool {
-        self.written_sha256.is_some() || self.v2_path_revision.is_some()
-    }
-
-    /// Whether the file, read just now at `root_id` and `relative_path`
-    /// with the hash `sha256`, is no longer what the app recorded. A file
-    /// with no record was never the app's: false.
-    pub fn changed_outside(&self, root_id: &str, relative_path: &str, sha256: &str) -> bool {
-        match (&self.written_sha256, &self.v2_path_revision) {
-            (Some(written), _) => written != sha256,
-            (None, Some(stored)) => *stored != v2_path_revision(root_id, relative_path, sha256),
-            (None, None) => false,
-        }
-    }
-}
-
-/// v2's `managed_path_revision` for a file (see the module comment).
-pub fn v2_path_revision(root_id: &str, relative_path: &str, file_sha256: &str) -> String {
-    sha256_hex(format!("{root_id}\u{0}{relative_path}\u{0}{file_sha256}").as_bytes())
-}
-
-/// The app's record of one track's file.
-pub fn record(conn: &Connection, track_id: &str) -> rusqlite::Result<Record> {
-    let row: Option<(Option<String>, Option<String>)> = conn
-        .prepare_cached(&format!(
-            "SELECT s.written_sha256, CASE WHEN {V2_ROW_SQL} THEN s.managed_path_revision END \
-             FROM library_track_management_state s WHERE s.local_track_id = ?1"
-        ))?
-        .query_row(params![track_id], |row| Ok((row.get(0)?, row.get(1)?)))
-        .optional()?;
-    Ok(
-        row.map_or_else(Record::default, |(written_sha256, v2_path_revision)| {
-            Record {
-                written_sha256,
-                v2_path_revision,
-            }
-        }),
-    )
 }
 
 /// Whether the app has a record of this track's file.
@@ -165,18 +89,31 @@ pub(crate) fn state_revisions(
     Ok(revisions)
 }
 
-/// The files of a finished plan that were changed outside the app and
-/// whose tags or embedded pictures the plan would change, as (album,
-/// track). A file the app has no record of does not count, nor one that
-/// was blocked before its bytes were read, nor one whose state the app
-/// itself rewrote while the plan was made (`before` holds each track's
-/// state revision from before).
+/// The files of a finished plan that were changed since the app wrote
+/// them.
+#[derive(Debug, Default)]
+pub(crate) struct Changed {
+    /// Those whose tags or embedded pictures the plan would change, as
+    /// (album, track).
+    pub counted: Vec<(String, String)>,
+    /// Those the plan may write without changing them: the change is only
+    /// in what the plan leaves alone. As (track, the hash the plan read,
+    /// the track's state revision before planning).
+    pub accepted: Vec<(String, String, Option<i64>)>,
+}
+
+/// Look through a finished plan for files changed since the app wrote
+/// them (see [`changed_since_written`]). A file the app has no record of
+/// does not count unless it stands in for one that went missing, nor one
+/// that was blocked before its bytes were read, nor one whose state the
+/// app itself rewrote while the plan was made (`before` holds each
+/// track's state revision from before).
 pub(crate) fn changed_outside(
     conn: &Connection,
     items: &[PlannedItem],
     before: &std::collections::HashMap<String, i64>,
-) -> rusqlite::Result<Vec<(String, String)>> {
-    let mut changed = Vec::new();
+) -> rusqlite::Result<Changed> {
+    let mut changed = Changed::default();
     for item in items {
         let rewrites = item.diff.tags_changed
             || item.diff.artwork_changed
@@ -184,7 +121,7 @@ pub(crate) fn changed_outside(
         let Some(track_id) = item.track_id.as_deref() else {
             continue;
         };
-        if !rewrites || item.fingerprint.is_empty() {
+        if item.fingerprint.is_empty() || !(rewrites || item.eligibility.writes()) {
             continue;
         }
         let revision: Option<i64> = conn
@@ -197,15 +134,153 @@ pub(crate) fn changed_outside(
         if revision != before.get(track_id).copied() {
             continue;
         }
-        if record(conn, track_id)?.changed_outside(
+        if !changed_since_written(
+            conn,
+            track_id,
             &item.source_root,
             &item.source_rel,
             &item.fingerprint,
-        ) {
-            changed.push((item.album_id.clone(), track_id.to_owned()));
+        )? {
+            continue;
+        }
+        if rewrites {
+            changed
+                .counted
+                .push((item.album_id.clone(), track_id.to_owned()));
+        } else {
+            changed
+                .accepted
+                .push((track_id.to_owned(), item.fingerprint.clone(), revision));
         }
     }
     Ok(changed)
+}
+
+/// Record the bytes a plan read as the app's, for files changed since the
+/// app wrote them only in what the plan leaves alone. Skips a file whose
+/// state moved since the plan looked.
+pub(crate) fn accept(
+    tx: &Transaction<'_>,
+    accepted: &[(String, String, Option<i64>)],
+) -> rusqlite::Result<()> {
+    for (track_id, sha256, revision) in accepted {
+        match revision {
+            Some(revision) => tx.execute(
+                "UPDATE library_track_management_state SET written_sha256 = ?2, \
+                 row_revision = row_revision + 1 WHERE local_track_id = ?1 AND row_revision = ?3",
+                params![track_id, sha256, revision],
+            )?,
+            None => tx.execute(
+                "INSERT INTO library_track_management_state (local_track_id, written_sha256) \
+                 VALUES (?1, ?2) ON CONFLICT (local_track_id) DO NOTHING",
+                params![track_id, sha256],
+            )?,
+        };
+    }
+    Ok(())
+}
+
+/// Where a profile run keeps, on its album's work row, the records it
+/// replaced (see [`record_applied`]), so its undo can put them back.
+const RECORDS_BEFORE: &str = "$.records_before";
+
+/// The records a job's album work row keeps for its undo, by track.
+fn records_before(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    ordinal: i64,
+) -> rusqlite::Result<serde_json::Map<String, serde_json::Value>> {
+    let stored: Option<String> = tx
+        .query_row(
+            "SELECT json_extract(result_json, ?3) FROM library_operation_work \
+             WHERE job_id = ?1 AND ordinal = ?2 AND json_valid(result_json)",
+            params![job_id, ordinal, RECORDS_BEFORE],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+    Ok(stored
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default())
+}
+
+/// After a run that applied the whole profile to an album, record the
+/// bytes it placed as the app's for each file it wrote, even over a file
+/// changed outside: every managed field was just written from the edition,
+/// so nothing of the change is left to protect. The commit kept the old
+/// record (as for a rename or a tag edit); this replaces it.
+///
+/// `placed` is each written track with the bytes this bundle staged for
+/// it. A row changes only while this job is its last run and the catalog
+/// still holds exactly those bytes, so a person's later write is never
+/// taken for this one. The records replaced are kept on the album's work
+/// row, in this transaction, and returned for the undo
+/// ([`restore_records`]); a second call after a crash keeps them.
+pub(crate) fn record_applied(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    ordinal: i64,
+    placed: &[(String, String)],
+) -> rusqlite::Result<serde_json::Map<String, serde_json::Value>> {
+    let mut before = records_before(tx, job_id, ordinal)?;
+    let mut changed = false;
+    for (track_id, staged) in placed {
+        let current: Option<Option<String>> = tx
+            .query_row(
+                "SELECT written_sha256 FROM library_track_management_state \
+                 WHERE local_track_id = ?1 AND last_operation_job_id = ?2 \
+                 AND applied_projection_hash = ?3",
+                params![track_id, job_id, staged],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(current) = current else { continue };
+        if current.as_deref() == Some(staged.as_str()) {
+            continue;
+        }
+        tx.execute(
+            "UPDATE library_track_management_state SET written_sha256 = ?2, \
+             row_revision = row_revision + 1 WHERE local_track_id = ?1",
+            params![track_id, staged],
+        )?;
+        before.insert(track_id.clone(), serde_json::json!(current));
+        changed = true;
+    }
+    if changed {
+        tx.execute(
+            "UPDATE library_operation_work SET result_json = json_set(CASE \
+             WHEN json_valid(result_json) AND json_type(result_json) = 'object' \
+             THEN result_json ELSE '{}' END, ?3, json(?4)) \
+             WHERE job_id = ?1 AND ordinal = ?2",
+            params![
+                job_id,
+                ordinal,
+                RECORDS_BEFORE,
+                serde_json::Value::Object(before.clone()).to_string()
+            ],
+        )?;
+    }
+    Ok(before)
+}
+
+/// After an undo of a profile run, put back the records that run replaced
+/// ([`record_applied`]): the undo restores the bytes from before the run,
+/// and a hand edit among them is the user's again. Only a row whose record
+/// is still the bytes the undo just placed.
+pub(crate) fn restore_records(
+    tx: &Transaction<'_>,
+    source_job_id: &str,
+    ordinal: i64,
+) -> rusqlite::Result<()> {
+    for (track_id, record) in records_before(tx, source_job_id, ordinal)? {
+        tx.execute(
+            "UPDATE library_track_management_state SET written_sha256 = ?2, \
+             row_revision = row_revision + 1 WHERE local_track_id = ?1 \
+             AND written_sha256 IS applied_projection_hash",
+            params![track_id, record.as_str()],
+        )?;
+    }
+    Ok(())
 }
 
 /// Whether the app stepped back from this album.
