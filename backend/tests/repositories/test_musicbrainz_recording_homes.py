@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+import repositories.musicbrainz_base as mb_base
+
 import repositories.musicbrainz_album as mod
 from infrastructure.cache.memory_cache import InMemoryCache
 from infrastructure.persistence.mb_canonical_store import MbCanonicalStore
@@ -50,6 +52,26 @@ def _release(
             "artist-credit": credit,
         },
     }
+
+
+@pytest.fixture(autouse=True)
+def official_musicbrainz_source():
+    """Start from the official source at generation 0 and put back whatever
+    was current: other suites move the process-wide source, and a stale one
+    makes every banked write a (correctly) skipped no-op."""
+    before = mb_base.capture_mb_source_context()
+    before_runtime = mb_base.brainzmash_runtime_enabled()
+    mb_base.set_mb_api_base(
+        mb_base.OFFICIAL_MB_API_BASE, source_mode="official", source_id="", generation=0
+    )
+    yield
+    mb_base.set_mb_api_base(
+        before.source_url,
+        source_mode=before.source_mode,
+        source_id=before.source_id,
+        generation=before.generation,
+        brainzmash_binding_valid=before_runtime,
+    )
 
 
 class _Repo(MusicBrainzAlbumMixin):

@@ -6,6 +6,8 @@ import time
 
 import pytest
 
+import repositories.musicbrainz_base as mb_base
+
 from infrastructure.persistence.mb_canonical_store import MbCanonicalStore
 from models.release_home import RecordingHome
 from repositories.musicbrainz_base import OFFICIAL_MB_API_BASE, MbSourceContext
@@ -17,6 +19,26 @@ _OTHER_CONTEXT = MbSourceContext(
     source_url="http://mirror", generation=0, source_mode="mirror", source_id="m1"
 )
 _DAY = 86400.0
+
+
+@pytest.fixture(autouse=True)
+def official_musicbrainz_source():
+    """Start from the official source at generation 0 and put back whatever
+    was current: other suites move the process-wide source, and a stale one
+    makes every banked write a (correctly) skipped no-op."""
+    before = mb_base.capture_mb_source_context()
+    before_runtime = mb_base.brainzmash_runtime_enabled()
+    mb_base.set_mb_api_base(
+        mb_base.OFFICIAL_MB_API_BASE, source_mode="official", source_id="", generation=0
+    )
+    yield
+    mb_base.set_mb_api_base(
+        before.source_url,
+        source_mode=before.source_mode,
+        source_id=before.source_id,
+        generation=before.generation,
+        brainzmash_binding_valid=before_runtime,
+    )
 
 
 def _home(rg: str, **overrides) -> RecordingHome:
