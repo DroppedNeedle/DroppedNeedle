@@ -60,6 +60,8 @@ pub const MAX_DAILY_QUOTA_LIMIT: u32 = 10_000;
 pub const PREVIEW_CACHE_MAX: usize = 100;
 /// Per-request timeout, kept from v2's 10s client calls.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// Largest search answer read.
+const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 /// What kind of preview a search is after. Album and track searches are
 /// separate cache identities: the same artist+title pair can hold two
@@ -463,10 +465,9 @@ impl YouTubeClient {
         if !(200..300).contains(&status) {
             return Err(YoutubeError::Api { status });
         }
-        let body = response
-            .bytes()
+        let body = crate::http_client::read_capped(response, MAX_BODY_BYTES)
             .await
-            .map_err(|error| YoutubeError::Transport(transport_kind(&error).to_owned()))?;
+            .map_err(|error| YoutubeError::Transport(error.kind().to_owned()))?;
         let video_id = match serde_json::from_slice::<YouTubeSearchResponse>(&body) {
             Ok(decoded) => match decoded.items.into_iter().next() {
                 None => None,

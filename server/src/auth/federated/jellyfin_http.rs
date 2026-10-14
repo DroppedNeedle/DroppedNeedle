@@ -12,11 +12,14 @@ use super::jellyfin_models::{AuthenticationResultWire, UserWire};
 use super::settings::{InstallIds, jellyfin_login_server};
 use super::users::PROVIDER_JELLYFIN;
 use crate::auth::users::stores::{BoxFuture, DirectoryError, DirectoryUser, UserDirectory};
+use crate::http_client::read_capped;
 use crate::runtime_config::ConfigStore;
 use crate::runtime_config::secret_sections::JellyfinConnection;
 
 /// Request timeout (v2 parity).
 const TIMEOUT: Duration = Duration::from_secs(15);
+/// Largest answer read from a Jellyfin server.
+const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 /// Live [`JellyfinIdp`] and Jellyfin [`UserDirectory`].
 #[derive(Clone)]
@@ -99,7 +102,7 @@ impl JellyfinIdp for JellyfinHttp {
                 ));
             }
         }
-        let bytes = response.bytes().await.map_err(|_| {
+        let bytes = read_capped(response, MAX_BODY_BYTES).await.map_err(|_| {
             FederatedError::ProviderUnavailable("Jellyfin authentication failed".to_owned())
         })?;
         let result: AuthenticationResultWire = serde_json::from_slice(&bytes).map_err(|_| {
@@ -164,8 +167,7 @@ impl UserDirectory for JellyfinHttp {
                 tracing::warn!(status = %response.status(), "jellyfin user list answered an error");
                 return Err(DirectoryError::Transport);
             }
-            let bytes = response
-                .bytes()
+            let bytes = read_capped(response, MAX_BODY_BYTES)
                 .await
                 .map_err(|_| DirectoryError::Transport)?;
             let users: Vec<serde_json::Value> =

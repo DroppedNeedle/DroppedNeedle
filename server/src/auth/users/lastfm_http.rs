@@ -9,12 +9,15 @@ use std::time::Duration;
 use super::lastfm_models::{ErrorWire, SessionWire, TokenWire};
 use super::stores::{BoxFuture, LastFmAuthClient, LastFmError};
 use crate::auth::federated::oidc::form_encode;
+use crate::http_client::{BodyError, read_capped};
 use crate::providers::lastfm::api_sig;
 
 /// Where the user approves a token.
 pub const AUTH_PAGE: &str = "https://www.last.fm/api/auth/";
 /// Request timeout (v2 parity).
 const TIMEOUT: Duration = Duration::from_secs(15);
+/// Largest answer read from the Last.fm auth API.
+const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 /// Live [`LastFmAuthClient`] over the shared outbound client.
 #[derive(Clone)]
@@ -64,10 +67,19 @@ impl LastFmAuthHttp {
                 LastFmError::Transport
             })?;
         let status = response.status();
-        let bytes = response.bytes().await.map_err(|cause| {
-            tracing::warn!(cause = %cause.without_url(), method, "last.fm body read failed");
-            LastFmError::Transport
-        })?;
+        let bytes = read_capped(response, MAX_BODY_BYTES)
+            .await
+            .map_err(|cause| {
+                match cause {
+                    BodyError::TooLarge => {
+                        tracing::warn!(method, "last.fm answer exceeded the size limit");
+                    }
+                    BodyError::Transport(cause) => {
+                        tracing::warn!(%cause, method, "last.fm body read failed");
+                    }
+                }
+                LastFmError::Transport
+            })?;
         if let Ok(error) = serde_json::from_slice::<ErrorWire>(&bytes) {
             tracing::info!(code = error.error, message = %error.message, method, "last.fm refused the call");
             return Err(map_error_code(error.error));

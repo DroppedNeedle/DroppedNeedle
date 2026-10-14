@@ -27,6 +27,8 @@ use std::time::Duration;
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::http_client::{BodyError, read_capped};
+
 /// Cover Art Archive root.
 pub const COVER_ART_ARCHIVE_BASE: &str = "https://coverartarchive.org";
 /// Conservative metadata/download pacing per the verified v3 policy row
@@ -106,37 +108,9 @@ pub trait CaaTransport: Send + Sync {
 }
 
 /// Largest body the transport reads: the biggest cap any caller applies
-/// (artwork bytes, v2 `MAX_DELIVERY_IMAGE_BYTES`). Larger bodies are never
-/// buffered whole.
+/// (artwork bytes, v2 `MAX_DELIVERY_IMAGE_BYTES`). A larger body is a
+/// transport failure and is never buffered whole.
 pub const TRANSPORT_MAX_BODY_BYTES: usize = 20 * 1024 * 1024;
-
-/// Read a body up to `cap + 1` bytes, so the caller's own size check sees
-/// an oversized body without the transport buffering all of it. A declared
-/// `Content-Length` above the cap is refused before reading.
-async fn read_capped(
-    mut response: reqwest::Response,
-    cap: usize,
-) -> Result<Vec<u8>, TransportError> {
-    if response
-        .content_length()
-        .is_some_and(|length| length > cap as u64)
-    {
-        return Err(TransportError(format!("body larger than {cap} bytes")));
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|error| TransportError(error.to_string()))?
-    {
-        let room = (cap + 1).saturating_sub(body.len());
-        body.extend_from_slice(&chunk[..chunk.len().min(room)]);
-        if body.len() > cap {
-            break;
-        }
-    }
-    Ok(body)
-}
 
 /// Production adapter over the factory's no-redirect client, which carries
 /// the shared timeouts and User-Agent.
@@ -173,7 +147,14 @@ impl CaaTransport for ReqwestCaaTransport {
                 headers.push((name.to_owned(), text.to_owned()));
             }
         }
-        let body = read_capped(response, TRANSPORT_MAX_BODY_BYTES).await?;
+        let body = read_capped(response, TRANSPORT_MAX_BODY_BYTES)
+            .await
+            .map_err(|error| match error {
+                BodyError::TooLarge => {
+                    TransportError(format!("body larger than {TRANSPORT_MAX_BODY_BYTES} bytes"))
+                }
+                BodyError::Transport(cause) => TransportError(cause),
+            })?;
         Ok(RawResponse {
             status,
             headers,
@@ -938,9 +919,9 @@ mod tests {
         }
     }
 
-    /// The transport never buffers a body past its cap. A declared length
-    /// over the cap is a transport failure; a body that streams past it
-    /// is cut one byte over, so the caller's own size check refuses it.
+    /// The transport never buffers a body past its cap: a declared length
+    /// over the cap and a body that streams past it are both transport
+    /// failures.
     #[tokio::test]
     async fn a_body_over_the_transport_cap_is_never_buffered_whole() {
         let factory = crate::http_client::HttpClientFactory::new().unwrap();
@@ -955,9 +936,8 @@ mod tests {
             TRANSPORT_MAX_BODY_BYTES + 4096,
         )
         .await;
-        let response = transport.get(&streamed).await.unwrap();
-        assert_eq!(response.status, 200);
-        assert_eq!(response.body.len(), TRANSPORT_MAX_BODY_BYTES + 1);
+        let error = transport.get(&streamed).await.unwrap_err();
+        assert_eq!(error.0, "body larger than 20971520 bytes");
     }
 
     #[test]

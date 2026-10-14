@@ -38,6 +38,7 @@ use thiserror::Error;
 
 use super::error::{MAX_RETRY_AFTER, ProviderError, classify_status};
 use super::limiter::RateLimiter;
+use crate::http_client::read_capped;
 
 /// Provider key used in [ProviderError] and logs.
 pub const SOURCE: &str = "ticketmaster";
@@ -49,6 +50,10 @@ pub const PAGE_SIZE: u32 = 200;
 /// Pagination follow cap: 600 events per attraction covers the largest tours.
 /// A deeper result set is truncated, loudly (see the warning log).
 pub const MAX_PAGES: u32 = 3;
+/// Largest Ticketmaster answer read. A page holds up to [`PAGE_SIZE`]
+/// events, each with its own image list, venue and attraction blocks, so
+/// a full page can pass 4 MiB.
+const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 /// One external id link inside an attraction's `externalLinks` map.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -459,11 +464,9 @@ impl TicketmasterClient {
                 status: response.status().as_u16(),
             });
         }
-        response
-            .bytes()
+        read_capped(response, MAX_BODY_BYTES)
             .await
-            .map(|body| body.to_vec())
-            .map_err(|error| TicketmasterError::Transport(transport_kind(&error).to_owned()))
+            .map_err(|error| TicketmasterError::Transport(error.kind().to_owned()))
     }
 }
 

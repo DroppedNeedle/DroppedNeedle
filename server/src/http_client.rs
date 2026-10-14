@@ -176,6 +176,17 @@ pub(crate) enum BodyError {
     Transport(String),
 }
 
+impl BodyError {
+    /// A short fixed description, for errors that must not carry
+    /// transport text.
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            Self::TooLarge => "answer too large",
+            Self::Transport(_) => "body read failed",
+        }
+    }
+}
+
 /// Read a body, giving up as soon as it passes `cap` bytes, whether or
 /// not the server declared its length.
 pub(crate) async fn read_capped(

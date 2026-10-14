@@ -13,11 +13,14 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::stores::{BoxFuture, HibpPolicy, PasswordScreen};
+use crate::http_client::read_capped;
 
 /// Number of SHA-1 hex chars sent to the range API (k-anonymity prefix).
 pub const RANGE_PREFIX_LEN: usize = 5;
 /// Padding header the range API honors.
 pub const RANGE_URL_PREFIX: &str = "https://api.pwnedpasswords.com/range/";
+/// Largest range answer read.
+const MAX_RANGE_BYTES: usize = 4 * 1024 * 1024;
 
 /// SHA-1 hex digest (uppercase, the HIBP file ordering).
 pub fn sha1_hex_upper(data: &[u8]) -> String {
@@ -121,7 +124,10 @@ impl HibpHttp for PwnedPasswordsHttp {
             if response.status() != reqwest::StatusCode::OK {
                 return Err(HibpHttpError);
             }
-            let text = response.text().await.map_err(|_| HibpHttpError)?;
+            let bytes = read_capped(response, MAX_RANGE_BYTES)
+                .await
+                .map_err(|_| HibpHttpError)?;
+            let text = String::from_utf8_lossy(&bytes);
             let mut suffixes = HashSet::new();
             for line in text.lines() {
                 let Some((suffix, _)) = line.split_once(':') else {

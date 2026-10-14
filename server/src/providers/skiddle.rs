@@ -31,12 +31,15 @@ use thiserror::Error;
 
 use super::error::{ProviderError, classify_status};
 use super::limiter::RateLimiter;
+use crate::http_client::read_capped;
 
 /// Provider key used in [ProviderError] and logs.
 pub const SOURCE: &str = "skiddle";
 
 /// Production endpoint. Tests point elsewhere via [SkiddleClient::with_base_url].
 pub const SKIDDLE_API_URL: &str = "https://www.skiddle.com/api/v1";
+/// Largest Skiddle answer read.
+const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 /// One matching act. `id` is the required identity field: a result without
 /// one fails the whole decode rather than materializing as an empty act.
@@ -297,11 +300,9 @@ impl SkiddleClient {
                 status: response.status().as_u16(),
             });
         }
-        response
-            .bytes()
+        read_capped(response, MAX_BODY_BYTES)
             .await
-            .map(|body| body.to_vec())
-            .map_err(|error| SkiddleError::Transport(transport_kind(&error).to_owned()))
+            .map_err(|error| SkiddleError::Transport(error.kind().to_owned()))
     }
 }
 

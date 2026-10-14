@@ -23,6 +23,7 @@ use thiserror::Error;
 
 use super::error::{ProviderError, classify_status};
 use super::limiter::RateLimiter;
+use crate::http_client::read_capped;
 
 /// Provider key used in [ProviderError] and logs.
 pub const SOURCE: &str = "geocoding";
@@ -31,6 +32,8 @@ pub const SOURCE: &str = "geocoding";
 pub const GEOCODING_API_URL: &str = "https://geocoding-api.open-meteo.com/v1/search";
 /// Default page of city suggestions, kept from v2.
 pub const DEFAULT_CITY_COUNT: u32 = 8;
+/// Largest geocoding answer read.
+const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 /// One matching city. Every field past the name tolerates absence, mirroring
 /// the v2 struct's all-defaulted shape.
@@ -144,10 +147,9 @@ impl GeocodingClient {
                 status: response.status().as_u16(),
             });
         }
-        let body = response
-            .bytes()
+        let body = read_capped(response, MAX_BODY_BYTES)
             .await
-            .map_err(|error| GeocodingError::Transport(transport_kind(&error).to_owned()))?;
+            .map_err(|error| GeocodingError::Transport(error.kind().to_owned()))?;
         let decoded: GeocodingResponse = serde_json::from_slice(&body)
             .map_err(|error| GeocodingError::Decode(error.to_string()))?;
         Ok(decoded.results)

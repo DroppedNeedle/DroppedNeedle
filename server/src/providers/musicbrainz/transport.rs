@@ -7,6 +7,12 @@
 
 use thiserror::Error;
 
+use crate::http_client::{BodyError, read_capped};
+
+/// Largest MusicBrainz answer read. A box-set release with every
+/// medium, track and credit comes back whole and can pass 4 MiB.
+pub const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+
 /// One outbound GET, transport-agnostic so fakes stay script-only.
 #[derive(Debug, Clone)]
 pub struct MbRequest {
@@ -126,11 +132,14 @@ impl MbTransport for ReqwestMbTransport {
                 headers.push((name.to_owned(), text.to_owned()));
             }
         }
-        let body = response
-            .bytes()
+        let body = read_capped(response, MAX_BODY_BYTES)
             .await
-            .map_err(|error| TransportError(error.to_string()))?
-            .to_vec();
+            .map_err(|error| match error {
+                BodyError::TooLarge => {
+                    TransportError(format!("body larger than {MAX_BODY_BYTES} bytes"))
+                }
+                BodyError::Transport(cause) => TransportError(cause),
+            })?;
         Ok(RawResponse {
             status,
             headers,

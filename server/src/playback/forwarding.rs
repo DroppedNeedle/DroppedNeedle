@@ -26,6 +26,7 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 use crate::auth::users::stores::{LastFmStore, LastFmSwitch};
+use crate::http_client::{BodyError, read_capped};
 use crate::plugins::scrobble::ListenBrainzLinkStore;
 use crate::runtime_config::crypto::Crypto;
 
@@ -40,6 +41,8 @@ pub const SCROBBLE_ATTEMPTS: u32 = 4;
 pub const BASE_BACKOFF: Duration = Duration::from_secs(5);
 /// Longest retry delay.
 pub const MAX_BACKOFF: Duration = Duration::from_secs(300);
+/// Largest Last.fm scrobble answer read.
+const MAX_LASTFM_BODY_BYTES: usize = 4 * 1024 * 1024;
 /// Per-request budget.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 /// ListenBrainz pacing (provider policy: 1 request per second).
@@ -571,9 +574,12 @@ impl Courier {
         if status.is_server_error() {
             return Delivery::Retry(None, format!("Last.fm answered {status}"));
         }
-        let body = match response.bytes().await {
+        let body = match read_capped(response, MAX_LASTFM_BODY_BYTES).await {
             Ok(body) => body,
-            Err(error) => return Delivery::Retry(None, transport_cause(&error)),
+            Err(BodyError::TooLarge) => {
+                return Delivery::Retry(None, "Last.fm answer exceeded the size limit".to_owned());
+            }
+            Err(BodyError::Transport(cause)) => return Delivery::Retry(None, cause),
         };
         if let Ok(error) = serde_json::from_slice::<LastFmError>(&body) {
             return match error.error {

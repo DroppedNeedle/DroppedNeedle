@@ -38,6 +38,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use super::{DegradationSink, Pacer};
+use crate::http_client::read_capped;
 
 pub mod playlists;
 pub mod stats;
@@ -64,6 +65,8 @@ pub const MAX_TOKEN_LEN: usize = 1024;
 pub const REQUEST_TIMEOUT_SECS: u64 = 15;
 /// Source name used for degradation records.
 pub const SOURCE: &str = "listenbrainz";
+/// Largest ListenBrainz answer read.
+const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 /// What a call produced. `Found` carries the payload, `Missing` is an
 /// authoritative negative (safe to treat as one), and `Unavailable` covers
@@ -916,7 +919,10 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             if accepted.contains(&status) {
                 return Err(RequestFailure::Accepted(status));
             }
-            let body = response.text().await.unwrap_or_default();
+            let body = read_capped(response, MAX_BODY_BYTES)
+                .await
+                .unwrap_or_default();
+            let body = String::from_utf8_lossy(&body);
             // Deterministic upstream policy blocks fail fast and must not
             // trip any shared breaker (v2 `_is_upstream_policy_block`): the
             // popularity feature-flag 500, and the anti-scraper 401 added in
@@ -943,8 +949,8 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
                 &format!("ListenBrainz {method} {category} request failed ({status})"),
             )));
         }
-        match response.text().await {
-            Ok(text) => match serde_json::from_str(&text) {
+        match read_capped(response, MAX_BODY_BYTES).await {
+            Ok(body) => match serde_json::from_slice(&body) {
                 Ok(payload) => {
                     self.sink.succeeded(SOURCE);
                     Ok(Body::Json(payload))
@@ -962,7 +968,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             },
             Err(error) => Err(RequestFailure::Outcome(self.recorded(
                 None,
-                &format!("ListenBrainz response body unreadable: {error}"),
+                &format!("ListenBrainz response body unreadable: {}", error.kind()),
             ))),
         }
     }
@@ -1383,7 +1389,7 @@ impl HttpListenBrainzVerifier {
         if status != 200 {
             return unavailable();
         }
-        let bytes = match response.bytes().await {
+        let bytes = match read_capped(response, MAX_BODY_BYTES).await {
             Ok(bytes) => bytes,
             Err(_) => return unavailable(),
         };
@@ -1451,7 +1457,7 @@ impl HttpListenBrainzVerifier {
         if status != 200 {
             return unavailable();
         }
-        let bytes = match response.bytes().await {
+        let bytes = match read_capped(response, MAX_BODY_BYTES).await {
             Ok(bytes) => bytes,
             Err(_) => return unavailable(),
         };

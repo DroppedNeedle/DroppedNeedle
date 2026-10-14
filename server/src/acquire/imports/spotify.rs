@@ -25,6 +25,7 @@ use super::models::SPOTIFY_SECRET_MASK;
 use super::models::{
     SpotifyAuthUrlResponse, SpotifyPlaylistItem, SpotifyPlaylistListResponse, SpotifySettings,
 };
+use crate::http_client::{BodyError, read_capped};
 
 /// OAuth scopes (v2 `_SPOTIFY_SCOPES`, verbatim).
 pub const SPOTIFY_SCOPES: &str =
@@ -34,6 +35,8 @@ pub const REFRESH_BUFFER_SECS: i64 = 60;
 /// Network read bound for one playlist cover (v2 5 MiB). Looser than the
 /// storage cap on purpose: it only stops an unbounded wire read.
 pub const MAX_COVER_FETCH_BYTES: usize = 5 * 1024 * 1024;
+/// Largest Web API answer read.
+pub const MAX_API_BODY_BYTES: usize = 4 * 1024 * 1024;
 /// OAuth callback path: the route [`imports_callback_router`] mounts
 /// under `/api/v3`.
 ///
@@ -997,9 +1000,9 @@ impl SpotifyClient {
 
     /// Fetch and validate a playlist image: single attempt, no redirects (a
     /// CDN URL must answer directly), host allowlist, `image/*` content
-    /// type, and a bounded streamed read aborting past
-    /// [`MAX_COVER_FETCH_BYTES`] without buffering the excess (v2
-    /// `fetch_spotify_playlist_cover`). Unusable answers return none;
+    /// type, and a capped read refusing anything past
+    /// [`MAX_COVER_FETCH_BYTES`] (v2 `fetch_spotify_playlist_cover`).
+    /// Unusable answers return none;
     /// network errors propagate for the caller to degrade.
     pub async fn fetch_cover(&self, url: &str) -> Result<Option<(Vec<u8>, String)>, SpotifyError> {
         if !is_allowed_cover_url(url) {
@@ -1025,45 +1028,32 @@ impl SpotifyClient {
         if !content_type.starts_with("image/") {
             return Ok(None);
         }
-        if let Some(declared) = response
-            .headers()
-            .get(reqwest::header::CONTENT_LENGTH)
-            .and_then(|value| value.to_str().ok())
-        {
-            let trimmed = declared.trim();
-            if !trimmed.is_empty()
-                && trimmed.bytes().all(|byte| byte.is_ascii_digit())
-                && let Ok(length) = trimmed.parse::<usize>()
-                && length > MAX_COVER_FETCH_BYTES
-            {
-                return Ok(None);
+        let body = match read_capped(response, MAX_COVER_FETCH_BYTES).await {
+            Ok(body) => body,
+            Err(BodyError::TooLarge) => return Ok(None),
+            Err(BodyError::Transport(cause)) => {
+                return Err(SpotifyError::Unavailable(format!(
+                    "cover read failed: {cause}"
+                )));
             }
-        }
-        // One-shot read: the workspace pins reqwest without the `stream`
-        // cargo feature, so mid-read aborts are unavailable. The
-        // content-length precheck above already rejects declared giants;
-        // the length check below still refuses to *keep* an over-cap body.
-        let body = response
-            .bytes()
-            .await
-            .map_err(|cause| SpotifyError::Unavailable(format!("cover read failed: {cause}")))?;
-        if body.len() > MAX_COVER_FETCH_BYTES {
-            return Ok(None);
-        }
-        Ok(Some((body.to_vec(), content_type)))
+        };
+        Ok(Some((body, content_type)))
     }
 }
 
-/// Decode a JSON body without the reqwest `json` cargo feature (the
-/// workspace pins reqwest to `rustls-tls` only): bytes first, then serde.
+/// Decode a JSON body read under [`MAX_API_BODY_BYTES`].
 async fn json_body(
     response: reqwest::Response,
     what: &str,
 ) -> Result<serde_json::Value, SpotifyError> {
-    let bytes = response
-        .bytes()
+    let bytes = read_capped(response, MAX_API_BODY_BYTES)
         .await
-        .map_err(|cause| SpotifyError::Unavailable(format!("{what} read failed: {cause}")))?;
+        .map_err(|cause| match cause {
+            BodyError::TooLarge => SpotifyError::Unavailable(format!("{what} answer too large")),
+            BodyError::Transport(cause) => {
+                SpotifyError::Unavailable(format!("{what} read failed: {cause}"))
+            }
+        })?;
     serde_json::from_slice::<serde_json::Value>(&bytes)
         .map_err(|cause| SpotifyError::Unavailable(format!("{what} decode failed: {cause}")))
 }

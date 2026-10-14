@@ -9,7 +9,12 @@
 
 use std::future::Future;
 
-use crate::http_client::transport_error;
+use crate::http_client::{BodyError, read_capped, transport_error};
+
+/// Largest slskd answer read. A search's responses list every file every
+/// peer offered and the transfer list is unpaged, so both can run to
+/// tens of megabytes.
+const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
 
 /// One answered HTTP response: status plus raw body.
 #[derive(Debug, Clone)]
@@ -85,11 +90,12 @@ impl ReqwestSlskdHttp {
             .await
             .map_err(|err| HttpFault(transport_error(err)))?;
         let status = response.status().as_u16();
-        let body = response
-            .bytes()
+        let body = read_capped(response, MAX_BODY_BYTES)
             .await
-            .map_err(|err| HttpFault(transport_error(err)))?
-            .to_vec();
+            .map_err(|cause| match cause {
+                BodyError::TooLarge => HttpFault("slskd answer exceeded the size limit".to_owned()),
+                BodyError::Transport(cause) => HttpFault(cause),
+            })?;
         Ok(HttpReply { status, body })
     }
 }

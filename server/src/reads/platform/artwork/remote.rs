@@ -3,6 +3,7 @@
 
 use futures_util::future::BoxFuture;
 
+use crate::http_client::{BodyError, read_capped};
 use crate::providers::coverart::{
     ArtworkBytes, CaaClient, CaaError, CaaTransport, DownloadSize, EntityKind, RateGate,
 };
@@ -114,7 +115,7 @@ impl HttpImages {
         };
         self.gate.acquire().await;
         let mut hops = 0;
-        let mut response = loop {
+        let response = loop {
             let response = match self
                 .client
                 .get(url.clone())
@@ -147,29 +148,17 @@ impl HttpImages {
         if status.is_server_error() || status.as_u16() == 429 {
             return ImageFetch::Failed;
         }
-        if !status.is_success()
-            || response
-                .content_length()
-                .is_some_and(|length| length > MAX_REMOTE_BYTES as u64)
-        {
+        if !status.is_success() {
             return ImageFetch::Unusable;
         }
-        let mut bytes = Vec::new();
-        loop {
-            match response.chunk().await {
-                Ok(Some(chunk)) => {
-                    bytes.extend_from_slice(&chunk);
-                    if bytes.len() > MAX_REMOTE_BYTES {
-                        return ImageFetch::Unusable;
-                    }
-                }
-                Ok(None) => break,
-                Err(error) => {
-                    tracing::debug!(%error, "image download cut off");
-                    return ImageFetch::Failed;
-                }
+        let bytes = match read_capped(response, MAX_REMOTE_BYTES).await {
+            Ok(bytes) => bytes,
+            Err(BodyError::TooLarge) => return ImageFetch::Unusable,
+            Err(BodyError::Transport(cause)) => {
+                tracing::debug!(%cause, "image download cut off");
+                return ImageFetch::Failed;
             }
-        }
+        };
         match crate::providers::coverart::sniff_image_content_type(&bytes) {
             Some(content_type) => ImageFetch::Found(ArtworkBytes {
                 content_type: content_type.to_owned(),

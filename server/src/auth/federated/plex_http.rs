@@ -17,6 +17,7 @@ use super::plex_models::{AccountListWire, AccountWire, PinPollWire, PinWire};
 use super::settings::{InstallIds, plex_login_enabled};
 use super::users::PROVIDER_PLEX;
 use crate::auth::users::stores::{BoxFuture, DirectoryError, DirectoryUser, UserDirectory};
+use crate::http_client::{BodyError, read_capped};
 use crate::remotes::plex::PlexAdapter;
 use crate::remotes::plex_models::Resource;
 use crate::runtime_config::ConfigStore;
@@ -26,6 +27,8 @@ use crate::runtime_config::secret_sections::PlexConnection;
 const TIMEOUT: Duration = Duration::from_secs(15);
 /// PIN poll (v2 parity).
 const POLL_TIMEOUT: Duration = Duration::from_secs(10);
+/// Largest answer read from plex.tv.
+const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 /// Live [`PlexPinClient`] and Plex [`UserDirectory`].
 #[derive(Clone)]
@@ -91,7 +94,9 @@ impl PlexTv {
                 "Plex request failed ({status})"
             )));
         }
-        let bytes = response.bytes().await.map_err(unreachable)?;
+        let bytes = read_capped(response, MAX_BODY_BYTES)
+            .await
+            .map_err(unreadable)?;
         serde_json::from_slice(&bytes).map_err(|_| {
             FederatedError::ProviderUnavailable(format!("Plex returned invalid JSON for {path}"))
         })
@@ -137,6 +142,14 @@ fn unreachable(cause: reqwest::Error) -> FederatedError {
     FederatedError::ProviderUnavailable("Could not reach plex.tv".to_owned())
 }
 
+fn unreadable(cause: BodyError) -> FederatedError {
+    match cause {
+        BodyError::TooLarge => tracing::warn!("plex.tv answer exceeded the size limit"),
+        BodyError::Transport(cause) => tracing::debug!(%cause, "plex.tv answer broke off"),
+    }
+    FederatedError::ProviderUnavailable("Could not reach plex.tv".to_owned())
+}
+
 fn is_server(device: &Resource) -> bool {
     device
         .provides
@@ -174,7 +187,9 @@ impl PlexPinClient for PlexTv {
                 response.status()
             )));
         }
-        let bytes = response.bytes().await.map_err(unreachable)?;
+        let bytes = read_capped(response, MAX_BODY_BYTES)
+            .await
+            .map_err(unreadable)?;
         let pin: PinWire = serde_json::from_slice(&bytes).map_err(|_| {
             FederatedError::ProviderUnavailable("plex.tv returned an unreadable PIN".to_owned())
         })?;
@@ -197,7 +212,9 @@ impl PlexPinClient for PlexTv {
         if response.status() != reqwest::StatusCode::OK {
             return Ok(None);
         }
-        let bytes = response.bytes().await.map_err(unreachable)?;
+        let bytes = read_capped(response, MAX_BODY_BYTES)
+            .await
+            .map_err(unreadable)?;
         let poll: PinPollWire = serde_json::from_slice(&bytes).map_err(|_| {
             FederatedError::ProviderUnavailable("plex.tv returned an unreadable PIN".to_owned())
         })?;

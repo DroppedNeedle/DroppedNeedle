@@ -31,6 +31,7 @@
 use std::time::Duration;
 
 use super::{DegradationSink, Pacer};
+use crate::http_client::read_capped;
 
 /// Default API host (v2 `LASTFM_API_URL`).
 pub const DEFAULT_BASE_URL: &str = "https://ws.audioscrobbler.com/2.0/";
@@ -45,6 +46,8 @@ pub const RATE_LIMIT_RETRY_SECS: f64 = 1.0;
 pub const REQUEST_TIMEOUT_SECS: u64 = 15;
 /// Source name used for degradation records.
 pub const SOURCE: &str = "lastfm";
+/// Largest Last.fm answer read.
+const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 /// What a call produced. `Found` carries the payload, `Missing` is an
 /// authoritative "unknown entity" (Last.fm error 6; safe to treat as a
@@ -837,17 +840,18 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
                 return Err(self.recorded(None, &format!("Last.fm request failed ({status})")));
             }
         }
-        let payload: serde_json::Value = match response.text().await {
-            Ok(text) => match serde_json::from_str(&text) {
+        let payload: serde_json::Value = match read_capped(response, MAX_BODY_BYTES).await {
+            Ok(body) => match serde_json::from_slice(&body) {
                 Ok(payload) => payload,
                 Err(_) => {
                     return Err(self.shape_error("Last.fm returned invalid JSON"));
                 }
             },
             Err(error) => {
-                return Err(
-                    self.recorded(None, &format!("Last.fm response body unreadable: {error}"))
-                );
+                return Err(self.recorded(
+                    None,
+                    &format!("Last.fm response body unreadable: {}", error.kind()),
+                ));
             }
         };
         // The JSON error envelope rides inside HTTP 200 (v2

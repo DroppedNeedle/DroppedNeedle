@@ -481,6 +481,75 @@ async fn identity_critical_dead_provider_fails_typed() {
     }
 }
 
+/// The production transport, pointed at a local server in place of
+/// musicbrainz.org.
+struct LocalMb {
+    real: musicbrainz::ReqwestMbTransport,
+    base: String,
+}
+
+impl musicbrainz::MbTransport for LocalMb {
+    async fn get(
+        &self,
+        request: &musicbrainz::MbRequest,
+    ) -> Result<musicbrainz::RawResponse, musicbrainz::TransportError> {
+        let mut local = request.clone();
+        local.url = local.url.replacen(musicbrainz::MB_API_BASE, &self.base, 1);
+        self.real.get(&local).await
+    }
+}
+
+/// An answer past the cap is refused as a dead provider, not read whole,
+/// even when the server never says how long it is.
+#[tokio::test]
+async fn an_answer_over_the_cap_is_refused_unread() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut raw = Vec::new();
+                let mut chunk = [0u8; 1024];
+                while !raw.windows(4).any(|window| window == b"\r\n\r\n") {
+                    match socket.read(&mut chunk).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(read) => raw.extend_from_slice(&chunk[..read]),
+                    }
+                }
+                // The client hangs up once it has seen too much, so a
+                // failed write here is the refusal working.
+                let head = "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nconnection: close\r\n\r\n";
+                let _ = socket.write_all(head.as_bytes()).await;
+                let _ = socket
+                    .write_all(&vec![b' '; musicbrainz::transport::MAX_BODY_BYTES + 1])
+                    .await;
+            });
+        }
+    });
+    let transport = LocalMb {
+        real: musicbrainz::ReqwestMbTransport::new(reqwest::Client::new()),
+        base: format!("http://{address}/ws/2"),
+    };
+    let client = musicbrainz::MusicBrainzClient::official(transport, unpaced());
+
+    let error = client
+        .lookup_release(
+            RELEASE_MBID,
+            &[],
+            musicbrainz::Criticality::IdentityCritical,
+        )
+        .await
+        .expect_err("an oversized answer is refused");
+    match error {
+        musicbrainz::MbError::Unavailable(cause) => {
+            assert!(cause.contains("body larger than"), "{cause}");
+        }
+        other => panic!("got {other:?}"),
+    }
+}
+
 #[tokio::test]
 async fn rate_limit_surfaces_retry_after_and_degrades_best_effort() {
     let (fake, sink) = fast_mb(vec![]);

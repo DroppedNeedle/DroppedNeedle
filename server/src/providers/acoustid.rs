@@ -21,6 +21,7 @@
 use std::time::Duration;
 
 use super::{DegradationSink, Pacer};
+use crate::http_client::read_capped;
 
 /// Default AcoustID host. Tests point the client at a scripted fake instead.
 pub const DEFAULT_BASE_URL: &str = "https://api.acoustid.org";
@@ -39,6 +40,9 @@ pub const DEFAULT_RETRY_AFTER_SECS: f64 = 60.0;
 pub const REQUEST_TIMEOUT_SECS: u64 = 15;
 /// Source name used for degradation records.
 pub const SOURCE: &str = "acoustid";
+/// Largest AcoustID answer read. A batch of [`MAX_BATCH`] fingerprints
+/// lists every release of every match, which can pass 4 MiB.
+const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 /// What a lookup produced. `Found` carries a usable match, `Missing` is an
 /// authoritative "no match" (safe to treat as a negative), and `Unavailable`
@@ -167,13 +171,14 @@ impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
             // retried and never counted toward the breaker.
             return self.unrecorded(format!("AcoustID rejected the lookup ({status})"));
         }
-        let payload: serde_json::Value = match response.text().await {
-            Ok(text) => match serde_json::from_str(&text) {
+        let payload: serde_json::Value = match read_capped(response, MAX_BODY_BYTES).await {
+            Ok(body) => match serde_json::from_slice(&body) {
                 Ok(payload) => payload,
                 Err(_) => return self.malformed(),
             },
             Err(error) => {
-                return self.recorded(None, format!("AcoustID response body unreadable: {error}"));
+                let kind = error.kind();
+                return self.recorded(None, format!("AcoustID response body unreadable: {kind}"));
             }
         };
         self.parse_lookup(payload)
@@ -233,8 +238,16 @@ impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
                     .record(SOURCE, format!("AcoustID batch lookup answered {status}"));
                 continue;
             }
-            let body = response.text().await.unwrap_or_default();
-            let payload = match serde_json::from_str::<serde_json::Value>(&body) {
+            let body = match read_capped(response, MAX_BODY_BYTES).await {
+                Ok(body) => body,
+                Err(error) => {
+                    let kind = error.kind();
+                    self.sink
+                        .record(SOURCE, format!("AcoustID batch body unreadable: {kind}"));
+                    continue;
+                }
+            };
+            let payload = match serde_json::from_slice::<serde_json::Value>(&body) {
                 Ok(payload) => payload,
                 Err(_) => {
                     self.sink

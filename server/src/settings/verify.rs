@@ -19,9 +19,12 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 
 use super::error::SettingsError;
+use crate::http_client::read_capped;
 
 /// Per-probe HTTP budget, matching the v2 repositories.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Largest probe answer read.
+const MAX_PROBE_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 /// Plain connection-test verdict.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -845,11 +848,10 @@ fn prowlarr_failure(error: &crate::acquire::usenet::prowlarr::ProwlarrError) -> 
     }
 }
 
-/// Decode a JSON body. The reqwest `json` feature is off, so this
-/// reads bytes and decodes with serde directly; anything unreadable
-/// is `None`.
+/// Decode a JSON body read under the probe cap; anything unreadable or
+/// too large is `None`.
 async fn decode_body(response: reqwest::Response) -> Option<serde_json::Value> {
-    let bytes = response.bytes().await.ok()?;
+    let bytes = read_capped(response, MAX_PROBE_BODY_BYTES).await.ok()?;
     serde_json::from_slice(&bytes).ok()
 }
 

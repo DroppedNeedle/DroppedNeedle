@@ -32,6 +32,8 @@ pub const GITHUB_RELEASES_URL: &str =
 pub const RELEASES_CACHE_TTL: Duration = Duration::from_secs(3600);
 /// Per-request timeout, kept from v2's 10s client call.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// Largest releases answer read.
+const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 /// One published release. `tag_name`, `published_at`, and `html_url` are the
 /// required identity fields: an entry without one fails the whole decode,
@@ -163,10 +165,9 @@ impl GitHubClient {
             );
             return Ok(Vec::new());
         }
-        let body = response
-            .bytes()
+        let body = crate::http_client::read_capped(response, MAX_BODY_BYTES)
             .await
-            .map_err(|error| FetchError::Transport(transport_kind(&error).to_owned()))?;
+            .map_err(|error| FetchError::Transport(error.kind().to_owned()))?;
         let raw: Vec<RawRelease> = match serde_json::from_slice(&body) {
             Ok(raw) => raw,
             Err(error) => {

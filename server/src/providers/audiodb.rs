@@ -18,6 +18,7 @@
 use std::time::Duration;
 
 use super::{DegradationSink, Pacer};
+use crate::http_client::read_capped;
 
 /// Default API host (v2 `AUDIODB_API_URL`, without the key segment).
 pub const DEFAULT_BASE_URL: &str = "https://www.theaudiodb.com/api/v1/json";
@@ -29,6 +30,8 @@ pub const RATE_LIMIT_RETRY_SECS: f64 = 60.0;
 pub const REQUEST_TIMEOUT_SECS: u64 = 15;
 /// Source name used for degradation records.
 pub const SOURCE: &str = "audiodb";
+/// Largest AudioDB answer read.
+const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 /// What a lookup produced. `Found` carries the artwork, `Missing` is an
 /// authoritative "no match" (safe to treat as a negative), and `Unavailable`
@@ -275,8 +278,8 @@ impl<P: Pacer, S: DegradationSink> AudioDbClient<P, S> {
         if status != 200 {
             return Err(self.unavailable(None, format!("AudioDB request failed ({status})")));
         }
-        match response.text().await {
-            Ok(text) => match serde_json::from_str(&text) {
+        match read_capped(response, MAX_BODY_BYTES).await {
+            Ok(body) => match serde_json::from_slice(&body) {
                 Ok(payload) => {
                     self.sink.succeeded(SOURCE);
                     Ok(payload)
@@ -291,7 +294,8 @@ impl<P: Pacer, S: DegradationSink> AudioDbClient<P, S> {
                 }
             },
             Err(error) => {
-                Err(self.unavailable(None, format!("AudioDB response body unreadable: {error}")))
+                let kind = error.kind();
+                Err(self.unavailable(None, format!("AudioDB response body unreadable: {kind}")))
             }
         }
     }

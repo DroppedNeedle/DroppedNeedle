@@ -21,6 +21,7 @@ use super::host::PluginHost;
 use super::manifest::{PluginManifest, load_manifest};
 use super::models::PluginRefKind;
 use super::runtime::BoxFuture;
+use crate::http_client::{BodyError, read_capped};
 
 /// Largest install archive (32 MiB).
 pub const MAX_PLUGIN_ZIP_BYTES: usize = 32 * 1024 * 1024;
@@ -137,7 +138,7 @@ impl ArchiveFetcher for ReqwestFetcher {
     fn fetch<'a>(&'a self, url: &'a str) -> BoxFuture<'a, Result<Fetched, FetchError>> {
         Box::pin(async move {
             let transport = |error: reqwest::Error| FetchError::Transport(error.to_string());
-            let mut response = self
+            let response = self
                 .http
                 .get(url)
                 .header("accept", "application/vnd.github+json")
@@ -151,20 +152,11 @@ impl ArchiveFetcher for ReqwestFetcher {
             if let Some(answer) = refusal(response.status(), response.headers(), now) {
                 return Ok(answer);
             }
-            if response
-                .content_length()
-                .is_some_and(|declared| declared > MAX_PLUGIN_ZIP_BYTES as u64)
-            {
-                return Err(FetchError::TooLarge);
+            match read_capped(response, MAX_PLUGIN_ZIP_BYTES).await {
+                Ok(body) => Ok(Fetched::Found(body)),
+                Err(BodyError::TooLarge) => Err(FetchError::TooLarge),
+                Err(BodyError::Transport(cause)) => Err(FetchError::Transport(cause)),
             }
-            let mut body = Vec::new();
-            while let Some(chunk) = response.chunk().await.map_err(transport)? {
-                body.extend_from_slice(&chunk);
-                if body.len() > MAX_PLUGIN_ZIP_BYTES {
-                    return Err(FetchError::TooLarge);
-                }
-            }
-            Ok(Fetched::Found(body))
         })
     }
 }

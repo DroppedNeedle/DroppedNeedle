@@ -38,6 +38,11 @@ use super::{
 };
 use crate::http_client::HttpClientFactory;
 
+/// Largest catalog answer read. Wikidata entities carry every language
+/// and Archive.org item metadata lists every file, so either can pass
+/// 4 MiB.
+const MAX_CATALOG_BODY_BYTES: usize = 16 * 1024 * 1024;
+
 /// Limiter-backed pacing for the audio clients.
 ///
 /// One pacer serves one verified source: [`for_source`](Self::for_source)
@@ -185,7 +190,13 @@ impl ReqwestGet {
             .get(reqwest::header::RETRY_AFTER)
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
-        let body = response.bytes().await.ok()?.to_vec();
+        let body = match crate::http_client::read_capped(response, MAX_CATALOG_BODY_BYTES).await {
+            Ok(body) => body,
+            Err(error) => {
+                tracing::warn!(kind = error.kind(), "catalog answer unreadable");
+                return None;
+            }
+        };
         Some((status, body, retry_after))
     }
 }

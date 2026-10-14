@@ -20,7 +20,12 @@ use super::models::LIDARR_API_KEY_MASK;
 use super::models::{
     LidarrArtistCandidate, LidarrArtistListResponse, LidarrConnectionSettings, LidarrImportResponse,
 };
-use crate::http_client::transport_error;
+use crate::http_client::{BodyError, read_capped, transport_error};
+
+/// Largest Lidarr answer read. `/artist` is one unpaged list of every
+/// artist with its overview and images, so a large library runs to tens
+/// of megabytes.
+const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
 
 /// True for a well-formed MusicBrainz id: `8-4-4-4-12` lowercase-or-upper
 /// hex, surrounding whitespace ignored, `unknown_` ids rejected (v2
@@ -163,12 +168,15 @@ impl LidarrClient {
                 status.as_u16()
             )));
         }
-        response
-            .bytes()
+        read_capped(response, MAX_BODY_BYTES)
             .await
-            .map(|body| body.to_vec())
-            .map_err(|cause| {
-                LidarrError::Unavailable(format!("lidarr read failed: {}", transport_error(cause)))
+            .map_err(|cause| match cause {
+                BodyError::TooLarge => {
+                    LidarrError::Unavailable("lidarr answer exceeded the size limit".to_owned())
+                }
+                BodyError::Transport(cause) => {
+                    LidarrError::Unavailable(format!("lidarr read failed: {cause}"))
+                }
             })
     }
 }

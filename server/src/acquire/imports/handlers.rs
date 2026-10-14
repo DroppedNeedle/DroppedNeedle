@@ -18,6 +18,7 @@ use crate::auth::session::middleware::{CurrentSession, TrustedProxies, effective
 use crate::auth::users::UsersDeps;
 use crate::auth::users::roles::{AuthContext, Role};
 use crate::auth::users::stores::StoreError as UserStoreError;
+use crate::http_client::read_capped;
 use crate::ids::IdGenerator;
 use axum::{
     Json,
@@ -45,10 +46,10 @@ use super::models::{
     SpotifyJobStatus, SpotifyPlaylistListResponse, SpotifyRedirectUri, SpotifySettings,
 };
 use super::spotify::{
-    AlbumMbidResolver, PendingAuth, PlaylistIndex, PlaylistTrackSink, SPOTIFY_CALLBACK_PATH,
-    SPOTIFY_LEGACY_CALLBACK_PATH, SpotifyClient, SpotifyConnection, SpotifyConnectionStore,
-    SpotifyError, SpotifyImportService, SpotifySettingsStore, SpotifyStateStore, now_unix_secs,
-    redirect_uri,
+    AlbumMbidResolver, MAX_API_BODY_BYTES, PendingAuth, PlaylistIndex, PlaylistTrackSink,
+    SPOTIFY_CALLBACK_PATH, SPOTIFY_LEGACY_CALLBACK_PATH, SpotifyClient, SpotifyConnection,
+    SpotifyConnectionStore, SpotifyError, SpotifyImportService, SpotifySettingsStore,
+    SpotifyStateStore, now_unix_secs, redirect_uri,
 };
 
 /// Every dependency the imports routes need, injected by constructor.
@@ -563,7 +564,7 @@ async fn finish_spotify_link(deps: &ImportsDeps, query: SpotifyCallbackQuery) ->
         .send()
         .await
     {
-        Ok(response) => match response.bytes().await {
+        Ok(response) => match read_capped(response, MAX_API_BODY_BYTES).await {
             Ok(body) => serde_json::from_slice::<serde_json::Value>(&body)
                 .unwrap_or(serde_json::Value::Null),
             Err(_) => serde_json::Value::Null,
