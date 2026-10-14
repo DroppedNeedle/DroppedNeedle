@@ -949,8 +949,18 @@ impl Render for SAlbumInfo {
 pub struct SScanStatus {
     /// Whether a scan is running.
     pub scanning: bool,
-    /// Tracks scanned so far.
+    /// Files looked at so far during a scan; playable tracks at rest.
     pub count: Option<i64>,
+    /// Folders holding at least one playable track.
+    pub folderCount: Option<i64>,
+    /// End of the last finished scan, ISO.
+    pub lastScan: Option<String>,
+    /// Kind of the last finished scan.
+    pub scanType: Option<String>,
+    /// Length of the last finished scan in nanoseconds: Navidrome 0.62.0
+    /// sends `int64(status.ElapsedTime)`, a Go `time.Duration`
+    /// (`server/subsonic/library_scanning.go`, read 2026-10-14).
+    pub elapsedTime: Option<i64>,
 }
 
 impl Render for SScanStatus {
@@ -958,6 +968,10 @@ impl Render for SScanStatus {
         obj(vec![
             ("scanning", self.scanning.into_val()),
             ("count", self.count.into_val()),
+            ("folderCount", self.folderCount.into_val()),
+            ("lastScan", self.lastScan.clone().into_val()),
+            ("scanType", self.scanType.clone().into_val()),
+            ("elapsedTime", self.elapsedTime.into_val()),
         ])
     }
 }

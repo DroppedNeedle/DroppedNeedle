@@ -14,6 +14,7 @@ use super::params::SubsonicParameters;
 use super::store::{PlaylistDetail, Store};
 use super::stream::AudioBackend;
 use super::value::{Val, obj};
+use super::views::iso;
 use super::{Ctx, Outcome};
 
 /// Max play-queue items (v2 `_MAX_QUEUE_ITEMS`).
@@ -1201,18 +1202,30 @@ pub async fn user<P: Principal, S: Store, B: AudioBackend>(
     ))
 }
 
-/// Scan status.
+/// Scan status. Before the first finished scan the three keys about the
+/// last one are left out: Navidrome 0.62.0 leaves `scanType` and
+/// `elapsedTime` out then (`omitempty` in `responses.ScanStatus`) and
+/// sends a zero date for `lastScan`, which would not be true here.
 pub async fn scan_status<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
-    let (scanning, count) = ctx
+    let status = ctx
         .store
         .scan_status()
         .await
         .map_err(Ctx::<P, S, B>::store_err)?;
+    let last = status.last.as_ref();
     Ok(Outcome::keyed(
         "scanStatus",
-        SScanStatus { scanning, count }.render(),
+        SScanStatus {
+            scanning: status.scanning,
+            count: Some(status.count),
+            folderCount: Some(status.folder_count),
+            lastScan: last.and_then(|last| iso(Some(last.finished_at))),
+            scanType: last.map(|last| last.kind.clone()),
+            elapsedTime: last.and_then(|last| last.elapsed_nanos),
+        }
+        .render(),
     ))
 }
 
@@ -1235,6 +1248,7 @@ pub async fn start_scan<P: Principal, S: Store, B: AudioBackend>(
         SScanStatus {
             scanning: true,
             count: Some(0),
+            ..SScanStatus::default()
         }
         .render(),
     ))

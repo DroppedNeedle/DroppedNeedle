@@ -537,7 +537,19 @@ async fn response_shapes() {
             ],
             &[],
         ),
-        ("getScanStatus", &[], &["scanning=\"false\""], &[]),
+        (
+            "getScanStatus",
+            &[],
+            &[
+                "scanning=\"false\"",
+                "count=\"3\"",
+                "folderCount=\"2\"",
+                "lastScan=\"2023-11-14T22:13:20Z\"",
+                "scanType=\"incremental\"",
+                "elapsedTime=\"1500000000\"",
+            ],
+            &[],
+        ),
         (
             "getTopSongs",
             &[("artist", "The Testers")],

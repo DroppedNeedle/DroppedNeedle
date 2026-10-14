@@ -1,9 +1,0 @@
-{
-  "differences": [
-    {"server": "navidrome", "object": "scanStatus", "key": "count", "kind": "missing", "rows": ["getScanStatus"], "reason": "The app reports only whether a scan is running. Navidrome adds the track and folder counts and the time and kind of the last scan."},
-    {"server": "navidrome", "object": "scanStatus", "key": "elapsedTime", "kind": "missing", "rows": ["getScanStatus"], "reason": "The app reports only whether a scan is running. Navidrome adds the track and folder counts and the time and kind of the last scan."},
-    {"server": "navidrome", "object": "scanStatus", "key": "folderCount", "kind": "missing", "rows": ["getScanStatus"], "reason": "The app reports only whether a scan is running. Navidrome adds the track and folder counts and the time and kind of the last scan."},
-    {"server": "navidrome", "object": "scanStatus", "key": "lastScan", "kind": "missing", "rows": ["getScanStatus"], "reason": "The app reports only whether a scan is running. Navidrome adds the track and folder counts and the time and kind of the last scan."},
-    {"server": "navidrome", "object": "scanStatus", "key": "scanType", "kind": "missing", "rows": ["getScanStatus"], "reason": "The app reports only whether a scan is running. Navidrome adds the track and folder counts and the time and kind of the last scan."}
-  ]
-}

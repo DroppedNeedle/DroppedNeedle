@@ -423,6 +423,25 @@ impl CompatLibrary {
             .await?)
     }
 
+    /// Playable tracks and the folders holding at least one, across every
+    /// library folder. A track is playable while its file is indexed.
+    pub async fn playable_counts(&self) -> Result<(i64, i64), CompatError> {
+        let pool = self.collections.db.pool()?;
+        // `rtrim` with the path's own non-slash characters cuts the file
+        // name off, leaving the folder.
+        let counts = sqlx::query_as(
+            "SELECT COALESCE(SUM(tracks), 0), COUNT(*) FROM (SELECT COUNT(*) AS tracks \
+             FROM local_tracks WHERE availability = 'indexed' \
+             GROUP BY root_id, rtrim(relative_path, replace(relative_path, '/', '')))",
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(|error| {
+            crate::reads::collections::db::StoreError::read("compat.playable_counts", error)
+        })?;
+        Ok(counts)
+    }
+
     /// Every playlist with what the user may see of it.
     pub async fn playlists(&self, user_id: &str) -> Result<Vec<Visible>, CompatError> {
         Ok(self.service().visible_playlists(user_id).await?)

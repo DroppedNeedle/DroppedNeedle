@@ -57,6 +57,30 @@ pub struct PlaylistRecord {
     pub changed_at: Option<String>,
 }
 
+/// The last scan run that finished, however it ended.
+#[derive(Debug, Clone, Default)]
+pub struct LastScan {
+    /// When it ended, Unix seconds.
+    pub finished_at: i64,
+    /// Its kind, as the scanner names it.
+    pub kind: String,
+    /// How long it ran, nanoseconds. None when it ended before it started.
+    pub elapsed_nanos: Option<i64>,
+}
+
+/// Scan status facts.
+#[derive(Debug, Clone, Default)]
+pub struct ScanStatusData {
+    /// Whether a scan is running.
+    pub scanning: bool,
+    /// Files looked at so far during a scan; playable tracks at rest.
+    pub count: i64,
+    /// Folders holding at least one playable track.
+    pub folder_count: i64,
+    /// The last finished run, or None before the first.
+    pub last: Option<LastScan>,
+}
+
 /// Playlist list row (None record = redacted private list, skipped).
 #[derive(Debug, Clone, Default)]
 pub struct PlaylistSummary {
@@ -556,8 +580,8 @@ pub trait Store: Clone + Send + Sync {
         user_id: &str,
     ) -> impl Future<Output = Result<Option<(Vec<u8>, String)>, Self::Error>> + Send;
 
-    /// (scanning, count).
-    fn scan_status(&self) -> impl Future<Output = Result<(bool, Option<i64>), Self::Error>> + Send;
+    /// Whether a scan runs, the library's size and the last finished scan.
+    fn scan_status(&self) -> impl Future<Output = Result<ScanStatusData, Self::Error>> + Send;
 
     /// Start a scan (admin gate lives in the handler).
     fn start_scan(&self) -> impl Future<Output = Result<(), Self::Error>> + Send;

@@ -11,9 +11,9 @@ use super::auth::{Credentials, Principal};
 use super::error::SubsonicError;
 use super::ids::IdKind;
 use super::store::{
-    AlbumSort, BookmarkRecord, ClientInfo, LyricsData, NowPlayingRow, PlaylistDetail,
-    PlaylistEntry, PlaylistRecord, PlaylistSummary, QueueState, Store, StreamDetailsData,
-    TranscodeDecisionData,
+    AlbumSort, BookmarkRecord, ClientInfo, LastScan, LyricsData, NowPlayingRow, PlaylistDetail,
+    PlaylistEntry, PlaylistRecord, PlaylistSummary, QueueState, ScanStatusData, Store,
+    StreamDetailsData, TranscodeDecisionData,
 };
 use super::stream::{AudioBackend, AudioBody, AudioFacts, BackendError, OpenedAudio, StreamPlan};
 use super::views::{ViewAlbum, ViewArtist, ViewGenre, ViewTrack};
@@ -911,8 +911,17 @@ impl Store for FakeStore {
         }
     }
 
-    async fn scan_status(&self) -> Result<(bool, Option<i64>), Infallible> {
-        Ok((self.lock().scanning, Some(3)))
+    async fn scan_status(&self) -> Result<ScanStatusData, Infallible> {
+        Ok(ScanStatusData {
+            scanning: self.lock().scanning,
+            count: 3,
+            folder_count: 2,
+            last: Some(LastScan {
+                finished_at: 1_700_000_000,
+                kind: "incremental".to_owned(),
+                elapsed_nanos: Some(1_500_000_000),
+            }),
+        })
     }
 
     async fn start_scan(&self) -> Result<(), Infallible> {

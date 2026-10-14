@@ -17,8 +17,9 @@ use crate::compat::settings::LiveSettings;
 use crate::compat::subsonic::advanced;
 use crate::compat::subsonic::ids::IdKind;
 use crate::compat::subsonic::store::{
-    AlbumSort, BookmarkRecord, ClientInfo, LyricLine, LyricsData, NowPlayingRow, PlaylistDetail,
-    PlaylistEntry, PlaylistRecord, PlaylistSummary, QueueState, Store, TranscodeDecisionData,
+    AlbumSort, BookmarkRecord, ClientInfo, LastScan, LyricLine, LyricsData, NowPlayingRow,
+    PlaylistDetail, PlaylistEntry, PlaylistRecord, PlaylistSummary, QueueState, ScanStatusData,
+    Store, TranscodeDecisionData,
 };
 use crate::compat::subsonic::views::{ViewAlbum, ViewArtist, ViewGenre, ViewTrack};
 use crate::library::scan::counter_names;
@@ -34,6 +35,15 @@ use crate::runtime_config::Crypto;
 /// Unix seconds to the `YYYY-MM-DDTHH:MM:SSZ` form Subsonic shows.
 fn iso_text(unix: u64) -> Option<String> {
     crate::compat::subsonic::views::iso(Some(unix as i64))
+}
+
+/// A scan kind as the scan API and `library_scan_runs.kind` spell it.
+fn scan_kind_name(kind: ScanKind) -> &'static str {
+    match kind {
+        ScanKind::Incremental => "incremental",
+        ScanKind::RescanFiles => "rescan_files",
+        ScanKind::PolicyReconcile => "policy_reconcile",
+    }
 }
 
 fn kind_name(kind: IdKind) -> &'static str {
@@ -893,16 +903,41 @@ impl Store for SubsonicStore {
             .map_err(|error| CompatError::Internal(format!("avatar load failed: {error:?}")))
     }
 
-    async fn scan_status(&self) -> Result<(bool, Option<i64>), CompatError> {
+    async fn scan_status(&self) -> Result<ScanStatusData, CompatError> {
+        let (tracks, folder_count) = self.library.playable_counts().await?;
         let current = self.scan.coordinator.current();
-        if current.is_empty() {
-            return Ok((false, None));
-        }
-        let inspected = current
-            .iter()
-            .filter_map(|run| run.counters.get(counter_names::INSPECTED))
-            .sum();
-        Ok((true, Some(inspected)))
+        let scanning = !current.is_empty();
+        let count = if scanning {
+            current
+                .iter()
+                .filter_map(|run| run.counters.get(counter_names::INSPECTED))
+                .sum()
+        } else {
+            tracks
+        };
+        let store = self.scan.scan_store.clone();
+        let last = tokio::task::spawn_blocking(move || store.list_history(1, None))
+            .await
+            .map_err(|error| CompatError::Internal(format!("scan history task: {error}")))?
+            .into_iter()
+            .next()
+            .and_then(|run| {
+                let finished_at = run.terminal_at?;
+                Some(LastScan {
+                    finished_at: finished_at as i64,
+                    kind: scan_kind_name(run.kind).to_owned(),
+                    elapsed_nanos: run
+                        .started_at
+                        .map(|started_at| ((finished_at - started_at).max(0.0) * 1e9) as i64)
+                        .filter(|nanos| *nanos > 0),
+                })
+            });
+        Ok(ScanStatusData {
+            scanning,
+            count,
+            folder_count,
+            last,
+        })
     }
 
     async fn start_scan(&self) -> Result<(), CompatError> {
