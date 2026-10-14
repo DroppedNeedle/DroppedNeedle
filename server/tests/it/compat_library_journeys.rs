@@ -809,9 +809,10 @@ async fn subsonic_made_playlist_cover_is_private_to_its_readers() {
 }
 
 /// The admin's setting for who may download library files holds in player
-/// apps. A user it excludes is told so and is refused the original file; a
-/// user it admits is told so and is served. Playing is not downloading:
-/// everyone still streams.
+/// apps. A user it excludes is told so and is refused at the download
+/// addresses; a user it admits is told so and is served. Playing is not
+/// downloading: everyone still streams, and still gets the original file
+/// from the address a Jellyfin app plays it from.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn download_setting_holds_in_player_apps() {
     let rig = CompatApp::start("compat-download-setting").await;
@@ -902,10 +903,30 @@ async fn download_setting_holds_in_player_apps() {
                     wrong.push(format!("{case}: EnableContentDownloading {told} at {at}"));
                 }
             }
-            let uri = format!("/jellyfin/Audio/{flac}/stream?{key}");
-            let (status, _, bytes) = app.raw("GET", &uri, &[], None).await;
-            if status != StatusCode::OK || bytes != airbag {
-                wrong.push(format!("{case}: Jellyfin stream is {status}"));
+            for method in ["GET", "HEAD"] {
+                let uri = format!("/jellyfin/Items/{flac}/Download?{key}");
+                let (status, headers, bytes) = app.raw(method, &uri, &[], None).await;
+                let served = status == StatusCode::OK
+                    && header_str(&headers, "content-disposition")
+                        == "attachment; filename=\"Airbag.flac\""
+                    && (method == "HEAD" || bytes == airbag);
+                let refused = status == StatusCode::FORBIDDEN && bytes.is_empty();
+                if !(if may { served } else { refused }) {
+                    wrong.push(format!(
+                        "{case}: {method} /Items/Download is {status} with {} bytes",
+                        bytes.len()
+                    ));
+                }
+            }
+            // Playing is not downloading: the address an app plays the
+            // original from, and the stream, serve everyone.
+            for tail in [format!("Items/{flac}/File"), format!("Audio/{flac}/stream")] {
+                let uri = format!("/jellyfin/{tail}?{key}");
+                let (status, headers, bytes) = app.raw("GET", &uri, &[], None).await;
+                let attached = !header_str(&headers, "content-disposition").is_empty();
+                if status != StatusCode::OK || bytes != airbag || attached {
+                    wrong.push(format!("{case}: GET {tail} is {status}"));
+                }
             }
 
             let auth = format!("u={name}&p={secret}&v=1.16.1&c=journey&f=json");

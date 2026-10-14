@@ -69,6 +69,7 @@ pub const JELLYFIN_TEMPLATES: &[&str] = &[
     "/jellyfin/Items/{item_id}/Images/{image_type}/{index}",
     "/jellyfin/Audio/{item_id}/{tail}",
     "/jellyfin/Items/{item_id}/File",
+    "/jellyfin/Items/{item_id}/Download",
     "/jellyfin/Items/{item_id}/PlaybackInfo",
     "/jellyfin/Users/{user_id}/FavoriteItems/{item_id}",
     "/jellyfin/UserFavoriteItems/{item_id}",

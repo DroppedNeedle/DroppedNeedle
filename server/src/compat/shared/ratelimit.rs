@@ -154,7 +154,8 @@ fn subsonic_endpoint(low: &str) -> Option<&str> {
 }
 
 /// Media paths skip the token buckets (v2 `is_media_request`): Subsonic
-/// `stream`/`download`, Jellyfin `/audio/*` and `/items/{id}/file`.
+/// `stream`/`download`, Jellyfin `/audio/*`, `/items/{id}/file` and
+/// `/items/{id}/download`.
 /// Matched case-insensitively on the canonical path.
 pub fn is_media_request(path: &str) -> bool {
     let low = path.to_lowercase();
@@ -165,7 +166,10 @@ pub fn is_media_request(path: &str) -> bool {
         return true;
     }
     let segs: Vec<&str> = low.split('/').collect();
-    matches!(segs.as_slice(), ["", "jellyfin", "items", id, "file"] if !id.is_empty())
+    matches!(
+        segs.as_slice(),
+        ["", "jellyfin", "items", id, "file" | "download"] if !id.is_empty()
+    )
 }
 
 /// Artwork paths skip the token buckets too: Subsonic `getCoverArt` and

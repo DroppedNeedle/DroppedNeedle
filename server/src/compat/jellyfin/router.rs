@@ -166,6 +166,10 @@ where
             get(item_file::<S, L, E, P, I>).head(item_file_head::<S, L, E, P, I>),
         )
         .route(
+            "/Items/{item_id}/Download",
+            get(item_download::<S, L, E, P, I>).head(item_download_head::<S, L, E, P, I>),
+        )
+        .route(
             "/Items/{item_id}/PlaybackInfo",
             get(playback_info::<S, L, E, P, I>).post(playback_info::<S, L, E, P, I>),
         )

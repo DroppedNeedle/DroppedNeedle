@@ -106,6 +106,7 @@ fn rate_limit_budgets() {
     assert!(ratelimit::is_media_request("/subsonic/rest/stream.view"));
     assert!(ratelimit::is_media_request("/jellyfin/audio/abc/stream"));
     assert!(ratelimit::is_media_request("/jellyfin/Items/abc/File"));
+    assert!(ratelimit::is_media_request("/jellyfin/Items/abc/Download"));
     assert!(!ratelimit::is_media_request("/subsonic/rest/getCoverArt"));
     assert!(ratelimit::is_artwork_request(
         "/subsonic/rest/getCoverArt.view"

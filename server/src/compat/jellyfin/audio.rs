@@ -12,9 +12,10 @@ use super::models::{MediaSourceInfo, PlaybackInfoBody, PlaybackInfoResponse};
 use super::params::{self, CiParams};
 use super::router::*;
 use super::seams::{
-    DecideInput, IdMap, LibraryRead, PlaybackSessions, StreamEngine, StreamPlan, TICKS_PER_SECOND,
-    decide,
+    ByteOutcome, DecideInput, IdMap, LibraryRead, PlaybackSessions, StreamEngine, StreamPlan,
+    TICKS_PER_SECOND, decide,
 };
+use crate::compat::subsonic::stream::download_filename;
 
 // ===== Streaming + PlaybackInfo =====
 
@@ -263,7 +264,9 @@ where
 }
 
 /// `GET /Items/{id}/File`: the original file with Range support. Finamp
-/// direct play and downloads use it.
+/// plays the tracks it does not transcode from it, so it asks for sign-in
+/// only and never reads the download setting, as in Jellyfin 10.10.6
+/// (`GetFile` is plain `[Authorize]`).
 pub(super) async fn item_file<S, L, E, P, I>(
     State(state): State<JellyfinState<S, L, E, P, I>>,
     Path(item_id): Path<String>,
@@ -276,21 +279,16 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(&state) {
-        return denied;
-    }
-    let headers = request.headers().clone();
-    let query = request.uri().query().map(str::to_owned);
-    let caller = match authed(&state.passwords, &headers, query.as_deref()).await {
-        Ok(caller) => caller,
-        Err(denied) => return denied,
-    };
-    let internal = match decode_track(&state, &item_id).await {
-        Ok(internal) => internal,
-        Err(denied) => return denied,
-    };
-    let engine = state.engine.for_caller(&caller.principal.id);
-    outcome_response(&engine.direct(&internal, header(&headers, "range")).await)
+    let (headers, query) = auth_inputs(&request);
+    original_file(
+        &state,
+        &headers,
+        query.as_deref(),
+        &item_id,
+        Original::Play,
+        false,
+    )
+    .await
 }
 
 /// `HEAD /Items/{id}/File`: the headers GET would answer, no body, no lease.
@@ -306,15 +304,181 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    if let Some(denied) = gate(&state) {
+    let (headers, query) = auth_inputs(&request);
+    original_file(
+        &state,
+        &headers,
+        query.as_deref(),
+        &item_id,
+        Original::Play,
+        true,
+    )
+    .await
+}
+
+/// `GET /Items/{id}/Download`: the original file as an attachment, for a
+/// user the admin's download setting admits.
+///
+/// Read in the Jellyfin 10.10.6 source on 2026-10-14 (`GetDownload` in
+/// `LibraryController.cs`; there is no recording of this route): it
+/// carries `Policies.Download`, so a signed-in user without
+/// `EnableContentDownloading` gets 403 before the item is looked up, an
+/// unknown item is 404, and the file is sent with its own content type,
+/// Range support and `Content-Disposition: attachment`. Jellyfin names the
+/// attachment after the file on disk. Here it is named after the track's
+/// title, as the Subsonic download is, so no name from the host is sent.
+/// The header is always sent.
+pub(super) async fn item_download<S, L, E, P, I>(
+    State(state): State<JellyfinState<S, L, E, P, I>>,
+    Path(item_id): Path<String>,
+    request: Request<Body>,
+) -> Response
+where
+    S: JellyfinPasswordStore,
+    L: LibraryRead,
+    E: StreamEngine,
+    P: PlaybackSessions,
+    I: IdMap,
+{
+    let (headers, query) = auth_inputs(&request);
+    original_file(
+        &state,
+        &headers,
+        query.as_deref(),
+        &item_id,
+        Original::Download,
+        false,
+    )
+    .await
+}
+
+/// `HEAD /Items/{id}/Download`: the headers GET would answer, refused for
+/// the same users.
+pub(super) async fn item_download_head<S, L, E, P, I>(
+    State(state): State<JellyfinState<S, L, E, P, I>>,
+    Path(item_id): Path<String>,
+    request: Request<Body>,
+) -> Response
+where
+    S: JellyfinPasswordStore,
+    L: LibraryRead,
+    E: StreamEngine,
+    P: PlaybackSessions,
+    I: IdMap,
+{
+    let (headers, query) = auth_inputs(&request);
+    original_file(
+        &state,
+        &headers,
+        query.as_deref(),
+        &item_id,
+        Original::Download,
+        true,
+    )
+    .await
+}
+
+/// What sign-in reads from a request: its headers and its query.
+fn auth_inputs(request: &Request<Body>) -> (HeaderMap, Option<String>) {
+    (
+        request.headers().clone(),
+        request.uri().query().map(str::to_owned),
+    )
+}
+
+/// Why the original file is asked for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Original {
+    /// To play it: any signed-in user.
+    Play,
+    /// To keep it: only a user the download setting admits.
+    Download,
+}
+
+/// The original file for both `/Items/{id}/File` and
+/// `/Items/{id}/Download`. The download setting is read on every request.
+async fn original_file<S, L, E, P, I>(
+    state: &JellyfinState<S, L, E, P, I>,
+    headers: &HeaderMap,
+    query: Option<&str>,
+    item_id: &str,
+    purpose: Original,
+    head: bool,
+) -> Response
+where
+    S: JellyfinPasswordStore,
+    L: LibraryRead,
+    E: StreamEngine,
+    P: PlaybackSessions,
+    I: IdMap,
+{
+    if let Some(denied) = gate(state) {
         return denied;
     }
-    let headers = request.headers().clone();
-    let query = request.uri().query().map(str::to_owned);
-    if let Err(denied) = authed(&state.passwords, &headers, query.as_deref()).await {
-        return denied;
+    let caller = match authed(&state.passwords, headers, query).await {
+        Ok(caller) => caller.principal,
+        Err(denied) => return denied,
+    };
+    let download = purpose == Original::Download;
+    if download
+        && !state
+            .settings
+            .jellyfin()
+            .download_access
+            .admits(&caller.role)
+    {
+        return error(StatusCode::FORBIDDEN);
     }
-    head_response(&state, &headers, &item_id).await
+    let internal = match decode_track(state, item_id).await {
+        Ok(internal) => internal,
+        Err(denied) => return denied,
+    };
+    let range = header(headers, "range");
+    let mut outcome = if head {
+        state.engine.head(&internal, range).await
+    } else {
+        let engine = state.engine.for_caller(&caller.id);
+        engine.direct(&internal, range).await
+    };
+    if download && matches!(outcome.status, 200 | 206) {
+        // A row deleted since the bytes were opened still downloads, under
+        // a plain name.
+        let name = match state.library.track(&caller.id, &internal).await {
+            Some(track) => {
+                download_filename(&track.title, track.file_format.as_deref().unwrap_or(""))
+            }
+            None => download_filename("track", served_format(&outcome)),
+        };
+        outcome.headers.push((
+            "Content-Disposition".to_owned(),
+            format!("attachment; filename=\"{name}\""),
+        ));
+    }
+    if head {
+        head_outcome_response(&outcome)
+    } else {
+        outcome_response(&outcome)
+    }
+}
+
+/// The format of the bytes an outcome serves, from its content type: the
+/// reverse of `content_type_for_format`. Empty when it names none.
+fn served_format(outcome: &ByteOutcome) -> &'static str {
+    let content_type = outcome
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+        .map_or("", |(_, value)| value.as_str());
+    match content_type {
+        "audio/flac" => "flac",
+        "audio/mpeg" => "mp3",
+        "audio/ogg" => "ogg",
+        "audio/mp4" => "m4a",
+        "audio/aac" => "aac",
+        "audio/wav" => "wav",
+        "audio/opus" => "opus",
+        _ => "",
+    }
 }
 
 /// HEAD for one item: the status and headers a direct GET would answer.
@@ -334,7 +498,11 @@ where
         Ok(internal) => internal,
         Err(denied) => return denied,
     };
-    let outcome = state.engine.head(&internal, header(headers, "range")).await;
+    head_outcome_response(&state.engine.head(&internal, header(headers, "range")).await)
+}
+
+/// A HEAD outcome as a response: its status and headers, no body.
+fn head_outcome_response(outcome: &ByteOutcome) -> Response {
     if outcome.status == StatusCode::NOT_FOUND.as_u16() {
         return error(StatusCode::NOT_FOUND);
     }
