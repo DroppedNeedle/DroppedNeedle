@@ -1104,6 +1104,151 @@ async fn takeover_check_lists_exactly_the_code_values() {
     assert_eq!(Cause::parse("your_choice"), None);
 }
 
+/// Migration 0046 rebuilds the edition remap queue to take a third origin.
+/// A database from before it keeps every row with its origin; the new
+/// origin is accepted after it, and one nobody named is still refused.
+#[tokio::test]
+async fn remap_queue_keeps_its_rows_and_takes_place_only() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 46)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+         ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1), \
+         ('al2', 'r1', 'g2', 'T', 't', 'a1', 'automatic', 1, 1), \
+         ('al3', 'r1', 'g3', 'T', 't', 'a1', 'automatic', 1, 1), \
+         ('al4', 'r1', 'g4', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO library_edition_remap_queue (local_album_id, release_mbid, \
+         chosen_by_user_id, queued_at, attempts, not_before, last_code, origin) VALUES \
+         ('al1', 'rel-1', 'u1', 1.5, 2, 9.5, 'MUSICBRAINZ_UNAVAILABLE', 'album_pin'), \
+         ('al2', 'rel-2', NULL, 2.5, 0, 0, NULL, 'group_pin');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    type QueueRow = (String, String, f64, i64, f64, Option<String>, String);
+    let rows: Vec<QueueRow> = sqlx::query_as(
+        "SELECT local_album_id, release_mbid, queued_at, attempts, not_before, last_code, \
+         origin FROM library_edition_remap_queue ORDER BY local_album_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "al1".to_owned(),
+                "rel-1".to_owned(),
+                1.5,
+                2,
+                9.5,
+                Some("MUSICBRAINZ_UNAVAILABLE".to_owned()),
+                "album_pin".to_owned()
+            ),
+            (
+                "al2".to_owned(),
+                "rel-2".to_owned(),
+                2.5,
+                0,
+                0.0,
+                None,
+                "group_pin".to_owned()
+            ),
+        ]
+    );
+    sqlx::raw_sql(
+        "INSERT INTO library_edition_remap_queue (local_album_id, release_mbid, queued_at, \
+         origin) VALUES ('al3', 'rel-3', 3, 'place_only');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(
+        sqlx::raw_sql(
+            "INSERT INTO library_edition_remap_queue (local_album_id, release_mbid, queued_at, \
+             origin) VALUES ('al4', 'rel-4', 4, 'x');",
+        )
+        .execute(&pool)
+        .await
+        .is_err(),
+        "an origin nobody named is refused"
+    );
+    let default: String = sqlx::query_scalar(
+        "SELECT dflt_value FROM pragma_table_info('library_edition_remap_queue') \
+         WHERE name = 'origin'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(default, "'album_pin'");
+    let chosen_by: Option<String> = sqlx::query_scalar(
+        "SELECT chosen_by_user_id FROM library_edition_remap_queue WHERE local_album_id = 'al1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(chosen_by.as_deref(), Some("u1"));
+    let sql: String = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE name = 'library_edition_remap_queue'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        sql.contains("REFERENCES local_albums(id) ON DELETE CASCADE"),
+        "{sql}"
+    );
+}
+
+/// The origins a remap may carry in the database are exactly the ones the
+/// code names, in both directions.
+#[tokio::test]
+async fn remap_origin_check_lists_exactly_the_code_values() {
+    use droppedneedle::library::operations::choice::RemapOrigin;
+
+    let pool = migrated_pool().await;
+    let sql: String = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE name = 'library_edition_remap_queue'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let marker = "CHECK(origin IN (";
+    let values = &sql[sql.find(marker).expect("the column has a CHECK") + marker.len()..];
+    let listed: Vec<String> = values[..values.find(')').expect("the list ends")]
+        .split(',')
+        .map(|value| value.trim().trim_matches('\'').to_owned())
+        .collect();
+    assert_eq!(
+        listed,
+        RemapOrigin::ALL.map(|origin| origin.as_str().to_owned())
+    );
+    for origin in RemapOrigin::ALL {
+        assert_eq!(RemapOrigin::parse(origin.as_str()), Some(origin));
+    }
+    assert_eq!(RemapOrigin::parse("x"), None);
+}
+
 /// Every table in the migrated schema is listed once in
 /// `server/table-owners.txt` under a known area, and the list names no
 /// table the schema lacks.

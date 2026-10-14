@@ -611,7 +611,7 @@ impl Operations {
                 }
                 Err(OperationError::Invalid(reason))
                     if reason.code == reasons::EDITION_FITS_NO_FILE.code
-                        && pending.from_group_pin =>
+                        && pending.origin == choice::RemapOrigin::GroupPin =>
                 {
                     choice::give_up_remap(tx, &pending, reason.code, now)?;
                     decisions::bump_catalog(tx)?;

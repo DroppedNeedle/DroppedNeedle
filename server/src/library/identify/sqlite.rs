@@ -30,6 +30,7 @@ use super::models::{
 use super::queue::PRIORITY_NEW_OR_CHANGED;
 use super::stores::{Approval, RELEASE_FRESH_SECS, StoreError};
 use crate::library::matching::Release;
+use crate::library::operations::choice::RemapOrigin;
 
 const PROVIDER: &str = "musicbrainz";
 /// Snapshot kind for stored release documents.
@@ -1358,7 +1359,7 @@ fn carry_match(
     chosen: bool,
     now: f64,
 ) -> rusqlite::Result<()> {
-    let remap: Option<(String, Option<String>, String)> = tx
+    let remap: Option<(String, Option<String>, RemapOrigin)> = tx
         .query_row(
             "SELECT release_mbid, chosen_by_user_id, origin \
              FROM library_edition_remap_queue WHERE local_album_id = ?1",
@@ -1405,7 +1406,7 @@ fn carry_match(
         )?;
         tx.execute(
             "UPDATE library_edition_remap_queue SET origin = ?2 WHERE local_album_id = ?1",
-            params![to, origin],
+            params![to, origin.as_str()],
         )?;
     }
     Ok(())

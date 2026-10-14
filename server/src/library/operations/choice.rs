@@ -907,19 +907,58 @@ pub fn undo(
 }
 
 // ---------------------------------------------------------------------------
-// Choices waiting for their files to be placed.
+// Editions waiting for their files to be placed.
 // ---------------------------------------------------------------------------
 
-/// One album whose chosen edition still needs its files placed.
+/// Why an album waits in the remap queue (the `origin` column).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemapOrigin {
+    /// A person chose this album's edition.
+    AlbumPin,
+    /// The choice came from a release-group pin fanned out over every
+    /// copy, not from a person pinning this album.
+    GroupPin,
+    /// The album has its edition; only its files are placed on it.
+    PlaceOnly,
+}
+
+impl RemapOrigin {
+    pub const ALL: [Self; 3] = [Self::AlbumPin, Self::GroupPin, Self::PlaceOnly];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AlbumPin => "album_pin",
+            Self::GroupPin => "group_pin",
+            Self::PlaceOnly => "place_only",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|origin| origin.as_str() == value)
+    }
+}
+
+/// A stored origin this version does not know is an error, never a
+/// default.
+impl rusqlite::types::FromSql for RemapOrigin {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        let text = value.as_str()?;
+        Self::parse(text).ok_or_else(|| {
+            rusqlite::types::FromSqlError::Other(format!("unknown remap origin {text:?}").into())
+        })
+    }
+}
+
+/// One album whose edition still needs its files placed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingRemap {
     pub local_album_id: String,
     pub release_mbid: String,
     pub chosen_by_user_id: Option<String>,
     pub attempts: i64,
-    /// True when the choice came from a release-group pin fanned out over
-    /// every copy, not from a person pinning this album.
-    pub from_group_pin: bool,
+    pub origin: RemapOrigin,
 }
 
 /// First wait, in seconds, after MusicBrainz did not answer; it doubles
@@ -941,7 +980,7 @@ pub fn next_remap(conn: &Connection, now: f64) -> rusqlite::Result<Option<Pendin
                 release_mbid: row.get(1)?,
                 chosen_by_user_id: row.get(2)?,
                 attempts: row.get(3)?,
-                from_group_pin: row.get::<_, String>(4)? == "group_pin",
+                origin: row.get(4)?,
             })
         },
     )
