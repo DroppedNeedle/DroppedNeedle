@@ -114,7 +114,7 @@ fn artist_view(artist: ArtistRecord) -> ArtistView {
         name: artist.name,
         album_count: artist.album_count as usize,
         appearance_album_count: artist.appearance_album_count as usize,
-        track_count: artist.track_count as usize,
+        track_count: 0,
         total_duration_seconds: 0.0,
         date_added: artist.date_added,
         starred: false,
@@ -189,7 +189,9 @@ impl JellyfinLibrary {
         let durations = self.library.player.artist_durations(&ids).await?;
         for view in &mut views {
             view.starred = starred.contains_key(&view.id);
-            view.total_duration_seconds = durations.get(&view.id).copied().unwrap_or(0.0);
+            let (seconds, tracks) = durations.get(&view.id).copied().unwrap_or((0.0, 0));
+            view.total_duration_seconds = seconds;
+            view.track_count = usize::try_from(tracks).unwrap_or(usize::MAX);
         }
         Ok(views)
     }

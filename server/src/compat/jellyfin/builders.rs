@@ -410,7 +410,9 @@ impl<'a, I: IdMap> Builder<'a, I> {
         let mut dto = base(artist_id.clone(), ar.name.clone(), self.server_id);
         dto.item_type = "MusicArtist".to_owned();
         dto.is_folder = true;
-        dto.child_count = Some(ar.album_count);
+        // Jellyfin counts the albums and songs tagged with the artist
+        // (`DtoService.SetItemByNameInfo`).
+        dto.child_count = Some(ar.album_count + ar.appearance_album_count + ar.track_count);
         dto.run_time_ticks = ticks(Some(ar.total_duration_seconds));
         if let Some(tag) = tag {
             dto.image_tags.insert("Primary".to_owned(), tag);

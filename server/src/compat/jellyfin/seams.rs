@@ -231,14 +231,14 @@ pub struct ArtistView {
     pub album_count: usize,
     /// Albums the artist appears on without leading them.
     pub appearance_album_count: usize,
-    /// Playable tracks crediting the artist.
+    /// Playable tracks crediting the artist as track or album artist.
     pub track_count: usize,
-    /// Summed length of the playable tracks on the albums the artist leads.
-    /// Jellyfin 10.10.6 means the length of every track crediting the
-    /// artist as track or album artist (`MetadataService`
-    /// `UpdateCumulativeRunTimeTicks` over `ArtistMetadataService`
-    /// `GetChildrenForMetadataUpdates`); the two differ only by tracks the
-    /// artist appears on without leading the album.
+    /// Summed length of those tracks. This is what Jellyfin 10.10.6 means
+    /// by an artist's `RunTimeTicks`: `MetadataService`
+    /// `UpdateCumulativeRunTimeTicks` sums the non-folder children that
+    /// `ArtistMetadataService.GetChildrenForMetadataUpdates` returns, the
+    /// items tagged with the artist as artist or album artist
+    /// (`SqliteItemRepository`, `ArtistIds`, `Type<=1`).
     pub total_duration_seconds: f64,
     /// Unix seconds added.
     pub date_added: Option<f64>,

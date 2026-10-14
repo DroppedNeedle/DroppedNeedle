@@ -387,6 +387,12 @@ async fn jellyfin_pinned_reference_shapes() {
     let artists = trace.get("/jellyfin/Artists", &auth).await;
     let radiohead = named(&artists["Items"], "Name", "Radiohead");
     assert_eq!(radiohead["ProviderIds"], json!({}));
+    // As Jellyfin counts and times an artist: every album and song that
+    // credits it, also one it only appears on (Artist One on Song A).
+    assert_eq!(radiohead["ChildCount"], json!(3), "{radiohead}");
+    let guest = named(&artists["Items"], "Name", "Artist One");
+    assert_eq!(guest["ChildCount"], json!(2), "{guest}");
+    assert!(guest["RunTimeTicks"].as_i64() > Some(0), "{guest}");
     rig.stop().await;
 }
 

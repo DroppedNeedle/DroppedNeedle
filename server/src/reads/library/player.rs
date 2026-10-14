@@ -91,6 +91,10 @@ pub struct PlayerTrack {
     pub cover_available: bool,
 }
 
+/// Per artist id: the summed length in seconds and the number of the
+/// streamable tracks crediting it (`artist_durations`).
+pub type ArtistTracks = HashMap<String, (f64, u64)>;
+
 /// One album with the extra facts players show.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlayerAlbum {
@@ -322,13 +326,13 @@ pub trait PlayerCatalog: Send + Sync {
     /// ascending.
     fn album_years<'a>(&'a self) -> BoxFuture<'a, Result<Vec<i64>, StoreError>>;
 
-    /// For some artist ids, the summed length in seconds of the streamable
-    /// tracks on the albums each one leads. An artist leading no such album
-    /// is absent.
+    /// For some artist ids, the summed length in seconds and the number of
+    /// the streamable tracks crediting each one as track artist or album
+    /// artist, each track once. An artist with no such track is absent.
     fn artist_durations<'a>(
         &'a self,
         ids: &'a [String],
-    ) -> BoxFuture<'a, Result<HashMap<String, f64>, StoreError>>;
+    ) -> BoxFuture<'a, Result<ArtistTracks, StoreError>>;
 }
 
 const TRACK_SELECT: &str = "SELECT t.id AS id, t.title AS title, t.local_album_id AS album_id, \
@@ -1643,30 +1647,38 @@ impl PlayerCatalog for SqlitePlayerCatalog {
     fn artist_durations<'a>(
         &'a self,
         ids: &'a [String],
-    ) -> BoxFuture<'a, Result<HashMap<String, f64>, StoreError>> {
+    ) -> BoxFuture<'a, Result<ArtistTracks, StoreError>> {
         Box::pin(async move {
             let pool = self.pool()?;
             let mut out = HashMap::with_capacity(ids.len());
             for chunk in ids.chunks(500) {
+                let marks = placeholders(chunk.len());
+                // UNION keeps one row per (artist, track), so a track that
+                // credits its album artist is counted once.
                 let sql = format!(
-                    "SELECT a.album_artist_id, COALESCE(SUM(t.duration_seconds), 0.0) \
-                     FROM local_albums a \
-                     JOIN local_tracks t ON t.local_album_id = a.id \
-                     AND t.availability = 'indexed' \
-                     WHERE a.retired_into_album_id IS NULL AND a.album_artist_id IN ({}) \
-                     GROUP BY a.album_artist_id",
-                    placeholders(chunk.len())
+                    "SELECT c.artist_id, COALESCE(SUM(t.duration_seconds), 0.0), COUNT(*) \
+                     FROM (SELECT ta.local_artist_id AS artist_id, ta.local_track_id AS track_id \
+                     FROM local_track_artists ta WHERE ta.local_artist_id IN ({marks}) \
+                     UNION \
+                     SELECT a.album_artist_id, lt.id FROM local_albums a \
+                     JOIN local_tracks lt ON lt.local_album_id = a.id \
+                     WHERE a.album_artist_id IN ({marks})) c \
+                     JOIN local_tracks t ON t.id = c.track_id AND t.availability = 'indexed' \
+                     JOIN local_albums a ON a.id = t.local_album_id \
+                     AND a.retired_into_album_id IS NULL \
+                     GROUP BY c.artist_id"
                 );
-                let mut query = sqlx::query_as::<_, (String, f64)>(&sql);
-                for id in chunk {
+                let mut query = sqlx::query_as::<_, (String, f64, i64)>(&sql);
+                for id in chunk.iter().chain(chunk) {
                     query = query.bind(id);
                 }
-                out.extend(
-                    query
-                        .fetch_all(pool)
-                        .await
-                        .map_err(read_error("player.artist_durations"))?,
-                );
+                let rows = query
+                    .fetch_all(pool)
+                    .await
+                    .map_err(read_error("player.artist_durations"))?;
+                out.extend(rows.into_iter().map(|(id, seconds, count)| {
+                    (id, (seconds, u64::try_from(count).unwrap_or(0)))
+                }));
             }
             Ok(out)
         })
