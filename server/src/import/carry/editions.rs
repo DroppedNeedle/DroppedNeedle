@@ -27,6 +27,7 @@ use super::bundle::SCHEMA;
 use super::{CarryError, SectionResult};
 use crate::export::sections::library::{ALBUM_PINS, ALBUMS};
 use crate::export::sections::management::EDITION_ACTIVE;
+use crate::library::operations::choice::RemapOrigin;
 
 /// Report entity and section marker name.
 pub(crate) const ENTITY: &str = "sticky_edition";
@@ -195,20 +196,26 @@ pub(crate) async fn apply(
         );
     }
     // The chosen release still needs the files placed on its tracks; the
-    // library does that when MusicBrainz is reachable. The pin rows have
-    // done their job: the identity row is the album's edition now.
+    // library does that when MusicBrainz is reachable, and changes nothing
+    // else (who chose it, a carried "leave unmanaged"). An album with an
+    // active custom edition lists its own tracks and is not queued. The
+    // pin rows have done their job: the identity row is the album's
+    // edition now.
     run(
         conn,
         &format!(
             "INSERT OR IGNORE INTO main.library_edition_remap_queue (local_album_id, \
-             release_mbid, chosen_by_user_id, queued_at) \
+             release_mbid, chosen_by_user_id, queued_at, origin) \
              SELECT p.local_album_id, lower(p.release_mbid), \
              (SELECT u.id FROM main.auth_users u WHERE u.id = p.set_by_user_id), \
-             CAST(strftime('%s', 'now') AS REAL) \
+             CAST(strftime('%s', 'now') AS REAL), '{place_only}' \
              FROM main.library_album_release_pins p \
              JOIN main.local_album_external_identities e ON e.local_album_id = p.local_album_id \
              WHERE p.local_album_id {carried} AND e.provider = 'musicbrainz' \
-             AND e.decision_source = 'manual' AND e.release_mbid = p.release_mbid"
+             AND e.decision_source = 'manual' AND e.release_mbid = p.release_mbid \
+             AND NOT EXISTS (SELECT 1 FROM main.library_custom_edition_active c \
+             WHERE c.local_album_id = p.local_album_id)",
+            place_only = RemapOrigin::PlaceOnly.as_str(),
         ),
     )
     .await?;

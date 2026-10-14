@@ -63,7 +63,7 @@ impl Corrections {
     ) -> Result<Previewed<MembershipOutcome>, CorrectionError> {
         let now = now_unix();
         self.in_tx(false, |tx| {
-            let run = run_membership(tx, request, actor, now)?;
+            let run = run_membership(tx, request, now)?;
             Ok(Previewed {
                 token: token::issue(&self.signer, actor, &run.material, now as i64),
                 outcome: run.outcome,
@@ -82,7 +82,7 @@ impl Corrections {
             if let Some(done) = replay(tx, meta.idempotency_key.as_deref())? {
                 return Ok(done);
             }
-            let run = run_membership(tx, request, &meta.actor, now)?;
+            let run = run_membership(tx, request, now)?;
             self.check_token(meta, &run.material, now)?;
             let outcome = run.outcome;
             let mut applied = Applied {
@@ -184,12 +184,11 @@ impl Corrections {
 fn run_membership(
     tx: &Transaction<'_>,
     request: &MembershipRequest,
-    actor: &str,
     now: f64,
 ) -> Result<Run, CorrectionError> {
     match request.kind {
-        MembershipKind::Reset => reset::reset(tx, request, actor, now),
-        _ => membership::regroup(tx, request, actor, now),
+        MembershipKind::Reset => reset::reset(tx, request, now),
+        _ => membership::regroup(tx, request, now),
     }
 }
 

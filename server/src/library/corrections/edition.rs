@@ -18,8 +18,10 @@
 //!   and the album is offered to identification again;
 //! - a track keeps its track identity only when it sits on the receiving
 //!   album's release;
-//! - an album keeping a chosen edition that gains tracks queues them to be
-//!   placed on that release.
+//! - an album that ends with an edition a person chose (or v2 carried),
+//!   with tracks not yet on it, queues them to be placed on that release.
+//!   Placing them changes nothing else: the edition, who chose it and
+//!   "leave unmanaged" stay as they were.
 
 use std::collections::BTreeSet;
 
@@ -29,7 +31,7 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, params, params_f
 use super::models::{DroppedEdition, EditionChange, EditionChangeKind, IdentityChoice};
 use super::reasons;
 use crate::library::identify::models::CandidateEvidence;
-use crate::library::operations::choice::queue_remap;
+use crate::library::operations::choice::queue_placement;
 use crate::library::operations::reasons::Reason;
 
 const PROVIDER: &str = "musicbrainz";
@@ -109,7 +111,6 @@ pub(super) struct Settle<'a> {
     /// Tracks that joined `dest`.
     pub moved_tracks: &'a [String],
     pub choice: IdentityChoice,
-    pub actor: &'a str,
     pub now: f64,
 }
 
@@ -305,19 +306,15 @@ pub(super) fn settle(tx: &Transaction<'_>, s: &Settle<'_>) -> rusqlite::Result<S
         ),
         params_from_iter(values),
     )?;
-    if let Some(chosen) = kept
-        .as_ref()
-        .filter(|identity| identity.pinned() && !identity.custom)
-        && let Some(release) = chosen.release_mbid.as_deref()
-        && unplaced(tx, &checked, release)?
+    if let Some(release) = kept.and_then(|identity| identity.release_mbid)
+        && queue_placement(tx, s.dest, s.now)?
     {
-        queue_remap(tx, s.dest, release, Some(s.actor), s.now)?;
         changes.push(EditionChange {
             album_id: s.dest.to_owned(),
             album_title: title.clone(),
             change: EditionChangeKind::RemapQueued,
             from_album_id: None,
-            release_mbid: Some(release.to_owned()),
+            release_mbid: Some(release),
             reason: reasons::EDITION_REMAP,
             dropped: Vec::new(),
         });
@@ -445,21 +442,6 @@ fn album_tracks(tx: &Transaction<'_>, album_id: &str) -> rusqlite::Result<Vec<St
     tx.prepare("SELECT id FROM local_tracks WHERE local_album_id = ?1")?
         .query_map(params![album_id], |row| row.get(0))?
         .collect()
-}
-
-/// Some of `tracks` is not placed on `release`.
-fn unplaced(tx: &Transaction<'_>, tracks: &[String], release: &str) -> rusqlite::Result<bool> {
-    let marks = placeholders(tracks.len());
-    let placed: i64 = tx.query_row(
-        &format!(
-            "SELECT COUNT(*) FROM local_track_external_identities WHERE provider = 'musicbrainz' \
-             AND lower(release_mbid) = lower(?1) AND release_track_mbid IS NOT NULL \
-             AND local_track_id IN ({marks})"
-        ),
-        params_from_iter(std::iter::once(release).chain(tracks.iter().map(String::as_str))),
-        |row| row.get(0),
-    )?;
-    Ok(placed < tracks.len() as i64)
 }
 
 pub(super) fn placeholders(n: usize) -> String {

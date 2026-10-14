@@ -431,7 +431,6 @@ pub(super) fn kept_editions(
 pub(super) fn regroup(
     tx: &Transaction<'_>,
     request: &MembershipRequest,
-    actor: &str,
     now: f64,
 ) -> Result<Run, CorrectionError> {
     let kind = request.kind;
@@ -530,7 +529,6 @@ pub(super) fn regroup(
             retired_into: &retired,
             moved_tracks: &track_ids,
             choice: request.identity_choice,
-            actor,
             now,
         },
     )?;

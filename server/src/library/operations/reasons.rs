@@ -470,6 +470,11 @@ pub fn match_reason(code: &str) -> Reason {
             "The edition you chose doesn't match these files.",
             "Pick another edition, or let DroppedNeedle choose.",
         ),
+        "CHOSEN_EDITION_NOT_LISTED" => reason(
+            "CHOSEN_EDITION_NOT_LISTED",
+            "MusicBrainz no longer lists the edition you chose, so these files cannot be placed on it.",
+            "Pick another edition, or let DroppedNeedle choose.",
+        ),
         "SUPPORTED" => reason(
             "SUPPORTED",
             "This edition fits the files closely: titles, track order and lengths agree.",

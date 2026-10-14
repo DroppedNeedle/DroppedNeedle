@@ -23,7 +23,6 @@ use crate::library::scan::sqlite_store::automatic_album_for;
 pub(super) fn reset(
     tx: &Transaction<'_>,
     request: &MembershipRequest,
-    actor: &str,
     now: f64,
 ) -> Result<Run, CorrectionError> {
     let track_ids = selected(request)?;
@@ -126,7 +125,6 @@ pub(super) fn reset(
                 retired_into: &emptied,
                 moved_tracks: ids,
                 choice: request.identity_choice,
-                actor,
                 now,
             },
         )?;

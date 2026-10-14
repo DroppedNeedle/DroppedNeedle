@@ -565,10 +565,13 @@ impl Operations {
         self.write(|tx| choice::undo(tx, album_id, actor, now_unix()))
     }
 
-    /// Place the files of the next album whose chosen edition still waits
-    /// for them (pins converted by an upgrade, v2 imports). True when one
-    /// was handled. Store calls block: run this on a blocking thread.
+    /// Place the files of the next album whose edition still waits for
+    /// them (pins converted by an upgrade, v2 imports, a person's release
+    /// approved without its tracks, an album that gained files). True when
+    /// one was handled. Store calls block: run this on a blocking thread.
     pub async fn remap_next(&self) -> Result<bool, OperationError> {
+        use choice::RemapOrigin;
+
         let now = now_unix();
         let Some(pending) = self.read(|conn| Ok(choice::next_remap(conn, now)?))? else {
             return Ok(false);
@@ -577,6 +580,7 @@ impl Operations {
             .candidate_for(&pending.local_album_id, &pending.release_mbid)
             .await;
         let actor = pending.chosen_by_user_id.as_deref();
+        let place_only = pending.origin == RemapOrigin::PlaceOnly;
         self.write(|tx| {
             let now = now_unix();
             // A person may have chosen again, or handed the album back,
@@ -584,7 +588,16 @@ impl Operations {
             if !choice::remap_still_wanted(tx, &pending)? {
                 return Ok(true);
             }
+            // A person's later word on the album ("leave unmanaged", a
+            // custom edition, another edition) stands over the queued one.
+            if !choice::remap_still_holds(tx, &pending)? {
+                choice::drop_remap(tx, &pending)?;
+                return Ok(true);
+            }
             let placed = match outcome {
+                Ok(candidate) if place_only => {
+                    choice::place_files(tx, &pending, &candidate, now).map(|_| ())
+                }
                 Ok(candidate) => {
                     choice::apply_choice(tx, &pending.local_album_id, &candidate, actor, None, now)
                         .map(|_| ())
@@ -603,6 +616,20 @@ impl Operations {
                 {
                     choice::retry_remap(tx, &pending, reason.code, now)?
                 }
+                // An edition the album already has is never given up: it
+                // stays, and the album shows why its files are not on it.
+                Err(OperationError::NotFound(reason))
+                    if reason.code == reasons::EDITION_NOT_FOUND.code && place_only =>
+                {
+                    choice::keep_unplaceable_choice(
+                        tx,
+                        &pending,
+                        reason.code,
+                        choice::CHOSEN_NOT_LISTED,
+                        now,
+                    )?;
+                    decisions::bump_catalog(tx)?;
+                }
                 Err(OperationError::NotFound(reason))
                     if reason.code == reasons::EDITION_NOT_FOUND.code =>
                 {
@@ -611,13 +638,19 @@ impl Operations {
                 }
                 Err(OperationError::Invalid(reason))
                     if reason.code == reasons::EDITION_FITS_NO_FILE.code
-                        && pending.origin == choice::RemapOrigin::GroupPin =>
+                        && pending.origin == RemapOrigin::GroupPin =>
                 {
                     choice::give_up_remap(tx, &pending, reason.code, now)?;
                     decisions::bump_catalog(tx)?;
                 }
                 Err(OperationError::Invalid(reason) | OperationError::NotFound(reason)) => {
-                    choice::keep_unplaceable_choice(tx, &pending, reason.code, now)?;
+                    choice::keep_unplaceable_choice(
+                        tx,
+                        &pending,
+                        reason.code,
+                        choice::CHOSEN_FITS_NO_FILE,
+                        now,
+                    )?;
                     decisions::bump_catalog(tx)?;
                 }
                 Err(other) => return Err(other),

@@ -908,6 +908,15 @@ pub fn undo(
 
 // ---------------------------------------------------------------------------
 // Editions waiting for their files to be placed.
+//
+// A queue row names the release the album's files go on. `album_pin` and
+// `group_pin` rows seal the release as the album's choice when they run,
+// as a choice made then would. A `place_only` row is for an album that
+// already has its edition, one a person chose or v2 carried, and holds
+// files that are not on it yet (a merge, a move, a retag the scan
+// followed): it puts the files on the release and changes nothing else.
+// Whatever its origin, a row runs only while the album's match is still a
+// person's and names that release; otherwise it is dropped unrun.
 // ---------------------------------------------------------------------------
 
 /// Why an album waits in the remap queue (the `origin` column).
@@ -991,14 +1000,49 @@ pub fn next_remap(conn: &Connection, now: f64) -> rusqlite::Result<Option<Pendin
 /// newer choice or hand-back removes or replaces the queue row, and the
 /// worker must then leave the album alone.
 pub fn remap_still_wanted(conn: &Connection, pending: &PendingRemap) -> rusqlite::Result<bool> {
-    let queued: Option<String> = conn
+    let queued: Option<(String, RemapOrigin)> = conn
         .query_row(
-            "SELECT release_mbid FROM library_edition_remap_queue WHERE local_album_id = ?1",
+            "SELECT release_mbid, origin FROM library_edition_remap_queue \
+             WHERE local_album_id = ?1",
             params![pending.local_album_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
-    Ok(queued.is_some_and(|release| release.eq_ignore_ascii_case(&pending.release_mbid)))
+    Ok(queued.is_some_and(|(release, origin)| {
+        release.eq_ignore_ascii_case(&pending.release_mbid) && origin == pending.origin
+    }))
+}
+
+/// Whether the album's match is still a person's (chosen by hand or
+/// carried from v2) and names the queued release. When it is not, a
+/// person changed the album since the row was queued ("leave unmanaged",
+/// a custom edition, "Let DroppedNeedle choose"), and that later word
+/// stands: the row has nothing left to do.
+pub fn remap_still_holds(conn: &Connection, pending: &PendingRemap) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM local_album_external_identities \
+         WHERE local_album_id = ?1 AND provider = ?2 \
+         AND decision_source IN ('manual', 'legacy_import') \
+         AND lower(release_mbid) = lower(?3))",
+        params![pending.local_album_id, PROVIDER, pending.release_mbid],
+        |row| row.get(0),
+    )
+}
+
+/// Drop a queued remap that no longer holds ([`remap_still_holds`]),
+/// writing nothing else.
+pub fn drop_remap(tx: &Transaction<'_>, pending: &PendingRemap) -> rusqlite::Result<()> {
+    tracing::info!(
+        album = pending.local_album_id,
+        release = pending.release_mbid,
+        origin = pending.origin.as_str(),
+        "the album's edition changed since its files were queued to be placed; dropped"
+    );
+    tx.execute(
+        "DELETE FROM library_edition_remap_queue WHERE local_album_id = ?1",
+        params![pending.local_album_id],
+    )?;
+    Ok(())
 }
 
 /// MusicBrainz did not answer, or the album's files are briefly out of
@@ -1066,20 +1110,22 @@ pub fn give_up_remap(
     Ok(())
 }
 
-/// A person pinned this exact edition but it fits none of the files. Their
-/// choice stays and the track placements stay as they were; the album
-/// shows why, so they can pick another edition or let DroppedNeedle choose.
+/// A person chose this exact edition but its files cannot be placed on it
+/// (`code`, logged). Their choice stays and the track placements stay as
+/// they were; the album shows why (`state_code`), so they can pick another
+/// edition or let DroppedNeedle choose.
 pub fn keep_unplaceable_choice(
     tx: &Transaction<'_>,
     pending: &PendingRemap,
     code: &str,
+    state_code: &str,
     now: f64,
 ) -> rusqlite::Result<()> {
     tracing::warn!(
         album = pending.local_album_id,
         release = pending.release_mbid,
         code,
-        "the chosen edition fits none of this album's files; the choice is kept"
+        "the album's files cannot be placed on the chosen edition; the choice is kept"
     );
     tx.execute(
         "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
@@ -1089,7 +1135,7 @@ pub fn keep_unplaceable_choice(
          updated_at = excluded.updated_at",
         params![
             pending.local_album_id,
-            CHOSEN_FITS_NO_FILE,
+            state_code,
             pending.release_mbid,
             now
         ],
@@ -1104,7 +1150,13 @@ pub fn keep_unplaceable_choice(
 /// Reason code on an album whose chosen edition fits none of its files.
 pub const CHOSEN_FITS_NO_FILE: &str = "CHOSEN_EDITION_FITS_NO_FILE";
 
-/// Queue the album's files to be placed on its chosen release.
+/// Reason code on an album whose chosen edition MusicBrainz no longer
+/// lists, so its files cannot be placed on it.
+pub const CHOSEN_NOT_LISTED: &str = "CHOSEN_EDITION_NOT_LISTED";
+
+/// Queue the album's files to be placed on the release a person just
+/// chose for it. It replaces any row queued for the album before, which
+/// becomes this person's ask.
 pub fn queue_remap(
     tx: &Transaction<'_>,
     album_id: &str,
@@ -1114,11 +1166,203 @@ pub fn queue_remap(
 ) -> rusqlite::Result<()> {
     tx.execute(
         "INSERT INTO library_edition_remap_queue (local_album_id, release_mbid, \
-         chosen_by_user_id, queued_at) VALUES (?1, lower(?2), ?3, ?4) \
+         chosen_by_user_id, queued_at, origin) VALUES (?1, lower(?2), ?3, ?4, ?5) \
          ON CONFLICT (local_album_id) DO UPDATE SET release_mbid = excluded.release_mbid, \
          chosen_by_user_id = excluded.chosen_by_user_id, queued_at = excluded.queued_at, \
-         attempts = 0, not_before = 0, last_code = NULL",
-        params![album_id, release_mbid, chosen_by, now],
+         attempts = 0, not_before = 0, last_code = NULL, origin = excluded.origin",
+        params![
+            album_id,
+            release_mbid,
+            chosen_by,
+            now,
+            RemapOrigin::AlbumPin.as_str()
+        ],
     )?;
     Ok(())
+}
+
+/// Queue the album's files to be placed on the edition it already has
+/// (`place_only`), when all of these hold: its match is a person's (chosen
+/// by hand or carried from v2) and names a release, no custom edition is
+/// active on it, and one of its indexed files is not placed on that
+/// release. A row already queued for the album, of any origin, places the
+/// files too and is left as it is. Returns true when those three hold,
+/// whether the row was written now or was there already.
+pub fn queue_placement(tx: &Transaction<'_>, album_id: &str, now: f64) -> rusqlite::Result<bool> {
+    let release: Option<String> = tx
+        .query_row(
+            "SELECT lower(release_mbid) FROM local_album_external_identities \
+             WHERE local_album_id = ?1 AND provider = ?2 \
+             AND decision_source IN ('manual', 'legacy_import') AND trim(release_mbid) <> '' \
+             AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
+             WHERE c.local_album_id = ?1)",
+            params![album_id, PROVIDER],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(release) = release else {
+        return Ok(false);
+    };
+    let unplaced: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM local_tracks t WHERE t.local_album_id = ?1 \
+         AND t.availability = 'indexed' AND NOT EXISTS (SELECT 1 \
+         FROM local_track_external_identities i WHERE i.local_track_id = t.id \
+         AND i.provider = ?2 AND lower(i.release_mbid) = ?3 \
+         AND i.release_track_mbid IS NOT NULL))",
+        params![album_id, PROVIDER, release],
+        |row| row.get(0),
+    )?;
+    if !unplaced {
+        return Ok(false);
+    }
+    tx.execute(
+        "INSERT INTO library_edition_remap_queue (local_album_id, release_mbid, \
+         chosen_by_user_id, queued_at, origin) VALUES (?1, ?2, NULL, ?3, ?4) \
+         ON CONFLICT (local_album_id) DO NOTHING",
+        params![album_id, release, now, RemapOrigin::PlaceOnly.as_str()],
+    )?;
+    Ok(true)
+}
+
+/// Run a `place_only` row: put the album's files on the edition it
+/// already has, and change nothing else. The caller has checked that the
+/// album's match is still a person's and names the queued release
+/// ([`remap_still_holds`]). An album with an active custom edition has
+/// nothing to place: the row is dropped.
+///
+/// A file already placed on the release keeps its row as it is, and the
+/// release track it holds is never given to another file (a second copy
+/// of it, merged in, stays unplaced). The other files the candidate
+/// weighed are placed as an edition choice places them ([`place`]), each
+/// upserted as a `manual` placement naming the release as the album's
+/// identity row spells it; the rest keep their recording, unplaced. A
+/// match state left by an earlier placement that failed
+/// (`CHOSEN_EDITION_*`) goes. A file that joined the album after the
+/// candidate was made keeps its row, and the queue row stays so the next
+/// try places it. Otherwise the queue row goes and automatic management
+/// looks at the album again, keeping a scan's stamp; it still honours
+/// "leave unmanaged", the taken-over mark and the stamp before it writes
+/// anything.
+///
+/// The album identity row (source, chooser, time, release and revision),
+/// both undo records, "leave unmanaged", the custom edition, the taken-over
+/// mark and the stamp are left as they are, and no audit row is written.
+/// No credit proof is written either, as for any person's match: the proof
+/// for a person's match is the album's accepted release, which reconcile
+/// can use once the files are placed on it.
+///
+/// `EDITION_FITS_NO_FILE` when no file is on the release, before or after,
+/// and none waits to be weighed; `ALBUM_NOT_FOUND` when the album has no
+/// indexed file. Returns the
+/// number of files placed now and of files left unplaced.
+pub fn place_files(
+    tx: &Transaction<'_>,
+    pending: &PendingRemap,
+    candidate: &ReidentificationCandidate,
+    now: f64,
+) -> Result<(usize, usize), OperationError> {
+    let album_id = pending.local_album_id.as_str();
+    let custom: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM library_custom_edition_active WHERE local_album_id = ?1)",
+        params![album_id],
+        |row| row.get(0),
+    )?;
+    if custom {
+        // A custom edition lists the album's own tracks; nothing is placed.
+        drop_remap(tx, pending)?;
+        return Ok((0, 0));
+    }
+    let release: String = tx.query_row(
+        "SELECT release_mbid FROM local_album_external_identities \
+         WHERE local_album_id = ?1 AND provider = ?2",
+        params![album_id, PROVIDER],
+        |row| row.get(0),
+    )?;
+    let indexed = indexed_track_ids(tx, album_id)?;
+    if indexed.is_empty() {
+        return Err(OperationError::NotFound(reasons::ALBUM_NOT_FOUND));
+    }
+    let held: Vec<(String, String)> = tx
+        .prepare(
+            "SELECT t.id, i.release_track_mbid FROM local_tracks t \
+             JOIN local_track_external_identities i \
+             ON i.local_track_id = t.id AND i.provider = ?2 \
+             WHERE t.local_album_id = ?1 AND t.availability = 'indexed' \
+             AND lower(i.release_mbid) = lower(?3) AND i.release_track_mbid IS NOT NULL",
+        )?
+        .query_map(params![album_id, PROVIDER, release], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    // A file that joined the album after MusicBrainz was asked was not
+    // weighed: it keeps its row, and the queue row stays for the next try.
+    let (others, unseen): (Vec<String>, Vec<String>) = indexed
+        .into_iter()
+        .filter(|track| !held.iter().any(|(placed, _)| placed == track))
+        .partition(|track| {
+            candidate
+                .evidence
+                .track_evidence
+                .iter()
+                .any(|evidence| evidence.local_track_id == *track)
+        });
+    let (offered, mut extra) = place(&others, candidate);
+    let mut placed = Vec::with_capacity(offered.len());
+    for placement in offered {
+        if held
+            .iter()
+            .any(|(_, taken)| taken.eq_ignore_ascii_case(&placement.release_track_mbid))
+        {
+            extra.push(placement.local_track_id);
+        } else {
+            placed.push(placement);
+        }
+    }
+    if placed.is_empty() && held.is_empty() && unseen.is_empty() {
+        return Err(OperationError::Invalid(reasons::EDITION_FITS_NO_FILE));
+    }
+    for placement in &placed {
+        upsert_track_identity(
+            tx,
+            &TrackRow {
+                local_track_id: &placement.local_track_id,
+                recording_mbid: &placement.recording_mbid,
+                release_mbid: Some(&release),
+                release_track_mbid: Some(&placement.release_track_mbid),
+                medium_position: Some(placement.disc),
+                release_track_position: Some(placement.position),
+                decision_source: "manual",
+            },
+            now,
+        )?;
+    }
+    for track_id in &extra {
+        tx.execute(
+            "UPDATE local_track_external_identities SET release_mbid = NULL, \
+             release_track_mbid = NULL, medium_position = NULL, \
+             release_track_position = NULL, decision_source = 'manual', selected_at = ?2, \
+             row_revision = row_revision + 1 WHERE local_track_id = ?1 AND provider = ?3",
+            params![track_id, now, PROVIDER],
+        )?;
+    }
+    tx.execute(
+        "DELETE FROM library_album_match_state WHERE local_album_id = ?1 \
+         AND reason_code LIKE 'CHOSEN\\_EDITION\\_%' ESCAPE '\\'",
+        params![album_id],
+    )?;
+    if unseen.is_empty() {
+        tx.execute(
+            "DELETE FROM library_edition_remap_queue WHERE local_album_id = ?1",
+            params![album_id],
+        )?;
+        crate::library::management::automatic::queue(tx, album_id, now)?;
+    }
+    tracing::info!(
+        album = album_id,
+        placed = placed.len(),
+        extra = extra.len(),
+        waiting = unseen.len(),
+        "the album's files were placed on its edition"
+    );
+    Ok((placed.len(), extra.len()))
 }

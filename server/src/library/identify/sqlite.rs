@@ -1282,7 +1282,10 @@ pub(crate) fn match_chosen(conn: &Connection, album_id: &str) -> rusqlite::Resul
 /// match takes a revision neither row has had, so nothing kept from
 /// either row reads as current against it. A chosen edition still waiting
 /// to be placed on the files is queued again for `kept`, and automatic
-/// management looks at `kept` afresh.
+/// management looks at `kept` afresh. When the match `kept` ends with is a
+/// person's release and a file is not on it yet, the files are queued to
+/// be placed on it, changing nothing else
+/// ([`queue_placement`](crate::library::operations::choice::queue_placement)).
 pub(crate) fn settle_followed_match(
     tx: &rusqlite::Transaction<'_>,
     gone: &str,
@@ -1344,6 +1347,7 @@ pub(crate) fn settle_followed_match(
     if reviews > 0 {
         bump_identification_stream(tx)?;
     }
+    crate::library::operations::choice::queue_placement(tx, kept, now)?;
     Ok(())
 }
 
@@ -1441,9 +1445,11 @@ pub(crate) fn merge_moves_match(conn: &Connection, old: &str, new: &str) -> rusq
 /// - Otherwise the match on `new` stays as it is.
 ///
 /// A review a person closed on `old` moves to `new`; one still waiting on
-/// it goes. The moved match takes a revision neither row has had. What is
-/// left on `old` of its match is the caller's to clear. Returns whether
-/// the match on `new` changed.
+/// it goes. The moved match takes a revision neither row has had. When
+/// the match `new` ends with is a person's release and a file on `new` is
+/// not on it yet, the files are queued to be placed on it, changing
+/// nothing else. What is left on `old` of its match is the caller's to
+/// clear. Returns whether the match on `new` changed.
 pub(crate) fn settle_merged_match(
     tx: &rusqlite::Transaction<'_>,
     old: &str,
@@ -1485,6 +1491,7 @@ pub(crate) fn settle_merged_match(
     if reviews > 0 {
         bump_identification_stream(tx)?;
     }
+    crate::library::operations::choice::queue_placement(tx, new, now)?;
     Ok(moves)
 }
 

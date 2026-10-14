@@ -1122,9 +1122,11 @@ async fn automatic_match_made_mid_scan_yields_to_a_chosen_one() {
     assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
     assert_eq!(
         hanging_rows(&rig, &album),
-        [0, 0, 0, 0, 0, 1, 0],
-        "only a fresh look by automatic management is left"
+        [0, 0, 0, 0, 1, 1, 0],
+        "only a fresh look by automatic management, and the files waiting to be \
+         placed on the chosen edition, are left"
     );
+    assert_eq!(placements_queued(&rig, &album), vec!["rel-1".to_owned()]);
     assert_eq!(identify_now(&rig, &album).await, "CHOSEN_EDITION_KEPT");
     assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
 }
@@ -1235,6 +1237,76 @@ async fn chosen_match_made_mid_scan_moves_to_the_kept_row() {
             "{name}"
         );
         assert_eq!(match_of(&rig, &album), matched("rel-new", source), "{name}");
+    }
+}
+
+/// Every track of the album (a SQL expression) placed on `release`, as an
+/// automatic identification leaves them.
+fn tracks_on(album: &str, release: &str) -> String {
+    format!(
+        "INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_mbid, release_track_mbid, decision_source, selected_at) \
+         SELECT id, 'musicbrainz', 'rec-' || id, '{release}', '{release}-' || id, \
+         'automatic', 0 FROM local_tracks WHERE local_album_id = {album};"
+    )
+}
+
+/// The releases the album's files wait to be placed on with nothing else
+/// changed (`place_only` rows, queued by nobody).
+fn placements_queued(rig: &RegroupRig, album: &str) -> Vec<String> {
+    let conn = droppedneedle::db::open_connection(&rig.db()).expect("side connection opens");
+    let mut statement = conn
+        .prepare(
+            "SELECT release_mbid FROM library_edition_remap_queue WHERE local_album_id = ?1 \
+             AND origin = 'place_only' AND chosen_by_user_id IS NULL",
+        )
+        .expect("queue reads");
+    statement
+        .query_map([album], |row| row.get(0))
+        .expect("queue rows")
+        .collect::<Result<_, _>>()
+        .expect("queue rows")
+}
+
+/// A person's release that a follow leaves on the kept row while the
+/// files sit on another release is queued to have the files placed on it,
+/// and nothing else: one `place_only` row naming the release. No row when
+/// the files already sit on it, and none for an automatic match.
+#[tokio::test]
+async fn followed_album_queues_its_files_for_a_chosen_release() {
+    for (name, tracks, arriving, queued) in [
+        (
+            "scan-regroup-place-chosen",
+            "rel-a",
+            "manual",
+            vec!["rel-b"],
+        ),
+        ("scan-regroup-place-sits", "rel-b", "manual", vec![]),
+        ("scan-regroup-place-automatic", "rel-a", "automatic", vec![]),
+    ] {
+        let (mut rig, files, album) = big_album(name).await;
+        let quoted = format!("'{album}'");
+        rig.run(&format!(
+            "{} {}",
+            match_sql(&quoted, "automatic", tracks),
+            tracks_on(&quoted, tracks)
+        ));
+        let after = rig.after.clone();
+        rig.tag(&files, &after);
+        rig.meanwhile_sql(match_sql(&new_row(&album), arriving, "rel-b"));
+        rig.scan().await;
+
+        assert_eq!(rig.album_of("a/t000.flac"), album, "{name}: followed");
+        assert_eq!(match_of(&rig, &album), matched("rel-b", arriving), "{name}");
+        assert_eq!(placements_queued(&rig, &album), queued, "{name}");
+        assert_eq!(
+            rig.count(&format!(
+                "SELECT COUNT(*) FROM library_edition_remap_queue \
+                 WHERE local_album_id = '{album}'"
+            )),
+            queued.len() as i64,
+            "{name}: no other row"
+        );
     }
 }
 
@@ -2277,6 +2349,33 @@ async fn match_across_two_scans_lands_on_the_row_that_stays() {
     .await;
     assert_eq!(rig.retired_into(&old), Some(new.clone()));
     assert_eq!(match_of(&rig, &new), None);
+}
+
+/// A person's release that moves from the old row onto the new row of an
+/// album joined across two scans, whose files sit on another release, is
+/// queued to have the files placed on it, and nothing else.
+#[tokio::test]
+async fn album_joined_across_scans_queues_its_files_for_a_chosen_release() {
+    let (rig, old, new) = two_sittings(
+        "scan-across-place-chosen",
+        |album| {
+            let quoted = format!("'{album}'");
+            format!(
+                "{} {}",
+                match_sql(&quoted, "manual", "rel-1"),
+                tracks_on(&quoted, "rel-2")
+            )
+        },
+        |_, _| String::new(),
+    )
+    .await;
+    assert_eq!(rig.retired_into(&old), Some(new.clone()));
+    assert_eq!(match_of(&rig, &new), matched("rel-1", "manual"));
+    assert_eq!(placements_queued(&rig, &new), vec!["rel-1".to_owned()]);
+    assert_eq!(
+        rig.count("SELECT COUNT(*) FROM library_edition_remap_queue"),
+        1
+    );
 }
 
 /// Seven of ten files retagged and the other three deleted in one
