@@ -1068,6 +1068,11 @@ pub struct ManagedMark<'a> {
     pub track_identity_revision: Option<u64>,
     /// The file's place and stat signature after the run.
     pub path_revision: Option<String>,
+    /// The file's SHA-256 as the plan read it, for a file the run left as
+    /// it found it. `None` for a file the run published: the commit
+    /// recorded the bytes it placed, and the plan's hash is of the bytes
+    /// before the write.
+    pub found_sha256: Option<&'a str>,
 }
 
 /// Record that a profile run wrote (or left as it wanted) one file.
@@ -1081,9 +1086,11 @@ pub fn mark_managed(
         "INSERT INTO library_track_management_state (local_track_id, applied_profile_id, \
          applied_profile_revision, applied_naming_script_revision, applied_override_revision, \
          last_operation_job_id, managed_root_id, last_managed_at, last_outcome, \
-         managed_path_revision) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'succeeded', ?9) \
+         managed_path_revision, written_sha256) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'succeeded', ?9, ?10) \
          ON CONFLICT (local_track_id) DO UPDATE SET \
+         written_sha256 = COALESCE(excluded.written_sha256, \
+         library_track_management_state.written_sha256), \
          applied_profile_id = excluded.applied_profile_id, \
          applied_profile_revision = excluded.applied_profile_revision, \
          applied_naming_script_revision = excluded.applied_naming_script_revision, \
@@ -1104,6 +1111,7 @@ pub fn mark_managed(
             mark.root_id,
             now,
             mark.path_revision,
+            mark.found_sha256,
         ],
     )?;
     tx.execute(

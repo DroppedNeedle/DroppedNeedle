@@ -15,8 +15,10 @@
 //! purging them), `duplicates` (a file whose place is taken), `activation`
 //! (the dry run that turns automatic management on), `automatic` (runs
 //! after a scan or an import), `after_apply` (bookkeeping and media-server
-//! refreshes), `recovery` (writes that need an administrator), and
-//! `placement` (how safely each library folder can be written to).
+//! refreshes), `recovery` (writes that need an administrator),
+//! `placement` (how safely each library folder can be written to), and
+//! `takeover` (albums whose files were changed outside the app, which
+//! automatic management then leaves alone).
 
 pub mod activation;
 pub mod after_apply;
@@ -37,6 +39,7 @@ pub mod selection;
 pub mod service;
 pub mod store;
 pub mod tag_edit;
+pub mod takeover;
 
 use std::time::Duration;
 

@@ -5008,6 +5008,360 @@ async fn library_management_artwork_journey() {
     );
 }
 
+/// A library whose `music` folder is managed by the Picard-style profile
+/// without asking, once [`ManagedLibrary::activate`] has confirmed a dry
+/// run for it.
+struct ManagedLibrary {
+    scratch: ScratchDir,
+    library: LibrarySetup,
+    music: PathBuf,
+}
+
+impl ManagedLibrary {
+    /// An empty library with its settings saved; `configure` changes the
+    /// profile before anything pins it.
+    async fn start(
+        tag: &str,
+        configure: impl Fn(&mut droppedneedle::runtime_config::sections::LibraryManagementProfile),
+    ) -> Self {
+        use droppedneedle::settings::management as lm;
+        let (scratch, library, music) = bare_library(tag);
+        std::fs::create_dir_all(&music).expect("music folder");
+        add_music_root(&library, &music).await;
+        library
+            .scan_store
+            .execute_batch_for_tests(
+                "INSERT INTO auth_users (id, display_name, role, created_at) \
+                 VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+            )
+            .expect("admin row");
+        let mut settings = lm::initial_settings("");
+        for profile in settings
+            .profiles
+            .iter_mut()
+            .filter(|profile| profile.id == lm::PICARD_ORGANIZER_PROFILE_ID)
+        {
+            configure(profile);
+        }
+        library.config.save(settings).expect("settings saved");
+        lm::service::LibraryManagementService::new(
+            library.config.clone(),
+            library.ids.clone(),
+            Arc::new(lm::StructuralCompiler),
+        )
+        .get_settings()
+        .expect("settings normalized");
+        Self {
+            scratch,
+            library,
+            music,
+        }
+    }
+
+    fn db(&self) -> rusqlite::Connection {
+        droppedneedle::db::open_connection(&self.scratch.to_path_buf().join("app.db"))
+            .expect("db opens")
+    }
+
+    fn management(&self) -> droppedneedle::library::management::service::Management {
+        droppedneedle::library::management::service::Management::new(&self.library)
+    }
+
+    fn settings_revision(&self) -> String {
+        droppedneedle::settings::management::settings_revision(
+            &self
+                .library
+                .config
+                .get::<droppedneedle::runtime_config::sections::LibraryManagement>()
+                .expect("settings read"),
+        )
+    }
+
+    /// Plant `tracks` copies of the fixture as one album in `folder`,
+    /// scan, identify it and confirm the match. Returns the album and its
+    /// tracks in order.
+    async fn add_album(&self, folder: &str, tracks: usize) -> (String, Vec<String>) {
+        use droppedneedle::library::tags::TagField;
+        use droppedneedle::library::tags::save::{TagEdit, save_tags};
+        let mut relative = Vec::new();
+        for number in 1..=tracks {
+            let rel = format!("{folder}/{number:02}.flac");
+            let file = plant(&self.music, &rel, "management_full.flac");
+            // Its own title, so no two files are named alike.
+            let mut edits = vec![TagEdit::verbatim(
+                TagField::Title,
+                vec![format!("{folder} {number}")],
+            )];
+            if number > 1 {
+                edits.extend([
+                    TagEdit::verbatim(TagField::TrackNumber, vec![number.to_string()]),
+                    TagEdit::verbatim(TagField::MusicBrainzRecordingId, Vec::new()),
+                    TagEdit::verbatim(TagField::MusicBrainzReleaseTrackId, Vec::new()),
+                ]);
+            }
+            save_tags(&file, &edits).expect("track retagged");
+            relative.push(rel);
+        }
+        rescan(&self.library).await;
+        let ids: Vec<String> = relative
+            .iter()
+            .map(|rel| {
+                self.library
+                    .scan_store
+                    .track_at("music", rel)
+                    .expect("track indexed")
+            })
+            .collect();
+        let album = self
+            .library
+            .scan_store
+            .album_for_track(&ids[0])
+            .expect("album");
+        self.library
+            .test_providers
+            .as_ref()
+            .expect("scripted providers")
+            .set_recall(ambiguous_recall(&self.library.identify_store, &album));
+        assert_eq!(self.library.identify_tick().await, 1);
+        droppedneedle::library::operations::service::Operations::new(&self.library)
+            .confirm_match(&album, "admin")
+            .expect("match confirmed");
+        (album, ids)
+    }
+
+    /// Turn automatic management on for the folder: a dry run, confirmed.
+    async fn activate(&self) {
+        use droppedneedle::library::management::activation::{
+            ActivationConfirm, ActivationProof, ActivationRequest,
+        };
+        use droppedneedle::runtime_config::sections::{
+            LibraryManagement, LibraryManagementRootAssignment,
+        };
+        let management = self.management();
+        let mut proposed = self
+            .library
+            .config
+            .get::<LibraryManagement>()
+            .expect("settings read");
+        match proposed
+            .root_assignments
+            .iter_mut()
+            .find(|assignment| assignment.root_id == "music")
+        {
+            Some(assignment) => {
+                assignment.enabled = true;
+                assignment.automatic_scan_discovered = true;
+            }
+            None => proposed
+                .root_assignments
+                .push(LibraryManagementRootAssignment {
+                    root_id: "music".to_owned(),
+                    profile_id: Some(
+                        droppedneedle::settings::management::PICARD_ORGANIZER_PROFILE_ID.to_owned(),
+                    ),
+                    enabled: true,
+                    automatic_scan_discovered: true,
+                    ..Default::default()
+                }),
+        }
+        let dry_run = management
+            .create_activation(
+                ActivationRequest {
+                    root_id: "music".to_owned(),
+                    settings: proposed.clone(),
+                    expected_settings_revision: self.settings_revision(),
+                    expected_policy_revision: self
+                        .library
+                        .live_registry()
+                        .policy_revision()
+                        .to_owned(),
+                    idempotency_key: Some("dry-run".to_owned()),
+                },
+                "admin",
+            )
+            .expect("dry run");
+        assert!(
+            management_step(&self.library).await,
+            "dry run planning runs"
+        );
+        management
+            .confirm_activation(
+                ActivationConfirm {
+                    settings: proposed,
+                    proofs: vec![ActivationProof {
+                        root_id: "music".to_owned(),
+                        job_id: dry_run.job_id,
+                        preview_token: dry_run.preview_token,
+                    }],
+                    expected_settings_revision: self.settings_revision(),
+                    confirmation: true,
+                },
+                "admin",
+            )
+            .expect("activation confirmed");
+    }
+
+    /// Have automatic management look at the album now, and run whatever
+    /// it starts to the end.
+    async fn look(&self, album: &str) {
+        self.library.queue_automatic_management(album);
+        self.worker_looks().await;
+    }
+
+    /// Let the worker look at every waiting album and finish its runs.
+    async fn worker_looks(&self) {
+        let management = self.management();
+        while management.automatic_next().expect("automatic step") {}
+        while management_step(&self.library).await {}
+    }
+
+    /// Where the track's file is now.
+    fn path(&self, track: &str) -> PathBuf {
+        let rel: String = self
+            .db()
+            .query_row(
+                "SELECT relative_path FROM local_tracks WHERE id = ?1",
+                [track],
+                |row| row.get(0),
+            )
+            .expect("track path");
+        self.music.join(rel)
+    }
+
+    /// The bytes the app recorded for the track's file.
+    fn recorded(&self, track: &str) -> Option<String> {
+        self.db()
+            .query_row(
+                "SELECT written_sha256 FROM library_track_management_state \
+                 WHERE local_track_id = ?1",
+                [track],
+                |row| row.get(0),
+            )
+            .unwrap_or(None)
+    }
+
+    /// The automatic runs so far, oldest first: state and terminal code.
+    fn automatic_runs(&self) -> Vec<(String, Option<String>)> {
+        let (history, _) = self
+            .management()
+            .history(Default::default())
+            .expect("history");
+        history
+            .iter()
+            .rev()
+            .filter(|item| item.origin == "scan_discovered")
+            .map(|item| {
+                (
+                    item.job.state.as_str().to_owned(),
+                    item.job.terminal_code.clone(),
+                )
+            })
+            .collect()
+    }
+}
+
+fn file_sha256(path: &Path) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(std::fs::read(path).expect("file reads"));
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// The values v2's own code gives for `managed_path_revision`, from a
+/// scratch copy of its `_hash_file` and both formula sites (`main` at
+/// cf7278a1) run on these fixtures. v3 must compute the same bytes, or
+/// every album v2 managed would read as changed after an upgrade.
+#[test]
+fn v2_path_revision_matches_v2() {
+    use droppedneedle::library::management::takeover::v2_path_revision;
+    let cases = [
+        (
+            "music",
+            "Artist/Album/01 Track.flac",
+            "management_full.flac",
+            "658fe3ecf890e4dd1d30a9cf56df3c4cabb16b6afb8bd919b234b24cf450dc18",
+        ),
+        (
+            "3f0c9a52-7d1e-4b0a-9c55-0d5a7e1b2c3d",
+            "incoming/a.mp3",
+            "mp3_full_01.mp3",
+            "9f472d49af0a94bd220804a21fc007e8c7a10a966e1c592b70c8ecdf578f8cd7",
+        ),
+        (
+            "music",
+            "x.m4a",
+            "m4a_full_01.m4a",
+            "140c24909442ce3398474f4b775c28b52444c798cd128e76a0b272b82215700e",
+        ),
+        (
+            "music",
+            "Bj\u{f6}rk \u{2013} \u{dc}n\u{ef}code \u{2713}/\u{65e5}\u{672c}\u{8a9e}/01 \u{2013} tr\u{101}ck.flac",
+            "management_full.flac",
+            "10c3af7a12bde5ad2cc771b4c6f489cc60d772b1ead4ed43e487f59905ae8755",
+        ),
+    ];
+    for (root, relative, fixture, expected) in cases {
+        let file = file_sha256(&fixtures_dir().join(fixture));
+        assert_eq!(
+            v2_path_revision(root, relative, &file),
+            expected,
+            "{relative}"
+        );
+    }
+}
+
+/// The app remembers the bytes of every file it writes or accepts: a file
+/// a run wrote has the hash of what the run left, and a file a run found
+/// the way it wanted has the hash of what it found.
+#[tokio::test]
+async fn the_app_records_the_bytes_it_writes() {
+    let managed = ManagedLibrary::start("lib-written-bytes", |_| {}).await;
+    let (album, tracks) = managed.add_album("incoming", 1).await;
+    managed.activate().await;
+    assert_eq!(managed.recorded(&tracks[0]), None, "nothing written yet");
+
+    managed.look(&album).await;
+    let written = managed.path(&tracks[0]);
+    assert_ne!(written, managed.music.join("incoming/01.flac"), "moved");
+    assert_eq!(
+        managed.recorded(&tracks[0]),
+        Some(file_sha256(&written)),
+        "the commit records what it placed"
+    );
+
+    // A new match revision with nothing to change: the run ends unchanged
+    // and records the bytes it found.
+    let bytes = std::fs::read(&written).expect("file reads");
+    managed
+        .db()
+        .execute(
+            "UPDATE library_track_management_state SET written_sha256 = NULL",
+            [],
+        )
+        .expect("record cleared");
+    managed
+        .db()
+        .execute(
+            "UPDATE local_album_external_identities SET row_revision = row_revision + 1 \
+             WHERE local_album_id = ?1",
+            [&album],
+        )
+        .expect("identity bumped");
+    managed.look(&album).await;
+    assert_eq!(
+        managed.automatic_runs().last(),
+        Some(&(
+            "succeeded".to_owned(),
+            Some("MANAGEMENT_UNCHANGED".to_owned())
+        ))
+    );
+    assert_eq!(std::fs::read(&written).expect("file reads"), bytes);
+    assert_eq!(managed.recorded(&tracks[0]), Some(file_sha256(&written)));
+}
+
 /// Every file below `dir`.
 fn walk_files(dir: &std::path::Path) -> Vec<PathBuf> {
     let mut found = Vec::new();

@@ -177,13 +177,16 @@ impl Catalog for SqliteCatalog {
             } else {
                 move_track(conn, track)?;
             }
+            // `written_sha256` is the app's record of the bytes it placed:
+            // a file that no longer has them was changed outside the app.
             conn.execute(
                 "INSERT INTO library_track_management_state (local_track_id, managed_root_id, \
-                 applied_projection_hash, last_outcome, last_managed_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5) \
+                 applied_projection_hash, written_sha256, last_outcome, last_managed_at) \
+                 VALUES (?1, ?2, ?3, ?3, ?4, ?5) \
                  ON CONFLICT (local_track_id) DO UPDATE SET \
                  managed_root_id = excluded.managed_root_id, \
                  applied_projection_hash = excluded.applied_projection_hash, \
+                 written_sha256 = excluded.written_sha256, \
                  last_outcome = excluded.last_outcome, \
                  last_managed_at = excluded.last_managed_at, \
                  row_revision = library_track_management_state.row_revision + 1",

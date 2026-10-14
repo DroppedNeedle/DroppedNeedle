@@ -103,6 +103,7 @@ impl Management {
                     album_identity: Option<u64>,
                     track_identity: Option<u64>,
                     path: Option<String>,
+                    found: Option<String>,
                 }
                 let marks: Vec<Mark> = written
                     .filter_map(|item| {
@@ -120,6 +121,10 @@ impl Management {
                             path: sandbox.as_ref().and_then(|sandbox| {
                                 super::automatic::path_revision(sandbox, &root, &rel)
                             }),
+                            // A file with no plan of its own was left as
+                            // the plan read it.
+                            found: (item.desired.plan.is_none() && !item.fingerprint.is_empty())
+                                .then(|| item.fingerprint.clone()),
                             track_id,
                             root,
                         })
@@ -140,6 +145,7 @@ impl Management {
                                 album_identity_revision: mark.album_identity,
                                 track_identity_revision: mark.track_identity,
                                 path_revision: mark.path.clone(),
+                                found_sha256: mark.found.as_deref(),
                             },
                             now,
                         )?;

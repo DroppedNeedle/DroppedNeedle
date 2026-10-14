@@ -61,7 +61,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 150);
+    assert_eq!(table_names(&pool).await.len(), 151);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -908,6 +908,123 @@ async fn retag_pair_checks_list_exactly_the_code_values() {
     }
     assert_eq!(RetagPairReason::parse("open"), None);
     assert_eq!(RetagPairState::parse("store_error"), None);
+}
+
+/// Migration 0044 adds the table of albums the app stepped back from and
+/// two columns. A database from before it keeps its rows, gains the table
+/// empty and the columns NULL, so an upgrade marks nothing by itself. A
+/// mark goes with its album and never keeps one from being deleted.
+#[tokio::test]
+async fn album_takeovers_arrive_empty_and_go_with_their_album() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 44)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+         ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         album_title, album_title_folded, file_format, ingest_source, imported_at, \
+         membership_source) VALUES ('t1', 'al1', 'r1', '/m/t1', 't1', 'h1', 1, 1, 's1', \
+         'One', 'one', 'T', 't', 'flac', 'scan', 1, 'automatic'); \
+         INSERT INTO library_track_management_state (local_track_id, managed_path_revision, \
+         last_outcome) VALUES ('t1', 'v2-value', 'succeeded'); \
+         INSERT INTO library_management_automatic_queue (local_album_id, queued_at, not_before) \
+         VALUES ('al1', 1, 1);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let count = |sql: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(sql)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(
+        count("SELECT COUNT(*) FROM library_album_takeovers").await,
+        0
+    );
+    assert_eq!(
+        count(
+            "SELECT COUNT(*) FROM library_track_management_state WHERE local_track_id = 't1' \
+             AND managed_path_revision = 'v2-value' AND written_sha256 IS NULL"
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        count(
+            "SELECT COUNT(*) FROM library_management_automatic_queue \
+             WHERE local_album_id = 'al1' AND retag_followed_at IS NULL"
+        )
+        .await,
+        1
+    );
+
+    sqlx::raw_sql(
+        "PRAGMA foreign_keys = ON; \
+         INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+         VALUES ('al1', 'files_changed', 1000); \
+         DELETE FROM library_track_management_state; \
+         DELETE FROM local_tracks; \
+         DELETE FROM local_albums WHERE id = 'al1';",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count("SELECT COUNT(*) FROM library_album_takeovers").await,
+        0
+    );
+    assert_eq!(count("SELECT COUNT(*) FROM local_albums").await, 0);
+}
+
+/// The causes a takeover may carry in the database are exactly the ones
+/// the code names, in both directions.
+#[tokio::test]
+async fn takeover_check_lists_exactly_the_code_values() {
+    use droppedneedle::library::management::takeover::Cause;
+
+    let pool = migrated_pool().await;
+    let sql: String =
+        sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE name = 'library_album_takeovers'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let marker = "CHECK(cause IN (";
+    let values = &sql[sql.find(marker).expect("the column has a CHECK") + marker.len()..];
+    let listed: Vec<String> = values[..values.find(')').expect("the list ends")]
+        .split(',')
+        .map(|value| value.trim().trim_matches('\'').to_owned())
+        .collect();
+    assert_eq!(listed, Cause::ALL.map(|cause| cause.as_str().to_owned()));
+    for cause in Cause::ALL {
+        assert_eq!(Cause::parse(cause.as_str()), Some(cause));
+    }
+    assert_eq!(Cause::parse("your_choice"), None);
 }
 
 /// Every table in the migrated schema is listed once in

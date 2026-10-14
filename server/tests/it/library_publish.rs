@@ -562,7 +562,29 @@ fn crash_at_every_phase_resumes_without_half_state() {
             // Full staged bytes, never half: the planned title is in
             // the tags and the file still decodes.
             assert_staged(&dest, &item.track_id);
+            // The roll-forward records the bytes it placed as the app's.
+            let recorded: Option<String> = conn
+                .query_row(
+                    "SELECT written_sha256 FROM library_track_management_state \
+                     WHERE local_track_id = ?1",
+                    [&item.track_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                recorded,
+                Some(droppedneedle::library::publish::snapshots::sha256_hex(
+                    &std::fs::read(&dest).unwrap()
+                )),
+                "{point:?}: the placed bytes are recorded"
+            );
         }
+        let marks: i64 = conn
+            .query_row("SELECT COUNT(*) FROM library_album_takeovers", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(marks, 0, "{point:?}: the app's own write marks nothing");
         assert!(
             hidden_leftovers(&fix.dir).is_empty(),
             "{point:?}: no staging debris remains"

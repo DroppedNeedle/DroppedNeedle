@@ -117,6 +117,7 @@ youtube_track_links
 audio_fingerprint_outcomes
 library_album_match_state
 library_album_release_pins
+library_album_takeovers
 library_artist_credit_proofs
 library_artist_reconciliation_dismissals
 library_artist_reconciliation_state
