@@ -107,6 +107,8 @@ pub mod fake;
 
 use std::collections::HashMap;
 
+use crate::runtime_config::sections::DownloadAccess;
+
 // Seam surface: public for the HTTP adapter.
 pub use auth::{Credentials, Principal, classify};
 pub use error::{GENERIC, PARAM_MISSING, SubsonicError};
@@ -173,6 +175,8 @@ pub struct Settings {
     pub ffmpeg_available: bool,
     /// Public base URL (for credential-free cover URLs).
     pub base_url: String,
+    /// The admin's setting for who may download library files.
+    pub download_access: DownloadAccess,
 }
 
 impl Default for Settings {
@@ -188,6 +192,7 @@ impl Default for Settings {
             transcode_max_bitrate_kbps: 320,
             ffmpeg_available: false,
             base_url: "http://localhost".to_owned(),
+            download_access: DownloadAccess::Everyone,
         }
     }
 }

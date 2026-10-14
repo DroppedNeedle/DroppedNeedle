@@ -1,7 +1,8 @@
 //! Compat settings, read per request.
 //!
 //! The kill switches, advertised names and transcode policy live in the
-//! `connect_apps` settings section. [`LiveSettings`] resolves them on every
+//! `connect_apps` settings section, and who may download library files in
+//! `security_settings`. [`LiveSettings`] resolves them on every
 //! request, so a change in Settings takes effect at once instead of at the
 //! next restart. Tests pin fixed values with `From<Settings>` and
 //! `From<JellyfinSettings>`.
@@ -11,7 +12,7 @@ use std::sync::Arc;
 use crate::compat::jellyfin::seams::JellyfinSettings;
 use crate::compat::subsonic::Settings;
 use crate::runtime_config::ConfigStore;
-use crate::runtime_config::sections::{AudioFormat, ConnectApps};
+use crate::runtime_config::sections::{AudioFormat, ConnectApps, DownloadAccess, SecuritySettings};
 
 /// Where the compat settings come from.
 pub trait SettingsSource: Send + Sync {
@@ -93,6 +94,20 @@ impl ConfigSettings {
     }
 }
 
+impl ConfigSettings {
+    /// Who may download library files. Admins only when the setting cannot
+    /// be read: a broken config must never widen a permission.
+    fn download_access(&self) -> DownloadAccess {
+        match self.store.get::<SecuritySettings>() {
+            Ok(security) => security.library_download_access,
+            Err(error) => {
+                tracing::warn!(%error, "security settings unreadable; compat downloads are admin-only");
+                DownloadAccess::Admin
+            }
+        }
+    }
+}
+
 fn output_format(format: AudioFormat) -> String {
     match format {
         AudioFormat::Opus => "opus".to_owned(),
@@ -112,6 +127,7 @@ impl SettingsSource for ConfigSettings {
             transcode_max_bitrate_kbps: apps.transcode_max_bitrate_kbps,
             ffmpeg_available: self.ffmpeg_available,
             base_url: String::new(),
+            download_access: self.download_access(),
         }
     }
 
@@ -125,6 +141,51 @@ impl SettingsSource for ConfigSettings {
             transcode_max_bitrate_kbps: apps.transcode_max_bitrate_kbps.clamp(32, 1411) as u32,
             transcode_default_format: output_format(apps.transcode_default_format),
             ffmpeg_available: self.ffmpeg_available,
+            download_access: self.download_access(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime_config::Crypto;
+
+    /// What both protocols read as the download setting from a config file
+    /// holding `config`.
+    fn download_access(tag: &str, config: &str) -> [DownloadAccess; 2] {
+        let dir = std::env::temp_dir().join(format!("dn-compat-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("scratch folder");
+        std::fs::write(dir.join("config.json"), config).expect("config writes");
+        let crypto = Crypto::from_key_bytes(&[7u8; 32]).expect("test key");
+        let store = ConfigStore::open(&dir.join("config.json"), crypto).expect("store opens");
+        let live = LiveSettings::from_config(Arc::new(store));
+        std::fs::remove_dir_all(&dir).expect("scratch folder removed");
+        [
+            live.jellyfin().download_access,
+            live.subsonic().download_access,
+        ]
+    }
+
+    /// A security section that cannot be decoded never opens downloads in
+    /// player apps: they are left to admins, not to everyone.
+    #[test]
+    fn unreadable_security_settings_leave_downloads_to_admins() {
+        for (tag, section) in [
+            ("unknown", r#"{"library_download_access": "nobody"}"#),
+            ("mistyped", "7"),
+        ] {
+            let config = format!(r#"{{"security_settings": {section}}}"#);
+            assert_eq!(
+                download_access(tag, &config),
+                [DownloadAccess::Admin; 2],
+                "{section}"
+            );
+        }
+        // A section that was never saved is the default, not a fault.
+        assert_eq!(
+            download_access("absent", "{}"),
+            [DownloadAccess::Everyone; 2]
+        );
     }
 }

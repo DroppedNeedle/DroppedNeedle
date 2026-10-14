@@ -23,8 +23,8 @@ pub struct CompatProfile {
     pub username_display: String,
     /// Display name.
     pub display_name: String,
-    /// Admin role.
-    pub is_admin: bool,
+    /// `user`, `trusted` or `admin`.
+    pub role: String,
 }
 
 /// User-id → profile lookup behind the compat principals.
@@ -45,7 +45,7 @@ impl CompatProfiles for UsersDeps {
                 .unwrap_or_else(|| username.clone()),
             username,
             display_name: row.display_name,
-            is_admin: row.role.as_str() == "admin",
+            role: row.role.as_str().to_owned(),
         })
     }
 }
@@ -74,8 +74,8 @@ impl Principal for CompatPrincipal {
         &self.profile.display_name
     }
 
-    fn is_admin(&self) -> bool {
-        self.profile.is_admin
+    fn role(&self) -> &str {
+        &self.profile.role
     }
 }
 

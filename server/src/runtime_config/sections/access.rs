@@ -22,6 +22,18 @@ pub enum DownloadAccess {
     Admin,
 }
 
+impl DownloadAccess {
+    /// Whether `role` may download library files.
+    #[must_use]
+    pub fn admits(self, role: &str) -> bool {
+        match self {
+            Self::Everyone => true,
+            Self::Trusted => role == "admin" || role == "trusted",
+            Self::Admin => role == "admin",
+        }
+    }
+}
+
 /// Security posture settings (no secrets; the HIBP path is a local file).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
@@ -57,11 +69,7 @@ impl SecuritySettings {
     /// Whether `role` may download library files.
     #[must_use]
     pub fn download_allowed(&self, role: &str) -> bool {
-        match self.library_download_access {
-            DownloadAccess::Everyone => true,
-            DownloadAccess::Trusted => role == "admin" || role == "trusted",
-            DownloadAccess::Admin => role == "admin",
-        }
+        self.library_download_access.admits(role)
     }
 }
 

@@ -808,6 +808,147 @@ async fn subsonic_made_playlist_cover_is_private_to_its_readers() {
     rig.stop().await;
 }
 
+/// The admin's setting for who may download library files holds in player
+/// apps. A user it excludes is told so and is refused the original file; a
+/// user it admits is told so and is served. Playing is not downloading:
+/// everyone still streams.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn download_setting_holds_in_player_apps() {
+    let rig = CompatApp::start("compat-download-setting").await;
+    let app = &rig.app;
+    let users = [
+        (PLAYER, rig.secret.clone()),
+        ("tris", rig.trusted_secret("tris").await),
+        ("admin", rig.admin_secret().await),
+    ];
+    let admin = app.login_admin().await;
+    let admin = [("authorization", admin.as_str())];
+
+    let (_, items) = app
+        .call(
+            "GET",
+            &format!(
+                "/jellyfin/Items?includeItemTypes=Audio&Recursive=true&api_key={}",
+                rig.secret
+            ),
+            &[],
+            None,
+        )
+        .await;
+    let flac = named(&items["Items"], "Name", "Airbag")["Id"]
+        .as_str()
+        .expect("track id")
+        .to_owned();
+    let (_, found) = app
+        .call(
+            "GET",
+            &rest(
+                "search3?query=One&songCount=5",
+                &rig.subsonic_auth("journey"),
+            ),
+            &[],
+            None,
+        )
+        .await;
+    let mp3 = named(
+        &found["subsonic-response"]["searchResult3"]["song"],
+        "title",
+        "One",
+    )["id"]
+        .as_str()
+        .expect("song id")
+        .to_owned();
+    let (airbag, one) = (rig.file("airbag"), rig.file("one"));
+
+    let mut wrong: Vec<String> = Vec::new();
+    for (setting, admitted) in [
+        ("everyone", [true, true, true]),
+        ("trusted", [false, true, true]),
+        ("admin", [false, false, true]),
+    ] {
+        let (status, mut security) = app
+            .call("GET", "/api/v3/settings/security", &admin, None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{security}");
+        security["library_download_access"] = json!(setting);
+        let (status, saved) = app
+            .call("PUT", "/api/v3/settings/security", &admin, Some(security))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{saved}");
+
+        for ((name, secret), may) in users.iter().zip(admitted) {
+            let case = format!("{name}, downloads for {setting}");
+            let key = format!("api_key={secret}");
+
+            let (status, echo) = app
+                .call(
+                    "POST",
+                    "/jellyfin/Users/AuthenticateByName",
+                    &[],
+                    Some(json!({"Username": name, "Pw": secret})),
+                )
+                .await;
+            assert_eq!(status, StatusCode::OK, "{case}");
+            let (status, me) = app
+                .call("GET", &format!("/jellyfin/Users/Me?{key}"), &[], None)
+                .await;
+            assert_eq!(status, StatusCode::OK, "{case}");
+            for (policy, at) in [
+                (&echo["User"]["Policy"], "sign-in"),
+                (&me["Policy"], "who am I"),
+            ] {
+                let told = &policy["EnableContentDownloading"];
+                if *told != json!(may) {
+                    wrong.push(format!("{case}: EnableContentDownloading {told} at {at}"));
+                }
+            }
+            let uri = format!("/jellyfin/Audio/{flac}/stream?{key}");
+            let (status, _, bytes) = app.raw("GET", &uri, &[], None).await;
+            if status != StatusCode::OK || bytes != airbag {
+                wrong.push(format!("{case}: Jellyfin stream is {status}"));
+            }
+
+            let auth = format!("u={name}&p={secret}&v=1.16.1&c=journey&f=json");
+            let (_, user) = app
+                .call(
+                    "GET",
+                    &rest(&format!("getUser?username={name}"), &auth),
+                    &[],
+                    None,
+                )
+                .await;
+            let told = &user["subsonic-response"]["user"]["downloadRole"];
+            if *told != json!(may) {
+                wrong.push(format!("{case}: downloadRole {told}"));
+            }
+            for method in ["GET", "HEAD"] {
+                let uri = rest(&format!("download?id={mp3}"), &auth);
+                let (status, headers, bytes) = app.raw(method, &uri, &[], None).await;
+                let kind = header_str(&headers, "content-type");
+                let served = kind == "audio/mpeg" && (method == "HEAD" || bytes == one);
+                // A Subsonic refusal is an answer: code 50, not authorized.
+                let code = serde_json::from_slice::<Value>(&bytes)
+                    .map(|body| body["subsonic-response"]["error"]["code"].clone());
+                let refused = kind == "application/json"
+                    && (method == "HEAD" || code.is_ok_and(|code| code == json!(50)));
+                if !(status == StatusCode::OK && if may { served } else { refused }) {
+                    wrong.push(format!(
+                        "{case}: {method} Subsonic download is {status} with {} bytes",
+                        bytes.len()
+                    ));
+                }
+            }
+            let uri = rest(&format!("stream?id={mp3}"), &auth);
+            let (status, _, bytes) = app.raw("GET", &uri, &[], None).await;
+            if status != StatusCode::OK || bytes != one {
+                wrong.push(format!("{case}: Subsonic stream is {status}"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    rig.stop().await;
+}
+
 /// Tripwire: no golden recorded from the library carries a credential.
 #[test]
 fn library_goldens_carry_no_credentials() {

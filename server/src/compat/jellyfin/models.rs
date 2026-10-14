@@ -140,6 +140,7 @@ pub struct UserPolicy {
     pub enable_audio_playback_transcoding: bool,
     pub enable_video_playback_transcoding: bool,
     pub enable_playback_remuxing: bool,
+    /// True for a user the admin's download setting admits.
     pub enable_content_downloading: bool,
     pub enable_remote_access: bool,
     pub enable_sync_transcoding: bool,
@@ -193,7 +194,7 @@ impl UserPolicy {
             enable_audio_playback_transcoding: facts.audio_transcoding,
             enable_video_playback_transcoding: false,
             enable_playback_remuxing: false,
-            enable_content_downloading: true,
+            enable_content_downloading: facts.content_downloading,
             enable_remote_access: true,
             enable_sync_transcoding: false,
             enable_user_preference_access: false,

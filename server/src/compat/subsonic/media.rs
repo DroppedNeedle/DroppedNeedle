@@ -2,7 +2,7 @@
 //! v2: the Subsonic router's endpoint functions.
 
 use super::auth::Principal;
-use super::error::{NOT_FOUND, SubsonicError};
+use super::error::{NOT_AUTHORIZED, NOT_FOUND, SubsonicError};
 use super::ids::{IdKind, decode, decode_expect};
 use super::models::{Render, SStreamDetails, STranscodeDecision};
 use super::store::{ClientInfo, Store};
@@ -255,9 +255,17 @@ pub async fn stream<P: Principal, S: Store, B: AudioBackend>(
 }
 
 /// Download: always original bytes, with a sanitized attachment filename.
+/// A user the admin's download setting excludes is refused with code 50,
+/// the Subsonic API's "not authorized for the given operation".
 pub async fn download<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
+    if !ctx.settings.download_access.admits(ctx.user()?.role()) {
+        return Err(SubsonicError::new(
+            NOT_AUTHORIZED,
+            "Library downloads are restricted by the administrator",
+        ));
+    }
     let fid = decode_expect(&ctx.p("id")?.unwrap_or_default(), IdKind::Track)?;
     let track = ctx
         .store

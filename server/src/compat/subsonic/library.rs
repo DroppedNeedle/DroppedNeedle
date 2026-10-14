@@ -1196,6 +1196,7 @@ pub async fn user<P: Principal, S: Store, B: AudioBackend>(
         SUser::caller(
             effective_username(caller),
             caller.is_admin(),
+            ctx.settings.download_access.admits(caller.role()),
             ctx.settings.transcode_max_bitrate_kbps,
         )
         .render(),

@@ -61,7 +61,7 @@ impl CompatProfiles for JourneyProfiles {
             username: "alice".to_owned(),
             username_display: "Alice".to_owned(),
             display_name: "Alice".to_owned(),
-            is_admin: false,
+            role: "user".to_owned(),
         })
     }
 }
@@ -76,6 +76,7 @@ fn subsonic_settings() -> SubsonicSettings {
         transcode_max_bitrate_kbps: 320,
         ffmpeg_available: true,
         base_url: String::new(),
+        download_access: droppedneedle::runtime_config::sections::DownloadAccess::Everyone,
     }
 }
 
@@ -88,6 +89,7 @@ fn jellyfin_settings() -> JellyfinSettings {
         transcode_max_bitrate_kbps: 320,
         transcode_default_format: "mp3".to_owned(),
         ffmpeg_available: true,
+        download_access: droppedneedle::runtime_config::sections::DownloadAccess::Everyone,
     }
 }
 

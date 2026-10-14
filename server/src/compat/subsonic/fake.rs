@@ -54,8 +54,8 @@ impl Principal for FakePrincipal {
         &self.display_name
     }
 
-    fn is_admin(&self) -> bool {
-        self.admin
+    fn role(&self) -> &str {
+        if self.admin { "admin" } else { "user" }
     }
 }
 

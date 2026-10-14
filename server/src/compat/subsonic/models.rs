@@ -1060,8 +1060,8 @@ impl Render for STranscodeDecision {
 }
 
 /// getUser payload (always the caller; the username param is ignored).
-/// Roles: admin implies admin+settings; everyone gets download, playlist,
-/// cover, and stream roles.
+/// Roles: admin implies admin+settings; everyone gets playlist, cover and
+/// stream roles; download follows the admin's download setting.
 #[derive(Debug, Clone, Default)]
 pub struct SUser {
     /// Caller username.
@@ -1072,7 +1072,7 @@ pub struct SUser {
     pub adminRole: bool,
     /// Settings role (admin only).
     pub settingsRole: bool,
-    /// Always true.
+    /// True for a user the admin's download setting admits.
     pub downloadRole: bool,
     /// Always false.
     pub uploadRole: bool,
@@ -1100,13 +1100,13 @@ pub struct SUser {
 
 impl SUser {
     /// Caller user object: admin flips admin+settings roles.
-    pub fn caller(username: String, is_admin: bool, max_bit_rate: i64) -> Self {
+    pub fn caller(username: String, is_admin: bool, may_download: bool, max_bit_rate: i64) -> Self {
         Self {
             username,
             scrobblingEnabled: true,
             adminRole: is_admin,
             settingsRole: is_admin,
-            downloadRole: true,
+            downloadRole: may_download,
             uploadRole: false,
             playlistRole: true,
             coverArtRole: true,

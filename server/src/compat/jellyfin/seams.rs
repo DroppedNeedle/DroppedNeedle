@@ -22,6 +22,8 @@
 
 use crate::auth::compat_auth::jellyfin::{JellyfinUser, PolicyFacts, effective_name};
 
+use crate::runtime_config::sections::DownloadAccess;
+
 use super::models::UserDto;
 
 // ===== Settings =====
@@ -45,13 +47,17 @@ pub struct JellyfinSettings {
     pub transcode_default_format: String,
     /// Whether ffmpeg is present (silent direct fallback when absent).
     pub ffmpeg_available: bool,
+    /// The admin's setting for who may download library files.
+    pub download_access: DownloadAccess,
 }
 
 impl JellyfinSettings {
-    /// The policy values that depend on these settings.
-    pub fn policy_facts(&self) -> PolicyFacts {
+    /// The policy values that depend on these settings, for a user with
+    /// `role`.
+    pub fn policy_facts(&self, role: &str) -> PolicyFacts {
         PolicyFacts {
             audio_transcoding: self.transcoding_enabled && self.ffmpeg_available,
+            content_downloading: self.download_access.admits(role),
         }
     }
 }
@@ -66,6 +72,7 @@ impl Default for JellyfinSettings {
             transcode_max_bitrate_kbps: 320,
             transcode_default_format: "mp3".to_owned(),
             ffmpeg_available: true,
+            download_access: DownloadAccess::Everyone,
         }
     }
 }

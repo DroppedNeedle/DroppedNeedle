@@ -25,8 +25,12 @@ pub trait Principal: Clone + Send + Sync {
     }
     /// Display name (for now-playing attribution).
     fn display_name(&self) -> &str;
+    /// `user`, `trusted` or `admin` (the download setting).
+    fn role(&self) -> &str;
     /// Admin role (startScan gate, getUser roles).
-    fn is_admin(&self) -> bool;
+    fn is_admin(&self) -> bool {
+        self.role() == "admin"
+    }
 }
 
 /// Which auth scheme the request attempted (verified elsewhere).

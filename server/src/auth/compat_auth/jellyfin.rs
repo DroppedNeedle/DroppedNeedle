@@ -286,6 +286,9 @@ pub struct PolicyFacts {
     /// Transcoding is switched on and ffmpeg is present, so a request for
     /// transcoded audio is served.
     pub audio_transcoding: bool,
+    /// The admin's setting for who may download library files admits this
+    /// user.
+    pub content_downloading: bool,
 }
 
 /// The date Jellyfin 10.10.6 sends for "never" (.NET's `DateTime.MinValue`).
@@ -356,7 +359,12 @@ pub fn login_echo_json(
     );
     push_bool(&mut out, false, "EnableVideoPlaybackTranscoding", false);
     push_bool(&mut out, false, "EnablePlaybackRemuxing", false);
-    push_bool(&mut out, false, "EnableContentDownloading", true);
+    push_bool(
+        &mut out,
+        false,
+        "EnableContentDownloading",
+        policy.content_downloading,
+    );
     push_bool(&mut out, false, "EnableRemoteAccess", true);
     push_bool(&mut out, false, "EnableSyncTranscoding", false);
     push_bool(&mut out, false, "EnableUserPreferenceAccess", false);

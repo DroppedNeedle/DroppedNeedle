@@ -238,7 +238,7 @@ where
         application_version,
         remote_end_point,
     };
-    let policy = state.settings.jellyfin().policy_facts();
+    let policy = state.settings.jellyfin().policy_facts(&user.role);
     raw_json(
         StatusCode::OK,
         &login_echo_json(&user, &login.pw, &facts, policy),
@@ -274,7 +274,10 @@ where
             &authed.principal.user_dto(
                 &server_id(),
                 unix_now(),
-                state.settings.jellyfin().policy_facts(),
+                state
+                    .settings
+                    .jellyfin()
+                    .policy_facts(&authed.principal.role),
             ),
         ),
         Err(denied) => denied,

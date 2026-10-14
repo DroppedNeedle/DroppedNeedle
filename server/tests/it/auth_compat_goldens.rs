@@ -549,6 +549,7 @@ fn jellyfin_user() -> JellyfinUser {
 
 const POLICY: PolicyFacts = PolicyFacts {
     audio_transcoding: true,
+    content_downloading: true,
 };
 
 fn session_facts() -> SessionFacts {
