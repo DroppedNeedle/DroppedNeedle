@@ -12,9 +12,13 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 /// Why the two rows were not joined.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetagPairReason {
-    /// Half or more of the old album's track rows stayed behind.
+    /// Half or more of the old album's track rows stayed behind. Only
+    /// rows written before such an album was followed carry it; the merge
+    /// at the end of a run joins them.
     MostlyMissing,
-    /// The new row also holds files that arrived with the retag.
+    /// The new row also holds files that arrived with the retag. Only rows
+    /// written before such an album was followed carry it; the merge at
+    /// the end of a run joins them.
     NewFilesAdded,
     /// Some of the old album's tracks went to another album earlier.
     TracksElsewhere,

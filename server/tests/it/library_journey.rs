@@ -6417,6 +6417,102 @@ async fn a_handed_back_album_is_looked_at_afresh() {
     assert_eq!(managed.mark(&album), None);
 }
 
+impl ManagedLibrary {
+    /// The album the track row is on, whether its file is there or not.
+    fn album_of(&self, track: &str) -> String {
+        self.db()
+            .query_row(
+                "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+                [track],
+                |row| row.get(0),
+            )
+            .expect("track row")
+    }
+}
+
+/// The album tag in the file.
+fn album_tag(path: &Path) -> Vec<String> {
+    use droppedneedle::library::tags::{TagField, read_fields};
+    read_fields(path).expect("tags read")[&TagField::Album].clone()
+}
+
+const STEPPED_BACK: &str =
+    "SELECT COUNT(*) FROM library_catalog_actions WHERE action_kind = 'management_stepped_back'";
+
+/// The app's own write regroups an album too: the edition's title is not
+/// the album tag in the files, so the run changes the album tag and the
+/// next scan files them under a new name. With seven of the album's twelve
+/// tracks gone for more than a day, that scan follows the album, and
+/// nothing marks it.
+#[tokio::test]
+async fn the_apps_own_regroup_of_a_mostly_missing_album_is_followed_unmarked() {
+    let managed = ManagedLibrary::start("lib-takeover-own-regroup", |_| {}).await;
+    managed.add_album("first", 1).await;
+    let (album, tracks) = managed.add_album("second", 12).await;
+    managed
+        .db()
+        .execute(
+            "INSERT INTO library_management_metadata_snapshots (id, provider, entity_kind, \
+             entity_id, input_hash, canonical_payload_json, payload_sha256, fetched_at) \
+             SELECT id || '-retitled', provider, entity_kind, entity_id, input_hash, \
+             json_set(canonical_payload_json, '$.title', 'second (remastered)'), \
+             lower(hex(randomblob(32))), fetched_at + 1 \
+             FROM library_management_metadata_snapshots \
+             WHERE json_extract(canonical_payload_json, '$.title') = 'second'",
+            [],
+        )
+        .expect("edition retitled");
+    managed.activate().await;
+    for track in &tracks[5..] {
+        std::fs::remove_file(managed.path(track)).expect("file removed");
+    }
+    rescan(&managed.library).await;
+    managed
+        .db()
+        .execute(
+            "UPDATE local_tracks SET missing_since = missing_since - 86401 \
+             WHERE availability = 'missing'",
+            [],
+        )
+        .expect("gone a day");
+    let key = || -> String {
+        managed
+            .db()
+            .query_row(
+                "SELECT grouping_key FROM local_albums WHERE id = ?1",
+                [&album],
+                |row| row.get(0),
+            )
+            .expect("album key")
+    };
+    let before = key();
+
+    managed.look(&album).await;
+    for track in &tracks[..5] {
+        assert_eq!(
+            managed.recorded(track),
+            Some(file_sha256(&managed.path(track))),
+            "the app wrote the file"
+        );
+        assert_eq!(album_tag(&managed.path(track)), vec!["second (remastered)"]);
+    }
+    rescan(&managed.library).await;
+    managed.worker_looks().await;
+
+    assert_ne!(key(), before, "the scan regrouped the files");
+    for track in &tracks {
+        assert_eq!(managed.album_of(track), album, "followed");
+    }
+    assert_eq!(managed.count("SELECT COUNT(*) FROM local_albums"), 2);
+    assert_eq!(managed.count("SELECT COUNT(*) FROM library_retag_pairs"), 0);
+    assert_eq!(
+        managed.mark(&album),
+        None,
+        "the app's own write never marks"
+    );
+    assert_eq!(managed.count(STEPPED_BACK), 0);
+}
+
 /// Every file below `dir`.
 fn walk_files(dir: &std::path::Path) -> Vec<PathBuf> {
     let mut found = Vec::new();

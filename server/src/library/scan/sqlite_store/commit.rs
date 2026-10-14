@@ -958,7 +958,9 @@ fn write_item(
 /// row is then `missing` from before that run began.
 ///
 /// A row that is `excluded`, or `missing` since before the run began,
-/// holds nothing.
+/// holds nothing. When the rows left behind are half the album or more,
+/// the follow also waits until each of them has been gone a day
+/// ([`LONG_GONE_SECONDS`]).
 fn holds(track: &str, run: &str) -> String {
     format!(
         "({track}.availability = 'indexed' OR ({track}.availability = 'missing' \
@@ -967,21 +969,33 @@ fn holds(track: &str, run: &str) -> String {
     )
 }
 
-/// An album a track left in this run. It is followed when the whole album
-/// was retagged together:
+/// How long the rows a retag left behind must have been missing, when
+/// they are half the album or more, before the album is followed. In
+/// seconds, like `missing_since`. A share that drops out for a few scans
+/// must not hand the album's row and chosen edition to the few files that
+/// were retagged meanwhile. A missing row with no time counts as long
+/// gone.
+const LONG_GONE_SECONDS: f64 = 86_400.0;
+
+/// An album a track left in this run. It is followed when its files were
+/// retagged together:
 ///
 /// - no track row holds it any more ([`holds`]);
 /// - every track that left it in this run sits on one album;
-/// - that album holds no other track row, present or not;
-/// - more of its track rows moved than stayed behind (a tie is not
-///   enough): what is left of an album that lost most of its tracks long
-///   ago may be a new album, not the old one renamed.
+/// - that album holds no other track row, or only rows this run first
+///   indexed on a row this run made: files added with the retag, which
+///   come along;
+/// - when no more of its tracks moved than stayed behind (moved counts
+///   the tracks that left it in this run, never the added files), each
+///   row that stayed is excluded or has been missing a day
+///   ([`LONG_GONE_SECONDS`]). Until then nothing is done and nothing is
+///   recorded.
 ///
 /// The old row then takes over the new name and key, keeping its id,
-/// reviews and pins, and the new row goes, its plays, favorites and
-/// playlist entries passing to the old one. Rows left behind (missing or
-/// excluded tracks) are not written: they stay on the old row with their
-/// ids, plays and track matches. Returns the album that went.
+/// reviews and pins, and the new row goes, its tracks, plays, favorites
+/// and playlist entries passing to the old one. Rows left behind (missing
+/// or excluded tracks) are not written: they stay on the old row with
+/// their ids, plays and track matches. Returns the album that went.
 ///
 /// A match or a review that landed on the new row while the scan was half
 /// way through the album is settled by `settle_followed_match`: a
@@ -993,9 +1007,8 @@ fn holds(track: &str, run: &str) -> String {
 ///
 /// When the two rows look like one retagged album and both stay, the pair
 /// is recorded with the reason and the log names the two, once
-/// ([`RetagPair::leave_apart`]): the album lost most of its tracks, a
-/// file was added with the retag, two chosen matches differ, or the new
-/// row could not be deleted. A pair on record is not tried again, unless
+/// ([`RetagPair::leave_apart`]): two chosen matches differ, or the new row
+/// could not be deleted. A pair on record is not tried again, unless
 /// the store failed the last time and the pair is still open: one a
 /// person joined or dismissed is theirs. Nothing is recorded when the
 /// tracks went to an album that was there before or that holds tracks
@@ -1045,7 +1058,7 @@ fn follow_regrouped(
     // the row or one of those tracks was there before this run, a person
     // retagged the album into another one: nothing to say about it. When
     // this run made the row and first indexed every one of those tracks,
-    // files were added along with the retag.
+    // files were added along with the retag, and they come along.
     let (foreign, older): (bool, bool) = tx
         .prepare_cached(
             "WITH run AS (SELECT started_at FROM library_scan_runs WHERE id = ?1), \
@@ -1063,25 +1076,32 @@ fn follow_regrouped(
         .query_row(params![run_id, target, album_id], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })?;
-    if foreign {
-        if !older {
-            pair.leave_apart(tx, RetagPairReason::NewFilesAdded, None)?;
-        }
+    if foreign && older {
         return Ok(None);
     }
-    // Every row on the new album came from this one, so they are the
-    // tracks that moved.
+    // Files added with the retag never left the album: only the tracks
+    // that moved from it count against those that stayed.
     let (moved, stayed): (i64, i64) = tx
         .prepare_cached(
-            "SELECT (SELECT COUNT(*) FROM local_tracks WHERE local_album_id = ?1), \
+            "SELECT (SELECT COUNT(DISTINCT m.local_track_id) FROM library_scan_album_moves m \
+               JOIN local_tracks t ON t.id = m.local_track_id \
+               WHERE m.run_id = ?1 AND m.previous_album_id = ?2 AND t.local_album_id = ?3), \
              (SELECT COUNT(*) FROM local_tracks WHERE local_album_id = ?2)",
         )?
-        .query_row(params![target, album_id], |row| {
+        .query_row(params![run_id, album_id, target], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })?;
     if moved <= stayed {
-        pair.leave_apart(tx, RetagPairReason::MostlyMissing, None)?;
-        return Ok(None);
+        let waiting: bool = tx
+            .prepare_cached(
+                "SELECT EXISTS(SELECT 1 FROM local_tracks WHERE local_album_id = ?1 \
+                 AND availability != 'excluded' AND NOT (availability = 'missing' \
+                 AND (missing_since IS NULL OR missing_since <= ?2)))",
+            )?
+            .query_row(params![album_id, now - LONG_GONE_SECONDS], |row| row.get(0))?;
+        if waiting {
+            return Ok(None);
+        }
     }
     if chosen_matches_differ(tx, target, album_id)? {
         pair.leave_apart(tx, RetagPairReason::ChosenMatchesDiffer, None)?;

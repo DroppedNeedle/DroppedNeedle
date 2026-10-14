@@ -1598,63 +1598,100 @@ fn open_pair(album: &str, new_row: &str, reason: &str) -> Vec<(String, String, S
     )]
 }
 
-/// What is left of an album that lost most of its tracks long ago is not
-/// followed when it is retagged: the last files of a pruned album given a
-/// new name may be a new album. The chosen match stays where it was and
-/// the two rows are recorded for a person to look at. A tie counts as
-/// most.
+impl RegroupRig {
+    /// Move the time the missing tracks went missing `seconds` back.
+    fn age_missing(&self, seconds: i64) {
+        self.run(&format!(
+            "UPDATE local_tracks SET missing_since = missing_since - {seconds} \
+             WHERE availability = 'missing'"
+        ));
+    }
+}
+
+/// A day and a second.
+const OVER_A_DAY: i64 = 86_401;
+
+/// What is left of an album that lost most of its tracks is followed when
+/// it is retagged, once the tracks left behind have been gone a day: the
+/// album keeps its row and its match under the new name, the missing
+/// tracks stay on it, and nothing is recorded. A tie is followed too.
 #[tokio::test]
-async fn mostly_missing_album_is_recorded_not_followed() {
-    retag_warnings();
+async fn mostly_missing_album_is_followed_once_the_rest_is_long_gone() {
     for (name, count, kept) in [
         ("scan-regroup-mostly-missing", 12, 5),
         ("scan-regroup-missing-tie", 2, 1),
     ] {
         let (mut rig, files, album) = chosen_album(name, count).await;
         rig.lose(&files[kept..]).await;
+        rig.age_missing(OVER_A_DAY);
         let after = rig.after.clone();
         rig.tag(&files[..kept], &after);
         rig.scan().await;
 
+        assert_eq!(rig.album_of("a/t000.flac"), album, "{name}: followed");
+        assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1, "{name}");
+        assert_eq!(rig.rows_on(&album), count as i64, "{name}");
+        assert_eq!(
+            rig.count(&format!(
+                "SELECT COUNT(*) FROM local_albums a JOIN local_album_external_identities i \
+                 ON i.local_album_id = a.id WHERE a.id = '{album}' AND a.title = '{after}' \
+                 AND i.release_mbid = 'rel-1' AND i.decision_source = 'manual' \
+                 AND i.row_revision = 1"
+            )),
+            1,
+            "{name}: the kept row has the new name and the very match it had"
+        );
+        assert_eq!(retag_pairs(&rig), vec![], "{name}");
+    }
+}
+
+/// Tracks gone for less than a day may only be out of reach. When they
+/// are half the album or more, the retagged files do not take the album's
+/// row and match: nothing is followed and nothing is recorded. Files
+/// added with the retag never left the album, so they do not count
+/// towards it.
+#[tokio::test]
+async fn mostly_missing_album_waits_a_day() {
+    for (name, added) in [
+        ("scan-regroup-missing-recent", 0),
+        ("scan-regroup-missing-recent-added", 3),
+    ] {
+        let (mut rig, files, album) = chosen_album(name, 12).await;
+        rig.lose(&files[5..]).await;
+        rig.age_missing(3_600);
+        let mut retagged = files[..5].to_vec();
+        retagged.extend((0..added).map(|n| format!("a/n{n}.flac")));
+        let after = rig.after.clone();
+        rig.tag(&retagged, &after);
+        rig.scan().await;
+
         let new_row = rig.album_of("a/t000.flac");
         assert_ne!(new_row, album, "{name}: not followed");
-        assert_eq!(
-            retag_pairs(&rig),
-            open_pair(&album, &new_row, "mostly_missing"),
-            "{name}"
-        );
+        assert_eq!(rig.rows_on(&album), 7, "{name}");
+        assert_eq!(rig.rows_on(&new_row), 5 + added, "{name}");
+        assert_eq!(retag_pairs(&rig), vec![], "{name}");
         assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"), "{name}");
         assert_eq!(match_of(&rig, &new_row), None, "{name}");
-        assert!(
-            warned_both_kept(&album, &new_row),
-            "{name}: the log names both"
-        );
     }
 }
 
 /// An album retagged to a new name with a file added in the same go is
-/// not followed, because the new row holds a track the album never had.
-/// The new row and that file are both this scan's, so the two rows are
-/// recorded: otherwise the chosen match would sit on a row with no files
-/// and nothing would say so.
+/// followed: the kept row takes the added file too, and nothing is
+/// recorded.
 #[tokio::test]
-async fn retag_with_a_file_added_is_recorded_not_followed() {
-    retag_warnings();
+async fn retag_with_a_file_added_is_followed() {
     let (mut rig, mut files, album) = chosen_album("scan-regroup-file-added", 10).await;
     files.push("a/t010.flac".to_owned());
     let after = rig.after.clone();
     rig.tag(&files, &after);
     rig.scan().await;
 
-    let new_row = rig.album_of("a/t000.flac");
-    assert_ne!(new_row, album, "not followed");
-    assert_eq!(rig.rows_on(&new_row), 11);
-    assert_eq!(
-        retag_pairs(&rig),
-        open_pair(&album, &new_row, "new_files_added")
-    );
+    assert_eq!(rig.album_of("a/t000.flac"), album, "followed");
+    assert_eq!(rig.album_of("a/t010.flac"), album);
+    assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1);
+    assert_eq!(rig.rows_on(&album), 11);
+    assert_eq!(retag_pairs(&rig), vec![]);
     assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
-    assert!(warned_both_kept(&album, &new_row), "the log names both");
 }
 
 /// Files retagged into an album that was already there are a person
