@@ -15,8 +15,8 @@
 //!   the `fake` engine replays the same range/status contract over seeded
 //!   bytes so the goldens pin it. [`decide`] ports v2's transcode policy
 //!   rules verbatim for the PlaybackInfo direct/transcode fork.
-//! - Ids: [`IdMap`]. Production derives v2's deterministic
-//!   `sha256("kind:internal")[:32]` ids from the catalog.
+//! - Ids: [`IdMap`]. Production derives the ids from the catalog, album
+//!   and artist ids with the data key.
 //! - Playback sessions: [`PlaybackSessions`]. Production binds the
 //!   scrobble adapter (presence + scrobble forwarding).
 
@@ -135,10 +135,21 @@ impl Principal {
 pub trait IdMap: Clone + Send + Sync + 'static {
     /// Stable 32-hex id for a (kind, internal) pair.
     fn to_jf(&self, kind: &str, internal: &str) -> impl Future<Output = String> + Send;
-    /// Reverse lookup; accepts dashed or undashed input, `None` when unknown.
-    /// (`from_*` takes `self` by v2-naming parity, not by convention.)
+    /// Reverse lookup for a signed-in caller only: call it after `authed`.
+    /// Answers to current ids and to the old ids albums and artists had
+    /// before theirs were keyed. Accepts dashed or undashed input, `None`
+    /// when unknown. (`from_*` takes `self` by v2-naming parity, not by
+    /// convention.)
     #[allow(clippy::wrong_self_convention)]
     fn from_jf(&self, jf_id: &str) -> impl Future<Output = Option<(String, String)>> + Send;
+    /// Reverse lookup for a caller who has not signed in (the picture
+    /// address): current ids only, never an old one, and a miss does not
+    /// read the catalog again once it has been read.
+    #[allow(clippy::wrong_self_convention)]
+    fn from_jf_anonymous(
+        &self,
+        jf_id: &str,
+    ) -> impl Future<Output = Option<(String, String)>> + Send;
 }
 
 // ===== Library seam =====

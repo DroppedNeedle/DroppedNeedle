@@ -4,11 +4,15 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use droppedneedle::compat::CompatSetup;
+use droppedneedle::compat::adapters::jellyfin_library::CatalogIds;
+use droppedneedle::compat::adapters::library::CompatLibrary;
+use droppedneedle::compat::jellyfin::builders::LIBRARY_INTERNAL_ID;
 use droppedneedle::compat::jellyfin::params::SortKey;
 use droppedneedle::compat::jellyfin::seams::{
-    AlbumFilter, ItemSort, LibraryRead as _, TrackFilter,
+    AlbumFilter, IdMap as _, ItemSort, LibraryRead as _, TrackFilter,
 };
 use droppedneedle::compat::subsonic::fake::{FakeAudio, FakeVerifier, NOW_UNIX, USER_ID};
 use droppedneedle::compat::subsonic::params::SubsonicParameters;
@@ -19,6 +23,7 @@ use droppedneedle::reads::ReadsSetup;
 use droppedneedle::reads::collections::db::CollectionsDb;
 use droppedneedle::reads::collections::models::{AddTracksBody, CreatePlaylistBody, TrackInput};
 use droppedneedle::reads::collections::service::CollectionsService;
+use droppedneedle::runtime_config::Crypto;
 
 use crate::common::ScratchDir;
 
@@ -529,4 +534,81 @@ async fn native_playlists_export_to_m3u_with_their_files() {
         "{text}"
     );
     assert!(text.contains("music/dummy/01.flac"), "{text}");
+}
+
+/// Jellyfin ids over the seeded catalog, keyed with `key`, reading the
+/// catalog again with no wait between reads.
+fn catalog_ids(rig: &Rig, key: u8) -> CatalogIds {
+    let crypto = Arc::new(Crypto::from_key_bytes(&[key; 32]).unwrap());
+    CatalogIds::new(
+        CompatLibrary::from_reads(&rig.reads),
+        crypto,
+        Duration::ZERO,
+    )
+}
+
+/// A caller who has not signed in causes one catalog read, the first, and
+/// never another: an album added after it is found only once a signed-in
+/// lookup has read the catalog again. An album's old unkeyed id answers
+/// only the signed-in lookup.
+#[tokio::test]
+async fn jellyfin_ids_unknown_to_a_caller_without_sign_in_read_the_catalog_once() {
+    let rig = Rig::open().await;
+    let ids = catalog_ids(&rig, 7);
+    let unknown = "0123456789abcdef0123456789abcdef";
+    assert_eq!(ids.from_jf_anonymous(unknown).await, None);
+    let first = ids.id_for("album", "alb-1");
+    let found = Some(("album".to_owned(), "alb-1".to_owned()));
+    assert_eq!(ids.from_jf_anonymous(&first).await, found);
+    let old = CatalogIds::derive("album", "alb-1");
+    assert_eq!(ids.from_jf_anonymous(&old).await, None);
+    assert_eq!(ids.from_jf(&old).await, found);
+
+    rig.runtime
+        .lane()
+        .write(Lane::Foreground, "seed", |tx| {
+            tx.execute_batch(
+                "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+                 album_artist_name, album_artist_name_folded, album_artist_id, year, \
+                 grouping_source, created_at, updated_at) VALUES ('alb-2', 'root', 'k2', \
+                 'Portishead', 'portishead', 'Portishead', 'portishead', 'art-1', 1997, \
+                 'automatic', 1, 1)",
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let added = ids.id_for("album", "alb-2");
+    let found = Some(("album".to_owned(), "alb-2".to_owned()));
+    assert_eq!(ids.from_jf_anonymous(&added).await, None);
+    assert_eq!(ids.from_jf(&added).await, found);
+    assert_eq!(ids.from_jf_anonymous(&added).await, found);
+}
+
+/// Album and artist ids depend on the data key; track, playlist, genre and
+/// library ids do not, so music and playlists an app downloaded stay
+/// matched and its stored library still browses.
+#[tokio::test]
+async fn only_album_and_artist_ids_depend_on_the_data_key() {
+    let rig = Rig::open().await;
+    let (one, two) = (catalog_ids(&rig, 7), catalog_ids(&rig, 8));
+    for (kind, internal) in [("album", "alb-1"), ("artist", "art-1")] {
+        assert_ne!(one.id_for(kind, internal), two.id_for(kind, internal));
+        assert_ne!(
+            one.id_for(kind, internal),
+            CatalogIds::derive(kind, internal)
+        );
+    }
+    for (kind, internal) in [
+        ("track", "trk-1"),
+        ("playlist", "pl-1"),
+        ("genre", "trip-hop"),
+        ("library", LIBRARY_INTERNAL_ID),
+    ] {
+        assert_eq!(one.id_for(kind, internal), two.id_for(kind, internal));
+        assert_eq!(
+            one.id_for(kind, internal),
+            CatalogIds::derive(kind, internal)
+        );
+    }
 }

@@ -55,7 +55,10 @@ where
     {
         return refused(refusal);
     }
-    json(StatusCode::OK, &marker(item_id, add, false))
+    // The answer names the item's current id, also when the app sent an
+    // old album or artist id.
+    let current = state.ids.to_jf(&kind, &internal).await;
+    json(StatusCode::OK, &marker(&current, add, false))
 }
 
 pub(super) async fn set_played<S, L, E, P, I>(
@@ -72,10 +75,11 @@ where
 {
     // Marker only: play counting goes via Sessions/Playing/Stopped, so this
     // writes nothing (avoids unwanted scrobble forwards, v2 `_set_played`).
-    if state.ids.from_jf(item_id).await.is_none() {
+    let Some((kind, internal)) = state.ids.from_jf(item_id).await else {
         return error(StatusCode::NOT_FOUND);
-    }
-    json(StatusCode::OK, &marker(item_id, false, played))
+    };
+    let current = state.ids.to_jf(&kind, &internal).await;
+    json(StatusCode::OK, &marker(&current, false, played))
 }
 
 pub(super) async fn favorite_add_legacy<S, L, E, P, I>(

@@ -121,10 +121,14 @@ many. Nothing else in the v2 database is changed.
 - Small per-user preferences: scrobble targets, home page sections,
   Navidrome folders, personal-mix approvals, and profile pictures.
 - Saved play queues and bookmarks of Subsonic and Jellyfin apps.
-- Your library: every artist, album and song with the id v2 gave it. Apps
-  like Symfonium, Feishin or Finamp keep their stars, downloads and queues,
-  because the ids they know do not change. Playlists, favorites, history,
-  queues and bookmarks find their songs again.
+- Your library: every artist, album and song with the id v2 gave it.
+  Playlists, favorites, history, queues and bookmarks find their songs
+  again. Subsonic apps like Symfonium or Feishin keep everything, because
+  the ids they know do not change. In Jellyfin apps like Finamp, stars,
+  play counts and playlists are kept and downloaded music stays matched,
+  but album and artist ids change once, so that nobody without an account
+  can work one out. An album or artist marked to keep offline has to be
+  marked again once; the music already on the device stays.
 - Matches you made by hand (and v2's own matches), retired ids that still
   point at the album or artist that replaced them, "keep as tagged" and
   "exclude" decisions, edition pins and custom editions, albums you kept

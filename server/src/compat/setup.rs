@@ -18,7 +18,7 @@ use axum::middleware::from_fn_with_state;
 use crate::auth::compat_auth::prod::ProdCompatPasswords;
 use crate::auth::users::UsersDeps;
 use crate::compat::adapters::engines::{GatewayAudio, GatewayStream};
-use crate::compat::adapters::jellyfin_library::{CatalogIds, JellyfinLibrary};
+use crate::compat::adapters::jellyfin_library::{CatalogIds, JellyfinLibrary, REBUILD_COOLDOWN};
 use crate::compat::adapters::library::CompatLibrary;
 use crate::compat::adapters::playback::CompatPlayback;
 use crate::compat::adapters::principal::SubsonicVerifier;
@@ -123,7 +123,7 @@ impl CompatSetup {
             playback.clone(),
             deps.users.clone(),
             deps.scan,
-            deps.crypto,
+            Arc::clone(&deps.crypto),
             deps.settings.clone(),
         );
         let jellyfin = JellyfinState::new(
@@ -131,7 +131,7 @@ impl CompatSetup {
             JellyfinLibrary::new(deps.library.clone()),
             GatewayStream::new(Arc::clone(&deps.engine)),
             playback,
-            CatalogIds::new(deps.library),
+            CatalogIds::new(deps.library, deps.crypto, REBUILD_COOLDOWN),
             deps.settings.clone(),
             deps.listener.clone(),
         );

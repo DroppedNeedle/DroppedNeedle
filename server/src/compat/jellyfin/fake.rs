@@ -54,6 +54,11 @@ impl IdMap for MemoryIds {
             .ok()
             .and_then(|reverse| reverse.get(&Self::normalize(jf_id)).cloned())
     }
+
+    /// The fake has no old ids, so both lookups are the same.
+    async fn from_jf_anonymous(&self, jf_id: &str) -> Option<(String, String)> {
+        self.from_jf(jf_id).await
+    }
 }
 
 #[derive(Debug, Clone)]

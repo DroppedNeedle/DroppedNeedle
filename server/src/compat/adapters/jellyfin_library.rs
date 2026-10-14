@@ -5,12 +5,14 @@
 //! LIMIT) plus its count; the caller's favorites and play counts are read
 //! for that page only, and image tags come from the rows themselves.
 //!
-//! [`CatalogIds`] keeps v2's deterministic `sha256("kind:internal")[:32]`
-//! ids. Because an id is a pure function of what it names, nothing needs
-//! storing: an id a client cached before a restart resolves again by
-//! deriving the ids of everything the library holds.
+//! [`CatalogIds`] makes album and artist ids with the data key, so nobody
+//! without an account can work one out, and every other id as
+//! `sha256("kind:internal")[:32]`. Because an id is a pure function of
+//! what it names and the key, nothing needs storing: an id a client cached
+//! before a restart resolves again by deriving the ids of everything the
+//! library holds.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -26,9 +28,14 @@ use crate::reads::library::player::{
     AlbumOrder, AlbumQuery, OrderKey, PlayerAlbum, PlayerTrack, TrackOrder, TrackQuery,
 };
 use crate::reads::library::stores::{ArtistRecord, ArtistScope as CatalogScope};
+use crate::runtime_config::Crypto;
 
-/// Shortest gap between two full id rebuilds after a miss.
-const REBUILD_COOLDOWN: Duration = Duration::from_secs(10);
+/// Shortest gap between two catalog reads for the id map.
+pub const REBUILD_COOLDOWN: Duration = Duration::from_secs(10);
+
+/// The data key's purpose for album and artist ids: nothing else the key
+/// signs is a valid id, and an id signs nothing else.
+const ITEM_ID_PURPOSE: &str = "jellyfin-item-id";
 
 /// Log a failed read and fall back to the empty answer the seam allows.
 fn logged<T: Default>(operation: &str, outcome: Result<T, CompatError>) -> T {
@@ -558,31 +565,49 @@ impl LibraryRead for JellyfinLibrary {
 
 #[derive(Default)]
 struct IdTable {
-    reverse: HashMap<String, (String, String)>,
-    rebuilt_at: Option<Instant>,
+    /// The ids this server hands out today, every kind.
+    current: HashMap<String, (String, String)>,
+    /// The unkeyed ids albums and artists had before theirs were keyed.
+    old: HashMap<String, (String, String)>,
+    /// Whether a whole catalog read has succeeded in this process.
+    filled: bool,
+    /// When the catalog was last read, whether or not the read succeeded.
+    read_at: Option<Instant>,
 }
 
-/// Deterministic Jellyfin ids over the catalog (see module docs).
+/// Jellyfin ids over the catalog (see module docs).
+///
+/// The catalog is read for the first lookup of the process, by anyone.
+/// After that only a miss from a signed-in caller ([`IdMap::from_jf`]) reads
+/// it again, at most once per `cooldown`; a read that failed is retried no
+/// sooner than that either.
 #[derive(Clone)]
 pub struct CatalogIds {
     library: CompatLibrary,
+    crypto: Arc<Crypto>,
+    cooldown: Duration,
     table: Arc<Mutex<IdTable>>,
-    /// One rebuild at a time: concurrent misses wait for it instead of
+    /// One catalog read at a time: concurrent misses wait for it instead of
     /// each reading the whole catalog.
-    rebuilding: Arc<tokio::sync::Mutex<()>>,
+    reading: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl CatalogIds {
-    /// Ids over the shared compat reads.
-    pub fn new(library: CompatLibrary) -> Self {
+    /// Ids over the shared compat reads, keyed with the data key.
+    /// Production passes [`REBUILD_COOLDOWN`] as `cooldown`.
+    pub fn new(library: CompatLibrary, crypto: Arc<Crypto>, cooldown: Duration) -> Self {
         Self {
             library,
+            crypto,
+            cooldown,
             table: Arc::new(Mutex::new(IdTable::default())),
-            rebuilding: Arc::new(tokio::sync::Mutex::new(())),
+            reading: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
-    /// The v2 derivation: first 32 hex chars of `sha256("kind:internal")`.
+    /// The unkeyed id: the first 32 hex characters of
+    /// `sha256("kind:internal")`. Tracks, playlists, genres and the library
+    /// keep it; for an album or artist it is the old id.
     pub fn derive(kind: &str, internal: &str) -> String {
         use sha2::{Digest, Sha256};
         format!(
@@ -592,32 +617,59 @@ impl CatalogIds {
             .to_owned()
     }
 
+    /// The id handed out for a (kind, internal) pair, without remembering
+    /// it. Album and artist ids are the first 32 hex characters of a MAC
+    /// under the data key over `kind\0internal`.
+    pub fn id_for(&self, kind: &str, internal: &str) -> String {
+        if kind != "album" && kind != "artist" {
+            return Self::derive(kind, internal);
+        }
+        let message = [kind.as_bytes(), b"\0", internal.as_bytes()].concat();
+        self.crypto.mac(ITEM_ID_PURPOSE, &message)[..16]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    fn normalize(jf_id: &str) -> String {
+        jf_id.replace('-', "").trim().to_lowercase()
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, IdTable> {
         self.table
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn lookup(&self, jf_id: &str) -> Option<(String, String)> {
-        self.lock().reverse.get(jf_id).cloned()
+    fn lookup(&self, jf_id: &str, with_old: bool) -> Option<(String, String)> {
+        let table = self.lock();
+        table
+            .current
+            .get(jf_id)
+            .or_else(|| with_old.then(|| table.old.get(jf_id)).flatten())
+            .cloned()
     }
 
-    /// Derive the id of everything addressable and remember the reverse
-    /// mapping. Rate-limited so a stream of unknown ids cannot turn into a
-    /// stream of full catalog reads.
-    async fn rebuild(&self) {
-        // Waiters see the rebuild that ran while they queued as recent and
-        // return; the caller then looks the id up again.
-        let _single = self.rebuilding.lock().await;
-        {
-            let table = self.lock();
-            if table
-                .rebuilt_at
-                .is_some_and(|at| at.elapsed() < REBUILD_COOLDOWN)
-            {
-                return;
-            }
+    /// Whether a lookup may read the catalog now: never within `cooldown`
+    /// of the last read, and once a read has succeeded only for a
+    /// signed-in caller.
+    fn may_read(&self, signed_in: bool) -> bool {
+        let table = self.lock();
+        let rested = table.read_at.is_none_or(|at| at.elapsed() >= self.cooldown);
+        rested && (signed_in || !table.filled)
+    }
+
+    /// Read every id the catalog holds and remember the current id of each,
+    /// plus the old id of each album and artist, when [`Self::may_read`]
+    /// allows it.
+    async fn read_catalog(&self, signed_in: bool) {
+        // Waiters see the read that ran while they queued and return; the
+        // caller then looks the id up again.
+        let _single = self.reading.lock().await;
+        if !self.may_read(signed_in) {
+            return;
         }
+        let mut complete = true;
         let mut pairs: Vec<(String, String)> =
             vec![("library".to_owned(), LIBRARY_INTERNAL_ID.to_owned())];
         match self.library.player.every_id().await {
@@ -627,41 +679,62 @@ impl CatalogIds {
                     pairs.push((kind.to_owned(), internal));
                 }
             }
-            Err(error) => tracing::error!(%error, "jellyfin id rebuild could not read the catalog"),
+            Err(error) => {
+                complete = false;
+                tracing::error!(%error, "jellyfin id rebuild could not read the catalog");
+            }
         }
         match self.library.collections.stores.playlists.list().await {
             Ok(rows) => pairs.extend(rows.into_iter().map(|row| ("playlist".to_owned(), row.id))),
-            Err(error) => tracing::error!(%error, "jellyfin id rebuild could not read playlists"),
-        }
-        let mut seen = HashSet::new();
-        let mut table = self.lock();
-        for (kind, internal) in pairs {
-            if seen.insert((kind.clone(), internal.clone())) {
-                table
-                    .reverse
-                    .insert(Self::derive(&kind, &internal), (kind, internal));
+            Err(error) => {
+                complete = false;
+                tracing::error!(%error, "jellyfin id rebuild could not read playlists");
             }
         }
-        table.rebuilt_at = Some(Instant::now());
+        let mut current = Vec::with_capacity(pairs.len());
+        let mut old = Vec::new();
+        for (kind, internal) in pairs {
+            if kind == "album" || kind == "artist" {
+                old.push((
+                    Self::derive(&kind, &internal),
+                    (kind.clone(), internal.clone()),
+                ));
+            }
+            current.push((self.id_for(&kind, &internal), (kind, internal)));
+        }
+        let mut table = self.lock();
+        table.current.extend(current);
+        table.old.extend(old);
+        table.filled |= complete;
+        table.read_at = Some(Instant::now());
     }
 }
 
 impl IdMap for CatalogIds {
     async fn to_jf(&self, kind: &str, internal: &str) -> String {
-        let jf_id = Self::derive(kind, internal);
+        let jf_id = self.id_for(kind, internal);
         self.lock()
-            .reverse
+            .current
             .entry(jf_id.clone())
             .or_insert_with(|| (kind.to_owned(), internal.to_owned()));
         jf_id
     }
 
     async fn from_jf(&self, jf_id: &str) -> Option<(String, String)> {
-        let normalized = jf_id.replace('-', "").trim().to_lowercase();
-        if let Some(found) = self.lookup(&normalized) {
+        let normalized = Self::normalize(jf_id);
+        if let Some(found) = self.lookup(&normalized, true) {
             return Some(found);
         }
-        self.rebuild().await;
-        self.lookup(&normalized)
+        self.read_catalog(true).await;
+        self.lookup(&normalized, true)
+    }
+
+    async fn from_jf_anonymous(&self, jf_id: &str) -> Option<(String, String)> {
+        let normalized = Self::normalize(jf_id);
+        if let Some(found) = self.lookup(&normalized, false) {
+            return Some(found);
+        }
+        self.read_catalog(false).await;
+        self.lookup(&normalized, false)
     }
 }

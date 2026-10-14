@@ -2,8 +2,10 @@
 //!
 //! v2 and v3 keep the catalog in the same tables with the same columns,
 //! so rows travel verbatim and keep their ids. That is what keeps every
-//! Subsonic and Jellyfin id stable (both derive from these ids), and what
-//! lets favorites, history, playlists and queues find their tracks again.
+//! Subsonic id and every Jellyfin track id stable (they derive from these
+//! ids; Jellyfin album and artist ids are keyed with the data key as well),
+//! and what lets favorites, history, playlists and queues find their tracks
+//! again.
 //! v3's first scan then matches the carried rows by root and path instead
 //! of minting new ids.
 //!
