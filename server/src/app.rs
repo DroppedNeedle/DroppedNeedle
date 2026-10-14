@@ -30,10 +30,13 @@
 //! and the UI all see the same base-relative path, and requests outside
 //! the base get the 404 envelope.
 //!
-//! The HSTS layer is the outermost of all, outside the base-path split, so
-//! every response can carry the header: routes, fallbacks, the web UI, the
-//! compat shims and the 404 outside the base. It only adds a header and
-//! only when the Security settings ask for it.
+//! Two layers from `security_headers.rs` only add response headers. The
+//! content-security layer sits just outside compression, at base-relative
+//! paths, and on the 404 outside the base: it covers every native response
+//! and leaves the compat shims alone. The HSTS layer is the outermost of
+//! all, outside the base-path split, so every response can carry the
+//! header: routes, fallbacks, the web UI, the compat shims and the 404
+//! outside the base. It adds one only when the Security settings ask.
 
 use axum::{Router, extract::Request, middleware, response::IntoResponse, routing::get};
 use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
@@ -43,7 +46,7 @@ use crate::{
     compat::http::fallback_redispatch,
     handlers,
     middleware::request_scope,
-    security_headers::{TransportSecurity, strict_transport_security},
+    security_headers::{TransportSecurity, content_security, strict_transport_security},
     state::AppState,
     web::WebUi,
 };
@@ -59,7 +62,8 @@ pub fn create_app_with_web(state: AppState, web: Option<WebUi>) -> Router {
     let base_path = state.config.base_path.clone();
     let outside_base = Router::new()
         .fallback(handlers::fallback_404)
-        .layer(middleware::from_fn_with_state(state.clone(), request_scope));
+        .layer(middleware::from_fn_with_state(state.clone(), request_scope))
+        .layer(middleware::from_fn(content_security));
     let hsts = middleware::from_fn_with_state(
         TransportSecurity::from_state(&state),
         strict_transport_security,
@@ -269,6 +273,7 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
         .method_not_allowed_fallback(fallback_405)
         .layer(middleware::from_fn_with_state(state, request_scope))
         .layer(compression_layer())
+        .layer(middleware::from_fn(content_security))
 }
 
 /// Response compression (brotli or gzip, as the client accepts) for API,

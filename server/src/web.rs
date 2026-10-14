@@ -14,6 +14,11 @@
 //! assets for a week. A smaller `.br` or `.gz` sibling is sent when the
 //! client accepts it, with `Vary: Accept-Encoding`. Any other GET that is
 //! not an API path gets `index.html` so client-side routes load.
+//!
+//! `index.html` holds inline script, which the page's content-security
+//! policy admits by hash. The hashes are taken from the file as served,
+//! after stamping, and every answer that is that page carries them to the
+//! layer in `security_headers.rs`.
 
 use std::{
     io::ErrorKind,
@@ -27,7 +32,11 @@ use axum::{
     http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     response::Response,
 };
+use base64::Engine as _;
+use sha2::Digest as _;
 use thiserror::Error;
+
+use crate::security_headers::AppShell;
 
 /// Token the frontend build bakes in front of every root-relative URL.
 /// Must match `frontend/svelte.config.js` byte for byte.
@@ -95,13 +104,39 @@ fn io_error(path: &Path) -> impl FnOnce(std::io::Error) -> WebError + '_ {
 #[derive(Debug, Clone)]
 pub struct WebUi {
     root: Arc<PathBuf>,
+    shell: AppShell,
 }
 
 impl WebUi {
-    /// Serve an already prepared tree as is.
+    /// Serve an already prepared tree as is. Blocking file work: it reads
+    /// `index.html` for its inline scripts.
     pub fn serve_dir(root: &Path) -> Self {
+        let index = root.join("index.html");
+        let script_hashes = match std::fs::read_to_string(&index) {
+            Ok(page) => {
+                let hashes = inline_script_hashes(&page);
+                // The build has always had one: the page's boot script.
+                // None means the build or the scanner changed, and an
+                // enforced policy would leave the page blank.
+                if hashes.is_empty() {
+                    tracing::warn!(
+                        path = %index.display(),
+                        "the web UI page has no inline script; an enforced \
+                         content-security policy may leave it blank"
+                    );
+                }
+                hashes
+            }
+            Err(error) => {
+                tracing::warn!(path = %index.display(), %error, "cannot read the web UI page");
+                Vec::new()
+            }
+        };
         Self {
             root: Arc::new(root.to_owned()),
+            shell: AppShell {
+                script_hashes: script_hashes.into(),
+            },
         }
     }
 
@@ -168,7 +203,8 @@ impl WebUi {
         if !relative.is_empty() && !relative.ends_with('/') {
             let file = self.root.join(relative);
             if is_file(&file).await {
-                return Some(serve_file(&file, relative, headers).await);
+                let shell = (relative == "index.html").then_some(&self.shell);
+                return Some(serve_file(&file, relative, headers, shell).await);
             }
             let asset_dir = matches!(segments.first(), Some(&("_app" | "img" | "fonts")));
             if asset_dir {
@@ -176,8 +212,48 @@ impl WebUi {
             }
         }
         let index = self.root.join("index.html");
-        Some(serve_file(&index, "index.html", headers).await)
+        Some(serve_file(&index, "index.html", headers, Some(&self.shell)).await)
     }
+}
+
+/// `sha256-<base64>` of each inline script in `page`, the form a
+/// content-security policy names one by. The text hashed is exactly what
+/// sits between the tags. A script with a `src` has no text to hash.
+///
+/// Checked against the page SvelteKit 2.70 builds: one inline classic
+/// script, inside the body's `<div>`, and no `<script` in a comment or an
+/// attribute. A page with none gives an empty list. A hash that does not
+/// match the served text cannot go unnoticed: the app does not start.
+fn inline_script_hashes(page: &str) -> Vec<String> {
+    // ASCII lowercasing keeps every byte offset, so positions found in
+    // `lower` index `page`.
+    let lower = page.to_ascii_lowercase();
+    let mut hashes = Vec::new();
+    let mut at = 0;
+    while let Some(open) = lower[at..].find("<script").map(|found| at + found) {
+        let attributes = open + "<script".len();
+        let Some(text) = lower[attributes..]
+            .find('>')
+            .map(|found| attributes + found + 1)
+        else {
+            break;
+        };
+        let Some(close) = lower[text..].find("</script").map(|found| text + found) else {
+            break;
+        };
+        let has_src = lower[attributes..text]
+            .split_ascii_whitespace()
+            .any(|attribute| attribute.starts_with("src=") || attribute == "src");
+        if !has_src {
+            let digest = sha2::Sha256::digest(&page.as_bytes()[text..close]);
+            hashes.push(format!(
+                "sha256-{}",
+                base64::engine::general_purpose::STANDARD.encode(digest)
+            ));
+        }
+        at = close;
+    }
+    hashes
 }
 
 /// `/api` or anything under it, segment-aware (v2 refused the whole
@@ -310,7 +386,14 @@ async fn choose(path: &Path, headers: &HeaderMap) -> Option<(Representation, boo
     Some((best.map_or(identity, |(_, chosen)| chosen), true))
 }
 
-async fn serve_file(path: &Path, relative: &str, headers: &HeaderMap) -> Response {
+/// Answer with the file at `path`. `shell` is given when the file is the
+/// web UI's page, and marks the 200 and the 304 as that page.
+async fn serve_file(
+    path: &Path,
+    relative: &str,
+    headers: &HeaderMap,
+    shell: Option<&AppShell>,
+) -> Response {
     let Some((chosen, has_variants)) = choose(path, headers).await else {
         return status_only(StatusCode::NOT_FOUND);
     };
@@ -335,6 +418,9 @@ async fn serve_file(path: &Path, relative: &str, headers: &HeaderMap) -> Respons
         .header(header::ETAG, &etag);
     if has_variants {
         builder = builder.header(header::VARY, "Accept-Encoding");
+    }
+    if let Some(shell) = shell {
+        builder = builder.extension(shell.clone());
     }
     if not_modified {
         return builder
