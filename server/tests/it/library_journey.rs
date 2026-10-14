@@ -3588,7 +3588,8 @@ async fn edition_plan_pairs_another_version_one_to_one() {
 /// after a rescan, reset it back to the original album, merge a copy in
 /// with its chosen edition following it, and merge a duplicate artist.
 /// Applies refuse a token that does not match, and a replayed key returns
-/// the first result.
+/// the first result. After a merge, the old album and artist ids still open
+/// the survivor.
 #[tokio::test]
 async fn library_journey_catalog_corrections() {
     let rig = Rig::start("lib-corrections").await;
@@ -3793,6 +3794,51 @@ async fn library_journey_catalog_corrections() {
         .expect("edition moved to album a");
     assert_eq!(pinned, CHOSEN);
 
+    // The merged album's old id opens the survivor, with its tracks.
+    let (status, survivor) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/albums/{album_a}"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{survivor}");
+    let (status, old) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/albums/{album_b}"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{old}");
+    assert_eq!(old["id"], json!(album_a));
+    assert_eq!(old["title"], survivor["title"]);
+    let (status, tracks) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/albums/{album_b}/tracks"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{tracks}");
+    let (_, survivor_tracks) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/albums/{album_a}/tracks"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(tracks, survivor_tracks);
+    assert!(
+        tracks["items"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|track| track["id"] == json!(b1)))
+    );
+
     // Two artists that are the same person: merge one into the other.
     db.execute_batch(
         "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
@@ -3840,6 +3886,31 @@ async fn library_journey_catalog_corrections() {
         .expect("merged artist");
     assert_eq!(retired.as_deref(), Some("artist-keep"));
     assert_eq!(favorite, "artist-keep");
+
+    // The merged artist's old id opens the survivor and its albums.
+    let (status, old) = app
+        .call("GET", "/api/v3/library/artists/artist-dupe", &headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{old}");
+    assert_eq!(old["id"], json!("artist-keep"));
+    let (status, albums) = app
+        .call(
+            "GET",
+            "/api/v3/library/artists/artist-dupe/albums",
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{albums}");
+    let (_, survivor_albums) = app
+        .call(
+            "GET",
+            "/api/v3/library/artists/artist-keep/albums",
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(albums, survivor_albums);
     rig.stop().await;
 }
 

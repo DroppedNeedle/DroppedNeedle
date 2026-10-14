@@ -587,6 +587,21 @@ pub trait LibraryLookups: Send + Sync {
         identifier: &'a str,
     ) -> BoxFuture<'a, Result<Vec<String>, StoreError>>;
 
+    /// The live album a local id or alias names now: the album itself, the
+    /// album a merge pointed its alias at, or the album it was retired into.
+    /// None when the id names nothing live.
+    fn current_album<'a>(
+        &'a self,
+        id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, StoreError>>;
+
+    /// The live artist a local id or alias names now, in the same order as
+    /// [`LibraryLookups::current_album`].
+    fn current_artist<'a>(
+        &'a self,
+        id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, StoreError>>;
+
     /// Streamable tracks of the albums, ordered by album id, disc, track.
     fn album_tracks_batch<'a>(
         &'a self,

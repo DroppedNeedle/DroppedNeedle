@@ -832,6 +832,21 @@ impl LibraryLookups for EmptyLookups {
         Box::pin(async move { Ok(Vec::new()) })
     }
 
+    fn current_album<'a>(
+        &'a self,
+        id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, StoreError>> {
+        // No merges here, so an id names itself.
+        Box::pin(async move { Ok(Some(id.to_owned())) })
+    }
+
+    fn current_artist<'a>(
+        &'a self,
+        id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, StoreError>> {
+        Box::pin(async move { Ok(Some(id.to_owned())) })
+    }
+
     fn album_tracks_batch<'a>(
         &'a self,
         _album_ids: &'a [String],

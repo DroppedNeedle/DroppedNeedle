@@ -277,6 +277,33 @@ async fn favorites_for(
         .map_err(LibraryFailure::from)
 }
 
+/// The catalog album an id names now. A merged or retired album's old id
+/// answers for the album it was merged into. Unknown ids are 404.
+async fn album_record(deps: &LibraryDeps, id: &str) -> Result<AlbumRecord, LibraryFailure> {
+    let current = deps
+        .lookups
+        .current_album(id)
+        .await?
+        .ok_or(LibraryFailure::NotFound)?;
+    deps.catalog
+        .get_album(&current)
+        .await?
+        .ok_or(LibraryFailure::NotFound)
+}
+
+/// The catalog artist an id names now, as [`album_record`] does for albums.
+async fn artist_record(deps: &LibraryDeps, id: &str) -> Result<ArtistRecord, LibraryFailure> {
+    let current = deps
+        .lookups
+        .current_artist(id)
+        .await?
+        .ok_or(LibraryFailure::NotFound)?;
+    deps.catalog
+        .get_artist(&current)
+        .await?
+        .ok_or(LibraryFailure::NotFound)
+}
+
 /// One page of catalog albums.
 pub async fn list_albums(
     deps: &LibraryDeps,
@@ -313,17 +340,14 @@ pub async fn list_albums(
     })
 }
 
-/// One catalog album. Unknown ids are 404.
+/// One catalog album, answered for the album the id names now. Unknown ids
+/// are 404.
 pub async fn get_album(
     deps: &LibraryDeps,
     user_id: &str,
     id: &str,
 ) -> Result<AlbumDetailView, LibraryFailure> {
-    let record = deps
-        .catalog
-        .get_album(id)
-        .await?
-        .ok_or(LibraryFailure::NotFound)?;
+    let record = album_record(deps, id).await?;
     let favorites = favorites_for(deps, user_id, "album", std::slice::from_ref(&record.id)).await?;
     let hold = deps.catalog.management_hold(&record.id).await?;
     Ok(AlbumDetailView {
@@ -345,11 +369,8 @@ pub async fn album_tracks(
     query: &PageQuery,
 ) -> Result<TrackPage, LibraryFailure> {
     let (limit, offset) = page(query.limit, query.offset, 200, 1000)?;
-    deps.catalog
-        .get_album(album_id)
-        .await?
-        .ok_or(LibraryFailure::NotFound)?;
-    let (records, total) = deps.catalog.album_tracks(album_id, limit, offset).await?;
+    let album = album_record(deps, album_id).await?;
+    let (records, total) = deps.catalog.album_tracks(&album.id, limit, offset).await?;
     let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "track", &ids).await?;
     Ok(TrackPage {
@@ -391,11 +412,8 @@ pub async fn album_copies(
     user_id: &str,
     album_id: &str,
 ) -> Result<AlbumPage, LibraryFailure> {
-    deps.catalog
-        .get_album(album_id)
-        .await?
-        .ok_or(LibraryFailure::NotFound)?;
-    let records = deps.catalog.album_copies(album_id).await?;
+    let album = album_record(deps, album_id).await?;
+    let records = deps.catalog.album_copies(&album.id).await?;
     let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "album", &ids).await?;
     let total = records.len() as u64;
@@ -444,17 +462,14 @@ pub async fn list_artists(
     })
 }
 
-/// One catalog artist. Unknown ids are 404.
+/// One catalog artist, answered for the artist the id names now. Unknown
+/// ids are 404.
 pub async fn get_artist(
     deps: &LibraryDeps,
     user_id: &str,
     id: &str,
 ) -> Result<ArtistView, LibraryFailure> {
-    let record = deps
-        .catalog
-        .get_artist(id)
-        .await?
-        .ok_or(LibraryFailure::NotFound)?;
+    let record = artist_record(deps, id).await?;
     let favorites =
         favorites_for(deps, user_id, "artist", std::slice::from_ref(&record.id)).await?;
     Ok(artist_view(&record, favorites.contains(&record.id)))
@@ -468,11 +483,11 @@ pub async fn artist_albums(
     query: &PageQuery,
 ) -> Result<AlbumPage, LibraryFailure> {
     let (limit, offset) = page(query.limit, query.offset, 200, 1000)?;
-    deps.catalog
-        .get_artist(artist_id)
-        .await?
-        .ok_or(LibraryFailure::NotFound)?;
-    let (records, total) = deps.catalog.artist_albums(artist_id, limit, offset).await?;
+    let artist = artist_record(deps, artist_id).await?;
+    let (records, total) = deps
+        .catalog
+        .artist_albums(&artist.id, limit, offset)
+        .await?;
     let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "album", &ids).await?;
     Ok(AlbumPage {
@@ -495,13 +510,10 @@ pub async fn artist_appearances(
     query: &PageQuery,
 ) -> Result<AlbumPage, LibraryFailure> {
     let (limit, offset) = page(query.limit, query.offset, 200, 1000)?;
-    deps.catalog
-        .get_artist(artist_id)
-        .await?
-        .ok_or(LibraryFailure::NotFound)?;
+    let artist = artist_record(deps, artist_id).await?;
     let (records, total) = deps
         .catalog
-        .artist_appearances(artist_id, limit, offset)
+        .artist_appearances(&artist.id, limit, offset)
         .await?;
     let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
     let favorites = favorites_for(deps, user_id, "album", &ids).await?;

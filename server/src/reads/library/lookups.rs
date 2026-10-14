@@ -277,6 +277,20 @@ impl LibraryLookups for SqliteLookups {
         })
     }
 
+    fn current_album<'a>(
+        &'a self,
+        id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, StoreError>> {
+        Box::pin(async move { current_id(self.pool()?, "album", id).await })
+    }
+
+    fn current_artist<'a>(
+        &'a self,
+        id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, StoreError>> {
+        Box::pin(async move { current_id(self.pool()?, "artist", id).await })
+    }
+
     fn album_tracks_batch<'a>(
         &'a self,
         album_ids: &'a [String],
