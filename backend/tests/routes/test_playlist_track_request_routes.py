@@ -467,3 +467,60 @@ def test_request_names_the_edition_that_carries_each_recording(env):
     }
     assert items["rec-fs"]["release_mbid"] == "rel-willy-1969"
     assert items["rec-pm"]["release_mbid"] is None
+    # Real names name the download folder (not "Single track" / Spotify's
+    # joined credit).
+    assert (items["rec-fs"]["album_title"], items["rec-fs"]["artist_name"]) == (
+        "Willy",
+        "Creedence Clearwater Revival",
+    )
+    assert items["rec-pm"]["album_title"] is None
+
+
+def test_unknown_album_falls_back_to_the_lead_artist(env):
+    client, app, playlists, requests, prefs, sse = env
+
+    async def lookup(recording):
+        return None
+
+    def service():
+        return PlaylistTrackRequestService(
+            playlist_repo=playlists.repository,
+            resolver_factory=lambda: PlaylistTrackResolver(
+                playlist_repo=playlists.repository,
+                mb_repo=_Mb(),
+                album_service=AsyncMock(),
+            ),
+            request_service=requests,
+            preferences_service=prefs,
+            homes_lookup=lookup,
+        )
+
+    app.dependency_overrides[playlist_routes.get_playlist_track_request_service] = (
+        service
+    )
+
+    async def seed():
+        record = await playlists.repository.create_playlist("Mix", user_id=OWNER)
+        await playlists.repository.add_tracks(
+            record.id,
+            [
+                {
+                    "track_name": "Fortunate Son",
+                    "artist_name": "Creedence Clearwater Revival, John Fogerty",
+                    "album_name": "Chronicle",
+                    "source_type": "",
+                    "recording_mbid": "rec-fs",
+                }
+            ],
+        )
+        return record.id
+
+    pid = client.portal.call(seed)
+    client.post(f"/playlists/{pid}/request-tracks", json={"mode": "auto"})
+
+    _wait(sse)
+    (item,) = requests.request_track_batch.await_args.args[0]
+    assert (item["artist_name"], item["album_title"]) == (
+        "Creedence Clearwater Revival",
+        None,
+    )

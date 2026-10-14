@@ -55,6 +55,12 @@ class _Preferences(Protocol):
     def get_playlist_track_request_settings(self) -> PlaylistTrackRequestSettings: ...
 
 
+def _lead_artist(artist_name: str) -> str:
+    """Spotify joins every credited artist with ", "; folders and searches
+    want the lead one."""
+    return artist_name.split(", ")[0].strip() or artist_name
+
+
 def requestable_items(tracks: list[PlaylistTrackRecord]) -> list[dict[str, Any]]:
     """Request items for every resolved (or user-chosen) track not yet owned."""
     items: list[dict[str, Any]] = []
@@ -137,9 +143,18 @@ class PlaylistTrackRequestService:
                 status="nothing_to_request",
             )
         for item in items:
-            item["release_mbid"] = await self._edition_for(
+            home = await self._home_for(
                 item["recording_mbid"], item["release_group_mbid"]
             )
+            item["release_mbid"] = home.release_mbid if home else None
+            # Real names, as the album page sends: they name the folder the
+            # track is filed under. Without a home the downloader backfills
+            # the album title from the release group.
+            item["album_title"] = home.title if home and home.title else None
+            if home and home.artist_credit and not home.is_various:
+                item["artist_name"] = home.artist_credit
+            else:
+                item["artist_name"] = _lead_artist(item["artist_name"])
         return await self._requests.request_track_batch(
             items,
             user_id=user_id,
@@ -147,11 +162,14 @@ class PlaylistTrackRequestService:
             requested_by_name=requested_by_name,
         )
 
-    async def _edition_for(self, recording_mbid: str, release_group_mbid: str) -> str | None:
-        """The edition of the chosen album that carries this recording.
+    async def _home_for(
+        self, recording_mbid: str, release_group_mbid: str
+    ) -> RecordingHome | None:
+        """The chosen album as the recording's home: its title and credit, and
+        the edition that carries the recording.
 
-        Without it the downloader uses the album's default edition, which may
-        not hold the recording, and refuses the request. None keeps that
+        Without that edition the downloader uses the album's default one, which
+        may not hold the recording, and refuses the request. None keeps that
         default (lookup unavailable or failed).
         """
         if self._homes_lookup is None:
@@ -164,9 +182,9 @@ class PlaylistTrackRequestService:
         wanted = release_group_mbid.casefold()
         return next(
             (
-                home.release_mbid
+                home
                 for home in homes or []
-                if home.release_group_mbid.casefold() == wanted and home.release_mbid
+                if home.release_group_mbid.casefold() == wanted
             ),
             None,
         )

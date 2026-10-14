@@ -224,3 +224,28 @@ async def test_edition_carrying_the_recording_is_requested_and_recorded(tmp_path
     assert calls["rec-0002"]["release_mbid"] is None
     record = await store.async_get_record("rec-0001", request_kind="track")
     assert record.release_mbid == "rel-1969"
+
+
+@pytest.mark.asyncio
+async def test_placeholder_album_title_is_never_sent_to_the_downloader(tmp_path):
+    """ "Single track" labels history only; sent on, it named the download
+    folder, so every playlist track landed in a "Single track (year)" folder."""
+    service, store, downloads = _service(tmp_path)
+    no_title = _item(1)
+    del no_title["album_title"]
+
+    await service.request_track_batch(
+        [no_title, _item(2, album_title="Willy and the Poor Boys")],
+        user_id="u1",
+        user_role="trusted",
+    )
+
+    calls = {
+        c.kwargs["recording_mbid"]: c.kwargs
+        for c in downloads.request_track.await_args_list
+    }
+    assert calls["rec-0001"]["album_title"] is None  # downloader backfills it
+    assert calls["rec-0002"]["album_title"] == "Willy and the Poor Boys"
+    assert (
+        await store.async_get_record("rec-0001", request_kind="track")
+    ).album_title == ("Single track")

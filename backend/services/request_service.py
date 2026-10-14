@@ -1127,7 +1127,10 @@ class RequestService:
                 {
                     "musicbrainz_id": key_of(item),
                     "artist_name": item.get("artist_name") or "Unknown",
+                    # History label only; never sent to the downloader, which
+                    # would file the track under a "Single track" folder.
                     "album_title": item.get("album_title") or "Single track",
+                    "dispatch_album_title": item.get("album_title") or None,
                     "artist_mbid": item.get("artist_mbid"),
                     "track_title": item.get("track_title") or "",
                     "duration_seconds": item.get("duration_seconds"),
@@ -1208,7 +1211,7 @@ class RequestService:
                         recording_mbid=recording,
                         artist_name=record["artist_name"],
                         track_title=record["track_title"],
-                        album_title=record["album_title"],
+                        album_title=record["dispatch_album_title"],
                         duration_seconds=record["duration_seconds"],
                         release_group_mbid=record["track_release_group_mbid"],
                         artist_mbid=record["artist_mbid"],
