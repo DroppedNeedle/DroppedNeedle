@@ -22,12 +22,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from rapidfuzz import fuzz
 
 from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.validators import is_valid_isrc
@@ -42,6 +40,7 @@ from models.release_home import (
     recording_version_flags,
 )
 from models.release_type_policy import should_include_release
+from models.song_identity import same_song_title, song_title_key
 from repositories.musicbrainz_album import recording_home_candidates
 from repositories.musicbrainz_base import (
     capture_mb_source_context,
@@ -49,7 +48,6 @@ from repositories.musicbrainz_base import (
     normalize_mb_id,
 )
 from repositories.playlist_repository import PlaylistTrackRecord, TrackResolution
-from services.native.title_match import fold
 from services.playlist_track_planner import (
     PlannerTrack,
     Substitute,
@@ -64,53 +62,23 @@ logger = logging.getLogger(__name__)
 _MB_CONCURRENCY = 4
 # A single ISRC can map to several recordings; homes are fetched for each.
 _MAX_RECORDINGS_PER_ISRC = 5
-_DURATION_TOLERANCE_SECONDS = 3
-_TITLE_MATCH_FLOOR = 90
 _ARTIST_RG_PAGE = 100
 _ARTIST_RG_MAX_PAGES = 10
 
+
 # Trailing remaster/mono/stereo/version qualifiers that do not change the song:
 # "Fortunate Son - Remastered 1985", "Proud Mary (2008 Remaster)".
-_SAME_SONG_SUFFIX = re.compile(
-    r"\s*(?:-\s*|[(\[])[^)\]-]*\b(?:remaster(?:ed)?|mono|stereo|single version|"
-    r"album version|original version|\d{4} mix)\b[^)\]]*[)\]]?\s*$",
-    re.IGNORECASE,
-)
-_NON_WORD = re.compile(r"[^\w]+")
-
-
-def song_title_key(title: str) -> str:
-    """Comparable form of a song title, dropping same-song qualifiers only.
-
-    Live, demo, remix and edit markers are kept, so they never match a studio
-    take of the song.
-    """
-    stripped = title or ""
-    while True:
-        shorter = _SAME_SONG_SUFFIX.sub("", stripped)
-        if shorter == stripped:
-            break
-        stripped = shorter
-    return " ".join(_NON_WORD.sub(" ", fold(stripped)).split())
-
-
 def same_song(
     title: str,
     duration_seconds: int | None,
     candidate: Track,
 ) -> bool:
-    key, other = song_title_key(title), song_title_key(candidate.title)
-    if not key or not other:
-        return False
-    if duration_seconds and candidate.length:
-        if (
-            abs(candidate.length / 1000 - duration_seconds)
-            > _DURATION_TOLERANCE_SECONDS
-        ):
-            return False
-        return fuzz.ratio(key, other) >= _TITLE_MATCH_FLOOR
-    # Without both lengths, only an exact title is evidence enough.
-    return key == other
+    return same_song_title(
+        title,
+        duration_seconds,
+        candidate.title,
+        candidate.length / 1000 if candidate.length else None,
+    )
 
 
 class _MbRepo(Protocol):

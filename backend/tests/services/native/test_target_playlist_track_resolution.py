@@ -175,12 +175,15 @@ async def _seed_local_track(
     *,
     recording: str | None,
     album_id: str = "album-1",
+    title: str = "Fortunate Son",
+    artist_name: str = "Creedence Clearwater Revival",
+    duration: int | None = 140,
 ) -> None:
     artist = LocalArtist(
-        id="artist-1",
-        display_name="Creedence Clearwater Revival",
-        folded_name="creedence clearwater revival",
-        normalized_name="creedence clearwater revival",
+        id=f"artist-{artist_name.lower().replace(' ', '-')}",
+        display_name=artist_name,
+        folded_name=artist_name.lower(),
+        normalized_name=artist_name.lower(),
         kind="group",
         created_at=1,
         updated_at=1,
@@ -206,12 +209,12 @@ async def _seed_local_track(
         file_mtime_ns=2,
         stat_revision="stat-1",
         tag_revision=f"tag-{track_id}",
-        title="Fortunate Son",
+        title=title,
         artist_name=artist.display_name,
         album_title=album.title,
         album_artist_name=artist.display_name,
         track_number=6,
-        duration_seconds=140,
+        duration_seconds=duration,
         file_format="flac",
         imported_at=1,
         embedded_recording_mbid=recording,
@@ -347,3 +350,117 @@ async def test_navidrome_export_writes_a_recording_linked_entry(tmp_path):
     assert (result.written, result.skipped_empty) == (1, 0)
     (exported,) = out.glob("*.m3u8")
     assert "track-fs.flac" in exported.read_text()
+
+
+@pytest.mark.asyncio
+async def test_same_song_links_a_different_recording_of_the_song(tmp_path):
+    """The reported case: "Ordinary" was fetched from its album page, so the
+    library holds the album's recording while the playlist entry resolved to
+    the single's. Same artist, title and length: link it."""
+    store = _store(tmp_path)
+    repo = TargetPlaylistRepository(store)
+    await _seed_local_track(
+        store,
+        "track-ordinary",
+        recording="rec-album-version",
+        title="Ordinary",
+        artist_name="Alex Warren",
+        duration=186,
+    )
+    pid, _ = await _entry_playlist(
+        repo,
+        {
+            "track_name": "Ordinary",
+            "artist_name": "Alex Warren",
+            "recording_mbid": "rec-single-version",
+            "duration": 187,
+        },
+    )
+
+    assert await repo.link_tracks_by_recording(pid) == 1
+
+    (track,) = await repo.get_tracks(pid)
+    assert (track.library_file_id, track.source_type) == ("track-ordinary", "local")
+
+
+@pytest.mark.parametrize(
+    ("local_title", "local_seconds", "entry", "linked"),
+    [
+        # Remaster qualifiers do not change the song.
+        (
+            "Fortunate Son",
+            140,
+            {"track_name": "Fortunate Son - Remastered 1985", "duration": 141},
+            True,
+        ),
+        # Lead artist of a Spotify multi-artist credit.
+        (
+            "Fortunate Son",
+            140,
+            {
+                "track_name": "Fortunate Son",
+                "artist_name": "Creedence Clearwater Revival, John Fogerty",
+                "duration": 140,
+            },
+            True,
+        ),
+        # No length on the entry: an exact title is enough.
+        ("Fortunate Son", 140, {"track_name": "Fortunate Son", "duration": None}, True),
+        # A live take is a different version.
+        (
+            "Fortunate Son - Live",
+            140,
+            {"track_name": "Fortunate Son", "duration": 140},
+            False,
+        ),
+        # More than 3 s apart: a different take or edit.
+        ("Fortunate Son", 180, {"track_name": "Fortunate Son", "duration": 140}, False),
+        # Same title by someone else.
+        (
+            "Fortunate Son",
+            140,
+            {
+                "track_name": "Fortunate Son",
+                "artist_name": "Pearl Jam",
+                "duration": 140,
+            },
+            False,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_same_song_rules(tmp_path, local_title, local_seconds, entry, linked):
+    store = _store(tmp_path)
+    repo = TargetPlaylistRepository(store)
+    await _seed_local_track(
+        store, "track-1", recording=None, title=local_title, duration=local_seconds
+    )
+    pid, _ = await _entry_playlist(repo, entry)
+
+    assert await repo.link_tracks_by_recording(pid) == (1 if linked else 0)
+
+
+@pytest.mark.asyncio
+async def test_recording_match_wins_over_same_song(tmp_path):
+    store = _store(tmp_path)
+    repo = TargetPlaylistRepository(store)
+    await _seed_local_track(
+        store, "track-a-song", recording="rec-other", album_id="album-a"
+    )
+    # Credited elsewhere, so only the recording pass can pick it.
+    await _seed_local_track(
+        store,
+        "track-b-exact",
+        recording="rec-fs",
+        album_id="album-b",
+        artist_name="Tribute Band",
+    )
+    pid, _ = await _entry_playlist(
+        repo,
+        {"track_name": "Fortunate Son", "recording_mbid": "rec-fs", "duration": 140},
+    )
+
+    await repo.link_tracks_by_recording(pid)
+
+    (track,) = await repo.get_tracks(pid)
+    assert track.library_file_id == "track-b-exact"

@@ -40,6 +40,7 @@ from infrastructure.persistence.native_library_schema import SCHEMA_SQL
 from infrastructure.queue.durable_work_wakeup import DurableWorkWakeups
 from infrastructure.validators import is_valid_mbid
 from models.audio import AudioArtistCredit
+from models.song_identity import same_song_title
 from models.artist_reconciliation import (
     ProviderAlbumArtistProjection,
     ProviderArtistCredit,
@@ -6157,78 +6158,133 @@ class NativeLibraryStore(PersistenceBase):
     async def link_target_playlist_tracks_by_recording(
         self, playlist_id: str, changed_at: str
     ) -> int:
-        """Link unlinked entries to the library track carrying their recording (#204).
+        """Link unlinked entries to the library track that holds their song (#204).
 
         Album-based source resolution only finds files in the album an entry
         was imported against, once that album is identified. A track requested
-        one by one lands in the album the planner chose and may sit in
-        identification review, but the import records its recording on
-        ``local_tracks.embedded_recording_mbid`` either way, so matching on the
-        entry's ``recording_mbid`` links it regardless. Entries already linked
-        are never touched; an entry with no source yet is promoted to ``local``
-        (the #381 healing rule), one that has a source keeps it.
+        on its own lands in the album the planner chose, often waits in
+        identification review, or was fetched from an album page as that
+        album's own recording. Two passes, each only for entries still unlinked:
+
+        1. **Recording:** the import records the downloaded recording on
+           ``local_tracks.embedded_recording_mbid`` regardless of review, so
+           match the entry's ``recording_mbid`` (or an identity row).
+        2. **Same song:** same artist, same song title (remaster/mono
+           qualifiers ignored, live/demo/remix kept) and, when both are known,
+           a length within 3 s (:func:`models.song_identity.same_song_title`).
+
+        An entry with no source becomes ``local`` (the #381 healing rule); one
+        that has a source keeps it.
         """
 
+        def apply(connection: sqlite3.Connection, entry: sqlite3.Row, match: sqlite3.Row) -> int:
+            local_track_id = str(match["id"])
+            assignments = (
+                "library_file_id = ?, local_track_id = ?, local_album_id = ?, "
+                "local_artist_id = ?, reference_tombstone_id = NULL"
+            )
+            params: list[Any] = [
+                local_track_id,
+                local_track_id,
+                match["local_album_id"],
+                match["artist_id"],
+            ]
+            if not entry["source_type"]:
+                sources: list[str] = []
+                raw = entry["available_sources"]
+                if raw:
+                    try:
+                        decoded = json.loads(raw)
+                    except json.JSONDecodeError:
+                        decoded = []
+                    if isinstance(decoded, list):
+                        sources = [str(item) for item in decoded]
+                if "local" not in sources:
+                    sources.append("local")
+                assignments += (
+                    ", source_type = 'local', track_source_id = ?, available_sources = ?"
+                )
+                params += [local_track_id, json.dumps(sorted(sources))]
+            return connection.execute(
+                f"UPDATE library_playlist_tracks SET {assignments} "
+                "WHERE id = ? AND playlist_id = ? AND local_track_id IS NULL",
+                (*params, entry["id"], playlist_id),
+            ).rowcount
+
+        track_columns = (
+            "SELECT t.id, t.local_album_id, t.title, t.duration_seconds, "
+            "COALESCE(ta.local_artist_id, a.album_artist_id) AS artist_id "
+            "FROM local_tracks t JOIN local_albums a ON a.id = t.local_album_id "
+            "LEFT JOIN local_track_artists ta "
+            "ON ta.local_track_id = t.id AND ta.position = 0 "
+            "WHERE t.availability = 'indexed' AND "
+        )
+
         def operation(connection: sqlite3.Connection) -> int:
-            entries = connection.execute(
+            updated = 0
+            by_recording = connection.execute(
                 "SELECT id, recording_mbid, source_type, available_sources "
                 "FROM library_playlist_tracks WHERE playlist_id = ? "
                 "AND local_track_id IS NULL AND recording_mbid IS NOT NULL "
                 "AND recording_mbid <> ''",
                 (playlist_id,),
             ).fetchall()
-            updated = 0
-            for entry in entries:
+            for entry in by_recording:
                 recording = str(entry["recording_mbid"]).casefold()
                 match = connection.execute(
-                    "SELECT t.id, t.local_album_id, "
-                    "COALESCE(ta.local_artist_id, a.album_artist_id) AS artist_id "
-                    "FROM local_tracks t JOIN local_albums a ON a.id = t.local_album_id "
-                    "LEFT JOIN local_track_artists ta "
-                    "ON ta.local_track_id = t.id AND ta.position = 0 "
-                    "WHERE t.availability = 'indexed' AND ("
-                    "LOWER(t.embedded_recording_mbid) = ? OR t.id IN ("
+                    track_columns
+                    + "(LOWER(t.embedded_recording_mbid) = ? OR t.id IN ("
                     "SELECT identity.local_track_id "
                     "FROM local_track_external_identities identity "
-                    "WHERE LOWER(identity.recording_mbid) = ?)) "
-                    "ORDER BY t.id LIMIT 1",
+                    "WHERE LOWER(identity.recording_mbid) = ?)) ORDER BY t.id LIMIT 1",
                     (recording, recording),
                 ).fetchone()
-                if match is None:
+                if match is not None:
+                    updated += apply(connection, entry, match)
+
+            by_song = connection.execute(
+                "SELECT id, track_name, artist_name, duration, source_type, "
+                "available_sources FROM library_playlist_tracks "
+                "WHERE playlist_id = ? AND local_track_id IS NULL",
+                (playlist_id,),
+            ).fetchall()
+            for entry in by_song:
+                artist = str(entry["artist_name"] or "").strip()
+                if not artist or not entry["track_name"]:
                     continue
-                local_track_id = str(match["id"])
-                assignments = (
-                    "library_file_id = ?, local_track_id = ?, local_album_id = ?, "
-                    "local_artist_id = ?, reference_tombstone_id = NULL"
-                )
-                params: list[Any] = [
-                    local_track_id,
-                    local_track_id,
-                    match["local_album_id"],
-                    match["artist_id"],
-                ]
-                if not entry["source_type"]:
-                    sources: list[str] = []
-                    raw = entry["available_sources"]
-                    if raw:
-                        try:
-                            decoded = json.loads(raw)
-                        except json.JSONDecodeError:
-                            decoded = []
-                        if isinstance(decoded, list):
-                            sources = [str(item) for item in decoded]
-                    if "local" not in sources:
-                        sources.append("local")
-                    assignments += (
-                        ", source_type = 'local', track_source_id = ?, "
-                        "available_sources = ?"
+                # Spotify joins several artists with ", "; the lead artist is
+                # what a downloaded file credits.
+                names = sorted({artist.lower(), artist.split(", ")[0].strip().lower()})
+                placeholders = ",".join("?" for _ in names)
+                candidates = connection.execute(
+                    track_columns
+                    + f"(LOWER(t.artist_name) IN ({placeholders}) "
+                    f"OR LOWER(t.album_artist_name) IN ({placeholders})) ORDER BY t.id",
+                    (*names, *names),
+                ).fetchall()
+                seconds = entry["duration"]
+                same = [
+                    candidate
+                    for candidate in candidates
+                    if same_song_title(
+                        str(entry["track_name"]),
+                        seconds,
+                        str(candidate["title"] or ""),
+                        candidate["duration_seconds"],
                     )
-                    params += [local_track_id, json.dumps(sorted(sources))]
-                updated += connection.execute(
-                    f"UPDATE library_playlist_tracks SET {assignments} "
-                    "WHERE id = ? AND playlist_id = ? AND local_track_id IS NULL",
-                    (*params, entry["id"], playlist_id),
-                ).rowcount
+                ]
+                if not same:
+                    continue
+                best = min(
+                    same,
+                    key=lambda candidate: (
+                        abs((candidate["duration_seconds"] or 0) - (seconds or 0))
+                        if seconds and candidate["duration_seconds"]
+                        else 0,
+                        str(candidate["id"]),
+                    ),
+                )
+                updated += apply(connection, entry, best)
             if updated:
                 connection.execute(
                     "UPDATE library_playlists SET updated_at = ? WHERE id = ?",
