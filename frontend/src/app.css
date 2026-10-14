@@ -3865,6 +3865,11 @@ body {
 	font-family: var(--font-sans);
 }
 
+/* The wrapper around the app in app.html takes no box of its own. */
+#app-root {
+	display: contents;
+}
+
 button,
 a,
 input,
