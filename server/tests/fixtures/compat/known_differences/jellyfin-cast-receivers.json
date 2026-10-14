@@ -1,0 +1,5 @@
+{
+  "differences": [
+    {"server": "jellyfin", "object": "body", "key": "CastReceiverApplications", "kind": "empty", "rows": ["system.info"], "reason": "Jellyfin lists the Cast receivers it ships with. This app has none to name, so it sends an empty list rather than claim one."}
+  ]
+}

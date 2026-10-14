@@ -23,7 +23,9 @@ pub struct PublicSystemInfo {
     pub startup_wizard_completed: bool,
 }
 
-/// `GET /System/Info` shape (v2 `SystemInfo`).
+/// `GET /System/Info` shape (v2 `SystemInfo`), plus the installation
+/// fields Jellyfin 10.10.6 sends (`system.info.json` in the references).
+/// The path fields are empty: this server does not report its host.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct SystemInfo {
@@ -37,6 +39,23 @@ pub struct SystemInfo {
     pub has_pending_restart: bool,
     pub is_shutting_down: bool,
     pub supports_library_monitor: bool,
+    pub web_socket_port_number: u16,
+    pub completed_installations: Vec<String>,
+    pub can_self_restart: bool,
+    pub can_launch_web_browser: bool,
+    pub program_data_path: String,
+    pub web_path: String,
+    pub items_by_name_path: String,
+    pub cache_path: String,
+    pub log_path: String,
+    pub internal_metadata_path: String,
+    /// Always empty: this server has no cast receivers to list.
+    pub cast_receiver_applications: Vec<String>,
+    pub has_update_available: bool,
+    pub encoder_location: String,
+    pub system_architecture: String,
+    pub operating_system_display_name: String,
+    pub transcoding_temp_path: String,
 }
 
 // ===== User objects (Finamp/Manet login contract) =====

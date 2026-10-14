@@ -36,7 +36,7 @@ where
     json(
         StatusCode::OK,
         &PublicSystemInfo {
-            local_address: local_address(&state, request.headers()),
+            local_address: local_address(&state, &request),
             server_name: settings.server_name.clone(),
             version: settings.server_version.clone(),
             product_name: "Jellyfin Server".to_owned(),
@@ -72,7 +72,7 @@ where
     json(
         StatusCode::OK,
         &SystemInfo {
-            local_address: local_address(&state, request.headers()),
+            local_address: local_address(&state, &request),
             server_name: settings.server_name.clone(),
             version: settings.server_version.clone(),
             product_name: "Jellyfin Server".to_owned(),
@@ -82,8 +82,54 @@ where
             has_pending_restart: false,
             is_shutting_down: false,
             supports_library_monitor: true,
+            web_socket_port_number: state.listener.port,
+            completed_installations: Vec::new(),
+            // Nothing here can restart the app or open a browser, and this
+            // API offers no update.
+            can_self_restart: false,
+            can_launch_web_browser: false,
+            program_data_path: String::new(),
+            web_path: String::new(),
+            items_by_name_path: String::new(),
+            cache_path: String::new(),
+            log_path: String::new(),
+            internal_metadata_path: String::new(),
+            cast_receiver_applications: Vec::new(),
+            has_update_available: false,
+            encoder_location: if settings.ffmpeg_available {
+                "System"
+            } else {
+                "NotFound"
+            }
+            .to_owned(),
+            system_architecture: system_architecture().to_owned(),
+            operating_system_display_name: operating_system_display_name().to_owned(),
+            transcoding_temp_path: String::new(),
         },
     )
+}
+
+/// The operating system's name as Jellyfin shows it.
+fn operating_system_display_name() -> &'static str {
+    match std::env::consts::OS {
+        "linux" => "Linux",
+        "macos" => "macOS",
+        "windows" => "Windows",
+        other => other,
+    }
+}
+
+/// The build's architecture in Jellyfin's spelling. The four spellings
+/// Jellyfin uses are mapped; any other architecture is sent under its Rust
+/// name.
+fn system_architecture() -> &'static str {
+    match std::env::consts::ARCH {
+        "x86_64" => "X64",
+        "aarch64" => "Arm64",
+        "x86" => "X86",
+        "arm" => "Arm",
+        other => other,
+    }
 }
 
 /// QuickConnect is unsupported: the literal `false` (v2 `_handle` lambda).

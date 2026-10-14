@@ -25,7 +25,7 @@ use crate::compat::adapters::principal::SubsonicVerifier;
 use crate::compat::adapters::queues::CompatQueues;
 use crate::compat::adapters::subsonic_store::SubsonicStore;
 use crate::compat::http::{CompatLimits, SubsonicState, cors_layer, limits_layer, subsonic_router};
-use crate::compat::jellyfin::{JellyfinState, router as jellyfin_router};
+use crate::compat::jellyfin::{JellyfinState, ListenerConfig, router as jellyfin_router};
 use crate::compat::settings::LiveSettings;
 use crate::library::wiring::LibrarySetup;
 use crate::media::MediaEngine;
@@ -66,11 +66,14 @@ pub struct CompatDeps {
     pub queues: CompatQueues,
     /// Settings source.
     pub settings: LiveSettings,
+    /// Port and trusted proxies of this server.
+    pub listener: ListenerConfig,
 }
 
 impl CompatDeps {
     /// Deps over the native reads bundle, so compat shares its catalog and
     /// collections.
+    #[allow(clippy::too_many_arguments)]
     pub fn over_reads(
         users: UsersDeps,
         crypto: Arc<Crypto>,
@@ -79,6 +82,7 @@ impl CompatDeps {
         scan: LibrarySetup,
         reads: &ReadsSetup,
         settings: LiveSettings,
+        listener: ListenerConfig,
     ) -> Self {
         Self {
             users,
@@ -89,6 +93,7 @@ impl CompatDeps {
             library: CompatLibrary::from_reads(reads),
             queues: CompatQueues::new(reads.collections.db.clone()),
             settings,
+            listener,
         }
     }
 }
@@ -126,12 +131,15 @@ impl CompatSetup {
             playback,
             CatalogIds::new(deps.library),
             deps.settings.clone(),
+            deps.listener.clone(),
         );
         let verifier = SubsonicVerifier::new(passwords.clone(), deps.users);
+        // Rate limits key the client behind these proxies (`TRUSTED_PROXY_IPS`).
         let limits = CompatLimits::new(
             Arc::new(crate::compat::http::StoreLabels::new(passwords)),
             deps.settings.clone(),
-        );
+        )
+        .with_trusted_proxies(deps.listener.trusted_proxies.clone());
         let audio = CompatAudio::new(deps.engine);
         let router = Self::assemble(
             &verifier,
@@ -223,6 +231,10 @@ impl CompatSetup {
             scan,
             reads,
             LiveSettings::fixed(Settings::default(), JellyfinSettings::default()),
+            ListenerConfig {
+                port: crate::config::DEFAULT_PORT,
+                trusted_proxies: crate::auth::session::middleware::TrustedProxies::default(),
+            },
         )))
     }
 
@@ -236,25 +248,6 @@ impl CompatSetup {
         self.settings = LiveSettings::fixed(subsonic_settings, jellyfin_settings);
         self.jellyfin.settings = self.settings.clone();
         self.limits.settings = self.settings.clone();
-        self.router = Self::assemble(
-            &self.verifier,
-            &self.store,
-            &self.audio,
-            &self.settings,
-            &self.jellyfin,
-            &self.limits,
-        );
-        self
-    }
-
-    /// Key rate limits and lockouts by the client behind these proxies
-    /// (`TRUSTED_PROXY_IPS`).
-    #[must_use]
-    pub fn with_trusted_proxies(
-        mut self,
-        trusted: crate::auth::session::middleware::TrustedProxies,
-    ) -> Self {
-        self.limits = self.limits.with_trusted_proxies(trusted);
         self.router = Self::assemble(
             &self.verifier,
             &self.store,

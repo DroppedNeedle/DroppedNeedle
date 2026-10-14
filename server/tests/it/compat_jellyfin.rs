@@ -6,16 +6,18 @@
 
 use axum::Router;
 use axum::body::Body;
+use axum::extract::ConnectInfo;
 use axum::http::Request;
 use droppedneedle::auth::compat_auth::fakes::FakeCompatPasswords;
 use droppedneedle::auth::compat_auth::jellyfin::server_id;
+use droppedneedle::auth::session::middleware::TrustedProxies;
 use droppedneedle::compat::jellyfin::fake::{
     FakeLibrary, MemoryEngine, MemoryIds, MemorySessions, SessionCall,
 };
 use droppedneedle::compat::jellyfin::seams::{
     DecideInput, IdMap, JellyfinSettings, StreamPlan, decide,
 };
-use droppedneedle::compat::jellyfin::{JellyfinState, router};
+use droppedneedle::compat::jellyfin::{JellyfinState, ListenerConfig, router};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
@@ -88,6 +90,10 @@ impl Fx {
                 self.sessions.clone(),
                 self.ids.clone(),
                 settings,
+                ListenerConfig {
+                    port: 8096,
+                    trusted_proxies: TrustedProxies::default(),
+                },
             )),
         )
     }
@@ -297,8 +303,17 @@ async fn gates_and_system_endpoints() {
     assert_eq!((denied.status, denied.body.len()), (401, 0));
     let info = fx.get("/jellyfin/System/Info", Some(&auth)).await;
     assert_eq!(info.header("content-type"), "application/json");
+    let mut body = info.json();
+    // Both depend on the build host; only that they are named is pinned.
+    for key in ["OperatingSystemDisplayName", "SystemArchitecture"] {
+        let value = body.as_object_mut().expect("object").remove(key);
+        assert!(
+            value.is_some_and(|value| value.as_str().is_some_and(|text| !text.is_empty())),
+            "{key} is named"
+        );
+    }
     assert_shape(
-        &info.json(),
+        &body,
         &json!({
             "LocalAddress": "http://localhost/jellyfin",
             "ServerName": "DroppedNeedle",
@@ -310,8 +325,31 @@ async fn gates_and_system_endpoints() {
             "HasPendingRestart": false,
             "IsShuttingDown": false,
             "SupportsLibraryMonitor": true,
+            "WebSocketPortNumber": 8096,
+            "CompletedInstallations": [],
+            "CanSelfRestart": false,
+            "CanLaunchWebBrowser": false,
+            "ProgramDataPath": "",
+            "WebPath": "",
+            "ItemsByNamePath": "",
+            "CachePath": "",
+            "LogPath": "",
+            "InternalMetadataPath": "",
+            "CastReceiverApplications": [],
+            "HasUpdateAvailable": false,
+            "EncoderLocation": "System",
+            "TranscodingTempPath": "",
         }),
         "$",
+    );
+    // No host path reaches the answer, so no value starts with a slash.
+    assert!(
+        info.json()
+            .as_object()
+            .expect("object")
+            .values()
+            .all(|value| !value.as_str().unwrap_or("").starts_with('/')),
+        "a System/Info value is a path"
     );
     let quick = fx.get("/jellyfin/QuickConnect/Enabled", None).await;
     assert_eq!((quick.status, quick.body.as_slice()), (200, &b"false"[..]));
@@ -319,6 +357,51 @@ async fn gates_and_system_endpoints() {
         .send("POST", "/jellyfin/Sessions/Logout", None, b"")
         .await;
     assert_eq!((logout.status, logout.body.len()), (204, 0));
+}
+
+/// `LocalAddress` as seen by one request that says it came over https
+/// through a proxy, sent from `peer`.
+async fn local_address_from(peer: &str) -> String {
+    let fx = fixture().await;
+    let mut request = Request::builder()
+        .uri("/jellyfin/System/Info")
+        .header("authorization", finamp(ALICE))
+        .header("host", "music.example")
+        .header("x-forwarded-proto", "https")
+        .body(Body::empty())
+        .expect("request");
+    let peer: std::net::SocketAddr = peer.parse().expect("peer address");
+    request.extensions_mut().insert(ConnectInfo(peer));
+    let response = fx
+        .app(settings())
+        .oneshot(request)
+        .await
+        .expect("router responds");
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    let info: Value = serde_json::from_slice(&bytes).expect("json");
+    info["LocalAddress"]
+        .as_str()
+        .expect("LocalAddress")
+        .to_owned()
+}
+
+#[tokio::test]
+async fn local_address_is_https_when_a_trusted_proxy_says_so() {
+    // The default trusted proxies are the loopback addresses.
+    assert_eq!(
+        local_address_from("127.0.0.1:50000").await,
+        "https://music.example/jellyfin"
+    );
+}
+
+#[tokio::test]
+async fn local_address_ignores_forwarded_scheme_from_an_untrusted_peer() {
+    assert_eq!(
+        local_address_from("203.0.113.9:50000").await,
+        "http://music.example/jellyfin"
+    );
 }
 
 #[tokio::test]

@@ -507,6 +507,7 @@ where
     }
     let raw_query = request.uri().query().map(str::to_owned);
     let is_post = request.method() == axum::http::Method::POST;
+    let advertised = local_address(&state, &request);
     let (parts, body) = request.into_parts();
     let authed = match authed(&state.passwords, &parts.headers, raw_query.as_deref()).await {
         Ok(authed) => authed,
@@ -564,8 +565,7 @@ where
         .unwrap_or_else(|| "dat".to_owned());
     let direct_url = format!(
         "{}/Audio/{item_id}/stream.{ext}?static=true&mediaSourceId={item_id}&api_key={}",
-        local_address(&state, &parts.headers),
-        authed.principal.token,
+        advertised, authed.principal.token,
     );
     let mut src = MediaSourceInfo {
         id: item_id.clone(),

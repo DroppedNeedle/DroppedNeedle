@@ -17,9 +17,10 @@
 use crate::auth::compat_auth::jellyfin::{
     JellyfinPasswordStore, JellyfinRequest, extract_client, extract_token, resolve_token, server_id,
 };
+use crate::auth::session::middleware::{TrustedProxies, arrived_over_https};
 use axum::Router;
 use axum::body::Body;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, Request, StatusCode};
 use axum::response::Response;
 use axum::routing::{get, post};
 
@@ -38,6 +39,16 @@ use super::seams::{
 use super::system::*;
 
 // ===== State + registration =====
+
+/// How clients reach this server: the port it listens on and the proxies
+/// whose forwarded headers are believed.
+#[derive(Debug, Clone)]
+pub struct ListenerConfig {
+    /// TCP port the app listens on, reported as `WebSocketPortNumber`.
+    pub port: u16,
+    /// Proxies whose `X-Forwarded-Proto` sets the scheme of `LocalAddress`.
+    pub trusted_proxies: TrustedProxies,
+}
 
 /// Router dependencies. Every seam is a generic so production binds the
 /// real adapters without touching the routes: `S` app-password store
@@ -62,6 +73,8 @@ pub struct JellyfinState<S, L, E, P, I> {
     pub base_path: String,
     /// Restart-stable server id, computed once (`compat_auth` owns the value).
     pub server_id: String,
+    /// Port and trusted proxies, from the deployment config.
+    pub listener: ListenerConfig,
 }
 
 impl<S, L, E, P, I> JellyfinState<S, L, E, P, I> {
@@ -73,6 +86,7 @@ impl<S, L, E, P, I> JellyfinState<S, L, E, P, I> {
         sessions: P,
         ids: I,
         settings: impl Into<LiveSettings>,
+        listener: ListenerConfig,
     ) -> Self {
         Self {
             passwords,
@@ -83,6 +97,7 @@ impl<S, L, E, P, I> JellyfinState<S, L, E, P, I> {
             settings: settings.into(),
             base_path: String::new(),
             server_id: server_id(),
+            listener,
         }
     }
 }
@@ -433,13 +448,20 @@ pub(super) fn gate<S, L, E, P, I>(state: &JellyfinState<S, L, E, P, I>) -> Optio
     }
 }
 
-/// Advertised origin plus shim prefix (v2 `_local_address`).
+/// Advertised origin plus shim prefix (v2 `_local_address`). The scheme is
+/// https only when the request arrived over HTTPS: direct TLS, or
+/// `X-Forwarded-Proto` from a trusted proxy.
 pub(super) fn local_address<S, L, E, P, I>(
     state: &JellyfinState<S, L, E, P, I>,
-    headers: &HeaderMap,
+    request: &Request<Body>,
 ) -> String {
-    let host = header(headers, "host").unwrap_or("localhost");
-    format!("http://{host}{}/jellyfin", state.base_path)
+    let host = header(request.headers(), "host").unwrap_or("localhost");
+    let scheme = if arrived_over_https(request, &state.listener.trusted_proxies) {
+        "https"
+    } else {
+        "http"
+    };
+    format!("{scheme}://{host}{}/jellyfin", state.base_path)
 }
 
 pub(super) fn builder<'a, S, L, E, P, I>(state: &'a JellyfinState<S, L, E, P, I>) -> Builder<'a, I>

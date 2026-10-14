@@ -245,6 +245,10 @@ impl E2e {
                 library.clone(),
                 &reads,
                 droppedneedle::compat::settings::LiveSettings::from_config(Arc::clone(&self.store)),
+                droppedneedle::compat::jellyfin::ListenerConfig {
+                    port: app_config.port,
+                    trusted_proxies: app_config.trusted_proxies.clone(),
+                },
             ),
         );
         let providers = Arc::new(Providers::unpaced());
