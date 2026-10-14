@@ -6143,7 +6143,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v3/plugins/{name}/ui/panel.js": {
+    "/api/v3/plugins/{name}/ui/panel": {
         parameters: {
             query?: never;
             header?: never;
@@ -6151,11 +6151,12 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Serve one enabled plugin's panel bundle. Admin-only: panel code runs in
-         *     the admin UI. The entry path resolves inside the plugin's own directory;
-         *     anything escaping it reads as missing.
+         * Serve one enabled plugin's settings panel as a page for the admin UI to
+         *     frame: a fixed wrapper with the plugin's panel script inlined. Admin-only.
+         *     The entry path resolves inside the plugin's own directory; anything
+         *     escaping it reads as missing.
          */
-        get: operations["plugin_panel_js"];
+        get: operations["plugin_panel_page"];
         put?: never;
         post?: never;
         delete?: never;
@@ -38233,7 +38234,7 @@ export interface operations {
             };
         };
     };
-    plugin_panel_js: {
+    plugin_panel_page: {
         parameters: {
             query?: never;
             header?: never;
@@ -38245,12 +38246,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Panel bundle */
+            /** @description Panel page */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "text/html": unknown;
+                };
             };
             /** @description Not modified */
             304: {

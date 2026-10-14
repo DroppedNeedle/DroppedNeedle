@@ -7,7 +7,7 @@ export const PLUGIN_ENDPOINTS = {
 	sources: () => v3('/api/v3/plugins/sources'),
 	plugin: (name: string) => v3('/api/v3/plugins/{name}', { path: { name } }),
 	update: (name: string) => v3('/api/v3/plugins/{name}/update', { path: { name } }),
-	uiBundle: (name: string) => v3('/api/v3/plugins/{name}/ui/panel.js', { path: { name } }),
+	panelPage: (name: string) => v3('/api/v3/plugins/{name}/ui/panel', { path: { name } }),
 	// One path segment under the plugin's extension root; the server route is
 	// a wildcard, so nested subpaths are not needed by any caller.
 	ext: (name: string, subpath: string, query?: V3Query) =>

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 
+	import { getApiUrl } from '$lib/api/api-utils';
 	import { api } from '$lib/api/client';
 	import { PLUGIN_ENDPOINTS } from '$lib/queries/plugins/endpoints';
 	import { fetchPluginSources } from '$lib/queries/plugins/PluginSourceQueries.svelte';
@@ -12,30 +13,15 @@
 
 	let { pluginName, displayName = pluginName }: Props = $props();
 
+	// The panel is plugin code. The server serves it as a page of its own whose
+	// policy header seals it, and the frame's sandbox seals it again: it gets
+	// its own origin, no cookies and no network. Never add allow-same-origin.
 	let frame: HTMLIFrameElement | null = $state(null);
-	// `csp` is valid on <iframe> in browsers but absent from Svelte's HTMLProps —
-	// set it imperatively so svelte-check stays green. Defense-in-depth alongside
-	// the srcdoc <meta> CSP below: the bundle cannot fetch() out.
-	$effect(() => {
-		frame?.setAttribute('csp', "default-src 'none'; connect-src 'none'; form-action 'none'");
-	});
-	let srcdoc: string = $state('');
+	let src: string = $state('');
 	let loading: boolean = $state(true);
 	let loadError: string | null = $state(null);
 
 	const RPC_METHODS = new Set(['sources.list', 'search.preview', 'get_settings', 'health.get']);
-
-	function escapeForInlineScript(js: string): string {
-		return js.replace(/<[/]script/gi, '<\\' + '/script');
-	}
-
-	function buildSrcdoc(panelJs: string): string {
-		const inline = escapeForInlineScript(panelJs);
-		return (
-			`<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';"><style>body{font:13px/1.5 system-ui,sans-serif;margin:0;padding:12px;color:#111;background:#fff}#panel-root{min-height:40px}</style></head><body><div id="panel-root"></div><script>${inline}<` +
-			`/script></body></html>`
-		);
-	}
 
 	function reply(target: Window | null, id: unknown, payload: Record<string, unknown>): void {
 		try {
@@ -78,18 +64,16 @@
 
 		async function load(): Promise<void> {
 			try {
-				const res = await api.global.get<Response>(PLUGIN_ENDPOINTS.uiBundle(pluginName), {
-					signal,
-					raw: true
-				});
-				if (!res.ok) throw new Error(`Panel unavailable (${res.status})`);
-				const js = await res.text();
+				// A frame cannot tell the page whether its load failed, so ask first.
+				const address = PLUGIN_ENDPOINTS.panelPage(pluginName);
+				const res = await api.global.head(address, { signal });
 				if (cancelled) return;
-				if (!js.trim()) throw new Error('Panel is empty');
-				srcdoc = buildSrcdoc(js);
+				if (res.status === 404) throw new Error('the panel file is missing or empty');
+				if (!res.ok) throw new Error(`the server answered ${res.status}`);
+				src = getApiUrl(address);
 			} catch (error) {
 				if (cancelled || signal.aborted) return;
-				loadError = error instanceof Error ? error.message : 'Panel failed to load';
+				loadError = error instanceof Error ? error.message : 'it failed to load';
 			} finally {
 				if (!cancelled) loading = false;
 			}
@@ -145,7 +129,7 @@
 			bind:this={frame}
 			title="{displayName} panel"
 			sandbox="allow-scripts"
-			{srcdoc}
+			{src}
 			class="h-48 w-full rounded-lg border border-base-content/10 bg-white"
 		></iframe>
 		<p class="mt-1 text-[11px] text-base-content/40">Sandboxed: scripts only, no network.</p>

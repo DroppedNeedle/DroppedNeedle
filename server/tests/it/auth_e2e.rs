@@ -1273,7 +1273,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/api/v3/admin/provider-stats", Posture::Admin),
     ("GET", "/api/v3/admin/users/{id}/quota", Posture::Admin),
     ("PUT", "/api/v3/admin/users/{id}/quota", Posture::Admin),
-    // Stage-10 plugins + scrobble. Plugin management and the panel bundle
+    // Stage-10 plugins + scrobble. Plugin management and the panel page
     // are admin-only; sources, guarded plugin HTTP, and the caller's own
     // scrobble settings admit any signed-in user.
     ("GET", "/api/v3/plugins", Posture::Admin),
@@ -1294,7 +1294,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/plugins/ext/{name}/{subpath}",
         Posture::User,
     ),
-    ("GET", "/api/v3/plugins/{name}/ui/panel.js", Posture::Admin),
+    ("GET", "/api/v3/plugins/{name}/ui/panel", Posture::Admin),
     ("GET", "/api/v3/me/scrobble-preferences", Posture::User),
     ("PUT", "/api/v3/me/scrobble-preferences", Posture::User),
     ("PUT", "/api/v3/me/connections/listenbrainz", Posture::User),

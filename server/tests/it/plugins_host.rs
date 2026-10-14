@@ -549,11 +549,88 @@ async fn plugin_routes_need_sessions_and_admins() {
         ("POST", "/plugins/toy/update"),
         ("PUT", "/plugins/toy"),
         ("DELETE", "/plugins/toy"),
-        ("GET", "/plugins/toy/ui/panel.js"),
+        ("GET", "/plugins/toy/ui/panel"),
     ] {
         let (status, _) = send(router_as(&rig, "user-1"), method, uri, Some(json!({}))).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}");
     }
+}
+
+/// The panel page is plugin script shown inside the admin UI. Its policy is
+/// what keeps that script out of the app's origin, so it is on every answer
+/// a browser can cache, and the script text cannot close its own element.
+#[tokio::test]
+async fn the_panel_page_is_sealed_on_every_answer() {
+    const POLICY: &str = "default-src 'none'; script-src 'unsafe-inline'; \
+        style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; \
+        frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; \
+        frame-ancestors 'self'; sandbox allow-scripts";
+    let rig = rig("panel");
+    let manifest = format!("{TOY_MANIFEST}[plugin_ui]\nentry = \"ui/panel.js\"\n");
+    write_plugin(&rig.dir, "toy", &manifest);
+    let ui = rig.dir.join("plugins").join("toy").join("ui");
+    std::fs::create_dir_all(&ui).unwrap();
+    std::fs::write(
+        ui.join("panel.js"),
+        "var a = 1;</script><script>var b = 2;</SCRIPT >",
+    )
+    .unwrap();
+    rig.host.load_all();
+
+    let get = |etag: Option<String>| {
+        let mut request = Request::builder().uri("/plugins/toy/ui/panel");
+        if let Some(etag) = etag {
+            request = request.header("if-none-match", etag);
+        }
+        router_as(&rig, "admin-1").oneshot(request.body(Body::empty()).unwrap())
+    };
+    let sealed = |response: &axum::http::Response<Body>| {
+        let header = |name: &str| {
+            response
+                .headers()
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned)
+        };
+        assert_eq!(header("content-security-policy").as_deref(), Some(POLICY));
+        assert_eq!(header("x-content-type-options").as_deref(), Some("nosniff"));
+        assert_eq!(
+            header("content-type").as_deref(),
+            Some("text/html; charset=utf-8")
+        );
+    };
+
+    // Dropped in but not enabled: no page.
+    assert_eq!(get(None).await.unwrap().status(), StatusCode::NOT_FOUND);
+    rig.host
+        .update_settings("toy", true, HashMap::new())
+        .unwrap();
+
+    let response = get(None).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    sealed(&response);
+    let etag = response.headers()["etag"].to_str().unwrap().to_owned();
+    assert!(etag.contains(env!("CARGO_PKG_VERSION")), "{etag}");
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let page = String::from_utf8(bytes.to_vec()).unwrap().to_lowercase();
+    assert_eq!(page.matches("</script").count(), 1, "{page}");
+    assert!(page.ends_with("</script></body></html>"), "{page}");
+    assert!(page.contains("var b = 2;"), "{page}");
+
+    let response = get(Some(etag)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+    sealed(&response);
+
+    let (status, _) = send(
+        router_as(&rig, "admin-1"),
+        "GET",
+        "/plugins/ghost/ui/panel",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

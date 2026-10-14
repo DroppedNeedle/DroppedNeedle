@@ -15628,13 +15628,13 @@
         }
       }
     },
-    "/api/v3/plugins/{name}/ui/panel.js": {
+    "/api/v3/plugins/{name}/ui/panel": {
       "get": {
         "tags": [
           "crate::plugins::handlers"
         ],
-        "summary": "Serve one enabled plugin's panel bundle. Admin-only: panel code runs in\nthe admin UI. The entry path resolves inside the plugin's own directory;\nanything escaping it reads as missing.",
-        "operationId": "plugin_panel_js",
+        "summary": "Serve one enabled plugin's settings panel as a page for the admin UI to\nframe: a fixed wrapper with the plugin's panel script inlined. Admin-only.\nThe entry path resolves inside the plugin's own directory; anything\nescaping it reads as missing.",
+        "operationId": "plugin_panel_page",
         "parameters": [
           {
             "name": "name",
@@ -15648,7 +15648,10 @@
         ],
         "responses": {
           "200": {
-            "description": "Panel bundle"
+            "description": "Panel page",
+            "content": {
+              "text/html": {}
+            }
           },
           "304": {
             "description": "Not modified"

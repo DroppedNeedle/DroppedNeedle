@@ -911,8 +911,50 @@ pub async fn plugin_ext_delete(
 }
 
 // ---------------------------------------------------------------------------
-// Plugin panel bundle
+// Plugin panel page
 // ---------------------------------------------------------------------------
+
+/// The fixed document around a plugin's panel script.
+const PANEL_PAGE_HEAD: &[u8] = b"<!doctype html><html><head><meta charset=\"utf-8\">\
+<style>body{font:13px/1.5 system-ui,sans-serif;margin:0;padding:12px;color:#111;background:#fff}\
+#panel-root{min-height:40px}</style></head><body><div id=\"panel-root\"></div><script>";
+const PANEL_PAGE_TAIL: &[u8] = b"</script></body></html>";
+
+/// What the panel page may do. It is plugin code shown inside the admin UI,
+/// so the page is sealed: `sandbox allow-scripts` gives it an origin of its
+/// own with no cookies or storage, even when the address is opened in its
+/// own tab, and only the app may frame it. Inline script and style run,
+/// pictures come from `data:` and `blob:` only, and nothing else loads or
+/// connects. Never add `allow-same-origin`: the script would then run as the
+/// app, with the admin's session.
+const PANEL_PAGE_POLICY: &str = "default-src 'none'; script-src 'unsafe-inline'; \
+style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; frame-src 'none'; \
+object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; \
+sandbox allow-scripts";
+
+/// The panel script with every `</script` (any case) broken up, so its text
+/// cannot close the element it is inlined into. `<\/script` reads the same
+/// inside a JavaScript string or regular expression. Not covered: a script
+/// holding `<!--` and then `<script` makes the parser run past the closing
+/// tag, which only breaks that plugin's own panel. Every other byte passes
+/// through unchanged.
+fn inline_panel_script(script: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(script.len() + 16);
+    let mut rest = script;
+    while let Some((&byte, tail)) = rest.split_first() {
+        out.push(byte);
+        if byte == b'<'
+            && tail.first() == Some(&b'/')
+            && tail
+                .get(1..7)
+                .is_some_and(|name| name.eq_ignore_ascii_case(b"script"))
+        {
+            out.push(b'\\');
+        }
+        rest = tail;
+    }
+    out
+}
 
 /// Format one timestamp as an HTTP date (`Sun, 06 Nov 1994 08:49:37 GMT`).
 fn http_date(when: SystemTime) -> String {
@@ -954,22 +996,23 @@ fn http_date(when: SystemTime) -> String {
     )
 }
 
-/// Serve one enabled plugin's panel bundle. Admin-only: panel code runs in
-/// the admin UI. The entry path resolves inside the plugin's own directory;
-/// anything escaping it reads as missing.
+/// Serve one enabled plugin's settings panel as a page for the admin UI to
+/// frame: a fixed wrapper with the plugin's panel script inlined. Admin-only.
+/// The entry path resolves inside the plugin's own directory; anything
+/// escaping it reads as missing.
 #[utoipa::path(
     get,
-    path = "/api/v3/plugins/{name}/ui/panel.js",
+    path = "/api/v3/plugins/{name}/ui/panel",
     params(("name" = String, Path, description = "Plugin name")),
     responses(
-        (status = 200, description = "Panel bundle"),
+        (status = 200, description = "Panel page", content_type = "text/html"),
         (status = 304, description = "Not modified"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin access required"),
         (status = 404, description = "Unknown plugin or panel"),
     )
 )]
-pub async fn plugin_panel_js(
+pub async fn plugin_panel_page(
     State(deps): State<PluginsDeps>,
     _admin: AdminUser,
     Path(name): Path<String>,
@@ -1058,10 +1101,20 @@ async fn serve_panel_file(
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_nanos())
         .unwrap_or(0);
-    let etag = format!("\"{plugin_name}-{:x}-{:x}\"", metadata.len(), mtime);
-    let mut builder = Response::builder()
+    // The build's version is part of the tag: a release that changes the
+    // wrapper must not answer 304 for a page cached from the old one.
+    let etag = format!(
+        "\"{plugin_name}-{}-{:x}-{:x}\"",
+        env!("CARGO_PKG_VERSION"),
+        metadata.len(),
+        mtime
+    );
+    // The policy is on the 304 too: a cached page takes its headers from
+    // whichever answer the browser saw last.
+    let builder = Response::builder()
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
         .header("x-content-type-options", "nosniff")
-        .header("content-security-policy", "sandbox")
+        .header("content-security-policy", PANEL_PAGE_POLICY)
         .header("cache-control", "private, max-age=60, must-revalidate")
         .header("etag", etag.clone())
         .header(
@@ -1084,11 +1137,15 @@ async fn serve_panel_file(
     let bytes = tokio::fs::read(&target)
         .await
         .map_err(|_| PluginError::NotFound)?;
-    builder = builder
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/javascript");
+    if bytes.iter().all(u8::is_ascii_whitespace) {
+        return Err(PluginError::NotFound);
+    }
+    let mut page = PANEL_PAGE_HEAD.to_vec();
+    page.extend(inline_panel_script(&bytes));
+    page.extend_from_slice(PANEL_PAGE_TAIL);
     builder
-        .body(Body::from(bytes))
+        .status(StatusCode::OK)
+        .body(Body::from(page))
         .map_err(|error| PluginError::internal(&error, ids))
 }
 
@@ -1270,7 +1327,7 @@ pub fn plugins_router(deps: PluginsDeps) -> axum::Router {
             "/plugins/{name}",
             put(update_plugin).delete(uninstall_plugin),
         )
-        .route("/plugins/{name}/ui/panel.js", get(plugin_panel_js))
+        .route("/plugins/{name}/ui/panel", get(plugin_panel_page))
         .route(
             "/plugins/ext/{name}/{*subpath}",
             get(plugin_ext_get)

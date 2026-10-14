@@ -422,8 +422,19 @@ With `[plugin_ui] entry`, the admin's plugin card shows the plugin's own
 script in a locked-down frame: no access to the page, its cookies or the
 network. It can talk to the page only through `postMessage`, with four
 read-only requests: `sources.list`, `search.preview`, `get_settings` (its own,
-secrets masked) and `health.get` (its own). The script is served to admins
-only, from inside the plugin folder. `external_url` shows a link instead.
+secrets masked) and `health.get` (its own). `external_url` shows a link
+instead.
+
+The server reads the script from inside the plugin folder and serves it to
+admins only, inlined into a small page of its own with an empty
+`<div id="panel-root">` to draw into. The script is not served as a file:
+there is no address to load it from. Inline script and style run, pictures
+load from `data:` and `blob:` addresses only, and nothing else loads or
+connects. Because the script is inlined, every `</script` in the file is sent
+as `<\/script`, which reads the same inside a JavaScript string. One pair
+is not handled: a file holding `<!--` and, anywhere after it, `<script` gives
+a panel that never runs. If your bundle has both, write one of them another
+way, for example `'<' + '!--'` or `'<' + 'script'`.
 
 ## The Python helper
 

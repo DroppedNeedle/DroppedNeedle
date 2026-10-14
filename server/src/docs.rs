@@ -660,7 +660,7 @@ use crate::{
         crate::plugins::handlers::plugin_ext_get,
         crate::plugins::handlers::plugin_ext_post,
         crate::plugins::handlers::plugin_ext_delete,
-        crate::plugins::handlers::plugin_panel_js,
+        crate::plugins::handlers::plugin_panel_page,
         crate::plugins::handlers::get_scrobble_preferences,
         crate::plugins::handlers::update_scrobble_preferences,
         crate::plugins::handlers::connect_listenbrainz_route,
