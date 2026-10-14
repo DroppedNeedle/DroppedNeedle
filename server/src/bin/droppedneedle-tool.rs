@@ -1,5 +1,5 @@
 //! Offline tooling: upgrade, export, validate, import, dry-run, restore,
-//! recovery-code, public-address.
+//! recovery-code, public-address, content-security-policy.
 //!
 //! Thin operator surface over the migration engines:
 //! [`upgrade`](droppedneedle::tooling::upgrade) turns a v2 data directory
@@ -11,7 +11,9 @@
 //! locked-out admin reset a password; its stdout is the code and nothing
 //! else.
 //! [`public-address`](droppedneedle::tooling::host_settings) states the
-//! address the web UI is opened at, for an admin whose saves are refused.
+//! address the web UI is opened at, for an admin whose saves are refused,
+//! and `content-security-policy` chooses how that policy is sent, for an
+//! admin whose browser shows a blank page under it.
 //! Everything is file plus SQLite; nothing here touches the network.
 //!
 //! The operator passphrase never travels as a CLI argument: it comes from
@@ -34,6 +36,7 @@ use droppedneedle::export::v2dir::V2Dirs;
 use droppedneedle::export::{ExportRequest, export_v2_to_file};
 use droppedneedle::r#import::ExitCode;
 use droppedneedle::runtime_config::Secret;
+use droppedneedle::runtime_config::sections::ContentSecurityPolicyMode;
 use droppedneedle::tooling::datalock::DataLock;
 use droppedneedle::tooling::host_settings;
 use droppedneedle::tooling::recovery_code;
@@ -61,6 +64,7 @@ Usage:
   droppedneedle-tool recovery-code --list-admins
   droppedneedle-tool public-address <address>...
   droppedneedle-tool public-address --show | --clear
+  droppedneedle-tool content-security-policy enforce | report-only | off
 
 upgrade turns the v2 data in the server's config and cache folders into
 v3 data, in place. Stop the server first. The v2 files are kept in a
@@ -81,6 +85,32 @@ droppedneedle-tool recovery-code --help says how to use it.
 public-address states the address the web UI is opened at, for when every
 save is answered \"Origin not allowed\".
 droppedneedle-tool public-address --help says how to use it.
+
+content-security-policy chooses how the web UI's content-security policy
+is sent, for when the web UI shows a blank page.
+droppedneedle-tool content-security-policy --help says how to use it.
+";
+
+/// Help for `content-security-policy`, printed without touching the data
+/// directory.
+const CONTENT_SECURITY_POLICY_HELP: &str = "\
+Usage:
+  droppedneedle-tool content-security-policy enforce
+  droppedneedle-tool content-security-policy report-only
+  droppedneedle-tool content-security-policy off
+
+Chooses how the web UI's content-security policy is sent. It is the
+Content-security policy setting on the Security tab, for an admin who
+cannot reach that tab: a reverse proxy that rewrites the page (an injected
+script, a script optimiser) can leave the web UI blank while the policy is
+enforced. Stop the server first, run it, then start the server.
+
+enforce      the browser refuses what the policy does not allow
+report-only  the browser lists in its console what the policy would refuse
+             and refuses nothing
+off          no policy is sent
+
+It finds the data the way upgrade does.
 ";
 
 /// Help for `public-address`, printed without touching the data directory.
@@ -147,6 +177,7 @@ fn main() {
         "restore" => run_restore(&args[1..]),
         "recovery-code" => run_recovery_code(&args[1..]),
         "public-address" => run_public_address(&args[1..]),
+        "content-security-policy" => run_content_security_policy(&args[1..]),
         "help" | "--help" | "-h" => {
             println!("{USAGE}");
             return;
@@ -726,6 +757,39 @@ fn run_list_admins() -> Result<(), String> {
     for name in names {
         println!("{name}");
     }
+    Ok(())
+}
+
+/// `content-security-policy enforce|report-only|off`. The saved mode is the
+/// only thing on stdout.
+fn run_content_security_policy(args: &[String]) -> Result<(), String> {
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let mode = match args.as_slice() {
+        ["-h" | "--help"] => {
+            println!("{CONTENT_SECURITY_POLICY_HELP}");
+            return Ok(());
+        }
+        ["enforce"] => ContentSecurityPolicyMode::Enforce,
+        ["report-only"] => ContentSecurityPolicyMode::ReportOnly,
+        ["off"] => ContentSecurityPolicyMode::Off,
+        _ => {
+            return Err(format!(
+                "content-security-policy takes one of enforce, report-only or off\n\
+                 {CONTENT_SECURITY_POLICY_HELP}"
+            ));
+        }
+    };
+    let saved = host_settings::set_content_security_policy(&data_dirs()?, mode)
+        .map_err(|error| error.to_string())?;
+    println!(
+        "{}",
+        match saved {
+            ContentSecurityPolicyMode::Enforce => "enforce",
+            ContentSecurityPolicyMode::ReportOnly => "report-only",
+            ContentSecurityPolicyMode::Off => "off",
+        }
+    );
+    eprintln!("Saved. Start the server.");
     Ok(())
 }
 

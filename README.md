@@ -286,6 +286,16 @@ Setting the max-age back to 0 stops the header but does not make browsers forget
 
 The web UI is served with a content-security policy: a header that tells the browser which scripts, styles, pictures, audio and frames the page may load, and who may show it in a frame. For now it is sent in report-only mode, so the browser lists in its console what the policy would refuse and refuses nothing, except for frames: who may show DroppedNeedle in a frame, and what its own frames may open, are enforced from the start. Settings > Security > Content-security policy has the two settings. "Policy" is `Report only` (the default), `Enforce` (the browser refuses what the policy does not allow) or `Off` (no policy is sent). "Allowed to frame DroppedNeedle" is a list of up to eight addresses, such as a dashboard at `https://home.example.com`, written like a public address: scheme, host and port, no path. It is empty by default, and unless the setting is `Off` nothing that is not on it can show DroppedNeedle in a frame. A dashboard on the same site (another subdomain of the same domain, or the same host on another port) works; one on another site shows the sign-in page, because the browser does not send the sign-in cookie there. A change to either applies from the next page load. Every other response (the API, covers, streams, files) carries a fixed policy under which nothing runs, unless the setting is `Off`. The Subsonic and Jellyfin APIs are not touched. If your reverse proxy adds a `Content-Security-Policy` of its own, the browser applies both and the stricter one wins on each point.
 
+A proxy that rewrites the page (an injected analytics script, a script optimiser such as Cloudflare's Rocket Loader) can leave the web UI blank while the policy is enforced, and then the Security tab cannot be reached. Change the mode on the host with the server stopped:
+
+```bash
+docker compose stop droppedneedle
+docker compose run --rm droppedneedle droppedneedle-tool content-security-policy report-only
+docker compose up -d droppedneedle
+```
+
+It takes `enforce`, `report-only` or `off`.
+
 With `BASE_PATH` set, everything moves under it: the web UI, `/api/v3`, the Subsonic and Jellyfin APIs, and `/health` (the container health check follows it). Point your proxy at the prefix without stripping it.
 
 <details>

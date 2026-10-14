@@ -1,7 +1,8 @@
 //! Settings changed from the host, for an admin the web UI refuses.
 //!
 //! Someone whose every save is answered `403 Origin not allowed` cannot
-//! save the setting that would fix it. Whoever can run this can already
+//! save the setting that would fix it, and neither can someone whose
+//! browser shows a blank page. Whoever can run this can already
 //! write the data directory, so it asks for no credential. A change goes
 //! through the section's own validated save, the same one the settings
 //! route uses. The exclusive [`DataLock`] is held for the run, so the
@@ -13,7 +14,7 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 use crate::runtime_config::crypto::CryptoError;
-use crate::runtime_config::sections::PublicAddress;
+use crate::runtime_config::sections::{ContentSecurityPolicyMode, PublicAddress, SecuritySettings};
 use crate::runtime_config::{ConfigError, ConfigStore, Crypto};
 use crate::tooling::datalock::{DataLock, DataLockError};
 use crate::tooling::upgrade::{BootRefusal, DataDirs, check_bootable};
@@ -61,9 +62,27 @@ pub fn with_stopped_settings<T>(
     })?;
     let store = ConfigStore::open(&dirs.config_file, crypto).map_err(|error| failed(&error))?;
     change(&store).map_err(|error| match error {
-        ConfigError::Validation { reason, .. } => HostSettingsError::Refused(reason),
+        ConfigError::Validation { field, reason, .. } => {
+            HostSettingsError::Refused(format!("{field}: {reason}"))
+        }
         other => failed(&other),
     })
+}
+
+/// Choose how the web UI's content-security policy is sent, for an admin
+/// whose browser shows a blank page under it and who therefore cannot reach
+/// the Security tab. Only that field of the security settings changes.
+/// Returns the mode as stored.
+pub fn set_content_security_policy(
+    dirs: &DataDirs,
+    mode: ContentSecurityPolicyMode,
+) -> Result<ContentSecurityPolicyMode, HostSettingsError> {
+    with_stopped_settings(dirs, |store| {
+        let mut security: SecuritySettings = store.get()?;
+        security.content_security_policy = mode;
+        store.save(security)
+    })
+    .map(|security| security.content_security_policy)
 }
 
 /// The stated public addresses, as stored.

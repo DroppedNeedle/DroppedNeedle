@@ -723,6 +723,66 @@ async fn the_page_policy_follows_the_saved_mode_and_framing_list() {
     running.shut_down().await;
 }
 
+/// An admin whose browser shows a blank page under the policy changes its
+/// mode from the host, with the server stopped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_policy_mode_set_from_the_host_is_served_at_the_next_boot() {
+    use droppedneedle::runtime_config::sections::ContentSecurityPolicyMode as Mode;
+    use droppedneedle::tooling::host_settings::{HostSettingsError, set_content_security_policy};
+
+    let dir = scratch("page-policy-host");
+    let config = config_in(&dir);
+    web_ui_in(&config);
+    let dirs = droppedneedle::tooling::upgrade::DataDirs::from_config(&config);
+    let config_file = config.config_file.clone();
+
+    let (router, background) = build(config.clone()).await.unwrap();
+    let running = start(router.clone(), background).await;
+    let (enforced, reported) = policies(&router, "/").await;
+    assert!(reported.is_some() && !enforced.unwrap().contains("script-src"));
+    // A running server holds the settings in memory: refused, nothing
+    // written.
+    let before = std::fs::read(&config_file).unwrap();
+    assert!(matches!(
+        set_content_security_policy(&dirs, Mode::Off),
+        Err(HostSettingsError::ServerRunning(_))
+    ));
+    assert_eq!(std::fs::read(&config_file).unwrap(), before);
+    drop(router);
+    running.shut_down().await;
+
+    // Only that field changes.
+    assert_eq!(
+        set_content_security_policy(&dirs, Mode::Enforce).unwrap(),
+        Mode::Enforce
+    );
+    let stored: SecuritySettings = stored_settings(&config).get().unwrap();
+    assert_eq!(
+        stored,
+        SecuritySettings {
+            hibp_check: false,
+            content_security_policy: Mode::Enforce,
+            ..SecuritySettings::default()
+        }
+    );
+    let (router, background) = build(config.clone()).await.unwrap();
+    let running = start(router.clone(), background).await;
+    let (enforced, reported) = policies(&router, "/").await;
+    assert!(enforced.is_some() && reported.is_none());
+    drop(router);
+    running.shut_down().await;
+
+    assert_eq!(
+        set_content_security_policy(&dirs, Mode::Off).unwrap(),
+        Mode::Off
+    );
+    let (router, background) = build(config).await.unwrap();
+    let running = start(router.clone(), background).await;
+    assert_eq!(policies(&router, "/").await, (None, None));
+    drop(router);
+    running.shut_down().await;
+}
+
 /// Set up the admin over TCP and return the session cookie.
 async fn admin_cookie(address: SocketAddr) -> String {
     let setup = reqwest::Client::new()
