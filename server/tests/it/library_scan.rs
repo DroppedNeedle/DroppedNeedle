@@ -1606,6 +1606,15 @@ impl RegroupRig {
              WHERE availability = 'missing'"
         ));
     }
+
+    /// Whether the album waits for automatic management with the stamp of
+    /// a scan that followed it across a retag.
+    fn stamped(&self, album: &str) -> bool {
+        self.count(&format!(
+            "SELECT COUNT(*) FROM library_management_automatic_queue \
+             WHERE local_album_id = '{album}' AND retag_followed_at IS NOT NULL"
+        )) == 1
+    }
 }
 
 /// A day and a second.
@@ -1692,6 +1701,82 @@ async fn retag_with_a_file_added_is_followed() {
     assert_eq!(rig.rows_on(&album), 11);
     assert_eq!(retag_pairs(&rig), vec![]);
     assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
+}
+
+/// A four-file album, `prepare` run on it (SQL, given the album id), then
+/// retagged whole and followed. Returns the rig and the album.
+async fn followed_album(name: &str, prepare: impl FnOnce(&str) -> String) -> (RegroupRig, String) {
+    let mut rig = RegroupRig::new(name);
+    let files: Vec<String> = (0..4).map(|n| format!("a/t{n:03}.flac")).collect();
+    let before = rig.before.clone();
+    rig.tag(&files, &before);
+    rig.scan().await;
+    let album = rig.album_of("a/t000.flac");
+    rig.run(&prepare(&album));
+    rig.run("DELETE FROM library_identify_jobs");
+
+    let after = rig.after.clone();
+    rig.tag(&files, &after);
+    rig.scan().await;
+    assert_eq!(rig.album_of("a/t000.flac"), album, "{name}: followed");
+    (rig, album)
+}
+
+/// A followed album whose edition a person chose, and none of whose files
+/// the app has a record of, is stamped in the scan's own write, so that
+/// automatic management leaves the hand retag alone. Queueing the album
+/// again keeps the stamp.
+#[tokio::test]
+async fn followed_album_with_a_chosen_edition_is_stamped() {
+    let (rig, album) = followed_album("scan-regroup-stamp", |album| {
+        match_sql(&format!("'{album}'"), "manual", "rel-1")
+    })
+    .await;
+    assert!(rig.stamped(&album));
+
+    let conn = droppedneedle::db::open_connection(&rig.db()).expect("side connection opens");
+    droppedneedle::library::management::automatic::queue(&conn, &album, 2.0e9)
+        .expect("queued again");
+    assert!(rig.stamped(&album), "queueing again keeps the stamp");
+}
+
+/// No stamp on a followed album whose edition is the app's own guess, one
+/// with no match at all (it is identified from its new tags), or one with
+/// a file the app has a record of, written by v3 or carried over from v2.
+#[tokio::test]
+async fn followed_album_is_stamped_only_for_a_chosen_edition_the_app_never_wrote() {
+    fn chosen_with_state(album: &str, columns: &str, values: &str) -> String {
+        format!(
+            "{} INSERT INTO library_track_management_state (local_track_id, {columns}) \
+             SELECT id, {values} FROM local_tracks WHERE local_album_id = '{album}' \
+             AND relative_path = 'a/t001.flac';",
+            match_sql(&format!("'{album}'"), "manual", "rel-1")
+        )
+    }
+    type Prepare = fn(&str) -> String;
+    let cases: [(&str, Prepare); 4] = [
+        ("scan-regroup-stamp-automatic", |album| {
+            match_sql(&format!("'{album}'"), "automatic", "rel-1")
+        }),
+        ("scan-regroup-stamp-no-match", |_| String::new()),
+        ("scan-regroup-stamp-written", |album| {
+            chosen_with_state(album, "written_sha256", "'abc'")
+        }),
+        ("scan-regroup-stamp-v2", |album| {
+            chosen_with_state(
+                album,
+                "managed_path_revision, last_outcome",
+                "'v2', 'succeeded'",
+            )
+        }),
+    ];
+    for (name, prepare) in cases {
+        let (rig, album) = followed_album(name, prepare).await;
+        assert!(!rig.stamped(&album), "{name}");
+        if name == "scan-regroup-stamp-no-match" {
+            assert_eq!(rig.queued_jobs(&album), 1, "offered for identification");
+        }
+    }
 }
 
 /// Files retagged into an album that was already there are a person

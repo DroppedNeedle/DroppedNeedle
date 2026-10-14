@@ -138,6 +138,39 @@ pub fn queue(conn: &Connection, album_id: &str, now: f64) -> rusqlite::Result<()
     Ok(())
 }
 
+/// Queue an album a scan followed across a retag, with the stamp that
+/// makes automatic management leave it unmanaged before it plans anything
+/// (`retag_followed_at`, in milliseconds). Only for an album with an
+/// edition someone chose and no file the app has a record of: the app
+/// would otherwise write the edition's old name over the retag. [`queue`]
+/// keeps the stamp; marking the album or handing it back clears it.
+pub(crate) fn stamp_retag_followed(
+    conn: &Connection,
+    album_id: &str,
+    now: f64,
+) -> rusqlite::Result<()> {
+    queue(conn, album_id, now)?;
+    conn.execute(
+        "UPDATE library_management_automatic_queue SET retag_followed_at = ?2 \
+         WHERE local_album_id = ?1",
+        params![album_id, (now * 1000.0) as i64],
+    )?;
+    Ok(())
+}
+
+/// Whether the album waits with a scan's retag stamp.
+fn retag_followed(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM library_management_automatic_queue \
+             WHERE local_album_id = ?1 AND retag_followed_at IS NOT NULL",
+            params![album_id],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
 /// Look again at the skipped albums whose reason may have gone (`None`
 /// wakes every one).
 pub fn wake(conn: &Connection, code: Option<&str>, now: f64) -> rusqlite::Result<usize> {
@@ -433,6 +466,28 @@ impl Management {
         // The only place an automatic file write starts: an album the app
         // stepped back from waits here until a person hands it back.
         if self.read(|conn| Ok(takeover::is_marked(conn, album_id)?))? {
+            return Ok(Verdict::Park(takeover::TAKEN_OVER));
+        }
+        // A scan followed the album across a retag made outside the app,
+        // over an edition someone chose. A record the app wrote since does
+        // not cancel it: that write took the retagged bytes as they were.
+        if self.read(|conn| Ok(retag_followed(conn, album_id)?))? {
+            self.write(|tx| {
+                takeover::mark(
+                    tx,
+                    album_id,
+                    takeover::Cause::RetagFollowed,
+                    &[],
+                    None,
+                    now_unix(),
+                )?;
+                tx.execute(
+                    "UPDATE library_management_automatic_queue SET retag_followed_at = NULL \
+                     WHERE local_album_id = ?1",
+                    params![album_id],
+                )?;
+                Ok(())
+            })?;
             return Ok(Verdict::Park(takeover::TAKEN_OVER));
         }
         let identities = &self.setup.identify_store;

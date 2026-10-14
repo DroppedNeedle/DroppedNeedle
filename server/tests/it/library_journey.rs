@@ -6418,6 +6418,20 @@ async fn a_handed_back_album_is_looked_at_afresh() {
 }
 
 impl ManagedLibrary {
+    /// Retag every one of `tracks` to the album `title` outside the app,
+    /// then scan.
+    async fn rename_outside(&self, tracks: &[String], title: &str) {
+        use droppedneedle::library::tags::{TagEdit, TagField, save_tags};
+        for track in tracks {
+            save_tags(
+                &self.path(track),
+                &[TagEdit::verbatim(TagField::Album, vec![title.to_owned()])],
+            )
+            .expect("retagged outside the app");
+        }
+        rescan(&self.library).await;
+    }
+
     /// The album the track row is on, whether its file is there or not.
     fn album_of(&self, track: &str) -> String {
         self.db()
@@ -6427,6 +6441,20 @@ impl ManagedLibrary {
                 |row| row.get(0),
             )
             .expect("track row")
+    }
+
+    /// Whether the album waits for the worker with a scan's stamp that it
+    /// was followed across a retag.
+    fn stamped(&self, album: &str) -> bool {
+        self.db()
+            .query_row(
+                "SELECT COUNT(*) FROM library_management_automatic_queue \
+                 WHERE local_album_id = ?1 AND retag_followed_at IS NOT NULL",
+                [album],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("stamp reads")
+            == 1
     }
 }
 
@@ -6511,6 +6539,129 @@ async fn the_apps_own_regroup_of_a_mostly_missing_album_is_followed_unmarked() {
         "the app's own write never marks"
     );
     assert_eq!(managed.count(STEPPED_BACK), 0);
+}
+
+/// An album whose edition a person chose, and whose files the app has
+/// never written, retagged by hand to a new name in a folder managed
+/// automatically: the scan follows it, and the worker leaves it unmanaged
+/// (`retag_followed`) without writing anything, said once. Handed back,
+/// the worker writes the edition and does not mark it again.
+#[tokio::test]
+async fn a_hand_renamed_album_with_a_chosen_edition_is_left_unmanaged() {
+    use droppedneedle::library::mutations::Mutations;
+
+    let managed = ManagedLibrary::start("lib-takeover-renamed", |_| {}).await;
+    managed.add_album("first", 1).await;
+    let (album, tracks) = managed.add_album("second", 2).await;
+    managed.activate().await;
+    managed.rename_outside(&tracks, "Renamed").await;
+    let bytes = || -> Vec<String> {
+        tracks
+            .iter()
+            .map(|track| file_sha256(&managed.path(track)))
+            .collect()
+    };
+    let edited = bytes();
+    assert_eq!(managed.album_of(&tracks[0]), album, "followed");
+    assert!(managed.stamped(&album));
+
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&album).as_deref(), Some("retag_followed"));
+    assert!(!managed.stamped(&album), "one follow marks once");
+    assert_eq!(managed.count(STEPPED_BACK), 1);
+    assert_eq!(bytes(), edited, "nothing written");
+    assert_eq!(album_tag(&managed.path(&tracks[0])), vec!["Renamed"]);
+    let skipped = managed.management().automatic_skipped(10).expect("skipped");
+    assert_eq!(skipped.len(), 1);
+    assert_eq!(skipped[0].reason.code, "TAKEN_OVER");
+
+    // A scan of unchanged files and another look change nothing.
+    rescan(&managed.library).await;
+    managed.look(&album).await;
+    assert_eq!(managed.count(STEPPED_BACK), 1);
+    assert_eq!(bytes(), edited);
+
+    assert!(
+        Mutations::new(&managed.library)
+            .hand_back_management(&album, "admin")
+            .expect("hand-back answers")
+    );
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&album), None);
+    assert_eq!(
+        album_tag(&managed.path(&tracks[0])),
+        vec!["second"],
+        "the edition's tags written"
+    );
+
+    // The app's write regroups the files again: no stamp, no mark.
+    rescan(&managed.library).await;
+    managed.worker_looks().await;
+    assert_eq!(managed.album_of(&tracks[0]), album);
+    assert_eq!(managed.mark(&album), None, "not marked again");
+    assert_eq!(managed.count(STEPPED_BACK), 1);
+}
+
+/// The same hand rename in a folder without automatic management marks
+/// nothing: the worker drops the album, stamp and all. And in a folder
+/// with it, a rename made in the app between the scan and the worker's
+/// look does not cancel the stamp: the album is still left unmanaged and
+/// its files keep the hand retag's tags.
+#[tokio::test]
+async fn a_hand_renamed_album_is_marked_only_where_the_folder_is_managed() {
+    use droppedneedle::library::publish::planner::PlanKind;
+
+    let manual = ManagedLibrary::start("lib-takeover-renamed-manual", |_| {}).await;
+    manual.add_album("first", 1).await;
+    let (album, tracks) = manual.add_album("second", 2).await;
+    manual.worker_looks().await;
+    manual.rename_outside(&tracks, "Renamed").await;
+    assert_eq!(manual.album_of(&tracks[0]), album, "followed");
+    assert!(
+        manual.stamped(&album),
+        "the scan cannot tell the folder apart"
+    );
+    manual.worker_looks().await;
+    assert_eq!(manual.mark(&album), None);
+    assert_eq!(
+        manual.count("SELECT COUNT(*) FROM library_management_automatic_queue"),
+        0,
+        "the queue row is gone with its stamp"
+    );
+
+    let managed = ManagedLibrary::start("lib-takeover-renamed-moved", |_| {}).await;
+    managed.add_album("first", 1).await;
+    let (album, tracks) = managed.add_album("second", 2).await;
+    managed.activate().await;
+    managed.rename_outside(&tracks, "Renamed").await;
+    assert!(managed.stamped(&album));
+    let relative: String = managed
+        .db()
+        .query_row(
+            "SELECT relative_path FROM local_tracks WHERE id = ?1",
+            [&tracks[0]],
+            |row| row.get(0),
+        )
+        .expect("track path");
+    publish_one(
+        &managed.library,
+        PlanKind::Move,
+        &album,
+        &relative,
+        Some("moved/01.flac"),
+        &[],
+    );
+    assert!(managed.path(&tracks[0]).ends_with("moved/01.flac"));
+    assert!(
+        managed.recorded(&tracks[0]).is_some(),
+        "the rename recorded the hand-retagged bytes as the app's"
+    );
+
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&album).as_deref(), Some("retag_followed"));
+    for track in &tracks {
+        assert_eq!(album_tag(&managed.path(track)), vec!["Renamed"]);
+    }
 }
 
 /// Every file below `dir`.

@@ -1243,6 +1243,15 @@ pub(crate) fn chosen_matches_differ(
     Ok(!one.revisable() && !other.revisable() && one.differs_from(&other))
 }
 
+/// Whether the album's match is a release someone chose: made by a person
+/// or carried over from v2, and naming a release. An automatic match does
+/// not count, though it names a release too.
+pub(crate) fn release_chosen(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
+    Ok(AlbumMatch::of(conn, album_id)?.is_some_and(|chosen| {
+        matches!(chosen.source.as_str(), "manual" | "legacy_import") && chosen.release.is_some()
+    }))
+}
+
 /// Settle the matches of two rows of one album before `gone` is deleted
 /// and `kept` carries on: a scan made `gone` for the album while it was
 /// being retagged, and a match or a review landed on it before the scan

@@ -23,7 +23,7 @@
 use super::retag_pairs::{self, RetagPairReason, RetagPairState};
 use super::*;
 use crate::library::identify::sqlite::{
-    chosen_matches_differ, offer_album, retarget_references, settle_followed_match,
+    chosen_matches_differ, offer_album, release_chosen, retarget_references, settle_followed_match,
 };
 use crate::library::management::{automatic, takeover};
 use crate::library::scan::naming::{
@@ -995,7 +995,10 @@ const LONG_GONE_SECONDS: f64 = 86_400.0;
 /// reviews and pins, and the new row goes, its tracks, plays, favorites
 /// and playlist entries passing to the old one. Rows left behind (missing
 /// or excluded tracks) are not written: they stay on the old row with
-/// their ids, plays and track matches. Returns the album that went.
+/// their ids, plays and track matches. An album with an edition someone
+/// chose and no file the app wrote is stamped for automatic management
+/// to leave alone ([`stamp_if_retagged_by_hand`]). Returns the album that
+/// went.
 ///
 /// A match or a review that landed on the new row while the scan was half
 /// way through the album is settled by `settle_followed_match`: a
@@ -1159,7 +1162,8 @@ fn follow_regrouped(
             "UPDATE playlist_tracks SET album_id = ?1 WHERE album_id = ?2",
             params![album_id, target],
         )?;
-        tx.execute("DELETE FROM local_albums WHERE id = ?1", params![target])
+        tx.execute("DELETE FROM local_albums WHERE id = ?1", params![target])?;
+        stamp_if_retagged_by_hand(tx, album_id, now)
     })();
     match followed {
         Ok(_) => {
@@ -1178,6 +1182,39 @@ fn follow_regrouped(
             Ok(None)
         }
     }
+}
+
+/// After a follow: when the album has an edition someone chose (a release
+/// a person picked or v2 carried, or a custom edition) and the app has no
+/// record of any of its files, stamp it for automatic management, which
+/// then leaves it unmanaged instead of writing the old edition's name back
+/// over the retag. An album with a file the app wrote is left to the check
+/// of those bytes, which tells the app's own retag from a person's.
+fn stamp_if_retagged_by_hand(
+    tx: &rusqlite::Transaction<'_>,
+    album_id: &str,
+    now: f64,
+) -> rusqlite::Result<()> {
+    let custom: bool = tx
+        .prepare_cached(
+            "SELECT EXISTS(SELECT 1 FROM library_custom_edition_active WHERE local_album_id = ?1)",
+        )?
+        .query_row(params![album_id], |row| row.get(0))?;
+    if !custom && !release_chosen(tx, album_id)? {
+        return Ok(());
+    }
+    let recorded: bool = tx
+        .prepare_cached(&format!(
+            "SELECT EXISTS(SELECT 1 FROM local_tracks t \
+             JOIN library_track_management_state s ON s.local_track_id = t.id \
+             WHERE t.local_album_id = ?1 AND {})",
+            takeover::record_sql()
+        ))?
+        .query_row(params![album_id], |row| row.get(0))?;
+    if recorded {
+        return Ok(());
+    }
+    automatic::stamp_retag_followed(tx, album_id, now)
 }
 
 /// Whether a statement failed because a row elsewhere still names the row
