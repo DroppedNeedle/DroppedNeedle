@@ -14,11 +14,12 @@ use super::artists;
 use super::membership::{self, Run};
 use super::models::{
     Applied, ApplyMeta, ArtistMergeOutcome, ArtistMergeRequest, CorrectionError, MembershipKind,
-    MembershipOutcome, MembershipRequest, Previewed,
+    MembershipOutcome, MembershipRequest, PairJoinRequest, Previewed, RetagPairList,
 };
 use super::reset;
+use super::retag_pairs;
 use super::token::{self, TokenFault};
-use crate::library::clock::now_unix;
+use crate::library::clock::{now_ms, now_unix};
 use crate::library::identify::sqlite::SqliteIdentifyStore;
 use crate::library::wiring::LibrarySetup;
 use crate::runtime_config::ConfigStore;
@@ -178,6 +179,26 @@ impl Corrections {
             )?;
             Ok(applied)
         })
+    }
+}
+
+/// Retag pairs a person joins or dismisses.
+impl Corrections {
+    /// The open pairs a person decides on, newest first.
+    pub fn retag_pairs(&self) -> Result<RetagPairList, CorrectionError> {
+        self.store.with_connection(|conn| retag_pairs::list(conn))
+    }
+
+    /// Join a pair; returns the album that stays.
+    pub fn join_retag_pair(&self, request: &PairJoinRequest) -> Result<String, CorrectionError> {
+        let now = now_unix();
+        self.in_tx(true, |tx| retag_pairs::join(tx, request, now))
+    }
+
+    /// Mark a pair as two albums. False when it was already.
+    pub fn dismiss_retag_pair(&self, old: &str, new: &str) -> Result<bool, CorrectionError> {
+        let now_ms = now_ms() as i64;
+        self.in_tx(true, |tx| retag_pairs::dismiss(tx, old, new, now_ms))
     }
 }
 

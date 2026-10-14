@@ -1,6 +1,8 @@
 //! Catalog correction routes: split, merge and move tracks between albums,
 //! reset manual grouping, and merge duplicate artists. Each has a preview
-//! route and an apply route; the apply takes the preview's token.
+//! route and an apply route; the apply takes the preview's token. Beside
+//! them, the album rows a scan would not join by itself, which a person
+//! joins or dismisses.
 //!
 //! Every route is admin-only, as in v2. Store work runs on
 //! `spawn_blocking`.
@@ -12,7 +14,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -23,7 +25,8 @@ use super::operations::ReasonView;
 use crate::library::corrections::Corrections;
 use crate::library::corrections::models::{
     Applied, ApplyMeta, ArtistMergeOutcome, ArtistMergeRequest, CorrectionError, IdentityChoice,
-    MembershipKind, MembershipOutcome, MembershipRequest, ProviderChoice,
+    MembershipKind, MembershipOutcome, MembershipRequest, PairEdition, PairJoinRequest, PairReason,
+    PairSide, ProviderChoice, RetagPair,
 };
 use crate::library::wiring::LibrarySetup;
 
@@ -49,6 +52,15 @@ pub fn corrections_router() -> Router<LibrarySetup> {
         )
         .route("/library/artists/merge-preview", post(preview_artist_merge))
         .route("/library/artists/merge", post(apply_artist_merge))
+        .route("/library/retag-pairs", get(list_retag_pairs))
+        .route(
+            "/library/retag-pairs/{old_album_id}/{new_album_id}/join",
+            post(join_retag_pair),
+        )
+        .route(
+            "/library/retag-pairs/{old_album_id}/{new_album_id}/dismiss",
+            post(dismiss_retag_pair),
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -687,4 +699,216 @@ pub async fn apply_artist_merge(
     };
     let applied = blocking(move || corrections.apply_artist_merge(&request, &meta)).await?;
     Ok(Json(applied.into()))
+}
+
+// ---------------------------------------------------------------------------
+// Retag pairs.
+// ---------------------------------------------------------------------------
+
+/// An album's edition on a retag pair.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RetagPairEditionView {
+    pub release_group_mbid: String,
+    pub release_mbid: Option<String>,
+    /// Chosen by a person or carried over from v2.
+    pub chosen: bool,
+    /// A custom edition is active. It does not carry over a join.
+    pub custom: bool,
+}
+
+/// Why the scan left a retag pair for a person.
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RetagPairReasonView {
+    /// Each album holds a different edition a person chose.
+    ChosenMatchesDiffer,
+    /// The album was split against a rename: the old album's edition
+    /// goes to the named album only.
+    TracksElsewhere,
+    /// The old album holds a custom edition, which does not carry over.
+    CustomEdition,
+}
+
+/// One album of a retag pair.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RetagPairAlbumView {
+    pub id: String,
+    pub title: String,
+    pub album_artist_name: String,
+    /// Indexed tracks.
+    pub track_count: i64,
+    pub edition: Option<RetagPairEditionView>,
+    /// The edition's revision, 0 for none. Send it back with a join.
+    pub identity_revision: i64,
+}
+
+/// Two album rows that look like one retagged album, which the scan would
+/// not join by itself.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RetagPairView {
+    /// The row the files left. It holds the favorites, plays and links.
+    pub old_album: RetagPairAlbumView,
+    /// The row the files sit on now, or the album it was merged into
+    /// since. A join keeps this one.
+    pub new_album: RetagPairAlbumView,
+    pub reason: RetagPairReasonView,
+    /// Two different chosen editions remain once a custom edition on the
+    /// old album is left out: the join must name the one to keep.
+    pub editions_differ: bool,
+    /// When the scan recorded the pair (Unix milliseconds).
+    pub recorded_at: i64,
+}
+
+/// The open retag pairs, newest first (at most 100), and how many there
+/// are.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RetagPairListResponse {
+    pub pairs: Vec<RetagPairView>,
+    pub total: i64,
+}
+
+/// Join a retag pair.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct RetagPairJoinBody {
+    /// The album whose chosen edition stays. Required when
+    /// `editions_differ` is true, and must be absent otherwise.
+    #[serde(default)]
+    pub keep_edition_of: Option<String>,
+    /// Each album's `identity_revision` as shown, by album id. Both albums
+    /// must be named.
+    pub expected_identity_revisions: BTreeMap<String, i64>,
+}
+
+/// A joined retag pair.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RetagPairJoinResponse {
+    /// The album that stays. The old album's id now opens it.
+    pub album_id: String,
+}
+
+/// A dismissed retag pair.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct RetagPairDismissResponse {
+    /// False when the pair was dismissed already.
+    pub dismissed: bool,
+}
+
+fn pair_album_view(side: PairSide) -> RetagPairAlbumView {
+    RetagPairAlbumView {
+        id: side.id,
+        title: side.title,
+        album_artist_name: side.album_artist_name,
+        track_count: side.track_count,
+        edition: side
+            .edition
+            .map(|edition: PairEdition| RetagPairEditionView {
+                release_group_mbid: edition.release_group_mbid,
+                release_mbid: edition.release_mbid,
+                chosen: edition.chosen,
+                custom: edition.custom,
+            }),
+        identity_revision: side.identity_revision,
+    }
+}
+
+fn pair_view(pair: RetagPair) -> RetagPairView {
+    RetagPairView {
+        old_album: pair_album_view(pair.old_album),
+        new_album: pair_album_view(pair.new_album),
+        reason: match pair.reason {
+            PairReason::ChosenMatchesDiffer => RetagPairReasonView::ChosenMatchesDiffer,
+            PairReason::TracksElsewhere => RetagPairReasonView::TracksElsewhere,
+            PairReason::CustomEdition => RetagPairReasonView::CustomEdition,
+        },
+        editions_differ: pair.editions_differ,
+        recorded_at: pair.recorded_at,
+    }
+}
+
+/// List album rows that look like one retagged album and wait for a
+/// person to join or dismiss them.
+#[utoipa::path(
+    get,
+    path = "/api/v3/library/retag-pairs",
+    responses(
+        (status = 200, description = "Open pairs, newest first", body = RetagPairListResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required"),
+    )
+)]
+pub async fn list_retag_pairs(
+    State(state): State<LibrarySetup>,
+    _caller: RequireAdmin,
+) -> Result<Json<RetagPairListResponse>, Response> {
+    let corrections = Corrections::new(&state);
+    let list = blocking(move || corrections.retag_pairs()).await?;
+    Ok(Json(RetagPairListResponse {
+        pairs: list.pairs.into_iter().map(pair_view).collect(),
+        total: list.total,
+    }))
+}
+
+/// Join a retag pair: the old album is merged into the new one. A custom
+/// edition on the old album is dropped, and so is the edition not kept
+/// when the two hold different chosen editions; each leaves a review on
+/// the album that stays. No file is written.
+#[utoipa::path(
+    post,
+    path = "/api/v3/library/retag-pairs/{old_album_id}/{new_album_id}/join",
+    params(
+        ("old_album_id" = String, Path, description = "The pair's old album"),
+        ("new_album_id" = String, Path, description = "The pair's new album"),
+    ),
+    request_body = RetagPairJoinBody,
+    responses(
+        (status = 200, description = "Joined, or joined already", body = RetagPairJoinResponse),
+        (status = 400, description = "An album's revision is missing, or the edition to keep is missing, not needed or not one of the two"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required"),
+        (status = 404, description = "No such pair"),
+        (status = 409, description = "The pair was dismissed, an album was merged, removed or changed its edition, or work is open on one"),
+    )
+)]
+pub async fn join_retag_pair(
+    State(state): State<LibrarySetup>,
+    caller: RequireAdmin,
+    Path((old_album_id, new_album_id)): Path<(String, String)>,
+    ValidJson(body): ValidJson<RetagPairJoinBody>,
+) -> Result<Json<RetagPairJoinResponse>, Response> {
+    let corrections = Corrections::new(&state);
+    let request = PairJoinRequest {
+        old_album_id,
+        new_album_id,
+        keep_edition_of: body.keep_edition_of,
+        expected_identity_revisions: body.expected_identity_revisions,
+        actor: caller.0.user_id,
+    };
+    let album_id = blocking(move || corrections.join_retag_pair(&request)).await?;
+    Ok(Json(RetagPairJoinResponse { album_id }))
+}
+
+/// Mark a retag pair as two different albums. A scan never joins it then.
+#[utoipa::path(
+    post,
+    path = "/api/v3/library/retag-pairs/{old_album_id}/{new_album_id}/dismiss",
+    params(
+        ("old_album_id" = String, Path, description = "The pair's old album"),
+        ("new_album_id" = String, Path, description = "The pair's new album"),
+    ),
+    responses(
+        (status = 200, description = "Dismissed, or dismissed already", body = RetagPairDismissResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required"),
+        (status = 404, description = "No such pair"),
+    )
+)]
+pub async fn dismiss_retag_pair(
+    State(state): State<LibrarySetup>,
+    _caller: RequireAdmin,
+    Path((old_album_id, new_album_id)): Path<(String, String)>,
+) -> Result<Json<RetagPairDismissResponse>, Response> {
+    let corrections = Corrections::new(&state);
+    let dismissed =
+        blocking(move || corrections.dismiss_retag_pair(&old_album_id, &new_album_id)).await?;
+    Ok(Json(RetagPairDismissResponse { dismissed }))
 }

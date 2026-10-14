@@ -143,3 +143,45 @@ pub const EDITION_REMAP: Reason = reason(
     "The album keeps its chosen edition; the new tracks are matched to it in the background.",
     "Nothing to do. Tracks that do not fit the edition show up on the album page.",
 );
+
+// Joining two album rows the scan would not join.
+pub const PAIR_NOT_FOUND: Reason = reason(
+    "RETAG_PAIR_NOT_FOUND",
+    "These two albums are not waiting to be joined.",
+    "Reload the page to see the albums still waiting.",
+);
+pub const PAIR_DISMISSED: Reason = reason(
+    "RETAG_PAIR_DISMISSED",
+    "These albums were marked as two different albums.",
+    "Use Merge on the album page to join them anyway.",
+);
+pub const PAIR_ALBUM_GONE: Reason = reason(
+    "RETAG_PAIR_ALBUM_GONE",
+    "One of these albums was merged or removed since this was shown.",
+    "Reload the page to see the albums still waiting.",
+);
+pub const PAIR_REVISIONS_REQUIRED: Reason = reason(
+    "RETAG_PAIR_REVISIONS_REQUIRED",
+    "The edition revisions of both albums are needed.",
+    "Send expected_identity_revisions with an entry for each album.",
+);
+pub const PAIR_EDITION_CHANGED: Reason = reason(
+    "STALE_REVISION",
+    "An album's edition changed since this was shown. Look again.",
+    "Reload the page and check both albums before joining them.",
+);
+pub const KEEP_EDITION_REQUIRED: Reason = reason(
+    "KEEP_EDITION_REQUIRED",
+    "These albums have two different chosen editions. Choose which one to keep.",
+    "Pick one of the two albums whose edition stays.",
+);
+pub const KEEP_EDITION_NOT_NEEDED: Reason = reason(
+    "KEEP_EDITION_NOT_NEEDED",
+    "These albums do not have two different chosen editions, so there is nothing to choose.",
+    "Join them without choosing an edition.",
+);
+pub const PAIR_LIVE_WORK: Reason = reason(
+    "RETAG_PAIR_LIVE_WORK",
+    "One of these albums has an open preview or a running operation. Finish or discard it, then merge.",
+    "Finish or discard the preview or operation, then join the albums.",
+);

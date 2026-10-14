@@ -9953,3 +9953,618 @@ async fn an_approval_continues_a_track_at_once() {
     assert_eq!(holdings(&db, &copy)[1], 1);
     assert_eq!(holdings(&db, &old[1])[1], 0);
 }
+
+// ---------------------------------------------------------------------------
+// Album rows a scan would not join: a person joins or dismisses them.
+// ---------------------------------------------------------------------------
+
+/// Both albums of a pair and the pair row, to show nothing changed.
+fn pair_snapshot(db: &rusqlite::Connection, old: &str, new: &str) -> String {
+    use rusqlite::OptionalExtension as _;
+    let mut out = String::new();
+    for album in [old, new] {
+        let row: (i64, Option<String>) = db
+            .query_row(
+                "SELECT row_revision, retired_into_album_id FROM local_albums WHERE id = ?1",
+                [album],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("album row");
+        let identity: Option<ChoiceRow> = db
+            .query_row(
+                "SELECT decision_source, release_mbid, selected_by_user_id, selected_at, \
+                 row_revision FROM local_album_external_identities WHERE local_album_id = ?1",
+                [album],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .optional()
+            .expect("identity reads");
+        let custom: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM library_custom_edition_active WHERE local_album_id = ?1",
+                [album],
+                |row| row.get(0),
+            )
+            .expect("custom reads");
+        out.push_str(&format!("{row:?} {identity:?} {custom};"));
+    }
+    let pair: Option<(String, String, i64)> = db
+        .query_row(
+            "SELECT reason, state, updated_at FROM library_retag_pairs \
+             WHERE old_album_id = ?1 AND new_album_id = ?2",
+            [old, new],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .expect("pair reads");
+    format!("{out} {pair:?}")
+}
+
+/// The album's pending reviews, as (reason, candidates).
+fn pending_reviews(db: &rusqlite::Connection, album: &str) -> Vec<(String, String)> {
+    db.prepare(
+        "SELECT reason_code, candidates_json FROM library_identify_reviews \
+         WHERE local_album_id = ?1 AND state = 'pending'",
+    )
+    .expect("reviews query")
+    .query_map([album], |row| Ok((row.get(0)?, row.get(1)?)))
+    .expect("reviews read")
+    .collect::<Result<_, _>>()
+    .expect("reviews rows")
+}
+
+/// The pairs a scan left apart for a person: the read lists the ones a
+/// person decides on, a join drops a custom edition and the chosen
+/// edition not kept (each with a review on the album that stays) and
+/// merges the two, a refusal changes nothing, and a dismissed pair is no
+/// longer listed. Only an admin reaches them.
+#[tokio::test]
+async fn retag_pairs_list_join_and_dismiss() {
+    let rig = Rig::start("lib-retag-pairs").await;
+    let app = &rig.app;
+    let admin = app.login_admin().await;
+    let headers = [("authorization", admin.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    let folders = [
+        "a-old", "a-new", "b-old", "b-new", "c-old", "c-new", "d-old", "d-new", "e-old", "e-new",
+        "f-old", "f-new", "f-third", "g-one", "g-two", "h-old", "h-new", "i-old", "i-new",
+    ];
+    for folder in folders {
+        plant(&music, &format!("{folder}/01.flac"), "flac_full_01.flac");
+    }
+    rig.pause_identification().await;
+    app.add_library_folder("music", &music).await;
+    app.scan_library().await;
+    let track = |folder: &str| {
+        rig.scan_store
+            .track_at("music", &format!("{folder}/01.flac"))
+            .expect("track indexed")
+    };
+    let ids: std::collections::BTreeMap<&str, String> = folders
+        .iter()
+        .map(|folder| {
+            let album = rig
+                .scan_store
+                .album_for_track(&track(folder))
+                .expect("album");
+            (*folder, album)
+        })
+        .collect();
+    let id = |folder: &str| ids[folder].clone();
+    assert_eq!(
+        ids.values()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        folders.len(),
+        "each folder is an album"
+    );
+    let choose = |folder: &str, group: &str, release: &str| {
+        format!(
+            "INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
+             selected_at, row_revision) VALUES ('{}', 'musicbrainz', '{group}', {release}, \
+             'manual', 'curator', 1234.5, 3);",
+            id(folder)
+        )
+    };
+    let pair = |old: &str, new: &str, reason: &str, at: i64| {
+        format!(
+            "INSERT INTO library_retag_pairs (old_album_id, new_album_id, reason, state, \
+             recorded_at, updated_at) VALUES ('{}', '{}', '{reason}', 'open', {at}, {at});",
+            id(old),
+            id(new)
+        )
+    };
+    let db = app.db();
+    db.execute_batch(
+        &[
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z');"
+                .to_owned(),
+            choose("a-old", "rg-a", "'rel-a-old'"),
+            choose("a-new", "rg-a", "'rel-a-new'"),
+            choose("b-old", "rg-b", "'rel-b-old'"),
+            choose("b-new", "rg-b", "'rel-b-new'"),
+            choose("d-old", "rg-d", "NULL"),
+            choose("d-new", "rg-d", "'rel-d-new'"),
+            choose("e-old", "rg-e", "'rel-e-old'"),
+            choose("e-new", "rg-e", "'rel-e-new'"),
+            format!(
+                "INSERT INTO library_custom_edition_manifests (id, local_album_id, version, \
+                 release_group_mbid, album_title, album_artist_name, source_album_revision, \
+                 input_revision, content_hash, sealed_by_user_id, sealed_at) \
+                 VALUES ('custom-d', '{d}', 1, 'rg-d', 'T', 'A', 1, 'i', 'h', 'curator', 0); \
+                 INSERT INTO library_custom_edition_active (local_album_id, manifest_id, \
+                 activated_at) VALUES ('{d}', 'custom-d', 0);",
+                d = id("d-old")
+            ),
+            format!(
+                "INSERT INTO local_track_external_identities (local_track_id, provider, \
+                 recording_mbid, release_mbid, release_track_mbid, decision_source, \
+                 selected_at) VALUES ('{}', 'musicbrainz', 'rec-a', 'rel-a-new', 'rt-a', \
+                 'manual', 0);",
+                track("a-new")
+            ),
+            format!(
+                "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+                 VALUES ('curator', 'album', '{a}', 1); \
+                 INSERT INTO library_play_history (id, user_id, local_album_id, track_name, \
+                 artist_name, played_at) VALUES ('play-a', 'curator', '{a}', 'Song', 'Artist', \
+                 '2026-01-01T00:00:00Z'); \
+                 INSERT INTO playlists (id, name, created_at, updated_at) \
+                 VALUES ('list', 'List', '', ''); \
+                 INSERT INTO playlist_tracks (id, playlist_id, position, track_name, \
+                 artist_name, album_name, album_id, source_type, created_at) \
+                 VALUES ('entry', 'list', 0, 'Song', 'Artist', 'Old', '{a}', 'local', ''); \
+                 INSERT INTO library_management_exclusions (local_album_id, reason, \
+                 excluded_by_user_id, excluded_at) VALUES ('{a}', 'by hand', 'curator', 5); \
+                 INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+                 VALUES ('{a}', 'files_changed', 1234);",
+                a = id("a-old")
+            ),
+            format!(
+                "INSERT INTO library_contribution_drafts (id, local_album_id, \
+                 created_by_user_id, state, album_row_revision, input_revision, \
+                 local_snapshot_json, resolved_draft_json, source_selection_json, created_at, \
+                 updated_at) VALUES ('draft-c', '{}', 'curator', 'ready', 1, 'r1', '{{}}', \
+                 '{{}}', '{{}}', 1, 1);",
+                id("c-old")
+            ),
+            pair("a-old", "a-new", "chosen_matches_differ", 1000),
+            pair("b-old", "b-new", "chosen_matches_differ", 2000),
+            pair("c-old", "c-new", "tracks_elsewhere", 3000),
+            pair("d-old", "d-new", "custom_edition", 4000),
+            pair("e-old", "e-new", "chosen_matches_differ", 5000),
+            pair("f-old", "f-new", "tracks_elsewhere", 6000),
+            pair("g-one", "g-two", "live_work", 7000),
+            pair("g-two", "g-one", "mostly_missing", 8000),
+        ]
+        .join("\n"),
+    )
+    .expect("pairs seeded");
+
+    // Only an admin reaches the routes.
+    let (a_old, a_new) = (id("a-old"), id("a-new"));
+    let join_a = format!("/api/v3/library/retag-pairs/{a_old}/{a_new}/join");
+    let routes = [
+        ("GET", "/api/v3/library/retag-pairs".to_owned(), None),
+        (
+            "POST",
+            join_a.clone(),
+            Some(json!({"expected_identity_revisions": {}})),
+        ),
+        (
+            "POST",
+            format!("/api/v3/library/retag-pairs/{a_old}/{a_new}/dismiss"),
+            None,
+        ),
+    ];
+    let user = app.login_user("plain").await;
+    let trusted = app.login_user("trusty").await;
+    let (status, body) = app
+        .call(
+            "PUT",
+            &format!("/api/v3/admin/users/{}/role", trusted.user_id),
+            &headers,
+            Some(json!({"role": "trusted"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    for (method, path, body) in &routes {
+        let (status, _) = app.call(method, path, &[], body.clone()).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{method} {path}");
+        for caller in [&user, &trusted] {
+            let (status, _) = app
+                .call(
+                    method,
+                    path,
+                    &[("authorization", caller.authorization.as_str())],
+                    body.clone(),
+                )
+                .await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{method} {path}");
+        }
+    }
+
+    // The read: open pairs a person decides on, newest first.
+    let list = || async {
+        let (status, body) = app
+            .call("GET", "/api/v3/library/retag-pairs", &headers, None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body
+    };
+    let listed = list().await;
+    assert_eq!(listed["total"], json!(6), "{listed}");
+    let order: Vec<(String, String, String, bool)> = listed["pairs"]
+        .as_array()
+        .expect("pairs")
+        .iter()
+        .map(|pair| {
+            (
+                pair["old_album"]["id"].as_str().expect("old").to_owned(),
+                pair["new_album"]["id"].as_str().expect("new").to_owned(),
+                pair["reason"].as_str().expect("reason").to_owned(),
+                pair["editions_differ"].as_bool().expect("differ"),
+            )
+        })
+        .collect();
+    let expect = |old: &str, new: &str, reason: &str, differ: bool| {
+        (id(old), id(new), reason.to_owned(), differ)
+    };
+    assert_eq!(
+        order,
+        vec![
+            expect("f-old", "f-new", "tracks_elsewhere", false),
+            expect("e-old", "e-new", "chosen_matches_differ", true),
+            expect("d-old", "d-new", "custom_edition", false),
+            expect("c-old", "c-new", "tracks_elsewhere", false),
+            expect("b-old", "b-new", "chosen_matches_differ", true),
+            expect("a-old", "a-new", "chosen_matches_differ", true),
+        ]
+    );
+    let shown_a = &listed["pairs"][5];
+    assert_eq!(
+        shown_a["old_album"]["edition"],
+        json!({"release_group_mbid": "rg-a", "release_mbid": "rel-a-old", "chosen": true,
+               "custom": false})
+    );
+    assert_eq!(shown_a["old_album"]["identity_revision"], json!(3));
+    assert_eq!(shown_a["old_album"]["track_count"], json!(1));
+    assert_eq!(
+        listed["pairs"][2]["old_album"]["edition"]["custom"],
+        json!(true)
+    );
+
+    // Refusals change nothing.
+    let before = pair_snapshot(&db, &a_old, &a_new);
+    let refusals = [
+        (
+            json!({"keep_edition_of": a_new, "expected_identity_revisions": {&a_old: 3}}),
+            StatusCode::BAD_REQUEST,
+            "RETAG_PAIR_REVISIONS_REQUIRED",
+        ),
+        (
+            json!({"expected_identity_revisions": {&a_old: 3, &a_new: 3}}),
+            StatusCode::BAD_REQUEST,
+            "KEEP_EDITION_REQUIRED",
+        ),
+        (
+            json!({"keep_edition_of": a_old,
+                   "expected_identity_revisions": {&a_old: 2, &a_new: 3}}),
+            StatusCode::CONFLICT,
+            "STALE_REVISION",
+        ),
+    ];
+    for (body, status, code) in refusals {
+        let (got, answer) = app.call("POST", &join_a, &headers, Some(body)).await;
+        assert_eq!(got, status, "{answer}");
+        assert_eq!(answer["error"]["code"], json!(code));
+        assert_eq!(pair_snapshot(&db, &a_old, &a_new), before, "{code}");
+    }
+
+    // Keep the old album's edition: it lands on the new album, which
+    // takes the old album's id, people's marks and history.
+    let keep_old = json!({"keep_edition_of": a_old,
+                          "expected_identity_revisions": {&a_old: 3, &a_new: 3}});
+    for _ in 0..2 {
+        let (status, body) = app
+            .call("POST", &join_a, &headers, Some(keep_old.clone()))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body, json!({"album_id": a_new}), "a retry answers the same");
+    }
+    let alias: String = db
+        .query_row(
+            "SELECT local_album_id FROM local_album_aliases WHERE alias = ?1",
+            [&a_old],
+            |row| row.get(0),
+        )
+        .expect("the old id is an alias");
+    assert_eq!(alias, a_new, "the old id names the album");
+    let chosen = choice_row(&db, &a_new);
+    assert_eq!(
+        (
+            chosen.0.as_str(),
+            chosen.1.as_deref(),
+            chosen.2.as_deref(),
+            chosen.3
+        ),
+        ("manual", Some("rel-a-old"), Some("curator"), 1234.5)
+    );
+    let reviews = pending_reviews(&db, &a_new);
+    assert_eq!(reviews.len(), 1, "{reviews:?}");
+    assert_eq!(reviews[0].0, "EDITION_KEPT_OVER_CONFLICT");
+    assert!(reviews[0].1.contains("rel-a-new"), "{}", reviews[0].1);
+    assert_eq!(
+        remap_row(&db, &a_new).map(|row| row.0).as_deref(),
+        Some("place_only")
+    );
+    let count = |sql: &str| -> i64 {
+        db.query_row(sql, [&a_new], |row| row.get(0))
+            .expect("count")
+    };
+    assert_eq!(
+        count("SELECT COUNT(*) FROM library_retag_pairs WHERE new_album_id = ?1"),
+        0
+    );
+    for sql in [
+        "SELECT COUNT(*) FROM library_user_favorites WHERE item_id = ?1",
+        "SELECT COUNT(*) FROM library_play_history WHERE local_album_id = ?1",
+        "SELECT COUNT(*) FROM playlist_tracks WHERE album_id = ?1",
+        "SELECT COUNT(*) FROM library_management_exclusions WHERE local_album_id = ?1",
+        "SELECT COUNT(*) FROM library_album_takeovers WHERE local_album_id = ?1",
+    ] {
+        assert_eq!(count(sql), 1, "{sql}");
+    }
+
+    // Keep the new album's: the mirror case.
+    let (b_old, b_new) = (id("b-old"), id("b-new"));
+    let b_chosen = choice_row(&db, &b_new);
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/retag-pairs/{b_old}/{b_new}/join"),
+            &headers,
+            Some(json!({"keep_edition_of": b_new,
+                        "expected_identity_revisions": {&b_old: 3, &b_new: 3}})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["album_id"], json!(b_new));
+    assert_eq!(
+        choice_row(&db, &b_new),
+        b_chosen,
+        "the kept edition is as it was"
+    );
+    let reviews = pending_reviews(&db, &b_new);
+    assert_eq!(reviews.len(), 1, "{reviews:?}");
+    assert_eq!(reviews[0].0, "EDITION_KEPT_OVER_CONFLICT");
+    assert!(reviews[0].1.contains("rel-b-old"), "{}", reviews[0].1);
+
+    // Open work on the old album holds the join back, changing nothing;
+    // once it is gone the split joins without an edition to choose.
+    let (c_old, c_new) = (id("c-old"), id("c-new"));
+    let join_c = format!("/api/v3/library/retag-pairs/{c_old}/{c_new}/join");
+    let plain = json!({"expected_identity_revisions": {&c_old: 0, &c_new: 0}});
+    let before = pair_snapshot(&db, &c_old, &c_new);
+    let (status, body) = app
+        .call("POST", &join_c, &headers, Some(plain.clone()))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        body["error"]["message"],
+        json!(
+            "One of these albums has an open preview or a running operation. Finish or \
+             discard it, then merge."
+        )
+    );
+    assert_eq!(pair_snapshot(&db, &c_old, &c_new), before);
+    db.execute(
+        "UPDATE library_contribution_drafts SET state = 'cancelled' WHERE id = 'draft-c'",
+        [],
+    )
+    .expect("draft closed");
+    let (status, body) = app.call("POST", &join_c, &headers, Some(plain)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["album_id"], json!(c_new));
+
+    // A custom edition on the old album does not carry over; the new
+    // album's chosen edition stays and the manifest is kept.
+    let (d_old, d_new) = (id("d-old"), id("d-new"));
+    let d_chosen = choice_row(&db, &d_new);
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/retag-pairs/{d_old}/{d_new}/join"),
+            &headers,
+            Some(json!({"expected_identity_revisions": {&d_old: 3, &d_new: 3}})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(choice_row(&db, &d_new), d_chosen);
+    let reviews = pending_reviews(&db, &d_new);
+    assert_eq!(reviews.len(), 1, "{reviews:?}");
+    assert_eq!(reviews[0].0, "EDITION_CLEARED_CUSTOM");
+    let total = |sql: &str| -> i64 { db.query_row(sql, [], |row| row.get(0)).expect("count") };
+    assert_eq!(
+        total("SELECT COUNT(*) FROM library_custom_edition_active"),
+        0
+    );
+    assert_eq!(
+        total("SELECT COUNT(*) FROM library_custom_edition_manifests WHERE id = 'custom-d'"),
+        1
+    );
+
+    // Dismiss: once, then already; the pair is no longer listed or joined.
+    let (e_old, e_new) = (id("e-old"), id("e-new"));
+    let dismiss_e = format!("/api/v3/library/retag-pairs/{e_old}/{e_new}/dismiss");
+    for dismissed in [true, false] {
+        let (status, body) = app.call("POST", &dismiss_e, &headers, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body, json!({"dismissed": dismissed}));
+    }
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/retag-pairs/{e_old}/{e_new}/join"),
+            &headers,
+            Some(json!({"keep_edition_of": e_old,
+                        "expected_identity_revisions": {&e_old: 3, &e_new: 3}})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], json!("RETAG_PAIR_DISMISSED"));
+
+    // The new album merged into a third by the album tools: the pair
+    // stands for the third album, and the join merges into it.
+    let (f_old, f_third) = (id("f-old"), id("f-third"));
+    let selection = json!({"track_ids": [track("f-new")], "target_album_id": f_third});
+    let (status, preview) = app
+        .call(
+            "POST",
+            "/api/v3/library/albums/merge-preview",
+            &headers,
+            Some(selection.clone()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    let mut apply = selection;
+    apply["preview_token"] = preview["preview_token"].clone();
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/albums/merge",
+            &headers,
+            Some(apply),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let listed = list().await;
+    assert_eq!(listed["total"], json!(1), "{listed}");
+    assert_eq!(listed["pairs"][0]["old_album"]["id"], json!(f_old));
+    assert_eq!(listed["pairs"][0]["new_album"]["id"], json!(f_third));
+    let f_new = id("f-new");
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/retag-pairs/{f_old}/{f_new}/join"),
+            &headers,
+            Some(json!({"expected_identity_revisions": {&f_old: 0, &f_new: 0}})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "a card shown before: {body}");
+    assert_eq!(body["error"]["code"], json!("RETAG_PAIR_ALBUM_GONE"));
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/retag-pairs/{f_old}/{f_third}/join"),
+            &headers,
+            Some(json!({"expected_identity_revisions": {&f_old: 0, &f_third: 0}})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["album_id"], json!(f_third));
+    let retired: Option<String> = db
+        .query_row(
+            "SELECT retired_into_album_id FROM local_albums WHERE id = ?1",
+            [&f_old],
+            |row| row.get(0),
+        )
+        .expect("album row");
+    assert_eq!(retired, Some(f_third));
+
+    // A custom edition on the new album, dropped for the old album's
+    // chosen release, leaves the custom edition's review. A refusal after
+    // an edition was dropped puts the edition back.
+    let (h_old, h_new, i_old, i_new) = (id("h-old"), id("h-new"), id("i-old"), id("i-new"));
+    db.execute_batch(
+        &[
+            choose("h-old", "rg-h", "'rel-h-old'"),
+            choose("h-new", "rg-h", "NULL"),
+            format!(
+                "INSERT INTO library_custom_edition_manifests (id, local_album_id, version, \
+                 release_group_mbid, album_title, album_artist_name, source_album_revision, \
+                 input_revision, content_hash, sealed_by_user_id, sealed_at) \
+                 VALUES ('custom-h', '{h_new}', 1, 'rg-h', 'T', 'A', 1, 'i', 'h', 'curator', \
+                 0); INSERT INTO library_custom_edition_active (local_album_id, manifest_id, \
+                 activated_at) VALUES ('{h_new}', 'custom-h', 0);"
+            ),
+            choose("i-old", "rg-i", "'rel-i-old'"),
+            choose("i-new", "rg-i", "'rel-i-new'"),
+            format!(
+                "INSERT INTO library_contribution_drafts (id, local_album_id, \
+                 created_by_user_id, state, album_row_revision, input_revision, \
+                 local_snapshot_json, resolved_draft_json, source_selection_json, created_at, \
+                 updated_at) VALUES ('draft-i', '{i_old}', 'curator', 'ready', 1, 'r1', \
+                 '{{}}', '{{}}', '{{}}', 1, 1);"
+            ),
+            pair("h-old", "h-new", "chosen_matches_differ", 9000),
+            pair("i-old", "i-new", "chosen_matches_differ", 9100),
+        ]
+        .join("\n"),
+    )
+    .expect("more pairs seeded");
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/retag-pairs/{h_old}/{h_new}/join"),
+            &headers,
+            Some(json!({"keep_edition_of": h_old,
+                        "expected_identity_revisions": {&h_old: 3, &h_new: 3}})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let reviews = pending_reviews(&db, &h_new);
+    assert_eq!(reviews.len(), 1, "{reviews:?}");
+    assert_eq!(reviews[0].0, "EDITION_CLEARED_CUSTOM");
+    let join_i = format!("/api/v3/library/retag-pairs/{i_old}/{i_new}/join");
+    let before = pair_snapshot(&db, &i_old, &i_new);
+    let (status, body) = app
+        .call(
+            "POST",
+            &join_i,
+            &headers,
+            Some(json!({"keep_edition_of": i_old,
+                        "expected_identity_revisions": {&i_old: 3, &i_new: 3}})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], json!("RETAG_PAIR_LIVE_WORK"));
+    assert_eq!(
+        pair_snapshot(&db, &i_old, &i_new),
+        before,
+        "the dropped edition is back"
+    );
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/retag-pairs/{i_old}/{i_new}/dismiss"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // No such pair.
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/retag-pairs/{}/{b_new}/join", id("g-one")),
+            &headers,
+            Some(json!({"expected_identity_revisions": {}})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let listed = list().await;
+    assert_eq!(listed, json!({"pairs": [], "total": 0}));
+    rig.stop().await;
+}

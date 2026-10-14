@@ -194,5 +194,7 @@ export const LibraryQueryKeyFactory = {
 			artist,
 			offset
 		] as const,
-	scanSchedule: () => [...LibraryQueryKeyFactory.all, 'scan-schedule'] as const
+	scanSchedule: () => [...LibraryQueryKeyFactory.all, 'scan-schedule'] as const,
+	// Admin-only and the same for every admin, so no user segment.
+	retagPairs: () => [...LibraryQueryKeyFactory.all, 'retag-pairs'] as const
 };

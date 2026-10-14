@@ -61,10 +61,14 @@ pub(crate) enum MergeOutcome {
 ///   the new row, equal or not, was chosen for the retagged files;
 /// - an audit action, the catalog revision, and the offer for
 ///   identification where the files are managed automatically.
+///
+/// `actor` is the person who asked, recorded on the audit action; `None`
+/// is the scan.
 pub(crate) fn merge_retagged(
     tx: &Transaction<'_>,
     old: &str,
     new: &str,
+    actor: Option<&str>,
     now: f64,
 ) -> rusqlite::Result<MergeOutcome> {
     let refused = |reason| {
@@ -124,7 +128,7 @@ pub(crate) fn merge_retagged(
         record_action(
             tx,
             CatalogAction {
-                actor: "system",
+                actor: actor.unwrap_or("system"),
                 kind: "merge_album",
                 album_id: new,
                 job_id: None,

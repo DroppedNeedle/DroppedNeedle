@@ -2491,6 +2491,17 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         Posture::Admin,
     ),
     ("POST", "/api/v3/library/artists/merge", Posture::Admin),
+    ("GET", "/api/v3/library/retag-pairs", Posture::Admin),
+    (
+        "POST",
+        "/api/v3/library/retag-pairs/{old_album_id}/{new_album_id}/join",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/retag-pairs/{old_album_id}/{new_album_id}/dismiss",
+        Posture::Admin,
+    ),
     // Artist reconciliation: admin-only, as in v2.
     (
         "GET",

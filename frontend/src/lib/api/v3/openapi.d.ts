@@ -4873,6 +4873,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/retag-pairs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List album rows that look like one retagged album and wait for a
+         *     person to join or dismiss them.
+         */
+        get: operations["list_retag_pairs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/retag-pairs/{old_album_id}/{new_album_id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark a retag pair as two different albums. A scan never joins it then. */
+        post: operations["dismiss_retag_pair"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/retag-pairs/{old_album_id}/{new_album_id}/join": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Join a retag pair: the old album is merged into the new one. A custom
+         *     edition on the old album is dropped, and so is the edition not kept
+         *     when the two hold different chosen editions; each leaves a review on
+         *     the album that stays. No file is written.
+         */
+        post: operations["join_retag_pair"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/reviews": {
         parameters: {
             query?: never;
@@ -20381,6 +20440,95 @@ export interface components {
             root_id: string;
             track_id: string;
         };
+        /** @description One album of a retag pair. */
+        RetagPairAlbumView: {
+            album_artist_name: string;
+            edition?: null | components["schemas"]["RetagPairEditionView"];
+            id: string;
+            /**
+             * Format: int64
+             * @description The edition's revision, 0 for none. Send it back with a join.
+             */
+            identity_revision: number;
+            title: string;
+            /**
+             * Format: int64
+             * @description Indexed tracks.
+             */
+            track_count: number;
+        };
+        /** @description A dismissed retag pair. */
+        RetagPairDismissResponse: {
+            /** @description False when the pair was dismissed already. */
+            dismissed: boolean;
+        };
+        /** @description An album's edition on a retag pair. */
+        RetagPairEditionView: {
+            /** @description Chosen by a person or carried over from v2. */
+            chosen: boolean;
+            /** @description A custom edition is active. It does not carry over a join. */
+            custom: boolean;
+            release_group_mbid: string;
+            release_mbid?: string | null;
+        };
+        /** @description Join a retag pair. */
+        RetagPairJoinBody: {
+            /**
+             * @description Each album's `identity_revision` as shown, by album id. Both albums
+             *     must be named.
+             */
+            expected_identity_revisions: {
+                [key: string]: number;
+            };
+            /**
+             * @description The album whose chosen edition stays. Required when
+             *     `editions_differ` is true, and must be absent otherwise.
+             */
+            keep_edition_of?: string | null;
+        };
+        /** @description A joined retag pair. */
+        RetagPairJoinResponse: {
+            /** @description The album that stays. The old album's id now opens it. */
+            album_id: string;
+        };
+        /**
+         * @description The open retag pairs, newest first (at most 100), and how many there
+         *     are.
+         */
+        RetagPairListResponse: {
+            pairs: components["schemas"]["RetagPairView"][];
+            /** Format: int64 */
+            total: number;
+        };
+        /**
+         * @description Why the scan left a retag pair for a person.
+         * @enum {string}
+         */
+        RetagPairReasonView: "chosen_matches_differ" | "tracks_elsewhere" | "custom_edition";
+        /**
+         * @description Two album rows that look like one retagged album, which the scan would
+         *     not join by itself.
+         */
+        RetagPairView: {
+            /**
+             * @description Two different chosen editions remain once a custom edition on the
+             *     old album is left out: the join must name the one to keep.
+             */
+            editions_differ: boolean;
+            /**
+             * @description The row the files sit on now, or the album it was merged into
+             *     since. A join keeps this one.
+             */
+            new_album: components["schemas"]["RetagPairAlbumView"];
+            /** @description The row the files left. It holds the favorites, plays and links. */
+            old_album: components["schemas"]["RetagPairAlbumView"];
+            reason: components["schemas"]["RetagPairReasonView"];
+            /**
+             * Format: int64
+             * @description When the scan recorded the pair (Unix milliseconds).
+             */
+            recorded_at: number;
+        };
         /** @description Retry-all-failed outcome. */
         RetryAllResponse: {
             /**
@@ -34619,6 +34767,150 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_retag_pairs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Open pairs, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetagPairListResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    dismiss_retag_pair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The pair's old album */
+                old_album_id: string;
+                /** @description The pair's new album */
+                new_album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dismissed, or dismissed already */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetagPairDismissResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No such pair */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    join_retag_pair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The pair's old album */
+                old_album_id: string;
+                /** @description The pair's new album */
+                new_album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetagPairJoinBody"];
+            };
+        };
+        responses: {
+            /** @description Joined, or joined already */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetagPairJoinResponse"];
+                };
+            };
+            /** @description An album's revision is missing, or the edition to keep is missing, not needed or not one of the two */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No such pair */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The pair was dismissed, an album was merged, removed or changed its edition, or work is open on one */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

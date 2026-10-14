@@ -17,7 +17,8 @@
 //! sentences, `token` the preview tokens, `membership` split, merge and
 //! move, `reset` reset grouping, `edition` what happens to editions,
 //! `artists` the artist merge, `retag_merge` the join of an album
-//! retagged across two scans, `continuation` a missing track continuing
+//! retagged across two scans, `retag_pairs` the pairs a person joins or
+//! dismisses, `continuation` a missing track continuing
 //! into the track that took its place, and `service` the entry points.
 
 mod artists;
@@ -28,6 +29,7 @@ pub mod models;
 pub mod reasons;
 mod reset;
 pub(crate) mod retag_merge;
+mod retag_pairs;
 pub mod service;
 mod token;
 

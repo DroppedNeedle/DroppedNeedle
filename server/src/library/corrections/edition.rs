@@ -388,7 +388,7 @@ pub(crate) fn drop_edition(tx: &Transaction<'_>, album_id: &str) -> rusqlite::Re
 
 /// Leave a pending review saying why editions went. The dropped editions
 /// are its candidates, so approving one puts that edition back.
-fn open_review(
+pub(crate) fn open_review(
     tx: &Transaction<'_>,
     album_id: &str,
     reason: Reason,

@@ -1684,7 +1684,7 @@ fn join_one(
     if dismissed || !tried(tx, old, new)? {
         return Ok(false);
     }
-    match merge_retagged(tx, old, new, now)? {
+    match merge_retagged(tx, old, new, None, now)? {
         MergeOutcome::Merged { offered: queued } => {
             *offered += i64::from(queued);
             Ok(true)

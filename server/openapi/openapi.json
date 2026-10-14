@@ -11770,6 +11770,149 @@
         }
       }
     },
+    "/api/v3/library/retag-pairs": {
+      "get": {
+        "tags": [
+          "crate::library::http::corrections"
+        ],
+        "summary": "List album rows that look like one retagged album and wait for a\nperson to join or dismiss them.",
+        "operationId": "list_retag_pairs",
+        "responses": {
+          "200": {
+            "description": "Open pairs, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetagPairListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        }
+      }
+    },
+    "/api/v3/library/retag-pairs/{old_album_id}/{new_album_id}/dismiss": {
+      "post": {
+        "tags": [
+          "crate::library::http::corrections"
+        ],
+        "summary": "Mark a retag pair as two different albums. A scan never joins it then.",
+        "operationId": "dismiss_retag_pair",
+        "parameters": [
+          {
+            "name": "old_album_id",
+            "in": "path",
+            "description": "The pair's old album",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "new_album_id",
+            "in": "path",
+            "description": "The pair's new album",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dismissed, or dismissed already",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetagPairDismissResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "No such pair"
+          }
+        }
+      }
+    },
+    "/api/v3/library/retag-pairs/{old_album_id}/{new_album_id}/join": {
+      "post": {
+        "tags": [
+          "crate::library::http::corrections"
+        ],
+        "summary": "Join a retag pair: the old album is merged into the new one. A custom\nedition on the old album is dropped, and so is the edition not kept\nwhen the two hold different chosen editions; each leaves a review on\nthe album that stays. No file is written.",
+        "operationId": "join_retag_pair",
+        "parameters": [
+          {
+            "name": "old_album_id",
+            "in": "path",
+            "description": "The pair's old album",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "new_album_id",
+            "in": "path",
+            "description": "The pair's new album",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetagPairJoinBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Joined, or joined already",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetagPairJoinResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An album's revision is missing, or the edition to keep is missing, not needed or not one of the two"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "No such pair"
+          },
+          "409": {
+            "description": "The pair was dismissed, an album was merged, removed or changed its edition, or work is open on one"
+          }
+        }
+      }
+    },
     "/api/v3/library/reviews": {
       "get": {
         "tags": [
@@ -46993,6 +47136,191 @@
           },
           "track_id": {
             "type": "string"
+          }
+        }
+      },
+      "RetagPairAlbumView": {
+        "type": "object",
+        "description": "One album of a retag pair.",
+        "required": [
+          "id",
+          "title",
+          "album_artist_name",
+          "track_count",
+          "identity_revision"
+        ],
+        "properties": {
+          "album_artist_name": {
+            "type": "string"
+          },
+          "edition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RetagPairEditionView"
+              }
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "identity_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The edition's revision, 0 for none. Send it back with a join."
+          },
+          "title": {
+            "type": "string"
+          },
+          "track_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Indexed tracks."
+          }
+        }
+      },
+      "RetagPairDismissResponse": {
+        "type": "object",
+        "description": "A dismissed retag pair.",
+        "required": [
+          "dismissed"
+        ],
+        "properties": {
+          "dismissed": {
+            "type": "boolean",
+            "description": "False when the pair was dismissed already."
+          }
+        }
+      },
+      "RetagPairEditionView": {
+        "type": "object",
+        "description": "An album's edition on a retag pair.",
+        "required": [
+          "release_group_mbid",
+          "chosen",
+          "custom"
+        ],
+        "properties": {
+          "chosen": {
+            "type": "boolean",
+            "description": "Chosen by a person or carried over from v2."
+          },
+          "custom": {
+            "type": "boolean",
+            "description": "A custom edition is active. It does not carry over a join."
+          },
+          "release_group_mbid": {
+            "type": "string"
+          },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "RetagPairJoinBody": {
+        "type": "object",
+        "description": "Join a retag pair.",
+        "required": [
+          "expected_identity_revisions"
+        ],
+        "properties": {
+          "expected_identity_revisions": {
+            "type": "object",
+            "description": "Each album's `identity_revision` as shown, by album id. Both albums\nmust be named.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "keep_edition_of": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The album whose chosen edition stays. Required when\n`editions_differ` is true, and must be absent otherwise."
+          }
+        }
+      },
+      "RetagPairJoinResponse": {
+        "type": "object",
+        "description": "A joined retag pair.",
+        "required": [
+          "album_id"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string",
+            "description": "The album that stays. The old album's id now opens it."
+          }
+        }
+      },
+      "RetagPairListResponse": {
+        "type": "object",
+        "description": "The open retag pairs, newest first (at most 100), and how many there\nare.",
+        "required": [
+          "pairs",
+          "total"
+        ],
+        "properties": {
+          "pairs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RetagPairView"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "RetagPairReasonView": {
+        "type": "string",
+        "description": "Why the scan left a retag pair for a person.",
+        "enum": [
+          "chosen_matches_differ",
+          "tracks_elsewhere",
+          "custom_edition"
+        ]
+      },
+      "RetagPairView": {
+        "type": "object",
+        "description": "Two album rows that look like one retagged album, which the scan would\nnot join by itself.",
+        "required": [
+          "old_album",
+          "new_album",
+          "reason",
+          "editions_differ",
+          "recorded_at"
+        ],
+        "properties": {
+          "editions_differ": {
+            "type": "boolean",
+            "description": "Two different chosen editions remain once a custom edition on the\nold album is left out: the join must name the one to keep."
+          },
+          "new_album": {
+            "$ref": "#/components/schemas/RetagPairAlbumView",
+            "description": "The row the files sit on now, or the album it was merged into\nsince. A join keeps this one."
+          },
+          "old_album": {
+            "$ref": "#/components/schemas/RetagPairAlbumView",
+            "description": "The row the files left. It holds the favorites, plays and links."
+          },
+          "reason": {
+            "$ref": "#/components/schemas/RetagPairReasonView"
+          },
+          "recorded_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the scan recorded the pair (Unix milliseconds)."
           }
         }
       },

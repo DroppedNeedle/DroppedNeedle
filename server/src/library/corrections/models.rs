@@ -199,6 +199,75 @@ pub struct Applied {
     pub catalog_revision: i64,
 }
 
+/// One album of a retag pair, as the card shows it.
+#[derive(Debug, Clone)]
+pub struct PairSide {
+    pub id: String,
+    pub title: String,
+    pub album_artist_name: String,
+    /// Indexed tracks.
+    pub track_count: i64,
+    pub edition: Option<PairEdition>,
+    /// The edition's revision, 0 for none. A join sends it back.
+    pub identity_revision: i64,
+}
+
+/// An album's edition on a retag pair.
+#[derive(Debug, Clone)]
+pub struct PairEdition {
+    pub release_group_mbid: String,
+    pub release_mbid: Option<String>,
+    /// Chosen by a person or carried over from v2.
+    pub chosen: bool,
+    /// A custom edition is active on it.
+    pub custom: bool,
+}
+
+/// Why the scan left a pair for a person.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PairReason {
+    /// Each album holds a different edition a person chose.
+    ChosenMatchesDiffer,
+    /// The album was split against a rename.
+    TracksElsewhere,
+    /// The old album holds a custom edition.
+    CustomEdition,
+}
+
+/// Two album rows the scan would not join, waiting for a person.
+#[derive(Debug, Clone)]
+pub struct RetagPair {
+    pub old_album: PairSide,
+    /// The album the files sit on now, or the album it was merged into
+    /// since.
+    pub new_album: PairSide,
+    pub reason: PairReason,
+    /// Two different chosen editions remain once a custom edition on the
+    /// old album is left out: a join must say which one to keep.
+    pub editions_differ: bool,
+    /// Milliseconds.
+    pub recorded_at: i64,
+}
+
+/// The open pairs, newest first, and how many there are.
+#[derive(Debug, Clone, Default)]
+pub struct RetagPairList {
+    pub pairs: Vec<RetagPair>,
+    pub total: i64,
+}
+
+/// A person joining a retag pair.
+#[derive(Debug, Clone)]
+pub struct PairJoinRequest {
+    pub old_album_id: String,
+    pub new_album_id: String,
+    /// Which album's chosen edition stays, when the two differ.
+    pub keep_edition_of: Option<String>,
+    /// The edition revisions the card showed, by album id (0 for none).
+    pub expected_identity_revisions: BTreeMap<String, i64>,
+    pub actor: String,
+}
+
 /// Why a correction did not happen. Handlers map it to a status.
 #[derive(Debug)]
 pub enum CorrectionError {
