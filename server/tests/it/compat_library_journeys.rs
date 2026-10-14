@@ -1588,6 +1588,303 @@ async fn jellyfin_album_ids_survive_a_restart() {
     rig.stop().await;
 }
 
+/// The local track, album and album artist ids of the song at `path`.
+fn catalog_ids(rig: &CompatApp, path: &str) -> (String, String, String) {
+    rig.app
+        .db()
+        .query_row(
+            "SELECT t.id, t.local_album_id, a.album_artist_id FROM local_tracks t \
+             JOIN local_albums a ON a.id = t.local_album_id WHERE t.relative_path = ?1",
+            [path],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap_or_else(|error| panic!("{path}: {error}"))
+}
+
+/// Fold the album holding `track` into `into`, as an admin does from the
+/// album tools.
+async fn merge_albums(rig: &CompatApp, track: &str, into: &str) {
+    let admin = rig.app.login_admin().await;
+    let admin = [("authorization", admin.as_str())];
+    let mut selection = json!({"track_ids": [track], "target_album_id": into});
+    let (status, preview) = rig
+        .app
+        .call(
+            "POST",
+            "/api/v3/library/albums/merge-preview",
+            &admin,
+            Some(selection.clone()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    selection["preview_token"] = preview["preview_token"].clone();
+    let (status, body) = rig
+        .app
+        .call(
+            "POST",
+            "/api/v3/library/albums/merge",
+            &admin,
+            Some(selection),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+/// Merge the artist `from` into `into`, as an admin does.
+async fn merge_artists(rig: &CompatApp, from: &str, into: &str) {
+    let admin = rig.app.login_admin().await;
+    let admin = [("authorization", admin.as_str())];
+    let mut selection = json!({"source_artist_ids": [from], "surviving_artist_id": into});
+    let (status, preview) = rig
+        .app
+        .call(
+            "POST",
+            "/api/v3/library/artists/merge-preview",
+            &admin,
+            Some(selection.clone()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    selection["preview_token"] = preview["preview_token"].clone();
+    let (status, body) = rig
+        .app
+        .call(
+            "POST",
+            "/api/v3/library/artists/merge",
+            &admin,
+            Some(selection),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+/// The Jellyfin id a signed-in app is handed for the album called `name`.
+async fn jellyfin_album_id(rig: &CompatApp, name: &str) -> String {
+    let token = rig.jellyfin_auth();
+    let (_, albums) = rig
+        .app
+        .call(
+            "GET",
+            "/jellyfin/Items?IncludeItemTypes=MusicAlbum&Recursive=true",
+            &[("X-Emby-Authorization", token.as_str())],
+            None,
+        )
+        .await;
+    named(&albums["Items"], "Name", name)["Id"]
+        .as_str()
+        .expect("album id")
+        .to_owned()
+}
+
+/// The Jellyfin id a signed-in app is handed for the album artist of the
+/// track `track`.
+async fn jellyfin_artist_id(rig: &CompatApp, track: &str) -> String {
+    let token = rig.jellyfin_auth();
+    let (status, item) = rig
+        .app
+        .call(
+            "GET",
+            &format!("/jellyfin/Items/{}", unkeyed_id("track", track)),
+            &[("X-Emby-Authorization", token.as_str())],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{item}");
+    item["AlbumArtists"][0]["Id"]
+        .as_str()
+        .expect("album artist id")
+        .to_owned()
+}
+
+/// The `Id` a signed-in Jellyfin app is answered for the item `id`, and
+/// the ids of the tracks listed under it as a parent.
+async fn jellyfin_item(rig: &CompatApp, id: &str) -> (Value, Vec<String>) {
+    let token = rig.jellyfin_auth();
+    let auth = [("X-Emby-Authorization", token.as_str())];
+    let (status, item) = rig
+        .app
+        .call("GET", &format!("/jellyfin/Items/{id}"), &auth, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{id}: {item}");
+    let (_, children) = rig
+        .app
+        .call(
+            "GET",
+            &format!("/jellyfin/Items?ParentId={id}"),
+            &auth,
+            None,
+        )
+        .await;
+    let mut listed: Vec<String> = children["Items"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{id}: {children}"))
+        .iter()
+        .map(|child| child["Id"].as_str().expect("child id").to_owned())
+        .collect();
+    listed.sort();
+    (item["Id"].clone(), listed)
+}
+
+/// The Subsonic answer to `call`, which must succeed.
+async fn subsonic_ok(rig: &CompatApp, call: &str) -> Value {
+    let auth = rig.subsonic_auth("merged");
+    let (_, body) = rig.app.call("GET", &rest(call, &auth), &[], None).await;
+    let answer = &body["subsonic-response"];
+    assert_eq!(answer["status"], json!("ok"), "{call}: {body}");
+    answer.clone()
+}
+
+/// A player app that saved an album before it was merged into another
+/// still opens it, at the album that holds it now, also after a second
+/// merge and a restart. Subsonic: `getAlbum` answers the surviving album
+/// with its id, `getMusicDirectory` and `getCoverArt` answer as for that
+/// album's id, and starring the old id stars it. Jellyfin, signed in, for
+/// both ids the album was handed out under: the item answers with the
+/// current id and lists the album's tracks, also as the first request of
+/// a new process; with no token it is a 401. The picture address never
+/// opens an old id: an empty 404 in the process that listed it and as the
+/// first request after a restart.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn merged_albums_keep_their_ids_in_player_apps() {
+    let mut rig = CompatApp::start("compat-merged-albums").await;
+    let (airbag, ok_computer, _) = catalog_ids(&rig, "Radiohead/OK Computer/01 Airbag.flac");
+    let (paranoid, _, _) = catalog_ids(&rig, "Radiohead/OK Computer/02 Paranoid Android.flac");
+    let (teardrop, mezzanine, _) = catalog_ids(&rig, "Massive Attack/Mezzanine/04 Teardrop.m4a");
+    let (one, achtung, _) = catalog_ids(&rig, "U2/Achtung Baby/03 One.mp3");
+    let keyed = jellyfin_album_id(&rig, "Mezzanine").await;
+    let unkeyed = unkeyed_id("album", &mezzanine);
+    let ok_computer_id = jellyfin_album_id(&rig, "OK Computer").await;
+    let achtung_id = jellyfin_album_id(&rig, "Achtung Baby").await;
+
+    merge_albums(&rig, &teardrop, &ok_computer).await;
+    let old = format!("al-{mezzanine}");
+    let album = subsonic_ok(&rig, &format!("getAlbum?id={old}")).await;
+    assert_eq!(album["album"]["id"], json!(format!("al-{ok_computer}")));
+    let survivor = subsonic_ok(&rig, &format!("getMusicDirectory?id=al-{ok_computer}")).await;
+    assert_eq!(
+        subsonic_ok(&rig, &format!("getMusicDirectory?id={old}")).await,
+        survivor
+    );
+    let auth = rig.subsonic_auth("merged");
+    let cover = rig
+        .app
+        .raw(
+            "GET",
+            &rest(&format!("getCoverArt?id=al-{ok_computer}"), &auth),
+            &[],
+            None,
+        )
+        .await;
+    let (status, _, bytes) = rig
+        .app
+        .raw(
+            "GET",
+            &rest(&format!("getCoverArt?id={old}"), &auth),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!((status, bytes), (cover.0, cover.2));
+    subsonic_ok(&rig, &format!("star?id={old}")).await;
+    let starred = subsonic_ok(&rig, "getStarred2").await;
+    assert_eq!(
+        starred["starred2"]["album"][0]["id"],
+        json!(format!("al-{ok_computer}")),
+        "{starred}"
+    );
+
+    let mut tracks: Vec<String> = [&airbag, &paranoid, &teardrop]
+        .iter()
+        .map(|track| unkeyed_id("track", track))
+        .collect();
+    tracks.sort();
+    for id in [&keyed, &unkeyed] {
+        assert_eq!(
+            jellyfin_item(&rig, id).await,
+            (json!(ok_computer_id), tracks.clone())
+        );
+        let (status, _) = rig
+            .app
+            .call("GET", &format!("/jellyfin/Items/{id}"), &[], None)
+            .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{id}");
+    }
+    let (status, _, body) = picture(&rig, &keyed, None).await;
+    assert_eq!((status, body.len()), (StatusCode::NOT_FOUND, 0));
+
+    merge_albums(&rig, &airbag, &achtung).await;
+    let album = subsonic_ok(&rig, &format!("getAlbum?id={old}")).await;
+    assert_eq!(album["album"]["id"], json!(format!("al-{achtung}")));
+    tracks.push(unkeyed_id("track", &one));
+    tracks.sort();
+    for id in [&keyed, &unkeyed] {
+        rig.app = rig.app.restart().await;
+        assert_eq!(
+            jellyfin_item(&rig, id).await,
+            (json!(achtung_id), tracks.clone()),
+            "{id} after a restart"
+        );
+    }
+    rig.app = rig.app.restart().await;
+    let (status, _, body) = picture(&rig, &keyed, None).await;
+    assert_eq!((status, body.len()), (StatusCode::NOT_FOUND, 0));
+    rig.stop().await;
+}
+
+/// A player app that saved an artist before two merges in a row opens the
+/// last artist through the first one's Subsonic id and Jellyfin id. An
+/// album known by an alias of an older kind opens on Subsonic, while
+/// Jellyfin, which never handed that alias out, has no id for it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn merged_artists_and_album_aliases_open_in_player_apps() {
+    let rig = CompatApp::start("compat-merged-artists").await;
+    let (teardrop, _, massive_attack) =
+        catalog_ids(&rig, "Massive Attack/Mezzanine/04 Teardrop.m4a");
+    let (airbag, _, radiohead) = catalog_ids(&rig, "Radiohead/OK Computer/01 Airbag.flac");
+    let (one, _, u2) = catalog_ids(&rig, "U2/Achtung Baby/03 One.mp3");
+    let (_, bokou, _) = catalog_ids(&rig, "ユキ/望厚/01 桃源へ.flac");
+    let keyed = jellyfin_artist_id(&rig, &teardrop).await;
+    let radiohead_id = jellyfin_artist_id(&rig, &airbag).await;
+    let u2_id = jellyfin_artist_id(&rig, &one).await;
+    let old = format!("ar-{massive_attack}");
+
+    merge_artists(&rig, &massive_attack, &radiohead).await;
+    let artist = subsonic_ok(&rig, &format!("getArtist?id={old}")).await;
+    assert_eq!(artist["artist"]["id"], json!(format!("ar-{radiohead}")));
+    assert_eq!(jellyfin_item(&rig, &keyed).await.0, json!(radiohead_id));
+
+    merge_artists(&rig, &radiohead, &u2).await;
+    let artist = subsonic_ok(&rig, &format!("getArtist?id={old}")).await;
+    assert_eq!(artist["artist"]["id"], json!(format!("ar-{u2}")));
+    for id in [&keyed, &unkeyed_id("artist", &massive_attack)] {
+        assert_eq!(jellyfin_item(&rig, id).await.0, json!(u2_id), "{id}");
+    }
+
+    let legacy = "8c2a6c8e-61a3-4a31-9a0f-3a4c5e6b7d80";
+    rig.app
+        .db()
+        .execute(
+            "INSERT INTO local_album_aliases (alias, local_album_id, kind, created_at) \
+             VALUES (?1, ?2, 'legacy_release_group', 1)",
+            [legacy, bokou.as_str()],
+        )
+        .expect("legacy alias seeds");
+    let album = subsonic_ok(&rig, &format!("getAlbum?id=al-{legacy}")).await;
+    assert_eq!(album["album"]["id"], json!(format!("al-{bokou}")));
+    let token = rig.jellyfin_auth();
+    let (status, _) = rig
+        .app
+        .call(
+            "GET",
+            &format!("/jellyfin/Items/{}", unkeyed_id("album", legacy)),
+            &[("X-Emby-Authorization", token.as_str())],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    rig.stop().await;
+}
+
 /// Tripwire: no golden recorded from the library carries a credential.
 #[test]
 fn library_goldens_carry_no_credentials() {

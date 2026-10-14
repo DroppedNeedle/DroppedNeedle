@@ -282,9 +282,28 @@ pub async fn delete_playlist<P: Principal, S: Store, B: AudioBackend>(
     Ok(Outcome::ok())
 }
 
+/// An album or artist id as it is now: the old id of a merged album or
+/// artist, or an alias, becomes the id of the one that holds it. An id
+/// nothing live holds is kept, so it answers as an unknown id does.
+pub async fn current_id<P: Principal, S: Store, B: AudioBackend>(
+    ctx: &'_ Ctx<'_, P, S, B>,
+    kind: IdKind,
+    internal: String,
+) -> Result<String, SubsonicError> {
+    if !matches!(kind, IdKind::Album | IdKind::Artist) {
+        return Ok(internal);
+    }
+    Ok(ctx
+        .store
+        .current_id(kind, &internal)
+        .await
+        .map_err(Ctx::<P, S, B>::store_err)?
+        .unwrap_or(internal))
+}
+
 /// (kind, internal id) pairs from `id` (prefix-routed) + `albumId` +
-/// `artistId`, deduped. Non-favorite `id` prefixes are ignored.
-pub fn collect_star_targets(
+/// `artistId`. Non-favorite `id` prefixes are ignored.
+fn collect_star_targets(
     ctx: &Ctx<impl Principal, impl Store, impl AudioBackend>,
 ) -> Result<Vec<(IdKind, String)>, SubsonicError> {
     let mut targets = Vec::new();
@@ -300,15 +319,21 @@ pub fn collect_star_targets(
     for sid in ctx.plist("artistId")? {
         targets.push((IdKind::Artist, decode_expect(&sid, IdKind::Artist)?));
     }
-    targets.dedup();
     Ok(targets)
 }
 
-/// Validated star targets: empty -> 10, unknown target -> 70.
+/// Validated star targets, each album and artist at its current id and
+/// every target once: empty -> 10, unknown target -> 70.
 pub async fn validated_star_targets<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Vec<(IdKind, String)>, SubsonicError> {
-    let targets = collect_star_targets(ctx)?;
+    let mut targets = Vec::new();
+    for (kind, internal) in collect_star_targets(ctx)? {
+        let target = (kind, current_id(ctx, kind, internal).await?);
+        if !targets.contains(&target) {
+            targets.push(target);
+        }
+    }
     if targets.is_empty() {
         return Err(SubsonicError::new(
             10,
@@ -493,6 +518,7 @@ pub async fn set_rating<P: Principal, S: Store, B: AudioBackend>(
         return Err(SubsonicError::missing("rating"));
     }
     let (kind, internal) = decode(&ctx.p("id")?.unwrap_or_default())?;
+    let internal = current_id(ctx, kind, internal).await?;
     let missing = ctx
         .store
         .missing_targets(&[(kind, internal)])
@@ -953,6 +979,7 @@ pub async fn artist_info<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
     let mbid = decode_expect(&ctx.p("id")?.unwrap_or_default(), IdKind::Artist)?;
+    let mbid = current_id(ctx, IdKind::Artist, mbid).await?;
     ctx.pint("count", Some(20), Some(0), Some(500))?;
     ctx.pbool("includeNotPresent", false)?;
     let (artist, _) = ctx
@@ -996,6 +1023,7 @@ pub async fn album_info<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
     let rg = decode_expect(&ctx.p("id")?.unwrap_or_default(), IdKind::Album)?;
+    let rg = current_id(ctx, IdKind::Album, rg).await?;
     let album = ctx
         .store
         .get_album(&rg)
@@ -1307,6 +1335,7 @@ pub async fn similar_songs_query<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Vec<super::views::ViewTrack>, SubsonicError> {
     let mbid = decode_expect(&ctx.p("id")?.unwrap_or_default(), IdKind::Artist)?;
+    let mbid = current_id(ctx, IdKind::Artist, mbid).await?;
     let count = ctx
         .pint("count", Some(50), Some(1), Some(500))?
         .unwrap_or(50)

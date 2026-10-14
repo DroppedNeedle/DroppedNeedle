@@ -567,7 +567,8 @@ impl LibraryRead for JellyfinLibrary {
 struct IdTable {
     /// The ids this server hands out today, every kind.
     current: HashMap<String, (String, String)>,
-    /// The unkeyed ids albums and artists had before theirs were keyed.
+    /// The unkeyed ids albums and artists had before theirs were keyed, and
+    /// both ids of every album and artist a merge retired.
     old: HashMap<String, (String, String)>,
     /// Whether a whole catalog read has succeeded in this process.
     filled: bool,
@@ -691,6 +692,14 @@ impl CatalogIds {
                 tracing::error!(%error, "jellyfin id rebuild could not read playlists");
             }
         }
+        let merged = match self.library.player.merged_ids().await {
+            Ok(merged) => merged,
+            Err(error) => {
+                complete = false;
+                tracing::error!(%error, "jellyfin id rebuild could not read merged ids");
+                Vec::new()
+            }
+        };
         let mut current = Vec::with_capacity(pairs.len());
         let mut old = Vec::new();
         for (kind, internal) in pairs {
@@ -702,11 +711,36 @@ impl CatalogIds {
             }
             current.push((self.id_for(&kind, &internal), (kind, internal)));
         }
+        // A merged album or artist answers to both ids it was handed out
+        // under, for signed-in callers only; `from_jf` follows it to the
+        // one that holds it now.
+        for (kind, internal) in merged {
+            let found = (kind.to_owned(), internal.clone());
+            old.push((Self::derive(kind, &internal), found.clone()));
+            old.push((self.id_for(kind, &internal), found));
+        }
         let mut table = self.lock();
         table.current.extend(current);
         table.old.extend(old);
         table.filled |= complete;
         table.read_at = Some(Instant::now());
+    }
+
+    /// An album or artist as it is now: a merged one becomes the album or
+    /// artist that holds it, and one with nothing live behind it is not
+    /// found. Other kinds pass through, and so does an id that could not
+    /// be followed, so a live one still answers.
+    async fn current(&self, (kind, internal): (String, String)) -> Option<(String, String)> {
+        if kind != "album" && kind != "artist" {
+            return Some((kind, internal));
+        }
+        match self.library.player.current_id(&kind, &internal).await {
+            Ok(current) => current.map(|id| (kind, id)),
+            Err(error) => {
+                tracing::warn!(%error, "jellyfin id could not be followed to its current item");
+                Some((kind, internal))
+            }
+        }
     }
 }
 
@@ -722,11 +756,14 @@ impl IdMap for CatalogIds {
 
     async fn from_jf(&self, jf_id: &str) -> Option<(String, String)> {
         let normalized = Self::normalize(jf_id);
-        if let Some(found) = self.lookup(&normalized, true) {
-            return Some(found);
-        }
-        self.read_catalog(true).await;
-        self.lookup(&normalized, true)
+        let found = match self.lookup(&normalized, true) {
+            Some(found) => found,
+            None => {
+                self.read_catalog(true).await;
+                self.lookup(&normalized, true)?
+            }
+        };
+        self.current(found).await
     }
 
     async fn from_jf_anonymous(&self, jf_id: &str) -> Option<(String, String)> {

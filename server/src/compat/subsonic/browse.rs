@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use super::auth::Principal;
 use super::error::{NOT_FOUND, SubsonicError};
 use super::ids::{IdKind, decode, decode_expect, encode};
+use super::library::current_id;
 use super::models::{
     Render, SArtistID3, SArtistsID3, SChild, SIndex, SIndexID3, SIndexes, SLicense, SMusicFolder,
     SOpenSubsonicExtension,
@@ -229,6 +230,7 @@ pub async fn artist<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
     let mbid = decode_expect(&ctx.p("id")?.unwrap_or_default(), IdKind::Artist)?;
+    let mbid = current_id(ctx, IdKind::Artist, mbid).await?;
     let (artist, albums) = ctx
         .store
         .get_artist_with_albums(&mbid)
@@ -245,6 +247,7 @@ pub async fn album<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
     let rg = decode_expect(&ctx.p("id")?.unwrap_or_default(), IdKind::Album)?;
+    let rg = current_id(ctx, IdKind::Album, rg).await?;
     let album = ctx
         .store
         .get_album(&rg)
@@ -489,6 +492,8 @@ pub async fn music_directory<P: Principal, S: Store, B: AudioBackend>(
         ));
     }
     let (kind, internal) = decode(&sid)?;
+    let internal = current_id(ctx, kind, internal).await?;
+    let sid = encode(kind, &internal);
     match kind {
         IdKind::Artist => {
             let (artist, albums) = ctx

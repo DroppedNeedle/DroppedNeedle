@@ -381,6 +381,15 @@ pub trait Store: Clone + Send + Sync {
         offset: usize,
     ) -> impl Future<Output = Result<Vec<ViewTrack>, Self::Error>> + Send;
 
+    /// The id an album or artist has now: `id` itself while it is live,
+    /// else the live one a merge or an alias points it at; `None` when
+    /// nothing live holds it. Other kinds answer `id` unchanged.
+    fn current_id(
+        &self,
+        kind: IdKind,
+        id: &str,
+    ) -> impl Future<Output = Result<Option<String>, Self::Error>> + Send;
+
     /// Subset of (kind, internal id) targets missing from the library.
     fn missing_targets(
         &self,

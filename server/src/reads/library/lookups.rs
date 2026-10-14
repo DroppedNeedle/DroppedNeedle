@@ -31,11 +31,31 @@ const STATS_EXTRAS: &str = "SELECT \
       AND t.availability = 'indexed')) AS local_only, \
     (SELECT MAX(terminal_at) FROM library_scan_runs WHERE state = 'completed') AS last_scan";
 
-/// A local album id or alias, following a merged album to its target.
-const DIRECT_ALBUM: &str = "SELECT COALESCE(retired_into_album_id, id) FROM local_albums \
-    WHERE id = ?1 \
-    UNION ALL SELECT local_album_id FROM local_album_aliases WHERE alias = lower(?1) \
-    LIMIT 1";
+/// The live album a local id or alias names now: the album itself while it
+/// is live, else the album its alias points at (every merge points older
+/// aliases at the survivor), else the album it was retired into.
+const DIRECT_ALBUM: &str = "SELECT id FROM ( \
+    SELECT id, 0 AS rank FROM local_albums WHERE id = ?1 AND retired_into_album_id IS NULL \
+    UNION ALL SELECT b.id, 1 FROM local_album_aliases x \
+     JOIN local_albums b ON b.id = x.local_album_id \
+     WHERE x.alias = lower(?1) AND b.retired_into_album_id IS NULL \
+    UNION ALL SELECT b.id, 2 FROM local_albums a \
+     JOIN local_albums b ON b.id = a.retired_into_album_id \
+     WHERE a.id = ?1 AND b.retired_into_album_id IS NULL) \
+    ORDER BY rank LIMIT 1";
+
+/// The live artist a local id or alias names now, in the same order as
+/// [`DIRECT_ALBUM`]. An artist merge never repoints `retired_into_artist_id`
+/// of artists merged earlier, so the alias comes before it.
+const DIRECT_ARTIST: &str = "SELECT id FROM ( \
+    SELECT id, 0 AS rank FROM local_artists WHERE id = ?1 AND retired_into_artist_id IS NULL \
+    UNION ALL SELECT r.id, 1 FROM local_artist_aliases x \
+     JOIN local_artists r ON r.id = x.local_artist_id \
+     WHERE x.alias = lower(?1) AND r.retired_into_artist_id IS NULL \
+    UNION ALL SELECT r.id, 2 FROM local_artists a \
+     JOIN local_artists r ON r.id = a.retired_into_artist_id \
+     WHERE a.id = ?1 AND r.retired_into_artist_id IS NULL) \
+    ORDER BY rank LIMIT 1";
 
 /// Live albums with a streamable track holding one of the release groups.
 const OWNERS_BY_GROUP: &str = "SELECT e.local_album_id, lower(e.release_group_mbid) \
@@ -69,9 +89,18 @@ impl SqliteLookups {
     }
 }
 
-/// The local album a local id or alias names, if any.
-async fn direct_album(pool: &SqlitePool, identifier: &str) -> Result<Option<String>, StoreError> {
-    sqlx::query_scalar(DIRECT_ALBUM)
+/// The live album or artist (`kind`) a local id or alias names now, if any.
+pub(super) async fn current_id(
+    pool: &SqlitePool,
+    kind: &str,
+    identifier: &str,
+) -> Result<Option<String>, StoreError> {
+    let sql = match kind {
+        "album" => DIRECT_ALBUM,
+        "artist" => DIRECT_ARTIST,
+        _ => return Ok(None),
+    };
+    sqlx::query_scalar(sql)
         .bind(identifier)
         .fetch_optional(pool)
         .await
@@ -178,7 +207,7 @@ impl LibraryLookups for SqliteLookups {
                 if !seen.insert(identifier.as_str()) {
                     continue;
                 }
-                match direct_album(pool, identifier).await? {
+                match current_id(pool, "album", identifier).await? {
                     Some(album_id) => {
                         resolved.insert(identifier.clone(), album_id);
                     }
@@ -216,7 +245,7 @@ impl LibraryLookups for SqliteLookups {
     ) -> BoxFuture<'a, Result<Vec<String>, StoreError>> {
         Box::pin(async move {
             let pool = self.pool()?;
-            if let Some(album_id) = direct_album(pool, identifier).await? {
+            if let Some(album_id) = current_id(pool, "album", identifier).await? {
                 return Ok(vec![album_id]);
             }
             let needle = lowered(&[identifier.to_owned()]);

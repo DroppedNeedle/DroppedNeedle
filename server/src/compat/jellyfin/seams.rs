@@ -136,10 +136,12 @@ pub trait IdMap: Clone + Send + Sync + 'static {
     /// Stable 32-hex id for a (kind, internal) pair.
     fn to_jf(&self, kind: &str, internal: &str) -> impl Future<Output = String> + Send;
     /// Reverse lookup for a signed-in caller only: call it after `authed`.
-    /// Answers to current ids and to the old ids albums and artists had
-    /// before theirs were keyed. Accepts dashed or undashed input, `None`
-    /// when unknown. (`from_*` takes `self` by v2-naming parity, not by
-    /// convention.)
+    /// Answers to current ids, to the old ids albums and artists had
+    /// before theirs were keyed, and to the ids of a merged album or
+    /// artist; an album or artist comes back as the one that holds it now.
+    /// Accepts dashed or undashed input, `None` when unknown or when
+    /// nothing live holds it. (`from_*` takes `self` by v2-naming parity,
+    /// not by convention.)
     #[allow(clippy::wrong_self_convention)]
     fn from_jf(&self, jf_id: &str) -> impl Future<Output = Option<(String, String)>> + Send;
     /// Reverse lookup for a caller who has not signed in (the picture

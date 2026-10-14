@@ -322,6 +322,19 @@ pub trait PlayerCatalog: Send + Sync {
     /// streamable tracks by local id, genres by display name.
     fn every_id<'a>(&'a self) -> BoxFuture<'a, Result<Vec<(&'static str, String)>, StoreError>>;
 
+    /// The id an album or artist (`kind`) has now: `id` itself while it is
+    /// live, else the live one a merge or an alias of any kind points it
+    /// at. `None` when nothing live holds it. One indexed read.
+    fn current_id<'a>(
+        &'a self,
+        kind: &'a str,
+        id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, StoreError>>;
+
+    /// Every `(kind, id)` an album or artist merge retired: the old local
+    /// ids an app may still hold.
+    fn merged_ids<'a>(&'a self) -> BoxFuture<'a, Result<Vec<(&'static str, String)>, StoreError>>;
+
     /// Every year at least one album with a streamable track has,
     /// ascending.
     fn album_years<'a>(&'a self) -> BoxFuture<'a, Result<Vec<i64>, StoreError>>;
@@ -1623,6 +1636,38 @@ impl PlayerCatalog for SqlitePlayerCatalog {
                     .fetch_all(pool)
                     .await
                     .map_err(read_error("player.every_id"))?;
+                out.extend(ids.into_iter().map(|id| (kind, id)));
+            }
+            Ok(out)
+        })
+    }
+
+    fn current_id<'a>(
+        &'a self,
+        kind: &'a str,
+        id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, StoreError>> {
+        Box::pin(async move { super::lookups::current_id(self.pool()?, kind, id).await })
+    }
+
+    fn merged_ids<'a>(&'a self) -> BoxFuture<'a, Result<Vec<(&'static str, String)>, StoreError>> {
+        Box::pin(async move {
+            let pool = self.pool()?;
+            let mut out = Vec::new();
+            for (kind, sql) in [
+                (
+                    "album",
+                    "SELECT alias FROM local_album_aliases WHERE kind = 'merged_album'",
+                ),
+                (
+                    "artist",
+                    "SELECT alias FROM local_artist_aliases WHERE kind = 'merged_artist'",
+                ),
+            ] {
+                let ids: Vec<String> = sqlx::query_scalar(sql)
+                    .fetch_all(pool)
+                    .await
+                    .map_err(read_error("player.merged_ids"))?;
                 out.extend(ids.into_iter().map(|id| (kind, id)));
             }
             Ok(out)

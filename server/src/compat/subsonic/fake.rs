@@ -549,6 +549,11 @@ impl Store for FakeStore {
             .collect())
     }
 
+    /// The fake has no merges or aliases: every id is its own.
+    async fn current_id(&self, _kind: IdKind, id: &str) -> Result<Option<String>, Infallible> {
+        Ok(Some(id.to_owned()))
+    }
+
     async fn missing_targets(
         &self,
         targets: &[(IdKind, String)],

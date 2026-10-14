@@ -551,6 +551,15 @@ impl Store for SubsonicStore {
         self.tracks_for_caller(tracks).await
     }
 
+    async fn current_id(&self, kind: IdKind, id: &str) -> Result<Option<String>, CompatError> {
+        match kind {
+            IdKind::Album | IdKind::Artist => {
+                Ok(self.library.player.current_id(kind_name(kind), id).await?)
+            }
+            _ => Ok(Some(id.to_owned())),
+        }
+    }
+
     async fn missing_targets(
         &self,
         targets: &[(IdKind, String)],

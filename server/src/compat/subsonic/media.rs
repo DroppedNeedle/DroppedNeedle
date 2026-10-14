@@ -4,6 +4,7 @@
 use super::auth::Principal;
 use super::error::{NOT_AUTHORIZED, NOT_FOUND, SubsonicError};
 use super::ids::{IdKind, decode, decode_expect};
+use super::library::current_id;
 use super::models::{Render, SStreamDetails, STranscodeDecision};
 use super::picture::PictureKind;
 use super::store::{ClientInfo, Store};
@@ -135,6 +136,7 @@ pub async fn cover_art<P: Principal, S: Store, B: AudioBackend>(
     let sid = ctx.p("id")?.unwrap_or_default();
     // Unknown prefix -> 70 -> 404-as-text on the binary path.
     let (kind, internal) = decode(&sid)?;
+    let internal = current_id(ctx, kind, internal).await?;
     let bucket = cover_bucket(ctx.pint("size", None, Some(1), Some(2000))?);
     match kind {
         IdKind::Album => library_picture(ctx.store, PictureKind::Album, &internal, bucket)
