@@ -93,6 +93,31 @@ fn scratch_db(dir: &std::path::Path) -> PathBuf {
     db_path
 }
 
+/// Another track of the album in the catalog at `rel`, with no file.
+fn seed_track(fix: &Fixture, id: &str, rel: &str, availability: &str, missing_since: Option<f64>) {
+    open_db(fix)
+        .execute(
+            "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, ingest_source, imported_at, \
+             membership_source, availability, missing_since) VALUES (?1, 'album', 'music', ?2, \
+             ?2, ?1, 0, 0, '0:0', ?1, ?1, 'Album', 'album', 'flac', 'scan', 0, 'automatic', \
+             ?3, ?4)",
+            rusqlite::params![id, rel, availability, missing_since],
+        )
+        .unwrap();
+}
+
+/// A track row's path, availability and `missing_since`.
+fn track_row(conn: &Connection, id: &str) -> (String, String, Option<f64>) {
+    conn.query_row(
+        "SELECT relative_path, availability, missing_since FROM local_tracks WHERE id = ?1",
+        [id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )
+    .unwrap()
+}
+
 fn open_db(fix: &Fixture) -> Connection {
     publish::recovery::open_recovery_connection(&fix.db_path).unwrap()
 }
@@ -552,6 +577,9 @@ fn crash_at_every_phase_resumes_without_half_state() {
                 [&elsewhere, &bundle.items[1].fingerprint.sha256],
             )
             .unwrap();
+        // A track whose file went before the write still holds track-a's
+        // destination in the catalog.
+        seed_track(&fix, "gone", "organized/a.flac", "missing", Some(1234.5));
         let (sealed, live) = seal(&bundle);
         let mut publisher = open_publisher(&fix);
         publisher.set_crash_point(Some(point));
@@ -598,6 +626,27 @@ fn crash_at_every_phase_resumes_without_half_state() {
                 );
             }
         }
+        // Committed, the missing row gave the path up and kept the rest;
+        // compensated, it still holds it.
+        let committed = track_row(&conn, "track-a").0 == "organized/a.flac";
+        let held = if committed {
+            format!("{}gone/gone/organized/a.flac", publish::HIDDEN_PREFIX)
+        } else {
+            "organized/a.flac".to_string()
+        };
+        let file_path: String = conn
+            .query_row(
+                "SELECT file_path FROM local_tracks WHERE id = 'gone'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(file_path.ends_with(&held), "{point:?}: {file_path}");
+        assert_eq!(
+            track_row(&conn, "gone"),
+            (held, "missing".to_string(), Some(1234.5)),
+            "{point:?}: the missing row"
+        );
         let marks: i64 = conn
             .query_row("SELECT COUNT(*) FROM library_album_takeovers", [], |row| {
                 row.get(0)
@@ -817,6 +866,39 @@ fn occupied_destination_is_never_overwritten() {
     let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
     assert!(matches!(err, PublishError::Collision(_)), "got {err:?}");
     assert_eq!(std::fs::read(&occupier).unwrap(), b"existing-library-file");
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// A row the catalog still lists as indexed at the destination, whose
+/// file went before any scan saw it, is not given up: the commit fails
+/// and compensates, and nothing moves.
+#[test]
+fn an_indexed_row_on_the_destination_fails_the_commit() {
+    let fix = fixture("indexed-occupant");
+    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    seed_track(&fix, "stale", "organized/a.flac", "indexed", None);
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+    assert!(matches!(err, PublishError::Catalog(_)), "got {err:?}");
+    drop(publisher);
+
+    let conn = open_db(&fix);
+    assert_eq!(
+        track_row(&conn, "stale"),
+        ("organized/a.flac".to_string(), "indexed".to_string(), None)
+    );
+    for item in bundle.items.iter() {
+        assert_eq!(track_row(&conn, &item.track_id).0, item.source_rel);
+        let source = fix.sandbox.resolve("music", &item.source_rel).unwrap();
+        assert_eq!(
+            sha256_hex(&std::fs::read(&source).unwrap()),
+            item.fingerprint.sha256
+        );
+        let dest = fix.sandbox.resolve("music", &item.dest_rel).unwrap();
+        assert!(dest.symlink_metadata().is_err(), "nothing placed");
+    }
+    assert_eq!(SqliteCatalog.revision(&conn).unwrap(), start_revision());
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 

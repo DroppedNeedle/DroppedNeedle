@@ -203,6 +203,7 @@ impl Catalog for SqliteCatalog {
             if let Some(adoption) = &track.adopt {
                 adopt_track(conn, track, adoption)?;
             } else {
+                give_up_destination(conn, track)?;
                 move_track(conn, track)?;
             }
             conn.execute(
@@ -282,6 +283,58 @@ fn retire_replaced(
          WHERE local_track_id = ?1",
         rusqlite::params![replaced],
     )?;
+    Ok(())
+}
+
+/// Free the destination of a track the commit moves. The file is already
+/// placed there and placement refuses a taken name, so another row still
+/// on that path describes a file that is gone. A missing or excluded row
+/// gives the path up for a hidden name of its own and keeps everything
+/// else: its id, availability, `missing_since`, album and record. A row
+/// the catalog still lists as indexed fails the commit until a scan has
+/// seen its file go.
+fn give_up_destination(conn: &Connection, track: &TrackCommit) -> Result<(), PublishError> {
+    let occupant: Option<(String, String)> = conn
+        .query_row(
+            "SELECT id, availability FROM local_tracks \
+             WHERE root_id = ?1 AND relative_path = ?2 AND id <> ?3",
+            rusqlite::params![track.root_id, track.rel_path, track.track_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((occupant, availability)) = occupant else {
+        return Ok(());
+    };
+    if availability == "indexed" {
+        return Err(PublishError::Catalog(format!(
+            "track {occupant} is still listed at the destination of track {}",
+            track.track_id
+        )));
+    }
+    let hidden = format!(
+        "{}gone/{}/{}",
+        super::HIDDEN_PREFIX,
+        occupant,
+        track.rel_path
+    );
+    // The hidden name under the same root, so the old row never points
+    // at the file placed on its old path.
+    let depth = Path::new(&track.rel_path).components().count();
+    let root_dir = Path::new(&track.file_path)
+        .ancestors()
+        .nth(depth)
+        .ok_or_else(|| PublishError::Catalog(format!("track {} has no root", track.track_id)))?;
+    let file_path = root_dir.join(&hidden).to_string_lossy().into_owned();
+    conn.execute(
+        "UPDATE local_tracks SET relative_path = ?2, file_path = ?3, path_hash = ?4, \
+         row_revision = row_revision + 1 WHERE id = ?1",
+        rusqlite::params![occupant, hidden, file_path, sha256_hex(hidden.as_bytes())],
+    )?;
+    tracing::info!(
+        track_id = %occupant,
+        placed = %track.track_id,
+        "a track whose file is gone gave up its path"
+    );
     Ok(())
 }
 

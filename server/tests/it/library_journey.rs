@@ -6969,6 +6969,8 @@ async fn a_file_retagged_and_renamed_together_is_still_the_users() {
         to
     };
 
+    let old_paths: Vec<PathBuf> = whole_tracks.iter().map(|t| managed.path(t)).collect();
+    let edition_tag = album_tag(&old_paths[0]);
     // Every file of the album: its release kept, the album retitled.
     let files: Vec<PathBuf> = whole_tracks
         .iter()
@@ -7052,8 +7054,35 @@ async fn a_file_retagged_and_renamed_together_is_still_the_users() {
         "files that went away mark nothing"
     );
 
+    let missing_since = |track: &str| -> (String, Option<f64>) {
+        managed
+            .db()
+            .query_row(
+                "SELECT availability, missing_since FROM local_tracks WHERE id = ?1",
+                [track],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("old row")
+    };
+    let gone: Vec<(String, Option<f64>)> = whole_tracks.iter().map(|t| missing_since(t)).collect();
+    assert!(
+        gone.iter()
+            .all(|(state, since)| state == "missing" && since.is_some())
+    );
+    managed
+        .db()
+        .execute(
+            "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+             VALUES ('admin', 'album', ?1, 1)",
+            [&whole],
+        )
+        .expect("album favorited");
+
     // Handed back: the rows left behind lose their record with it, so the
-    // album is not marked again.
+    // album is not marked again. The naming rules lead the files back to
+    // the paths their old rows hold: those rows give the paths up and
+    // stay missing under their own ids.
+    let runs = managed.automatic_runs().len();
     assert!(
         Mutations::new(&managed.library)
             .hand_back_management(&whole, "admin")
@@ -7061,6 +7090,32 @@ async fn a_file_retagged_and_renamed_together_is_still_the_users() {
     );
     managed.worker_looks().await;
     assert_eq!(managed.mark(&whole), None);
+    let after = managed.automatic_runs();
+    assert!(after.len() > runs, "the hand-back runs");
+    for run in &after[runs..] {
+        assert_eq!(run.0, "succeeded", "{after:?}");
+        assert_ne!(run.1.as_deref(), Some("MANAGEMENT_PARTIAL"), "{after:?}");
+    }
+    for ((old, path), before) in whole_tracks.iter().zip(&old_paths).zip(&gone) {
+        let new = new_row(path);
+        assert_ne!(&new, old, "the old row is off its path");
+        assert_eq!(managed.album_of(&new), whole);
+        assert_eq!(album_tag(path), edition_tag);
+        assert_eq!(
+            &missing_since(old),
+            before,
+            "still missing, since the same day"
+        );
+        assert_ne!(&managed.path(old), path);
+    }
+    assert_eq!(
+        managed.count(&format!(
+            "SELECT COUNT(*) FROM library_user_favorites WHERE item_kind = 'album' \
+             AND item_id = '{whole}'"
+        )),
+        1,
+        "the album keeps its id and its favourite"
+    );
     rescan(&managed.library).await;
     managed.look(&whole).await;
     assert_eq!(managed.mark(&whole), None, "not marked again");
