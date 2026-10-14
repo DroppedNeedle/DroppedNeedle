@@ -33,6 +33,8 @@ pub struct SArtistID3 {
     pub musicBrainzId: Option<String>,
     /// Sort name.
     pub sortName: Option<String>,
+    /// Credit roles (artist lists and details only).
+    pub roles: Option<Vec<String>>,
     /// Populated by getArtist only.
     pub album: Option<Vec<SAlbumID3>>,
 }
@@ -48,6 +50,13 @@ impl Render for SArtistID3 {
             ("starred", self.starred.clone().into_val()),
             ("musicBrainzId", self.musicBrainzId.clone().into_val()),
             ("sortName", self.sortName.clone().into_val()),
+            (
+                "roles",
+                self.roles
+                    .as_ref()
+                    .map(|roles| Val::List(roles.iter().map(|r| r.as_str().into_val()).collect()))
+                    .into_val(),
+            ),
             (
                 "album",
                 self.album
@@ -601,6 +610,8 @@ impl Render for SIndexID3 {
 /// getArtists payload.
 #[derive(Debug, Clone, Default)]
 pub struct SArtistsID3 {
+    /// Library revision, as getIndexes sends it: a counter, not a time.
+    pub lastModified: i64,
     /// Articles stripped for bucketing.
     pub ignoredArticles: String,
     /// Buckets.
@@ -610,6 +621,7 @@ pub struct SArtistsID3 {
 impl Render for SArtistsID3 {
     fn render(&self) -> Val {
         obj(vec![
+            ("lastModified", self.lastModified.into_val()),
             ("ignoredArticles", self.ignoredArticles.as_str().into_val()),
             (
                 "index",

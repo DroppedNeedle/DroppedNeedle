@@ -127,6 +127,7 @@ fn view_artist(artist: ArtistRecord) -> ViewArtist {
         artist_mbid: artist.id,
         name: artist.name,
         album_count: Some(artist.album_count as i64),
+        track_count: Some(artist.track_count as i64),
         starred_at: None,
         musicbrainz_artist_id: artist.artist_mbid,
         provider_identity_projected: true,

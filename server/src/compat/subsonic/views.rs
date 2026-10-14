@@ -131,6 +131,8 @@ pub struct ViewArtist {
     pub name: String,
     /// Album count.
     pub album_count: Option<i64>,
+    /// Streamable tracks credited.
+    pub track_count: Option<i64>,
     /// Starred unix seconds.
     pub starred_at: Option<i64>,
     /// Projected MusicBrainz id, if identity projection ran.
@@ -268,6 +270,25 @@ pub struct ViewGenre {
     pub album_count: i64,
 }
 
+/// What an artist is credited as, in a fixed order: `albumartist` with an
+/// album of its own, `artist` with a credited track, and `maincredit` with
+/// either. Navidrome's order differs from answer to answer.
+pub fn artist_roles(view: &ViewArtist) -> Vec<String> {
+    let leads = view.album_count.is_some_and(|count| count > 0);
+    let plays = view.track_count.is_some_and(|count| count > 0);
+    let mut roles = Vec::new();
+    if leads {
+        roles.push("albumartist".to_owned());
+    }
+    if plays {
+        roles.push("artist".to_owned());
+    }
+    if leads || plays {
+        roles.push("maincredit".to_owned());
+    }
+    roles
+}
+
 /// Artist -> ID3 artist (v2 `to_artist_id3`), with its picture link.
 pub fn to_artist_id3(view: &ViewArtist, image_url: Option<String>) -> SArtistID3 {
     let aid = encode(IdKind::Artist, &view.artist_mbid);
@@ -283,6 +304,7 @@ pub fn to_artist_id3(view: &ViewArtist, image_url: Option<String>) -> SArtistID3
             .clone()
             .or_else(|| (!view.provider_identity_projected).then(|| view.artist_mbid.clone())),
         sortName: Some(view.name.clone()),
+        roles: Some(artist_roles(view)),
         album: None,
     }
 }

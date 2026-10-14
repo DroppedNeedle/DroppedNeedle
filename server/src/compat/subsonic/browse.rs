@@ -137,6 +137,11 @@ pub async fn artists<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
     validate_music_folder(&ctx.params)?;
+    let revision = ctx
+        .store
+        .get_library_revision()
+        .await
+        .map_err(Ctx::<P, S, B>::store_err)?;
     let artists = ctx
         .store
         .get_artists(100_000, 0, None)
@@ -159,6 +164,7 @@ pub async fn artists<P: Principal, S: Store, B: AudioBackend>(
     Ok(Outcome::keyed(
         "artists",
         SArtistsID3 {
+            lastModified: revision,
             ignoredArticles: IGNORED_ARTICLES.to_owned(),
             index,
         }

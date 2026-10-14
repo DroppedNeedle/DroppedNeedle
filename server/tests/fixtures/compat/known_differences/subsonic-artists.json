@@ -1,6 +1,0 @@
-{
-  "differences": [
-    {"server": "navidrome", "object": "artist", "key": "roles", "kind": "missing", "rows": ["error.music-folder-repeated", "getArtist", "getArtists", "search3.empty-quotes", "search3.no-query", "search3.word"], "reason": "The app does not send the list of roles on an artist. Navidrome does."},
-    {"server": "navidrome", "object": "artists", "key": "lastModified", "kind": "missing", "rows": ["error.music-folder-repeated", "getArtists"], "reason": "The app does not send when the artist index last changed. Navidrome does."}
-  ]
-}
