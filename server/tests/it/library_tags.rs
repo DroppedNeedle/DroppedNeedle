@@ -1147,6 +1147,9 @@ fn picard_edits() -> Vec<TagEdit> {
         one(TagField::ReplayGainAlbumPeak, "1.000000"),
         one(TagField::Lyrics, "First line\nSecond line"),
     ]
+    .into_iter()
+    .chain(credit_edits())
+    .collect()
 }
 
 /// The full tag set lands in every writable format through the safe
@@ -1164,6 +1167,15 @@ fn picard_tag_set_round_trips_per_format() {
         "management_full.m4a",
     ] {
         let (_scratch, path) = temp_copy(name, "picard");
+        // MP4 has no home for performers or arrangers.
+        let edits: Vec<TagEdit> = edits
+            .iter()
+            .filter(|edit| {
+                !name.ends_with(".m4a")
+                    || !matches!(edit.field, TagField::Performer | TagField::Arranger)
+            })
+            .cloned()
+            .collect();
         tags::save_tags(&path, &edits).unwrap_or_else(|error| panic!("{name}: {error}"));
         let fields = tags::read_fields(&path).unwrap();
         for edit in &edits {
@@ -1213,8 +1225,8 @@ fn picard_tag_set_round_trips_per_format() {
 #[test]
 fn native_items_scrub_and_restore() {
     for (name, key) in [
-        ("management_full.flac", "vorbis:COMPOSER"),
-        ("management_full.mp3", "id3:TCOM"),
+        ("management_full.flac", "vorbis:MOOD"),
+        ("management_full.mp3", "id3:TBPM"),
         ("management_full.m4a", "mp4:----:MOOD"),
     ] {
         let (_scratch, path) = temp_copy(name, "native");
@@ -1429,7 +1441,7 @@ fn id3_raw_frames_scrub_and_restore() {
     let (_scratch, path) = temp_copy("management_full.mp3", "raw-frames");
     let encode =
         |bytes: &[u8]| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
-    let comment = encode(b"\x03eng\x00a note");
+    let comment = encode(b"\x03engnote\x00a note");
     let private = encode(b"owner.example\x00\x01\x02\x03");
     let link = encode(b"https://example.org/artist");
     tags::save_tags(
@@ -1550,4 +1562,1322 @@ fn id3v2_bytes(major: u8, frames: &[(&str, &[u8])]) -> Vec<u8> {
     ]);
     out.extend_from_slice(&body);
     out
+}
+
+// ---------------------------------------------------------------------------
+// Credits, work, comment and AcoustID fields
+// ---------------------------------------------------------------------------
+
+/// Every ID3 frame of a file in order: id and payload, read from the
+/// bytes.
+fn id3_frames(path: &Path) -> (u8, Vec<(String, Vec<u8>)>) {
+    let bytes = std::fs::read(path).unwrap();
+    assert_eq!(&bytes[..3], b"ID3");
+    let major = bytes[3];
+    let syncsafe = |part: &[u8]| {
+        part.iter()
+            .fold(0usize, |acc, byte| (acc << 7) | usize::from(byte & 0x7F))
+    };
+    let end = 10 + syncsafe(&bytes[6..10]);
+    let mut frames = Vec::new();
+    let mut offset = 10;
+    while offset + 10 <= end && bytes[offset] != 0 {
+        let id = String::from_utf8(bytes[offset..offset + 4].to_vec()).unwrap();
+        let size = if major == 4 {
+            syncsafe(&bytes[offset + 4..offset + 8])
+        } else {
+            u32::from_be_bytes(bytes[offset + 4..offset + 8].try_into().unwrap()) as usize
+        };
+        frames.push((id, bytes[offset + 10..offset + 10 + size].to_vec()));
+        offset += 10 + size;
+    }
+    (major, frames)
+}
+
+/// The strings of an ID3 text payload (encoding byte first), without the
+/// trailing terminator.
+fn id3_strings(payload: &[u8]) -> Vec<String> {
+    let (encoding, body) = payload.split_first().unwrap();
+    let mut out: Vec<String> = match encoding {
+        0 => body
+            .split(|byte| *byte == 0)
+            .map(|part| part.iter().map(|byte| char::from(*byte)).collect())
+            .collect(),
+        3 => body
+            .split(|byte| *byte == 0)
+            .map(|part| String::from_utf8(part.to_vec()).unwrap())
+            .collect(),
+        1 | 2 => {
+            let units: Vec<u16> = body
+                .chunks_exact(2)
+                .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+                .collect();
+            // A string with no byte-order mark keeps the one before's.
+            let mut order = false;
+            units
+                .split(|unit| *unit == 0)
+                .map(|part| {
+                    let (part, swap) = match part.first() {
+                        Some(0xFEFF) => (&part[1..], false),
+                        Some(0xFFFE) => (&part[1..], true),
+                        _ => (part, order),
+                    };
+                    order = swap;
+                    let units: Vec<u16> = part
+                        .iter()
+                        .map(|unit| if swap { unit.swap_bytes() } else { *unit })
+                        .collect();
+                    String::from_utf16(&units).unwrap()
+                })
+                .collect()
+        }
+        other => panic!("encoding {other}"),
+    };
+    while out.last().is_some_and(String::is_empty) {
+        out.pop();
+    }
+    out
+}
+
+/// The values of one text frame.
+fn id3_text_values(path: &Path, id: &str) -> Vec<String> {
+    id3_frames(path)
+        .1
+        .iter()
+        .find(|(frame, _)| frame == id)
+        .map(|(_, payload)| id3_strings(payload))
+        .unwrap_or_default()
+}
+
+/// The values of the `TXXX` frame with this description.
+fn id3_txxx_values(path: &Path, description: &str) -> Vec<String> {
+    id3_frames(path)
+        .1
+        .iter()
+        .filter(|(id, _)| id == "TXXX")
+        .map(|(_, payload)| id3_strings(payload))
+        .find(|strings| strings.first().map(String::as_str) == Some(description))
+        .map(|strings| strings[1..].to_vec())
+        .unwrap_or_default()
+}
+
+/// The role and name pairs of a `TIPL`, `TMCL` or `IPLS` frame.
+fn id3_people(path: &Path, id: &str) -> Vec<(String, String)> {
+    let frames: Vec<Vec<u8>> = id3_frames(path)
+        .1
+        .into_iter()
+        .filter(|(frame, _)| frame == id)
+        .map(|(_, payload)| payload)
+        .collect();
+    assert!(frames.len() <= 1, "several {id} frames");
+    frames
+        .first()
+        .map(|payload| {
+            id3_strings(payload)
+                .chunks(2)
+                .map(|pair| (pair[0].clone(), pair[1].clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Every `COMM` frame: language, description, text.
+fn id3_comments(path: &Path) -> Vec<(String, String, String)> {
+    id3_frames(path)
+        .1
+        .iter()
+        .filter(|(id, _)| id == "COMM")
+        .map(|(_, payload)| {
+            let language = String::from_utf8(payload[1..4].to_vec()).unwrap();
+            let mut rest = vec![payload[0]];
+            rest.extend_from_slice(&payload[4..]);
+            let mut strings = id3_strings(&rest);
+            strings.resize(2, String::new());
+            (language, strings[0].clone(), strings[1].clone())
+        })
+        .collect()
+}
+
+/// A raw ID3v2.3 tag holding these frames in this order.
+fn id3v23_raw(frames: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut body = Vec::new();
+    for (id, payload) in frames {
+        body.extend_from_slice(id.as_bytes());
+        body.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        body.extend_from_slice(&[0, 0]);
+        body.extend_from_slice(payload);
+    }
+    let size = body.len();
+    let mut out = vec![b'I', b'D', b'3', 3, 0, 0];
+    out.extend_from_slice(&[
+        ((size >> 21) & 0x7F) as u8,
+        ((size >> 14) & 0x7F) as u8,
+        ((size >> 7) & 0x7F) as u8,
+        (size & 0x7F) as u8,
+    ]);
+    out.extend_from_slice(&body);
+    out
+}
+
+/// A UTF-16 people payload: each string big-endian with its own
+/// byte-order mark (Picard, mutagen), or, as lofty 0.25's v2.3 writer
+/// lays one out, a single little-endian mark at the start.
+fn utf16_people(pairs: &[(&str, &str)], one_mark: bool) -> Vec<u8> {
+    let mut payload = vec![1];
+    for (index, part) in pairs
+        .iter()
+        .flat_map(|(role, name)| [*role, *name])
+        .enumerate()
+    {
+        if one_mark {
+            if index == 0 {
+                payload.extend_from_slice(&[0xFF, 0xFE]);
+            }
+            for unit in part.encode_utf16() {
+                payload.extend_from_slice(&unit.to_le_bytes());
+            }
+        } else {
+            payload.extend_from_slice(&[0xFE, 0xFF]);
+            for unit in part.encode_utf16() {
+                payload.extend_from_slice(&unit.to_be_bytes());
+            }
+        }
+        payload.extend_from_slice(&[0, 0]);
+    }
+    payload
+}
+
+/// A v2.3 file holding these frames over the fixture's audio.
+fn v23_file(test: &str, frames: &[(&str, &[u8])]) -> (ScratchDir, PathBuf) {
+    let audio = mp3_audio_tail(&std::fs::read(fixture("management_full.mp3")).unwrap()).to_vec();
+    let mut bytes = id3v23_raw(frames);
+    bytes.extend_from_slice(&audio);
+    let dir = ScratchDir::new(test);
+    let path = dir.join("v23.mp3");
+    std::fs::write(&path, &bytes).unwrap();
+    (dir, path)
+}
+
+/// A raw ID3v2.4 tag holding these frames in this order.
+fn id3v24_raw(frames: &[(&str, &[u8])]) -> Vec<u8> {
+    let syncsafe = |len: usize| {
+        [
+            ((len >> 21) & 0x7F) as u8,
+            ((len >> 14) & 0x7F) as u8,
+            ((len >> 7) & 0x7F) as u8,
+            (len & 0x7F) as u8,
+        ]
+    };
+    let mut body = Vec::new();
+    for (id, payload) in frames {
+        body.extend_from_slice(id.as_bytes());
+        body.extend_from_slice(&syncsafe(payload.len()));
+        body.extend_from_slice(&[0, 0]);
+        body.extend_from_slice(payload);
+    }
+    let mut out = vec![b'I', b'D', b'3', 4, 0, 0];
+    out.extend_from_slice(&syncsafe(body.len()));
+    out.extend_from_slice(&body);
+    out
+}
+
+/// The packets of the first logical stream of an Ogg file.
+fn ogg_packets(bytes: &[u8]) -> Vec<Vec<u8>> {
+    let mut packets = Vec::new();
+    let mut assembly = Vec::new();
+    let mut serial = None;
+    let mut offset = 0;
+    while offset + 27 <= bytes.len() {
+        assert_eq!(&bytes[offset..offset + 4], b"OggS");
+        let page_serial = u32::from_le_bytes(bytes[offset + 14..offset + 18].try_into().unwrap());
+        let segments = bytes[offset + 26] as usize;
+        let table = &bytes[offset + 27..offset + 27 + segments];
+        let mut data = offset + 27 + segments;
+        let ours = *serial.get_or_insert(page_serial) == page_serial;
+        for len in table {
+            let len = *len as usize;
+            if ours {
+                assembly.extend_from_slice(&bytes[data..data + len]);
+                if len < 255 {
+                    packets.push(std::mem::take(&mut assembly));
+                }
+            }
+            data += len;
+        }
+        offset = data;
+    }
+    packets
+}
+
+/// A Vorbis comment payload's pairs in order.
+fn vorbis_comment_pairs(payload: &[u8]) -> Vec<(String, String)> {
+    let word = |at: usize| u32::from_le_bytes(payload[at..at + 4].try_into().unwrap()) as usize;
+    let mut cursor = 4 + word(0);
+    let count = word(cursor);
+    cursor += 4;
+    let mut out = Vec::new();
+    for _ in 0..count {
+        let len = word(cursor);
+        cursor += 4;
+        let pair = std::str::from_utf8(&payload[cursor..cursor + len]).unwrap();
+        cursor += len;
+        let (key, value) = pair.split_once('=').unwrap();
+        out.push((key.to_owned(), value.to_owned()));
+    }
+    out
+}
+
+/// Every Vorbis comment pair of a FLAC, Ogg Vorbis or Opus file in order.
+fn vorbis_pairs(path: &Path) -> Vec<(String, String)> {
+    let bytes = std::fs::read(path).unwrap();
+    if &bytes[..4] == b"fLaC" {
+        let mut offset = 4;
+        loop {
+            let header = bytes[offset];
+            let len =
+                u32::from_be_bytes([0, bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]])
+                    as usize;
+            if header & 0x7F == 4 {
+                return vorbis_comment_pairs(&bytes[offset + 4..offset + 4 + len]);
+            }
+            offset += 4 + len;
+            assert_eq!(header & 0x80, 0, "comment block missing");
+        }
+    }
+    let packet = &ogg_packets(&bytes)[1];
+    let magic = if packet.starts_with(b"OpusTags") {
+        8
+    } else {
+        7
+    };
+    vorbis_comment_pairs(&packet[magic..])
+}
+
+fn vorbis_key_values(path: &Path, key: &str) -> Vec<String> {
+    vorbis_pairs(path)
+        .into_iter()
+        .filter(|(held, _)| held.eq_ignore_ascii_case(key))
+        .map(|(_, value)| value)
+        .collect()
+}
+
+/// The audio of any writable fixture: what follows the tags.
+fn audio_bytes(path: &Path) -> Vec<u8> {
+    let bytes = std::fs::read(path).unwrap();
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("flac") => flac_audio_tail(&bytes).to_vec(),
+        Some("mp3") => mp3_audio_tail(&bytes).to_vec(),
+        Some("m4a") => m4a_mdat(&bytes).to_vec(),
+        // Ogg: every packet after the comment packet (the Vorbis setup
+        // header and the audio).
+        _ => ogg_packets(&bytes)[2..].concat(),
+    }
+}
+
+/// An MP4 item compared whole: kind, freeform name, data payloads.
+type AtomView = (Vec<u8>, Option<String>, Vec<Vec<u8>>);
+
+/// One MP4 `ilst` item: its kind, freeform name, and data payloads with
+/// their data types.
+struct Mp4Atom {
+    kind: [u8; 4],
+    name: Option<String>,
+    data: Vec<Vec<u8>>,
+    types: Vec<u32>,
+}
+
+fn mp4_boxes(bytes: &[u8], start: usize, end: usize) -> Vec<([u8; 4], usize, usize)> {
+    let mut out = Vec::new();
+    let mut offset = start;
+    while offset + 8 <= end {
+        let size = u32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap()) as usize;
+        let kind: [u8; 4] = bytes[offset + 4..offset + 8].try_into().unwrap();
+        out.push((kind, offset + 8, offset + size));
+        offset += size;
+    }
+    out
+}
+
+fn mp4_atoms(path: &Path) -> Vec<Mp4Atom> {
+    let bytes = std::fs::read(path).unwrap();
+    let find = |start: usize, end: usize, kind: &[u8; 4]| {
+        mp4_boxes(&bytes, start, end)
+            .into_iter()
+            .find(|(held, _, _)| held == kind)
+            .map(|(_, content, end)| (content, end))
+            .unwrap()
+    };
+    let (start, end) = find(0, bytes.len(), b"moov");
+    let (start, end) = find(start, end, b"udta");
+    let (start, end) = find(start, end, b"meta");
+    let (start, end) = find(start + 4, end, b"ilst");
+    mp4_boxes(&bytes, start, end)
+        .into_iter()
+        .map(|(kind, content, end)| {
+            let mut name = None;
+            let mut data = Vec::new();
+            let mut types = Vec::new();
+            for (child, inner, child_end) in mp4_boxes(&bytes, content, end) {
+                match &child {
+                    b"name" => {
+                        name =
+                            Some(String::from_utf8(bytes[inner + 4..child_end].to_vec()).unwrap());
+                    }
+                    b"data" => {
+                        data.push(bytes[inner + 8..child_end].to_vec());
+                        types.push(u32::from_be_bytes(
+                            bytes[inner..inner + 4].try_into().unwrap(),
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            Mp4Atom {
+                kind,
+                name,
+                data,
+                types,
+            }
+        })
+        .collect()
+}
+
+fn mp4_text(path: &Path, kind: &[u8; 4]) -> Vec<String> {
+    mp4_atoms(path)
+        .into_iter()
+        .filter(|atom| &atom.kind == kind)
+        .flat_map(|atom| atom.data)
+        .map(|data| String::from_utf8(data).unwrap())
+        .collect()
+}
+
+fn mp4_freeform(path: &Path, name: &str) -> Vec<String> {
+    mp4_atoms(path)
+        .into_iter()
+        .filter(|atom| &atom.kind == b"----" && atom.name.as_deref() == Some(name))
+        .flat_map(|atom| atom.data)
+        .map(|data| String::from_utf8(data).unwrap())
+        .collect()
+}
+
+/// A big-endian integer atom's values.
+fn mp4_integers(path: &Path, kind: &[u8; 4]) -> Vec<u64> {
+    mp4_atoms(path)
+        .into_iter()
+        .filter(|atom| &atom.kind == kind)
+        .flat_map(|atom| atom.data)
+        .map(|data| {
+            data.iter()
+                .fold(0u64, |acc, byte| (acc << 8) | u64::from(*byte))
+        })
+        .collect()
+}
+
+fn texts(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| (*value).to_owned()).collect()
+}
+
+fn pair(role: &str, name: &str) -> (String, String) {
+    (role.to_owned(), name.to_owned())
+}
+
+const PERFORMERS: &[&str] = &[
+    "A (guitar)",
+    "B (lead vocals)",
+    "C",
+    "A (drums (drum set))",
+    "Sunn O))) (guitar)",
+];
+
+/// The pairs [`PERFORMERS`] are written as: instrument, then name.
+fn performer_pairs() -> Vec<(String, String)> {
+    vec![
+        pair("guitar", "A"),
+        pair("lead vocals", "B"),
+        pair("", "C"),
+        pair("drums (drum set)", "A"),
+        pair("guitar", "Sunn O)))"),
+    ]
+}
+
+/// One value set for every field beyond the release facts.
+fn credit_edits() -> Vec<TagEdit> {
+    let many = |field: TagField, values: &[&str]| TagEdit::new(field, texts(values));
+    vec![
+        many(TagField::AlbumArtists, &["The Lanterns", "Guest"]),
+        many(TagField::Work, &["Night Suite"]),
+        many(
+            TagField::MusicBrainzWorkId,
+            &["c0ffee00-0000-4000-8000-00000000f001"],
+        ),
+        many(TagField::Movement, &["Allegro"]),
+        many(TagField::MovementNumber, &["2"]),
+        many(TagField::MovementCount, &["4"]),
+        many(TagField::Composer, &["Ada Composer", "Ben Composer"]),
+        many(TagField::Lyricist, &["Lyra Writer"]),
+        many(TagField::Conductor, &["Carl Conductor"]),
+        many(TagField::Performer, PERFORMERS),
+        many(TagField::Arranger, &["Arlo Arranger"]),
+        many(TagField::Remixer, &["Rémi Mixer"]),
+        many(TagField::Producer, &["Pia Producer", "Pete Producer"]),
+        many(TagField::Comment, &["A comment, with ünïcode"]),
+        many(TagField::Copyright, &["2024 Night Bus"]),
+        many(TagField::EncodedBy, &["DroppedNeedle"]),
+        many(
+            TagField::AcoustIdId,
+            &["c0ffee00-0000-4000-8000-0000000a0001"],
+        ),
+        many(TagField::AcoustIdFingerprint, &["AQADtEmUaEkSRUkS"]),
+    ]
+}
+
+fn value_of(edits: &[TagEdit], field: TagField) -> Vec<String> {
+    edits
+        .iter()
+        .find(|edit| edit.field == field)
+        .unwrap()
+        .values
+        .clone()
+}
+
+/// Saves `edits` and checks each lands where `check` reads it from the
+/// bytes; a later title edit leaves them all as they are, and the audio
+/// stays byte for byte.
+fn credits_round_trip(path: &Path, edits: &[TagEdit], check: &dyn Fn(&Path)) {
+    let name = path.display().to_string();
+    let audio = audio_bytes(path);
+    tags::save_tags(path, edits).unwrap_or_else(|error| panic!("{name}: {error}"));
+    check(path);
+    let fields = tags::read_fields(path).unwrap();
+    tags::save_tags(path, &[TagEdit::set_title("Later")])
+        .unwrap_or_else(|error| panic!("{name}: {error}"));
+    check(path);
+    let after = tags::read_fields(path).unwrap();
+    for edit in edits {
+        assert_eq!(after.get(&edit.field), fields.get(&edit.field), "{name}");
+    }
+    assert_eq!(audio_bytes(path), audio, "{name}: audio changed");
+}
+
+#[test]
+fn credit_fields_land_in_vorbis_comments() {
+    for name in [
+        "management_full.flac",
+        "management_full.ogg",
+        "management_full.opus",
+    ] {
+        let (_scratch, path) = temp_copy(name, "credits-vorbis");
+        let edits = credit_edits();
+        let check = |path: &Path| {
+            for (key, field) in [
+                ("ALBUMARTISTS", TagField::AlbumArtists),
+                ("WORK", TagField::Work),
+                ("MUSICBRAINZ_WORKID", TagField::MusicBrainzWorkId),
+                ("MOVEMENTNAME", TagField::Movement),
+                ("MOVEMENT", TagField::MovementNumber),
+                ("MOVEMENTTOTAL", TagField::MovementCount),
+                ("COMPOSER", TagField::Composer),
+                ("LYRICIST", TagField::Lyricist),
+                ("CONDUCTOR", TagField::Conductor),
+                ("PERFORMER", TagField::Performer),
+                ("ARRANGER", TagField::Arranger),
+                ("REMIXER", TagField::Remixer),
+                ("PRODUCER", TagField::Producer),
+                ("COMMENT", TagField::Comment),
+                ("COPYRIGHT", TagField::Copyright),
+                ("ENCODEDBY", TagField::EncodedBy),
+                ("ACOUSTID_ID", TagField::AcoustIdId),
+                ("ACOUSTID_FINGERPRINT", TagField::AcoustIdFingerprint),
+            ] {
+                assert_eq!(
+                    vorbis_key_values(path, key),
+                    value_of(&edits, field),
+                    "{name}: {key}"
+                );
+            }
+            assert!(vorbis_key_values(path, "ENCODED-BY").is_empty(), "{name}");
+        };
+        credits_round_trip(&path, &edits, &check);
+        let fields = tags::read_fields(&path).unwrap();
+        for edit in &edits {
+            assert_eq!(fields.get(&edit.field), Some(&edit.values), "{name}");
+        }
+    }
+}
+
+#[test]
+fn credit_fields_land_in_id3v24() {
+    let (_scratch, path) = temp_copy("management_full.mp3", "credits-v24");
+    let edits = credit_edits();
+    let check = |path: &Path| {
+        assert_eq!(id3_frames(path).0, 4);
+        for (description, field) in [
+            ("ALBUMARTISTS", TagField::AlbumArtists),
+            ("WORK", TagField::Work),
+            ("MusicBrainz Work Id", TagField::MusicBrainzWorkId),
+            ("Acoustid Id", TagField::AcoustIdId),
+            ("Acoustid Fingerprint", TagField::AcoustIdFingerprint),
+        ] {
+            assert_eq!(
+                id3_txxx_values(path, description),
+                value_of(&edits, field),
+                "{description}"
+            );
+        }
+        for (id, field) in [
+            ("MVNM", TagField::Movement),
+            ("TCOM", TagField::Composer),
+            ("TEXT", TagField::Lyricist),
+            ("TPE3", TagField::Conductor),
+            ("TPE4", TagField::Remixer),
+            ("TCOP", TagField::Copyright),
+            ("TENC", TagField::EncodedBy),
+        ] {
+            assert_eq!(id3_text_values(path, id), value_of(&edits, field), "{id}");
+        }
+        assert!(id3_frames(path).1.iter().all(|(id, _)| id != "TIT1"));
+        assert_eq!(id3_text_values(path, "MVIN"), texts(&["2/4"]));
+        assert_eq!(id3_people(path, "TMCL"), performer_pairs());
+        // The fixture's producer pair is replaced in place; the arranger
+        // pair is added after it.
+        assert_eq!(
+            id3_people(path, "TIPL"),
+            vec![
+                pair("producer", "Pia Producer"),
+                pair("producer", "Pete Producer"),
+                pair("arranger", "Arlo Arranger"),
+            ]
+        );
+        assert_eq!(
+            id3_comments(path),
+            vec![(
+                "eng".to_owned(),
+                String::new(),
+                "A comment, with ünïcode".to_owned()
+            )]
+        );
+    };
+    credits_round_trip(&path, &edits, &check);
+    let fields = tags::read_fields(&path).unwrap();
+    for edit in &edits {
+        assert_eq!(
+            fields.get(&edit.field),
+            Some(&edit.values),
+            "{:?}",
+            edit.field
+        );
+    }
+}
+
+/// A pure ID3v2.3 tag over the fixture's audio.
+fn pure_v23_copy(test: &str) -> (ScratchDir, PathBuf) {
+    let audio = mp3_audio_tail(&std::fs::read(fixture("management_full.mp3")).unwrap()).to_vec();
+    let mut tag = id3v2_bytes(
+        3,
+        &[
+            ("TIT2", b"Management Track"),
+            ("TPE1", b"Alpha feat. Beta"),
+            ("TYER", b"2024"),
+            ("TRCK", b"2"),
+        ],
+    );
+    tag.extend_from_slice(&audio);
+    let dir = ScratchDir::new(test);
+    let path = dir.join("pure_v23.mp3");
+    std::fs::write(&path, &tag).unwrap();
+    (dir, path)
+}
+
+/// lofty 0.25's v2.3 writer keeps `MVNM`, `MVIN`, `TCOP`, `TENC`, `TEXT`,
+/// `TPE3`, `TPE4` and `TCOM`, and the wrapper builds `IPLS` and `COMM`
+/// itself: every field lands in its Picard home and the tag stays a
+/// clean v2.3 tag.
+#[test]
+fn credit_fields_land_in_id3v23() {
+    let (_scratch, path) = pure_v23_copy("tags-credits-v23");
+    let edits = credit_edits();
+    let check = |path: &Path| {
+        assert_eq!(id3_frames(path).0, 3);
+        let bytes = std::fs::read(path).unwrap();
+        assert_eq!(mixed_v23_detail(&inspect_id3_bytes(&bytes).unwrap()), None);
+        // v2.3 holds one text value per frame: several are joined with '/'.
+        let joined = |field: TagField| vec![value_of(&edits, field).join("/")];
+        for (description, field) in [
+            ("ALBUMARTISTS", TagField::AlbumArtists),
+            ("WORK", TagField::Work),
+            ("MusicBrainz Work Id", TagField::MusicBrainzWorkId),
+            ("Acoustid Id", TagField::AcoustIdId),
+            ("Acoustid Fingerprint", TagField::AcoustIdFingerprint),
+        ] {
+            assert_eq!(
+                id3_txxx_values(path, description),
+                joined(field),
+                "{description}"
+            );
+        }
+        for (id, field) in [
+            ("MVNM", TagField::Movement),
+            ("TCOM", TagField::Composer),
+            ("TEXT", TagField::Lyricist),
+            ("TPE3", TagField::Conductor),
+            ("TPE4", TagField::Remixer),
+            ("TCOP", TagField::Copyright),
+            ("TENC", TagField::EncodedBy),
+        ] {
+            assert_eq!(id3_text_values(path, id), joined(field), "{id}");
+        }
+        assert_eq!(id3_text_values(path, "MVIN"), texts(&["2/4"]));
+        let mut ipls = performer_pairs();
+        ipls.extend([
+            pair("arranger", "Arlo Arranger"),
+            pair("producer", "Pia Producer"),
+            pair("producer", "Pete Producer"),
+        ]);
+        assert_eq!(id3_people(path, "IPLS"), ipls);
+        assert_eq!(
+            id3_comments(path),
+            vec![(
+                "eng".to_owned(),
+                String::new(),
+                "A comment, with ünïcode".to_owned()
+            )]
+        );
+    };
+    credits_round_trip(&path, &edits, &check);
+    let fields = tags::read_fields(&path).unwrap();
+    for field in [
+        TagField::Performer,
+        TagField::Arranger,
+        TagField::Producer,
+        TagField::Comment,
+        TagField::MovementNumber,
+        TagField::MovementCount,
+    ] {
+        assert_eq!(fields[&field], value_of(&edits, field), "{field:?}");
+    }
+}
+
+#[test]
+fn credit_fields_land_in_mp4_atoms() {
+    let (_scratch, path) = temp_copy("management_full.m4a", "credits-m4a");
+    let edits: Vec<TagEdit> = credit_edits()
+        .into_iter()
+        .filter(|edit| !matches!(edit.field, TagField::Performer | TagField::Arranger))
+        .collect();
+    let check = |path: &Path| {
+        for (kind, field) in [
+            (b"\xa9wrk", TagField::Work),
+            (b"\xa9mvn", TagField::Movement),
+            (b"\xa9wrt", TagField::Composer),
+            (b"\xa9cmt", TagField::Comment),
+            (b"cprt", TagField::Copyright),
+            (b"\xa9too", TagField::EncodedBy),
+        ] {
+            assert_eq!(mp4_text(path, kind), value_of(&edits, field), "{field:?}");
+        }
+        for (name, field) in [
+            ("ALBUMARTISTS", TagField::AlbumArtists),
+            ("MusicBrainz Work Id", TagField::MusicBrainzWorkId),
+            ("LYRICIST", TagField::Lyricist),
+            ("CONDUCTOR", TagField::Conductor),
+            ("REMIXER", TagField::Remixer),
+            ("PRODUCER", TagField::Producer),
+            ("Acoustid Id", TagField::AcoustIdId),
+            ("Acoustid Fingerprint", TagField::AcoustIdFingerprint),
+        ] {
+            assert_eq!(mp4_freeform(path, name), value_of(&edits, field), "{name}");
+        }
+        assert_eq!(mp4_integers(path, b"\xa9mvi"), vec![2]);
+        assert_eq!(mp4_integers(path, b"\xa9mvc"), vec![4]);
+    };
+    credits_round_trip(&path, &edits, &check);
+    let fields = tags::read_fields(&path).unwrap();
+    for edit in &edits {
+        assert_eq!(
+            fields.get(&edit.field),
+            Some(&edit.values),
+            "{:?}",
+            edit.field
+        );
+    }
+}
+
+/// Musician credits round-trip with their instruments; MP4 has no home
+/// for performers or arrangers and refuses them, with nothing to remove.
+#[test]
+fn performers_round_trip_and_mp4_refuses() {
+    let performers = TagEdit::new(TagField::Performer, texts(PERFORMERS));
+    let (_v24, mp3) = temp_copy("management_full.mp3", "performers");
+    let (_v23, v23) = pure_v23_copy("tags-performers-v23");
+    let (_flac, flac) = temp_copy("management_full.flac", "performers");
+    for path in [&mp3, &v23, &flac] {
+        tags::save_tags(path, std::slice::from_ref(&performers)).unwrap();
+        assert_eq!(
+            tags::read_fields(path).unwrap()[&TagField::Performer],
+            texts(PERFORMERS),
+            "{}",
+            path.display()
+        );
+    }
+    assert_eq!(vorbis_key_values(&flac, "PERFORMER"), texts(PERFORMERS));
+    assert_eq!(id3_people(&mp3, "TMCL"), performer_pairs());
+    assert_eq!(id3_people(&v23, "IPLS"), performer_pairs());
+
+    for edit in [
+        performers,
+        TagEdit::new(TagField::Arranger, texts(&["Arlo Arranger"])),
+    ] {
+        let (refusal, before, after) = save_refused("management_full.m4a", "credit-m4a", &[edit]);
+        assert!(
+            matches!(refusal, Refusal::UnencodableItem { .. }),
+            "{refusal:?}"
+        );
+        assert_eq!(before, after);
+    }
+    let (_m4a, m4a) = temp_copy("management_full.m4a", "performer-clear");
+    tags::save_tags(&m4a, &[TagEdit::new(TagField::Performer, Vec::new())]).unwrap();
+}
+
+/// The fixtures v2's generator tagged read their credits, work and
+/// AcoustID values under the fields, no longer as native items.
+#[test]
+fn management_fixtures_read_their_credits() {
+    let id = |n: u8| format!("10000000-0000-4000-8000-00000000000{n}");
+    for name in [
+        "management_full.mp3",
+        "management_full.flac",
+        "management_full.ogg",
+        "management_full.opus",
+        "management_full.m4a",
+    ] {
+        let document = tags::save::read_document(&fixture(name)).unwrap();
+        let get = |field: TagField| document.values.get(&field).cloned().unwrap_or_default();
+        // The MP4 fixture carries no composer.
+        if name != "management_full.m4a" {
+            assert_eq!(
+                get(TagField::Composer),
+                texts(&["Example Composer"]),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            get(TagField::Lyricist),
+            texts(&["Example Lyricist"]),
+            "{name}"
+        );
+        assert_eq!(
+            get(TagField::Producer),
+            texts(&["Example Producer"]),
+            "{name}"
+        );
+        assert_eq!(get(TagField::Work), texts(&["Example Work"]), "{name}");
+        assert_eq!(get(TagField::MusicBrainzWorkId), vec![id(7)], "{name}");
+        assert_eq!(get(TagField::Isrc), texts(&["GBABC2400001"]), "{name}");
+        assert_eq!(get(TagField::AcoustIdId), vec![id(8)], "{name}");
+        assert_eq!(
+            get(TagField::AcoustIdFingerprint),
+            texts(&["AQAD-management-fingerprint"]),
+            "{name}"
+        );
+        for key in document.native.keys() {
+            let folded = key.to_ascii_lowercase();
+            assert!(
+                ["composer", "lyricist", "tcom", "text", "work", "acoustid"]
+                    .iter()
+                    .all(|owned| !folded.ends_with(owned)),
+                "{name}: {key} is still native"
+            );
+        }
+    }
+}
+
+/// Edits of producer, comment and composer leave a foreign `TIPL` pair,
+/// an iTunNORM `COMM`, an unknown `TXXX`, an unknown Vorbis key and an
+/// unknown MP4 freeform as they were, in order.
+#[test]
+fn credit_edits_leave_neighbours_alone() {
+    let edits = [
+        TagEdit::new(TagField::Producer, texts(&["New Producer"])),
+        TagEdit::new(TagField::Comment, texts(&["New comment"])),
+        TagEdit::new(TagField::Composer, texts(&["New Composer"])),
+    ];
+
+    // MP3: the fixture's TIPL swapped for one with neighbours, plus an
+    // iTunNORM comment and an unknown TXXX.
+    let (_scratch, mp3) = temp_copy("management_full.mp3", "neighbours");
+    let audio = mp3_audio_tail(&std::fs::read(&mp3).unwrap()).to_vec();
+    let mut frames: Vec<(String, Vec<u8>)> = id3_frames(&mp3)
+        .1
+        .into_iter()
+        .filter(|(id, _)| id != "TIPL")
+        .collect();
+    frames.push((
+        "TIPL".to_owned(),
+        b"\x03engineer\x00Eve Engineer\x00producer\x00Example Producer\x00mix\x00Max Mixer\x00"
+            .to_vec(),
+    ));
+    let itunnorm = b"\x00engiTunNORM\x00 00000A1B 00000C2D".to_vec();
+    frames.push(("COMM".to_owned(), itunnorm.clone()));
+    frames.push(("TXXX".to_owned(), b"\x03ZZZ_UNHEARD_OF\x00mystery".to_vec()));
+    let refs: Vec<(&str, &[u8])> = frames
+        .iter()
+        .map(|(id, payload)| (id.as_str(), payload.as_slice()))
+        .collect();
+    let mut bytes = id3v24_raw(&refs);
+    bytes.extend_from_slice(&audio);
+    std::fs::write(&mp3, &bytes).unwrap();
+    let untouched = |path: &Path| {
+        let mut frames: Vec<(String, Vec<String>)> = id3_frames(path)
+            .1
+            .into_iter()
+            .filter(|(id, _)| !matches!(id.as_str(), "TIPL" | "COMM" | "TCOM"))
+            .map(|(id, payload)| {
+                let decoded = if id.starts_with('T') {
+                    id3_strings(&payload)
+                } else {
+                    vec![format!("{payload:?}")]
+                };
+                (id, decoded)
+            })
+            .collect();
+        frames.sort();
+        frames
+    };
+    let before = untouched(&mp3);
+    tags::save_tags(&mp3, &edits).unwrap();
+    assert_eq!(
+        id3_people(&mp3, "TIPL"),
+        vec![
+            pair("engineer", "Eve Engineer"),
+            pair("producer", "New Producer"),
+            pair("mix", "Max Mixer"),
+        ]
+    );
+    let comments: Vec<Vec<u8>> = id3_frames(&mp3)
+        .1
+        .into_iter()
+        .filter(|(id, _)| id == "COMM")
+        .map(|(_, payload)| payload)
+        .collect();
+    assert_eq!(comments.len(), 2);
+    assert!(comments.contains(&itunnorm), "iTunNORM changed");
+    assert!(id3_comments(&mp3).contains(&(
+        "eng".to_owned(),
+        String::new(),
+        "New comment".to_owned()
+    )));
+    assert_eq!(id3_text_values(&mp3, "TCOM"), texts(&["New Composer"]));
+    assert_eq!(id3_txxx_values(&mp3, "ZZZ_UNHEARD_OF"), texts(&["mystery"]));
+    assert_eq!(untouched(&mp3), before);
+    assert_eq!(audio_bytes(&mp3), audio);
+
+    // FLAC: an unknown key beside CUSTOM_KEEP; every untouched pair keeps
+    // its place.
+    let (_scratch, flac) = temp_copy("management_full.flac", "neighbours");
+    flac_inject_pairs(&flac, &[("ZZZ_UNHEARD_OF_FIELD", "mystery")]);
+    let edited = ["PRODUCER", "COMMENT", "COMPOSER"];
+    let rest = |path: &Path| -> Vec<(String, String)> {
+        vorbis_pairs(path)
+            .into_iter()
+            .filter(|(key, _)| !edited.contains(&key.as_str()))
+            .collect()
+    };
+    let before = rest(&flac);
+    tags::save_tags(&flac, &edits).unwrap();
+    assert_eq!(rest(&flac), before);
+    assert_eq!(
+        vorbis_key_values(&flac, "PRODUCER"),
+        texts(&["New Producer"])
+    );
+    assert_eq!(vorbis_key_values(&flac, "COMMENT"), texts(&["New comment"]));
+
+    // M4A: the fixture's unknown freeform and every other atom stay, in
+    // their order.
+    let (_scratch, m4a) = temp_copy("management_full.m4a", "neighbours");
+    let rest = |path: &Path| -> Vec<AtomView> {
+        mp4_atoms(path)
+            .into_iter()
+            .filter(|atom| {
+                !(atom.kind == *b"\xa9cmt"
+                    || atom.kind == *b"\xa9wrt"
+                    || atom.name.as_deref() == Some("PRODUCER"))
+            })
+            .map(|atom| {
+                // Number pairs lose their padding and integers their
+                // width on any save; compare those by value.
+                let data = atom
+                    .data
+                    .into_iter()
+                    .map(|data| match &atom.kind {
+                        b"trkn" | b"disk" => data[..6].to_vec(),
+                        b"stik" | b"cpil" => data
+                            .iter()
+                            .fold(0u64, |acc, byte| (acc << 8) | u64::from(*byte))
+                            .to_be_bytes()
+                            .to_vec(),
+                        _ => data,
+                    })
+                    .collect();
+                (atom.kind.to_vec(), atom.name, data)
+            })
+            .collect()
+    };
+    let before = rest(&m4a);
+    tags::save_tags(&m4a, &edits).unwrap();
+    assert_eq!(rest(&m4a), before);
+    assert_eq!(
+        mp4_freeform(&m4a, "CUSTOM_KEEP"),
+        texts(&["opaque local value"])
+    );
+    assert_eq!(mp4_freeform(&m4a, "PRODUCER"), texts(&["New Producer"]));
+}
+
+/// An undo recorded before these fields existed names their tags as
+/// native items. Replaying it, with the removal a restore adds for the
+/// field, puts the original bytes back.
+#[test]
+fn native_replays_restore_owned_tags() {
+    let encode =
+        |bytes: &[u8]| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
+    let replay = |path: &Path, field: TagField, key: &str, values: Vec<String>| {
+        tags::save_tags(
+            path,
+            &[
+                TagEdit::verbatim(field, Vec::new()),
+                TagEdit::native(key, values),
+            ],
+        )
+        .unwrap_or_else(|error| panic!("{key}: {error}"));
+    };
+
+    let (_scratch, flac) = temp_copy("management_full.flac", "replay");
+    let original = vorbis_key_values(&flac, "COMPOSER");
+    tags::save_tags(
+        &flac,
+        &[TagEdit::new(TagField::Composer, texts(&["Changed"]))],
+    )
+    .unwrap();
+    replay(
+        &flac,
+        TagField::Composer,
+        "vorbis:COMPOSER",
+        original.clone(),
+    );
+    assert_eq!(vorbis_key_values(&flac, "COMPOSER"), original);
+
+    let (_scratch, m4a) = temp_copy("management_full.m4a", "replay");
+    let original = mp4_freeform(&m4a, "LYRICIST");
+    tags::save_tags(
+        &m4a,
+        &[TagEdit::new(TagField::Lyricist, texts(&["Changed"]))],
+    )
+    .unwrap();
+    replay(
+        &m4a,
+        TagField::Lyricist,
+        "mp4:----:LYRICIST",
+        original.clone(),
+    );
+    assert_eq!(mp4_freeform(&m4a, "LYRICIST"), original);
+
+    // MP3: TCOM, and a comment beside an iTunNORM, listed together as
+    // `id3:COMM` the way the old reader listed them.
+    let (_scratch, mp3) = temp_copy("management_full.mp3", "replay");
+    let comment = b"\x03eng\x00old note".to_vec();
+    let itunnorm = b"\x00engiTunNORM\x00 00000A1B".to_vec();
+    id3_inject_frames(&mp3, &[("COMM", &comment), ("COMM", &itunnorm)]);
+    let tcom = id3_text_values(&mp3, "TCOM");
+    tags::save_tags(
+        &mp3,
+        &[
+            TagEdit::new(TagField::Composer, texts(&["Changed"])),
+            TagEdit::new(TagField::Comment, texts(&["new note"])),
+        ],
+    )
+    .unwrap();
+    replay(&mp3, TagField::Composer, "id3:TCOM", tcom.clone());
+    replay(
+        &mp3,
+        TagField::Comment,
+        "id3:COMM",
+        vec![encode(&comment), encode(&itunnorm)],
+    );
+    let mut comments: Vec<Vec<u8>> = id3_frames(&mp3)
+        .1
+        .into_iter()
+        .filter(|(id, _)| id == "COMM")
+        .map(|(_, payload)| payload)
+        .collect();
+    comments.sort();
+    let mut original = vec![comment, itunnorm];
+    original.sort();
+    assert_eq!(comments, original);
+    assert_eq!(id3_text_values(&mp3, "TCOM"), tcom);
+}
+
+/// v2 recorded a v2.3 file's tag as mutagen re-rendered it, which moves
+/// every `IPLS` pair into a v2.4 `TIPL`. Restoring that baseline over the
+/// v2.3 file keeps its musician credit beside the producer.
+#[test]
+fn v2_baseline_restore_keeps_v23_musician_credits() {
+    use droppedneedle::library::publish::{staging, v2_baseline};
+    let credits = [("guitar", "A"), ("producer", "P")];
+    let ipls = utf16_people(&credits, false);
+    let (_scratch, path) = v23_file(
+        "v2-ipls",
+        &[("TIT2", b"\x00Management Track"), ("IPLS", &ipls)],
+    );
+    let snapshot = id3v24_raw(&[
+        ("TIT2", b"\x03Management Track"),
+        ("TIPL", b"\x03guitar\x00A\x00producer\x00P\x00"),
+    ]);
+    let json = format!(
+        r#"{{"snapshot_version":1,"probe":{{"detected_format":"mp3"}},
+            "native_tags":{{"encoded_id3":"{}"}}}}"#,
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &snapshot)
+    );
+    let baseline = v2_baseline::translate(json.as_bytes(), "mp3", "music", "a.mp3")
+        .unwrap()
+        .doc;
+    let current = staging::document_from_file(&path).unwrap();
+    let updates = staging::restore_updates(&baseline, &current, "a.mp3");
+    let edits = staging::check_managed_updates(&updates).unwrap();
+    tags::save_tags(&path, &edits).unwrap();
+    assert_eq!(
+        id3_people(&path, "IPLS"),
+        vec![pair("guitar", "A"), pair("producer", "P")]
+    );
+}
+
+/// On v2.4 a `TIPL` pair outside the involved roles is a musician
+/// credit, as Picard reads it; a performer write moves it to `TMCL`.
+#[test]
+fn v24_tipl_musicians_read_as_performers() {
+    let (_scratch, mp3) = temp_copy("management_full.mp3", "tipl-musicians");
+    id3_inject_frames(&mp3, &[("TMCL", b"\x03bass\x00B\x00")]);
+    let frames: Vec<(String, Vec<u8>)> = id3_frames(&mp3)
+        .1
+        .into_iter()
+        .map(|(id, payload)| match id.as_str() {
+            "TIPL" => (
+                id,
+                b"\x03guitar\x00A\x00producer\x00Example Producer\x00".to_vec(),
+            ),
+            _ => (id, payload),
+        })
+        .collect();
+    let audio = mp3_audio_tail(&std::fs::read(&mp3).unwrap()).to_vec();
+    let refs: Vec<(&str, &[u8])> = frames
+        .iter()
+        .map(|(id, payload)| (id.as_str(), payload.as_slice()))
+        .collect();
+    let mut bytes = id3v24_raw(&refs);
+    bytes.extend_from_slice(&audio);
+    std::fs::write(&mp3, &bytes).unwrap();
+    let fields = tags::read_fields(&mp3).unwrap();
+    assert_eq!(
+        fields[&TagField::Performer],
+        texts(&["B (bass)", "A (guitar)"])
+    );
+    assert_eq!(fields[&TagField::Producer], texts(&["Example Producer"]));
+    // An undo writes back every field as it read: nothing moves.
+    // Payloads by frame id: ID3 frame order is not kept across a save.
+    let people = |path: &Path| -> Vec<(String, Vec<u8>)> {
+        let mut frames: Vec<(String, Vec<u8>)> = id3_frames(path)
+            .1
+            .into_iter()
+            .filter(|(id, _)| matches!(id.as_str(), "TIPL" | "TMCL"))
+            .collect();
+        frames.sort();
+        frames
+    };
+    let held = people(&mp3);
+    tags::save_tags(&mp3, &[TagEdit::set_title("Later")]).unwrap();
+    let undo: Vec<TagEdit> = fields
+        .iter()
+        .map(|(field, values)| TagEdit::verbatim(*field, values.clone()))
+        .collect();
+    tags::save_tags(&mp3, &undo).unwrap();
+    assert_eq!(people(&mp3), held);
+    assert_eq!(id3_text_values(&mp3, "TIT2"), texts(&["Management Track"]));
+    tags::save_tags(
+        &mp3,
+        &[TagEdit::new(
+            TagField::Performer,
+            texts(&["B (bass)", "A (guitar)", "C"]),
+        )],
+    )
+    .unwrap();
+    assert_eq!(
+        id3_people(&mp3, "TMCL"),
+        vec![pair("bass", "B"), pair("guitar", "A"), pair("", "C")]
+    );
+    assert_eq!(
+        id3_people(&mp3, "TIPL"),
+        vec![pair("producer", "Example Producer")]
+    );
+}
+
+/// A NUL inside a credit or comment would split it into other strings;
+/// it is refused before anything is written.
+#[test]
+fn nul_in_credits_and_comments_is_refused() {
+    for edit in [
+        TagEdit::new(TagField::Producer, texts(&["A\u{0}B"])),
+        TagEdit::new(TagField::Performer, texts(&["A\u{0}B (guitar)"])),
+        TagEdit::new(TagField::Comment, texts(&["a\u{0}b"])),
+    ] {
+        let (refusal, before, after) = save_refused("management_full.mp3", "nul-credit", &[edit]);
+        assert!(
+            matches!(refusal, Refusal::UnencodableItem { .. }),
+            "{refusal:?}"
+        );
+        assert_eq!(before, after);
+    }
+}
+
+/// lofty writes a v2.3 `IPLS` with one little-endian byte-order mark for
+/// the whole frame. Its names read as written, survive an unrelated
+/// edit byte for byte, and survive a producer edit.
+#[test]
+fn lofty_v23_ipls_keeps_its_names() {
+    let ipls = utf16_people(&[("guitar", "Ána"), ("producer", "Pål")], true);
+    let (_scratch, path) = v23_file(
+        "lofty-ipls",
+        &[("TIT2", b"\x00Management Track"), ("IPLS", &ipls)],
+    );
+    let fields = tags::read_fields(&path).unwrap();
+    assert_eq!(fields[&TagField::Performer], texts(&["Ána (guitar)"]));
+    assert_eq!(fields[&TagField::Producer], texts(&["Pål"]));
+    tags::save_tags(&path, &[TagEdit::set_title("Later")]).unwrap();
+    let held: Vec<Vec<u8>> = id3_frames(&path)
+        .1
+        .into_iter()
+        .filter(|(id, _)| id == "IPLS")
+        .map(|(_, payload)| payload)
+        .collect();
+    assert_eq!(held, vec![ipls]);
+    tags::save_tags(
+        &path,
+        &[TagEdit::new(TagField::Producer, texts(&["New Producer"]))],
+    )
+    .unwrap();
+    assert_eq!(
+        id3_people(&path, "IPLS"),
+        vec![pair("guitar", "Ána"), pair("producer", "New Producer")]
+    );
+}
+
+/// v2.3 keeps every credit in `IPLS`, where a producer is not a
+/// musician: a performer playing "producer" is refused, not filed as a
+/// producer credit.
+#[test]
+fn v23_performer_with_an_involved_role_is_refused() {
+    let (_scratch, path) = pure_v23_copy("v23-involved");
+    let before = std::fs::read(&path).unwrap();
+    let result = tags::save_tags(
+        &path,
+        &[TagEdit::new(
+            TagField::Performer,
+            texts(&["Bob (producer)"]),
+        )],
+    );
+    assert!(
+        matches!(
+            result,
+            Err(TagsError::SaveRefused {
+                refusal: Refusal::UnencodableItem { .. },
+                ..
+            })
+        ),
+        "{result:?}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+/// A write of as many values as the role held keeps its pairs in their
+/// places, so an undo puts interleaved pairs back in order. A comment
+/// keeps its language.
+#[test]
+fn credit_undo_keeps_order_and_comment_language() {
+    let (_scratch, mp3) = temp_copy("management_full.mp3", "interleaved");
+    let audio = mp3_audio_tail(&std::fs::read(&mp3).unwrap()).to_vec();
+    let mut frames: Vec<(String, Vec<u8>)> = id3_frames(&mp3)
+        .1
+        .into_iter()
+        .filter(|(id, _)| id != "TIPL")
+        .collect();
+    frames.push((
+        "TIPL".to_owned(),
+        b"\x03producer\x00P1\x00engineer\x00E\x00producer\x00P2\x00".to_vec(),
+    ));
+    frames.push(("COMM".to_owned(), b"\x03deu\x00alt".to_vec()));
+    let refs: Vec<(&str, &[u8])> = frames
+        .iter()
+        .map(|(id, payload)| (id.as_str(), payload.as_slice()))
+        .collect();
+    let mut bytes = id3v24_raw(&refs);
+    bytes.extend_from_slice(&audio);
+    std::fs::write(&mp3, &bytes).unwrap();
+    let original = id3_people(&mp3, "TIPL");
+    tags::save_tags(
+        &mp3,
+        &[
+            TagEdit::new(TagField::Producer, texts(&["X", "Y"])),
+            TagEdit::new(TagField::Comment, texts(&["neu"])),
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        id3_comments(&mp3),
+        vec![("deu".to_owned(), String::new(), "neu".to_owned())]
+    );
+    tags::save_tags(
+        &mp3,
+        &[TagEdit::verbatim(TagField::Producer, texts(&["P1", "P2"]))],
+    )
+    .unwrap();
+    assert_eq!(id3_people(&mp3, "TIPL"), original);
+}
+
+/// An integer atom whose bytes happen to be printable (an iTunes `cnID`)
+/// keeps its data type and value across a save, and the `ilst` items
+/// keep their order.
+#[test]
+fn mp4_integer_atoms_keep_their_type_and_order() {
+    use lofty::config::{ParseOptions, WriteOptions};
+    use lofty::file::AudioFile as _;
+    use lofty::mp4::{Atom, AtomData, AtomIdent, DataType, Mp4File};
+    use lofty::tag::TagExt as _;
+    let (_scratch, m4a) = temp_copy("management_full.m4a", "typed-atom");
+    // Planted with lofty itself, as an iTunes purchase carries it.
+    let mut file =
+        Mp4File::read_from(&mut std::fs::File::open(&m4a).unwrap(), ParseOptions::new()).unwrap();
+    let mut ilst = file.ilst_mut().unwrap().clone();
+    ilst.insert(Atom::new(
+        AtomIdent::Fourcc(*b"cnID"),
+        AtomData::Unknown {
+            code: DataType::BeSignedInteger,
+            data: b"Jk<-".to_vec(),
+        },
+    ));
+    ilst.save_to_path(&m4a, WriteOptions::new()).unwrap();
+    let view = |path: &Path| -> Vec<(Vec<u8>, Option<String>, Vec<u32>)> {
+        mp4_atoms(path)
+            .into_iter()
+            .map(|atom| (atom.kind.to_vec(), atom.name, atom.types))
+            .collect()
+    };
+    let cnid = |path: &Path| -> Vec<(u32, Vec<u8>)> {
+        mp4_atoms(path)
+            .into_iter()
+            .filter(|atom| &atom.kind == b"cnID")
+            .flat_map(|atom| atom.types.into_iter().zip(atom.data))
+            .collect()
+    };
+    assert_eq!(cnid(&m4a), vec![(21, b"Jk<-".to_vec())]);
+    let before = view(&m4a);
+    tags::save_tags(&m4a, &[TagEdit::set_title("Later")]).unwrap();
+    assert_eq!(cnid(&m4a), vec![(21, b"Jk<-".to_vec())]);
+    assert_eq!(view(&m4a), before);
 }

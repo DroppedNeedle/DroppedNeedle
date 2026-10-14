@@ -24,6 +24,7 @@ const ALBUM_FIELDS: &[TagField] = &[
     TagField::Album,
     TagField::AlbumSort,
     TagField::AlbumArtist,
+    TagField::AlbumArtists,
     TagField::AlbumArtistSort,
     TagField::Compilation,
     TagField::DiscTotal,
@@ -44,11 +45,22 @@ const ALBUM_FIELDS: &[TagField] = &[
 /// Fields that hold several values in order.
 const LIST_FIELDS: &[TagField] = &[
     TagField::Artists,
+    TagField::AlbumArtists,
     TagField::Genre,
     TagField::Label,
     TagField::CatalogNumber,
+    TagField::Isrc,
+    TagField::ReleaseType,
     TagField::MusicBrainzArtistId,
     TagField::MusicBrainzAlbumArtistId,
+    TagField::MusicBrainzWorkId,
+    TagField::Composer,
+    TagField::Lyricist,
+    TagField::Conductor,
+    TagField::Performer,
+    TagField::Arranger,
+    TagField::Remixer,
+    TagField::Producer,
 ];
 
 /// `album` or `track`.

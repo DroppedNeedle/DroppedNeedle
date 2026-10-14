@@ -13,17 +13,24 @@
 //! leaving the original untouched.
 //!
 //! The writable fields are Picard's tag set ([`TagField`]): titles and
-//! credits, track and disc numbers with totals, dates, release facts, and
-//! the MusicBrainz ids, each under Picard's native name for the format.
-//! An edit with no values removes the field.
+//! credits, track and disc numbers with totals, dates, release facts,
+//! work and movement, comment, copyright, encoder, and the MusicBrainz
+//! and AcoustID ids, each under Picard's native name for the format.
+//! An edit with no values removes the field. Fields sharing an ID3 frame
+//! own only their part of it: arranger and producer their `TIPL` (v2.3
+//! `IPLS`) pairs, the comment the `COMM` frame with no description; the
+//! other pairs and comments stay as they were, in their places.
 //!
-//! Preserved across one unrelated title edit: `TXXX:WORK`, unknown ID3
-//! frames, multi-valued tags, `TXXX` description case, unknown Vorbis
-//! fields, `TOTALTRACKS`/`TOTALDISCS` spelling, the vendor string, MP4
-//! freeforms, pictures, `CUSTOM_KEEP` everywhere, and byte-identical audio.
-//! Refused: mixed v2.3 tags, present empty Vorbis values, values a field
-//! cannot hold (see [`Refusal`]), unparseable tag bytes, and any
-//! post-save delta outside the edit.
+//! Preserved across one unrelated title edit: unknown ID3 frames,
+//! multi-valued tags, `TXXX` description case, unknown Vorbis fields,
+//! `TOTALTRACKS`/`TOTALDISCS` spelling, the vendor string, MP4 freeforms,
+//! the order of MP4 items and of their values, each MP4 item's data
+//! type, pictures, `CUSTOM_KEEP` everywhere,
+//! and byte-identical audio. Refused: mixed v2.3 tags, present empty
+//! Vorbis values, values a field cannot hold (see [`Refusal`]), a
+//! performer or arranger in MP4 (which has no home for either), a NUL
+//! in a credit or comment, unparseable tag bytes, and any post-save
+//! delta outside the edit.
 //!
 //! `WAV` and `AAC` are read-only (the ID3-chunk fork and the never-persist
 //! APE tag, per the measured format matrix), and WMA is unrecognized like everywhere.
@@ -48,7 +55,9 @@ use lofty::tag::items::Timestamp;
 use lofty::tag::{Accessor as _, TagExt as _, TagType};
 use thiserror::Error;
 
-use super::fields::{FieldKind, Id3Target, MP4_MEAN, Mp4Target, Slot, TagField};
+use super::fields::{
+    FieldKind, INVOLVED_ROLES, Id3Target, MP4_MEAN, Mp4Target, Role, Slot, TagField,
+};
 use super::{AudioFormat, TagsError, format_for_path};
 
 /// One requested mutation: a field with its replacement values. No
@@ -294,12 +303,13 @@ pub struct FieldDocument {
     /// Each Vorbis spelling's own values, for fields the file spells more
     /// than one way (`TOTALTRACKS` and `TRACKTOTAL`).
     pub spellings: BTreeMap<(TagField, &'static str), Vec<String>>,
-    /// Text items outside the writable fields (a composer, an encoder
-    /// note, a custom `TXXX`), keyed the way [`TagEdit::native`] takes
+    /// Text items outside the writable fields (a mood, an encoder
+    /// setting, a custom `TXXX`), keyed the way [`TagEdit::native`] takes
     /// them, so a scrub can remove them and a restore put them back.
     /// ID3 comment, URL, private and object frames are listed whole
-    /// (`id3:COMM`, one base64 payload per frame). Pictures and other
-    /// non-text items are not listed: they are never scrubbed.
+    /// (`id3:COMM`, one base64 payload per frame), except the comment the
+    /// comment field owns. Pictures and other non-text items are not
+    /// listed: they are never scrubbed.
     pub native: BTreeMap<String, Vec<String>>,
     /// Embedded pictures in file order.
     pub pictures: Vec<PictureSpec>,
@@ -347,7 +357,7 @@ pub fn read_document(path: &Path) -> Result<FieldDocument, TagsError> {
         }
         AudioFormat::M4a => match parse_mp4_atoms(&bytes).map_err(unreadable)? {
             Some(atoms) => {
-                document.native = mp4_native(&atoms);
+                document.native = mp4_native(&atoms, false);
                 TagField::ALL
                     .into_iter()
                     .map(|field| (field, mp4_read(&atoms, field)))
@@ -463,7 +473,12 @@ fn id3_native(tag: &DeepId3) -> BTreeMap<String, Vec<String>> {
                 Id3Target::SplitDate => {
                     owned.extend(["TYER", "TDAT", "TIME"].map(str::to_owned));
                 }
-                Id3Target::Ufid(_) | Id3Target::Lyrics => {}
+                // Key-value frames are never listed; owned comments are
+                // left out of the `COMM` listing below.
+                Id3Target::Ufid(_)
+                | Id3Target::Lyrics
+                | Id3Target::People(..)
+                | Id3Target::Comment => {}
             }
         }
     }
@@ -498,7 +513,7 @@ fn id3_native(tag: &DeepId3) -> BTreeMap<String, Vec<String>> {
     ids.sort_unstable();
     ids.dedup();
     for id in ids {
-        let (listed, _) = raw_listing(&tag.frames, id);
+        let (listed, _) = raw_listing(&native_pool(&tag.frames, id));
         if listed.is_empty() {
             continue;
         }
@@ -519,27 +534,56 @@ fn id3_native(tag: &DeepId3) -> BTreeMap<String, Vec<String>> {
 /// is: never scrubbed, never copied into a tag document).
 const MAX_RAW_NATIVE_BYTES: usize = 1 << 20;
 
-/// One raw frame id's payloads, split into the ones listed as a native
-/// item and the ones left alone. Frames over [`MAX_RAW_NATIVE_BYTES`]
-/// are left alone, and so is every frame of an id that holds exact
-/// duplicates (the writer cannot keep two identical frames apart). An
-/// edit of the id rewrites the listed frames only and writes the others
-/// back unchanged.
-fn raw_listing<'a>(frames: &'a [Id3FrameTruth], id: &str) -> (Vec<&'a [u8]>, Vec<&'a [u8]>) {
-    let all: Vec<&[u8]> = frames
-        .iter()
-        .filter(|frame| frame.text.is_none() && frame.id == id)
-        .map(|frame| frame.payload.as_slice())
-        .collect();
+/// Raw payloads split into the ones listed as a native item and the ones
+/// left alone. Frames over [`MAX_RAW_NATIVE_BYTES`] are left alone, and
+/// so is every frame of a set that holds exact duplicates (the writer
+/// cannot keep two identical frames apart). An edit of the id rewrites
+/// the listed frames only and writes the others back unchanged.
+fn raw_listing<'a>(all: &[&'a [u8]]) -> (Vec<&'a [u8]>, Vec<&'a [u8]>) {
     let duplicated = all
         .iter()
         .enumerate()
         .any(|(index, payload)| all[..index].contains(payload));
     if duplicated {
-        return (Vec::new(), all);
+        return (Vec::new(), all.to_vec());
     }
-    all.into_iter()
+    all.iter()
+        .copied()
         .partition(|payload| payload.len() <= MAX_RAW_NATIVE_BYTES)
+}
+
+/// The raw frames of one id a native item covers: all of them, except
+/// the `COMM` frames the comment field owns.
+fn native_pool<'a>(frames: &'a [Id3FrameTruth], id: &str) -> Vec<&'a [u8]> {
+    frames
+        .iter()
+        .filter(|frame| frame.text.is_none() && frame.id == id)
+        .map(|frame| frame.payload.as_slice())
+        .filter(|payload| id != "COMM" || !comment_owned(payload))
+        .collect()
+}
+
+/// Every frame of a raw id after a native edit of it, starting from
+/// `current`: the listed frames give way to `payloads`, the rest stay.
+/// A `COMM` edit leaves the comment field's frames alone unless it
+/// carries one itself: a native item recorded before the comment was a
+/// field listed those frames too, and replaying it puts them back.
+fn raw_after(current: &[Vec<u8>], id: &str, payloads: &[Vec<u8>]) -> Vec<Vec<u8>> {
+    let replaces_owned = id == "COMM" && payloads.iter().any(|payload| comment_owned(payload));
+    let (pool, mut kept): (Vec<&[u8]>, Vec<Vec<u8>>) = if id == "COMM" && !replaces_owned {
+        let (owned, rest): (Vec<&Vec<u8>>, Vec<&Vec<u8>>) =
+            current.iter().partition(|payload| comment_owned(payload));
+        (
+            rest.into_iter().map(Vec::as_slice).collect(),
+            owned.into_iter().cloned().collect(),
+        )
+    } else {
+        (current.iter().map(Vec::as_slice).collect(), Vec::new())
+    };
+    let (_, left) = raw_listing(&pool);
+    kept.extend(left.into_iter().map(<[u8]>::to_vec));
+    kept.extend(payloads.iter().cloned());
+    kept
 }
 
 /// ID3 frames listed whole as native items: comments, URL links,
@@ -582,16 +626,23 @@ fn vorbis_native(truth: &VorbisTruth) -> BTreeMap<String, Vec<String>> {
     out
 }
 
-/// MP4 text atoms and iTunes freeforms no writable field owns.
-fn mp4_native(atoms: &[Mp4AtomTruth]) -> BTreeMap<String, Vec<String>> {
+/// MP4 text atoms and iTunes freeforms no writable field owns, or with
+/// `owned_too`, every one that holds text (what a native edit may
+/// replace: an undo recorded before a field owned the item names it).
+fn mp4_native(atoms: &[Mp4AtomTruth], owned_too: bool) -> BTreeMap<String, Vec<String>> {
     let mut owned_codes: Vec<[u8; 4]> = vec![*b"covr"];
     let mut owned_names: Vec<&'static str> = Vec::new();
-    for field in TagField::ALL {
+    let fields: &[TagField] = if owned_too { &[] } else { &TagField::ALL };
+    for field in fields.iter().copied() {
         match field.mp4() {
-            Mp4Target::Text(code) | Mp4Target::Pair(code, _) | Mp4Target::Flag(code) => {
-                owned_codes.push(code);
-            }
-            Mp4Target::Freeform(name) => owned_names.push(name),
+            Some(
+                Mp4Target::Text(code)
+                | Mp4Target::Pair(code, _)
+                | Mp4Target::Flag(code)
+                | Mp4Target::Integer(code),
+            ) => owned_codes.push(code),
+            Some(Mp4Target::Freeform(name)) => owned_names.push(name),
+            None => {}
         }
     }
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -708,7 +759,7 @@ fn native_edit(snapshot: &Snapshot, key: &str, values: &[String]) -> Result<Nati
             // text is refused rather than lose that value.
             let listed = atoms
                 .as_deref()
-                .map(mp4_native)
+                .map(|atoms| mp4_native(atoms, true))
                 .unwrap_or_default()
                 .contains_key(key);
             let held = atoms.as_deref().is_some_and(|atoms| {
@@ -840,6 +891,7 @@ pub fn document_from_captured(
                 .map(|atom| Mp4AtomTruth {
                     kind: atom.kind,
                     items: atom.values.iter().map(mp4_item).collect(),
+                    types: vec![None; atom.values.len()],
                 })
                 .collect();
             TagField::ALL
@@ -1047,6 +1099,17 @@ fn is_key_value_id(id: &str) -> bool {
     matches!(id, "TIPL" | "TMCL")
 }
 
+/// Text frames: the `T` family minus the key-value lists, plus iTunes'
+/// movement frames (`MVNM`, `MVIN`).
+fn is_text_id(id: &str) -> bool {
+    (id.starts_with('T') && !is_key_value_id(id)) || matches!(id, "MVNM" | "MVIN")
+}
+
+/// Frames of name pairs: v2.4's `TIPL` and `TMCL`, v2.3's `IPLS`.
+fn is_people_id(id: &str) -> bool {
+    matches!(id, "TIPL" | "TMCL" | "IPLS")
+}
+
 fn parse_id3_deep(data: &[u8]) -> Result<Option<DeepId3>, Refusal> {
     if data.len() < 10 || &data[..3] != b"ID3" {
         return Ok(None);
@@ -1119,7 +1182,7 @@ fn parse_id3_deep(data: &[u8]) -> Result<Option<DeepId3>, Refusal> {
         let payload = data[offset + 10..payload_end].to_vec();
         let text = if id == "TXXX" {
             Some(decode_txxx(&payload).map_err(no_inventory)?)
-        } else if id.starts_with('T') && !is_key_value_id(&id) {
+        } else if is_text_id(&id) {
             Some(Id3TextTruth {
                 desc: None,
                 values: decode_id3_strings(&payload).map_err(no_inventory)?,
@@ -1173,10 +1236,11 @@ fn decode_id3_strings(payload: &[u8]) -> Result<Vec<String>, String> {
         _ => return Err(format!("unknown text encoding {encoding}")),
     };
     let mut values = Vec::new();
+    let mut swap = false;
     for part in parts {
         // A trailing terminator yields a trailing empty part; drop those,
         // keep interior empties (they are real values).
-        values.push(decode_id3_part(*encoding, part)?);
+        values.push(decode_id3_part_after(*encoding, part, &mut swap)?);
     }
     while values.last().is_some_and(String::is_empty) {
         values.pop();
@@ -1217,29 +1281,213 @@ fn split_utf16_units(body: &[u8]) -> Vec<&[u8]> {
     parts
 }
 
-/// The text of a `USLT` frame: encoding, three-byte language, a
-/// terminated description, then the lyrics.
+/// The text of a `USLT` frame.
 fn decode_uslt(payload: &[u8]) -> Result<String, String> {
+    decode_lang_text(payload).map(|(_, _, text)| text)
+}
+
+/// A `USLT` or `COMM` payload: encoding, three-byte language, a
+/// terminated description, then the text.
+fn decode_lang_text(payload: &[u8]) -> Result<([u8; 3], String, String), String> {
     let (&encoding, rest) = payload
         .split_first()
-        .ok_or_else(|| "empty USLT frame".to_owned())?;
-    let body = rest.get(3..).ok_or_else(|| "short USLT frame".to_owned())?;
-    let wide = matches!(encoding, 1 | 2);
-    let end = if wide {
+        .ok_or_else(|| "empty frame".to_owned())?;
+    let language: [u8; 3] = rest
+        .get(..3)
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or_else(|| "short frame".to_owned())?;
+    let body = &rest[3..];
+    let (desc_end, text_start) = if matches!(encoding, 1 | 2) {
         body.chunks_exact(2)
             .position(|pair| pair == [0, 0])
-            .map(|index| index * 2 + 2)
+            .map(|index| (index * 2, index * 2 + 2))
     } else {
         body.iter()
             .position(|byte| *byte == 0)
-            .map(|index| index + 1)
+            .map(|index| (index, index + 1))
     }
-    .ok_or_else(|| "USLT description not terminated".to_owned())?;
-    let text = decode_id3_part(encoding, &body[end..])?;
-    Ok(text.trim_end_matches('\0').to_owned())
+    .ok_or_else(|| "description not terminated".to_owned())?;
+    let mut swap = false;
+    let description = decode_id3_part_after(encoding, &body[..desc_end], &mut swap)?;
+    let text = decode_id3_part_after(encoding, &body[text_start..], &mut swap)?;
+    Ok((
+        language,
+        description,
+        text.trim_end_matches('\0').to_owned(),
+    ))
 }
 
-fn decode_id3_part(encoding: u8, part: &[u8]) -> Result<String, String> {
+/// A `COMM` frame the comment field owns: one with an empty description.
+fn comment_owned(payload: &[u8]) -> bool {
+    decode_lang_text(payload).is_ok_and(|(_, description, _)| description.is_empty())
+}
+
+/// Strings for a frame this wrapper builds, each terminated: UTF-8 in
+/// v2.4, UTF-16 with a byte-order mark in v2.3 (which has no UTF-8).
+/// Returns the encoding byte and the body.
+fn encode_id3_strings(v23: bool, parts: &[&str]) -> (u8, Vec<u8>) {
+    let mut body = Vec::new();
+    for part in parts {
+        if v23 {
+            body.extend_from_slice(&[0xFE, 0xFF]);
+            for unit in part.encode_utf16() {
+                body.extend_from_slice(&unit.to_be_bytes());
+            }
+            body.extend_from_slice(&[0, 0]);
+        } else {
+            body.extend_from_slice(part.as_bytes());
+            body.push(0);
+        }
+    }
+    (if v23 { 1 } else { 3 }, body)
+}
+
+/// A `COMM` payload with an empty description.
+fn comment_payload(v23: bool, language: [u8; 3], text: &str) -> Vec<u8> {
+    let (encoding, body) = encode_id3_strings(v23, &["", text]);
+    let mut payload = vec![encoding];
+    payload.extend_from_slice(&language);
+    payload.extend_from_slice(&body);
+    payload
+}
+
+/// The role and name pairs of a people frame, in order.
+type People = Vec<(String, String)>;
+
+/// The role and name pairs of a people frame.
+fn decode_people(payload: &[u8]) -> Result<Vec<(String, String)>, String> {
+    let values = decode_id3_strings(payload)?;
+    if values.len() % 2 != 0 {
+        return Err("a role without a name".to_owned());
+    }
+    Ok(values
+        .chunks_exact(2)
+        .map(|pair| (pair[0].clone(), pair[1].clone()))
+        .collect())
+}
+
+fn people_payload(v23: bool, pairs: &[(String, String)]) -> Vec<u8> {
+    let parts: Vec<&str> = pairs
+        .iter()
+        .flat_map(|(role, name)| [role.as_str(), name.as_str()])
+        .collect();
+    let (encoding, body) = encode_id3_strings(v23, &parts);
+    let mut payload = vec![encoding];
+    payload.extend_from_slice(&body);
+    payload
+}
+
+/// The pairs of the one people frame `id`, none when it is absent. More
+/// than one such frame, or one that does not decode, is an error.
+fn people_pairs(tag: &DeepId3, id: &str) -> Result<Vec<(String, String)>, String> {
+    let frames: Vec<&Id3FrameTruth> = tag.frames.iter().filter(|frame| frame.id == id).collect();
+    match frames.as_slice() {
+        [] => Ok(Vec::new()),
+        [one] => decode_people(&one.payload),
+        _ => Err(format!("several {id} frames")),
+    }
+}
+
+/// The frames a role's pairs are read from. Performers on v2.4 are the
+/// `TMCL` pairs, then the `TIPL` pairs outside [`INVOLVED_ROLES`]: an
+/// ID3v2.3 tag upgraded to v2.4 (mutagen's `update_to_v24`) holds its
+/// musician credits there, and Picard reads them the same way. A write
+/// moves them to `TMCL`.
+fn people_sources(id: &'static str, role: Role) -> Vec<&'static str> {
+    if id == "TMCL" && role == Role::Performer {
+        vec!["TMCL", "TIPL"]
+    } else {
+        vec![id]
+    }
+}
+
+/// Whether `role` owns a pair whose role is `pair_role` in frame `id`.
+fn role_owns(id: &str, role: Role, pair_role: &str) -> bool {
+    match role {
+        Role::Named(name) => pair_role == name,
+        Role::Performer => id == "TMCL" || !INVOLVED_ROLES.contains(&pair_role),
+    }
+}
+
+/// A musician credit as shown: `name (instrument)`, or the name alone.
+fn performer_text(instrument: &str, name: &str) -> String {
+    if instrument.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{name} ({instrument})")
+    }
+}
+
+/// A musician credit split back into instrument and name. The instrument
+/// is the balanced bracket group that ends the value, after a space, so
+/// `A (drums (drum set))` keeps its inner brackets and `Sunn O)))` stays
+/// a name. A name with no instrument that itself ends in a bracket group
+/// is split too; MusicBrainz keeps disambiguation out of names.
+fn performer_pair(value: &str) -> (String, String) {
+    if value.ends_with(')') {
+        let mut depth = 0usize;
+        for (index, c) in value.char_indices().rev() {
+            match c {
+                ')' => depth += 1,
+                '(' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        if let Some(name) = value[..index].strip_suffix(' ')
+                            && !name.is_empty()
+                        {
+                            let instrument = &value[index + 1..value.len() - 1];
+                            return (instrument.to_owned(), name.to_owned());
+                        }
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    (String::new(), value.to_owned())
+}
+
+/// `pairs` with the ones `role` owns replaced by `values`: the new pairs
+/// take the owned pairs' places in order, any extra ones follow the last
+/// owned place (the end when there was none), and owned places left over
+/// go. Every other pair keeps its place, so a write of the same number
+/// of values (an undo) puts interleaved pairs back where they were.
+fn replace_people(
+    id: &str,
+    role: Role,
+    pairs: &[(String, String)],
+    values: &[String],
+) -> Vec<(String, String)> {
+    let mut new = values.iter().map(|value| match role {
+        Role::Named(name) => (name.to_owned(), value.clone()),
+        Role::Performer => performer_pair(value),
+    });
+    let owned = pairs
+        .iter()
+        .filter(|pair| role_owns(id, role, &pair.0))
+        .count();
+    let mut seen = 0;
+    let mut out = Vec::new();
+    for pair in pairs {
+        if role_owns(id, role, &pair.0) {
+            seen += 1;
+            out.extend(new.next());
+            if seen == owned {
+                out.extend(new.by_ref());
+            }
+        } else {
+            out.push(pair.clone());
+        }
+    }
+    out.extend(new);
+    out
+}
+
+/// One string of a frame. `swap` carries the byte order from the string
+/// before: a UTF-16 string with no byte-order mark takes it. lofty writes
+/// a v2.3 multi-string frame with one mark at the very start.
+fn decode_id3_part_after(encoding: u8, part: &[u8], swap: &mut bool) -> Result<String, String> {
     match encoding {
         0 => Ok(part.iter().map(|byte| *byte as char).collect()),
         3 => std::str::from_utf8(part)
@@ -1253,16 +1501,25 @@ fn decode_id3_part(encoding: u8, part: &[u8]) -> Result<String, String> {
                 .chunks_exact(2)
                 .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
                 .collect();
-            let (units, swap) = if encoding == 1 {
+            let units = if encoding == 1 {
                 match units.first() {
-                    Some(0xFEFF) => (&units[1..], false),
-                    Some(0xFFFE) => (&units[1..], true),
-                    // Missing BOM: assume big-endian like most readers.
-                    _ => (units.as_slice(), false),
+                    Some(0xFEFF) => {
+                        *swap = false;
+                        &units[1..]
+                    }
+                    Some(0xFFFE) => {
+                        *swap = true;
+                        &units[1..]
+                    }
+                    // No mark: the order of the string before, big-endian
+                    // for the first.
+                    _ => units.as_slice(),
                 }
             } else {
-                (units.as_slice(), false)
+                *swap = false;
+                units.as_slice()
             };
+            let swap = *swap;
             char::decode_utf16(units.iter().map(
                 |unit| {
                     if swap { unit.swap_bytes() } else { *unit }
@@ -1500,6 +1757,9 @@ enum Mp4Item {
 struct Mp4AtomTruth {
     kind: [u8; 4],
     items: Vec<Mp4Item>,
+    /// Each item's data type (1 is UTF-8, 21 a signed integer), `None`
+    /// where the item has no data box or was not read from bytes.
+    types: Vec<Option<u32>>,
 }
 
 /// Walk `moov/udta/meta/ilst` and hash every child atom. `Ok(None)` when
@@ -1528,16 +1788,27 @@ fn parse_mp4_atoms(bytes: &[u8]) -> Result<Option<Vec<Mp4AtomTruth>>, Refusal> {
     let kids = read_boxes(bytes, ilst.content, ilst.end).map_err(no_inventory)?;
     let mut atoms = Vec::with_capacity(kids.len());
     for kid in &kids {
+        let (items, types) = mp4_child_items(bytes, kid).into_iter().unzip();
         atoms.push(Mp4AtomTruth {
             kind: kid.kind,
-            items: mp4_child_items(bytes, kid),
+            items,
+            types,
         });
     }
     Ok(Some(atoms))
 }
 
-/// Data payloads of one `ilst` child, interpreted by kind.
-fn mp4_child_items(bytes: &[u8], kid: &Mp4Box) -> Vec<Mp4Item> {
+/// Data payloads of one `ilst` child, interpreted by kind and data type,
+/// each with its data type.
+fn mp4_child_items(bytes: &[u8], kid: &Mp4Box) -> Vec<(Mp4Item, Option<u32>)> {
+    let data_type = |grandkid: &Mp4Box| {
+        Some(u32::from_be_bytes([
+            0,
+            bytes[grandkid.content + 1],
+            bytes[grandkid.content + 2],
+            bytes[grandkid.content + 3],
+        ]))
+    };
     let grandkids = read_boxes(bytes, kid.content, kid.end).unwrap_or_default();
     if kid.kind == *b"----" {
         let mut mean = None;
@@ -1559,10 +1830,15 @@ fn mp4_child_items(bytes: &[u8], kid: &Mp4Box) -> Vec<Mp4Item> {
         // Mean/name boxes precede the data boxes; pair positionally.
         return items
             .into_iter()
-            .map(|(mean, name, grandkid)| Mp4Item::Freeform {
-                mean: mean.unwrap_or_default(),
-                name: name.unwrap_or_default(),
-                data: bytes[grandkid.content + 8..grandkid.end].to_vec(),
+            .map(|(mean, name, grandkid)| {
+                (
+                    Mp4Item::Freeform {
+                        mean: mean.unwrap_or_default(),
+                        name: name.unwrap_or_default(),
+                        data: bytes[grandkid.content + 8..grandkid.end].to_vec(),
+                    },
+                    data_type(grandkid),
+                )
             })
             .collect();
     }
@@ -1572,25 +1848,44 @@ fn mp4_child_items(bytes: &[u8], kid: &Mp4Box) -> Vec<Mp4Item> {
             continue;
         }
         let payload = &bytes[grandkid.content + 8..grandkid.end];
-        items.push(mp4_data_item(kid.kind, payload));
+        let data_type = data_type(&grandkid);
+        items.push((mp4_data_item(kid.kind, data_type, payload), data_type));
     }
     if items.is_empty() {
-        items.push(Mp4Item::Bytes(bytes[kid.start..kid.end].to_vec()));
+        items.push((Mp4Item::Bytes(bytes[kid.start..kid.end].to_vec()), None));
     }
     items
 }
 
-fn mp4_data_item(kind: [u8; 4], payload: &[u8]) -> Mp4Item {
+/// One data payload by meaning. Only UTF-8 data (type 1), or data of the
+/// implicit type 0, can be text: an integer whose bytes happen to be
+/// printable stays an integer.
+fn mp4_data_item(kind: [u8; 4], data_type: Option<u32>, payload: &[u8]) -> Mp4Item {
     if (kind == *b"trkn" || kind == *b"disk") && payload.len() >= 6 {
         return Mp4Item::Pair(
             u32::from(u16::from_be_bytes([payload[2], payload[3]])),
             u32::from(u16::from_be_bytes([payload[4], payload[5]])),
         );
     }
+    // Movement number and count are integers, even when their bytes
+    // happen to be printable.
+    if kind == *b"\xa9mvi" || kind == *b"\xa9mvc" {
+        match payload.len() {
+            1 => return Mp4Item::Integer(u64::from(payload[0])),
+            2 => return Mp4Item::Integer(u64::from(u16::from_be_bytes([payload[0], payload[1]]))),
+            4 => {
+                return Mp4Item::Integer(u64::from(u32::from_be_bytes([
+                    payload[0], payload[1], payload[2], payload[3],
+                ])));
+            }
+            _ => {}
+        }
+    }
     if kind == *b"cpil" && payload.len() == 1 {
         return Mp4Item::Bool(payload[0] != 0);
     }
     if let Ok(text) = std::str::from_utf8(payload)
+        && matches!(data_type, None | Some(0 | 1))
         && !text.is_empty()
         && text
             .chars()
@@ -1895,7 +2190,8 @@ enum NativeEdit {
     Id3Lyrics {
         text: Option<String>,
     },
-    /// Every frame with this id, as raw payloads (none removes them).
+    /// Every frame with this id after the save, as raw payloads (none
+    /// removes them).
     Id3Raw {
         id: String,
         payloads: Vec<Vec<u8>>,
@@ -1921,6 +2217,10 @@ enum NativeEdit {
         code: [u8; 4],
         value: Option<bool>,
     },
+    Mp4Integer {
+        code: [u8; 4],
+        value: Option<i32>,
+    },
 }
 
 impl NativeEdit {
@@ -1938,10 +2238,16 @@ impl NativeEdit {
 
     fn same_target(&self, other: &NativeEdit) -> bool {
         match (self, other) {
-            (NativeEdit::Vorbis { key: a, .. }, NativeEdit::Vorbis { key: b, .. }) => a == b,
+            // Vorbis keys are matched without case on write.
+            (NativeEdit::Vorbis { key: a, .. }, NativeEdit::Vorbis { key: b, .. }) => {
+                a.eq_ignore_ascii_case(b)
+            }
             (NativeEdit::Mp4Text { code: a, .. }, NativeEdit::Mp4Text { code: b, .. })
             | (NativeEdit::Mp4Pair { code: a, .. }, NativeEdit::Mp4Pair { code: b, .. })
-            | (NativeEdit::Mp4Flag { code: a, .. }, NativeEdit::Mp4Flag { code: b, .. }) => a == b,
+            | (NativeEdit::Mp4Flag { code: a, .. }, NativeEdit::Mp4Flag { code: b, .. })
+            | (NativeEdit::Mp4Integer { code: a, .. }, NativeEdit::Mp4Integer { code: b, .. }) => {
+                a == b
+            }
             (NativeEdit::Mp4Freeform { name: a, .. }, NativeEdit::Mp4Freeform { name: b, .. }) => {
                 a == b
             }
@@ -1966,7 +2272,28 @@ fn resolve_edits(snapshot: &Snapshot, edits: &[TagEdit]) -> Result<Vec<NativeEdi
         let Some(key) = &edit.native else {
             continue;
         };
-        let native = native_edit(snapshot, key, &edit.values)?;
+        let mut native = native_edit(snapshot, key, &edit.values)?;
+        if let NativeEdit::Id3Raw { id, payloads } = &mut native {
+            let current: Vec<Vec<u8>> = match resolved.iter().find_map(|known| match known {
+                NativeEdit::Id3Raw {
+                    id: known,
+                    payloads,
+                } if known == id => Some(payloads),
+                _ => None,
+            }) {
+                Some(payloads) => payloads.clone(),
+                None => match snapshot {
+                    Snapshot::Id3 { tag: Some(tag), .. } => tag
+                        .frames
+                        .iter()
+                        .filter(|frame| frame.text.is_none() && frame.id == *id)
+                        .map(|frame| frame.payload.clone())
+                        .collect(),
+                    _ => Vec::new(),
+                },
+            };
+            *payloads = raw_after(&current, id, payloads);
+        }
         resolved.retain(|known| !known.same_target(&native));
         resolved.push(native);
     }
@@ -1984,7 +2311,125 @@ fn resolve_field_edits(snapshot: &Snapshot, edits: &[TagEdit]) -> Result<Vec<Nat
             let tag = tag.as_ref();
             let v23 = tag.is_some_and(|tag| tag.major == 3);
             let mut pairs: Vec<(&'static str, Option<String>, Option<String>)> = Vec::new();
+            // Each people frame touched: its pairs, and the field that
+            // last changed them.
+            let mut people: Vec<(&'static str, People, TagField)> = Vec::new();
+            let mut comments: Option<Vec<Vec<u8>>> = None;
             for edit in edits.iter().filter(|edit| edit.spelling.is_none()) {
+                let unencodable = |reason: String| Refusal::UnencodableItem {
+                    field: edit.field,
+                    reason,
+                };
+                if let Id3Target::People(id, role) = edit.field.id3(v23) {
+                    // Values the file already reads as (an undo or restore
+                    // replays every field) leave the frames alone: a
+                    // rewrite would move v2.4 musicians from TIPL to TMCL.
+                    let unchanged = tag.is_some_and(|tag| match id3_read(tag, edit.field) {
+                        FieldRead::Values(values) => values == edit.values,
+                        FieldRead::Absent => edit.values.is_empty(),
+                        FieldRead::Opaque => false,
+                    });
+                    if unchanged {
+                        continue;
+                    }
+                    if edit.values.iter().any(|value| value.contains('\0')) {
+                        return Err(unencodable(
+                            "a credit cannot hold a NUL character".to_owned(),
+                        ));
+                    }
+                    if role == Role::Performer {
+                        for value in &edit.values {
+                            let (instrument, name) = performer_pair(value);
+                            if performer_text(&instrument, &name) != *value {
+                                return Err(unencodable(format!(
+                                    "'{value}' would not read back as written"
+                                )));
+                            }
+                            // v2.3 keeps every credit in `IPLS`, where these
+                            // roles are not musicians.
+                            if v23 && INVOLVED_ROLES.contains(&instrument.as_str()) {
+                                return Err(unencodable(format!(
+                                    "'{value}' would read back as a {instrument} credit"
+                                )));
+                            }
+                        }
+                    }
+                    let held = |id: &str| -> Result<Vec<(String, String)>, Refusal> {
+                        Ok(tag
+                            .map(|tag| people_pairs(tag, id))
+                            .transpose()
+                            .map_err(|detail| Refusal::NoByteInventory { detail })?
+                            .unwrap_or_default())
+                    };
+                    for (index, source) in people_sources(id, role).into_iter().enumerate() {
+                        let slot = match people.iter().position(|(known, ..)| *known == source) {
+                            Some(slot) => slot,
+                            None => {
+                                let pairs = held(source)?;
+                                // A frame the role holds nothing in is
+                                // left as it is.
+                                if index > 0
+                                    && !pairs.iter().any(|pair| role_owns(source, role, &pair.0))
+                                {
+                                    continue;
+                                }
+                                people.push((source, pairs, edit.field));
+                                people.len() - 1
+                            }
+                        };
+                        // The values go to the first frame; the others
+                        // only give up the role's pairs.
+                        let values: &[String] = if index == 0 { &edit.values } else { &[] };
+                        people[slot].1 = replace_people(source, role, &people[slot].1, values);
+                        people[slot].2 = edit.field;
+                    }
+                    continue;
+                }
+                if edit.field.id3(v23) == Id3Target::Comment {
+                    let current = comments.get_or_insert_with(|| {
+                        tag.map(|tag| {
+                            tag.frames
+                                .iter()
+                                .filter(|frame| frame.id == "COMM")
+                                .map(|frame| frame.payload.clone())
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                    });
+                    let owned: Vec<&Vec<u8>> = current
+                        .iter()
+                        .filter(|payload| comment_owned(payload))
+                        .collect();
+                    if owned.len() > 1 {
+                        return Err(unencodable(
+                            "the file holds several comments; they cannot be written as one"
+                                .to_owned(),
+                        ));
+                    }
+                    // Keep the comment's language, or use English.
+                    let language = owned
+                        .first()
+                        .and_then(|payload| decode_lang_text(payload).ok())
+                        .map_or(*b"eng", |(language, _, _)| language);
+                    current.retain(|payload| !comment_owned(payload));
+                    if let Some(text) = edit.values.first() {
+                        if text.contains('\0') {
+                            return Err(unencodable(
+                                "a comment cannot hold a NUL character".to_owned(),
+                            ));
+                        }
+                        let payload = comment_payload(v23, language, text);
+                        if decode_lang_text(&payload).ok()
+                            != Some((language, String::new(), text.clone()))
+                        {
+                            return Err(unencodable(format!(
+                                "'{text}' would not read back as written"
+                            )));
+                        }
+                        current.push(payload);
+                    }
+                    continue;
+                }
                 // lofty writes v2.3 multi-values with '/', so say so up
                 // front and verify what lands.
                 let values = if v23 && edit.values.len() > 1 {
@@ -2045,7 +2490,32 @@ fn resolve_field_edits(snapshot: &Snapshot, edits: &[TagEdit]) -> Result<Vec<Nat
                             });
                         }
                     }
+                    Id3Target::People(..) | Id3Target::Comment => {}
                 }
+            }
+            for (id, pairs, field) in people {
+                let payloads = if pairs.is_empty() {
+                    Vec::new()
+                } else {
+                    let payload = people_payload(v23, &pairs);
+                    if decode_people(&payload).ok().as_ref() != Some(&pairs) {
+                        return Err(Refusal::UnencodableItem {
+                            field,
+                            reason: format!("the {id} credits would not read back as written"),
+                        });
+                    }
+                    vec![payload]
+                };
+                push(NativeEdit::Id3Raw {
+                    id: id.to_owned(),
+                    payloads,
+                });
+            }
+            if let Some(payloads) = comments {
+                push(NativeEdit::Id3Raw {
+                    id: "COMM".to_owned(),
+                    payloads,
+                });
             }
             for (id, number, total) in pairs {
                 let values = match (number, total) {
@@ -2085,11 +2555,34 @@ fn resolve_field_edits(snapshot: &Snapshot, edits: &[TagEdit]) -> Result<Vec<Nat
                     field: edit.field,
                     reason: reason.to_owned(),
                 };
-                match edit.field.mp4() {
+                let Some(target) = edit.field.mp4() else {
+                    // Nothing to remove where the format has no home.
+                    if edit.values.is_empty() {
+                        continue;
+                    }
+                    return Err(unencodable("MP4 has no home for this field"));
+                };
+                match target {
                     Mp4Target::Text(code) => push(NativeEdit::Mp4Text {
                         code,
                         values: edit.values.clone(),
                     }),
+                    Mp4Target::Integer(code) => {
+                        let value = match edit.values.first() {
+                            None => None,
+                            Some(value) => Some(
+                                value
+                                    .trim()
+                                    .parse::<i32>()
+                                    .ok()
+                                    .filter(|value| *value >= 0)
+                                    .ok_or_else(|| {
+                                        unencodable("MP4 numbers must be whole numbers")
+                                    })?,
+                            ),
+                        };
+                        push(NativeEdit::Mp4Integer { code, value });
+                    }
                     Mp4Target::Freeform(name) => push(NativeEdit::Mp4Freeform {
                         name: atoms
                             .as_deref()
@@ -2403,6 +2896,57 @@ fn id3_read(tag: &DeepId3, field: TagField) -> FieldRead {
                 _ => FieldRead::Opaque,
             }
         }
+        Id3Target::People(id, role) => {
+            let mut owned: Vec<(String, String)> = Vec::new();
+            for source in people_sources(id, role) {
+                match people_pairs(tag, source) {
+                    Ok(pairs) => owned.extend(
+                        pairs
+                            .into_iter()
+                            .filter(|(pair_role, _)| role_owns(source, role, pair_role)),
+                    ),
+                    Err(_) => return FieldRead::Opaque,
+                }
+            }
+            let values: Vec<String> = owned
+                .iter()
+                .map(|(instrument, name)| match role {
+                    Role::Named(_) => name.clone(),
+                    Role::Performer => performer_text(instrument, name),
+                })
+                .collect();
+            // A pair that would not come back from its text (no name, a
+            // name ending in parentheses) cannot be written back.
+            let faithful = owned.iter().zip(&values).all(|(pair, value)| {
+                !pair.1.is_empty()
+                    && match role {
+                        Role::Named(_) => true,
+                        Role::Performer => performer_pair(value) == *pair,
+                    }
+            });
+            if faithful {
+                values_or_absent(values)
+            } else {
+                FieldRead::Opaque
+            }
+        }
+        Id3Target::Comment => {
+            let owned: Vec<String> = tag
+                .frames
+                .iter()
+                .filter(|frame| frame.id == "COMM")
+                .filter_map(|frame| decode_lang_text(&frame.payload).ok())
+                .filter(|(_, description, _)| description.is_empty())
+                .map(|(_, _, text)| text)
+                .collect();
+            match owned.as_slice() {
+                [] => FieldRead::Absent,
+                [text] if !text.is_empty() && !text.contains('\0') => FieldRead::Values(owned),
+                // Several comments, an empty one, or one holding a NUL
+                // cannot be written back as one value.
+                _ => FieldRead::Opaque,
+            }
+        }
     }
 }
 
@@ -2459,7 +3003,10 @@ fn mp4_read(atoms: &[Mp4AtomTruth], field: TagField) -> FieldRead {
             .flat_map(|atom| atom.items.iter())
             .collect()
     };
-    match field.mp4() {
+    let Some(target) = field.mp4() else {
+        return FieldRead::Absent;
+    };
+    match target {
         Mp4Target::Text(code) => {
             let mut values = Vec::new();
             for item in items_of(code) {
@@ -2507,6 +3054,13 @@ fn mp4_read(atoms: &[Mp4AtomTruth], field: TagField) -> FieldRead {
             [] => FieldRead::Absent,
             [Mp4Item::Bool(value)] => {
                 FieldRead::Values(vec![if *value { "1" } else { "0" }.to_owned()])
+            }
+            _ => FieldRead::Opaque,
+        },
+        Mp4Target::Integer(code) => match items_of(code).as_slice() {
+            [] => FieldRead::Absent,
+            [Mp4Item::Integer(value)] if i32::try_from(*value).is_ok() => {
+                FieldRead::Values(vec![value.to_string()])
             }
             _ => FieldRead::Opaque,
         },
@@ -2658,13 +3212,10 @@ fn verify_id3(
                         && decode_uslt(&landed[0].payload).ok().as_deref() == Some(text.as_str())
                 }
             },
-            NativeEdit::Id3Raw { id, payloads } => {
-                // The frames left out of the listing stay, byte for byte,
-                // beside the edited ones.
-                let mut want: Vec<&[u8]> = before
-                    .map(|before| raw_listing(&before.frames, id).1)
-                    .unwrap_or_default();
-                want.extend(payloads.iter().map(Vec::as_slice));
+            NativeEdit::Id3Raw { payloads, .. } => {
+                // Every frame of the id, byte for byte, the ones the edit
+                // left alone included.
+                let mut want: Vec<&[u8]> = payloads.iter().map(Vec::as_slice).collect();
                 let mut got: Vec<&[u8]> = landed
                     .iter()
                     .map(|frame| frame.payload.as_slice())
@@ -2723,14 +3274,15 @@ fn verify_vorbis(
     after: Option<&VorbisTruth>,
     edits: &[NativeEdit],
 ) -> Result<(), Refusal> {
-    let expected: Vec<(&str, &Vec<String>)> = edits
+    // Keys compare without case, as the pairs are grouped.
+    let expected: Vec<(String, &Vec<String>)> = edits
         .iter()
         .filter_map(|edit| match edit {
-            NativeEdit::Vorbis { key, values } => Some((key.as_str(), values)),
+            NativeEdit::Vorbis { key, values } => Some((key.to_ascii_uppercase(), values)),
             _ => None,
         })
         .collect();
-    let edited_keys: Vec<&str> = expected.iter().map(|(key, _)| *key).collect();
+    let edited_keys: Vec<&str> = expected.iter().map(|(key, _)| key.as_str()).collect();
     match (had_tag, before, after) {
         (false, _, None) if expected.iter().all(|(_, values)| values.is_empty()) => {
             return Ok(());
@@ -2773,7 +3325,7 @@ fn verify_vorbis(
         .map(|after| grouped_pairs_all(&after.pairs))
         .unwrap_or_default();
     for (key, values) in &expected {
-        let landed = match grouped.get(*key) {
+        let landed = match grouped.get(key) {
             Some(seen) => seen == *values,
             None => values.is_empty(),
         };
@@ -2822,7 +3374,8 @@ fn verify_mp4(
         .filter_map(|edit| match edit {
             NativeEdit::Mp4Text { code, .. }
             | NativeEdit::Mp4Pair { code, .. }
-            | NativeEdit::Mp4Flag { code, .. } => Some(*code),
+            | NativeEdit::Mp4Flag { code, .. }
+            | NativeEdit::Mp4Integer { code, .. } => Some(*code),
             _ => None,
         })
         .collect();
@@ -2843,7 +3396,7 @@ fn verify_mp4(
             items.remove(code);
         }
         if let Some(freeforms) = items.get_mut(b"----") {
-            freeforms.retain(|item| {
+            freeforms.retain(|(item, _)| {
                 !matches!(item, Mp4Item::Freeform { mean, name, .. }
                     if mean == MP4_MEAN && edited_names.contains(&name.as_str()))
             });
@@ -2938,6 +3491,20 @@ fn verify_mp4(
                 };
                 (String::from_utf8_lossy(code).into_owned(), landed)
             }
+            NativeEdit::Mp4Integer { code, value } => {
+                let seen: Vec<&Mp4Item> = atoms
+                    .iter()
+                    .filter(|atom| atom.kind == *code)
+                    .flat_map(|atom| atom.items.iter())
+                    .collect();
+                let landed = match value {
+                    None => seen.is_empty(),
+                    Some(value) => {
+                        seen.as_slice() == [&Mp4Item::Integer(u64::from(value.unsigned_abs()))]
+                    }
+                };
+                (String::from_utf8_lossy(code).into_owned(), landed)
+            }
             _ => continue,
         };
         if !landed {
@@ -2947,7 +3514,7 @@ fn verify_mp4(
     Ok(())
 }
 
-fn describe_atom_diff(kind: &[u8; 4], before: &[Mp4Item], after: &[Mp4Item]) -> String {
+fn describe_atom_diff(kind: &[u8; 4], before: &[TypedItem], after: &[TypedItem]) -> String {
     let label = format!(
         "{:02x}{:02x}{:02x}{:02x}",
         kind[0], kind[1], kind[2], kind[3]
@@ -2955,9 +3522,9 @@ fn describe_atom_diff(kind: &[u8; 4], before: &[Mp4Item], after: &[Mp4Item]) -> 
     if *kind != *b"----" {
         return format!("{label} {}->{} items", before.len(), after.len());
     }
-    let grouped = |items: &[Mp4Item]| {
+    let grouped = |items: &[TypedItem]| {
         let mut map: BTreeMap<(String, String), Vec<Vec<u8>>> = BTreeMap::new();
-        for item in items {
+        for (item, _) in items {
             if let Mp4Item::Freeform { mean, name, data } = item {
                 map.entry((mean.clone(), name.clone()))
                     .or_default()
@@ -3004,19 +3571,22 @@ fn describe_atom_diff(kind: &[u8; 4], before: &[Mp4Item], after: &[Mp4Item]) -> 
     format!("{label} [{}]", diffs.join("; "))
 }
 
-/// Semantic items per atom kind, flattened across same-kind atoms in
-/// file order (lofty splits multi-data atoms on save). Freeforms sort
-/// stably by (mean, name): order across names is meaningless, order
-/// within a name is a multi-value order and stays put.
-fn atom_items(atoms: &[Mp4AtomTruth]) -> BTreeMap<[u8; 4], Vec<Mp4Item>> {
-    let mut map: BTreeMap<[u8; 4], Vec<Mp4Item>> = BTreeMap::new();
+/// An item by meaning, with its data type.
+type TypedItem = (Mp4Item, Option<u32>);
+
+/// Semantic items and their data types per atom kind, flattened across
+/// same-kind atoms in file order (lofty splits multi-data atoms on save).
+/// Freeforms sort stably by (mean, name): order across names is
+/// meaningless, order within a name is a multi-value order and stays put.
+fn atom_items(atoms: &[Mp4AtomTruth]) -> BTreeMap<[u8; 4], Vec<TypedItem>> {
+    let mut map: BTreeMap<[u8; 4], Vec<TypedItem>> = BTreeMap::new();
     for atom in atoms {
         map.entry(atom.kind)
             .or_default()
-            .extend(atom.items.iter().cloned());
+            .extend(atom.items.iter().cloned().zip(atom.types.iter().copied()));
     }
     if let Some(freeforms) = map.get_mut(b"----") {
-        freeforms.sort_by(|a, b| match (a, b) {
+        freeforms.sort_by(|(a, _), (b, _)| match (a, b) {
             (
                 Mp4Item::Freeform {
                     mean: am, name: an, ..
@@ -3103,20 +3673,9 @@ fn apply_edits(
                         }
                     }
                     NativeEdit::Id3Raw { id, payloads } => {
-                        // Only the listed frames change: the others go
-                        // back exactly as they were.
-                        let kept: Vec<Vec<u8>> = truth
-                            .map(|truth| {
-                                raw_listing(&truth.frames, id)
-                                    .1
-                                    .into_iter()
-                                    .map(<[u8]>::to_vec)
-                                    .collect()
-                            })
-                            .unwrap_or_default();
                         let frame_id = FrameId::Valid(std::borrow::Cow::Owned(id.clone()));
                         let _ = native.remove(&frame_id).count();
-                        for payload in kept.iter().chain(payloads) {
+                        for payload in payloads {
                             native.insert(Frame::Binary(lofty::id3::v2::BinaryFrame::new(
                                 frame_id.clone(),
                                 payload.clone(),
@@ -3221,6 +3780,12 @@ fn apply_edits(
                 .cloned()
                 .map(Ilst::from)
                 .unwrap_or_default();
+            if let Snapshot::Mp4 {
+                atoms: Some(atoms), ..
+            } = snapshot
+            {
+                repair_mp4_text(&mut native, atoms);
+            }
             for edit in edits {
                 match edit {
                     NativeEdit::Mp4Text { code, values } => {
@@ -3238,6 +3803,13 @@ fn apply_edits(
                         let _ = native.remove(&ident).count();
                         if let Some(value) = value {
                             native.insert(Atom::new(ident, AtomData::Bool(*value)));
+                        }
+                    }
+                    NativeEdit::Mp4Integer { code, value } => {
+                        let ident = AtomIdent::Fourcc(*code);
+                        let _ = native.remove(&ident).count();
+                        if let Some(value) = value {
+                            native.insert(Atom::new(ident, AtomData::SignedInteger(*value)));
                         }
                     }
                     NativeEdit::Mp4Pair {
@@ -3277,6 +3849,12 @@ fn apply_edits(
                     native.insert_picture(lofty_picture(spec));
                 }
             }
+            if let Snapshot::Mp4 {
+                atoms: Some(atoms), ..
+            } = snapshot
+            {
+                keep_mp4_order(&mut native, atoms);
+            }
             native
                 .save_to_path(temp, WriteOptions::new())
                 .map_err(save_failed)
@@ -3291,6 +3869,98 @@ fn apply_edits(
 fn save_failed<E: std::error::Error>(error: E) -> Refusal {
     Refusal::SaveFailed {
         reason: error_chain(&error),
+    }
+}
+
+/// Put every UTF-8 atom and freeform back as the file held it: the
+/// generic round-trip can reorder an item's values (two genres come back
+/// swapped once the tag grows). Items of any other data type, or that
+/// hold anything else, stay as lofty has them.
+fn repair_mp4_text(native: &mut Ilst, atoms: &[Mp4AtomTruth]) {
+    let mut texts: Vec<(AtomIdent<'static>, Vec<String>)> = Vec::new();
+    let mut skipped: Vec<AtomIdent<'static>> = Vec::new();
+    for atom in atoms {
+        let utf8 = |index: usize| atom.types.get(index).copied().flatten() == Some(1);
+        let found: Vec<(AtomIdent<'static>, Option<String>)> = if atom.kind == *b"----" {
+            atom.items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| match item {
+                    Mp4Item::Freeform { mean, name, data } => (
+                        AtomIdent::Freeform {
+                            mean: std::borrow::Cow::Owned(mean.clone()),
+                            name: std::borrow::Cow::Owned(name.clone()),
+                        },
+                        std::str::from_utf8(data)
+                            .ok()
+                            .filter(|text| {
+                                utf8(index)
+                                    && !text.is_empty()
+                                    && !mean.is_empty()
+                                    && !name.is_empty()
+                            })
+                            .map(str::to_owned),
+                    ),
+                    _ => (AtomIdent::Fourcc(atom.kind), None),
+                })
+                .collect()
+        } else {
+            atom.items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| match item {
+                    Mp4Item::Text(text) if utf8(index) => {
+                        (AtomIdent::Fourcc(atom.kind), Some(text.clone()))
+                    }
+                    _ => (AtomIdent::Fourcc(atom.kind), None),
+                })
+                .collect()
+        };
+        for (ident, text) in found {
+            match text {
+                Some(text) => match texts.iter_mut().find(|(known, _)| *known == ident) {
+                    Some((_, values)) => values.push(text),
+                    None => texts.push((ident, vec![text])),
+                },
+                None => skipped.push(ident),
+            }
+        }
+    }
+    // An item holding anything that is not text stays as lofty has it.
+    texts.retain(|(ident, _)| !skipped.contains(ident));
+    for (ident, values) in texts {
+        replace_mp4(native, ident, &values);
+    }
+}
+
+/// Put the `ilst` items back in the file's order: lofty's remove swaps
+/// the items left behind, and a replaced item goes to the end. Items the
+/// file did not hold follow, in the order they were added.
+fn keep_mp4_order(native: &mut Ilst, atoms: &[Mp4AtomTruth]) {
+    let mut order: Vec<AtomIdent<'static>> = Vec::new();
+    for atom in atoms {
+        if atom.kind == *b"----" {
+            for item in &atom.items {
+                if let Mp4Item::Freeform { mean, name, .. } = item {
+                    order.push(AtomIdent::Freeform {
+                        mean: std::borrow::Cow::Owned(mean.clone()),
+                        name: std::borrow::Cow::Owned(name.clone()),
+                    });
+                }
+            }
+        } else {
+            order.push(AtomIdent::Fourcc(atom.kind));
+        }
+    }
+    let mut held: Vec<Atom<'static>> = std::mem::take(native).into_iter().collect();
+    held.sort_by_key(|atom| {
+        order
+            .iter()
+            .position(|ident| ident == atom.ident())
+            .unwrap_or(order.len())
+    });
+    for atom in held {
+        native.insert(atom);
     }
 }
 
@@ -3382,6 +4052,27 @@ fn repair_id3_text(native: &mut Id3v2Tag, truth: Option<&DeepId3>) {
                 FrameId::Valid(std::borrow::Cow::Owned(frame.id.clone())),
                 TextEncoding::UTF8,
                 text.values.join("\0"),
+            )));
+        }
+    }
+    // People and comment frames go back as the bytes they were: the
+    // generic round-trip re-encodes them, and on v2.3 reads `IPLS` as a
+    // `TIPL` the sweep above removes.
+    let mut raw_ids: Vec<&str> = truth
+        .frames
+        .iter()
+        .map(|frame| frame.id.as_str())
+        .filter(|id| is_people_id(id) || *id == "COMM")
+        .collect();
+    raw_ids.sort_unstable();
+    raw_ids.dedup();
+    for id in raw_ids {
+        let frame_id = FrameId::Valid(std::borrow::Cow::Owned(id.to_owned()));
+        let _ = native.remove(&frame_id).count();
+        for frame in truth.frames.iter().filter(|frame| frame.id == id) {
+            native.insert(Frame::Binary(lofty::id3::v2::BinaryFrame::new(
+                frame_id.clone(),
+                frame.payload.clone(),
             )));
         }
     }

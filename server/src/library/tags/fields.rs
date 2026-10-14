@@ -1,6 +1,29 @@
 //! The fields the save wrapper writes: Picard's tag set, with Picard's
 //! names per format (<https://picard-docs.musicbrainz.org/en/appendices/tag_mapping.html>),
 //! so beets, Lidarr, Navidrome, Jellyfin, and Picard itself read them.
+//!
+//! Picard tag mapping, read 2026-10-14, for the fields beyond the
+//! release facts (the code below is the full list):
+//!
+//! | Field | ID3v2.4 | ID3v2.3 | Vorbis | MP4 |
+//! |---|---|---|---|---|
+//! | album_artists | TXXX:ALBUMARTISTS | same | ALBUMARTISTS | ----:ALBUMARTISTS |
+//! | work | TXXX:WORK (never TIT1) | same | WORK | ©wrk |
+//! | musicbrainz_work_id | TXXX:MusicBrainz Work Id | same | MUSICBRAINZ_WORKID | ----:MusicBrainz Work Id |
+//! | movement | MVNM | MVNM | MOVEMENTNAME | ©mvn |
+//! | movement_number, movement_count | MVIN n/m | MVIN n/m | MOVEMENT, MOVEMENTTOTAL | ©mvi, ©mvc (integer) |
+//! | composer | TCOM | TCOM | COMPOSER | ©wrt |
+//! | lyricist | TEXT | TEXT | LYRICIST | ----:LYRICIST |
+//! | conductor | TPE3 | TPE3 | CONDUCTOR | ----:CONDUCTOR |
+//! | performer | TMCL instrument, name | IPLS | PERFORMER=Name (instrument) | none |
+//! | arranger | TIPL:arranger | IPLS:arranger | ARRANGER | none |
+//! | remixer | TPE4 | TPE4 | REMIXER | ----:REMIXER |
+//! | producer | TIPL:producer | IPLS:producer | PRODUCER | ----:PRODUCER |
+//! | comment | COMM, empty description | same | COMMENT | ©cmt |
+//! | copyright | TCOP | TCOP | COPYRIGHT | cprt |
+//! | encoded_by | TENC | TENC | ENCODEDBY, ENCODED-BY | ©too |
+//! | acoustid_id | TXXX:Acoustid Id | same | ACOUSTID_ID | ----:Acoustid Id |
+//! | acoustid_fingerprint | TXXX:Acoustid Fingerprint | same | ACOUSTID_FINGERPRINT | ----:Acoustid Fingerprint |
 
 /// One writable field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -43,6 +66,24 @@ pub enum TagField {
     ReplayGainAlbumGain,
     ReplayGainAlbumPeak,
     Lyrics,
+    AlbumArtists,
+    Work,
+    MusicBrainzWorkId,
+    Movement,
+    MovementNumber,
+    MovementCount,
+    Composer,
+    Lyricist,
+    Conductor,
+    Performer,
+    Arranger,
+    Remixer,
+    Producer,
+    Comment,
+    Copyright,
+    EncodedBy,
+    AcoustIdId,
+    AcoustIdFingerprint,
 }
 
 /// How a new value for a field must look. Values replayed from a file
@@ -55,7 +96,7 @@ pub enum FieldKind {
     Count,
     /// One `YYYY`, `YYYY-MM`, or `YYYY-MM-DD` date.
     Date,
-    /// One identifier or word.
+    /// One value: an identifier, a word, or one piece of text.
     Single,
     /// `1` or `0`.
     Flag,
@@ -86,7 +127,29 @@ pub enum Id3Target {
     SplitDate,
     /// The one unsynchronised lyrics frame (`USLT`).
     Lyrics,
+    /// Name pairs in a key-value frame (`TIPL`, `TMCL`, or v2.3's `IPLS`)
+    /// that this role owns.
+    People(&'static str, Role),
+    /// The `COMM` frame with an empty description, in any language.
+    Comment,
 }
+
+/// Which pairs of a people frame a field owns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    /// Pairs whose role is this word (`producer`).
+    Named(&'static str),
+    /// Musician credits, `instrument` to name: every `TMCL` pair, and the
+    /// `TIPL` or `IPLS` pairs whose role is not one of [`INVOLVED_ROLES`]
+    /// (a v2.3 tag upgraded to v2.4 keeps them in `TIPL`; a v2.4 write
+    /// moves them to `TMCL`). A pair reads as `name (instrument)`, or
+    /// `name` when the instrument is empty.
+    Performer,
+}
+
+/// The `TIPL` roles Picard maps to their own tags; in a v2.3 `IPLS` every
+/// other role is a musician credit.
+pub const INVOLVED_ROLES: &[&str] = &["arranger", "engineer", "producer", "DJ-mix", "mix"];
 
 /// Where a field lives in an MP4 `ilst`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +160,8 @@ pub enum Mp4Target {
     Pair([u8; 4], Slot),
     /// A one-byte boolean atom.
     Flag([u8; 4]),
+    /// One integer atom (`©mvi`, `©mvc`).
+    Integer([u8; 4]),
 }
 
 /// The freeform namespace Picard and iTunes use.
@@ -105,7 +170,7 @@ pub const MP4_MEAN: &str = "com.apple.iTunes";
 pub const MUSICBRAINZ_UFID_OWNER: &str = "http://musicbrainz.org";
 
 impl TagField {
-    pub const ALL: [TagField; 38] = [
+    pub const ALL: [TagField; 56] = [
         TagField::Title,
         TagField::TitleSort,
         TagField::Artist,
@@ -144,6 +209,24 @@ impl TagField {
         TagField::ReplayGainAlbumGain,
         TagField::ReplayGainAlbumPeak,
         TagField::Lyrics,
+        TagField::AlbumArtists,
+        TagField::Work,
+        TagField::MusicBrainzWorkId,
+        TagField::Movement,
+        TagField::MovementNumber,
+        TagField::MovementCount,
+        TagField::Composer,
+        TagField::Lyricist,
+        TagField::Conductor,
+        TagField::Performer,
+        TagField::Arranger,
+        TagField::Remixer,
+        TagField::Producer,
+        TagField::Comment,
+        TagField::Copyright,
+        TagField::EncodedBy,
+        TagField::AcoustIdId,
+        TagField::AcoustIdFingerprint,
     ];
 
     /// The managed-field name publish requests and documents use.
@@ -187,6 +270,24 @@ impl TagField {
             TagField::ReplayGainAlbumGain => "replaygain_album_gain",
             TagField::ReplayGainAlbumPeak => "replaygain_album_peak",
             TagField::Lyrics => "lyrics",
+            TagField::AlbumArtists => "album_artists",
+            TagField::Work => "work",
+            TagField::MusicBrainzWorkId => "musicbrainz_work_id",
+            TagField::Movement => "movement",
+            TagField::MovementNumber => "movement_number",
+            TagField::MovementCount => "movement_count",
+            TagField::Composer => "composer",
+            TagField::Lyricist => "lyricist",
+            TagField::Conductor => "conductor",
+            TagField::Performer => "performer",
+            TagField::Arranger => "arranger",
+            TagField::Remixer => "remixer",
+            TagField::Producer => "producer",
+            TagField::Comment => "comment",
+            TagField::Copyright => "copyright",
+            TagField::EncodedBy => "encoded_by",
+            TagField::AcoustIdId => "acoustid_id",
+            TagField::AcoustIdFingerprint => "acoustid_fingerprint",
         }
     }
 
@@ -223,7 +324,9 @@ impl TagField {
             TagField::TrackNumber
             | TagField::TrackTotal
             | TagField::DiscNumber
-            | TagField::DiscTotal => FieldKind::Count,
+            | TagField::DiscTotal
+            | TagField::MovementNumber
+            | TagField::MovementCount => FieldKind::Count,
             TagField::Date | TagField::OriginalDate => FieldKind::Date,
             TagField::Compilation => FieldKind::Flag,
             TagField::ReleaseStatus
@@ -235,7 +338,10 @@ impl TagField {
             | TagField::MusicBrainzRecordingId
             | TagField::MusicBrainzReleaseTrackId
             | TagField::MusicBrainzReleaseId
-            | TagField::MusicBrainzReleaseGroupId => FieldKind::Single,
+            | TagField::MusicBrainzReleaseGroupId
+            | TagField::AcoustIdId
+            | TagField::AcoustIdFingerprint
+            | TagField::Comment => FieldKind::Single,
             TagField::ReplayGainTrackGain | TagField::ReplayGainAlbumGain => FieldKind::Gain,
             TagField::ReplayGainTrackPeak | TagField::ReplayGainAlbumPeak => FieldKind::Peak,
             _ => FieldKind::Text,
@@ -285,6 +391,24 @@ impl TagField {
             TagField::ReplayGainAlbumGain => &["REPLAYGAIN_ALBUM_GAIN"],
             TagField::ReplayGainAlbumPeak => &["REPLAYGAIN_ALBUM_PEAK"],
             TagField::Lyrics => &["LYRICS", "UNSYNCEDLYRICS"],
+            TagField::AlbumArtists => &["ALBUMARTISTS"],
+            TagField::Work => &["WORK"],
+            TagField::MusicBrainzWorkId => &["MUSICBRAINZ_WORKID"],
+            TagField::Movement => &["MOVEMENTNAME"],
+            TagField::MovementNumber => &["MOVEMENT"],
+            TagField::MovementCount => &["MOVEMENTTOTAL"],
+            TagField::Composer => &["COMPOSER"],
+            TagField::Lyricist => &["LYRICIST"],
+            TagField::Conductor => &["CONDUCTOR"],
+            TagField::Performer => &["PERFORMER"],
+            TagField::Arranger => &["ARRANGER"],
+            TagField::Remixer => &["REMIXER"],
+            TagField::Producer => &["PRODUCER"],
+            TagField::Comment => &["COMMENT"],
+            TagField::Copyright => &["COPYRIGHT"],
+            TagField::EncodedBy => &["ENCODEDBY", "ENCODED-BY"],
+            TagField::AcoustIdId => &["ACOUSTID_ID"],
+            TagField::AcoustIdFingerprint => &["ACOUSTID_FINGERPRINT"],
         }
     }
 
@@ -292,7 +416,11 @@ impl TagField {
     /// `TYER`/`TDAT`/`TIME` and the original date to `TORY` (year only).
     /// lofty's v2.3 writer drops `TSOP`, `TSOA`, `TSOT`, and `TSST`, so in
     /// v2.3 those fields go to `TXXX` frames; `TSO2` survives and is used in
-    /// both versions.
+    /// both versions. Probed against lofty 0.25.4 (2026-10-14): its v2.3
+    /// writer keeps `MVNM`, `MVIN`, `TCOP`, `TENC`, `TEXT`, `TPE3`, `TPE4`
+    /// and `TCOM`. It reads `IPLS` as a `TIPL` and writes key-value frames
+    /// back merged, so the wrapper writes the people frames (`TIPL`,
+    /// `TMCL`, `IPLS`) and the comment frame from its own bytes.
     pub fn id3(self, v23: bool) -> Id3Target {
         match self {
             TagField::Title => Id3Target::Text("TIT2"),
@@ -339,11 +467,35 @@ impl TagField {
             TagField::ReplayGainAlbumGain => Id3Target::User("REPLAYGAIN_ALBUM_GAIN"),
             TagField::ReplayGainAlbumPeak => Id3Target::User("REPLAYGAIN_ALBUM_PEAK"),
             TagField::Lyrics => Id3Target::Lyrics,
+            TagField::AlbumArtists => Id3Target::User("ALBUMARTISTS"),
+            // Never `TIT1`, which most players read as the grouping.
+            TagField::Work => Id3Target::User("WORK"),
+            TagField::MusicBrainzWorkId => Id3Target::User("MusicBrainz Work Id"),
+            TagField::Movement => Id3Target::Text("MVNM"),
+            TagField::MovementNumber => Id3Target::Pair("MVIN", Slot::Number),
+            TagField::MovementCount => Id3Target::Pair("MVIN", Slot::Total),
+            TagField::Composer => Id3Target::Text("TCOM"),
+            TagField::Lyricist => Id3Target::Text("TEXT"),
+            TagField::Conductor => Id3Target::Text("TPE3"),
+            TagField::Remixer => Id3Target::Text("TPE4"),
+            TagField::Performer if v23 => Id3Target::People("IPLS", Role::Performer),
+            TagField::Performer => Id3Target::People("TMCL", Role::Performer),
+            TagField::Arranger if v23 => Id3Target::People("IPLS", Role::Named("arranger")),
+            TagField::Arranger => Id3Target::People("TIPL", Role::Named("arranger")),
+            TagField::Producer if v23 => Id3Target::People("IPLS", Role::Named("producer")),
+            TagField::Producer => Id3Target::People("TIPL", Role::Named("producer")),
+            TagField::Comment => Id3Target::Comment,
+            TagField::Copyright => Id3Target::Text("TCOP"),
+            TagField::EncodedBy => Id3Target::Text("TENC"),
+            TagField::AcoustIdId => Id3Target::User("Acoustid Id"),
+            TagField::AcoustIdFingerprint => Id3Target::User("Acoustid Fingerprint"),
         }
     }
 
-    pub fn mp4(self) -> Mp4Target {
-        match self {
+    /// The MP4 home, or `None` when the format has none (Picard and v2
+    /// write no performer or arranger to MP4).
+    pub fn mp4(self) -> Option<Mp4Target> {
+        Some(match self {
             TagField::Title => Mp4Target::Text(*b"\xa9nam"),
             TagField::TitleSort => Mp4Target::Text(*b"sonm"),
             TagField::Artist => Mp4Target::Text(*b"\xa9ART"),
@@ -388,6 +540,23 @@ impl TagField {
             TagField::ReplayGainAlbumGain => Mp4Target::Freeform("replaygain_album_gain"),
             TagField::ReplayGainAlbumPeak => Mp4Target::Freeform("replaygain_album_peak"),
             TagField::Lyrics => Mp4Target::Text(*b"\xa9lyr"),
-        }
+            TagField::AlbumArtists => Mp4Target::Freeform("ALBUMARTISTS"),
+            TagField::Work => Mp4Target::Text(*b"\xa9wrk"),
+            TagField::MusicBrainzWorkId => Mp4Target::Freeform("MusicBrainz Work Id"),
+            TagField::Movement => Mp4Target::Text(*b"\xa9mvn"),
+            TagField::MovementNumber => Mp4Target::Integer(*b"\xa9mvi"),
+            TagField::MovementCount => Mp4Target::Integer(*b"\xa9mvc"),
+            TagField::Composer => Mp4Target::Text(*b"\xa9wrt"),
+            TagField::Lyricist => Mp4Target::Freeform("LYRICIST"),
+            TagField::Conductor => Mp4Target::Freeform("CONDUCTOR"),
+            TagField::Remixer => Mp4Target::Freeform("REMIXER"),
+            TagField::Producer => Mp4Target::Freeform("PRODUCER"),
+            TagField::Comment => Mp4Target::Text(*b"\xa9cmt"),
+            TagField::Copyright => Mp4Target::Text(*b"cprt"),
+            TagField::EncodedBy => Mp4Target::Text(*b"\xa9too"),
+            TagField::AcoustIdId => Mp4Target::Freeform("Acoustid Id"),
+            TagField::AcoustIdFingerprint => Mp4Target::Freeform("Acoustid Fingerprint"),
+            TagField::Performer | TagField::Arranger => return None,
+        })
     }
 }

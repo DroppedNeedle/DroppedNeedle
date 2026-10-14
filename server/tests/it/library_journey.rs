@@ -5580,17 +5580,21 @@ async fn library_management_artwork_journey() {
     assert_eq!(after.pictures.len(), 1, "one cover, nothing piled up");
     assert_eq!(after.pictures[0].kind, 3);
     assert!(!after.native.contains_key("mp4:----:MOOD"), "scrubbed");
+    // Composer and work id are fields now: read back from the file's
+    // own atoms, not listed as native items.
     assert_eq!(
-        after.native.get("mp4:\u{a9}wrt"),
+        after.values.get(&TagField::Composer),
         Some(&vec!["Ada Composer".to_owned()]),
         "composer kept"
     );
-    assert!(
-        after
-            .native
-            .keys()
-            .any(|key| key.eq_ignore_ascii_case("mp4:----:MusicBrainz Work Id")),
+    assert_eq!(
+        after.values.get(&TagField::MusicBrainzWorkId),
+        Some(&vec!["c0ffee00-0000-4000-8000-00000000f001".to_owned()]),
         "work id kept"
+    );
+    assert!(
+        !after.native.contains_key("mp4:\u{a9}wrt"),
+        "composer is a field, not a native item"
     );
     assert_eq!(
         after.values.get(&TagField::Isrc),
