@@ -397,11 +397,12 @@ fn header_str(map: &HeaderMap, name: &str) -> String {
         .to_owned()
 }
 
-/// A song's `path` is where its file sits under its own library folder,
-/// and says nothing of where on the host that folder is. A second folder
-/// is added so a path that carried its folder would show.
+/// A song's path, on Subsonic and on a Jellyfin track fetched by id, is
+/// where its file sits under its own library folder, and says nothing of
+/// where on the host that folder is. A second folder is added so a path
+/// that carried its folder would show.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn subsonic_song_path_never_carries_the_host_path() {
+async fn song_paths_never_carry_the_host_path() {
     let rig = CompatApp::start("compat-song-path").await;
     let auth = rig.subsonic_auth("path-check");
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -463,6 +464,49 @@ async fn subsonic_song_path_never_carries_the_host_path() {
     for path in &paths {
         assert!(!path.starts_with('/'), "{path} is absolute");
         assert!(!path.contains(&host), "{path} carries the host path");
+    }
+
+    // Jellyfin sends the same path on a track fetched by id, and an empty
+    // one on the library view, an album and an artist.
+    let jellyfin = rig.jellyfin_auth();
+    let auth = [("X-Emby-Authorization", jellyfin.as_str())];
+    let (status, views) = rig
+        .app
+        .call("GET", "/jellyfin/UserViews", &auth, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{views}");
+    assert_eq!(views["Items"][0]["Path"], json!(""), "{views}");
+    let (status, tracks) = rig
+        .app
+        .call(
+            "GET",
+            "/jellyfin/Items?includeItemTypes=Audio&Recursive=true",
+            &auth,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{tracks}");
+    let first = &tracks["Items"][0];
+    let mut jellyfin_paths = Vec::new();
+    for track in tracks["Items"].as_array().expect("tracks") {
+        let id = track["Id"].as_str().expect("track id");
+        let (status, item) = rig
+            .app
+            .call("GET", &format!("/jellyfin/Items/{id}"), &auth, None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{item}");
+        jellyfin_paths.push(item["Path"].as_str().expect("track path").to_owned());
+    }
+    jellyfin_paths.sort();
+    assert_eq!(jellyfin_paths, expected);
+    for id in [&first["AlbumId"], &first["AlbumArtists"][0]["Id"]] {
+        let id = id.as_str().expect("album or artist id");
+        let (status, item) = rig
+            .app
+            .call("GET", &format!("/jellyfin/Items/{id}"), &auth, None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{item}");
+        assert_eq!(item["Path"], json!(""), "{item}");
     }
     rig.stop().await;
 }
