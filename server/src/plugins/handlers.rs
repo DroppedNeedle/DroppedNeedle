@@ -923,14 +923,19 @@ const PANEL_PAGE_TAIL: &[u8] = b"</script></body></html>";
 /// What the panel page may do. It is plugin code shown inside the admin UI,
 /// so the page is sealed: `sandbox allow-scripts` gives it an origin of its
 /// own with no cookies or storage, even when the address is opened in its
-/// own tab, and only the app may frame it. Inline script and style run,
-/// pictures come from `data:` and `blob:` only, and nothing else loads or
-/// connects. Never add `allow-same-origin`: the script would then run as the
-/// app, with the admin's session.
-const PANEL_PAGE_POLICY: &str = "default-src 'none'; script-src 'unsafe-inline'; \
-style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; frame-src 'none'; \
-object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; \
-sandbox allow-scripts";
+/// own tab, and only the app may frame it, along with whatever an admin
+/// allowed to frame the app. Inline script and style run, pictures come from
+/// `data:` and `blob:` only, and nothing else loads or connects. Never add
+/// `allow-same-origin`: the script would then run as the app, with the
+/// admin's session.
+fn panel_page_policy(config: &ConfigStore) -> String {
+    format!(
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; \
+         img-src data: blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; \
+         base-uri 'none'; form-action 'none'; frame-ancestors {}; sandbox allow-scripts",
+        crate::security_headers::framed_page_ancestors(config)
+    )
+}
 
 /// The panel script with every `</script` (any case) broken up, so its text
 /// cannot close the element it is inlined into. `<\/script` reads the same
@@ -1059,6 +1064,7 @@ pub async fn plugin_panel_page(
         &normalized,
         &name,
         &if_none_match,
+        &panel_page_policy(&deps.config),
         deps.ids.as_ref(),
     )
     .await
@@ -1069,6 +1075,7 @@ async fn serve_panel_file(
     entry: &str,
     plugin_name: &str,
     if_none_match: &str,
+    policy: &str,
     ids: &dyn IdGenerator,
 ) -> Result<Response, PluginError> {
     let base = tokio::fs::canonicalize(directory)
@@ -1114,7 +1121,7 @@ async fn serve_panel_file(
     let builder = Response::builder()
         .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
         .header("x-content-type-options", "nosniff")
-        .header("content-security-policy", PANEL_PAGE_POLICY)
+        .header("content-security-policy", policy)
         .header("cache-control", "private, max-age=60, must-revalidate")
         .header("etag", etag.clone())
         .header(

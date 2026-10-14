@@ -12049,6 +12049,11 @@ export interface components {
             /** @description Owning source. */
             source: components["schemas"]["SourceName"];
         };
+        /**
+         * @description How the web UI's content-security policy is sent.
+         * @enum {string}
+         */
+        ContentSecurityPolicyMode: "enforce" | "report_only" | "off";
         /** @description Save an edited draft. */
         ContributionDraftBody: {
             /** @description The whole draft. */
@@ -21136,6 +21141,15 @@ export interface components {
         };
         /** @description Security posture settings (no secrets; the HIBP path is a local file). */
         SecuritySettings: {
+            /** @default report_only */
+            content_security_policy: components["schemas"]["ContentSecurityPolicyMode"];
+            /**
+             * @description Up to eight origins that may show DroppedNeedle in a frame, such as
+             *     a dashboard at `https://home.example.com`. Empty: nobody may.
+             *     Stored the way a browser sends `Origin`.
+             * @default []
+             */
+            frame_ancestors: string[];
             /**
              * @description Check passwords against Have-I-Been-Pwned.
              * @default true

@@ -28429,6 +28429,15 @@
           }
         }
       },
+      "ContentSecurityPolicyMode": {
+        "type": "string",
+        "description": "How the web UI's content-security policy is sent.",
+        "enum": [
+          "enforce",
+          "report_only",
+          "off"
+        ]
+      },
       "ContributionDraftBody": {
         "type": "object",
         "description": "Save an edited draft.",
@@ -48824,6 +48833,23 @@
         "type": "object",
         "description": "Security posture settings (no secrets; the HIBP path is a local file).",
         "properties": {
+          "content_security_policy": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ContentSecurityPolicyMode",
+                "description": "How the web UI's content-security policy is sent."
+              }
+            ],
+            "default": "report_only"
+          },
+          "frame_ancestors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Up to eight origins that may show DroppedNeedle in a frame, such as\na dashboard at `https://home.example.com`. Empty: nobody may.\nStored the way a browser sends `Origin`.",
+            "default": []
+          },
           "hibp_check": {
             "type": "boolean",
             "description": "Check passwords against Have-I-Been-Pwned.",

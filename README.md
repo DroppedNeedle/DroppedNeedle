@@ -284,6 +284,8 @@ HSTS is off by default and set under Settings > Security: a max-age in seconds (
 
 Setting the max-age back to 0 stops the header but does not make browsers forget: each one keeps refusing plain HTTP until the max-age it last saw runs out. To end that early, set the max-age to 1, open DroppedNeedle over HTTPS once in every browser that used it, then set it to 0. Failing that, clear the site's HSTS entry in the browser. A domain that was submitted to the browsers' preload list has to be removed through hstspreload.org as well, which takes months.
 
+The web UI is served with a content-security policy: a header that tells the browser which scripts, styles, pictures, audio and frames the page may load, and who may show it in a frame. For now it is sent in report-only mode, so the browser lists in its console what the policy would refuse and refuses nothing, except for frames: who may show DroppedNeedle in a frame, and what its own frames may open, are enforced from the start. Settings > Security > Content-security policy has the two settings. "Policy" is `Report only` (the default), `Enforce` (the browser refuses what the policy does not allow) or `Off` (no policy is sent). "Allowed to frame DroppedNeedle" is a list of up to eight addresses, such as a dashboard at `https://home.example.com`, written like a public address: scheme, host and port, no path. It is empty by default, and unless the setting is `Off` nothing that is not on it can show DroppedNeedle in a frame. A dashboard on the same site (another subdomain of the same domain, or the same host on another port) works; one on another site shows the sign-in page, because the browser does not send the sign-in cookie there. A change to either applies from the next page load. Every other response (the API, covers, streams, files) carries a fixed policy under which nothing runs, unless the setting is `Off`. The Subsonic and Jellyfin APIs are not touched. If your reverse proxy adds a `Content-Security-Policy` of its own, the browser applies both and the stricter one wins on each point.
+
 With `BASE_PATH` set, everything moves under it: the web UI, `/api/v3`, the Subsonic and Jellyfin APIs, and `/health` (the container health check follows it). Point your proxy at the prefix without stripping it.
 
 <details>
@@ -348,7 +350,7 @@ Where things live in the UI:
 | Main listening source (ListenBrainz or Last.fm) | Settings > Music Source |
 | MusicBrainz server (official or your own mirror) | Settings > MusicBrainz |
 | Users, roles, Jellyfin and Plex user import | Settings > Users |
-| Password breach checking, HSTS, who can download library files | Settings > Security |
+| Password breach checking, HSTS, the content-security policy, who can download library files | Settings > Security |
 | Discover queue and top picks tuning | Settings > Advanced |
 
 Album covers come from your own files first: an image in the album folder (`cover.jpg`, `folder.png`, `front.jpg` and the like) or a picture embedded in a track. The library picks these up after each scan, and large pictures are scaled down for the grid. Albums without local art get their cover from the Cover Art Archive, cached on disk. To prefer the Cover Art Archive over your files, turn off "Prefer local cover art" under Settings > Advanced.

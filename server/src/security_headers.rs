@@ -23,13 +23,14 @@ use axum::{
     middleware::Next,
     response::Response,
 };
+use sha2::Digest as _;
 
 use crate::{
     auth::session::middleware::{TrustedProxies, arrived_over_https},
     compat::shared::path_case::is_compat_path,
     runtime_config::{
         ConfigStore,
-        sections::{HSTS_MAX_AGE_LIMIT, SecuritySettings},
+        sections::{ContentSecurityPolicyMode, HSTS_MAX_AGE_LIMIT, SecuritySettings},
     },
     state::AppState,
 };
@@ -55,9 +56,15 @@ const BARE_POLICY: &str = "default-src 'none'; frame-ancestors 'none'; sandbox";
 /// address, which the session origin check falls back on.
 const REFERRER_POLICY: &str = "strict-origin-when-cross-origin";
 
-/// The header the page's policy goes under: the browser reports what the
-/// policy would refuse and refuses nothing.
-const SHELL_POLICY_HEADER: HeaderName = header::CONTENT_SECURITY_POLICY_REPORT_ONLY;
+/// The header the page's policy goes under in each mode. `None` when the
+/// admin turned the policy off.
+fn shell_policy_header(mode: ContentSecurityPolicyMode) -> Option<HeaderName> {
+    match mode {
+        ContentSecurityPolicyMode::Enforce => Some(header::CONTENT_SECURITY_POLICY),
+        ContentSecurityPolicyMode::ReportOnly => Some(header::CONTENT_SECURITY_POLICY_REPORT_ONLY),
+        ContentSecurityPolicyMode::Off => None,
+    }
+}
 
 /// The page's policy, one directive each, without `script-src` and
 /// `frame-ancestors`, which [`shell_policy`] adds.
@@ -97,9 +104,7 @@ const SHELL_DIRECTIVES: &[&str] = &[
     "font-src 'self'",
     // Every request the app makes goes to its own address.
     "connect-src 'self'",
-    // The plugin panel page and YouTube embeds. It also holds a frame to
-    // those addresses when the frame's own script navigates it.
-    "frame-src 'self' https://www.youtube.com",
+    FRAME_SRC,
     // No worker, worklet or plugin content exists.
     "worker-src 'none'",
     "manifest-src 'self'",
@@ -117,8 +122,31 @@ const SHELL_DIRECTIVES: &[&str] = &[
 const SCRIPT_SOURCES: &str = "'self' 'report-sample' https://www.youtube.com/iframe_api \
      https://www.youtube.com/s/player/";
 
-/// The page's policy for these inline-script hashes.
-fn shell_policy(script_hashes: &[String]) -> String {
+/// The frames the page may hold: the plugin panel page and YouTube embeds.
+/// It also holds a frame to those addresses when the frame's own script
+/// navigates it.
+const FRAME_SRC: &str = "frame-src 'self' https://www.youtube.com";
+
+/// Who may frame the page: nobody, but the addresses an admin listed.
+fn frame_ancestors(framing: &[String]) -> String {
+    if framing.is_empty() {
+        "frame-ancestors 'none'".to_owned()
+    } else {
+        format!("frame-ancestors {}", framing.join(" "))
+    }
+}
+
+/// What is enforced about frames while the page's policy only reports.
+/// Report-only is there so a mismatched boot script cannot blank the page;
+/// framing has no such risk, so who may frame the page and where its frames
+/// may go are enforced from the start.
+fn framing_policy(framing: &[String]) -> String {
+    format!("{FRAME_SRC}; {}", frame_ancestors(framing))
+}
+
+/// The page's policy for these inline-script hashes and these framing
+/// sources (see [`SecuritySettings::framing_sources`]).
+fn shell_policy(script_hashes: &[String], framing: &[String]) -> String {
     let mut policy = SHELL_DIRECTIVES.join("; ");
     policy.push_str("; script-src ");
     policy.push_str(SCRIPT_SOURCES);
@@ -127,23 +155,141 @@ fn shell_policy(script_hashes: &[String]) -> String {
         policy.push_str(hash);
         policy.push('\'');
     }
-    // Nobody may put the app in a frame.
-    policy.push_str("; frame-ancestors 'none'");
+    policy.push_str("; ");
+    policy.push_str(&frame_ancestors(framing));
     policy
+}
+
+/// Who may frame a page the app itself shows in a frame (the plugin panel
+/// page), as the sources of that page's `frame-ancestors`: the app, plus
+/// the addresses an admin allowed to frame the app. The browser checks
+/// every ancestor up to the top, so a dashboard that frames the app has to
+/// be named here too or the inner frame stays empty. Unreadable settings
+/// leave the app alone.
+pub fn framed_page_ancestors(config: &ConfigStore) -> String {
+    let mut sources = vec!["'self'".to_owned()];
+    match config.get::<SecuritySettings>() {
+        Ok(settings) => sources.extend(settings.framing_sources()),
+        Err(error) => {
+            tracing::debug!(%error, "security settings unreadable; framing by the app only")
+        }
+    }
+    sources.join(" ")
+}
+
+/// What the content-security layer needs: the live settings.
+#[derive(Debug, Clone)]
+pub struct ContentSecurity {
+    config: Arc<ConfigStore>,
+}
+
+impl ContentSecurity {
+    /// Follow the settings in `config`.
+    pub fn new(config: Arc<ConfigStore>) -> Self {
+        Self { config }
+    }
+
+    /// Follow the settings the rest of the server reads.
+    pub fn from_state(state: &AppState) -> Self {
+        Self::new(state.auth.config_store.clone())
+    }
+
+    /// The saved settings. Unreadable ones give the default mode and no
+    /// framing, never a missing policy.
+    fn settings(&self) -> SecuritySettings {
+        self.config.get::<SecuritySettings>().unwrap_or_else(|error| {
+            tracing::debug!(%error, "security settings unreadable; default content-security policy");
+            SecuritySettings::default()
+        })
+    }
+}
+
+/// A short mark for how these settings send the page's policy, added to the
+/// page's `ETag`.
+///
+/// A browser that revalidates a cached page and gets a 304 keeps every
+/// header of the cached answer that the 304 does not carry. Without the
+/// mark, a page cached while the policy was enforced would stay enforced
+/// after an admin chose report-only or off, and would keep an old framing
+/// list. With it, a page cached under other settings no longer matches and
+/// is sent again in full.
+fn policy_mark(settings: &SecuritySettings) -> String {
+    let mode = match settings.content_security_policy {
+        ContentSecurityPolicyMode::Enforce => "enforce",
+        ContentSecurityPolicyMode::ReportOnly => "report",
+        ContentSecurityPolicyMode::Off => "off",
+    };
+    let digest = sha2::Sha256::digest(format!("{mode} {}", settings.framing_sources().join(" ")));
+    let short: String = digest
+        .iter()
+        .take(4)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!("-csp{short}")
+}
+
+/// Take the current mark off the entity tags a browser sent back, so the
+/// file server compares the tag it made. A tag with another mark, from other
+/// settings, is left as it is and matches nothing.
+fn unmark_if_none_match(request: &mut Request, mark: &str) {
+    let Some(sent) = request
+        .headers()
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return;
+    };
+    let unmarked = sent.replace(&format!("{mark}\""), "\"");
+    if let Ok(value) = HeaderValue::from_str(&unmarked) {
+        request.headers_mut().insert(header::IF_NONE_MATCH, value);
+    }
+}
+
+/// Add the mark to the page's entity tag, inside the quotes.
+fn mark_etag(headers: &mut axum::http::HeaderMap, mark: &str) {
+    let marked = headers
+        .get(header::ETAG)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|tag| tag.strip_suffix('"'))
+        .and_then(|open| HeaderValue::from_str(&format!("{open}{mark}\"")).ok());
+    if let Some(value) = marked {
+        headers.insert(header::ETAG, value);
+    }
 }
 
 /// Add `X-Content-Type-Options: nosniff` and a content-security policy to a
 /// native response: the page's policy on the web UI's page, with
 /// `Referrer-Policy`, and [`BARE_POLICY`] on everything else. A compat
 /// response is left exactly as it is, and so is a policy a route set.
-pub async fn content_security(request: Request, next: Next) -> Response {
-    let compat = is_compat_path(request.uri().path());
-    let mut response = next.run(request).await;
-    if compat {
-        return response;
+///
+/// The Security settings choose how the page's policy is sent and who may
+/// frame the page. They are read once per request, before the handler, so
+/// the policy sent and the mark on the page's `ETag` always agree; a change
+/// applies from the next request. In report-only mode the framing rules
+/// are still enforced ([`framing_policy`]). Turned off, no policy is added
+/// anywhere and `nosniff` stays.
+///
+/// Of the request, only `If-None-Match` is read, and only to be compared:
+/// see [`policy_mark`]. Nothing a request sends reaches a policy.
+pub async fn content_security(
+    State(security): State<ContentSecurity>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    if is_compat_path(request.uri().path()) {
+        return next.run(request).await;
     }
+    let settings = security.settings();
+    let mark = policy_mark(&settings);
+    if request.headers().contains_key(header::IF_NONE_MATCH) {
+        unmark_if_none_match(&mut request, &mark);
+    }
+    let mut response = next.run(request).await;
     let shell = response.extensions().get::<AppShell>().cloned();
     let headers = response.headers_mut();
+    if shell.is_some() {
+        mark_etag(headers, &mark);
+    }
     if !headers.contains_key(header::X_CONTENT_TYPE_OPTIONS) {
         headers.insert(
             header::X_CONTENT_TYPE_OPTIONS,
@@ -156,16 +302,30 @@ pub async fn content_security(request: Request, next: Next) -> Response {
             HeaderValue::from_static(REFERRER_POLICY),
         );
     }
+    let Some(shell_header) = shell_policy_header(settings.content_security_policy) else {
+        return response;
+    };
     if headers.contains_key(header::CONTENT_SECURITY_POLICY) {
         return response;
     }
     match shell {
-        Some(shell) => match HeaderValue::from_str(&shell_policy(&shell.script_hashes)) {
-            Ok(value) => {
-                headers.insert(SHELL_POLICY_HEADER, value);
+        Some(shell) => {
+            let framing = settings.framing_sources();
+            let mut policies = vec![(shell_header, shell_policy(&shell.script_hashes, &framing))];
+            if settings.content_security_policy == ContentSecurityPolicyMode::ReportOnly {
+                policies.push((header::CONTENT_SECURITY_POLICY, framing_policy(&framing)));
             }
-            Err(error) => tracing::error!(%error, "the page's policy is not a header value"),
-        },
+            for (name, policy) in policies {
+                match HeaderValue::from_str(&policy) {
+                    Ok(value) => {
+                        headers.insert(name, value);
+                    }
+                    Err(error) => {
+                        tracing::error!(%error, "the page's policy is not a header value");
+                    }
+                }
+            }
+        }
         None => {
             headers.insert(
                 header::CONTENT_SECURITY_POLICY,

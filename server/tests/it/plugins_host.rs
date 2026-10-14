@@ -559,12 +559,24 @@ async fn plugin_routes_need_sessions_and_admins() {
 /// The panel page is plugin script shown inside the admin UI. Its policy is
 /// what keeps that script out of the app's origin, so it is on every answer
 /// a browser can cache, and the script text cannot close its own element.
+/// Only the app may frame it, plus the addresses an admin allowed to frame
+/// the app: a browser checks every ancestor, so a panel inside a framed app
+/// would otherwise stay empty. The layer that gives every other answer its
+/// policy leaves this one as the route set it.
 #[tokio::test]
 async fn the_panel_page_is_sealed_on_every_answer() {
-    const POLICY: &str = "default-src 'none'; script-src 'unsafe-inline'; \
-        style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; \
-        frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; \
-        frame-ancestors 'self'; sandbox allow-scripts";
+    use droppedneedle::runtime_config::sections::SecuritySettings;
+    use droppedneedle::security_headers::{ContentSecurity, content_security};
+
+    const DASHBOARD: &str = "https://home.example.com";
+    let policy = |ancestors: &str| {
+        format!(
+            "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; \
+             img-src data: blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; \
+             base-uri 'none'; form-action 'none'; frame-ancestors {ancestors}; \
+             sandbox allow-scripts"
+        )
+    };
     let rig = rig("panel");
     let manifest = format!("{TOY_MANIFEST}[plugin_ui]\nentry = \"ui/panel.js\"\n");
     write_plugin(&rig.dir, "toy", &manifest);
@@ -582,9 +594,14 @@ async fn the_panel_page_is_sealed_on_every_answer() {
         if let Some(etag) = etag {
             request = request.header("if-none-match", etag);
         }
-        router_as(&rig, "admin-1").oneshot(request.body(Body::empty()).unwrap())
+        router_as(&rig, "admin-1")
+            .layer(axum::middleware::from_fn_with_state(
+                ContentSecurity::new(Arc::clone(&rig.config)),
+                content_security,
+            ))
+            .oneshot(request.body(Body::empty()).unwrap())
     };
-    let sealed = |response: &axum::http::Response<Body>| {
+    let sealed = |response: &axum::http::Response<Body>, ancestors: &str| {
         let header = |name: &str| {
             response
                 .headers()
@@ -592,7 +609,11 @@ async fn the_panel_page_is_sealed_on_every_answer() {
                 .and_then(|value| value.to_str().ok())
                 .map(str::to_owned)
         };
-        assert_eq!(header("content-security-policy").as_deref(), Some(POLICY));
+        assert_eq!(
+            header("content-security-policy").as_deref(),
+            Some(policy(ancestors).as_str())
+        );
+        assert_eq!(header("content-security-policy-report-only"), None);
         assert_eq!(header("x-content-type-options").as_deref(), Some("nosniff"));
         assert_eq!(
             header("content-type").as_deref(),
@@ -600,15 +621,20 @@ async fn the_panel_page_is_sealed_on_every_answer() {
         );
     };
 
-    // Dropped in but not enabled: no page.
-    assert_eq!(get(None).await.unwrap().status(), StatusCode::NOT_FOUND);
+    // Dropped in but not enabled: no page, and an answer nothing runs in.
+    let missing = get(None).await.unwrap();
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        missing.headers()["content-security-policy"],
+        "default-src 'none'; frame-ancestors 'none'; sandbox"
+    );
     rig.host
         .update_settings("toy", true, HashMap::new())
         .unwrap();
 
     let response = get(None).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    sealed(&response);
+    sealed(&response, "'self'");
     let etag = response.headers()["etag"].to_str().unwrap().to_owned();
     assert!(etag.contains(env!("CARGO_PKG_VERSION")), "{etag}");
     let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
@@ -619,9 +645,17 @@ async fn the_panel_page_is_sealed_on_every_answer() {
     assert!(page.ends_with("</script></body></html>"), "{page}");
     assert!(page.contains("var b = 2;"), "{page}");
 
+    rig.config
+        .save(SecuritySettings {
+            frame_ancestors: vec![format!("{DASHBOARD}/")],
+            ..SecuritySettings::default()
+        })
+        .unwrap();
+    let framed = format!("'self' {DASHBOARD}");
+    sealed(&get(None).await.unwrap(), &framed);
     let response = get(Some(etag)).await.unwrap();
     assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
-    sealed(&response);
+    sealed(&response, &framed);
 
     let (status, _) = send(
         router_as(&rig, "admin-1"),

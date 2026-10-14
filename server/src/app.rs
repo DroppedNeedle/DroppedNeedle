@@ -46,7 +46,9 @@ use crate::{
     compat::http::fallback_redispatch,
     handlers,
     middleware::request_scope,
-    security_headers::{TransportSecurity, content_security, strict_transport_security},
+    security_headers::{
+        ContentSecurity, TransportSecurity, content_security, strict_transport_security,
+    },
     state::AppState,
     web::WebUi,
 };
@@ -63,7 +65,10 @@ pub fn create_app_with_web(state: AppState, web: Option<WebUi>) -> Router {
     let outside_base = Router::new()
         .fallback(handlers::fallback_404)
         .layer(middleware::from_fn_with_state(state.clone(), request_scope))
-        .layer(middleware::from_fn(content_security));
+        .layer(middleware::from_fn_with_state(
+            ContentSecurity::from_state(&state),
+            content_security,
+        ));
     let hsts = middleware::from_fn_with_state(
         TransportSecurity::from_state(&state),
         strict_transport_security,
@@ -242,6 +247,8 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
     };
     // Captured before `state` moves into the request-scope layer below.
     let debug_cors = state.config.debug_cors;
+    let content_security_layer =
+        middleware::from_fn_with_state(ContentSecurity::from_state(&state), content_security);
     let fallback_405 = {
         let compat_router = compat_router.clone();
         move |request: Request| async move {
@@ -273,7 +280,7 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
         .method_not_allowed_fallback(fallback_405)
         .layer(middleware::from_fn_with_state(state, request_scope))
         .layer(compression_layer())
-        .layer(middleware::from_fn(content_security))
+        .layer(content_security_layer)
 }
 
 /// Response compression (brotli or gzip, as the client accepts) for API,

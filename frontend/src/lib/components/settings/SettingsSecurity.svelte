@@ -4,6 +4,7 @@
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import { onDestroy } from 'svelte';
 	import {
+		ShieldAlert,
 		ShieldCheck,
 		KeyRound,
 		CircleCheck,
@@ -18,16 +19,13 @@
 	} from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import type { OIDCConnectionSettings } from '$lib/types';
+	import type { components } from '$lib/api/v3/openapi';
+	import ListField from '$lib/ui/ListField.svelte';
+	import SelectField from '$lib/ui/SelectField.svelte';
 	import SettingsPublicAddress from './SettingsPublicAddress.svelte';
 
-	interface SecuritySettingsForm {
-		hibp_check: boolean;
-		hibp_local_path: string;
-		hsts_max_age: number;
-		hsts_include_subdomains: boolean;
-		hsts_preload: boolean;
-		library_download_access: 'everyone' | 'trusted' | 'admin';
-	}
+	type SecuritySettingsForm = components['schemas']['SecuritySettings'];
+	type PolicyMode = SecuritySettingsForm['content_security_policy'];
 
 	const DEFAULTS: SecuritySettingsForm = {
 		hibp_check: true,
@@ -35,7 +33,24 @@
 		hsts_max_age: 0,
 		hsts_include_subdomains: false,
 		hsts_preload: false,
-		library_download_access: 'everyone'
+		library_download_access: 'everyone',
+		content_security_policy: 'report_only',
+		frame_ancestors: []
+	};
+
+	const MAX_FRAMING_ADDRESSES = 8;
+
+	const POLICY_MODES: { value: PolicyMode; label: string }[] = [
+		{ value: 'enforce', label: 'Enforce' },
+		{ value: 'report_only', label: 'Report only' },
+		{ value: 'off', label: 'Off' }
+	];
+
+	const POLICY_MODE_HELP: Record<PolicyMode, string> = {
+		enforce: 'The browser refuses anything the policy does not allow.',
+		report_only:
+			'The browser lists in its console what the policy would refuse and refuses it only for frames: who may show DroppedNeedle in a frame, and what its frames may open.',
+		off: 'No policy is sent, so the browser limits nothing and anyone may show DroppedNeedle in a frame.'
 	};
 
 	const form = createSettingsForm<SecuritySettingsForm>({
@@ -112,8 +127,17 @@
 
 	function resetToDefaults() {
 		if (form.data) {
-			Object.assign(form.data, DEFAULTS);
+			Object.assign(form.data, DEFAULTS, { frame_ancestors: [] });
 		}
+	}
+
+	// A row left blank is not an address: drop it before the server sees it.
+	async function saveSecurity() {
+		if (!form.data) return;
+		form.data.frame_ancestors = form.data.frame_ancestors
+			.map((address) => address.trim())
+			.filter(Boolean);
+		await form.save();
 	}
 </script>
 
@@ -432,6 +456,49 @@
 			</div>
 		</div>
 
+		<!-- Content-security policy -->
+		<div class="card bg-base-200">
+			<div class="card-body gap-4">
+				<div class="flex items-center gap-2">
+					<div class="bg-warning/10 rounded-lg p-2">
+						<ShieldAlert class="h-5 w-5 text-warning" />
+					</div>
+					<div>
+						<h3 class="font-semibold">Content-security policy</h3>
+						<p class="text-xs text-base-content/50">
+							Tells the browser what the web UI may load and run, and who may show it in a frame.
+						</p>
+					</div>
+				</div>
+
+				<SelectField
+					label="Policy"
+					bind:value={form.data.content_security_policy}
+					options={POLICY_MODES}
+					help={POLICY_MODE_HELP[form.data.content_security_policy]}
+				/>
+
+				<p class="text-sm text-base-content/70">
+					A reverse proxy that rewrites the page can leave the web UI blank while the policy is
+					enforced. If that happens, stop the server and run
+					<code class="text-xs">droppedneedle-tool content-security-policy report-only</code> on the host.
+				</p>
+
+				<ListField
+					label="Allowed to frame DroppedNeedle"
+					itemLabel="Address"
+					addLabel="Add an address"
+					bind:values={form.data.frame_ancestors}
+					max={MAX_FRAMING_ADDRESSES}
+					mono
+					placeholder="https://home.example.com"
+					empty="No address listed: nobody may show DroppedNeedle in a frame."
+					help="Each address listed here, such as a dashboard at https://home.example.com, may show DroppedNeedle in a frame unless the policy is off. A dashboard on the same site (another subdomain of the same domain, or the same host on another port) works; one on another site shows the sign-in page, because the browser does not send the sign-in cookie there. The scheme, host and port, no path. Up to {MAX_FRAMING_ADDRESSES}."
+					disabled={form.saving}
+				/>
+			</div>
+		</div>
+
 		<SettingsPublicAddress />
 
 		<!-- OIDC / SSO -->
@@ -631,7 +698,7 @@
 			</button>
 			<button
 				class="btn btn-primary"
-				onclick={() => form.save()}
+				onclick={saveSecurity}
 				disabled={form.saving || (form.data.hsts_preload && !form.data.hsts_include_subdomains)}
 			>
 				{#if form.saving}

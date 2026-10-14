@@ -545,6 +545,184 @@ async fn hsts_is_sent_only_over_https_and_only_while_the_setting_is_on() {
     running.shut_down().await;
 }
 
+/// The two content-security headers on the answer to a GET: the enforced
+/// policy and the report-only one.
+async fn policies(router: &axum::Router, uri: &str) -> (Option<String>, Option<String>) {
+    let request = axum::http::Request::builder()
+        .uri(uri)
+        .header("host", "music.test")
+        .body(Body::empty())
+        .unwrap();
+    let response = answer_from(router, STRANGER, request).await;
+    assert_eq!(
+        response.headers()["x-content-type-options"],
+        "nosniff",
+        "{uri}"
+    );
+    let header = |name: &str| {
+        response
+            .headers()
+            .get(name)
+            .map(|value| value.to_str().unwrap().to_owned())
+    };
+    (
+        header("content-security-policy"),
+        header("content-security-policy-report-only"),
+    )
+}
+
+/// A web UI build whose page holds one inline script.
+fn web_ui_in(config: &AppConfig) {
+    std::fs::create_dir_all(&config.static_dir).unwrap();
+    std::fs::write(
+        config.static_dir.join("index.html"),
+        "<div><script>boot()</script></div>",
+    )
+    .unwrap();
+}
+
+/// The Security settings choose how the page's policy is sent and who may
+/// frame the app, from the next request on. What goes into the policy is an
+/// origin and nothing else: text that could add a source or a directive is
+/// refused at save.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_page_policy_follows_the_saved_mode_and_framing_list() {
+    const PAGE: &str = "/library";
+    const API: &str = "/api/v3/auth/setup/status";
+    const BARE: &str = "default-src 'none'; frame-ancestors 'none'; sandbox";
+    const FRAMING_ONLY: &str = "frame-src 'self' https://www.youtube.com; frame-ancestors 'none'";
+    // sha256 of `boot()`.
+    const BOOT: &str = "'sha256-MeZS89WlF0u+o0hCvHTBt4q1WHU+U+sJKgbdRUc36mY='";
+    let dir = scratch("page-policy");
+    let config = config_in(&dir);
+    web_ui_in(&config);
+    let (router, background) = build(config).await.unwrap();
+    let running = start(router.clone(), background).await;
+    let cookie = admin_cookie(running.address).await;
+    let save = |body: serde_json::Value| {
+        save_as_browser(
+            &router,
+            STRANGER,
+            &cookie,
+            "http://music.test",
+            &[],
+            ("security", body),
+        )
+    };
+    let framing = |policy: &str| {
+        let (_, sources) = policy.rsplit_once("frame-ancestors ").unwrap();
+        sources.to_owned()
+    };
+
+    // As installed: reported, except who may frame the page and where its
+    // frames go, which are enforced: nobody may frame the app.
+    let (enforced, reported) = policies(&router, PAGE).await;
+    let reported = reported.expect("the page reports");
+    assert_eq!(enforced.as_deref(), Some(FRAMING_ONLY));
+    assert!(reported.contains(BOOT), "{reported}");
+    assert_eq!(framing(&reported), "'none'");
+    assert_eq!(policies(&router, API).await, (Some(BARE.to_owned()), None));
+    // What a browser that has the page cached asks: the status, and the
+    // tag it would cache next.
+    let revalidate = |etag: String| async {
+        let request = axum::http::Request::builder()
+            .uri(PAGE)
+            .header("host", "music.test")
+            .header("if-none-match", etag)
+            .body(Body::empty())
+            .unwrap();
+        let response = answer_from(&router, STRANGER, request).await;
+        let etag = response.headers()["etag"].to_str().unwrap().to_owned();
+        (response.status().as_u16(), etag)
+    };
+    let (code, cached_reporting) = revalidate("\"none\"".to_owned()).await;
+    assert_eq!(code, 200);
+    assert_eq!(revalidate(cached_reporting.clone()).await.0, 304);
+
+    let (code, body) = save(serde_json::json!({
+        "hibp_check": false,
+        "content_security_policy": "enforce",
+        "frame_ancestors": ["HTTPS://Home.Example.com:443/", "http://192.168.1.5:7575"],
+    }))
+    .await;
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(
+        body["frame_ancestors"],
+        serde_json::json!(["https://home.example.com", "http://192.168.1.5:7575"])
+    );
+    let (enforced, reported) = policies(&router, PAGE).await;
+    let enforced = enforced.expect("the page enforces");
+    assert_eq!(reported, None);
+    assert!(enforced.contains(BOOT), "{enforced}");
+    assert_eq!(
+        framing(&enforced),
+        "https://home.example.com http://192.168.1.5:7575"
+    );
+    // A browser keeps a cached page's headers that a 304 leaves out, so the
+    // page it cached under the old settings is sent again in full.
+    let (code, cached_enforcing) = revalidate(cached_reporting.clone()).await;
+    assert_eq!(code, 200);
+    assert_ne!(cached_enforcing, cached_reporting);
+    assert_eq!(revalidate(cached_enforcing.clone()).await.0, 304);
+    // Only the page can be framed: every other answer still refuses.
+    assert_eq!(policies(&router, API).await, (Some(BARE.to_owned()), None));
+
+    // Refused, with the field named, and the policy keeps its last value.
+    for bad in [
+        "https://home.example.com/dash",
+        "https://home.example.com;script-src",
+        "https://home.example.com; script-src *",
+        "https://home.example.com,evil.test",
+        "https://*.example.com",
+        "https://%2A.example.com",
+        "https://'self'",
+        "*",
+        "'self'",
+        "http://[::1]:7575",
+    ] {
+        let (code, body) = save(serde_json::json!({
+            "hibp_check": false,
+            "content_security_policy": "enforce",
+            "frame_ancestors": [bad],
+        }))
+        .await;
+        assert_eq!(code, 400, "{bad}: {body}");
+        let message = body["error"]["message"].as_str().unwrap();
+        assert!(
+            message.contains("security_settings.frame_ancestors"),
+            "{bad}: {message}"
+        );
+    }
+    let (code, _) = save(serde_json::json!({
+        "hibp_check": false,
+        "content_security_policy": "loud",
+    }))
+    .await;
+    assert!((400..500).contains(&code), "{code}");
+    assert_eq!(policies(&router, PAGE).await, (Some(enforced), None));
+
+    let (code, body) = save(serde_json::json!({
+        "hibp_check": false,
+        "content_security_policy": "off",
+        "frame_ancestors": ["https://home.example.com"],
+    }))
+    .await;
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(policies(&router, PAGE).await, (None, None));
+    assert_eq!(policies(&router, API).await, (None, None));
+    assert_eq!(revalidate(cached_enforcing).await.0, 200);
+
+    // A save that leaves both out puts them back as installed.
+    let (code, body) = save(serde_json::json!({"hibp_check": false})).await;
+    assert_eq!(code, 200, "{body}");
+    let (enforced, reported) = policies(&router, PAGE).await;
+    assert_eq!(enforced.as_deref(), Some(FRAMING_ONLY));
+    assert_eq!(framing(&reported.expect("the page reports")), "'none'");
+
+    drop(router);
+    running.shut_down().await;
+}
+
 /// Set up the admin over TCP and return the session cookie.
 async fn admin_cookie(address: SocketAddr) -> String {
     let setup = reqwest::Client::new()

@@ -34,6 +34,23 @@ impl DownloadAccess {
     }
 }
 
+/// How the web UI's content-security policy is sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ContentSecurityPolicyMode {
+    /// The browser refuses what the policy does not allow.
+    Enforce,
+    /// The browser lists in its console what the policy would refuse and
+    /// refuses nothing, except that who may frame the web UI and where its
+    /// frames may go are still enforced.
+    #[default]
+    ReportOnly,
+    /// No policy is added to the web UI or to other responses. The plugin
+    /// panel page and the remote image relay keep their own policies in
+    /// every mode.
+    Off,
+}
+
 /// Security posture settings (no secrets; the HIBP path is a local file).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
@@ -50,6 +67,12 @@ pub struct SecuritySettings {
     pub hsts_preload: bool,
     /// Who may download library files.
     pub library_download_access: DownloadAccess,
+    /// How the web UI's content-security policy is sent.
+    pub content_security_policy: ContentSecurityPolicyMode,
+    /// Up to eight origins that may show DroppedNeedle in a frame, such as
+    /// a dashboard at `https://home.example.com`. Empty: nobody may.
+    /// Stored the way a browser sends `Origin`.
+    pub frame_ancestors: Vec<String>,
 }
 
 impl Default for SecuritySettings {
@@ -61,11 +84,71 @@ impl Default for SecuritySettings {
             hsts_include_subdomains: false,
             hsts_preload: false,
             library_download_access: DownloadAccess::Everyone,
+            content_security_policy: ContentSecurityPolicyMode::default(),
+            frame_ancestors: Vec::new(),
         }
     }
 }
 
+/// `origin` as a source in a content-security policy, or why it cannot be
+/// one. A policy is a `;`-separated list of space-separated words, so a
+/// source is built from the parsed origin and only from characters the
+/// policy grammar gives a host (CSP Level 3, section 2.3.1, read
+/// 2026-10-14: `host-char = ALPHA / DIGIT / "-"`, parts joined by `.`).
+/// The URL parser lets `;`, `,` and `'` through in a host name; here they
+/// are refused, and so is an IPv6 address, which the grammar has no form
+/// for.
+fn frame_source(origin: &Origin) -> Result<String, String> {
+    let host = origin.host();
+    if host.starts_with('[') {
+        return Err(
+            "is an IPv6 address, which a browser does not accept here: use a host name or \
+             an IPv4 address"
+                .to_owned(),
+        );
+    }
+    let plain = !host.is_empty()
+        && host.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'.')
+        });
+    if !plain {
+        return Err(
+            "has a character in its host name that a browser does not accept here".to_owned(),
+        );
+    }
+    Ok(origin.serialized())
+}
+
+/// The framing addresses an admin typed as policy sources, in the order
+/// given and without duplicates. The error names the entry and why.
+fn parse_frame_ancestors(entries: &[String]) -> Result<Vec<String>, String> {
+    parse_origins(entries)?
+        .iter()
+        .map(|origin| {
+            frame_source(origin).map_err(|reason| format!("{:?} {reason}", origin.serialized()))
+        })
+        .collect()
+}
+
 impl SecuritySettings {
+    /// The stored framing addresses as policy sources. An entry that is not
+    /// a plain origin is left out, and so is anything past the limit: a bad
+    /// entry never widens who may frame the app.
+    #[must_use]
+    pub fn framing_sources(&self) -> Vec<String> {
+        let mut sources: Vec<String> = Vec::new();
+        for entry in &self.frame_ancestors {
+            let Ok(source) = Origin::from_stated(entry).and_then(|origin| frame_source(&origin))
+            else {
+                continue;
+            };
+            if sources.len() < MAX_ORIGINS && !sources.contains(&source) {
+                sources.push(source);
+            }
+        }
+        sources
+    }
+
     /// Whether `role` may download library files.
     #[must_use]
     pub fn download_allowed(&self, role: &str) -> bool {
@@ -95,7 +178,20 @@ impl Section for SecuritySettings {
                 reason: "needs hsts_include_subdomains".to_owned(),
             });
         }
-        Ok(())
+        parse_frame_ancestors(&self.frame_ancestors)
+            .map(drop)
+            .map_err(|reason| ConfigError::Validation {
+                section: Self::KEY,
+                field: "frame_ancestors",
+                reason,
+            })
+    }
+
+    /// Rewrites each framing address the way a browser sends it and drops
+    /// duplicates. In a file edited by hand, an entry that is not a plain
+    /// origin and anything past the limit are dropped too.
+    fn normalize(&mut self) {
+        self.frame_ancestors = self.framing_sources();
     }
 }
 

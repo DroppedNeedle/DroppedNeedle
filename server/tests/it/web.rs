@@ -169,7 +169,11 @@ async fn the_page_runs_only_its_own_scripts_and_nothing_else_runs_anything() {
 
     let is_the_page = |headers: &HeaderMap, what: &str| {
         let policy = text(headers, REPORTING).unwrap_or_else(|| panic!("{what}: no policy"));
-        assert_eq!(text(headers, ENFORCED), None, "{what}");
+        assert_eq!(
+            text(headers, ENFORCED),
+            Some("frame-src 'self' https://www.youtube.com; frame-ancestors 'none'"),
+            "{what}"
+        );
         let scripts = directive(policy, "script-src");
         assert!(scripts.contains(&served.as_str()), "{what}: {policy}");
         assert!(scripts.contains(&"'self'"), "{what}: {policy}");
