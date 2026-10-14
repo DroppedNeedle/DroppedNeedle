@@ -791,7 +791,7 @@ impl droppedneedle::library::operations::port::EditionPlans for PlannedEdition {
         >,
     > {
         use droppedneedle::library::operations::plan::{
-            EditionPlan, FileFate, PlanFile, PlanTrack,
+            EditionFacts, EditionPlan, FileFate, PlanFile, PlanTrack,
         };
         let track = |position: u32, file: Option<&str>| PlanTrack {
             disc: 1,
@@ -807,6 +807,7 @@ impl droppedneedle::library::operations::port::EditionPlans for PlannedEdition {
             title: String::new(),
             disc: 1,
             track: 0,
+            length_ms: None,
             fate: FileFate::Keep,
             edition_track: None,
         };
@@ -818,6 +819,8 @@ impl droppedneedle::library::operations::port::EditionPlans for PlannedEdition {
                 title: "Album".into(),
                 artist_name: "Artist".into(),
                 is_current: true,
+                same_album: true,
+                edition: EditionFacts::default(),
                 tracks: vec![track(1, Some("t1")), track(2, None), track(3, Some("t3"))],
                 files: vec![kept("t1"), kept("t3")],
             }))

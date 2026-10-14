@@ -6,7 +6,7 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 
 use super::choice::undo_available;
 use super::reasons::{self, Reason};
-use super::store::PROVIDER;
+use super::store::{self, PROVIDER};
 use crate::library::identify::models::CandidateEvidence;
 
 /// Where an album's edition stands.
@@ -36,6 +36,30 @@ impl EditionState {
     }
 }
 
+/// What kind of edition the album has.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditionKind {
+    /// A MusicBrainz release.
+    Release,
+    /// A custom edition built from the album's own files.
+    Custom,
+    /// A release group with no release chosen within it.
+    GroupOnly,
+    /// No edition at all.
+    None,
+}
+
+impl EditionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Release => "release",
+            Self::Custom => "custom",
+            Self::GroupOnly => "group_only",
+            Self::None => "none",
+        }
+    }
+}
+
 /// One album's edition, with the reason behind it.
 #[derive(Debug, Clone)]
 pub struct EditionStatus {
@@ -50,10 +74,18 @@ pub struct EditionStatus {
     /// The closest candidates the matcher scored, best first.
     pub candidates: Vec<CandidateEvidence>,
     pub undo_available: bool,
+    /// The identity's row revision, 0 when there is none.
+    pub identity_revision: i64,
+    pub edition_kind: EditionKind,
+    /// Tries so far, while the chosen edition's files are still being
+    /// placed on it.
+    pub placing_attempts: Option<u32>,
+    /// An identification of the album is queued or running.
+    pub identifying: bool,
 }
 
-/// Release group, release, decision source, chooser, chosen at.
-type IdentityRow = (String, Option<String>, String, Option<String>, f64);
+/// Release group, release, decision source, chooser, chosen at, revision.
+type IdentityRow = (String, Option<String>, String, Option<String>, f64, i64);
 
 /// One album's edition, or `None` for an album the library does not hold.
 pub fn edition_status(
@@ -71,7 +103,7 @@ pub fn edition_status(
     let identity: Option<IdentityRow> = conn
         .query_row(
             "SELECT release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
-             selected_at FROM local_album_external_identities \
+             selected_at, row_revision FROM local_album_external_identities \
              WHERE local_album_id = ?1 AND provider = ?2",
             params![album_id, PROVIDER],
             |row| {
@@ -81,6 +113,7 @@ pub fn edition_status(
                     row.get(2)?,
                     row.get(3)?,
                     row.get(4)?,
+                    row.get(5)?,
                 ))
             },
         )
@@ -99,7 +132,7 @@ pub fn edition_status(
         .unwrap_or_default();
     let protected = identity
         .as_ref()
-        .is_some_and(|(_, _, source, _, _)| source == "manual" || source == "legacy_import");
+        .is_some_and(|(_, _, source, _, _, _)| source == "manual" || source == "legacy_import");
     let (state, reason) = match (&identity, &flagged) {
         // A chosen edition stays chosen; a flag on it explains a problem
         // with the choice (it fits none of the files).
@@ -110,20 +143,40 @@ pub fn edition_status(
         }
         (Some(_), Some((_, code, _))) => (EditionState::Unconfirmed, reasons::match_reason(code)),
         (Some(_), None) => (EditionState::Confirmed, reasons::match_reason("SUPPORTED")),
+        (None, _) if keeps_own_tags(conn, album_id)? => (
+            EditionState::Unidentified,
+            reasons::match_reason("FOLDER_KEEPS_TAGS"),
+        ),
         (None, _) => (
             EditionState::Unidentified,
             reasons::match_reason("UNIDENTIFIED"),
         ),
     };
-    let (group, release, chosen_by, chosen_at) = match identity {
-        Some((group, release, _, user, at)) => (
+    let (group, release, chosen_by, chosen_at, identity_revision) = match identity {
+        Some((group, release, _, user, at, revision)) => (
             Some(group),
             release,
             protected.then_some(user).flatten(),
             protected.then_some(at),
+            revision,
         ),
-        None => (None, None, None, None),
+        None => (None, None, None, None, 0),
     };
+    let custom: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM library_custom_edition_active WHERE local_album_id = ?1)",
+        params![album_id],
+        |row| row.get(0),
+    )?;
+    // A custom edition counts only where no release is chosen, as
+    // automatic management reads it.
+    let edition_kind = match (&group, &release) {
+        (_, Some(_)) => EditionKind::Release,
+        _ if custom => EditionKind::Custom,
+        (Some(_), None) => EditionKind::GroupOnly,
+        (None, None) => EditionKind::None,
+    };
+    let placing_attempts = placing_attempts(conn, album_id)?;
+    let identifying = identifying(conn, album_id)?;
     Ok(Some(EditionStatus {
         local_album_id: album_id.to_owned(),
         state,
@@ -134,7 +187,47 @@ pub fn edition_status(
         reason,
         candidates,
         undo_available: undo_available(conn, album_id)?,
+        identity_revision,
+        edition_kind,
+        placing_attempts,
+        identifying,
     }))
+}
+
+/// Tries so far while the album's chosen edition is still being placed
+/// (its `library_edition_remap_queue` row); `None` once it is placed.
+pub(crate) fn placing_attempts(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<u32>> {
+    conn.query_row(
+        "SELECT attempts FROM library_edition_remap_queue WHERE local_album_id = ?1",
+        params![album_id],
+        |row| row.get(0),
+    )
+    .optional()
+}
+
+/// Whether an identification of the album is open. Open jobs are
+/// `queued`, `running` and `deferred` (waiting out a backoff); `attention`
+/// waits on a person, and the rest have ended.
+pub(crate) fn identifying(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM library_identify_jobs WHERE local_album_id = ?1 \
+         AND state IN ('queued', 'running', 'deferred'))",
+        params![album_id],
+        |row| row.get(0),
+    )
+}
+
+/// Whether every indexed file of the album sits in a folder that keeps its
+/// own tags, so identification never runs for it by itself.
+fn keeps_own_tags(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
+    Ok(
+        store::album_revisions(conn, album_id)?.is_some_and(|album| {
+            album
+                .policies
+                .iter()
+                .all(|policy| policy == "local_metadata")
+        }),
+    )
 }
 
 /// One album whose match waits for a look.

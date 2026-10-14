@@ -329,7 +329,7 @@ impl RequestsService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::library::operations::plan::{FileFate, PlanFile};
+    use crate::library::operations::plan::{EditionFacts, FileFate, PlanFile};
 
     fn track(position: u32, file: Option<&str>) -> PlanTrack {
         PlanTrack {
@@ -354,6 +354,8 @@ mod tests {
             title: "Album".into(),
             artist_name: "Artist".into(),
             is_current: true,
+            same_album: true,
+            edition: EditionFacts::default(),
             tracks: vec![track(1, Some("f1")), track(2, None), track(3, Some("f3"))],
             files: ["f1", "f3"]
                 .iter()
@@ -362,6 +364,7 @@ mod tests {
                     title: String::new(),
                     disc: 1,
                     track: 0,
+                    length_ms: None,
                     fate: FileFate::Keep,
                     edition_track: None,
                 })

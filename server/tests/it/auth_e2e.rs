@@ -2445,7 +2445,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     (
         "GET",
         "/api/v3/library/albums/{album_id}/reidentification/releases",
-        Posture::Admin,
+        Posture::Curator,
     ),
     (
         "POST",
@@ -2572,7 +2572,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     (
         "GET",
         "/api/v3/library/albums/{album_id}/edition/plan",
-        Posture::Curator,
+        Posture::User,
     ),
     (
         "POST",

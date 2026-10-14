@@ -3166,9 +3166,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Move files the album's edition has no place for (second copies and
-         *     files not on it) to the recycle bin. Only files the current plan marks
-         *     that way are accepted; nothing runs on its own. Undo with
+         * Move files the album's edition has no place for (second copies, other
+         *     versions and files not on it) to the recycle bin: every fate but
+         *     `keep`. Only files the current plan marks that way are accepted;
+         *     nothing runs on its own. Undo with
          *     `.../edition/extras/restore`.
          */
         post: operations["remove_extras"];
@@ -3204,8 +3205,10 @@ export interface paths {
         };
         /**
          * What taking an edition would do: which files keep their place, which
-         *     are second copies or extras, and which edition tracks are missing.
-         *     Asks MusicBrainz for the release; changes nothing.
+         *     are second copies, other versions or extras, and which edition tracks
+         *     are missing. Asks MusicBrainz for the release; changes nothing. The
+         *     album's own edition is open to every signed-in user; planning another
+         *     release is for curators, who can choose it.
          */
         get: operations["plan_edition"];
         put?: never;
@@ -13457,6 +13460,29 @@ export interface components {
          * @enum {string}
          */
         EditionDatePreference: "earliest" | "latest" | "any";
+        /** @description What MusicBrainz says about the planned edition. */
+        EditionFactsView: {
+            barcode?: string | null;
+            /** @description The first catalog number. */
+            catalog_number?: string | null;
+            country?: string | null;
+            /**
+             * @description Release date as MusicBrainz gives it (`YYYY`, `YYYY-MM` or
+             *     `YYYY-MM-DD`).
+             */
+            date?: string | null;
+            disambiguation?: string | null;
+            /** Format: int32 */
+            disc_count: number;
+            /** @description One format per medium that names one, in medium order. */
+            formats: string[];
+            /** @description The first label. */
+            label?: string | null;
+            status?: string | null;
+            title: string;
+            /** Format: int32 */
+            track_count: number;
+        };
         /** @description Pin-set body. */
         EditionPinBody: {
             /** @description Any MusicBrainz release, from this album's group or another. */
@@ -13479,23 +13505,39 @@ export interface components {
             /** @description The album's edition. */
             selected_release_mbid?: string | null;
         };
+        /** @description The chosen edition's files are still being placed on it. */
+        EditionPlacingView: {
+            /**
+             * Format: int32
+             * @description Failed tries so far; above 0 means MusicBrainz did not answer.
+             */
+            attempts: number;
+        };
         /** @description One of the album's files and what the edition makes of it. */
         EditionPlanFileView: {
             /** Format: int32 */
             disc_number: number;
             /**
              * Format: int32
-             * @description The edition track the file keeps or duplicates.
+             * @description The edition track the file keeps, duplicates or is another version
+             *     of.
              */
             edition_disc_number?: number | null;
             /** Format: int32 */
             edition_position?: number | null;
             /**
              * @description `keep` (sits on its own edition track), `duplicate` (another copy
-             *     of a song the edition already has a file for) or `extra` (the
-             *     edition has no track for it). Choosing never deletes a file.
+             *     of a song the edition already has a file for), `other_version`
+             *     (the same title and artist as an edition track no file holds, but
+             *     not placed on it; that track still counts as missing) or `extra`
+             *     (the edition has no track for it). Choosing never deletes a file.
              */
             fate: string;
+            /**
+             * Format: int64
+             * @description The file's length, when the scan read it.
+             */
+            length_ms?: number | null;
             local_track_id: string;
             title: string;
             /** Format: int32 */
@@ -13520,14 +13562,25 @@ export interface components {
             album_id: string;
             artist_name: string;
             duplicate_count: number;
+            edition: components["schemas"]["EditionFactsView"];
             extra_count: number;
             files: components["schemas"]["EditionPlanFileView"][];
             /** @description The edition is already the album's edition. */
             is_current: boolean;
             kept_count: number;
+            /**
+             * @description Edition tracks no file holds, including those a file is another
+             *     version of.
+             */
             missing_count: number;
+            other_version_count: number;
             release_group_mbid: string;
             release_mbid: string;
+            /**
+             * @description The edition belongs to the album's current release group (false
+             *     for an album with none).
+             */
+            same_album: boolean;
             title: string;
             tracks: components["schemas"]["EditionPlanTrackView"][];
         };
@@ -13598,6 +13651,29 @@ export interface components {
             chosen_at?: number | null;
             /** @description Who chose the edition, for a chosen one. */
             chosen_by_user_id?: string | null;
+            /**
+             * @description `release` (a MusicBrainz release), `custom` (a custom edition),
+             *     `group_only` (a release group with no release chosen) or `none`.
+             */
+            edition_kind: string;
+            /**
+             * @description The app writes the edition's tags and file names by itself after a
+             *     choice: the album's folder manages it automatically and nothing
+             *     holds it back.
+             */
+            files_by_itself: boolean;
+            /**
+             * @description An identification of the album is queued or running, as after
+             *     "Let DroppedNeedle choose".
+             */
+            identifying: boolean;
+            /**
+             * Format: int64
+             * @description The identity's row revision, 0 when the album has none. A guarded
+             *     write echoes it.
+             */
+            identity_revision: number;
+            placing?: null | components["schemas"]["EditionPlacingView"];
             /** @description Why the edition is what it is, and what to do about it. */
             reason: components["schemas"]["ReasonView"];
             release_group_mbid?: string | null;
@@ -13609,6 +13685,8 @@ export interface components {
             state: string;
             /** @description The last edition change can still be taken back. */
             undo_available: boolean;
+            /** @description That write is still to happen. */
+            writing: boolean;
         };
         /**
          * @description Standard or expanded editions.
@@ -19867,7 +19945,7 @@ export interface components {
         };
         /** @description Extra files to move to the recycle bin. */
         RemoveExtrasBody: {
-            /** @description Local track ids the album's edition plan marks `duplicate` or `extra`. */
+            /** @description Local track ids the album's edition plan marks anything but `keep`. */
             track_ids: string[];
         };
         /** @description What removing extras did. */
@@ -29551,7 +29629,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Curator role required */
+            /** @description Curator role required to plan another release */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -29780,7 +29858,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Admin role required */
+            /** @description Curator role required */
             403: {
                 headers: {
                     [name: string]: unknown;

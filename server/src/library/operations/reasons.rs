@@ -525,6 +525,11 @@ pub fn match_reason(code: &str) -> Reason {
             "This album has not been matched to MusicBrainz yet.",
             "Wait for identification to run, or pick an edition yourself.",
         ),
+        "FOLDER_KEEPS_TAGS" => reason(
+            "FOLDER_KEEPS_TAGS",
+            "This folder keeps its own tags, so DroppedNeedle doesn't match its albums by itself.",
+            "Pick an edition yourself if you want one.",
+        ),
         other => reason(
             "UNDESCRIBED_MATCH",
             if other.is_empty() {

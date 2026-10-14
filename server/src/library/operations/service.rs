@@ -492,14 +492,14 @@ impl Operations {
         album_id: &str,
         raw_release: Option<&str>,
     ) -> Result<EditionPlan, OperationError> {
-        let (current, indexed) = {
+        let (identity, indexed) = {
             let ops = self.clone();
             let album = album_id.to_owned();
             tokio::task::spawn_blocking(move || {
                 ops.read(|conn| {
                     let identity = album_identity_row(conn, &album)?;
                     Ok((
-                        identity.and_then(|row| row.release_mbid),
+                        identity.map(|row| (row.release_mbid, row.release_group_mbid)),
                         indexed_track_ids(conn, &album)?,
                     ))
                 })
@@ -510,6 +510,7 @@ impl Operations {
         if indexed.is_empty() {
             return Err(OperationError::NotFound(reasons::ALBUM_NOT_FOUND));
         }
+        let (current, group) = identity.unwrap_or_default();
         let release = match raw_release {
             Some(raw) => parse_release(raw)?,
             None => current
@@ -523,6 +524,7 @@ impl Operations {
             &candidate,
             &indexed,
             current.as_deref(),
+            group.as_deref(),
         ))
     }
 

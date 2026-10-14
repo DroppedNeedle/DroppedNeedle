@@ -106,8 +106,9 @@ impl Rig {
         body["row_revision"].as_u64().expect("revision")
     }
 
-    /// Let identification run again; the loop wakes at once.
-    async fn resume_identification(&self, paused_at: u64) {
+    /// Let identification run again; the loop wakes at once. Returns the
+    /// switch's revision.
+    async fn resume_identification(&self, paused_at: u64) -> u64 {
         let auth = self.app.login_admin().await;
         let (status, body) = self
             .app
@@ -119,6 +120,7 @@ impl Rig {
             )
             .await;
         assert_eq!(status, StatusCode::OK, "{body}");
+        body["row_revision"].as_u64().expect("revision")
     }
 
     /// The owner chooses `REL_1` as the album's edition.
@@ -2914,6 +2916,671 @@ async fn library_journey_choose_edition() {
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_eq!(body["error"]["code"], json!("EDITION_NOT_FOUND"));
+    rig.stop().await;
+}
+
+/// A two-file album in `music`, identified as the release its tags name.
+/// Returns the album, that release and the identification switch's
+/// revision.
+async fn identified_album(rig: &Rig, music: &Path, folder: &str) -> (String, Release, u64) {
+    plant(music, &format!("{folder}/01.flac"), "flac_full_01.flac");
+    plant(music, &format!("{folder}/02.flac"), "flac_full_02.flac");
+    let paused_at = rig.pause_identification().await;
+    rig.app.add_library_folder("music", music).await;
+    let track_id = rig
+        .scan_store
+        .track_at("music", &format!("{folder}/01.flac"))
+        .expect("track indexed");
+    let album = rig.scan_store.album_for_track(&track_id).expect("album");
+    let fit = tagged_release(&rig.identify_store, &album);
+    rig.identify.set_recall(RecallResult {
+        releases: vec![fit.clone()],
+        ..RecallResult::default()
+    });
+    let control = rig.resume_identification(paused_at).await;
+    rig.identified(1).await;
+    (album, fit, control)
+}
+
+async fn edition_status(app: &TestApp, headers: &[(&str, &str)], edition: &str) -> Value {
+    let (status, body) = app.call("GET", edition, headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body
+}
+
+/// The edition status says what happens next: while the chosen edition's
+/// files are placed (and how often MusicBrainz failed), while the album is
+/// identified again after "Let DroppedNeedle choose", the kind of edition
+/// and its revision, and that nothing writes the files by itself in a
+/// folder managed by hand.
+#[tokio::test]
+async fn edition_status_says_what_happens_next() {
+    let rig = Rig::start("lib-edition-status").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    let (album, fit, control) = identified_album(&rig, &music, "album-s").await;
+    let edition = format!("/api/v3/library/albums/{album}/edition");
+    let status = || edition_status(app, &headers, &edition);
+
+    let body = status().await;
+    assert_eq!(body["release_mbid"], json!(fit.id), "{body}");
+    assert_eq!(body["edition_kind"], json!("release"));
+    assert!(body["identity_revision"].as_i64() > Some(0), "{body}");
+    assert_eq!(body["placing"], Value::Null);
+    assert_eq!(body["identifying"], json!(false));
+    assert_eq!(body["files_by_itself"], json!(false), "a manual folder");
+    assert_eq!(body["writing"], json!(false));
+
+    // A remap row seeded with a far-off `not_before`, so the loop never
+    // takes it: placing, then waiting on MusicBrainz, then done.
+    let db = app.db();
+    db.execute(
+        "INSERT INTO library_edition_remap_queue \
+         (local_album_id, release_mbid, queued_at, attempts, not_before, origin) \
+         VALUES (?1, ?2, 0, 0, 1e12, 'album_pin')",
+        rusqlite::params![album, fit.id],
+    )
+    .expect("remap row queued");
+    assert_eq!(status().await["placing"], json!({"attempts": 0}));
+    db.execute(
+        "UPDATE library_edition_remap_queue SET attempts = 1 WHERE local_album_id = ?1",
+        [&album],
+    )
+    .expect("row updated");
+    assert_eq!(status().await["placing"], json!({"attempts": 1}));
+    db.execute(
+        "DELETE FROM library_edition_remap_queue WHERE local_album_id = ?1",
+        [&album],
+    )
+    .expect("row removed");
+    assert_eq!(status().await["placing"], Value::Null);
+
+    // "Let DroppedNeedle choose" while identification is paused: the job
+    // stays open and the status says so until it has run.
+    let (code, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/identification/pause",
+            &headers,
+            Some(json!({"expected_revision": control})),
+        )
+        .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let paused_at = body["row_revision"].as_u64().expect("revision");
+    let (code, body) = app.call("DELETE", &edition, &headers, None).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(body["identifying"], json!(true), "{body}");
+    assert_eq!(status().await["identifying"], json!(true));
+    rig.resume_identification(paused_at).await;
+    rig.identified(1).await;
+    assert_eq!(status().await["identifying"], json!(false));
+    rig.stop().await;
+}
+
+/// In a folder managed automatically the app writes a chosen edition's
+/// files by itself, unless the album is left unmanaged; right after a
+/// choice that write is still to happen.
+#[tokio::test]
+async fn edition_status_says_when_the_app_writes_the_files() {
+    let rig = Rig::start("lib-edition-writes").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    let (album, fit, _) = identified_album(&rig, &music, "album-a").await;
+    activate_automatic_folder(app, &headers, false).await;
+    let edition = format!("/api/v3/library/albums/{album}/edition");
+    let (status, body) = app.call("GET", &edition, &headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["files_by_itself"], json!(true), "{body}");
+
+    let db = app.db();
+    db.execute(
+        "INSERT INTO library_management_exclusions \
+         (local_album_id, reason, excluded_by_user_id, excluded_at) \
+         SELECT ?1, 'user', id, 0 FROM auth_users WHERE role = 'admin' LIMIT 1",
+        [&album],
+    )
+    .expect("album left unmanaged");
+    let (_, body) = app.call("GET", &edition, &headers, None).await;
+    assert_eq!(body["files_by_itself"], json!(false), "{body}");
+    assert_eq!(body["writing"], json!(false));
+    db.execute(
+        "DELETE FROM library_management_exclusions WHERE local_album_id = ?1",
+        [&album],
+    )
+    .expect("exclusion removed");
+
+    let (status, body) = app
+        .call(
+            "PUT",
+            &edition,
+            &headers,
+            Some(json!({"release_mbid": fit.id})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"]["files_by_itself"], json!(true), "{body}");
+    assert_eq!(body["status"]["writing"], json!(true), "{body}");
+    let status = || async {
+        let (code, body) = app.call("GET", &edition, &headers, None).await;
+        assert_eq!(code, StatusCode::OK, "{body}");
+        body
+    };
+    let writes = |body: &Value| (body["files_by_itself"].clone(), body["writing"].clone());
+
+    // Parked, or waiting on a preview a person must look at: nothing is
+    // about to be written.
+    db.execute(
+        "UPDATE library_management_automatic_queue SET not_before = 1e15, \
+         last_reason_code = 'MANAGEMENT_FAILED' WHERE local_album_id = ?1",
+        [&album],
+    )
+    .expect("row parked");
+    assert_eq!(writes(&status().await), (json!(true), json!(false)));
+    db.execute(
+        "UPDATE library_management_automatic_queue SET not_before = 1e12, \
+         last_reason_code = 'PREVIEW_BLOCKED' WHERE local_album_id = ?1",
+        [&album],
+    )
+    .expect("row waits on a blocked preview");
+    assert_eq!(writes(&status().await), (json!(true), json!(false)));
+
+    // The app stepped back from the album: it writes nothing until the
+    // album is handed back, and a hand-back on its way counts as done.
+    db.execute(
+        "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+         VALUES (?1, 'files_changed', 0)",
+        [&album],
+    )
+    .expect("album taken over");
+    assert_eq!(writes(&status().await), (json!(false), json!(false)));
+    db.execute(
+        "UPDATE library_album_takeovers SET handed_back_at = 1, hand_back_retry_at = 1000000000000000 \
+         WHERE local_album_id = ?1",
+        [&album],
+    )
+    .expect("hand-back stamped");
+    assert_eq!(status().await["files_by_itself"], json!(true));
+    db.execute(
+        "DELETE FROM library_album_takeovers WHERE local_album_id = ?1",
+        [&album],
+    )
+    .expect("mark lifted");
+
+    // A custom edition, where the folder does not manage custom editions
+    // by itself.
+    db.execute_batch(&format!(
+        "UPDATE local_album_external_identities SET release_mbid = NULL, \
+         row_revision = row_revision + 1 WHERE local_album_id = '{album}'; \
+         INSERT INTO library_custom_edition_manifests (id, local_album_id, version, \
+         release_group_mbid, album_title, album_artist_name, source_album_revision, \
+         input_revision, content_hash, sealed_by_user_id, sealed_at) \
+         SELECT 'manifest-1', '{album}', 1, '{group}', 'Sealed', 'Sealed', 1, 'input', 'hash', \
+         id, 0 FROM auth_users WHERE role = 'admin' LIMIT 1; \
+         INSERT INTO library_custom_edition_tracks (manifest_id, ordinal, local_track_id, \
+         source_track_revision, stat_revision, tag_revision, title, artist_name, album_title, \
+         album_artist_name, disc_number, track_number) SELECT 'manifest-1', rowid, id, 1, 's', \
+         't', 'Sealed', 'Sealed', 'Sealed', 'Sealed', 1, rowid FROM local_tracks \
+         WHERE local_album_id = '{album}' AND availability = 'indexed'; \
+         INSERT INTO library_custom_edition_active (local_album_id, manifest_id, activated_at) \
+         VALUES ('{album}', 'manifest-1', 0);",
+        group = fit.release_group_id,
+    ))
+    .expect("custom edition sealed");
+    let body = status().await;
+    assert_eq!(body["edition_kind"], json!("custom"), "{body}");
+    assert_eq!(writes(&body), (json!(false), json!(false)));
+    // Where the folder manages custom editions by itself, it writes this one.
+    activate_automatic_folder(app, &headers, true).await;
+    assert_eq!(status().await["files_by_itself"], json!(true));
+    // A manifest that lists only some of the album's files is no custom
+    // edition to the worker: it waits for a release, and so does the status.
+    db.execute_batch(&format!(
+        "INSERT INTO library_custom_edition_manifests (id, local_album_id, version, \
+         release_group_mbid, album_title, album_artist_name, source_album_revision, \
+         input_revision, content_hash, sealed_by_user_id, sealed_at) \
+         SELECT 'manifest-2', '{album}', 2, '{group}', 'Sealed', 'Sealed', 1, 'input', 'hash-2', \
+         id, 0 FROM auth_users WHERE role = 'admin' LIMIT 1; \
+         INSERT INTO library_custom_edition_tracks (manifest_id, ordinal, local_track_id, \
+         source_track_revision, stat_revision, tag_revision, title, artist_name, album_title, \
+         album_artist_name, disc_number, track_number) SELECT 'manifest-2', 0, id, 1, 's', \
+         't', 'Sealed', 'Sealed', 'Sealed', 'Sealed', 1, 1 FROM local_tracks \
+         WHERE local_album_id = '{album}' AND availability = 'indexed' LIMIT 1; \
+         UPDATE library_custom_edition_active SET manifest_id = 'manifest-2' \
+         WHERE local_album_id = '{album}';",
+        group = fit.release_group_id,
+    ))
+    .expect("manifest gone stale");
+    let body = status().await;
+    assert_eq!(body["edition_kind"], json!("custom"), "{body}");
+    assert_eq!(writes(&body), (json!(false), json!(false)));
+    db.execute(
+        "DELETE FROM library_custom_edition_active WHERE local_album_id = ?1",
+        [&album],
+    )
+    .expect("custom edition let go");
+    // Only a release group: nothing is written until a release is chosen.
+    let body = status().await;
+    assert_eq!(body["edition_kind"], json!("group_only"), "{body}");
+    assert_eq!(writes(&body), (json!(false), json!(false)));
+
+    // An unconfirmed match waits for a person before anything is written.
+    db.execute(
+        "UPDATE local_album_external_identities SET release_mbid = ?2, \
+         row_revision = row_revision + 1 WHERE local_album_id = ?1",
+        [&album, &fit.id],
+    )
+    .expect("release back");
+    assert_eq!(status().await["files_by_itself"], json!(true));
+    db.execute(
+        "INSERT INTO library_album_match_state (local_album_id, state, reason_code, updated_at) \
+         VALUES (?1, 'unconfirmed', 'LOOSE_MATCH', 0)",
+        [&album],
+    )
+    .expect("match unconfirmed");
+    assert_eq!(writes(&status().await), (json!(false), json!(false)));
+    db.execute(
+        "DELETE FROM library_album_match_state WHERE local_album_id = ?1",
+        [&album],
+    )
+    .expect("match confirmed");
+
+    // An edition with no track for one of the files: that file can never
+    // be written from it, so once the files are placed nothing is written
+    // by itself.
+    let mut other = fit.clone();
+    other.id = "3e4f5a6b-7c8d-4e9f-8a0b-1c2d3e4f5a6b".to_owned();
+    other.tracks[1].id = "other-track-1".to_owned();
+    other.tracks[1].recording_id = "c3d4e5f6-0000-4000-8000-000000000002".to_owned();
+    other.tracks[1].length_ms = other.tracks[1].length_ms.map(|length| length + 45_000);
+    rig.identify.set_recall(RecallResult {
+        releases: vec![fit.clone(), other.clone()],
+        ..RecallResult::default()
+    });
+    let (code, body) = app
+        .call(
+            "PUT",
+            &edition,
+            &headers,
+            Some(json!({"release_mbid": other.id})),
+        )
+        .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let body = app
+        .until("the files are placed", || async {
+            let body = status().await;
+            (body["placing"].is_null() && body["identifying"] == json!(false)).then_some(body)
+        })
+        .await;
+    assert_eq!(body["release_mbid"], json!(other.id), "{body}");
+    assert_eq!(writes(&body), (json!(false), json!(false)), "{body}");
+    rig.stop().await;
+}
+
+/// Turn automatic management on for the `music` folder the way the
+/// settings page does: a dry run, then its confirmation. `custom_editions`
+/// lets it manage custom editions by itself too.
+async fn activate_automatic_folder(app: &TestApp, headers: &[(&str, &str)], custom_editions: bool) {
+    let (status, mut settings) = app
+        .call("GET", "/api/v3/settings/library-management", headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{settings}");
+    let revision = settings["settings_revision"]
+        .as_str()
+        .expect("settings revision")
+        .to_owned();
+    if let Some(fields) = settings.as_object_mut() {
+        fields.remove("settings_revision");
+    }
+    let assignments = settings["root_assignments"]
+        .as_array_mut()
+        .expect("root assignments");
+    match assignments
+        .iter_mut()
+        .find(|assignment| assignment["root_id"] == json!("music"))
+    {
+        Some(assignment) => {
+            assignment["enabled"] = json!(true);
+            assignment["automatic_scan_discovered"] = json!(true);
+            assignment["automatic_custom_editions"] = json!(custom_editions);
+        }
+        None => assignments.push(json!({
+            "root_id": "music",
+            "profile_id": droppedneedle::settings::management::PICARD_ORGANIZER_PROFILE_ID,
+            "enabled": true,
+            "automatic_scan_discovered": true,
+            "automatic_custom_editions": custom_editions,
+        })),
+    }
+    let (status, roots) = app
+        .call("GET", "/api/v3/library/roots", headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{roots}");
+    let (status, dry_run) = app
+        .call(
+            "POST",
+            "/api/v3/settings/library-management/activation-previews",
+            headers,
+            Some(json!({
+                "root_id": "music",
+                "settings": settings,
+                "expected_settings_revision": revision,
+                "expected_policy_revision": roots["policy_revision"],
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{dry_run}");
+    let job = dry_run["job_id"].as_str().expect("dry run job").to_owned();
+    let detail = format!("/api/v3/settings/library-management/activation-previews/{job}");
+    let detail = detail.as_str();
+    app.until("the dry run is ready", || async move {
+        let (status, body) = app.call("GET", detail, headers, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        (body["ready_for_confirmation"] == json!(true)).then_some(())
+    })
+    .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/settings/library-management/activation-confirmations",
+            headers,
+            Some(json!({
+                "settings": settings,
+                "proofs": [{
+                    "root_id": "music",
+                    "job_id": job,
+                    "preview_token": dry_run["preview_token"],
+                }],
+                "expected_settings_revision": revision,
+                "confirmation": true,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+/// An album nobody matched, in a folder that keeps its own tags, says the
+/// folder is why: identification never runs there by itself. One with a
+/// file under a folder that identifies does not.
+#[tokio::test]
+async fn an_unmatched_album_in_a_keep_tags_folder_says_why() {
+    let rig = Rig::start("lib-edition-keep-tags").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    plant(&music, "album-k/01.flac", "flac_full_01.flac");
+    plant(&music, "album-k/02.flac", "flac_full_02.flac");
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/roots",
+            &headers,
+            Some(json!({
+                "id": "music",
+                "path": music.to_string_lossy(),
+                "policy": "local_metadata",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let album = app
+        .until("the album is indexed", || {
+            let album = rig
+                .scan_store
+                .track_at("music", "album-k/01.flac")
+                .and_then(|track| rig.scan_store.album_for_track(&track));
+            async move { album }
+        })
+        .await;
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/albums/{album}/edition"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["state"], json!("unidentified"), "{body}");
+    assert_eq!(body["reason"]["code"], json!("FOLDER_KEEPS_TAGS"), "{body}");
+    assert_eq!(body["edition_kind"], json!("none"));
+    assert_eq!(body["identity_revision"], json!(0));
+
+    let second = app
+        .until("the second file is indexed", || {
+            let track = rig.scan_store.track_at("music", "album-k/02.flac");
+            async move { track }
+        })
+        .await;
+    assert_eq!(
+        rig.scan_store.album_for_track(&second).as_ref(),
+        Some(&album)
+    );
+    app.db()
+        .execute(
+            "UPDATE local_tracks SET applied_policy = 'automatic' WHERE id = ?1",
+            [&second],
+        )
+        .expect("one file identifies");
+    let (_, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/albums/{album}/edition"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(body["reason"]["code"], json!("UNIDENTIFIED"), "{body}");
+    rig.stop().await;
+}
+
+/// The plan of another edition names a file that is another version of one
+/// of its tracks (same title and artist, 45 s longer, another recording)
+/// instead of listing it as an extra beside a missing track, still counts
+/// that track missing, and carries the edition's facts and the files'
+/// lengths. Any signed-in user reads the album's own plan; planning
+/// another release and searching for one are for curators.
+#[tokio::test]
+async fn edition_plan_names_another_version_of_a_track() {
+    const OTHER: &str = "0f6e7a1c-2b3d-4e5f-8a9b-1c2d3e4f5a6b";
+    const STRANGER: &str = "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d";
+    let rig = Rig::start("lib-edition-plan").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    let (album, fit, _) = identified_album(&rig, &music, "album-p").await;
+    let mut other = fit.clone();
+    other.id = OTHER.to_owned();
+    other.date = Some("2004-05-01".to_owned());
+    other.country = Some("GB".to_owned());
+    other.tracks[1].id = "other-track-1".to_owned();
+    other.tracks[1].recording_id = "a1b2c3d4-0000-4000-8000-000000000002".to_owned();
+    other.tracks[1].length_ms = other.tracks[1].length_ms.map(|length| length + 45_000);
+    rig.identify.set_recall(RecallResult {
+        releases: vec![fit.clone(), other.clone()],
+        ..RecallResult::default()
+    });
+    let plan = format!("/api/v3/library/albums/{album}/edition/plan");
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("{plan}?release_mbid={OTHER}"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        (
+            &body["kept_count"],
+            &body["missing_count"],
+            &body["other_version_count"],
+            &body["extra_count"],
+        ),
+        (&json!(1), &json!(1), &json!(1), &json!(0)),
+        "{body}"
+    );
+    let second = body["files"]
+        .as_array()
+        .expect("files")
+        .iter()
+        .find(|file| file["fate"] != json!("keep"))
+        .expect("the unplaced file");
+    assert_eq!(second["fate"], json!("other_version"), "{body}");
+    assert_eq!(
+        (&second["edition_disc_number"], &second["edition_position"]),
+        (
+            &json!(other.tracks[1].disc),
+            &json!(other.tracks[1].position)
+        )
+    );
+    assert!(second["length_ms"].as_u64() > Some(0), "{body}");
+    assert_eq!(body["edition"]["date"], json!("2004-05-01"));
+    assert_eq!(body["edition"]["country"], json!("GB"));
+    assert_eq!(body["same_album"], json!(true));
+
+    // The same title by another artist, on another album: not another
+    // version, just a file the edition has no track for.
+    let mut stranger = other.clone();
+    stranger.id = STRANGER.to_owned();
+    stranger.release_group_id = "5d6e7f80-1a2b-4c3d-8e9f-0a1b2c3d4e5f".to_owned();
+    stranger.tracks[1].artists = vec![CreditedArtist {
+        id: "0e1f2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b".to_owned(),
+        name: "Someone Else".to_owned(),
+        sort_name: None,
+        join: String::new(),
+    }];
+    rig.identify.set_recall(RecallResult {
+        releases: vec![fit.clone(), other.clone(), stranger],
+        ..RecallResult::default()
+    });
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("{plan}?release_mbid={STRANGER}"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        (&body["other_version_count"], &body["extra_count"]),
+        (&json!(0), &json!(1)),
+        "{body}"
+    );
+    assert_eq!(body["same_album"], json!(false), "{body}");
+
+    let user = app.login_user("plain").await;
+    let user_headers = [("authorization", user.authorization.as_str())];
+    let (status, body) = app.call("GET", &plan, &user_headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["kept_count"], json!(2), "{body}");
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("{plan}?release_mbid={OTHER}"),
+            &user_headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+
+    let search = format!("/api/v3/library/albums/{album}/reidentification/releases?title=Album");
+    let (status, body) = app.call("GET", &search, &user_headers, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    let trusted = app.login_user("tris").await;
+    let (status, body) = app
+        .call(
+            "PUT",
+            &format!("/api/v3/admin/users/{}/role", trusted.user_id),
+            &headers,
+            Some(json!({"role": "trusted"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = app
+        .call(
+            "GET",
+            &search,
+            &[("authorization", trusted.authorization.as_str())],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    rig.stop().await;
+}
+
+/// Another version pairs one file with one track: when two files (a 4:11
+/// and a 6:02 cut, say) could both be another version of the same missing
+/// track, neither is, and both stay files the edition has no track for.
+#[tokio::test]
+async fn edition_plan_pairs_another_version_one_to_one() {
+    const OTHER: &str = "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f";
+    let rig = Rig::start("lib-edition-plan-pairs").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    plant(&music, "album-v/01.flac", "flac_full_01.flac");
+    plant(&music, "album-v/02.flac", "flac_full_02.flac");
+    plant(&music, "album-v/03.flac", "flac_full_02.flac");
+    rig.pause_identification().await;
+    app.add_library_folder("music", &music).await;
+    let tracks: Vec<String> = ["01", "02", "03"]
+        .iter()
+        .map(|name| {
+            rig.scan_store
+                .track_at("music", &format!("album-v/{name}.flac"))
+                .expect("track indexed")
+        })
+        .collect();
+    let album = rig.scan_store.album_for_track(&tracks[0]).expect("album");
+    for track in &tracks {
+        assert_eq!(rig.scan_store.album_for_track(track).as_ref(), Some(&album));
+    }
+    let mut other = tagged_release(&rig.identify_store, &album);
+    let mut seen = std::collections::HashSet::new();
+    other
+        .tracks
+        .retain(|track| seen.insert(track.title.clone()));
+    assert_eq!(other.tracks.len(), 2, "one track per song");
+    other.id = OTHER.to_owned();
+    let second = other
+        .tracks
+        .iter_mut()
+        .find(|track| track.position == 2)
+        .expect("the second track");
+    second.id = "other-track-2".to_owned();
+    second.recording_id = "b2c3d4e5-0000-4000-8000-000000000002".to_owned();
+    second.length_ms = second.length_ms.map(|length| length + 45_000);
+    rig.identify.set_recall(RecallResult {
+        releases: vec![other],
+        ..RecallResult::default()
+    });
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/albums/{album}/edition/plan?release_mbid={OTHER}"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        (
+            &body["kept_count"],
+            &body["missing_count"],
+            &body["other_version_count"],
+            &body["extra_count"],
+        ),
+        (&json!(1), &json!(1), &json!(0), &json!(2)),
+        "{body}"
+    );
     rig.stop().await;
 }
 
@@ -7453,6 +8120,35 @@ async fn a_wide_restore_never_writes_over_an_unnoticed_hand_edit() {
     assert_eq!(managed.mark(&album).as_deref(), Some("files_changed"));
     let items = managed.restore_preview(&[&album], "own").await;
     assert!(items[0].eligibility.writes(), "{:?}", items[0].facts);
+}
+
+/// An automatic run the worker started for an album, its queue row gone,
+/// is still a write to come until it has run.
+#[tokio::test]
+async fn an_open_automatic_run_is_a_write_to_come() {
+    let managed = ManagedLibrary::start("lib-automatic-writing", |_| {}).await;
+    let (album, _) = managed.add_album("first", 1).await;
+    managed.activate().await;
+    let management = managed.management();
+    let writes = || management.writes_by_itself(&album).expect("writes read");
+    managed.library.queue_automatic_management(&album);
+    assert!(writes().by_itself);
+    assert!(writes().pending, "queued");
+    assert!(management.automatic_next().expect("automatic step"));
+    let queued: bool = managed
+        .db()
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM library_management_automatic_queue \
+             WHERE local_album_id = ?1)",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("queue read");
+    assert!(!queued, "the worker took the row");
+    assert!(writes().pending, "the run is open");
+    while management_step(&managed.library).await {}
+    assert!(!writes().pending, "the run is done");
+    assert!(writes().by_itself);
 }
 
 /// An automatic run that was waiting to be planned when a scan followed

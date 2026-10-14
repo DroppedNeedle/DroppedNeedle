@@ -2,7 +2,8 @@
 //! explicit re-identification and settle it, search MusicBrainz releases
 //! for the edition finder, and undo an automatic edition.
 //!
-//! Every route is admin-only, as in v2. Store work runs on
+//! Every route is admin-only, as in v2, except the release search, which
+//! curators use to choose an edition. Store work runs on
 //! `spawn_blocking`; the release search awaits MusicBrainz.
 
 use axum::{
@@ -15,7 +16,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
-use super::auth::RequireAdmin;
+use super::auth::{RequireAdmin, RequireCurator};
 use super::error::{LibraryError, ValidJson, ValidQuery};
 use super::models::PenaltyView;
 use crate::library::identify::models::EvidenceClass;
@@ -736,14 +737,14 @@ pub async fn reidentify_album(
         (status = 200, description = "One page of releases", body = ReleaseEditionSearchResponse),
         (status = 400, description = "Missing title or bad paging"),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin role required"),
+        (status = 403, description = "Curator role required"),
         (status = 404, description = "Unknown album"),
         (status = 503, description = "MusicBrainz is unavailable"),
     )
 )]
 pub async fn search_reidentification_releases(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    _caller: RequireCurator,
     Path(album_id): Path<String>,
     ValidQuery(query): ValidQuery<ReleaseSearchQuery>,
 ) -> Result<Json<ReleaseEditionSearchResponse>, OperationsHttpError> {

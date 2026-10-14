@@ -6749,7 +6749,7 @@
         "tags": [
           "crate::library::http::edition"
         ],
-        "summary": "Move files the album's edition has no place for (second copies and\nfiles not on it) to the recycle bin. Only files the current plan marks\nthat way are accepted; nothing runs on its own. Undo with\n`.../edition/extras/restore`.",
+        "summary": "Move files the album's edition has no place for (second copies, other\nversions and files not on it) to the recycle bin: every fate but\n`keep`. Only files the current plan marks that way are accepted;\nnothing runs on its own. Undo with\n`.../edition/extras/restore`.",
         "operationId": "remove_extras",
         "parameters": [
           {
@@ -6866,7 +6866,7 @@
         "tags": [
           "crate::library::http::edition"
         ],
-        "summary": "What taking an edition would do: which files keep their place, which\nare second copies or extras, and which edition tracks are missing.\nAsks MusicBrainz for the release; changes nothing.",
+        "summary": "What taking an edition would do: which files keep their place, which\nare second copies, other versions or extras, and which edition tracks\nare missing. Asks MusicBrainz for the release; changes nothing. The\nalbum's own edition is open to every signed-in user; planning another\nrelease is for curators, who can choose it.",
         "operationId": "plan_edition",
         "parameters": [
           {
@@ -6906,7 +6906,7 @@
             "description": "Not authenticated"
           },
           "403": {
-            "description": "Curator role required"
+            "description": "Curator role required to plan another release"
           },
           "404": {
             "description": "Unknown album, or MusicBrainz does not know the release"
@@ -7144,7 +7144,7 @@
             "description": "Not authenticated"
           },
           "403": {
-            "description": "Admin role required"
+            "description": "Curator role required"
           },
           "404": {
             "description": "Unknown album"
@@ -31791,6 +31791,83 @@
           "any"
         ]
       },
+      "EditionFactsView": {
+        "type": "object",
+        "description": "What MusicBrainz says about the planned edition.",
+        "required": [
+          "title",
+          "formats",
+          "disc_count",
+          "track_count"
+        ],
+        "properties": {
+          "barcode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "catalog_number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The first catalog number."
+          },
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Release date as MusicBrainz gives it (`YYYY`, `YYYY-MM` or\n`YYYY-MM-DD`)."
+          },
+          "disambiguation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "disc_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "formats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "One format per medium that names one, in medium order."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The first label."
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "track_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "EditionPinBody": {
         "type": "object",
         "description": "Pin-set body.",
@@ -31836,6 +31913,21 @@
           }
         }
       },
+      "EditionPlacingView": {
+        "type": "object",
+        "description": "The chosen edition's files are still being placed on it.",
+        "required": [
+          "attempts"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Failed tries so far; above 0 means MusicBrainz did not answer.",
+            "minimum": 0
+          }
+        }
+      },
       "EditionPlanFileView": {
         "type": "object",
         "description": "One of the album's files and what the edition makes of it.",
@@ -31858,7 +31950,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "The edition track the file keeps or duplicates.",
+            "description": "The edition track the file keeps, duplicates or is another version\nof.",
             "minimum": 0
           },
           "edition_position": {
@@ -31871,7 +31963,16 @@
           },
           "fate": {
             "type": "string",
-            "description": "`keep` (sits on its own edition track), `duplicate` (another copy\nof a song the edition already has a file for) or `extra` (the\nedition has no track for it). Choosing never deletes a file."
+            "description": "`keep` (sits on its own edition track), `duplicate` (another copy\nof a song the edition already has a file for), `other_version`\n(the same title and artist as an edition track no file holds, but\nnot placed on it; that track still counts as missing) or `extra`\n(the edition has no track for it). Choosing never deletes a file."
+          },
+          "length_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The file's length, when the scan read it.",
+            "minimum": 0
           },
           "local_track_id": {
             "type": "string"
@@ -31943,9 +32044,12 @@
           "title",
           "artist_name",
           "is_current",
+          "same_album",
+          "edition",
           "kept_count",
           "missing_count",
           "duplicate_count",
+          "other_version_count",
           "extra_count",
           "tracks",
           "files"
@@ -31960,6 +32064,9 @@
           "duplicate_count": {
             "type": "integer",
             "minimum": 0
+          },
+          "edition": {
+            "$ref": "#/components/schemas/EditionFactsView"
           },
           "extra_count": {
             "type": "integer",
@@ -31981,6 +32088,11 @@
           },
           "missing_count": {
             "type": "integer",
+            "description": "Edition tracks no file holds, including those a file is another\nversion of.",
+            "minimum": 0
+          },
+          "other_version_count": {
+            "type": "integer",
             "minimum": 0
           },
           "release_group_mbid": {
@@ -31988,6 +32100,10 @@
           },
           "release_mbid": {
             "type": "string"
+          },
+          "same_album": {
+            "type": "boolean",
+            "description": "The edition belongs to the album's current release group (false\nfor an album with none)."
           },
           "title": {
             "type": "string"
@@ -32082,7 +32198,12 @@
           "state",
           "reason",
           "candidates",
-          "undo_available"
+          "undo_available",
+          "identity_revision",
+          "edition_kind",
+          "identifying",
+          "files_by_itself",
+          "writing"
         ],
         "properties": {
           "album_id": {
@@ -32110,6 +32231,34 @@
             ],
             "description": "Who chose the edition, for a chosen one."
           },
+          "edition_kind": {
+            "type": "string",
+            "description": "`release` (a MusicBrainz release), `custom` (a custom edition),\n`group_only` (a release group with no release chosen) or `none`."
+          },
+          "files_by_itself": {
+            "type": "boolean",
+            "description": "The app writes the edition's tags and file names by itself after a\nchoice: the album's folder manages it automatically and nothing\nholds it back."
+          },
+          "identifying": {
+            "type": "boolean",
+            "description": "An identification of the album is queued or running, as after\n\"Let DroppedNeedle choose\"."
+          },
+          "identity_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The identity's row revision, 0 when the album has none. A guarded\nwrite echoes it."
+          },
+          "placing": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EditionPlacingView",
+                "description": "Set while the chosen edition's files are still being placed on it."
+              }
+            ]
+          },
           "reason": {
             "$ref": "#/components/schemas/ReasonView",
             "description": "Why the edition is what it is, and what to do about it."
@@ -32133,6 +32282,10 @@
           "undo_available": {
             "type": "boolean",
             "description": "The last edition change can still be taken back."
+          },
+          "writing": {
+            "type": "boolean",
+            "description": "That write is still to happen."
           }
         }
       },
@@ -45827,7 +45980,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Local track ids the album's edition plan marks `duplicate` or `extra`."
+            "description": "Local track ids the album's edition plan marks anything but `keep`."
           }
         }
       },

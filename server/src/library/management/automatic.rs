@@ -20,8 +20,11 @@ use super::reasons::{self, ItemReason};
 use super::service::{JobSpec, Management};
 use super::{planner, profile, store, takeover};
 use crate::library::clock::now_unix;
+use crate::library::identify::models::AlbumIdentity;
+use crate::library::operations::status;
 use crate::library::publish::Sandbox;
 use crate::library::publish::snapshots::sha256_hex;
+use crate::runtime_config::sections::{LibraryManagement, LibraryManagementRootAssignment};
 use crate::settings::management::{activation_is_current, migration_carry_applies};
 
 /// How long the catalog must be still before automatic management looks
@@ -39,6 +42,41 @@ pub(super) const PARKED: f64 = 1.0e15;
 pub struct Settle {
     revision: Option<i64>,
     changed_at: Option<f64>,
+}
+
+/// Whether the app writes an album's files by itself, and whether it is
+/// still to do so.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AutomaticWrites {
+    pub by_itself: bool,
+    pub pending: bool,
+}
+
+/// The first checks of a look at an album: whether automatic management
+/// would write it at all as things stand.
+enum Gate {
+    /// Never written by itself until something changes.
+    Closed(Verdict),
+    /// A scan followed a retag made outside the app: the album is marked
+    /// taken over, then parked.
+    Follow,
+    /// Not ready yet; looked at again later.
+    NotYet(Verdict),
+    /// The rest of the look goes on.
+    Open(Box<Opened>),
+}
+
+/// What the rest of a look needs once the gate is open.
+struct Opened {
+    files: Vec<AlbumFile>,
+    stored: LibraryManagement,
+    assignment: LibraryManagementRootAssignment,
+    origin: Origin,
+    policy: String,
+    states: Vec<Option<store::TrackState>>,
+    identity: AlbumIdentity,
+    /// Each file and the revision of the track match it is written from.
+    mapping: Vec<(String, u64)>,
 }
 
 /// What automatic management decided for one album.
@@ -156,6 +194,20 @@ pub(crate) fn stamp_retag_followed(
         params![album_id, (now * 1000.0) as i64],
     )?;
     Ok(())
+}
+
+/// Whether a person asked for the album's taken-over mark to be lifted and
+/// the worker has yet to do it.
+fn hand_back_stamped(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM library_album_takeovers \
+             WHERE local_album_id = ?1 AND handed_back_at IS NOT NULL",
+            params![album_id],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
 }
 
 /// Whether the album waits with a scan's retag stamp.
@@ -288,6 +340,48 @@ impl Management {
         Ok(automatic_origin(&assignment, &files).is_some())
     }
 
+    /// Whether the app writes the album's files by itself (the first
+    /// checks of a look would let it through, a stamped hand-back counting
+    /// as done), and whether such a write is still to come: an automatic
+    /// run for the album is open, or its queue row is neither parked nor
+    /// waiting on a blocked preview. Blocking.
+    pub fn writes_by_itself(&self, album_id: &str) -> Result<AutomaticWrites, ManagementError> {
+        let open = match self.automatic_gate(album_id, true)? {
+            Gate::Closed(_) | Gate::Follow => false,
+            // A file with no track to map to stays so once the album's files
+            // are placed and matched (a file the chosen edition has no track
+            // for), and the look parks: only a placing or a matching still
+            // to come can map it.
+            Gate::NotYet(Verdict::Wait("TRACK_NOT_MAPPED")) => self.read(|conn| {
+                Ok(status::placing_attempts(conn, album_id)?.is_some()
+                    || status::identifying(conn, album_id)?)
+            })?,
+            Gate::NotYet(_) | Gate::Open(_) => true,
+        };
+        if !open {
+            return Ok(AutomaticWrites::default());
+        }
+        let pending = self.read(|conn| {
+            Ok(conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM library_management_automatic_queue \
+                 WHERE local_album_id = ?1 AND not_before < ?2 \
+                 AND last_reason_code IS NOT 'PREVIEW_BLOCKED') \
+                 OR EXISTS(SELECT 1 FROM library_operation_jobs j \
+                 JOIN library_management_job_snapshots s ON s.job_id = j.id \
+                 WHERE j.kind = ?3 AND j.state IN ('queued', 'running', 'paused') \
+                 AND j.idempotency_key LIKE 'automatic:%' \
+                 AND EXISTS(SELECT 1 FROM json_each(s.selection_json, '$.ids') \
+                 WHERE value = ?1))",
+                params![album_id, PARKED, store::KIND],
+                |row| row.get(0),
+            )?)
+        })?;
+        Ok(AutomaticWrites {
+            by_itself: true,
+            pending,
+        })
+    }
+
     /// Look at the next waiting album once the catalog has settled and no
     /// scan runs. True when one was looked at or handed back. Blocking.
     pub fn automatic_step(&self, settle: &mut Settle) -> Result<bool, ManagementError> {
@@ -417,13 +511,20 @@ impl Management {
         })
     }
 
-    fn automatic_verdict(&self, album_id: &str) -> Result<Verdict, ManagementError> {
+    /// The first checks of a look, which write nothing. `passing_hand_back`
+    /// lets a taken-over album whose hand-back is stamped through, as the
+    /// worker lifts its mark before it looks again.
+    fn automatic_gate(
+        &self,
+        album_id: &str,
+        passing_hand_back: bool,
+    ) -> Result<Gate, ManagementError> {
         let files = self.read(|conn| Ok(album_files(conn, album_id)?))?;
         let Some(first) = files.first() else {
-            return Ok(Verdict::Done("ALBUM_GONE"));
+            return Ok(Gate::Closed(Verdict::Done("ALBUM_GONE")));
         };
         if files.iter().any(|file| file.root_id != first.root_id) {
-            return Ok(Verdict::Park("SPANS_FOLDERS"));
+            return Ok(Gate::Closed(Verdict::Park("SPANS_FOLDERS")));
         }
         let stored = self.settings()?;
         let assignment = profile::root_assignment(&stored, &first.root_id);
@@ -436,18 +537,16 @@ impl Management {
                     || assignment.automatic_drop_imports
                     || assignment.automatic_scan_discovered);
             if writes_some && self.read(|conn| Ok(retag_followed(conn, album_id)?))? {
-                self.write(|tx| Ok(takeover::mark_followed(tx, album_id, now_unix())?))?;
-                return Ok(Verdict::Park(takeover::TAKEN_OVER));
+                return Ok(Gate::Follow);
             }
-            return Ok(Verdict::Done("NOT_AUTOMATIC"));
+            return Ok(Gate::Closed(Verdict::Done("NOT_AUTOMATIC")));
         };
-        let registry = self.setup.live_registry();
-        let policy = registry.policy_revision().to_owned();
+        let policy = self.setup.live_registry().policy_revision().to_owned();
         let pinned_policy = self.activation_policy_revision()?;
         if !activation_is_current(&stored, &assignment, &pinned_policy)
             && !migration_carry_applies(&stored, &assignment, &pinned_policy)
         {
-            return Ok(Verdict::Park("ACTIVATION_STALE"));
+            return Ok(Gate::Closed(Verdict::Park("ACTIVATION_STALE")));
         }
         let activated_at = assignment.activation_confirmed_at.unwrap_or(0.0);
         let mut states = Vec::new();
@@ -459,7 +558,7 @@ impl Management {
                 && state.managed_at.is_none_or(|at| at >= activated_at)
         });
         if restored {
-            return Ok(Verdict::Park("RESTORED"));
+            return Ok(Gate::Closed(Verdict::Park("RESTORED")));
         }
         let excluded = self.read(|conn| {
             Ok(conn
@@ -472,23 +571,25 @@ impl Management {
                 .is_some())
         })?;
         if excluded {
-            return Ok(Verdict::Park("EXCLUDED"));
+            return Ok(Gate::Closed(Verdict::Park("EXCLUDED")));
         }
         // The only place an automatic file write starts: an album the app
         // stepped back from waits here until a person hands it back.
-        if self.read(|conn| Ok(takeover::is_marked(conn, album_id)?))? {
-            return Ok(Verdict::Park(takeover::TAKEN_OVER));
+        let held = self.read(|conn| {
+            Ok(takeover::is_marked(conn, album_id)?
+                && !(passing_hand_back && hand_back_stamped(conn, album_id)?))
+        })?;
+        if held {
+            return Ok(Gate::Closed(Verdict::Park(takeover::TAKEN_OVER)));
         }
         // A scan followed the album across a retag made outside the app,
         // over an edition someone chose. A record the app wrote since does
         // not cancel it: that write took the retagged bytes as they were.
         if self.read(|conn| Ok(retag_followed(conn, album_id)?))? {
-            self.write(|tx| Ok(takeover::mark_followed(tx, album_id, now_unix())?))?;
-            return Ok(Verdict::Park(takeover::TAKEN_OVER));
+            return Ok(Gate::Follow);
         }
-        let identities = &self.setup.identify_store;
-        let Some(identity) = identities.album_identity(album_id) else {
-            return Ok(Verdict::Wait("IDENTITY_NOT_ACCEPTED"));
+        let Some(identity) = self.setup.identify_store.album_identity(album_id) else {
+            return Ok(Gate::NotYet(Verdict::Wait("IDENTITY_NOT_ACCEPTED")));
         };
         // A custom edition is managed automatically only where the folder
         // says so (v2's automatic_custom_editions).
@@ -498,10 +599,11 @@ impl Management {
                 .read(|conn| Ok(super::custom::active(conn, album_id)?))?
                 .is_some();
         if custom && !assignment.automatic_custom_editions {
-            return Ok(Verdict::Park("CUSTOM_EDITION"));
+            return Ok(Gate::Closed(Verdict::Park("CUSTOM_EDITION")));
         }
+        let identities = &self.setup.identify_store;
         if !custom && (identity.release_mbid.is_none() || identity.release_group_mbid.is_none()) {
-            return Ok(Verdict::Park("RELEASE_NOT_SELECTED"));
+            return Ok(Gate::Closed(Verdict::Park("RELEASE_NOT_SELECTED")));
         }
         let mut mapping = Vec::new();
         for file in &files {
@@ -515,7 +617,7 @@ impl Management {
                 track if custom => {
                     mapping.push((file.id.clone(), track.map_or(0, |track| track.row_revision)));
                 }
-                _ => return Ok(Verdict::Wait("TRACK_NOT_MAPPED")),
+                _ => return Ok(Gate::NotYet(Verdict::Wait("TRACK_NOT_MAPPED"))),
             }
         }
         let manage_unconfirmed = planner::manage_unconfirmed(&self.setup);
@@ -524,8 +626,39 @@ impl Management {
         if gate.is_some() {
             // Confirming the match, or turning on "Also manage unconfirmed
             // matches", looks at the album again.
-            return Ok(Verdict::Park("UNCONFIRMED_MATCH"));
+            return Ok(Gate::Closed(Verdict::Park("UNCONFIRMED_MATCH")));
         }
+        Ok(Gate::Open(Box::new(Opened {
+            files,
+            stored,
+            assignment,
+            origin,
+            policy,
+            states,
+            identity,
+            mapping,
+        })))
+    }
+
+    fn automatic_verdict(&self, album_id: &str) -> Result<Verdict, ManagementError> {
+        let opened = match self.automatic_gate(album_id, false)? {
+            Gate::Closed(verdict) | Gate::NotYet(verdict) => return Ok(verdict),
+            Gate::Follow => {
+                self.write(|tx| Ok(takeover::mark_followed(tx, album_id, now_unix())?))?;
+                return Ok(Verdict::Park(takeover::TAKEN_OVER));
+            }
+            Gate::Open(opened) => *opened,
+        };
+        let Opened {
+            files,
+            stored,
+            assignment,
+            origin,
+            policy,
+            states,
+            identity,
+            mapping,
+        } = opened;
         let pinned = profile::pin_assignment(&stored, &assignment)?;
         let revisions = profile::revisions(&stored, &pinned, &policy);
         let sandbox = self.setup.publish_sandbox().ok();
