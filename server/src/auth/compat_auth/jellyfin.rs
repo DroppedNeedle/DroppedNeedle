@@ -269,14 +269,9 @@ pub struct SessionFacts {
     pub device_name: Option<String>,
     /// Device id from the auth header.
     pub device_id: Option<String>,
-    /// UTC ISO-8601 activity timestamp with microseconds, v2
-    /// `datetime.now(timezone.utc).isoformat()` shape
-    /// (`2026-09-28T12:00:00.123456+00:00`). The Jellyfin router formats
-    /// it; this contract only pins the shape.
-    pub last_activity: String,
     /// The time of this sign-in as Jellyfin writes a date
     /// (`2026-09-28T12:00:00.1234560Z`): the user's `LastLoginDate` and
-    /// `LastActivityDate`.
+    /// `LastActivityDate`, and the session's `LastActivityDate`.
     pub signed_in_at: String,
     /// `Version` from the auth header, the app's own version.
     pub application_version: Option<String>,
@@ -377,7 +372,7 @@ pub fn login_echo_json(user: &JellyfinUser, access_token: &str, session: &Sessio
     push_kv(&mut out, true, "Id", &session.id);
     push_kv(&mut out, false, "UserId", &user.id);
     push_kv(&mut out, false, "UserName", name);
-    push_kv(&mut out, false, "LastActivityDate", &session.last_activity);
+    push_kv(&mut out, false, "LastActivityDate", &session.signed_in_at);
     if let Some(client) = session.client.as_deref() {
         push_kv(&mut out, false, "Client", client);
     }

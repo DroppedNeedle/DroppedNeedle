@@ -47,7 +47,9 @@ pub fn iso_o(ts: Option<f64>) -> String {
     };
     let whole = ts.max(0.0);
     let secs = whole.floor() as i64;
-    let micros = ((whole - secs as f64) * 1_000_000.0).round() as u32;
+    // A fraction within half a microsecond of the next second would round
+    // to a seventh digit: it stays in this second.
+    let micros = (((whole - secs as f64) * 1_000_000.0).round() as u32).min(999_999);
     let (y, m, d, hh, mm, ss) = civil_from_unix(secs);
     format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}.{micros:06}0Z")
 }
@@ -78,20 +80,6 @@ fn month_and_day(year: i32, date: &str) -> Option<(u8, u8)> {
     };
     time::Date::from_calendar_date(year, time::Month::try_from(month).ok()?, day).ok()?;
     Some((month, day))
-}
-
-/// Current UTC time in v2 `datetime.now(timezone.utc).isoformat()` shape
-/// (`2026-09-28T12:00:00.123456+00:00`) for `SessionInfo.LastActivityDate`.
-pub fn utc_now_iso() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0);
-    let whole = now.max(0.0);
-    let secs = whole.floor() as i64;
-    let micros = ((whole - secs as f64) * 1_000_000.0).round() as u32;
-    let (y, m, d, hh, mm, ss) = civil_from_unix(secs);
-    format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}.{micros:06}+00:00")
 }
 
 /// Unix seconds → (year, month, day, hour, min, sec) UTC (Howard Hinnant's

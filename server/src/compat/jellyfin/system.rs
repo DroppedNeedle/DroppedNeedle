@@ -234,7 +234,6 @@ where
         client,
         device_name,
         device_id,
-        last_activity: builders::utc_now_iso(),
         signed_in_at: builders::iso_o(Some(unix_now())),
         application_version,
         remote_end_point,

@@ -161,8 +161,8 @@ fn finamp(secret: &str) -> String {
     )
 }
 
-/// Exact-key-set JSON comparison; `__UUID__`, `__ISO_PY__` and `__ISO_NET__`
-/// match by shape.
+/// Exact-key-set JSON comparison; `__UUID__` and `__ISO_NET__` match by
+/// shape.
 fn assert_shape(actual: &Value, expected: &Value, path: &str) {
     match (actual, expected) {
         (Value::String(got), Value::String(exp)) if exp == "__ISO_NET__" => {
@@ -175,15 +175,6 @@ fn assert_shape(actual: &Value, expected: &Value, path: &str) {
             assert!(
                 got.len() == 32 && got.bytes().all(|b| b.is_ascii_hexdigit()),
                 "{path}: {got} is not a 32-hex id"
-            );
-        }
-        (Value::String(got), Value::String(exp)) if exp == "__ISO_PY__" => {
-            // `2026-09-28T12:00:00.123456+00:00`
-            let shape = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}\+00:00$")
-                .expect("regex");
-            assert!(
-                shape.is_match(got),
-                "{path}: {got} is not a microsecond UTC timestamp"
             );
         }
         (Value::Object(got), Value::Object(exp)) => {
@@ -422,7 +413,7 @@ async fn login_echoes_the_app_password_and_users_me_matches() {
                 "Id": "__UUID__",
                 "UserId": "user-alice",
                 "UserName": "alice",
-                "LastActivityDate": "__ISO_PY__",
+                "LastActivityDate": "__ISO_NET__",
                 "DeviceName": "",
                 "IsActive": true,
                 "SupportsRemoteControl": false,
