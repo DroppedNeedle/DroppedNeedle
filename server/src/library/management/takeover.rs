@@ -16,6 +16,7 @@
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
 use super::models::{ManagementError, PlannedItem};
+use super::reasons::ItemReason;
 use crate::library::clock::now_unix;
 use crate::library::operations::decisions::{CatalogAction, bump_catalog, record_action};
 pub use crate::library::publish::record::record_sql;
@@ -28,6 +29,22 @@ pub const TAKEN_OVER: &str = "TAKEN_OVER";
 /// Terminal code of an automatic run that wrote nothing because the
 /// album's files were changed outside the app.
 pub const FILES_CHANGED_OUTSIDE: &str = "FILES_CHANGED_OUTSIDE";
+/// Block code of a file a preview of several albums leaves alone because
+/// it was changed outside the app since the app wrote it.
+pub const CHANGED_OUTSIDE: &str = "CHANGED_OUTSIDE";
+
+/// Why a preview of several albums leaves a file alone.
+pub(crate) fn changed_outside_reason() -> ItemReason {
+    ItemReason {
+        code: CHANGED_OUTSIDE.to_owned(),
+        message: "This file was changed outside DroppedNeedle since DroppedNeedle last wrote it."
+            .to_owned(),
+        action: "Preview the album by itself to see what would change. Applying that preview \
+                 overwrites the change."
+            .to_owned(),
+    }
+}
+
 /// Why the app stepped back from an album.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cause {

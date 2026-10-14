@@ -1105,7 +1105,22 @@ impl Management {
             if tracks.is_empty() {
                 continue;
             }
-            let items = planner::plan_album(&ctx, scope, &tracks, bundle_ordinal as i64, ordinal)?;
+            let held = ctx.wide && snapshot.origin == Origin::Manual.as_str();
+            let before = if held {
+                self.read(|conn| {
+                    Ok(takeover::state_revisions(
+                        conn,
+                        std::slice::from_ref(&scope.album_id),
+                    )?)
+                })?
+            } else {
+                Default::default()
+            };
+            let mut items =
+                planner::plan_album(&ctx, scope, &tracks, bundle_ordinal as i64, ordinal)?;
+            if held {
+                self.hold_changed(&scope.album_id, &snapshot.job.id, &mut items, &before)?;
+            }
             ordinal += items.len() as i64;
             summary.bundle_count += 1;
             for item in &items {
@@ -1122,6 +1137,51 @@ impl Management {
         });
         summary.expanded_track_count = summary.item_count;
         Ok(Some(summary))
+    }
+
+    /// A person's preview of more than one album never writes over a file
+    /// changed outside the app that automatic management has not looked at
+    /// yet: the check it runs blocks the album here, and where the folder
+    /// is managed automatically the album is marked as it would be.
+    /// Previewing the album by itself overwrites the change.
+    fn hold_changed(
+        &self,
+        album_id: &str,
+        job_id: &str,
+        items: &mut [PlannedItem],
+        before: &std::collections::HashMap<String, i64>,
+    ) -> Result<(), ManagementError> {
+        let changed = self
+            .read(|conn| Ok(takeover::changed_outside(conn, items, before)?))?
+            .counted;
+        if changed.is_empty() {
+            return Ok(());
+        }
+        for item in items.iter_mut().filter(|item| item.eligibility.writes()) {
+            let own = changed
+                .iter()
+                .any(|(_, track)| item.track_id.as_deref() == Some(track.as_str()));
+            if own {
+                item.block(takeover::changed_outside_reason());
+            } else if item.diff.changes_anything() {
+                item.block(reasons::bundle_blocked());
+            }
+        }
+        if self.managed_automatically(album_id)? {
+            let tracks: Vec<String> = changed.into_iter().map(|(_, track)| track).collect();
+            let now = now_unix();
+            self.write(|tx| {
+                Ok(takeover::mark(
+                    tx,
+                    album_id,
+                    takeover::Cause::FilesChanged,
+                    &tracks,
+                    Some(job_id),
+                    now,
+                )?)
+            })?;
+        }
+        Ok(())
     }
 
     /// Plan putting each album of the linked apply back.

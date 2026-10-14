@@ -17,6 +17,7 @@ use super::service::{JobSpec, Management, stale};
 use super::store::Snapshot;
 use crate::library::clock::now_unix;
 use crate::library::manage::BaselineSkip;
+use crate::library::publish::record::changed_since_written;
 use crate::library::publish::snapshots::{BlobStore, sha256_hex};
 use crate::library::publish::undo::BaselineBlock;
 
@@ -145,6 +146,12 @@ impl Management {
         for scope in &mut albums {
             scope.track_ids = None;
         }
+        let wide = albums
+            .iter()
+            .map(|scope| scope.album_id.as_str())
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            > 1;
         let mut summary = Summary::default();
         let mut ordinal = 0;
         for (bundle_ordinal, scope) in albums.iter().enumerate() {
@@ -232,6 +239,50 @@ impl Management {
                     }
                 }
                 items.push(item);
+            }
+            if wide {
+                // A restore of more than one album never writes over a
+                // file changed outside since the app wrote it: restore the
+                // album by itself for that.
+                let changed = self.read(|conn| {
+                    let mut changed = Vec::new();
+                    for item in items.iter().filter(|item| item.desired.plan.is_some()) {
+                        if let Some(track_id) = &item.track_id
+                            && changed_since_written(
+                                conn,
+                                track_id,
+                                &item.source_root,
+                                &item.source_rel,
+                                &item.fingerprint,
+                            )?
+                        {
+                            changed.push(track_id.clone());
+                        }
+                    }
+                    Ok(changed)
+                })?;
+                for item in items.iter_mut().filter(|item| {
+                    item.track_id
+                        .as_ref()
+                        .is_some_and(|id| changed.contains(id))
+                }) {
+                    item.block(super::takeover::changed_outside_reason());
+                }
+                // As a many-album preview does: where the folder is managed
+                // automatically, the album is left unmanaged too.
+                if !changed.is_empty() && self.managed_automatically(&scope.album_id)? {
+                    let now = now_unix();
+                    self.write(|tx| {
+                        Ok(super::takeover::mark(
+                            tx,
+                            &scope.album_id,
+                            super::takeover::Cause::FilesChanged,
+                            &changed,
+                            Some(&snapshot.job.id),
+                            now,
+                        )?)
+                    })?;
+                }
             }
             if items
                 .iter()

@@ -7155,6 +7155,250 @@ async fn a_rename_in_the_app_keeps_v2s_record() {
     assert_eq!(file_sha256(&file), bytes, "nothing written");
 }
 
+/// A preview of two albums where one has a hand edit the worker has not
+/// looked at yet: that album's files are blocked and, in a folder managed
+/// automatically, the album is left unmanaged; the other album plans. The
+/// album previewed by itself plans.
+#[tokio::test]
+async fn a_wide_preview_never_writes_over_an_unnoticed_hand_edit() {
+    use droppedneedle::library::management::models::{Eligibility, SelectionKind};
+
+    let managed = ManagedLibrary::start("lib-takeover-wide-unnoticed", |_| {}).await;
+    let (album, tracks) = managed.add_album("first", 1).await;
+    let (other, _) = managed.add_album("second", 1).await;
+    managed.activate().await;
+    managed.look(&album).await;
+    managed.look(&other).await;
+    managed
+        .edit_outside(&tracks[0], title_edit("By Hand"))
+        .await;
+    let file = managed.path(&tracks[0]);
+    let bytes = file_sha256(&file);
+
+    let (_, items) = managed
+        .preview(SelectionKind::Albums, &[&album, &other], "both")
+        .await;
+    assert_eq!(items.len(), 2);
+    for item in &items {
+        if item.album_id == album {
+            assert_eq!(item.eligibility, Eligibility::Blocked);
+            assert_eq!(item.reason().expect("a reason").code, "CHANGED_OUTSIDE");
+        } else {
+            assert!(item.eligibility.writes(), "{:?}", item.facts);
+        }
+    }
+    assert_eq!(managed.mark(&album).as_deref(), Some("files_changed"));
+
+    let (_, items) = managed
+        .preview(SelectionKind::Albums, &[&album], "own")
+        .await;
+    assert!(items[0].eligibility.writes(), "{:?}", items[0].facts);
+    assert!(items[0].diff.tags_changed);
+    assert_eq!(file_sha256(&file), bytes);
+}
+
+impl ManagedLibrary {
+    /// A person's restore-originals preview of whole albums, planned.
+    async fn restore_preview(
+        &self,
+        ids: &[&str],
+        key: &str,
+    ) -> Vec<droppedneedle::library::management::models::PlannedItem> {
+        use droppedneedle::library::management::models::{Selection, SelectionKind};
+        use droppedneedle::library::management::restore::RestoreRequest;
+        let management = self.management();
+        let handle = management
+            .create_restore_preview(
+                RestoreRequest {
+                    selection: Selection {
+                        kind: SelectionKind::Albums,
+                        ids: ids.iter().map(|id| (*id).to_owned()).collect(),
+                        catalog_filter: None,
+                    },
+                    expected_settings_revision: self.settings_revision(),
+                    expected_policy_revision: self
+                        .library
+                        .live_registry()
+                        .policy_revision()
+                        .to_owned(),
+                    idempotency_key: key.to_owned(),
+                },
+                "admin",
+            )
+            .expect("restore preview queued");
+        assert!(management_step(&self.library).await, "planning runs");
+        management
+            .items(&handle.job_id, -1, 100, &Default::default())
+            .expect("items")
+            .items
+    }
+}
+
+/// In a folder managed by hand, a wide preview blocks an album with an
+/// unnoticed hand edit and leaves it unmarked. A person's run of the
+/// album by itself takes the files back, so after a change of edition a
+/// wide preview plans it again.
+#[tokio::test]
+async fn a_wide_preview_in_a_manual_folder_blocks_without_marking() {
+    use droppedneedle::library::management::models::{Eligibility, SelectionKind};
+
+    let managed = ManagedLibrary::start("lib-takeover-wide-manual", |_| {}).await;
+    let (other, _) = managed.add_album("first", 1).await;
+    let (album, tracks) = managed.add_album("second", 1).await;
+    managed.worker_looks().await;
+    managed
+        .apply(SelectionKind::Albums, &[&album], "album")
+        .await;
+    managed
+        .apply(SelectionKind::Albums, &[&other], "other")
+        .await;
+    managed
+        .edit_outside(&tracks[0], title_edit("By Hand"))
+        .await;
+
+    let (_, items) = managed
+        .preview(SelectionKind::Albums, &[&album, &other], "both")
+        .await;
+    for item in items.iter().filter(|item| item.album_id == album) {
+        assert_eq!(item.eligibility, Eligibility::Blocked);
+        assert_eq!(item.reason().expect("a reason").code, "CHANGED_OUTSIDE");
+    }
+    assert_eq!(
+        managed.mark(&album),
+        None,
+        "nothing is managed by itself here"
+    );
+
+    managed.apply(SelectionKind::Albums, &[&album], "own").await;
+    let chosen: String = managed
+        .db()
+        .query_row(
+            "SELECT release_mbid FROM local_album_external_identities WHERE local_album_id = ?1",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("edition");
+    // The album's two editions differ only in their second id group.
+    let edition = if chosen.contains("-0000-") {
+        chosen.replacen("-0000-", "-0001-", 1)
+    } else {
+        chosen.replacen("-0001-", "-0000-", 1)
+    };
+    droppedneedle::library::operations::service::Operations::new(&managed.library)
+        .choose_edition(&album, &edition, Some("admin"))
+        .await
+        .expect("edition chosen");
+    let (_, items) = managed
+        .preview(SelectionKind::Albums, &[&album, &other], "after")
+        .await;
+    for item in items.iter().filter(|item| item.album_id == album) {
+        assert!(item.eligibility.writes(), "{:?}", item.facts);
+        assert!(item.diff.tags_changed);
+    }
+}
+
+/// Undoing a person's run of the whole profile puts the hand edit it
+/// wrote over back, and with it the app's record from before the run: in
+/// a folder managed by hand, a wide preview after a change of edition
+/// still leaves the album alone.
+#[tokio::test]
+async fn an_undone_profile_run_gives_the_hand_edit_back() {
+    use droppedneedle::library::management::models::{Eligibility, SelectionKind};
+    use droppedneedle::library::tags::{TagField, read_fields};
+
+    let managed = ManagedLibrary::start("lib-takeover-undo-hand-edit", |_| {}).await;
+    let (other, _) = managed.add_album("first", 1).await;
+    let (album, tracks) = managed.add_album("second", 1).await;
+    managed.worker_looks().await;
+    managed
+        .apply(SelectionKind::Albums, &[&album], "album")
+        .await;
+    managed
+        .apply(SelectionKind::Albums, &[&other], "other")
+        .await;
+    managed
+        .edit_outside(&tracks[0], title_edit("By Hand"))
+        .await;
+    let run = managed.apply(SelectionKind::Albums, &[&album], "own").await;
+
+    let management = managed.management();
+    let detail = management.detail(&run).expect("detail");
+    let undo = management
+        .undo_preview(&run, detail.job.row_revision, "undo", "admin")
+        .expect("undo preview");
+    assert!(
+        management_step(&managed.library).await,
+        "undo planning runs"
+    );
+    let undone = management_apply(&managed.library, &undo).await;
+    assert_eq!(undone.job.state.as_str(), "succeeded");
+    let file = managed.path(&tracks[0]);
+    assert_eq!(
+        read_fields(&file).expect("tags read")[&TagField::Title],
+        vec!["By Hand".to_owned()],
+        "the hand edit is back"
+    );
+
+    let chosen: String = managed
+        .db()
+        .query_row(
+            "SELECT release_mbid FROM local_album_external_identities WHERE local_album_id = ?1",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("edition");
+    // The album's two editions differ only in their second id group.
+    let edition = if chosen.contains("-0000-") {
+        chosen.replacen("-0000-", "-0001-", 1)
+    } else {
+        chosen.replacen("-0001-", "-0000-", 1)
+    };
+    droppedneedle::library::operations::service::Operations::new(&managed.library)
+        .choose_edition(&album, &edition, Some("admin"))
+        .await
+        .expect("edition chosen");
+    let (_, items) = managed
+        .preview(SelectionKind::Albums, &[&album, &other], "after")
+        .await;
+    for item in items.iter().filter(|item| item.album_id == album) {
+        assert_eq!(item.eligibility, Eligibility::Blocked);
+        assert_eq!(item.reason().expect("a reason").code, "CHANGED_OUTSIDE");
+    }
+}
+
+/// A restore of the originals over more than one album leaves out a file
+/// changed outside since the app wrote it and, in a folder managed
+/// automatically, leaves the album unmanaged; the album restored by
+/// itself goes ahead.
+#[tokio::test]
+async fn a_wide_restore_never_writes_over_an_unnoticed_hand_edit() {
+    use droppedneedle::library::management::models::Eligibility;
+
+    let managed = ManagedLibrary::start("lib-takeover-wide-restore", |_| {}).await;
+    let (album, tracks) = managed.add_album("first", 1).await;
+    let (other, _) = managed.add_album("second", 1).await;
+    managed.activate().await;
+    managed.look(&album).await;
+    managed.look(&other).await;
+    managed
+        .edit_outside(&tracks[0], title_edit("By Hand"))
+        .await;
+
+    let items = managed.restore_preview(&[&album, &other], "both").await;
+    assert_eq!(items.len(), 2);
+    for item in &items {
+        if item.album_id == album {
+            assert_eq!(item.eligibility, Eligibility::Blocked);
+            assert_eq!(item.reason().expect("a reason").code, "CHANGED_OUTSIDE");
+        } else {
+            assert!(item.eligibility.writes(), "{:?}", item.facts);
+        }
+    }
+    assert_eq!(managed.mark(&album).as_deref(), Some("files_changed"));
+    let items = managed.restore_preview(&[&album], "own").await;
+    assert!(items[0].eligibility.writes(), "{:?}", items[0].facts);
+}
+
 /// An automatic run that was waiting to be planned when a scan followed
 /// its album across a hand retag and stamped it writes nothing: its plan
 /// treats the stamp as the mark it is about to become.
