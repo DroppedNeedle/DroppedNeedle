@@ -24,6 +24,7 @@ from models.local_catalog import (
 from repositories.playlist_repository import TrackResolution
 from services.native.target_reference_adapters import TargetPlaylistRepository
 from services.playlist_service import PlaylistService
+from services.playlist_track_resolver import is_owned
 from services.spotify_import_service import SpotifyImportService
 
 _COLUMNS = {
@@ -503,3 +504,106 @@ async def test_rows_resolved_earlier_get_their_filed_album_shown(tmp_path):
     for name in ("Flagged", "Untouched"):
         assert (after[name].cover_url, after[name].album_id) == (stale, "rg-muchdance")
     assert await repo.link_tracks_by_recording(pid) == 0  # idempotent
+
+
+# --- removed library tracks (manual-test follow-up) ---------------------------
+
+
+def _set_availability(store, track_id, availability):
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute(
+            "UPDATE local_tracks SET availability = ? WHERE id = ?",
+            (availability, track_id),
+        )
+
+
+@pytest.mark.parametrize("availability", ["excluded", "missing"])
+@pytest.mark.asyncio
+async def test_removed_library_track_is_unlinked_from_the_playlist(
+    tmp_path, availability
+):
+    """The reported case: a song removed from the library still offered
+    Local and Navidrome on the playlist, failed to play, and was skipped by
+    "Request all tracks" as owned."""
+    store = _store(tmp_path)
+    repo = TargetPlaylistRepository(store)
+    await _seed_local_track(store, "track-fs", recording="rec-fs")
+    pid, before = await _entry_playlist(
+        repo,
+        {
+            "track_name": "Fortunate Son",
+            "recording_mbid": "rec-fs",
+            "source_type": "local",
+            "library_file_id": "track-fs",
+            "available_sources": ["local", "navidrome"],
+        },
+    )
+    assert is_owned(before["Fortunate Son"])
+
+    _set_availability(store, "track-fs", availability)
+    assert await repo.link_tracks_by_recording(pid) == 1
+
+    (track,) = await repo.get_tracks(pid)
+    assert track.library_file_id is None
+    assert (track.source_type, track.track_source_id) == ("", None)
+    assert track.available_sources is None  # Navidrome served the same file
+    assert not is_owned(track)  # "Request all tracks" requests it again
+    rows = await store.list_target_playlist_export_rows(pid)
+    assert rows[0]["file_path"] is None
+    assert await repo.link_tracks_by_recording(pid) == 0  # idempotent
+
+
+@pytest.mark.asyncio
+async def test_another_servers_source_is_kept_when_unlinking(tmp_path):
+    store = _store(tmp_path)
+    repo = TargetPlaylistRepository(store)
+    await _seed_local_track(store, "track-fs", recording=None)
+    pid, _ = await _entry_playlist(
+        repo,
+        {
+            "track_name": "Fortunate Son",
+            "source_type": "jellyfin",
+            "library_file_id": "track-fs",
+            "available_sources": ["jellyfin", "local", "navidrome"],
+        },
+    )
+    _set_availability(store, "track-fs", "excluded")
+
+    await repo.link_tracks_by_recording(pid)
+
+    (track,) = await repo.get_tracks(pid)
+    assert track.library_file_id is None
+    assert (track.source_type, track.available_sources) == ("jellyfin", ["jellyfin"])
+
+
+@pytest.mark.asyncio
+async def test_a_redownloaded_song_relinks_in_the_same_pass(tmp_path):
+    store = _store(tmp_path)
+    repo = TargetPlaylistRepository(store)
+    await _seed_local_track(
+        store, "track-old", recording="rec-fs", album_id="album-old"
+    )
+    pid, _ = await _entry_playlist(
+        repo,
+        {
+            "track_name": "Fortunate Son",
+            "recording_mbid": "rec-fs",
+            "source_type": "local",
+            "library_file_id": "track-old",
+        },
+    )
+    _set_availability(store, "track-old", "excluded")
+    # The album-page download (credited separately so the seeded artist
+    # is not created twice).
+    await _seed_local_track(
+        store,
+        "track-new",
+        recording="rec-fs",
+        album_id="album-new",
+        artist_name="CCR Again",
+    )
+
+    await repo.link_tracks_by_recording(pid)
+
+    (track,) = await repo.get_tracks(pid)
+    assert (track.library_file_id, track.source_type) == ("track-new", "local")

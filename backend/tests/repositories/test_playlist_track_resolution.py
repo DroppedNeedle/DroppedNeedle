@@ -171,3 +171,31 @@ def test_legacy_rows_resolved_earlier_get_their_filed_album_shown(repo):
     assert after[resolved.id].album_id == "rg-layers"
     assert after[flagged.id].cover_url == stale
     assert repo.link_tracks_by_recording(playlist.id) == 0
+
+
+def test_legacy_removed_library_file_is_unlinked(repo, tmp_path):
+    playlist = repo.create_playlist("CCR")
+    conn = repo._get_connection()
+    conn.execute(
+        "CREATE TABLE library_files (id TEXT PRIMARY KEY, recording_mbid TEXT, deleted_at TEXT)"
+    )
+    conn.execute("INSERT INTO library_files VALUES ('file-1', 'rec-1', '2026-10-14')")
+    conn.commit()
+    track = _add(
+        repo,
+        playlist.id,
+        source_type="local",
+        track_source_id="file-1",
+        library_file_id="file-1",
+        available_sources=["local", "navidrome"],
+    )
+
+    assert repo.link_tracks_by_recording(playlist.id) == 1
+
+    after = repo.get_track(playlist.id, track.id)
+    assert (after.library_file_id, after.source_type, after.track_source_id) == (
+        None,
+        "",
+        None,
+    )
+    assert after.available_sources is None  # Navidrome served the same file

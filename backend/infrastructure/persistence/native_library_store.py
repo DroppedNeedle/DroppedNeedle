@@ -839,6 +839,15 @@ class ReferenceProvenanceBatchResult(NamedTuple):
         return self.inserted
 
 
+
+# Sources a removed library file takes with it from playlist rows (#204):
+# this library's own file (#181/#381 healing) and Navidrome, which serves the
+# same files when it scans DroppedNeedle's library. If a separate Navidrome
+# copy exists, album-based source resolution re-adds it on page load.
+_REMOVED_WITH_LIBRARY_FILE = frozenset(
+    {"local", "droppedneedle-local", "howler", "navidrome"}
+)
+
 class NativeLibraryStore(PersistenceBase):
     """Own every target catalog, job, review, scan, and migration transaction."""
 
@@ -6184,6 +6193,13 @@ class NativeLibraryStore(PersistenceBase):
         3. **Display:** a resolved or chosen entry shows the album it is filed
            under; rows resolved before that was stored get their cover and
            album refreshed here, from the database alone.
+
+        First, entries linked to a library track that is no longer available
+        (removed: ``missing`` or ``excluded``) are unlinked, so the playlist
+        stops offering a file that is gone, "Request all tracks" counts it
+        missing again, and the export leaves it out. An unavailable library
+        root never marks its tracks missing, so an offline disk does not
+        unlink anything. A re-downloaded song relinks in the passes below.
         """
 
         def apply(connection: sqlite3.Connection, entry: sqlite3.Row, match: sqlite3.Row) -> int:
@@ -6229,8 +6245,49 @@ class NativeLibraryStore(PersistenceBase):
             "WHERE t.availability = 'indexed' AND "
         )
 
+        def unlink_unavailable(connection: sqlite3.Connection) -> int:
+            gone = connection.execute(
+                "SELECT pt.id, pt.source_type, pt.available_sources "
+                "FROM library_playlist_tracks pt "
+                "JOIN local_tracks t ON t.id = pt.local_track_id "
+                "WHERE pt.playlist_id = ? AND t.availability <> 'indexed'",
+                (playlist_id,),
+            ).fetchall()
+            unlinked = 0
+            for entry in gone:
+                sources: list[str] = []
+                raw = entry["available_sources"]
+                if raw:
+                    try:
+                        decoded = json.loads(raw)
+                    except json.JSONDecodeError:
+                        decoded = []
+                    if isinstance(decoded, list):
+                        sources = [
+                            str(item)
+                            for item in decoded
+                            if item not in _REMOVED_WITH_LIBRARY_FILE
+                        ]
+                lost_source = (entry["source_type"] or "") in _REMOVED_WITH_LIBRARY_FILE
+                unlinked += connection.execute(
+                    "UPDATE library_playlist_tracks SET local_track_id = NULL, "
+                    "library_file_id = NULL, local_album_id = NULL, "
+                    "local_artist_id = NULL, available_sources = ?, "
+                    "source_type = CASE WHEN ? THEN '' ELSE source_type END, "
+                    "track_source_id = CASE WHEN ? THEN NULL ELSE track_source_id END "
+                    "WHERE id = ? AND playlist_id = ?",
+                    (
+                        json.dumps(sorted(sources)) if sources else None,
+                        int(lost_source),
+                        int(lost_source),
+                        entry["id"],
+                        playlist_id,
+                    ),
+                ).rowcount
+            return unlinked
+
         def operation(connection: sqlite3.Connection) -> int:
-            updated = 0
+            updated = unlink_unavailable(connection)
             by_recording = connection.execute(
                 "SELECT id, recording_mbid, source_type, available_sources "
                 "FROM library_playlist_tracks WHERE playlist_id = ? "

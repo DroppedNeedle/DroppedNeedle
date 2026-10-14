@@ -12,6 +12,14 @@ from models.release_home import release_group_cover_url
 
 _UNSET = object()
 
+# Sources a removed library file takes with it from playlist rows (#204):
+# this library's own file (#181/#381 healing) and Navidrome, which serves the
+# same files when it scans DroppedNeedle's library. If a separate Navidrome
+# copy exists, album-based source resolution re-adds it on page load.
+_REMOVED_WITH_LIBRARY_FILE = frozenset(
+    {"local", "droppedneedle-local", "howler", "navidrome"}
+)
+
 # Per-track source resolution for "Request all tracks" (#204). ``isrc`` and
 # ``recording_mbid`` identify the song; the rest is the resolver's verdict:
 # the release group to source it from, that group's HomeTier label,
@@ -859,6 +867,38 @@ class PlaylistRepository:
                 ).fetchone()
                 is not None
             )
+            # Rows still pointing at a removed library file are unlinked first
+            # (a re-downloaded song relinks below).
+            unlinked = 0
+            if has_library:
+                gone = conn.execute(
+                    "SELECT pt.id, pt.source_type, pt.available_sources "
+                    "FROM playlist_tracks pt JOIN library_files f "
+                    "ON f.id = pt.library_file_id "
+                    "WHERE pt.playlist_id = ? AND f.deleted_at IS NOT NULL",
+                    (playlist_id,),
+                ).fetchall()
+                for entry in gone:
+                    sources = [
+                        s
+                        for s in self._parse_available_sources(entry["available_sources"]) or []
+                        if s not in _REMOVED_WITH_LIBRARY_FILE
+                    ]
+                    lost_source = (entry["source_type"] or "") in _REMOVED_WITH_LIBRARY_FILE
+                    unlinked += conn.execute(
+                        "UPDATE playlist_tracks SET library_file_id = NULL, "
+                        "available_sources = ?, "
+                        "source_type = CASE WHEN ? THEN '' ELSE source_type END, "
+                        "track_source_id = CASE WHEN ? THEN NULL ELSE track_source_id END "
+                        "WHERE id = ? AND playlist_id = ?",
+                        (
+                            json.dumps(sorted(sources)) if sources else None,
+                            int(lost_source),
+                            int(lost_source),
+                            entry["id"],
+                            playlist_id,
+                        ),
+                    ).rowcount
             entries = (
                 conn.execute(
                     "SELECT id, recording_mbid, source_type, available_sources "
@@ -870,7 +910,7 @@ class PlaylistRepository:
                 if has_library
                 else []
             )
-            updated = 0
+            updated = unlinked
             for entry in entries:
                 match = conn.execute(
                     "SELECT id FROM library_files WHERE LOWER(recording_mbid) = ? "
