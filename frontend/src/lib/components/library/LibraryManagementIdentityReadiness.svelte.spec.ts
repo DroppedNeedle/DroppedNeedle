@@ -79,7 +79,10 @@ vi.mock('$lib/queries/library/LibraryIdentityPreparationMutations.svelte', () =>
 	discardLibraryIdentityPreparation: () => ({ mutateAsync: h.discard, isPending: false }),
 	undoLibraryAutomaticEdition: () => ({ mutateAsync: h.undo, isPending: false })
 }));
-vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', () => ({
+vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', async (importOriginal) => ({
+	...(await importOriginal<
+		typeof import('$lib/queries/library/LibraryOperationMutations.svelte')
+	>()),
 	controlLibraryOperation: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
