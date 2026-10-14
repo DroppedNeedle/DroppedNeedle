@@ -283,6 +283,26 @@ pub(crate) fn restore_records(
     Ok(())
 }
 
+/// Mark an album a scan followed across a retag and stamped
+/// ([`super::automatic::stamp_retag_followed`]), and clear the stamp.
+/// False when the album carries no stamp.
+pub(crate) fn mark_followed(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    now: f64,
+) -> rusqlite::Result<bool> {
+    let cleared = tx.execute(
+        "UPDATE library_management_automatic_queue SET retag_followed_at = NULL \
+         WHERE local_album_id = ?1 AND retag_followed_at IS NOT NULL",
+        params![album_id],
+    )?;
+    if cleared == 0 {
+        return Ok(false);
+    }
+    mark(tx, album_id, Cause::RetagFollowed, &[], None, now)?;
+    Ok(true)
+}
+
 /// Whether the app stepped back from this album.
 pub fn is_marked(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
     Ok(conn

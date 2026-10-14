@@ -7155,6 +7155,66 @@ async fn a_rename_in_the_app_keeps_v2s_record() {
     assert_eq!(file_sha256(&file), bytes, "nothing written");
 }
 
+/// An automatic run that was waiting to be planned when a scan followed
+/// its album across a hand retag and stamped it writes nothing: its plan
+/// treats the stamp as the mark it is about to become.
+#[tokio::test]
+async fn a_run_planned_after_the_stamp_writes_nothing() {
+    let managed = ManagedLibrary::start("lib-takeover-stamp-plan", |_| {}).await;
+    managed.add_album("first", 1).await;
+    let (album, tracks) = managed.add_album("second", 2).await;
+    managed.activate().await;
+    managed.library.queue_automatic_management(&album);
+    assert!(
+        managed
+            .management()
+            .automatic_next()
+            .expect("automatic step")
+    );
+    managed.rename_outside(&tracks, "Renamed").await;
+    assert!(managed.stamped(&album));
+    let bytes: Vec<String> = tracks
+        .iter()
+        .map(|track| file_sha256(&managed.path(track)))
+        .collect();
+
+    while management_step(&managed.library).await {}
+    assert_eq!(managed.mark(&album).as_deref(), Some("retag_followed"));
+    assert!(!managed.stamped(&album));
+    assert_eq!(
+        managed.automatic_runs().last(),
+        Some(&("succeeded".to_owned(), Some("TAKEN_OVER".to_owned())))
+    );
+    for (track, before) in tracks.iter().zip(&bytes) {
+        assert_eq!(
+            &file_sha256(&managed.path(track)),
+            before,
+            "nothing written"
+        );
+        assert_eq!(album_tag(&managed.path(track)), vec!["Renamed"]);
+    }
+}
+
+/// A folder that manages only acquisitions by itself can still write a
+/// hand-renamed album later (a download into it), so the album is marked
+/// rather than dropped with its stamp.
+#[tokio::test]
+async fn a_stamp_is_kept_where_the_folder_writes_other_albums() {
+    let managed = ManagedLibrary::start("lib-takeover-renamed-acquisitions", |_| {}).await;
+    managed.add_album("first", 1).await;
+    let (album, tracks) = managed.add_album("second", 2).await;
+    managed.activate().await;
+    managed.set_automatic(false, true);
+    managed.rename_outside(&tracks, "Renamed").await;
+    assert!(managed.stamped(&album));
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&album).as_deref(), Some("retag_followed"));
+    assert_eq!(album_tag(&managed.path(&tracks[0])), vec!["Renamed"]);
+    let skipped = managed.management().automatic_skipped(10).expect("skipped");
+    assert_eq!(skipped.len(), 1);
+    assert_eq!(skipped[0].reason.code, "TAKEN_OVER");
+}
+
 /// Every file below `dir`.
 fn walk_files(dir: &std::path::Path) -> Vec<PathBuf> {
     let mut found = Vec::new();

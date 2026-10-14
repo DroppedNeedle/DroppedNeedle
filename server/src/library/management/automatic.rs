@@ -428,6 +428,17 @@ impl Management {
         let stored = self.settings()?;
         let assignment = profile::root_assignment(&stored, &first.root_id);
         let Some(origin) = automatic_origin(&assignment, &files) else {
+            // A followed retag keeps its stamp while the folder can still
+            // write the album by itself some other way (an acquisition into
+            // it, say): it is marked rather than dropped.
+            let writes_some = assignment.enabled
+                && (assignment.automatic_acquisitions
+                    || assignment.automatic_drop_imports
+                    || assignment.automatic_scan_discovered);
+            if writes_some && self.read(|conn| Ok(retag_followed(conn, album_id)?))? {
+                self.write(|tx| Ok(takeover::mark_followed(tx, album_id, now_unix())?))?;
+                return Ok(Verdict::Park(takeover::TAKEN_OVER));
+            }
             return Ok(Verdict::Done("NOT_AUTOMATIC"));
         };
         let registry = self.setup.live_registry();
@@ -472,22 +483,7 @@ impl Management {
         // over an edition someone chose. A record the app wrote since does
         // not cancel it: that write took the retagged bytes as they were.
         if self.read(|conn| Ok(retag_followed(conn, album_id)?))? {
-            self.write(|tx| {
-                takeover::mark(
-                    tx,
-                    album_id,
-                    takeover::Cause::RetagFollowed,
-                    &[],
-                    None,
-                    now_unix(),
-                )?;
-                tx.execute(
-                    "UPDATE library_management_automatic_queue SET retag_followed_at = NULL \
-                     WHERE local_album_id = ?1",
-                    params![album_id],
-                )?;
-                Ok(())
-            })?;
+            self.write(|tx| Ok(takeover::mark_followed(tx, album_id, now_unix())?))?;
             return Ok(Verdict::Park(takeover::TAKEN_OVER));
         }
         let identities = &self.setup.identify_store;

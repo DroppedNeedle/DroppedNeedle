@@ -890,9 +890,11 @@ impl Management {
                 return Ok((false, false));
             }
             // An album marked after this run was queued (an undo, or a
-            // second run after a crash) is never written by it.
+            // second run after a crash) is never written by it, nor one a
+            // scan stamped as followed across a retag that the worker has
+            // not marked yet.
             for album in &albums {
-                if takeover::is_marked(tx, album)? {
+                if takeover::is_marked(tx, album)? || takeover::mark_followed(tx, album, now)? {
                     store::set_mode(tx, job_id, JobMode::AutomaticApply.as_str())?;
                     store::complete_without_work(tx, job_id, takeover::TAKEN_OVER, now)?;
                     return Ok((true, true));
