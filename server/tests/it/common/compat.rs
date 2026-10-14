@@ -346,15 +346,21 @@ impl<'a> Trace<'a> {
     }
 }
 
-/// PlaybackInfo advertises its stream URL with `api_key=<token>`: masked
-/// as `***`.
+/// PlaybackInfo advertises its stream URL with `api_key=<token>`, and a
+/// Subsonic picture link carries `sig=<signature>`: both masked as `***`.
 fn mask_api_keys(text: &str) -> String {
+    ["api_key=", "sig="]
+        .iter()
+        .fold(text.to_owned(), |text, key| mask_value(&text, key))
+}
+
+fn mask_value(text: &str, key: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
-    while let Some(start) = rest.find("api_key=") {
-        out.push_str(&rest[..start + "api_key=".len()]);
+    while let Some(start) = rest.find(key) {
+        out.push_str(&rest[..start + key.len()]);
         out.push_str("***");
-        rest = &rest[start + "api_key=".len()..];
+        rest = &rest[start + key.len()..];
         rest = rest.find('&').map_or("", |end| &rest[end..]);
     }
     out.push_str(rest);

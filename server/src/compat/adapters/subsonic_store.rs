@@ -16,6 +16,7 @@ use crate::auth::users::UsersDeps;
 use crate::compat::settings::LiveSettings;
 use crate::compat::subsonic::advanced;
 use crate::compat::subsonic::ids::IdKind;
+use crate::compat::subsonic::picture::PictureSigner;
 use crate::compat::subsonic::store::{
     AlbumSort, BookmarkRecord, ClientInfo, LastScan, LyricLine, LyricsData, NowPlayingRow,
     PlaylistDetail, PlaylistEntry, PlaylistRecord, PlaylistSummary, QueueState, ScanStatusData,
@@ -151,6 +152,7 @@ pub struct SubsonicStore {
     users: UsersDeps,
     scan: LibrarySetup,
     crypto: Arc<Crypto>,
+    pictures: PictureSigner,
     settings: LiveSettings,
     caller: Option<String>,
 }
@@ -172,6 +174,7 @@ impl SubsonicStore {
             playback,
             users,
             scan,
+            pictures: PictureSigner::new(Arc::clone(&crypto)),
             crypto,
             settings,
             caller: None,
@@ -255,6 +258,10 @@ impl Store for SubsonicStore {
             caller: Some(user_id.to_owned()),
             ..self.clone()
         }
+    }
+
+    fn pictures(&self) -> &PictureSigner {
+        &self.pictures
     }
 
     async fn get_artists(

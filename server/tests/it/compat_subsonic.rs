@@ -52,6 +52,7 @@ fn request(endpoint: &str, pairs: &[(&str, &str)], authed: bool) -> Request {
         body: Vec::new(),
         content_type: None,
         now_unix: Some(NOW_UNIX),
+        picture_base: None,
     }
 }
 
@@ -474,16 +475,13 @@ async fn response_shapes() {
             ],
             &[],
         ),
-        // Info image URLs never embed credentials.
+        // With no address to build on, picture links are left out, never
+        // sent relative.
         (
             "getArtistInfo2",
             &[("id", "ar-artist-1")],
-            &[
-                "<artistInfo2",
-                "musicBrainzId=\"artist-1\"",
-                "smallImageUrl=\"http://localhost/subsonic/rest/getCoverArt?id=ar-artist-1&amp;size=250\"",
-            ],
-            &["apiKey"],
+            &["<artistInfo2", "musicBrainzId=\"artist-1\""],
+            &["apiKey", "ImageUrl"],
         ),
         (
             "getArtistInfo",

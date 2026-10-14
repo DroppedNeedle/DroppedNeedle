@@ -10,6 +10,7 @@ use super::Verifier;
 use super::auth::{Credentials, Principal};
 use super::error::SubsonicError;
 use super::ids::IdKind;
+use super::picture::PictureSigner;
 use super::store::{
     AlbumSort, BookmarkRecord, ClientInfo, LastScan, LyricsData, NowPlayingRow, PlaylistDetail,
     PlaylistEntry, PlaylistRecord, PlaylistSummary, QueueState, ScanStatusData, Store,
@@ -133,9 +134,23 @@ pub struct FakeInner {
 }
 
 /// In-memory store with a tiny fixed catalog.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct FakeStore {
     inner: Arc<Mutex<FakeInner>>,
+    pictures: PictureSigner,
+}
+
+impl Default for FakeStore {
+    fn default() -> Self {
+        let crypto = match crate::runtime_config::Crypto::from_key_bytes(&[9u8; 32]) {
+            Ok(crypto) => crypto,
+            Err(_) => unreachable!("a 32-byte key is always valid"),
+        };
+        Self {
+            inner: Arc::default(),
+            pictures: PictureSigner::new(Arc::new(crypto)),
+        }
+    }
 }
 
 impl FakeStore {
@@ -325,6 +340,10 @@ fn matches(query: Option<&str>, haystacks: &[&str]) -> bool {
 
 impl Store for FakeStore {
     type Error = Infallible;
+
+    fn pictures(&self) -> &PictureSigner {
+        &self.pictures
+    }
 
     async fn get_artists(
         &self,

@@ -7,8 +7,9 @@
 //! percent-decoded key name, repeats are preserved, and non-secret pairs
 //! pass through untouched.
 
-/// Query keys whose values are secrets (v2 `_SECRET_QS_KEYS`).
-pub const SECRET_KEYS: [&str; 9] = [
+/// Query keys whose values are secrets (v2 `_SECRET_QS_KEYS`, plus the
+/// signature of an open picture link).
+pub const SECRET_KEYS: [&str; 10] = [
     "p",
     "t",
     "s",
@@ -18,6 +19,7 @@ pub const SECRET_KEYS: [&str; 9] = [
     "password",
     "token",
     "transcodeparams",
+    "sig",
 ];
 
 /// Mask substituted for secret values (v2 `_MASK`).

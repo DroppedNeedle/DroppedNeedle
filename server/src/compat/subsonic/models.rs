@@ -25,6 +25,8 @@ pub struct SArtistID3 {
     pub coverArt: Option<String>,
     /// Album count.
     pub albumCount: Option<i64>,
+    /// Open picture link (artist lists and details only).
+    pub artistImageUrl: Option<String>,
     /// Starred timestamp ISO, if starred.
     pub starred: Option<String>,
     /// MusicBrainz artist id.
@@ -42,6 +44,7 @@ impl Render for SArtistID3 {
             ("name", self.name.as_str().into_val()),
             ("coverArt", self.coverArt.clone().into_val()),
             ("albumCount", self.albumCount.into_val()),
+            ("artistImageUrl", self.artistImageUrl.clone().into_val()),
             ("starred", self.starred.clone().into_val()),
             ("musicBrainzId", self.musicBrainzId.clone().into_val()),
             ("sortName", self.sortName.clone().into_val()),
@@ -67,6 +70,8 @@ pub struct SArtist {
     pub starred: Option<String>,
     /// Cover art id.
     pub coverArt: Option<String>,
+    /// Open picture link.
+    pub artistImageUrl: Option<String>,
 }
 
 impl Render for SArtist {
@@ -76,6 +81,7 @@ impl Render for SArtist {
             ("name", self.name.as_str().into_val()),
             ("starred", self.starred.clone().into_val()),
             ("coverArt", self.coverArt.clone().into_val()),
+            ("artistImageUrl", self.artistImageUrl.clone().into_val()),
         ])
     }
 }

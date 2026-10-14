@@ -111,6 +111,7 @@ impl Rig {
             body: Vec::new(),
             content_type: None,
             now_unix: Some(NOW_UNIX),
+            picture_base: None,
         };
         let settings = Settings {
             enabled: true,

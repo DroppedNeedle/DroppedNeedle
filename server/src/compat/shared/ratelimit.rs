@@ -172,11 +172,15 @@ pub fn is_media_request(path: &str) -> bool {
     )
 }
 
-/// Artwork paths skip the token buckets too: Subsonic `getCoverArt` and
-/// `getAvatar`, Jellyfin `/items/{id}/images/*`. A client paints a grid of
-/// covers at once, so a request budget would only produce blank tiles.
+/// Artwork paths skip the token buckets too: Subsonic `getCoverArt`,
+/// `getAvatar` and the open picture address, Jellyfin
+/// `/items/{id}/images/*`. A client paints a grid of covers at once, so a
+/// request budget would only produce blank tiles.
 pub fn is_artwork_request(path: &str) -> bool {
     let low = path.to_lowercase();
+    if low == crate::compat::subsonic::picture::PATH {
+        return true;
+    }
     if let Some(endpoint) = subsonic_endpoint(&low) {
         return matches!(endpoint, "getcoverart" | "getavatar");
     }

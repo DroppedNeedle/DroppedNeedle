@@ -29,10 +29,12 @@ use crate::auth::session::middleware::TrustedProxies;
 use crate::client_ip::ClientIp;
 use crate::compat::jellyfin::QueryTokens;
 use crate::compat::settings::LiveSettings;
+use crate::compat::shared::address::{ListenerConfig, base_address};
 use crate::compat::shared::{auth, cors, path_case, ratelimit, redact};
 use crate::compat::subsonic::auth::Principal;
 use crate::compat::subsonic::error::SubsonicError;
 use crate::compat::subsonic::params::{MAX_REQUEST_PARAMETER_BYTES, SubsonicParameters};
+use crate::compat::subsonic::picture;
 use crate::compat::subsonic::value::{Rendered, SubsonicFormat, parse_format, render_error};
 use crate::compat::subsonic::{
     AudioBackend, Request as SubsonicRequest, Settings, Store, Verifier, classify, dispatch_with,
@@ -90,7 +92,7 @@ pub const JELLYFIN_TEMPLATES: &[&str] = &[
 ];
 
 /// Subsonic route templates for path canonicalization.
-pub const SUBSONIC_TEMPLATES: &[&str] = &["/subsonic/rest/{endpoint}"];
+pub const SUBSONIC_TEMPLATES: &[&str] = &["/subsonic/rest/{endpoint}", picture::PATH];
 
 /// All compat templates in one list for the case layer.
 pub fn compat_templates() -> Vec<&'static str> {
@@ -293,14 +295,17 @@ fn sniff_format(raw_query: Option<&str>) -> (SubsonicFormat, Option<String>) {
     (format, callback)
 }
 
-/// Protocol-shaped limit reject with `Retry-After`.
+/// Protocol-shaped limit reject with `Retry-After`. The open picture
+/// address answers an empty 429: a picture loader would keep an envelope
+/// as a broken picture.
 fn limit_reject(
     path: &str,
     raw_query: Option<&str>,
     retry_after: u64,
     settings: &Settings,
 ) -> Response {
-    let mut response = if path.to_lowercase().starts_with("/subsonic") {
+    let low = path.to_lowercase();
+    let mut response = if low.starts_with("/subsonic") && low != picture::PATH {
         let (format, callback) = sniff_format(raw_query);
         let rendered = render_error(
             0,
@@ -455,10 +460,12 @@ pub struct SubsonicState<V, S, B> {
     pub limits: Arc<Mutex<ratelimit::CompatRateLimits>>,
     /// Clock origin for bucket timestamps.
     pub started: Arc<Instant>,
+    /// How apps reach this server, for the address in picture links.
+    pub listener: ListenerConfig,
 }
 
 impl<V, S, B> SubsonicState<V, S, B> {
-    /// Wrap the seams, buckets, and clock origin.
+    /// Wrap the seams, buckets, clock origin and listener.
     pub fn new(
         verifier: V,
         store: S,
@@ -466,6 +473,7 @@ impl<V, S, B> SubsonicState<V, S, B> {
         settings: impl Into<LiveSettings>,
         limits: Arc<Mutex<ratelimit::CompatRateLimits>>,
         started: Arc<Instant>,
+        listener: ListenerConfig,
     ) -> Self {
         Self {
             verifier,
@@ -474,6 +482,7 @@ impl<V, S, B> SubsonicState<V, S, B> {
             settings: settings.into(),
             limits,
             started,
+            listener,
         }
     }
 
@@ -496,6 +505,10 @@ where
             get(subsonic_dispatch::<V, S, B>)
                 .post(subsonic_dispatch::<V, S, B>)
                 .head(subsonic_dispatch::<V, S, B>),
+        )
+        .route(
+            picture::PATH,
+            get(subsonic_picture::<V, S, B>).head(subsonic_picture::<V, S, B>),
         )
         .method_not_allowed_fallback(subsonic_method_not_allowed::<V, S, B>)
         .with_state(state)
@@ -524,6 +537,33 @@ where
         ),
         false,
     )
+}
+
+/// The open picture address: no sign-in, only a signed album or artist
+/// link (see [`picture`]). Every refusal is the same empty 404, and none
+/// counts as a failed sign-in.
+async fn subsonic_picture<V, S, B>(
+    State(state): State<SubsonicState<V, S, B>>,
+    RawQuery(raw_query): RawQuery,
+    request: Request,
+) -> Response
+where
+    V: Verifier,
+    S: Store,
+    B: AudioBackend,
+{
+    let head = request.method() == axum::http::Method::HEAD;
+    match picture::open(
+        &state.store,
+        &state.settings.subsonic(),
+        raw_query.as_deref(),
+    )
+    .await
+    {
+        picture::Opened::Picture(rendered) => rendered_response(&rendered, head),
+        picture::Opened::Closed => StatusCode::NOT_FOUND.into_response(),
+        picture::Opened::Failed => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 /// Flatten a JSON object body into scalar params (reportPlayback only).
@@ -562,6 +602,7 @@ where
     S: Store,
     B: AudioBackend,
 {
+    let picture_base = base_address(&request, &state.listener, &state.settings);
     let (parts, body) = request.into_parts();
     let method = parts.method.to_string();
     let (format, callback) = sniff_format(raw_query.as_deref());
@@ -736,6 +777,7 @@ where
         body: body_bytes.to_vec(),
         content_type: Some(content_type.to_owned()).filter(|mime| !mime.is_empty()),
         now_unix: None,
+        picture_base,
     };
     let rendered = dispatch_with(
         &state.verifier,

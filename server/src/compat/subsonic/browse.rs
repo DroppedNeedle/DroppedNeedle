@@ -147,7 +147,7 @@ pub async fn artists<P: Principal, S: Store, B: AudioBackend>(
         buckets
             .entry(index_letter(&artist.name))
             .or_default()
-            .push(super::views::to_artist_id3(artist));
+            .push(ctx.artist_id3(artist));
     }
     let index = buckets
         .into_iter()
@@ -198,7 +198,7 @@ pub async fn indexes<P: Principal, S: Store, B: AudioBackend>(
         buckets
             .entry(index_letter(&artist.name))
             .or_default()
-            .push(super::views::to_artist_file(artist));
+            .push(ctx.artist_file(artist));
     }
     let index = buckets
         .into_iter()
@@ -229,7 +229,7 @@ pub async fn artist<P: Principal, S: Store, B: AudioBackend>(
         .await
         .map_err(Ctx::<P, S, B>::store_err)?
         .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Artist not found"))?;
-    let mut rendered = super::views::to_artist_id3(&artist);
+    let mut rendered = ctx.artist_id3(&artist);
     rendered.album = Some(albums.iter().map(super::views::to_album_id3).collect());
     Ok(Outcome::keyed("artist", rendered.render()))
 }
@@ -633,7 +633,7 @@ pub async fn search3<P: Principal, S: Store, B: AudioBackend>(
                 Val::List(
                     artists
                         .iter()
-                        .map(|artist| super::views::to_artist_id3(artist).render())
+                        .map(|artist| ctx.artist_id3(artist).render())
                         .collect(),
                 ),
             ),
@@ -672,7 +672,7 @@ pub async fn search2<P: Principal, S: Store, B: AudioBackend>(
                 Val::List(
                     artists
                         .iter()
-                        .map(|artist| super::views::to_artist_file(artist).render())
+                        .map(|artist| ctx.artist_file(artist).render())
                         .collect(),
                 ),
             ),

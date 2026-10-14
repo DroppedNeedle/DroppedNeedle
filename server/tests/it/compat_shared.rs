@@ -1,7 +1,7 @@
 //! Shared compat security posture: which Jellyfin paths are anonymous,
-//! query redaction, the rate-limit and auth-backoff budgets, and the
-//! address player apps are given. The credential schemes are pinned in
-//! `auth_compat_goldens`.
+//! query redaction, the rate-limit and auth-backoff budgets, the address
+//! player apps are given and the signature on open picture links. The
+//! credential schemes are pinned in `auth_compat_goldens`.
 
 use axum::body::Body;
 use axum::extract::ConnectInfo;
@@ -12,6 +12,8 @@ use droppedneedle::compat::jellyfin::JellyfinSettings;
 use droppedneedle::compat::settings::LiveSettings;
 use droppedneedle::compat::shared::address::{ListenerConfig, base_address};
 use droppedneedle::compat::shared::{auth, ratelimit, redact};
+use droppedneedle::compat::subsonic::picture::{PURPOSE, PictureKind, PictureSigner};
+use droppedneedle::runtime_config::Crypto;
 
 #[test]
 fn anonymous_paths() {
@@ -82,6 +84,11 @@ fn redaction_masks_query_secrets() {
             "/subsonic/rest/ping?id=1&id=2&p=***",
         ),
         ("/subsonic/rest/ping", "/subsonic/rest/ping"),
+        // The signature of an open picture link.
+        (
+            "/subsonic/img?id=al-1&sig=abc123&size=500",
+            "/subsonic/img?id=al-1&sig=***&size=500",
+        ),
     ] {
         assert_eq!(redact::redact_request_target(target), expected);
     }
@@ -257,4 +264,25 @@ fn base_address_for_player_apps() {
             case.name
         );
     }
+}
+
+/// A picture signature is the whole lowercase hex MAC of the kind and id
+/// under its own purpose. The same message signed under another purpose
+/// does not open a picture, an album's signature does not open the artist
+/// with the same id, and a cut or uppercased signature does not verify.
+#[test]
+fn picture_signatures_are_bound_to_their_purpose_and_kind() {
+    let crypto = std::sync::Arc::new(Crypto::from_key_bytes(&[5u8; 32]).expect("test key"));
+    let signer = PictureSigner::new(crypto.clone());
+    let hex = |mac: [u8; 32]| mac.iter().map(|b| format!("{b:02x}")).collect::<String>();
+
+    let album = signer.sign(PictureKind::Album, "rg-1");
+    assert_eq!(album, hex(crypto.mac(PURPOSE, b"album\0rg-1")));
+    assert!(signer.verifies(PictureKind::Album, "rg-1", &album));
+
+    let elsewhere = hex(crypto.mac("catalog-correction-preview", b"album\0rg-1"));
+    assert!(!signer.verifies(PictureKind::Album, "rg-1", &elsewhere));
+    assert!(!signer.verifies(PictureKind::Artist, "rg-1", &album));
+    assert!(!signer.verifies(PictureKind::Album, "rg-1", &album[..32]));
+    assert!(!signer.verifies(PictureKind::Album, "rg-1", &album.to_uppercase()));
 }

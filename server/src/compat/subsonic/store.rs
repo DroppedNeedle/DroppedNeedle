@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 
 use super::ids::IdKind;
+use super::picture::PictureSigner;
 use super::views::{ViewAlbum, ViewArtist, ViewGenre, ViewTrack};
 
 /// Album-list sort keys (v2 `_ALBUMLIST_SORTS` + byYear directions).
@@ -253,6 +254,9 @@ pub trait Store: Clone + Send + Sync {
     fn for_caller(&self, _user_id: &str) -> Self {
         self.clone()
     }
+
+    /// The signer of open picture links, over the data key.
+    fn pictures(&self) -> &PictureSigner;
 
     /// Artists page in name order, optional match query (None = match-all).
     /// No caller shows a total, so none is counted.

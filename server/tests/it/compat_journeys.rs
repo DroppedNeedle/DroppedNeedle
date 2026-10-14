@@ -76,7 +76,6 @@ fn subsonic_settings() -> SubsonicSettings {
         transcode_default_format: "mp3".to_owned(),
         transcode_max_bitrate_kbps: 320,
         ffmpeg_available: true,
-        base_url: String::new(),
         download_access: droppedneedle::runtime_config::sections::DownloadAccess::Everyone,
     }
 }
@@ -245,6 +244,11 @@ fn apps() -> Apps {
         subsonic_settings(),
         subsonic_limits.limits.clone(),
         subsonic_limits.started.clone(),
+        ListenerConfig {
+            port: 4533,
+            trusted_proxies: droppedneedle::auth::session::middleware::TrustedProxies::default(),
+            base_path: String::new(),
+        },
     );
     let subsonic = Router::new()
         .merge(subsonic_router(subsonic_state))
@@ -932,7 +936,9 @@ async fn streaming_ranges_and_head_on_both_protocols() {
 }
 
 /// Media paths skip the token buckets but not the auth-failure lockout, so
-/// guessing passwords over `stream` still trips the backoff.
+/// guessing passwords over `stream` still trips the backoff. A locked-out
+/// client asking the open picture address gets an empty 429, not an
+/// envelope a picture loader would keep as a broken picture.
 #[tokio::test]
 async fn media_path_auth_lockout_blocks_brute_force() {
     let apps = apps();
@@ -951,6 +957,11 @@ async fn media_path_auth_lockout_blocks_brute_force() {
     assert!(!header_str(&headers, "retry-after").is_empty());
     let reject: Value = serde_json::from_slice(&bytes).expect("reject json");
     assert_eq!(reject["subsonic-response"]["error"]["code"], json!(0));
+    let picture = "/subsonic/img?id=al-rg-1&sig=0&size=500";
+    let (status, headers, bytes) = raw_call(&apps.subsonic, "GET", picture, &[]).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(!header_str(&headers, "retry-after").is_empty());
+    assert!(bytes.is_empty());
 }
 
 /// Tripwire: no committed fixture may contain the fixture credential.

@@ -156,7 +156,6 @@ impl SettingsSource for ConfigSettings {
             transcode_default_format: output_format(apps.transcode_default_format),
             transcode_max_bitrate_kbps: apps.transcode_max_bitrate_kbps,
             ffmpeg_available: self.ffmpeg_available,
-            base_url: String::new(),
             download_access: self.download_access(),
         }
     }

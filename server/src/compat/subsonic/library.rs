@@ -11,6 +11,7 @@ use super::models::{
     SPlayQueueByIndex, SPlaylist, SScanStatus, SStructuredLyrics, SUser,
 };
 use super::params::SubsonicParameters;
+use super::picture::{INFO_SIZES, PictureKind};
 use super::store::{PlaylistDetail, Store};
 use super::stream::AudioBackend;
 use super::value::{Val, obj};
@@ -416,7 +417,7 @@ pub async fn starred2<P: Principal, S: Store, B: AudioBackend>(
                 Val::List(
                     artists
                         .iter()
-                        .map(|artist| super::views::to_artist_id3(artist).render())
+                        .map(|artist| ctx.artist_id3(artist).render())
                         .collect(),
                 ),
             ),
@@ -456,7 +457,7 @@ pub async fn starred<P: Principal, S: Store, B: AudioBackend>(
                 Val::List(
                     artists
                         .iter()
-                        .map(|artist| super::views::to_artist_file(artist).render())
+                        .map(|artist| ctx.artist_file(artist).render())
                         .collect(),
                 ),
             ),
@@ -946,7 +947,7 @@ pub fn effective_username(user: &impl Principal) -> String {
 }
 
 /// Artist info: projected MBID (else the raw mbid when it looks like
-/// one) plus small/medium/large credential-free cover URLs. `count`
+/// one) plus small/medium/large open picture links. `count`
 /// and `includeNotPresent` are parsed and ignored.
 pub async fn artist_info<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
@@ -960,7 +961,6 @@ pub async fn artist_info<P: Principal, S: Store, B: AudioBackend>(
         .await
         .map_err(Ctx::<P, S, B>::store_err)?
         .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Artist not found"))?;
-    let cover_id = encode(IdKind::Artist, &mbid);
     let music_brainz_id = if artist.provider_identity_projected {
         artist.musicbrainz_artist_id.clone()
     } else if artist.artist_mbid.contains('-') {
@@ -968,6 +968,8 @@ pub async fn artist_info<P: Principal, S: Store, B: AudioBackend>(
     } else {
         None
     };
+    let [small, medium, large] =
+        INFO_SIZES.map(|size| ctx.picture_link(PictureKind::Artist, &artist.artist_mbid, size));
     let key = if ctx.endpoint_name == "getartistinfo2" {
         "artistInfo2"
     } else {
@@ -979,17 +981,17 @@ pub async fn artist_info<P: Principal, S: Store, B: AudioBackend>(
             biography: None,
             musicBrainzId: music_brainz_id,
             lastFmUrl: None,
-            smallImageUrl: Some(ctx.cover_art_url(&cover_id, 250)),
-            mediumImageUrl: Some(ctx.cover_art_url(&cover_id, 500)),
-            largeImageUrl: Some(ctx.cover_art_url(&cover_id, 1200)),
+            smallImageUrl: small,
+            mediumImageUrl: medium,
+            largeImageUrl: large,
             similarArtist: Vec::new(),
         }
         .render(),
     ))
 }
 
-/// Album info: projected MBID (else the raw rg mbid) plus sized
-/// credential-free cover URLs.
+/// Album info: projected MBID (else the raw rg mbid) plus sized open
+/// picture links.
 pub async fn album_info<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
@@ -1000,7 +1002,8 @@ pub async fn album_info<P: Principal, S: Store, B: AudioBackend>(
         .await
         .map_err(Ctx::<P, S, B>::store_err)?
         .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Album not found"))?;
-    let cover_id = encode(IdKind::Album, &rg);
+    let [small, medium, large] =
+        INFO_SIZES.map(|size| ctx.picture_link(PictureKind::Album, &album.rg_mbid, size));
     let music_brainz_id = if album.provider_identity_projected {
         album.musicbrainz_release_group_id.clone()
     } else {
@@ -1012,9 +1015,9 @@ pub async fn album_info<P: Principal, S: Store, B: AudioBackend>(
             notes: None,
             musicBrainzId: music_brainz_id,
             lastFmUrl: None,
-            smallImageUrl: Some(ctx.cover_art_url(&cover_id, 250)),
-            mediumImageUrl: Some(ctx.cover_art_url(&cover_id, 500)),
-            largeImageUrl: Some(ctx.cover_art_url(&cover_id, 1200)),
+            smallImageUrl: small,
+            mediumImageUrl: medium,
+            largeImageUrl: large,
         }
         .render(),
     ))

@@ -268,14 +268,15 @@ pub struct ViewGenre {
     pub album_count: i64,
 }
 
-/// Artist -> ID3 artist (v2 `to_artist_id3`).
-pub fn to_artist_id3(view: &ViewArtist) -> SArtistID3 {
+/// Artist -> ID3 artist (v2 `to_artist_id3`), with its picture link.
+pub fn to_artist_id3(view: &ViewArtist, image_url: Option<String>) -> SArtistID3 {
     let aid = encode(IdKind::Artist, &view.artist_mbid);
     SArtistID3 {
         id: aid.clone(),
         name: view.name.clone(),
         coverArt: Some(aid),
         albumCount: view.album_count,
+        artistImageUrl: image_url,
         starred: iso(view.starred_at),
         musicBrainzId: view
             .musicbrainz_artist_id
@@ -286,14 +287,16 @@ pub fn to_artist_id3(view: &ViewArtist) -> SArtistID3 {
     }
 }
 
-/// Artist -> file-structure artist (v2 `to_artist_file`).
-pub fn to_artist_file(view: &ViewArtist) -> SArtist {
+/// Artist -> file-structure artist (v2 `to_artist_file`), with its picture
+/// link.
+pub fn to_artist_file(view: &ViewArtist, image_url: Option<String>) -> SArtist {
     let aid = encode(IdKind::Artist, &view.artist_mbid);
     SArtist {
         id: aid.clone(),
         name: view.name.clone(),
         starred: iso(view.starred_at),
         coverArt: Some(aid),
+        artistImageUrl: image_url,
     }
 }
 

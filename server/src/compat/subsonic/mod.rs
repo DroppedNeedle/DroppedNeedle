@@ -11,6 +11,8 @@
 //! a plain 404. Only `getOpenSubsonicExtensions` is public; everything else,
 //! binary endpoints included, needs app-password auth. Formats: `f` in
 //! `xml` (default), `json`, `jsonp` (unsafe callbacks fall back to JSON).
+//! Beside them, `GET|HEAD /subsonic/img` serves album and artist pictures
+//! from signed links without sign-in ([`picture`]).
 //!
 //! | Endpoint | Key | Auth | Notes |
 //! |---|---|---|---|
@@ -40,7 +42,7 @@
 //! | getPlayQueue/savePlayQueue | playQueue/ok | yes | <=500; current consistency |
 //! | getPlayQueueByIndex/savePlayQueueByIndex | playQueueByIndex/ok | yes | extension indexBasedQueue:1 |
 //! | getBookmarks/createBookmark/deleteBookmark | bookmarks/ok | yes | pinned bookmark fields |
-//! | getArtistInfo[2]/getAlbumInfo[2] | artistInfo[2]/albumInfo | yes | projected MBIDs + sized cover URLs |
+//! | getArtistInfo[2]/getAlbumInfo[2] | artistInfo[2]/albumInfo | yes | projected MBIDs + sized open picture links |
 //! | getAvatar | bytes | yes, self-only | non-self -> 403-as-text |
 //! | getLyricsBySongId | lyricsList | yes | extension songLyrics:1 |
 //! | getLyrics | lyrics | yes | exact title (+artist) match; miss -> empty value |
@@ -103,6 +105,7 @@ pub mod library;
 pub mod media;
 pub mod models;
 pub mod params;
+pub mod picture;
 pub mod store;
 pub mod stream;
 pub mod value;
@@ -183,8 +186,6 @@ pub struct Settings {
     pub transcode_max_bitrate_kbps: i64,
     /// Whether ffmpeg is available.
     pub ffmpeg_available: bool,
-    /// Public base URL (for credential-free cover URLs).
-    pub base_url: String,
     /// The admin's setting for who may download library files.
     pub download_access: DownloadAccess,
 }
@@ -201,7 +202,6 @@ impl Default for Settings {
             transcode_default_format: "mp3".to_owned(),
             transcode_max_bitrate_kbps: 320,
             ffmpeg_available: false,
-            base_url: "http://localhost".to_owned(),
             download_access: DownloadAccess::Everyone,
         }
     }
@@ -238,6 +238,9 @@ pub struct Request {
     /// Clock override, unix seconds. `None` reads the system clock;
     /// tests stamp the fixture clock for deterministic time fields.
     pub now_unix: Option<f64>,
+    /// The address the app reached this server at, for picture links.
+    /// `None` leaves the link keys out.
+    pub picture_base: Option<String>,
 }
 
 impl Request {
@@ -278,6 +281,8 @@ pub struct Ctx<'a, P, S, B> {
     pub body: Vec<u8>,
     /// Current time, unix seconds (fixture clock in tests).
     pub now_unix: f64,
+    /// The address the app reached this server at, for picture links.
+    pub picture_base: Option<String>,
 }
 
 impl<P: Principal, S: Store, B: AudioBackend> Ctx<'_, P, S, B> {
@@ -336,12 +341,40 @@ impl<P: Principal, S: Store, B: AudioBackend> Ctx<'_, P, S, B> {
         }
     }
 
-    /// Advertised getCoverArt URL: base URL plus the fixed route, sized,
-    /// never carrying a credential (v2 `cover_art_url`).
-    pub fn cover_art_url(&self, cover_id: &str, size: i64) -> String {
-        format!(
-            "{}/subsonic/rest/getCoverArt?id={cover_id}&size={size}",
-            self.settings.base_url.trim_end_matches('/')
+    /// The open link to an album or artist picture the catalog just
+    /// returned, or `None` when the request named no address: a link is
+    /// absolute or not sent.
+    pub fn picture_link(
+        &self,
+        kind: picture::PictureKind,
+        internal_id: &str,
+        size: u32,
+    ) -> Option<String> {
+        let base = self.picture_base.as_deref()?;
+        Some(picture::link(
+            base,
+            self.store.pictures(),
+            kind,
+            internal_id,
+            size,
+        ))
+    }
+
+    /// ID3 artist with its picture link.
+    pub fn artist_id3(&self, artist: &views::ViewArtist) -> models::SArtistID3 {
+        views::to_artist_id3(artist, self.artist_image_url(artist))
+    }
+
+    /// File-structure artist with its picture link.
+    pub fn artist_file(&self, artist: &views::ViewArtist) -> models::SArtist {
+        views::to_artist_file(artist, self.artist_image_url(artist))
+    }
+
+    fn artist_image_url(&self, artist: &views::ViewArtist) -> Option<String> {
+        self.picture_link(
+            picture::PictureKind::Artist,
+            &artist.artist_mbid,
+            picture::ARTIST_IMAGE_SIZE,
         )
     }
 
@@ -530,6 +563,7 @@ pub async fn dispatch_with<V: Verifier, S: Store, B: AudioBackend>(
             content_type: request.content_type.clone(),
             body: request.body.clone(),
             now_unix: request.now_unix.unwrap_or_else(live_now_unix),
+            picture_base: request.picture_base.clone(),
         };
         run_handler(&ctx).await
     }

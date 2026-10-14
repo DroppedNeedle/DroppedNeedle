@@ -860,6 +860,241 @@ async fn subsonic_made_playlist_cover_is_private_to_its_readers() {
     rig.stop().await;
 }
 
+/// The address every request in these journeys is sent to.
+const SENT_TO: &str = "http://test.local";
+
+/// The library with an album whose folder holds a `cover.png`, and the
+/// Subsonic ids of that album, its artist and its one song.
+async fn covered_album(tag: &str) -> (CompatApp, [String; 3]) {
+    let rig = CompatApp::start(tag).await;
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let second = rig.app.config.root_app_dir.join("second");
+    let album = second.join("Covered/Sleeve");
+    std::fs::create_dir_all(&album).expect("mkdir");
+    std::fs::copy(
+        manifest.join("tests/fixtures/library/management_full.flac"),
+        album.join("01 Sleeve.flac"),
+    )
+    .expect("fixture copies");
+    image::RgbImage::from_pixel(8, 8, image::Rgb([200, 10, 10]))
+        .save(album.join("cover.png"))
+        .expect("cover writes");
+    rig.app.add_library_folder("second", &second).await;
+    let auth = rig.subsonic_auth("pictures");
+    let (_, all) = rig
+        .app
+        .call(
+            "GET",
+            &rest("search3?query=&songCount=500", &auth),
+            &[],
+            None,
+        )
+        .await;
+    let song = all["subsonic-response"]["searchResult3"]["song"]
+        .as_array()
+        .expect("songs")
+        .iter()
+        .find(|song| song["path"] == "Covered/Sleeve/01 Sleeve.flac")
+        .expect("the covered song")
+        .clone();
+    let album_id = song["albumId"].as_str().expect("album id").to_owned();
+    let (_, album) = rig
+        .app
+        .call(
+            "GET",
+            &rest(&format!("getAlbum?id={album_id}"), &auth),
+            &[],
+            None,
+        )
+        .await;
+    let artist_id = album["subsonic-response"]["album"]["artistId"]
+        .as_str()
+        .expect("album artist id")
+        .to_owned();
+    let song_id = song["id"].as_str().expect("song id").to_owned();
+    (rig, [album_id, artist_id, song_id])
+}
+
+/// The path and query of an open picture link, after checking it is
+/// absolute at the address the request was sent to and carries nothing
+/// but the id, the signature and the size.
+fn picture_path(link: &Value) -> String {
+    let link = link.as_str().unwrap_or_else(|| panic!("no link: {link}"));
+    let path = link
+        .strip_prefix(SENT_TO)
+        .unwrap_or_else(|| panic!("{link} is not under {SENT_TO}"));
+    let query = path
+        .strip_prefix("/subsonic/img?")
+        .unwrap_or_else(|| panic!("{link} is not a picture link"));
+    let keys: Vec<&str> = query
+        .split('&')
+        .map(|pair| pair.split_once('=').map_or(pair, |(key, _)| key))
+        .collect();
+    assert_eq!(keys, ["id", "sig", "size"], "{link}");
+    path.to_owned()
+}
+
+/// The three links of a `getAlbumInfo2` or `getArtistInfo2` answer.
+fn info_links(info: &Value) -> Vec<String> {
+    ["smallImageUrl", "mediumImageUrl", "largeImageUrl"]
+        .iter()
+        .map(|key| picture_path(&info[key]))
+        .collect()
+}
+
+/// Album and artist picture links open with no credentials: the links of
+/// `getAlbumInfo2`, `getArtistInfo2` and an artist's `artistImageUrl` are
+/// absolute at the address the app used, carry no credential, and answer
+/// a picture with `nosniff`, a sandbox policy and a one-day cache to a
+/// request that signs in with nothing. The album's picture is the one
+/// `getCoverArt` gives a signed-in user, and the same request gets the
+/// same link every time.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn subsonic_picture_links_open_without_sign_in() {
+    let (rig, [album_id, artist_id, _]) = covered_album("compat-picture-links").await;
+    let app = &rig.app;
+    let auth = rig.subsonic_auth("pictures");
+    let get = |call: String| {
+        let auth = auth.clone();
+        async move { app.call("GET", &rest(&call, &auth), &[], None).await.1 }
+    };
+
+    let album_info = get(format!("getAlbumInfo2?id={album_id}")).await;
+    let album_links = info_links(&album_info["subsonic-response"]["albumInfo"]);
+    let again = get(format!("getAlbumInfo2?id={album_id}")).await;
+    assert_eq!(
+        info_links(&again["subsonic-response"]["albumInfo"]),
+        album_links
+    );
+    let artist_info = get(format!("getArtistInfo2?id={artist_id}")).await;
+    let mut links = info_links(&artist_info["subsonic-response"]["artistInfo2"]);
+    let artists = get("getArtists".to_owned()).await;
+    let artist = artists["subsonic-response"]["artists"]["index"]
+        .as_array()
+        .expect("index")
+        .iter()
+        .flat_map(|bucket| bucket["artist"].as_array().expect("artists").iter())
+        .find(|artist| artist["id"] == artist_id.as_str())
+        .expect("the album artist in getArtists")
+        .clone();
+    links.push(picture_path(&artist["artistImageUrl"]));
+    links.extend(album_links.iter().cloned());
+
+    for link in &links {
+        let (status, headers, body) = app.raw("GET", link, &[], None).await;
+        assert_eq!(status, StatusCode::OK, "{link}");
+        assert!(
+            header_str(&headers, "content-type").starts_with("image/"),
+            "{link}"
+        );
+        assert_eq!(header_str(&headers, "x-content-type-options"), "nosniff");
+        assert_eq!(
+            header_str(&headers, "content-security-policy"),
+            "sandbox; default-src 'none'"
+        );
+        assert_eq!(
+            header_str(&headers, "cache-control"),
+            "public, max-age=86400",
+            "{link}"
+        );
+        assert!(!body.is_empty(), "{link}");
+    }
+
+    let (_, _, opened) = app.raw("GET", &album_links[2], &[], None).await;
+    let (status, headers, served) = app
+        .raw(
+            "GET",
+            &rest(&format!("getCoverArt?id={album_id}&size=1200"), &auth),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(header_str(&headers, "content-type"), "image/png");
+    assert_eq!(opened, served);
+    rig.stop().await;
+}
+
+/// The picture address opens nothing else, each refusal the same empty
+/// 404: a signature with one character changed, an album's signature on
+/// its artist's id, on a readable playlist's id or on a song's id, no
+/// signature, and a good link while the Subsonic API is off. None of them
+/// counts as a failed sign-in: the client that sent them still signs in.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn subsonic_picture_address_opens_nothing_else() {
+    let (rig, [album_id, artist_id, song_id]) = covered_album("compat-picture-refusals").await;
+    let app = &rig.app;
+    let auth = rig.subsonic_auth("pictures");
+    let (_, info) = app
+        .call(
+            "GET",
+            &rest(&format!("getAlbumInfo2?id={album_id}"), &auth),
+            &[],
+            None,
+        )
+        .await;
+    let link = picture_path(&info["subsonic-response"]["albumInfo"]["mediumImageUrl"]);
+    let (status, _, _) = app.raw("GET", &link, &[], None).await;
+    assert_eq!(status, StatusCode::OK, "the link opens");
+    let sig = link
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("sig="))
+        .expect("signature")
+        .to_owned();
+    let (_, made) = app
+        .call(
+            "GET",
+            &rest(&format!("createPlaylist?name=Mine&songId={song_id}"), &auth),
+            &[],
+            None,
+        )
+        .await;
+    let playlist_id = made["subsonic-response"]["playlist"]["id"]
+        .as_str()
+        .expect("playlist id")
+        .to_owned();
+
+    let flipped = format!(
+        "{}{}",
+        if sig.starts_with('0') { '1' } else { '0' },
+        &sig[1..]
+    );
+    let refused = [
+        link.replace(&sig, &flipped),
+        format!("/subsonic/img?id={artist_id}&sig={sig}&size=500"),
+        format!("/subsonic/img?id={playlist_id}&sig={sig}&size=500"),
+        format!("/subsonic/img?id={song_id}&sig={sig}&size=500"),
+        format!("/subsonic/img?id={album_id}&size=500"),
+    ];
+    for path in &refused {
+        let (status, _, body) = app.raw("GET", path, &[], None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+        assert!(body.is_empty(), "{path}");
+    }
+
+    let admin = app.login_admin().await;
+    let admin = [("authorization", admin.as_str())];
+    let switch = |on: bool| async move {
+        let (_, mut apps) = app
+            .call("GET", "/api/v3/settings/connect-apps", &admin, None)
+            .await;
+        apps["subsonic_enabled"] = json!(on);
+        let (status, saved) = app
+            .call("PUT", "/api/v3/settings/connect-apps", &admin, Some(apps))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{saved}");
+    };
+    switch(false).await;
+    let (status, _, body) = app.raw("GET", &link, &[], None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "while Subsonic is off");
+    assert!(body.is_empty());
+    switch(true).await;
+
+    let (_, ping) = app.call("GET", &rest("ping", &auth), &[], None).await;
+    assert_eq!(ping["subsonic-response"]["status"], "ok", "{ping}");
+    rig.stop().await;
+}
+
 /// The admin's setting for who may download library files holds in player
 /// apps. A user it excludes is told so and is refused at the download
 /// addresses; a user it admits is told so and is served. Playing is not

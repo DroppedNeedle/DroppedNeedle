@@ -108,6 +108,7 @@ pub struct CompatSetup {
     jellyfin: CompatJellyfinState,
     settings: LiveSettings,
     limits: CompatLimits,
+    listener: ListenerConfig,
     router: Router,
 }
 
@@ -149,6 +150,7 @@ impl CompatSetup {
             &deps.settings,
             &jellyfin,
             &limits,
+            &deps.listener,
         );
         Self {
             verifier,
@@ -157,6 +159,7 @@ impl CompatSetup {
             jellyfin,
             settings: deps.settings,
             limits,
+            listener: deps.listener,
             router,
         }
     }
@@ -257,6 +260,7 @@ impl CompatSetup {
             &self.settings,
             &self.jellyfin,
             &self.limits,
+            &self.listener,
         );
         self
     }
@@ -288,6 +292,7 @@ impl CompatSetup {
         settings: &LiveSettings,
         jellyfin: &CompatJellyfinState,
         limits: &CompatLimits,
+        listener: &ListenerConfig,
     ) -> Router {
         let subsonic = subsonic_router(SubsonicState::new(
             verifier.clone(),
@@ -296,6 +301,7 @@ impl CompatSetup {
             settings.clone(),
             limits.limits.clone(),
             limits.started.clone(),
+            listener.clone(),
         ));
         let jellyfin = Router::new().nest("/jellyfin", jellyfin_router(jellyfin.clone()));
         Router::new()
