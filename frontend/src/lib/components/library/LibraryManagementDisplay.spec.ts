@@ -53,7 +53,9 @@ const ALL_STABLE_CODES = [
 	'SIDECAR_UNREADABLE',
 	'UNCONFIRMED_MATCH',
 	'UNMATCHED_ALBUM',
-	'WRITE_FAILED'
+	'WRITE_FAILED',
+	'TAKEN_OVER',
+	'FILES_CHANGED_OUTSIDE'
 ];
 
 describe('managementReasonLabel', () => {
