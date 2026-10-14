@@ -1,11 +1,11 @@
 //! Runtime factory: one call from a path to a serving database.
 //!
 //! [`open_runtime`] runs the boot checks in order: create the parent
-//! directory, refuse symlinks and network filesystems, open the reader pool
-//! with the full pragma set, take a verified backup when the schema is
-//! behind, run the schema migrations and assert `user_version`, then start
-//! the writer lane, open the read pools and wire the checkpoint, wakeup,
-//! and backup services.
+//! directory, refuse symlinks and network filesystems, take a verified
+//! backup when the schema is behind, run the schema migrations and assert
+//! `user_version` on a boot pool, open the read-only reader pool with the
+//! full pragma set, then start the writer lane, open the read pools and
+//! wire the checkpoint, wakeup, and backup services.
 //!
 //! Backups live in `backups/` next to the database file, so they share its
 //! volume and filesystem (the backup stages and renames in place).
@@ -24,10 +24,7 @@
 
 use std::{
     path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -95,8 +92,9 @@ pub struct DbConfig {
     /// The WAL sizes, high then low, at which bulk writes are held and let
     /// go. Not a setting: only a test changes them.
     wal_water: (i64, i64),
-    /// How long a request read waits for a pooled connection before `Busy`.
-    /// Not a setting: only a test changes it.
+    /// How long a request read waits for a pooled connection before `Busy`,
+    /// in the read pool and the sqlx reader pool. Not a setting: only a test
+    /// changes it.
     read_wait: Duration,
 }
 
@@ -181,17 +179,30 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
     let backups = BackupService::new(&path, &backup_dir);
     backup_before_upgrade(&path, &backups).await?;
 
-    let reads_frozen = Arc::new(AtomicBool::new(false));
+    // Migrations run on a writable pool of their own, closed before the
+    // reader pool opens, so every reader connection is read-only from the
+    // moment it opens. The boot pool connects eagerly with the same pragma
+    // set, so a database that refuses it still fails boot; the reader pool
+    // then opens its connections as reads need them.
+    let boot = open_pool(
+        &path,
+        config.readers,
+        config.busy_timeout,
+        ACQUIRE_TIMEOUT,
+        false,
+    )
+    .await?;
+    let migrated = crate::schema::apply_migrations(&boot).await;
+    boot.close().await;
+    migrated?;
     let pool = open_pool(
         &path,
         config.readers,
         config.busy_timeout,
-        Arc::clone(&reads_frozen),
+        config.read_wait,
+        true,
     )
     .await?;
-    crate::schema::apply_migrations(&pool).await?;
-    crate::schema::assert_migrated(&pool).await?;
-    reads_frozen.store(true, Ordering::Release);
 
     let lane = WriteLane::open_limited(&path, config.lane_limits)?;
     // Read-only connections, so they open after the writer: it is the
@@ -302,8 +313,8 @@ impl DbRuntime {
         &self.reads
     }
 
-    /// Reader pool. Reads only after boot, enforced by `query_only=ON` on
-    /// every checkout once migrations complete; every write goes through
+    /// Reader pool. Reads only, enforced by `query_only=ON` on every
+    /// connection it opens; every write goes through
     /// [`DbRuntime::lane`].
     pub fn pool(&self) -> &SqlitePool {
         self.db.sqlx()
@@ -364,20 +375,24 @@ impl DbRuntime {
     }
 }
 
-/// Open the reader pool with the full connection pragma set.
-/// `after_connect` applies every pragma and fails the connection loudly on
-/// drift; `before_acquire` re-verifies journal mode and FK enforcement at
-/// each checkout and recycles strays. Once `reads_frozen` flips (after boot
-/// migrations), both hooks pin `query_only=ON` so the pool can no longer
-/// write, whether a checkout reuses an idle connection or opens a new one;
-/// boot migrations run before the flip.
+/// Open a pool with the full connection pragma set. `after_connect` applies
+/// every pragma when a connection opens and fails it loudly on drift; with
+/// `read_only` it also pins `query_only=ON`, so the pool can never write,
+/// and opens no connection until a read asks for one. `acquire_wait` is how
+/// long a caller waits for a connection.
+///
+/// A checkout does no work on the connection: no pragma check and no ping.
+/// The pragmas are per connection and nothing in the process changes them
+/// after open (WAL is a property of the file, and a read-only connection
+/// has no writes for foreign keys to check), and a ping cannot tell an
+/// in-process SQLite connection anything.
 async fn open_pool(
     path: &Path,
     readers: u32,
     busy_timeout: Duration,
-    reads_frozen: Arc<AtomicBool>,
+    acquire_wait: Duration,
+    read_only: bool,
 ) -> Result<SqlitePool, DbError> {
-    let frozen_at_connect = Arc::clone(&reads_frozen);
     let connect = SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(true)
@@ -385,58 +400,46 @@ async fn open_pool(
         .synchronous(SqliteSynchronous::Normal)
         .busy_timeout(busy_timeout)
         .foreign_keys(true);
-    let pool = SqlitePoolOptions::new()
+    let options = SqlitePoolOptions::new()
         .max_connections(readers.max(1))
         .min_connections(MIN_CONNECTIONS.min(readers.max(1)))
-        .acquire_timeout(ACQUIRE_TIMEOUT)
+        .acquire_timeout(acquire_wait)
+        .test_before_acquire(false)
         .idle_timeout(Some(IDLE_TIMEOUT))
         .max_lifetime(None)
         .after_connect(
             move |connection: &mut SqliteConnection, _meta: PoolConnectionMetadata| {
-                let reads_frozen = Arc::clone(&frozen_at_connect);
                 Box::pin(async move {
-                    apply_pragmas(connection, busy_timeout).await?;
-                    // A connection opened on demand skips `before_acquire`,
-                    // so it has to pick up the read-only pin here.
-                    if reads_frozen.load(Ordering::Acquire) {
-                        sqlx::query("PRAGMA query_only=ON")
-                            .execute(&mut *connection)
-                            .await?;
+                    let ready = ready_connection(connection, busy_timeout, read_only).await;
+                    // Without this line a pool that can never open a
+                    // connection would only show as callers told "busy".
+                    if let Err(error) = &ready {
+                        tracing::error!(%error, "database connection could not be made ready");
                     }
-                    Ok(())
+                    ready
                 })
             },
-        )
-        .before_acquire(
-            move |connection: &mut SqliteConnection, _meta: PoolConnectionMetadata| {
-                let reads_frozen = Arc::clone(&reads_frozen);
-                Box::pin(async move {
-                    let mode: String = sqlx::query_scalar("PRAGMA journal_mode")
-                        .fetch_one(&mut *connection)
-                        .await?;
-                    let foreign_keys: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
-                        .fetch_one(&mut *connection)
-                        .await?;
-                    let healthy = mode.eq_ignore_ascii_case("wal") && foreign_keys == 1;
-                    if !healthy {
-                        tracing::warn!(
-                            journal_mode = mode,
-                            foreign_keys,
-                            "recycling pooled connection with drifted pragmas"
-                        );
-                    }
-                    if healthy && reads_frozen.load(Ordering::Acquire) {
-                        sqlx::query("PRAGMA query_only=ON")
-                            .execute(&mut *connection)
-                            .await?;
-                    }
-                    Ok(healthy)
-                })
-            },
-        )
-        .connect_with(connect)
-        .await?;
-    Ok(pool)
+        );
+    if read_only {
+        return Ok(options.connect_lazy_with(connect));
+    }
+    Ok(options.connect_with(connect).await?)
+}
+
+/// Apply the pragma set to a new connection, then the read-only pin when
+/// the pool is the reader pool.
+async fn ready_connection(
+    connection: &mut SqliteConnection,
+    busy_timeout: Duration,
+    read_only: bool,
+) -> Result<(), sqlx::Error> {
+    apply_pragmas(connection, busy_timeout).await?;
+    if read_only {
+        sqlx::query("PRAGMA query_only=ON")
+            .execute(&mut *connection)
+            .await?;
+    }
+    Ok(())
 }
 
 /// The full pragma set, applied to every pooled connection at open.

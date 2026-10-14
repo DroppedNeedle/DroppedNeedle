@@ -74,9 +74,14 @@ pub(crate) struct E2e {
 
 impl E2e {
     pub(crate) async fn open(tag: &str) -> Self {
+        Self::open_with(tag, |config| config).await
+    }
+
+    /// As [`E2e::open`], with the database tuned by `tune`.
+    pub(crate) async fn open_with(tag: &str, tune: impl FnOnce(DbConfig) -> DbConfig) -> Self {
         let scratch = crate::common::ScratchDir::new(&format!("auth-e2e-{tag}"));
         let dir = scratch.to_path_buf();
-        let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
+        let runtime = open_runtime(&tune(DbConfig::new(&dir.join("app.db"))))
             .await
             .expect("scratch runtime opens");
         let crypto = Arc::new(Crypto::from_key_bytes(&[7u8; 32]).expect("test key"));
@@ -3321,7 +3326,12 @@ async fn login_store_failure_is_a_500_not_bad_credentials() {
 
 #[tokio::test]
 async fn sign_in_waits_out_a_full_read_pool_as_busy_not_a_fault() {
-    let e2e = E2e::open("pool-full").await;
+    // A short checkout limit, so the busy answers come without the real
+    // five-second wait.
+    let e2e = E2e::open_with("pool-full", |config| {
+        config.with_read_wait(Duration::from_millis(250))
+    })
+    .await;
     let (_, token) = setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
     let auth = bearer(token.as_str().expect("setup token"));
     // Every reader checked out: the stand-in for a host too busy to hand
