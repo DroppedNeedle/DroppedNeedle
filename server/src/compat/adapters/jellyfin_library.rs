@@ -712,8 +712,8 @@ impl CatalogIds {
             current.push((self.id_for(&kind, &internal), (kind, internal)));
         }
         // A merged album or artist answers to both ids it was handed out
-        // under, for signed-in callers only; `from_jf` follows it to the
-        // one that holds it now.
+        // under, and a track alias to its own, for signed-in callers only;
+        // `from_jf` follows it to the one that holds it now.
         for (kind, internal) in merged {
             let found = (kind.to_owned(), internal.clone());
             old.push((Self::derive(kind, &internal), found.clone()));
@@ -726,12 +726,13 @@ impl CatalogIds {
         table.read_at = Some(Instant::now());
     }
 
-    /// An album or artist as it is now: a merged one becomes the album or
-    /// artist that holds it, and one with nothing live behind it is not
-    /// found. Other kinds pass through, and so does an id that could not
-    /// be followed, so a live one still answers.
+    /// An album, artist or track as it is now: a merged album or artist
+    /// becomes the one that holds it, and one with nothing live behind it
+    /// is not found; the old id of a missing track that continued into
+    /// another becomes that track. Other kinds pass through, and so does an
+    /// id that could not be followed, so a live one still answers.
     async fn current(&self, (kind, internal): (String, String)) -> Option<(String, String)> {
-        if kind != "album" && kind != "artist" {
+        if kind != "album" && kind != "artist" && kind != "track" {
             return Some((kind, internal));
         }
         match self.library.player.current_id(&kind, &internal).await {

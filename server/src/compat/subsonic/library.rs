@@ -151,6 +151,7 @@ pub async fn create_playlist<P: Principal, S: Store, B: AudioBackend>(
         .iter()
         .map(|sid| decode_expect(sid, IdKind::Track))
         .collect::<Result<Vec<_>, _>>()?;
+    let song_file_ids = current_tracks(ctx, song_file_ids).await?;
     let pid = match ctx.p("playlistId")? {
         Some(playlist_id) => {
             let pid = decode_expect(&playlist_id, IdKind::Playlist)?;
@@ -218,6 +219,7 @@ pub async fn update_playlist<P: Principal, S: Store, B: AudioBackend>(
         .iter()
         .map(|sid| decode_expect(sid, IdKind::Track))
         .collect::<Result<Vec<_>, _>>()?;
+    let add_file_ids = current_tracks(ctx, add_file_ids).await?;
     let mut remove_indices = Vec::new();
     for value in ctx.plist("songIndexToRemove")? {
         let single = SubsonicParameters::new(vec![("songIndexToRemove".to_owned(), value)]);
@@ -282,15 +284,16 @@ pub async fn delete_playlist<P: Principal, S: Store, B: AudioBackend>(
     Ok(Outcome::ok())
 }
 
-/// An album or artist id as it is now: the old id of a merged album or
-/// artist, or an alias, becomes the id of the one that holds it. An id
+/// An album, artist or track id as it is now: the old id of a merged
+/// album or artist, an alias, or the old id of a missing track that
+/// continued into another, becomes the id of the one that holds it. An id
 /// nothing live holds is kept, so it answers as an unknown id does.
 pub async fn current_id<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
     kind: IdKind,
     internal: String,
 ) -> Result<String, SubsonicError> {
-    if !matches!(kind, IdKind::Album | IdKind::Artist) {
+    if !matches!(kind, IdKind::Album | IdKind::Artist | IdKind::Track) {
         return Ok(internal);
     }
     Ok(ctx
@@ -299,6 +302,18 @@ pub async fn current_id<P: Principal, S: Store, B: AudioBackend>(
         .await
         .map_err(Ctx::<P, S, B>::store_err)?
         .unwrap_or(internal))
+}
+
+/// Track ids as they are now, one read each, in order.
+async fn current_tracks<P: Principal, S: Store, B: AudioBackend>(
+    ctx: &'_ Ctx<'_, P, S, B>,
+    file_ids: Vec<String>,
+) -> Result<Vec<String>, SubsonicError> {
+    let mut current = Vec::with_capacity(file_ids.len());
+    for file_id in file_ids {
+        current.push(current_id(ctx, IdKind::Track, file_id).await?);
+    }
+    Ok(current)
 }
 
 /// (kind, internal id) pairs from `id` (prefix-routed) + `albumId` +
@@ -562,6 +577,7 @@ pub async fn scrobble<P: Principal, S: Store, B: AudioBackend>(
     let user_name = ctx.user()?.display_name().to_owned();
     if !submission {
         let fid = decode_expect(&ids[0], IdKind::Track)?;
+        let fid = current_id(ctx, IdKind::Track, fid).await?;
         ctx.store
             .now_playing(&fid, &user_id, client.as_deref(), &user_name)
             .await
@@ -570,6 +586,7 @@ pub async fn scrobble<P: Principal, S: Store, B: AudioBackend>(
     }
     for (index, sid) in ids.iter().enumerate() {
         let fid = decode_expect(sid, IdKind::Track)?;
+        let fid = current_id(ctx, IdKind::Track, fid).await?;
         let played_at = timestamps
             .get(index)
             .copied()
@@ -637,6 +654,7 @@ pub async fn report_playback<P: Principal, S: Store, B: AudioBackend>(
         ));
     }
     let file_id = decode_expect(&ctx.p("mediaId")?.unwrap_or_default(), IdKind::Track)?;
+    let file_id = current_id(ctx, IdKind::Track, file_id).await?;
     let position_ms = ctx.pint("positionMs", None, Some(0), Some(MAX_MEDIA_POSITION_MS))?;
     if position_ms.is_none() {
         return Err(SubsonicError::missing("positionMs"));
@@ -680,6 +698,7 @@ pub async fn validated_queue_ids<P: Principal, S: Store, B: AudioBackend>(
         .iter()
         .map(|sid| decode_expect(sid, IdKind::Track))
         .collect::<Result<Vec<_>, _>>()?;
+    let file_ids = current_tracks(ctx, file_ids).await?;
     let unique: Vec<(IdKind, String)> = file_ids
         .iter()
         .collect::<std::collections::HashSet<_>>()
@@ -781,6 +800,7 @@ pub async fn save_play_queue<P: Principal, S: Store, B: AudioBackend>(
             ));
         };
         let current_file_id = decode_expect(&current, IdKind::Track)?;
+        let current_file_id = current_id(ctx, IdKind::Track, current_file_id).await?;
         current_index = Some(
             file_ids
                 .iter()
@@ -917,6 +937,7 @@ pub async fn create_bookmark<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
     let file_id = decode_expect(&ctx.p("id")?.unwrap_or_default(), IdKind::Track)?;
+    let file_id = current_id(ctx, IdKind::Track, file_id).await?;
     let position = ctx.pint("position", None, Some(0), Some(MAX_MEDIA_POSITION_MS))?;
     if position.is_none() {
         return Err(SubsonicError::missing("position"));
@@ -946,6 +967,7 @@ pub async fn delete_bookmark<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
     let file_id = decode_expect(&ctx.p("id")?.unwrap_or_default(), IdKind::Track)?;
+    let file_id = current_id(ctx, IdKind::Track, file_id).await?;
     let user_id = ctx.user()?.user_id().to_owned();
     let missing = ctx
         .store
@@ -1056,6 +1078,7 @@ pub async fn lyrics_by_song_id<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
     let file_id = decode_expect(&ctx.p("id")?.unwrap_or_default(), IdKind::Track)?;
+    let file_id = current_id(ctx, IdKind::Track, file_id).await?;
     let track = ctx
         .store
         .get_track(&file_id)

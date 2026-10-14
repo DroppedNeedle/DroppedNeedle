@@ -32,6 +32,7 @@ use std::collections::HashMap;
 
 use sqlx::{Row as _, SqlitePool};
 
+use super::lookups::CURRENT_TRACK;
 use super::stores::{
     AlbumFilter, AlbumRecord, AlbumSort, ArtistListing, ArtistRecord, ArtistScope, ArtistSort,
     BoxFuture, DecadeRecord, GenreRecord, ManagementHoldRecord, StatsRecord, StoreError,
@@ -1108,7 +1109,7 @@ impl LibraryCatalog for SqliteCatalog {
             };
             let row = sqlx::query(&format!(
                 "SELECT {TRACK_COLUMNS} {TRACK_JOINS} \
-                 WHERE t.id = ? AND t.availability = 'indexed'"
+                 WHERE t.id = ({CURRENT_TRACK}) AND t.availability = 'indexed'"
             ))
             .bind(id)
             .fetch_optional(pool)

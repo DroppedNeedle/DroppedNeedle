@@ -322,17 +322,19 @@ pub trait PlayerCatalog: Send + Sync {
     /// streamable tracks by local id, genres by display name.
     fn every_id<'a>(&'a self) -> BoxFuture<'a, Result<Vec<(&'static str, String)>, StoreError>>;
 
-    /// The id an album or artist (`kind`) has now: `id` itself while it is
-    /// live, else the live one a merge or an alias of any kind points it
-    /// at. `None` when nothing live holds it. One indexed read.
+    /// The id an album, artist or track (`kind`) has now: `id` itself while
+    /// it is live, else the live one a merge or an alias of any kind points
+    /// it at. `None` for an album or artist nothing live holds; a track
+    /// answers its own id then, so reads test its availability as usual.
+    /// One indexed read.
     fn current_id<'a>(
         &'a self,
         kind: &'a str,
         id: &'a str,
     ) -> BoxFuture<'a, Result<Option<String>, StoreError>>;
 
-    /// Every `(kind, id)` an album or artist merge retired: the old local
-    /// ids an app may still hold.
+    /// Every `(kind, id)` an album or artist merge retired, and every track
+    /// alias: the old local ids an app may still hold.
     fn merged_ids<'a>(&'a self) -> BoxFuture<'a, Result<Vec<(&'static str, String)>, StoreError>>;
 
     /// Every year at least one album with a streamable track has,
@@ -1663,6 +1665,7 @@ impl PlayerCatalog for SqlitePlayerCatalog {
                     "artist",
                     "SELECT alias FROM local_artist_aliases WHERE kind = 'merged_artist'",
                 ),
+                ("track", "SELECT alias FROM local_track_aliases"),
             ] {
                 let ids: Vec<String> = sqlx::query_scalar(sql)
                     .fetch_all(pool)

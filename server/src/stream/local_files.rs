@@ -15,6 +15,7 @@ use sqlx::{Row as _, SqlitePool};
 
 use crate::library::scan::roots::RootRegistry;
 use crate::library::wiring::RootSource;
+use crate::reads::library::lookups::CURRENT_TRACK;
 
 /// One catalog file playback or a download may serve.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,11 +84,13 @@ impl FileCatalog {
         Self { pool }
     }
 
-    /// One streamable track's file. None for unknown, missing or excluded
-    /// tracks.
+    /// One streamable track's file; the old id of a track that continued
+    /// into another answers with that track's file. None for unknown,
+    /// missing or excluded tracks.
     pub async fn track(&self, track_id: &str) -> Result<Option<CatalogFile>, sqlx::Error> {
         let row = sqlx::query(&format!(
-            "SELECT {FILE_COLUMNS} FROM local_tracks WHERE id = ? AND availability = 'indexed'"
+            "SELECT {FILE_COLUMNS} FROM local_tracks \
+             WHERE id = ({CURRENT_TRACK}) AND availability = 'indexed'"
         ))
         .bind(track_id)
         .fetch_optional(&self.pool)

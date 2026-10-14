@@ -553,7 +553,7 @@ impl Store for SubsonicStore {
 
     async fn current_id(&self, kind: IdKind, id: &str) -> Result<Option<String>, CompatError> {
         match kind {
-            IdKind::Album | IdKind::Artist => {
+            IdKind::Album | IdKind::Artist | IdKind::Track => {
                 Ok(self.library.player.current_id(kind_name(kind), id).await?)
             }
             _ => Ok(Some(id.to_owned())),

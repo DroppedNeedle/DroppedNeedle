@@ -792,13 +792,14 @@ pub async fn suggestions(
 /// Stored lyrics for one track. Unknown tracks, unstreamable tracks, and
 /// tracks without stored lyrics are all 404.
 pub async fn lyrics(deps: &LibraryDeps, track_id: &str) -> Result<LyricsView, LibraryFailure> {
-    deps.catalog
+    let track = deps
+        .catalog
         .get_track(track_id)
         .await?
         .ok_or(LibraryFailure::NotFound)?;
     let doc = deps
         .lyrics
-        .get(track_id)
+        .get(&track.id)
         .await?
         .ok_or(LibraryFailure::NotFound)?;
     Ok(LyricsView {

@@ -1885,6 +1885,145 @@ async fn merged_artists_and_album_aliases_open_in_player_apps() {
     rig.stop().await;
 }
 
+/// A track whose file was deleted while a copy of it stays, both mapped
+/// to the same release track of the album's edition, continues into the
+/// copy, and the id a player app saved for it opens the copy. Subsonic:
+/// `getSong` answers the copy with its id, `stream` serves the copy's
+/// bytes (a range too), starring the old id stars the copy and a scrobble files under
+/// it. Jellyfin, signed in: the old id answers with the copy's id, also as
+/// the first request of a new process, and is a 401 with no token. The
+/// web reads of the track and its stream, GET and HEAD, follow it too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_continued_track_opens_by_its_old_id() {
+    let mut rig = CompatApp::start("compat-continued-track").await;
+    let (old, album, _) = catalog_ids(&rig, "U2/Achtung Baby/03 One.mp3");
+    let music = rig.app.config.root_app_dir.join("music");
+    std::fs::copy(
+        music.join("U2/Achtung Baby/03 One.mp3"),
+        music.join("U2/Achtung Baby/03 One (copy).mp3"),
+    )
+    .expect("copied");
+    rig.app.scan_library().await;
+    let (copy, copy_album, _) = catalog_ids(&rig, "U2/Achtung Baby/03 One (copy).mp3");
+    assert_eq!(copy_album, album);
+    let release = "33333333-3333-4333-8333-333333333333";
+    rig.app
+        .db()
+        .execute_batch(&format!(
+            "INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, release_mbid, decision_source, selected_at) \
+             VALUES ('{album}', 'musicbrainz', 'rg-3', '{release}', 'manual', 1) \
+             ON CONFLICT (local_album_id, provider) DO UPDATE SET \
+             release_mbid = excluded.release_mbid, decision_source = 'manual'; \
+             DELETE FROM library_album_match_state WHERE local_album_id = '{album}'; \
+             INSERT INTO local_track_external_identities (local_track_id, provider, \
+             recording_mbid, release_mbid, release_track_mbid, decision_source, selected_at) \
+             VALUES ('{old}', 'musicbrainz', 'rec-one', '{release}', 'rt-one', 'manual', 1), \
+             ('{copy}', 'musicbrainz', 'rec-one', '{release}', 'rt-one', 'manual', 1) \
+             ON CONFLICT (local_track_id, provider) DO UPDATE SET \
+             release_mbid = excluded.release_mbid, \
+             release_track_mbid = excluded.release_track_mbid;"
+        ))
+        .expect("both copies mapped");
+    let bytes = rig.file("one");
+    std::fs::remove_file(music.join("U2/Achtung Baby/03 One.mp3")).expect("original deleted");
+    rig.app.scan_library().await;
+
+    let song = subsonic_ok(&rig, &format!("getSong?id=tr-{old}")).await;
+    assert_eq!(song["song"]["id"], json!(format!("tr-{copy}")), "{song}");
+    let auth = rig.subsonic_auth("merged");
+    let (status, headers, body) = rig
+        .app
+        .raw(
+            "GET",
+            &rest(&format!("stream?id=tr-{old}"), &auth),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        header_str(&headers, "content-length"),
+        bytes.len().to_string()
+    );
+    assert_eq!(body, bytes);
+    let (status, _, body) = rig
+        .app
+        .raw(
+            "GET",
+            &rest(&format!("stream?id=tr-{old}"), &auth),
+            &[("Range", "bytes=0-49")],
+            None,
+        )
+        .await;
+    assert_eq!(
+        (status, body.as_slice()),
+        (StatusCode::PARTIAL_CONTENT, &bytes[..50])
+    );
+    subsonic_ok(&rig, &format!("star?id=tr-{old}")).await;
+    let starred = subsonic_ok(&rig, "getStarred2").await;
+    assert_eq!(
+        starred["starred2"]["song"][0]["id"],
+        json!(format!("tr-{copy}")),
+        "{starred}"
+    );
+    subsonic_ok(&rig, &format!("scrobble?id=tr-{old}&submission=true")).await;
+    let filed: (i64, i64) = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM library_play_history WHERE local_track_id = ?1), \
+             (SELECT COUNT(*) FROM library_play_history WHERE local_track_id = ?2)",
+            [&copy, &old],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("plays read");
+    assert_eq!(filed, (1, 0));
+
+    let admin = rig.app.login_admin().await;
+    let admin = [("authorization", admin.as_str())];
+    let (status, track) = rig
+        .app
+        .call(
+            "GET",
+            &format!("/api/v3/library/tracks/{old}"),
+            &admin,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{track}");
+    assert_eq!(track["id"], json!(copy), "{track}");
+    let (status, _, body) = rig
+        .app
+        .raw("GET", &format!("/api/v3/stream/local/{old}"), &admin, None)
+        .await;
+    assert_eq!((status, body), (StatusCode::OK, bytes.clone()));
+    let (status, headers, body) = rig
+        .app
+        .raw("HEAD", &format!("/api/v3/stream/local/{old}"), &admin, None)
+        .await;
+    assert_eq!((status, body.len()), (StatusCode::OK, 0));
+    assert_eq!(
+        header_str(&headers, "content-length"),
+        bytes.len().to_string()
+    );
+
+    let (old_id, copy_id) = (unkeyed_id("track", &old), unkeyed_id("track", &copy));
+    assert_eq!(jellyfin_item(&rig, &old_id).await.0, json!(copy_id));
+    rig.app = rig.app.restart().await;
+    assert_eq!(
+        jellyfin_item(&rig, &old_id).await.0,
+        json!(copy_id),
+        "after a restart"
+    );
+    let (status, _) = rig
+        .app
+        .call("GET", &format!("/jellyfin/Items/{old_id}"), &[], None)
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    rig.stop().await;
+}
+
 /// Tripwire: no golden recorded from the library carries a credential.
 #[test]
 fn library_goldens_carry_no_credentials() {

@@ -269,6 +269,7 @@ pub async fn song<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
     let fid = decode_expect(&ctx.p("id")?.unwrap_or_default(), IdKind::Track)?;
+    let fid = current_id(ctx, IdKind::Track, fid).await?;
     let track = ctx
         .store
         .get_track(&fid)

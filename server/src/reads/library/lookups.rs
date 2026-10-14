@@ -57,6 +57,16 @@ const DIRECT_ARTIST: &str = "SELECT id FROM ( \
      WHERE a.id = ?1 AND r.retired_into_artist_id IS NULL) \
     ORDER BY rank LIMIT 1";
 
+/// The track a local id names now: the track itself while its file is
+/// indexed, else the track its alias names (a missing track that
+/// continued into another), else the id itself, so a read's own
+/// availability test answers for it as for any id.
+pub(crate) const CURRENT_TRACK: &str = "SELECT id FROM ( \
+    SELECT id, 0 AS rank FROM local_tracks WHERE id = ?1 AND availability = 'indexed' \
+    UNION ALL SELECT local_track_id, 1 FROM local_track_aliases WHERE alias = ?1 \
+    UNION ALL SELECT ?1, 2) \
+    ORDER BY rank LIMIT 1";
+
 /// Live albums with a streamable track holding one of the release groups.
 const OWNERS_BY_GROUP: &str = "SELECT e.local_album_id, lower(e.release_group_mbid) \
     FROM local_album_external_identities e JOIN local_albums b ON b.id = e.local_album_id \
@@ -89,7 +99,8 @@ impl SqliteLookups {
     }
 }
 
-/// The live album or artist (`kind`) a local id or alias names now, if any.
+/// The live album or artist (`kind`) a local id or alias names now, if
+/// any. A track id always answers: the track it names now, or itself.
 pub(super) async fn current_id(
     pool: &SqlitePool,
     kind: &str,
@@ -98,6 +109,7 @@ pub(super) async fn current_id(
     let sql = match kind {
         "album" => DIRECT_ALBUM,
         "artist" => DIRECT_ARTIST,
+        "track" => CURRENT_TRACK,
         _ => return Ok(None),
     };
     sqlx::query_scalar(sql)

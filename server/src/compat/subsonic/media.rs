@@ -212,6 +212,7 @@ pub async fn stream<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
     let fid = decode_expect(&ctx.p("id")?.unwrap_or_default(), IdKind::Track)?;
+    let fid = current_id(ctx, IdKind::Track, fid).await?;
     let format = ctx.params.one_of("format", &["raw", "mp3", "opus"], None)?;
     let max_bitrate = ctx.pint("maxBitRate", None, Some(0), Some(1_000_000))?;
     let time_offset = ctx
@@ -279,6 +280,7 @@ pub async fn download<P: Principal, S: Store, B: AudioBackend>(
         ));
     }
     let fid = decode_expect(&ctx.p("id")?.unwrap_or_default(), IdKind::Track)?;
+    let fid = current_id(ctx, IdKind::Track, fid).await?;
     let track = ctx
         .store
         .get_track(&fid)
@@ -503,6 +505,7 @@ pub async fn transcode_decision<P: Principal, S: Store, B: AudioBackend>(
         return Err(SubsonicError::new(10, "Only song transcoding is supported"));
     }
     let file_id = decode_expect(&ctx.p("mediaId")?.unwrap_or_default(), IdKind::Track)?;
+    let file_id = current_id(ctx, IdKind::Track, file_id).await?;
     let track = ctx
         .store
         .get_track(&file_id)
@@ -566,6 +569,7 @@ pub async fn transcode_stream<P: Principal, S: Store, B: AudioBackend>(
         return Err(SubsonicError::new(10, "Only song transcoding is supported"));
     }
     let file_id = decode_expect(&ctx.p("mediaId")?.unwrap_or_default(), IdKind::Track)?;
+    let file_id = current_id(ctx, IdKind::Track, file_id).await?;
     let params = ctx
         .params
         .string_max("transcodeParams", None, 8192)?
