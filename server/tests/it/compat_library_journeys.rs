@@ -707,6 +707,115 @@ async fn jellyfin_reports_an_administrator_only_for_an_admin() {
     rig.stop().await;
 }
 
+/// A playlist with no uploaded cover gets a picture made from its tracks'
+/// albums, for those who may read it only: another user asking for a
+/// private playlist's cover gets the placeholder, as for any miss.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn subsonic_made_playlist_cover_is_private_to_its_readers() {
+    let rig = CompatApp::start("compat-playlist-cover").await;
+    let app = &rig.app;
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let second = app.config.root_app_dir.join("second");
+    let album = second.join("Covered/Sleeve");
+    std::fs::create_dir_all(&album).expect("mkdir");
+    std::fs::copy(
+        manifest.join("tests/fixtures/library/management_full.flac"),
+        album.join("01 Sleeve.flac"),
+    )
+    .expect("fixture copies");
+    image::RgbImage::from_pixel(8, 8, image::Rgb([200, 10, 10]))
+        .save(album.join("cover.png"))
+        .expect("cover writes");
+    app.add_library_folder("second", &second).await;
+
+    let admin = app.login_admin().await;
+    let (status, created) = app
+        .call(
+            "POST",
+            "/api/v3/me/app-passwords",
+            &[("authorization", admin.as_str())],
+            Some(json!({"name": "Other"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let other = format!(
+        "u=admin&p={}&v=1.16.1&c=cover-check&f=json",
+        created["secret"].as_str().expect("secret")
+    );
+    let owner = rig.subsonic_auth("cover-check");
+
+    let (_, all) = app
+        .call(
+            "GET",
+            &rest("search3?query=&songCount=500", &owner),
+            &[],
+            None,
+        )
+        .await;
+    let song = all["subsonic-response"]["searchResult3"]["song"]
+        .as_array()
+        .expect("songs")
+        .iter()
+        .find(|song| song["path"] == "Covered/Sleeve/01 Sleeve.flac")
+        .expect("the covered song")["id"]
+        .as_str()
+        .expect("song id")
+        .to_owned();
+    let (_, made) = app
+        .call(
+            "GET",
+            &rest(&format!("createPlaylist?name=Mine&songId={song}"), &owner),
+            &[],
+            None,
+        )
+        .await;
+    let playlist = &made["subsonic-response"]["playlist"];
+    let id = playlist["id"].as_str().expect("playlist id").to_owned();
+    assert_eq!(playlist["coverArt"], json!(id));
+
+    let cover = |auth: String| {
+        let id = id.clone();
+        async move {
+            let (status, headers, body) = app
+                .raw(
+                    "GET",
+                    &rest(&format!("getCoverArt?id={id}"), &auth),
+                    &[],
+                    None,
+                )
+                .await;
+            assert_eq!(status, StatusCode::OK);
+            (
+                header_str(&headers, "content-type"),
+                header_str(&headers, "cache-control"),
+                body,
+            )
+        }
+    };
+    let (kind, cache, picture) = cover(owner).await;
+    assert_eq!(
+        (kind.as_str(), cache.as_str()),
+        ("image/png", "private, max-age=3600")
+    );
+    let (kind, cache, placeholder) = cover(other.clone()).await;
+    assert_eq!(
+        (kind.as_str(), cache.as_str()),
+        ("image/webp", "public, max-age=86400")
+    );
+    assert_ne!(placeholder, picture);
+
+    let (_, lists) = app
+        .call("GET", &rest("getPlaylists", &other), &[], None)
+        .await;
+    assert!(
+        !lists["subsonic-response"]["playlists"]
+            .to_string()
+            .contains(&id),
+        "{lists}"
+    );
+    rig.stop().await;
+}
+
 /// Tripwire: no golden recorded from the library carries a credential.
 #[test]
 fn library_goldens_carry_no_credentials() {

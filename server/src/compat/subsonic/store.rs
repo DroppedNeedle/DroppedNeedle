@@ -51,8 +51,6 @@ pub struct PlaylistRecord {
     pub name: String,
     /// Public flag.
     pub is_public: bool,
-    /// True when the playlist has cover art.
-    pub has_cover: bool,
     /// Created ISO timestamp.
     pub created_at: Option<String>,
     /// Updated ISO timestamp.
@@ -447,7 +445,9 @@ pub trait Store: Clone + Send + Sync {
         user_id: &str,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
-    /// Playlist cover bytes + content type, or None.
+    /// Cover bytes + content type of a playlist the user may read: the
+    /// uploaded one, else one made from its tracks. None when there is
+    /// neither or the playlist is not theirs to read.
     fn playlist_cover(
         &self,
         playlist_id: &str,

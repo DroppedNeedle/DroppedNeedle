@@ -170,7 +170,6 @@ impl FakeStore {
                 id: "p1".to_owned(),
                 name: "Mix".to_owned(),
                 is_public: true,
-                has_cover: true,
                 created_at: Some("2023-11-01T00:00:00Z".to_owned()),
                 changed_at: Some("2023-11-02T00:00:00Z".to_owned()),
             },
@@ -650,7 +649,6 @@ impl Store for FakeStore {
             id: id.clone(),
             name: name.to_owned(),
             is_public: false,
-            has_cover: false,
             created_at: Some("2023-11-14T22:13:20Z".to_owned()),
             changed_at: Some("2023-11-14T22:13:20Z".to_owned()),
         };
@@ -745,13 +743,7 @@ impl Store for FakeStore {
         playlist_id: &str,
         _user_id: &str,
     ) -> Result<Option<(Vec<u8>, String)>, Infallible> {
-        let inner = self.lock();
-        let has_cover = inner
-            .playlists
-            .iter()
-            .find(|(record, ..)| record.id == playlist_id)
-            .is_some_and(|(record, ..)| record.has_cover);
-        Ok(has_cover.then(|| (b"PLAYLIST-COVER".to_vec(), "image/jpeg".to_owned())))
+        Ok((playlist_id == "p1").then(|| (b"PLAYLIST-COVER".to_vec(), "image/jpeg".to_owned())))
     }
 
     async fn apply_favorites(

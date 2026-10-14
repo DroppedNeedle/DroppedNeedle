@@ -127,7 +127,6 @@ fn record(visible: &Visible) -> PlaylistRecord {
         id: visible.row.id.clone(),
         name: visible.row.name.clone(),
         is_public: visible.row.is_public,
-        has_cover: visible.row.has_cover,
         created_at: iso_text(visible.row.created_at),
         changed_at: iso_text(visible.row.updated_at),
     }

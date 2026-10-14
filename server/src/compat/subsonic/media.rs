@@ -65,10 +65,11 @@ pub fn serve_outcome(served: Result<ServedAudio, ServeError>) -> Result<Outcome,
 }
 
 /// Cover art: album/track -> release-group art, artist -> artist image,
-/// playlist -> playlist file (Feishin #287). Misses serve the gray WebP
-/// placeholder; non-playlist hits carry immutable cache headers; `size`
-/// buckets to 250/500/1200. HEAD is served by the HTTP layer (which
-/// strips bodies); only the playlist branch needs explicit headers.
+/// playlist -> its uploaded cover (Feishin #287) or one made from its
+/// tracks. Misses serve the gray WebP placeholder; non-playlist hits
+/// carry immutable cache headers; `size` buckets to 250/500/1200. HEAD is
+/// served by the HTTP layer (which strips bodies); only the playlist
+/// branch needs explicit headers.
 pub async fn cover_art<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {

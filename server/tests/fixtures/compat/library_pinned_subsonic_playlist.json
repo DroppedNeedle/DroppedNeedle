@@ -3,6 +3,7 @@
     "openSubsonic": true,
     "playlist": {
       "changed": "0000-00-00T00:00:00Z",
+      "coverArt": "pl-<id-12>",
       "created": "0000-00-00T00:00:00Z",
       "duration": 0,
       "entry": [

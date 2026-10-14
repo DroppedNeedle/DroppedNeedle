@@ -64,9 +64,7 @@ pub async fn playlist_detail<P: Principal, S: Store, B: AudioBackend>(
         duration: Some(total),
         created: record.created_at.clone(),
         changed: record.changed_at.clone(),
-        coverArt: record
-            .has_cover
-            .then(|| encode(IdKind::Playlist, &record.id)),
+        coverArt: Some(encode(IdKind::Playlist, &record.id)),
         entry: Some(songs),
     })
 }
@@ -109,9 +107,7 @@ pub async fn playlists<P: Principal, S: Store, B: AudioBackend>(
                 duration: Some(duration),
                 created: record.created_at.clone(),
                 changed: record.changed_at.clone(),
-                coverArt: record
-                    .has_cover
-                    .then(|| encode(IdKind::Playlist, &record.id)),
+                coverArt: Some(encode(IdKind::Playlist, &record.id)),
                 entry: None,
             }
             .render(),

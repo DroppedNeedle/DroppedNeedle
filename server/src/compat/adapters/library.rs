@@ -133,6 +133,53 @@ pub struct CompatLibrary {
     pub shuffles: Arc<ShuffleSeeds>,
 }
 
+/// Covers in a made playlist picture: a two by two grid.
+const TILE_COUNT: usize = 4;
+/// Side of one tile, pixels.
+const TILE_SIDE: u32 = 250;
+/// The cover size asked of each album, the smallest that fills a tile well.
+const TILE_SOURCE_SIZE: &str = "500";
+/// Entries read from the top of a playlist when looking for albums.
+const TILE_ENTRIES: usize = 100;
+/// Albums asked for a cover before giving up on a full grid.
+const TILE_ALBUMS: usize = 8;
+/// Largest cover decoded for a tile, a decompression-bomb guard.
+const TILE_MAX_PIXELS: u64 = 40_000_000;
+
+/// Four covers as one square JPEG, two by two in order, each cropped to
+/// fill its tile. None when a cover is too large or does not decode.
+fn tile_covers(covers: &[ImageBytes]) -> Option<ImageBytes> {
+    use image::{ImageReader, RgbImage, codecs::jpeg::JpegEncoder, imageops};
+    use std::io::Cursor;
+
+    let mut canvas = RgbImage::new(TILE_SIDE * 2, TILE_SIDE * 2);
+    for (index, (bytes, _)) in (0u32..).zip(covers.iter().take(TILE_COUNT)) {
+        let format = image::guess_format(bytes).ok()?;
+        let (width, height) = ImageReader::with_format(Cursor::new(bytes), format)
+            .into_dimensions()
+            .ok()?;
+        if u64::from(width) * u64::from(height) > TILE_MAX_PIXELS {
+            return None;
+        }
+        let tile = ImageReader::with_format(Cursor::new(bytes), format)
+            .decode()
+            .ok()?
+            .resize_to_fill(TILE_SIDE, TILE_SIDE, imageops::FilterType::Triangle)
+            .to_rgb8();
+        imageops::replace(
+            &mut canvas,
+            &tile,
+            i64::from(index % 2 * TILE_SIDE),
+            i64::from(index / 2 * TILE_SIDE),
+        );
+    }
+    let mut out = Vec::new();
+    canvas
+        .write_with_encoder(JpegEncoder::new_with_quality(&mut out, 85))
+        .ok()?;
+    Some((out, "image/jpeg".to_owned()))
+}
+
 /// Unix seconds as a whole number.
 pub fn whole(seconds: Option<f64>) -> Option<i64> {
     seconds
@@ -531,17 +578,61 @@ impl CompatLibrary {
         Ok(())
     }
 
-    /// Uploaded cover of a readable playlist.
+    /// Cover of a readable playlist: the uploaded one, else a picture made
+    /// from its tracks' albums as the web tile is (four covers tiled when
+    /// four albums have one, else the first cover), or None when no track
+    /// has a cover. Made on each request, never stored.
     pub async fn playlist_cover(
         &self,
         user_id: &str,
         playlist_id: &str,
     ) -> Result<Option<ImageBytes>, CompatError> {
-        match self.service().cover(user_id, playlist_id).await {
-            Ok(cover) => Ok(Some((cover.bytes, cover.content_type))),
-            Err(CollectionsError::NotFound) => Ok(None),
-            Err(other) => Err(other.into()),
+        let Some(visible) = self.playlist(user_id, playlist_id).await? else {
+            return Ok(None);
+        };
+        if visible.row.has_cover {
+            return match self.service().cover(user_id, playlist_id).await {
+                Ok(cover) => Ok(Some((cover.bytes, cover.content_type))),
+                Err(CollectionsError::NotFound) => Ok(None),
+                Err(other) => Err(other.into()),
+            };
         }
+        let file_ids = self
+            .playlist_entries(playlist_id)
+            .await?
+            .into_iter()
+            .filter_map(|(_, file_id)| file_id)
+            .take(TILE_ENTRIES)
+            .collect::<Vec<_>>();
+        let album_of = self
+            .tracks_by_ids(&file_ids)
+            .await?
+            .into_iter()
+            .map(|track| (track.id, track.album_id))
+            .collect::<HashMap<_, _>>();
+        let mut albums: Vec<&String> = Vec::new();
+        for album_id in file_ids.iter().filter_map(|id| album_of.get(id)) {
+            if !albums.contains(&album_id) {
+                albums.push(album_id);
+            }
+        }
+        let mut covers = Vec::new();
+        for album_id in albums.into_iter().take(TILE_ALBUMS) {
+            if let Some(cover) = self.album_cover(album_id, Some(TILE_SOURCE_SIZE)).await? {
+                covers.push(cover);
+                if covers.len() == TILE_COUNT {
+                    break;
+                }
+            }
+        }
+        if covers.len() < TILE_COUNT {
+            return Ok(covers.into_iter().next());
+        }
+        let first = covers.first().cloned();
+        let tiled = tokio::task::spawn_blocking(move || tile_covers(&covers))
+            .await
+            .map_err(|error| CompatError::Internal(format!("playlist cover task: {error}")))?;
+        Ok(tiled.or(first))
     }
 
     /// Art for a local album: its own folder or embedded art, or the

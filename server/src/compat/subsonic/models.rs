@@ -538,7 +538,7 @@ pub struct SPlaylist {
     pub created: Option<String>,
     /// Changed timestamp ISO.
     pub changed: Option<String>,
-    /// Cover art id (set iff the playlist has cover art).
+    /// Cover art id: the playlist's own id, on every playlist.
     pub coverArt: Option<String>,
     /// Entries (detail only).
     pub entry: Option<Vec<SChild>>,
