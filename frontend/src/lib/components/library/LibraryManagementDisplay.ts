@@ -493,7 +493,9 @@ export const MANAGEMENT_REASON_LABELS: Record<string, string> = {
 	EXTERNAL_REFRESH_NOT_CONFIGURED: 'Media-server refresh not configured',
 	EXTERNAL_REFRESH_AUTH_FAILED: 'Media-server refresh sign-in failed',
 	EXTERNAL_REFRESH_FAILED: 'Media-server refresh failed',
-	EXTERNAL_REFRESH_INTERRUPTED: 'Media-server refresh interrupted'
+	EXTERNAL_REFRESH_INTERRUPTED: 'Media-server refresh interrupted',
+	TAKEN_OVER: 'Left unmanaged: files were changed outside DroppedNeedle',
+	FILES_CHANGED_OUTSIDE: 'Nothing written: files were changed outside DroppedNeedle'
 };
 
 export function managementReasonLabel(value: string): string {

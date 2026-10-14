@@ -180,6 +180,17 @@
 				detail: 'The operation finished with skipped files. Inspect their reasons below.'
 			};
 		}
+		if (
+			operation.terminal_code === 'FILES_CHANGED_OUTSIDE' ||
+			operation.terminal_code === 'TAKEN_OVER'
+		) {
+			return {
+				className: 'alert-info',
+				label: managementReasonLabel(operation.terminal_code),
+				detail:
+					'The album is left unmanaged. Choose "Manage it again" on its page to have DroppedNeedle retag and rename it from its edition.'
+			};
+		}
 		if (operation.state === 'succeeded') {
 			return {
 				className: 'alert-success',

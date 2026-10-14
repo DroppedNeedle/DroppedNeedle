@@ -51,14 +51,36 @@ const h = vi.hoisted(() => ({
 		isLoading: false,
 		isError: false
 	},
-	admin: true
+	admin: true,
+	takeovers: {
+		data: undefined as
+			| {
+					total: number;
+					handing_back: number;
+					items: Array<{
+						album_id: string;
+						album_title: string;
+						artist_name: string | null;
+						cause: string;
+						noticed_at: number;
+					}>;
+			  }
+			| undefined,
+		isPending: false,
+		isError: false,
+		error: null,
+		refetch: vi.fn()
+	},
+	handBack: vi.fn(),
+	handBackAll: vi.fn()
 }));
 
 vi.mock('$app/navigation', () => ({ goto: h.goto, replaceState: h.replaceState }));
 vi.mock('$app/state', () => ({ page: h.appPage }));
 vi.mock('$lib/api/client', () => ({
 	api: { global: { get: h.apiGet, post: h.apiPost } },
-	ApiError: class ApiError extends Error {}
+	ApiError: class ApiError extends Error {},
+	TransportError: class TransportError extends Error {}
 }));
 vi.mock('$lib/stores/toast', () => ({ toastStore: { show: h.toast } }));
 vi.mock('$lib/queries/library-management/LibraryManagementInvalidation', () => ({
@@ -156,10 +178,15 @@ vi.mock('$lib/queries/library-management/LibraryManagementQueries.svelte', () =>
 		data: undefined,
 		isLoading: false,
 		isError: false
-	})
+	}),
+	getLibraryManagementTakeoversQuery: () => h.takeovers,
+	TAKEOVERS_POLL_MS: 5_000
 }));
 vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () => ({
 	controlLibraryManagementOperationMutation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	handBackLibraryAlbumMutation: () => ({ mutateAsync: h.handBack, isPending: false }),
+	handBackAllLibraryAlbumsMutation: () => ({ mutateAsync: h.handBackAll, isPending: false }),
+	handBackRefusalMessage: () => null,
 	discardLibraryManagementPreviewMutation: () => ({ mutateAsync: h.discard, isPending: false }),
 	reissueLibraryManagementPreviewMutation: () => ({ mutateAsync: h.reissue, isPending: false }),
 	resolveLibraryManagementImportBundleMutation: () => ({
@@ -359,6 +386,78 @@ beforeEach(() => {
 		isError: false
 	};
 	h.discard.mockResolvedValue({});
+	h.takeovers.data = undefined;
+	h.handBack.mockResolvedValue({ handed_back: true });
+	h.handBackAll.mockResolvedValue({ albums: 2 });
+});
+
+function takenOver(id: string, title: string) {
+	return {
+		album_id: id,
+		album_title: title,
+		artist_name: 'Signal Artist',
+		cause: 'files_changed',
+		noticed_at: Date.UTC(2026, 9, 1, 12)
+	};
+}
+
+describe('albums left unmanaged', () => {
+	const summary = /left unmanaged because/;
+
+	it('says nothing when no album is left unmanaged', async () => {
+		h.takeovers.data = { total: 0, handing_back: 0, items: [] };
+		await render(LibraryManagementControlRoom);
+
+		await expect.element(page.getByText('Ready previews')).toBeVisible();
+		await expect.element(page.getByText(summary)).not.toBeInTheDocument();
+	});
+
+	it('lists the albums with one button each and no bulk button for one', async () => {
+		h.takeovers.data = { total: 1, handing_back: 0, items: [takenOver('album-1', 'Kept Mine')] };
+		await render(LibraryManagementControlRoom);
+
+		await page
+			.getByText('1 album is left unmanaged because its files were changed outside DroppedNeedle')
+			.click();
+		await expect.element(page.getByRole('link', { name: 'Kept Mine' })).toBeVisible();
+		await page.getByRole('button', { name: 'Manage it again' }).click();
+
+		expect(h.handBack).toHaveBeenCalledWith({ albumId: 'album-1' });
+		await expect.element(page.getByRole('button', { name: /Manage all/ })).not.toBeInTheDocument();
+	});
+
+	it('hands every album back with one button, saying what that overwrites', async () => {
+		h.takeovers.data = {
+			total: 2,
+			handing_back: 0,
+			items: [takenOver('album-1', 'Kept Mine'), takenOver('album-2', 'Also Mine')]
+		};
+		await render(LibraryManagementControlRoom);
+
+		await page
+			.getByText(
+				'2 albums are left unmanaged because their files were changed outside DroppedNeedle'
+			)
+			.click();
+		await expect
+			.element(
+				page.getByText(
+					'DroppedNeedle will retag and rename the files of all 2 albums from their editions.'
+				)
+			)
+			.toBeVisible();
+		await page.getByRole('button', { name: 'Manage all 2 again' }).click();
+
+		expect(h.handBackAll).toHaveBeenCalledOnce();
+		expect(h.handBack).not.toHaveBeenCalled();
+	});
+
+	it('says how many albums wait their turn to be handed back', async () => {
+		h.takeovers.data = { total: 0, handing_back: 3, items: [] };
+		await render(LibraryManagementControlRoom);
+
+		await expect.element(page.getByText('3 albums are being handed back.')).toBeVisible();
+	});
 });
 
 describe('LibraryManagementControlRoom', () => {

@@ -32,9 +32,14 @@
 	import {
 		controlLibraryManagementOperationMutation,
 		discardLibraryManagementPreviewMutation,
+		handBackAllLibraryAlbumsMutation,
+		handBackLibraryAlbumMutation,
+		handBackRefusalMessage,
 		reissueLibraryManagementPreviewMutation,
 		resolveLibraryManagementImportBundleMutation
 	} from '$lib/queries/library-management/LibraryManagementMutations.svelte';
+	import AsyncButton from '$lib/ui/AsyncButton.svelte';
+	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import {
 		forgetLibraryManagementPreviewToken,
 		rememberLibraryManagementPreviewToken
@@ -43,7 +48,9 @@
 		getLibraryManagementOperationsQuery,
 		getLibraryManagementAutomaticSkippedQuery,
 		getLibraryManagementRecoveryQuery,
-		getLibraryManagementSettingsQuery
+		getLibraryManagementSettingsQuery,
+		getLibraryManagementTakeoversQuery,
+		TAKEOVERS_POLL_MS
 	} from '$lib/queries/library-management/LibraryManagementQueries.svelte';
 
 	const settingsQuery = getLibraryManagementSettingsQuery(
@@ -119,11 +126,35 @@
 			).length
 	);
 	const recoveryUnavailable = $derived(recoveryQuery.isError);
-	const skippedQuery = getLibraryManagementAutomaticSkippedQuery(
+	const takeoversQuery = getLibraryManagementTakeoversQuery(
 		() => authStore.user?.id,
 		() => authStore.isAdmin
 	);
+	const handingBack = $derived(takeoversQuery.data?.handing_back ?? 0);
+	const skippedQuery = getLibraryManagementAutomaticSkippedQuery(
+		() => authStore.user?.id,
+		() => authStore.isAdmin,
+		() => (handingBack > 0 ? TAKEOVERS_POLL_MS : false)
+	);
 	const skippedAlbums = $derived(skippedQuery.data?.items ?? []);
+	const handBackAlbum = handBackLibraryAlbumMutation();
+	const handBackAll = handBackAllLibraryAlbumsMutation();
+	// Albums whose files could not be read for a hand-back, with the reason.
+	let handBackRefusals = $state<Record<string, string>>({});
+
+	async function handBackOne(albumId: string): Promise<void> {
+		try {
+			await handBackAlbum.mutateAsync({ albumId });
+			delete handBackRefusals[albumId];
+		} catch (error) {
+			const refusal = handBackRefusalMessage(error);
+			if (refusal) handBackRefusals[albumId] = refusal;
+		}
+	}
+
+	function day(millis: number): string {
+		return new Date(millis).toLocaleDateString(undefined, { dateStyle: 'medium' });
+	}
 
 	onMount(() => {
 		const events = createLibraryManagementEvents();
@@ -670,6 +701,78 @@
 							>Showing the first {leftoverFiles.length}.</span
 						>{/if}
 				</div>{/if}
+			{#if authStore.isAdmin}
+				<QueryBoundary
+					query={takeoversQuery}
+					what="albums left unmanaged"
+					isEmpty={(data) => data.total === 0 && data.handing_back === 0}
+				>
+					{#snippet loading()}{/snippet}
+					{#snippet empty()}{/snippet}
+					{#snippet children(takeovers)}
+						<details class="rounded-lg border border-base-content/10 p-3">
+							<summary class="cursor-pointer text-sm font-semibold"
+								>{#if takeovers.total > 0}{takeovers.total}
+									{takeovers.total === 1
+										? 'album is left unmanaged because its files were'
+										: 'albums are left unmanaged because their files were'} changed outside DroppedNeedle{:else}{takeovers.handing_back}
+									{takeovers.handing_back === 1 ? 'album is' : 'albums are'} being handed back.{/if}</summary
+							>
+							{#if takeovers.total > 0 && takeovers.handing_back > 0}
+								<p class="mt-2 text-sm text-base-content/70" role="status">
+									{takeovers.handing_back}
+									{takeovers.handing_back === 1 ? 'album is' : 'albums are'} being handed back.
+								</p>
+							{/if}
+							{#if takeovers.total > 1}
+								<div class="mt-3 flex flex-wrap items-center gap-3">
+									<AsyncButton
+										class="btn btn-outline btn-sm"
+										pending={handBackAll.isPending}
+										onclick={() => handBackAll.mutateAsync().catch(() => undefined)}
+										>Manage all {takeovers.total} again</AsyncButton
+									>
+									<p class="max-w-2xl flex-1 text-sm text-base-content/70">
+										DroppedNeedle will retag and rename the files of all {takeovers.total} albums from
+										their editions. Changes made outside DroppedNeedle are overwritten. Each run can be
+										undone from the operations page.
+									</p>
+								</div>
+							{/if}
+							{#if takeovers.items.length > 0}
+								<ul class="mt-3 flex flex-col gap-2 text-sm">
+									{#each takeovers.items as album (album.album_id)}<li
+											class="flex flex-wrap items-center justify-between gap-2"
+										>
+											<span class="min-w-0"
+												><a
+													class="link font-medium"
+													href={withBasePath(`/album/${encodeURIComponent(album.album_id)}`)}
+													>{album.album_title}</a
+												><span class="text-base-content/60"
+													>{album.artist_name ? ` · ${album.artist_name}` : ''} · {day(
+														album.noticed_at
+													)}</span
+												>{#if handBackRefusals[album.album_id]}<span
+														class="block text-warning"
+														role="status">{handBackRefusals[album.album_id]}</span
+													>{/if}</span
+											><AsyncButton
+												class="btn btn-ghost btn-sm"
+												onclick={() => handBackOne(album.album_id)}>Manage it again</AsyncButton
+											>
+										</li>{/each}
+								</ul>
+								<p class="mt-3 text-sm text-base-content/60">
+									DroppedNeedle will retag and rename an album's files from its edition. Changes
+									made outside DroppedNeedle are overwritten. The run can be undone from the
+									operations page.
+								</p>
+							{/if}
+						</details>
+					{/snippet}
+				</QueryBoundary>
+			{/if}
 			{#if skippedAlbums.length > 0}<details class="rounded-lg border border-base-content/10 p-3">
 					<summary class="cursor-pointer text-sm font-semibold"
 						>Automatic management skipped {skippedAlbums.length}

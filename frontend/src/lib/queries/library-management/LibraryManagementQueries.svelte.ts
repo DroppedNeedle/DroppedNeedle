@@ -262,23 +262,29 @@ export const getLibraryManagementRecoveryQuery = (
 
 export const getLibraryManagementAutomaticSkippedQuery = (
 	getUserId: Getter<string | null | undefined>,
-	enabled: Getter<boolean> = () => true
+	enabled: Getter<boolean> = () => true,
+	refetchInterval: Getter<number | false> = () => false
 ) =>
 	createQuery(() => ({
 		enabled: enabled(),
+		refetchInterval: refetchInterval(),
 		queryKey: LibraryManagementQueryKeyFactory.automaticSkipped(getUserId()),
 		queryFn: ({ signal }) =>
 			api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.automaticSkipped(), { signal })
 	}));
 
+export const TAKEOVERS_POLL_MS = 5_000;
+
 // Albums left unmanaged because their files were changed outside the app,
-// and how many of them wait to be handed back.
+// and how many of them wait to be handed back. Read again while any wait.
 export const getLibraryManagementTakeoversQuery = (
 	getUserId: Getter<string | null | undefined>,
 	enabled: Getter<boolean> = () => true
 ) =>
 	createQuery(() => ({
 		enabled: enabled(),
+		refetchInterval: (query: { state: { data?: { handing_back: number } } }) =>
+			(query.state.data?.handing_back ?? 0) > 0 ? TAKEOVERS_POLL_MS : false,
 		queryKey: LibraryManagementQueryKeyFactory.takeovers(getUserId()),
 		queryFn: ({ signal }) => api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.takeovers(), { signal })
 	}));
