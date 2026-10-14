@@ -2581,6 +2581,16 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         Posture::Curator,
     ),
     (
+        "POST",
+        "/api/v3/library/albums/{album_id}/edition/custom",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/albums/{album_id}/edition/leave-unmanaged",
+        Posture::Admin,
+    ),
+    (
         "GET",
         "/api/v3/library/albums/{album_id}/edition/plan",
         Posture::User,
@@ -3068,6 +3078,21 @@ async fn trusted_tier_pins_admitted_approvals_forbidden() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_eq!(error_code(&body), "NOT_FOUND");
+
+    // A custom edition and "leave unmanaged" are an admin's word.
+    for (path, body) in [
+        (
+            "/api/v3/library/albums/e2e-dummy-id/edition/custom",
+            json!({"release_mbid": "e2e-dummy-id", "expected_identity_revision": 0}),
+        ),
+        (
+            "/api/v3/library/albums/e2e-dummy-id/edition/leave-unmanaged",
+            json!({"expected_identity_revision": 0}),
+        ),
+    ] {
+        let (status, body, _) = call(e2e.router(), "POST", path, &tris_headers, Some(body)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {body}");
+    }
 
     // Admin-only approvals still forbid trusted callers.
     let (status, body, _) = call(

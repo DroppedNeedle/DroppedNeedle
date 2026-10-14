@@ -75,6 +75,12 @@ export const LibraryV3Api = {
 		v3('/api/v3/library/albums/{album_id}/edition/confirm', { path: { album_id: albumId } }),
 	editionUndo: (albumId: string) =>
 		v3('/api/v3/library/albums/{album_id}/edition/undo', { path: { album_id: albumId } }),
+	editionCustom: (albumId: string) =>
+		v3('/api/v3/library/albums/{album_id}/edition/custom', { path: { album_id: albumId } }),
+	editionLeaveUnmanaged: (albumId: string) =>
+		v3('/api/v3/library/albums/{album_id}/edition/leave-unmanaged', {
+			path: { album_id: albumId }
+		}),
 	editionExtrasRemove: (albumId: string) =>
 		v3('/api/v3/library/albums/{album_id}/edition/extras/remove', {
 			path: { album_id: albumId }

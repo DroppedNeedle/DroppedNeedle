@@ -166,6 +166,11 @@ pub const EDITION_CHOICE_STALE: Reason = reason(
     "The album's edition changed after your choice, so undoing it would bring back an outdated match.",
     "Reload the album and pick the edition you want.",
 );
+pub const EDITION_CHANGED: Reason = reason(
+    STALE,
+    "The album's edition or files changed since you opened it.",
+    "Reload the album and try again.",
+);
 pub const NOTHING_TO_CONFIRM: Reason = reason(
     "NOTHING_TO_CONFIRM",
     "This album has no match waiting for confirmation.",

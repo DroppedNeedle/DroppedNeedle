@@ -1,6 +1,7 @@
 //! An administrator's decisions on the catalog: settling a
-//! re-identification (exact release, custom edition, or leave unmanaged)
-//! and undoing an automatic edition. Each runs in the caller's
+//! re-identification (exact release, custom edition, or leave unmanaged),
+//! the same custom edition and "leave unmanaged" made directly on an
+//! album, and undoing an automatic edition. Each runs in the caller's
 //! transaction, checks the revisions the administrator was shown, writes
 //! the identities as curator decisions, records an audit row in
 //! `library_catalog_actions`, and moves the catalog revision.
@@ -14,7 +15,7 @@ use super::models::{
     ReidentificationCandidate, UndoOutcome,
 };
 use super::reasons;
-use super::store::{PROVIDER, Snapshot, job, job_after, matches_snapshot, snapshot};
+use super::store::{PROVIDER, album_revisions, job, job_after, matches_snapshot, snapshot};
 use crate::library::identify::models::{
     AlbumIdentity, EvidenceClass, PriorAlbumIdentity, PriorTrackIdentity,
 };
@@ -80,7 +81,15 @@ pub fn select_candidate(
                     reasons::CUSTOM_EDITION_NEEDS_CONFIRMATION,
                 ));
             }
-            let manifest = seal_custom_edition(tx, &snap, &candidate, before.as_ref(), actor, now)?;
+            let manifest = seal_custom_edition(
+                tx,
+                &album_id,
+                &snap.expected_input_revision,
+                &candidate,
+                before.as_ref(),
+                actor,
+                now,
+            )?;
             evaluation.outcome = "custom_edition".into();
             evaluation.custom_manifest_id = Some(manifest);
             (
@@ -148,6 +157,124 @@ pub fn select_candidate(
     )?;
     bump_catalog(tx)?;
     job_after(tx, job_id)
+}
+
+/// What a person saw of the album before asking for a custom edition: its
+/// identity revision (0 with none), and its row and input revisions read
+/// before MusicBrainz was asked.
+#[derive(Debug, Clone)]
+pub struct SealGuard {
+    pub identity_revision: i64,
+    pub album_revision: i64,
+    pub input_revision: String,
+}
+
+/// A person seals the album's files as they are under the release's group
+/// (a custom edition), directly on the album. Refused as stale, with
+/// nothing changed, when the album moved since `guard` was read. Settles
+/// the album's open reviews as approved, drops a queued placement of its
+/// files, and keeps an edition undo with an audit row `custom_edition`.
+pub fn custom_edition(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    candidate: &ReidentificationCandidate,
+    guard: &SealGuard,
+    actor: &str,
+    now: f64,
+) -> Result<(), OperationError> {
+    let now_revisions =
+        album_revisions(tx, album_id)?.ok_or(OperationError::NotFound(reasons::ALBUM_NOT_FOUND))?;
+    if now_revisions.album_revision != guard.album_revision
+        || now_revisions.input_revision != guard.input_revision
+        || super::choice::identity_revision(tx, album_id)? != guard.identity_revision
+    {
+        return Err(OperationError::Conflict(reasons::EDITION_CHANGED));
+    }
+    let point = super::choice::undo_point(tx, album_id)?;
+    let before = album_identity(tx, album_id)?;
+    seal_custom_edition(
+        tx,
+        album_id,
+        &guard.input_revision,
+        candidate,
+        before.as_ref(),
+        actor,
+        now,
+    )?;
+    settle_waiting(tx, album_id)?;
+    // Automatic management looks at the album again, as after a choice.
+    crate::library::management::automatic::queue(tx, album_id, now)?;
+    settle_reviews(
+        tx,
+        album_id,
+        "approved",
+        Some(&candidate.candidate_key),
+        actor,
+    )?;
+    super::choice::keep_undo_point(
+        tx,
+        album_id,
+        &point,
+        actor,
+        "custom_edition",
+        "CUSTOM_EDITION_SEALED",
+        now,
+    )?;
+    Ok(())
+}
+
+/// A person leaves the album unmanaged, directly on the album: the exact
+/// release goes, the release group stays as their choice, and Library
+/// Management keeps out until "Manage it again". Refused as stale, with
+/// nothing changed, unless the identity revision is still
+/// `expected_identity_revision` (0 for an album with none). Settles the
+/// album's open reviews as rejected, drops a queued placement of its
+/// files, and keeps an edition undo with an audit row `leave_unmanaged`.
+pub fn leave_album_unmanaged(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    expected_identity_revision: i64,
+    actor: &str,
+    now: f64,
+) -> Result<(), OperationError> {
+    if album_revisions(tx, album_id)?.is_none() {
+        return Err(OperationError::NotFound(reasons::ALBUM_NOT_FOUND));
+    }
+    if super::choice::identity_revision(tx, album_id)? != expected_identity_revision {
+        return Err(OperationError::Conflict(reasons::EDITION_CHANGED));
+    }
+    let point = super::choice::undo_point(tx, album_id)?;
+    let before = album_identity(tx, album_id)?;
+    leave_unmanaged(tx, album_id, None, before.as_ref(), actor, now)?;
+    settle_waiting(tx, album_id)?;
+    settle_reviews(tx, album_id, "rejected", None, actor)?;
+    super::choice::keep_undo_point(
+        tx,
+        album_id,
+        &point,
+        actor,
+        "leave_unmanaged",
+        "MANAGEMENT_EXCLUDED",
+        now,
+    )?;
+    Ok(())
+}
+
+/// A person's direct word on the album replaces any placement of its files
+/// still queued, and settles a match waiting for a look, as a choice does.
+/// An album left with no identity keeps its `unmatched` row.
+fn settle_waiting(tx: &Transaction<'_>, album_id: &str) -> rusqlite::Result<()> {
+    tx.execute(
+        "DELETE FROM library_edition_remap_queue WHERE local_album_id = ?1",
+        params![album_id],
+    )?;
+    tx.execute(
+        "DELETE FROM library_album_match_state WHERE local_album_id = ?1 \
+         AND EXISTS (SELECT 1 FROM local_album_external_identities \
+         WHERE local_album_id = ?1 AND provider = ?2)",
+        params![album_id, PROVIDER],
+    )?;
+    Ok(())
 }
 
 pub(super) fn album_identity(
@@ -368,16 +495,19 @@ struct ManifestTrack {
 
 /// Seal the files as they are under the candidate's release group: a
 /// manual release-group identity plus a versioned manifest of every file.
-/// Returns the manifest id.
+/// `input_revision` is the album's input revision the caller checked; the
+/// manifest records it. A person's "leave unmanaged" stays. Returns the
+/// manifest id.
+#[allow(clippy::too_many_arguments)]
 fn seal_custom_edition(
     tx: &Transaction<'_>,
-    snap: &Snapshot,
+    album_id: &str,
+    input_revision: &str,
     candidate: &ReidentificationCandidate,
     before: Option<&AlbumIdentity>,
     actor: &str,
     now: f64,
 ) -> Result<String, OperationError> {
-    let album_id = snap.local_album_id.as_str();
     if !names_hold(candidate) {
         return Err(OperationError::Invalid(
             reasons::CUSTOM_EDITION_NAMES_CONFLICT,
@@ -522,7 +652,7 @@ fn seal_custom_edition(
     hasher.update(
         format!(
             "{album_id}\0{version}\0{}\0{title}\0{album_artist}\0{album_json}\0{}\n",
-            candidate.evidence.release_group_mbid, snap.expected_input_revision
+            candidate.evidence.release_group_mbid, input_revision
         )
         .as_bytes(),
     );
@@ -561,7 +691,7 @@ fn seal_custom_edition(
             album_json,
             album_revision,
             identity_revision,
-            snap.expected_input_revision,
+            input_revision,
             content_hash,
             candidate.candidate_key,
             actor,
@@ -619,10 +749,6 @@ fn seal_custom_edition(
          ON CONFLICT (local_album_id) DO UPDATE SET manifest_id = excluded.manifest_id, \
          activated_at = excluded.activated_at, row_revision = row_revision + 1",
         params![album_id, manifest_id, now],
-    )?;
-    tx.execute(
-        "DELETE FROM library_management_exclusions WHERE local_album_id = ?1",
-        params![album_id],
     )?;
     Ok(manifest_id)
 }

@@ -5,6 +5,10 @@
 //! - `DELETE /library/albums/{id}/edition`: "Let DroppedNeedle choose".
 //! - `POST /library/albums/{id}/edition/confirm`: "Looks right".
 //! - `POST /library/albums/{id}/edition/undo`: take back the last change.
+//! - `POST /library/albums/{id}/edition/custom`: keep the files as they are
+//!   as a custom edition of a release's group (admins).
+//! - `POST /library/albums/{id}/edition/leave-unmanaged`: drop the exact
+//!   edition and keep Library Management away from the album (admins).
 //! - `GET /library/albums/{id}/edition/plan`: what taking an edition would
 //!   do to the files (kept, duplicate, other version, extra) and which
 //!   tracks are missing. Planning another release than the album's own is
@@ -25,7 +29,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
-use super::auth::{Principal, RequireCurator};
+use super::auth::{Principal, RequireAdmin, RequireCurator};
 use super::error::{LibraryError, ValidJson, ValidQuery};
 use super::models::PenaltyView;
 use super::mutations::MutationHttpError;
@@ -60,6 +64,14 @@ pub fn edition_router() -> Router<LibrarySetup> {
         .route(
             "/library/albums/{album_id}/edition/undo",
             post(undo_edition),
+        )
+        .route(
+            "/library/albums/{album_id}/edition/custom",
+            post(seal_custom_edition),
+        )
+        .route(
+            "/library/albums/{album_id}/edition/leave-unmanaged",
+            post(leave_unmanaged),
         )
         .route("/library/albums/{album_id}/edition/plan", get(plan_edition))
         .route(
@@ -576,6 +588,86 @@ pub async fn undo_edition(
     let ops = Operations::new(&state);
     let (album, user) = (album_id.clone(), caller.0.user_id);
     blocking(move || ops.undo_edition_choice(&album, &user)).await?;
+    Ok(Json(status_of(&state, &album_id).await?))
+}
+
+/// Seal a custom edition.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct CustomEditionBody {
+    /// A MusicBrainz release of the group the files are kept under.
+    pub release_mbid: String,
+    /// The `identity_revision` the edition status showed.
+    pub expected_identity_revision: i64,
+}
+
+/// Leave the album unmanaged.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct LeaveUnmanagedBody {
+    /// The `identity_revision` the edition status showed.
+    pub expected_identity_revision: i64,
+}
+
+/// Keep the album's files as they are, as a custom edition of the
+/// release's group: the tags, positions and file list are frozen as they
+/// are now, and the release group becomes the album's chosen match.
+/// Undo with `.../edition/undo`.
+#[utoipa::path(
+    post,
+    path = "/api/v3/library/albums/{album_id}/edition/custom",
+    params(("album_id" = String, Path, description = "Local album id")),
+    request_body = CustomEditionBody,
+    responses(
+        (status = 200, description = "The album's edition", body = EditionStatusView),
+        (status = 400, description = "Not a release id, or the files cannot be sealed under that release group (CUSTOM_EDITION_NOT_SEALABLE)"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required"),
+        (status = 404, description = "Unknown album, or MusicBrainz does not know the release"),
+        (status = 409, description = "The album changed since it was read (STALE_REVISION)"),
+        (status = 503, description = "MusicBrainz is not answering"),
+    )
+)]
+pub async fn seal_custom_edition(
+    State(state): State<LibrarySetup>,
+    caller: RequireAdmin,
+    Path(album_id): Path<String>,
+    ValidJson(body): ValidJson<CustomEditionBody>,
+) -> Result<Json<EditionStatusView>, OperationsHttpError> {
+    Operations::new(&state)
+        .seal_custom_edition(
+            &album_id,
+            &body.release_mbid,
+            body.expected_identity_revision,
+            &caller.0.user_id,
+        )
+        .await?;
+    Ok(Json(status_of(&state, &album_id).await?))
+}
+
+/// Leave the album unmanaged: its exact edition goes (the release group
+/// stays as the person's choice) and Library Management leaves its files
+/// alone until "Manage it again". Undo with `.../edition/undo`.
+#[utoipa::path(
+    post,
+    path = "/api/v3/library/albums/{album_id}/edition/leave-unmanaged",
+    params(("album_id" = String, Path, description = "Local album id")),
+    request_body = LeaveUnmanagedBody,
+    responses(
+        (status = 200, description = "The album's edition", body = EditionStatusView),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required"),
+        (status = 404, description = "Unknown album"),
+        (status = 409, description = "The album's edition changed since it was read (STALE_REVISION)"),
+    )
+)]
+pub async fn leave_unmanaged(
+    State(state): State<LibrarySetup>,
+    caller: RequireAdmin,
+    Path(album_id): Path<String>,
+    ValidJson(body): ValidJson<LeaveUnmanagedBody>,
+) -> Result<Json<EditionStatusView>, OperationsHttpError> {
+    let ops = Operations::new(&state);
+    let (album, user) = (album_id.clone(), caller.0.user_id);
+    blocking(move || ops.leave_unmanaged(&album, body.expected_identity_revision, &user)).await?;
     Ok(Json(status_of(&state, &album_id).await?))
 }
 

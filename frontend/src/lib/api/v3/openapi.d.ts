@@ -3156,6 +3156,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/albums/{album_id}/edition/custom": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Keep the album's files as they are, as a custom edition of the
+         *     release's group: the tags, positions and file list are frozen as they
+         *     are now, and the release group becomes the album's chosen match.
+         *     Undo with `.../edition/undo`.
+         */
+        post: operations["seal_custom_edition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/albums/{album_id}/edition/extras/remove": {
         parameters: {
             query?: never;
@@ -3190,6 +3212,27 @@ export interface paths {
         put?: never;
         /** Put back the files one removal of extras moved to the recycle bin. */
         post: operations["restore_extras"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/edition/leave-unmanaged": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Leave the album unmanaged: its exact edition goes (the release group
+         *     stays as the person's choice) and Library Management leaves its files
+         *     alone until "Manage it again". Undo with `.../edition/undo`.
+         */
+        post: operations["leave_unmanaged"];
         delete?: never;
         options?: never;
         head?: never;
@@ -12292,6 +12335,16 @@ export interface components {
             /** @description Import provenance (`<source>:<id>`), when the playlist was imported. */
             source_ref?: string | null;
         };
+        /** @description Seal a custom edition. */
+        CustomEditionBody: {
+            /**
+             * Format: int64
+             * @description The `identity_revision` the edition status showed.
+             */
+            expected_identity_revision: number;
+            /** @description A MusicBrainz release of the group the files are kept under. */
+            release_mbid: string;
+        };
         /** @description One album below the quality cutoff. */
         CutoffUnmetItem: {
             album_title?: string | null;
@@ -15274,6 +15327,14 @@ export interface components {
             auth_url: string;
             /** @description Single-use token for the session exchange. */
             token: string;
+        };
+        /** @description Leave the album unmanaged. */
+        LeaveUnmanagedBody: {
+            /**
+             * Format: int64
+             * @description The `identity_revision` the edition status showed.
+             */
+            expected_identity_revision: number;
         };
         /** @description The whole feed. */
         LibraryActivity: {
@@ -29637,6 +29698,75 @@ export interface operations {
             };
         };
     };
+    seal_custom_edition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CustomEditionBody"];
+            };
+        };
+        responses: {
+            /** @description The album's edition */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionStatusView"];
+                };
+            };
+            /** @description Not a release id, or the files cannot be sealed under that release group (CUSTOM_EDITION_NOT_SEALABLE) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album, or MusicBrainz does not know the release */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The album changed since it was read (STALE_REVISION) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description MusicBrainz is not answering */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     remove_extras: {
         parameters: {
             query?: never;
@@ -29760,6 +29890,61 @@ export interface operations {
                 content?: never;
             };
             /** @description Another file now sits at an old path; nothing was put back */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    leave_unmanaged: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LeaveUnmanagedBody"];
+            };
+        };
+        responses: {
+            /** @description The album's edition */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionStatusView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The album's edition changed since it was read (STALE_REVISION) */
             409: {
                 headers: {
                     [name: string]: unknown;

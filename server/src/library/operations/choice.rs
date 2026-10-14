@@ -60,11 +60,145 @@ fn to_json<T: Serialize>(value: &T) -> Result<String, OperationError> {
     serde_json::to_string(value).map_err(|error| OperationError::Store(error.to_string()))
 }
 
+/// An album's "leave unmanaged" row, as the undo keeps it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ExclusionRow {
+    reason: String,
+    excluded_by_user_id: String,
+    excluded_at: f64,
+    row_revision: i64,
+}
+
+/// The same row. The time is compared to the microsecond: read back from
+/// the undo's JSON it can differ from the stored value in the last bit.
+impl PartialEq for ExclusionRow {
+    fn eq(&self, other: &Self) -> bool {
+        self.reason == other.reason
+            && self.excluded_by_user_id == other.excluded_by_user_id
+            && self.row_revision == other.row_revision
+            && (self.excluded_at - other.excluded_at).abs() < 1e-6
+    }
+}
+
+/// What holds the album apart beside its edition: a person's "leave
+/// unmanaged" and the active custom edition.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+struct Hold {
+    exclusion: Option<ExclusionRow>,
+    custom_manifest_id: Option<String>,
+}
+
+/// The album's hold before a change and as the change left it.
+#[derive(Debug, Serialize, Deserialize)]
+struct HoldChange {
+    before: Hold,
+    after: Hold,
+}
+
+fn hold(conn: &Connection, album_id: &str) -> rusqlite::Result<Hold> {
+    let exclusion = conn
+        .query_row(
+            "SELECT reason, excluded_by_user_id, excluded_at, row_revision \
+             FROM library_management_exclusions WHERE local_album_id = ?1",
+            params![album_id],
+            |row| {
+                Ok(ExclusionRow {
+                    reason: row.get(0)?,
+                    excluded_by_user_id: row.get(1)?,
+                    excluded_at: row.get(2)?,
+                    row_revision: row.get(3)?,
+                })
+            },
+        )
+        .optional()?;
+    let custom_manifest_id = conn
+        .query_row(
+            "SELECT manifest_id FROM library_custom_edition_active WHERE local_album_id = ?1",
+            params![album_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(Hold {
+        exclusion,
+        custom_manifest_id,
+    })
+}
+
+/// Put back each part of the hold `change` altered, while that part is
+/// still as the change left it.
+fn restore_hold(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    change: &HoldChange,
+    actor: &str,
+    now: f64,
+) -> rusqlite::Result<()> {
+    let current = hold(tx, album_id)?;
+    let (before, after) = (&change.before, &change.after);
+    if before.exclusion != after.exclusion && current.exclusion == after.exclusion {
+        match &before.exclusion {
+            None => {
+                tx.execute(
+                    "DELETE FROM library_management_exclusions WHERE local_album_id = ?1",
+                    params![album_id],
+                )?;
+            }
+            Some(row) => {
+                // The person who left it unmanaged may have been removed
+                // since; the one undoing stands in for them.
+                tx.execute(
+                    "INSERT INTO library_management_exclusions (local_album_id, reason, \
+                     excluded_by_user_id, excluded_at, row_revision) \
+                     SELECT ?1, ?2, chooser, ?4, 1 FROM (SELECT COALESCE( \
+                     (SELECT id FROM auth_users WHERE id = ?3), \
+                     (SELECT id FROM auth_users WHERE id = ?5)) AS chooser) \
+                     WHERE chooser IS NOT NULL \
+                     ON CONFLICT (local_album_id) DO UPDATE SET reason = excluded.reason, \
+                     excluded_by_user_id = excluded.excluded_by_user_id, \
+                     excluded_at = excluded.excluded_at, row_revision = row_revision + 1",
+                    params![
+                        album_id,
+                        row.reason,
+                        row.excluded_by_user_id,
+                        row.excluded_at,
+                        actor
+                    ],
+                )?;
+            }
+        }
+    }
+    if before.custom_manifest_id != after.custom_manifest_id
+        && current.custom_manifest_id == after.custom_manifest_id
+    {
+        match &before.custom_manifest_id {
+            None => {
+                tx.execute(
+                    "DELETE FROM library_custom_edition_active WHERE local_album_id = ?1",
+                    params![album_id],
+                )?;
+            }
+            Some(manifest) => {
+                // A manifest that is gone since is not put back.
+                tx.execute(
+                    "INSERT INTO library_custom_edition_active (local_album_id, manifest_id, \
+                     activated_at, row_revision) SELECT ?1, id, ?3, 1 \
+                     FROM library_custom_edition_manifests WHERE id = ?2 AND local_album_id = ?1 \
+                     ON CONFLICT (local_album_id) DO UPDATE SET manifest_id = excluded.manifest_id, \
+                     activated_at = excluded.activated_at, row_revision = row_revision + 1",
+                    params![album_id, manifest, now],
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// What a change replaced, kept until the next change or an undo.
 struct Snapshot {
     identity: Option<PriorAlbumIdentity>,
     tracks: Vec<PriorTrackIdentity>,
     state: Option<MatchStateRow>,
+    hold: Hold,
 }
 
 fn snapshot(conn: &Connection, album_id: &str) -> rusqlite::Result<Snapshot> {
@@ -72,19 +206,13 @@ fn snapshot(conn: &Connection, album_id: &str) -> rusqlite::Result<Snapshot> {
         identity: album_identity_row(conn, album_id)?,
         tracks: track_identity_rows(conn, album_id)?,
         state: match_state_row(conn, album_id)?,
+        hold: hold(conn, album_id)?,
     })
 }
 
-/// Keep `before` as the album's one undo, keyed to the identity revision
-/// the change left behind.
-fn keep_undo(
-    tx: &Transaction<'_>,
-    album_id: &str,
-    before: &Snapshot,
-    action_id: &str,
-    now: f64,
-) -> Result<(), OperationError> {
-    let revision: i64 = tx
+/// The album identity's row revision, 0 when the album has none.
+pub(super) fn identity_revision(conn: &Connection, album_id: &str) -> rusqlite::Result<i64> {
+    Ok(conn
         .query_row(
             "SELECT row_revision FROM local_album_external_identities \
              WHERE local_album_id = ?1 AND provider = ?2",
@@ -92,19 +220,36 @@ fn keep_undo(
             |row| row.get(0),
         )
         .optional()?
-        .unwrap_or(0);
+        .unwrap_or(0))
+}
+
+/// Keep `before` as the album's one undo, keyed to the identity revision
+/// the change left behind, with the album's hold before and after it.
+fn keep_undo(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    before: &Snapshot,
+    action_id: &str,
+    now: f64,
+) -> Result<(), OperationError> {
+    let revision = identity_revision(tx, album_id)?;
     let identity = before.identity.as_ref().map(to_json).transpose()?;
     let state = before.state.as_ref().map(to_json).transpose()?;
+    let held = to_json(&HoldChange {
+        before: before.hold.clone(),
+        after: hold(tx, album_id)?,
+    })?;
     tx.execute(
         "INSERT INTO library_edition_choice_undo (id, local_album_id, action_id, \
          prior_identity_json, prior_tracks_json, prior_match_state_json, \
-         expected_identity_revision, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+         expected_identity_revision, created_at, prior_hold_json) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
          ON CONFLICT (local_album_id) DO UPDATE SET id = excluded.id, \
          action_id = excluded.action_id, prior_identity_json = excluded.prior_identity_json, \
          prior_tracks_json = excluded.prior_tracks_json, \
          prior_match_state_json = excluded.prior_match_state_json, \
          expected_identity_revision = excluded.expected_identity_revision, \
-         created_at = excluded.created_at",
+         created_at = excluded.created_at, prior_hold_json = excluded.prior_hold_json",
         params![
             uuid::Uuid::new_v4().to_string(),
             album_id,
@@ -114,6 +259,7 @@ fn keep_undo(
             state,
             revision,
             now,
+            held,
         ],
     )?;
     Ok(())
@@ -265,9 +411,10 @@ pub fn apply_choice(
             params![track_id, now, PROVIDER],
         )?;
     }
+    // A person's "leave unmanaged" stays: "Manage it again" is the one way
+    // back to management.
     for table in [
         "library_custom_edition_active",
-        "library_management_exclusions",
         "library_album_match_state",
         "library_edition_remap_queue",
     ] {
@@ -750,9 +897,16 @@ pub(crate) fn restore_match_state(
     Ok(())
 }
 
-/// An undo row: id, prior identity, prior tracks, prior match state, and
-/// the identity revision the change left.
-type UndoRow = (String, Option<String>, String, Option<String>, i64);
+/// An undo row: id, prior identity, prior tracks, prior match state, the
+/// identity revision the change left, and the hold before and after it.
+type UndoRow = (
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    i64,
+    Option<String>,
+);
 
 /// Whether the album has an edition change that can still be undone.
 pub fn undo_available(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
@@ -768,8 +922,11 @@ pub fn undo_available(conn: &Connection, album_id: &str) -> rusqlite::Result<boo
 }
 
 /// Take back the album's last edition change: the identity, track rows and
-/// match state go back to what they were. Refused once anything else has
-/// changed the album's identity since.
+/// match state go back to what they were, and so does each part of the
+/// album's hold ("leave unmanaged", the active custom edition) the change
+/// altered, while that part is still as the change left it. A record kept
+/// before the hold was recorded restores none. Refused once anything else
+/// has changed the album's identity since.
 pub fn undo(
     tx: &Transaction<'_>,
     album_id: &str,
@@ -779,7 +936,7 @@ pub fn undo(
     let undo: Option<UndoRow> = tx
         .query_row(
             "SELECT id, prior_identity_json, prior_tracks_json, prior_match_state_json, \
-             expected_identity_revision FROM library_edition_choice_undo \
+             expected_identity_revision, prior_hold_json FROM library_edition_choice_undo \
              WHERE local_album_id = ?1",
             params![album_id],
             |row| {
@@ -789,11 +946,12 @@ pub fn undo(
                     row.get(2)?,
                     row.get(3)?,
                     row.get(4)?,
+                    row.get(5)?,
                 ))
             },
         )
         .optional()?;
-    let Some((undo_id, identity_json, tracks_json, state_json, expected)) = undo else {
+    let Some((undo_id, identity_json, tracks_json, state_json, expected, hold_json)) = undo else {
         return Err(OperationError::NotFound(reasons::NO_EDITION_CHOICE));
     };
     let current = album_identity_row(tx, album_id)?;
@@ -814,6 +972,11 @@ pub fn undo(
     let prior_tracks: Vec<PriorTrackIdentity> =
         serde_json::from_str(&tracks_json).map_err(unreadable)?;
     let prior_state: Option<MatchStateRow> = state_json
+        .as_deref()
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(unreadable)?;
+    let held: Option<HoldChange> = hold_json
         .as_deref()
         .map(serde_json::from_str)
         .transpose()
@@ -888,6 +1051,9 @@ pub fn undo(
                 state.updated_at,
             ],
         )?;
+    }
+    if let Some(change) = &held {
+        restore_hold(tx, album_id, change, actor, now)?;
     }
     tx.execute(
         "DELETE FROM library_edition_choice_undo WHERE id = ?1",

@@ -403,6 +403,68 @@ impl Operations {
         .map_err(|error| OperationError::Store(error.to_string()))?
     }
 
+    /// Seal the album's files as they are under the release's group: a
+    /// custom edition, made directly on the album. The album's revisions
+    /// are read before MusicBrainz is asked and checked again when the
+    /// edition is written; a stale `expected_identity_revision` is refused
+    /// before MusicBrainz is asked.
+    pub async fn seal_custom_edition(
+        &self,
+        album_id: &str,
+        raw_release: &str,
+        expected_identity_revision: i64,
+        actor: &str,
+    ) -> Result<(), OperationError> {
+        let release = parse_release(raw_release)?;
+        let guard = {
+            let ops = self.clone();
+            let album = album_id.to_owned();
+            tokio::task::spawn_blocking(move || {
+                ops.read(|conn| {
+                    let known = store::album_revisions(conn, &album)?
+                        .ok_or(OperationError::NotFound(reasons::ALBUM_NOT_FOUND))?;
+                    Ok(decisions::SealGuard {
+                        identity_revision: choice::identity_revision(conn, &album)?,
+                        album_revision: known.album_revision,
+                        input_revision: known.input_revision,
+                    })
+                })
+            })
+            .await
+            .map_err(|error| OperationError::Store(error.to_string()))??
+        };
+        if guard.identity_revision != expected_identity_revision {
+            return Err(OperationError::Conflict(reasons::EDITION_CHANGED));
+        }
+        let candidate = self.candidate_for(album_id, &release).await?;
+        let (ops, album, actor) = (self.clone(), album_id.to_owned(), actor.to_owned());
+        tokio::task::spawn_blocking(move || {
+            ops.write(|tx| {
+                decisions::custom_edition(tx, &album, &candidate, &guard, &actor, now_unix())
+            })
+        })
+        .await
+        .map_err(|error| OperationError::Store(error.to_string()))?
+    }
+
+    /// Leave the album unmanaged, directly on the album. Blocking.
+    pub fn leave_unmanaged(
+        &self,
+        album_id: &str,
+        expected_identity_revision: i64,
+        actor: &str,
+    ) -> Result<(), OperationError> {
+        self.write(|tx| {
+            decisions::leave_album_unmanaged(
+                tx,
+                album_id,
+                expected_identity_revision,
+                actor,
+                now_unix(),
+            )
+        })
+    }
+
     /// The release scored against the album's files, as a candidate.
     async fn candidate_for(
         &self,

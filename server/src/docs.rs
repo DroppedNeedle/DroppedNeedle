@@ -639,6 +639,8 @@ use crate::{
         crate::library::http::edition::hand_back_edition,
         crate::library::http::edition::confirm_edition,
         crate::library::http::edition::undo_edition,
+        crate::library::http::edition::seal_custom_edition,
+        crate::library::http::edition::leave_unmanaged,
         crate::library::http::edition::plan_edition,
         crate::library::http::edition::remove_extras,
         crate::library::http::edition::restore_extras,

@@ -6744,6 +6744,66 @@
         }
       }
     },
+    "/api/v3/library/albums/{album_id}/edition/custom": {
+      "post": {
+        "tags": [
+          "crate::library::http::edition"
+        ],
+        "summary": "Keep the album's files as they are, as a custom edition of the\nrelease's group: the tags, positions and file list are frozen as they\nare now, and the release group becomes the album's chosen match.\nUndo with `.../edition/undo`.",
+        "operationId": "seal_custom_edition",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomEditionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The album's edition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionStatusView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a release id, or the files cannot be sealed under that release group (CUSTOM_EDITION_NOT_SEALABLE)"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown album, or MusicBrainz does not know the release"
+          },
+          "409": {
+            "description": "The album changed since it was read (STALE_REVISION)"
+          },
+          "503": {
+            "description": "MusicBrainz is not answering"
+          }
+        }
+      }
+    },
     "/api/v3/library/albums/{album_id}/edition/extras/remove": {
       "post": {
         "tags": [
@@ -6857,6 +6917,60 @@
           },
           "409": {
             "description": "Another file now sits at an old path; nothing was put back"
+          }
+        }
+      }
+    },
+    "/api/v3/library/albums/{album_id}/edition/leave-unmanaged": {
+      "post": {
+        "tags": [
+          "crate::library::http::edition"
+        ],
+        "summary": "Leave the album unmanaged: its exact edition goes (the release group\nstays as the person's choice) and Library Management leaves its files\nalone until \"Manage it again\". Undo with `.../edition/undo`.",
+        "operationId": "leave_unmanaged",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeaveUnmanagedBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The album's edition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionStatusView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown album"
+          },
+          "409": {
+            "description": "The album's edition changed since it was read (STALE_REVISION)"
           }
         }
       }
@@ -29043,6 +29157,25 @@
           }
         }
       },
+      "CustomEditionBody": {
+        "type": "object",
+        "description": "Seal a custom edition.",
+        "required": [
+          "release_mbid",
+          "expected_identity_revision"
+        ],
+        "properties": {
+          "expected_identity_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The `identity_revision` the edition status showed."
+          },
+          "release_mbid": {
+            "type": "string",
+            "description": "A MusicBrainz release of the group the files are kept under."
+          }
+        }
+      },
       "CutoffUnmetItem": {
         "type": "object",
         "description": "One album below the quality cutoff.",
@@ -35799,6 +35932,20 @@
           "token": {
             "type": "string",
             "description": "Single-use token for the session exchange."
+          }
+        }
+      },
+      "LeaveUnmanagedBody": {
+        "type": "object",
+        "description": "Leave the album unmanaged.",
+        "required": [
+          "expected_identity_revision"
+        ],
+        "properties": {
+          "expected_identity_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The `identity_revision` the edition status showed."
           }
         }
       },

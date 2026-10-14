@@ -2919,6 +2919,340 @@ async fn library_journey_choose_edition() {
     rig.stop().await;
 }
 
+/// The album's "leave unmanaged" as the album page reads it.
+async fn management_hold(app: &TestApp, headers: &[(&str, &str)], album: &str) -> Value {
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/albums/{album}"),
+            headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["management_hold"].clone()
+}
+
+/// Leave the album unmanaged by a person's own hand, as the album page
+/// would have it.
+fn exclude_by_hand(db: &rusqlite::Connection, album: &str) {
+    db.execute(
+        "INSERT INTO library_management_exclusions (local_album_id, reason, \
+         excluded_by_user_id, excluded_at) \
+         SELECT ?1, 'manual', id, 5 FROM auth_users WHERE role = 'admin' LIMIT 1",
+        [album],
+    )
+    .expect("album left unmanaged");
+}
+
+fn catalog_actions(db: &rusqlite::Connection, album: &str, kind: &str) -> i64 {
+    db.query_row(
+        "SELECT COUNT(*) FROM library_catalog_actions \
+         WHERE local_album_id = ?1 AND action_kind = ?2",
+        [album, kind],
+        |row| row.get(0),
+    )
+    .expect("actions read")
+}
+
+fn active_manifest(db: &rusqlite::Connection, album: &str) -> Option<String> {
+    use rusqlite::OptionalExtension as _;
+    db.query_row(
+        "SELECT manifest_id FROM library_custom_edition_active WHERE local_album_id = ?1",
+        [album],
+        |row| row.get(0),
+    )
+    .optional()
+    .expect("active manifest reads")
+}
+
+/// A custom edition sealed directly on the album: refused when the
+/// release's title contradicts the files or the album moved since it was
+/// read; sealed with one audit row; undone back to the release, the
+/// manifest kept. A person's "leave unmanaged" survives both the seal and
+/// a later "Use this edition", and undoing that choice brings the custom
+/// edition back on its own manifest.
+#[tokio::test]
+async fn custom_edition_is_sealed_on_the_album_and_undone() {
+    const OTHER: &str = "0f6e7a1c-2b3d-4e5f-8a9b-1c2d3e4f5a6b";
+    let rig = Rig::start("lib-custom-direct").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    let (album, fit, _) = identified_album(&rig, &music, "album-c").await;
+    let edition = format!("/api/v3/library/albums/{album}/edition");
+    let custom = format!("{edition}/custom");
+    let db = app.db();
+    let revision = edition_status(app, &headers, &edition).await["identity_revision"].clone();
+
+    // A release whose title contradicts the files is refused.
+    let mut renamed = fit.clone();
+    renamed.id = OTHER.to_owned();
+    renamed.title = "Nothing Like These Files".to_owned();
+    rig.identify.set_recall(RecallResult {
+        releases: vec![renamed],
+        ..RecallResult::default()
+    });
+    let (status, body) = app
+        .call(
+            "POST",
+            &custom,
+            &headers,
+            Some(json!({"release_mbid": OTHER, "expected_identity_revision": revision})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], json!("CUSTOM_EDITION_NOT_SEALABLE"));
+    rig.identify.set_recall(RecallResult {
+        releases: vec![fit.clone()],
+        ..RecallResult::default()
+    });
+    // So is an identity revision the album has moved past.
+    let (status, body) = app
+        .call(
+            "POST",
+            &custom,
+            &headers,
+            Some(json!({"release_mbid": fit.id, "expected_identity_revision": 999})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], json!("STALE_REVISION"));
+    let body = edition_status(app, &headers, &edition).await;
+    assert_eq!(body["identity_revision"], revision);
+    assert_eq!(body["edition_kind"], json!("release"));
+    assert_eq!(catalog_actions(&db, &album, "custom_edition"), 0);
+
+    let (status, body) = app
+        .call(
+            "POST",
+            &custom,
+            &headers,
+            Some(json!({"release_mbid": fit.id, "expected_identity_revision": revision})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["edition_kind"], json!("custom"), "{body}");
+    assert_eq!(body["state"], json!("chosen"));
+    assert_eq!(body["release_mbid"], Value::Null);
+    assert_eq!(body["undo_available"], json!(true));
+    assert_eq!(catalog_actions(&db, &album, "custom_edition"), 1);
+    assert!(active_manifest(&db, &album).is_some());
+
+    // Undo: the release is back, the custom edition no longer active, its
+    // manifest kept.
+    let (status, body) = app
+        .call("POST", &format!("{edition}/undo"), &headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["release_mbid"], json!(fit.id), "{body}");
+    assert_eq!(body["edition_kind"], json!("release"));
+    assert_eq!(active_manifest(&db, &album), None);
+    let manifests: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM library_custom_edition_manifests WHERE local_album_id = ?1",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("manifests read");
+    assert_eq!(manifests, 1);
+
+    // With a person's "leave unmanaged": sealing and then choosing a
+    // release both keep it.
+    exclude_by_hand(&db, &album);
+    let revision = edition_status(app, &headers, &edition).await["identity_revision"].clone();
+    let (status, body) = app
+        .call(
+            "POST",
+            &custom,
+            &headers,
+            Some(json!({"release_mbid": fit.id, "expected_identity_revision": revision})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let sealed = active_manifest(&db, &album).expect("custom edition active");
+    assert_eq!(
+        management_hold(app, &headers, &album).await["kind"],
+        json!("your_choice")
+    );
+    let (status, body) = app
+        .call(
+            "PUT",
+            &edition,
+            &headers,
+            Some(json!({"release_mbid": fit.id})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(active_manifest(&db, &album), None);
+    assert_eq!(
+        management_hold(app, &headers, &album).await["kind"],
+        json!("your_choice")
+    );
+
+    // Undoing that choice brings the custom edition back as it was.
+    let (status, body) = app
+        .call("POST", &format!("{edition}/undo"), &headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["edition_kind"], json!("custom"), "{body}");
+    assert_eq!(active_manifest(&db, &album), Some(sealed));
+    assert_eq!(
+        management_hold(app, &headers, &album).await["kind"],
+        json!("your_choice")
+    );
+    rig.stop().await;
+}
+
+/// "Leave unmanaged" made directly on an automatically matched album: a
+/// stale revision changes nothing; otherwise the release goes, the group
+/// stays as the person's choice, the album is held as their choice and a
+/// queued placement is dropped. Undo brings the release and placements
+/// back and lifts the hold, or keeps a hold the person had set before.
+/// "Manage it again" lifts it too.
+#[tokio::test]
+async fn leave_unmanaged_on_the_album_and_undo() {
+    let rig = Rig::start("lib-leave-direct").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    let (album, fit, _) = identified_album(&rig, &music, "album-l").await;
+    let track = rig
+        .scan_store
+        .track_at("music", "album-l/01.flac")
+        .expect("track indexed");
+    let edition = format!("/api/v3/library/albums/{album}/edition");
+    let leave = format!("{edition}/leave-unmanaged");
+    let db = app.db();
+    let identity = || {
+        db.query_row(
+            "SELECT decision_source, release_group_mbid, release_mbid, row_revision \
+             FROM local_album_external_identities WHERE local_album_id = ?1",
+            [&album],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )
+        .expect("identity reads")
+    };
+    let matched = identity();
+    assert_eq!(matched.0, "automatic");
+    let revision = matched.3;
+
+    let (status, body) = app
+        .call(
+            "POST",
+            &leave,
+            &headers,
+            Some(json!({"expected_identity_revision": revision + 1})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], json!("STALE_REVISION"));
+    assert_eq!(identity(), matched);
+    assert_eq!(management_hold(app, &headers, &album).await, Value::Null);
+    assert_eq!(catalog_actions(&db, &album, "leave_unmanaged"), 0);
+
+    db.execute(
+        "INSERT INTO library_edition_remap_queue \
+         (local_album_id, release_mbid, queued_at, attempts, not_before, origin) \
+         VALUES (?1, ?2, 0, 0, 1e12, 'album_pin')",
+        rusqlite::params![album, fit.id],
+    )
+    .expect("remap row queued");
+    // The match waits in Unconfirmed matches; the person's word settles it.
+    let match_state = || {
+        use rusqlite::OptionalExtension as _;
+        db.query_row(
+            "SELECT state FROM library_album_match_state WHERE local_album_id = ?1",
+            [&album],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .expect("match state reads")
+    };
+    db.execute(
+        "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+         release_mbid, candidates_json, updated_at) \
+         VALUES (?1, 'unconfirmed', 'CLOSE_CALL', ?2, '[]', 1)",
+        rusqlite::params![album, fit.id],
+    )
+    .expect("match left unconfirmed");
+    let (status, body) = app
+        .call(
+            "POST",
+            &leave,
+            &headers,
+            Some(json!({"expected_identity_revision": revision})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["release_mbid"], Value::Null, "{body}");
+    assert_eq!(body["edition_kind"], json!("group_only"));
+    assert_eq!(body["state"], json!("chosen"));
+    assert_eq!(body["placing"], Value::Null);
+    let left = identity();
+    assert_eq!(
+        (left.0.as_str(), left.1.as_str(), left.2.as_deref()),
+        ("manual", matched.1.as_str(), None)
+    );
+    assert_eq!(placement(&db, &track).0, None);
+    assert_eq!(match_state(), None);
+    assert_eq!(
+        management_hold(app, &headers, &album).await["kind"],
+        json!("your_choice")
+    );
+    assert_eq!(catalog_actions(&db, &album, "leave_unmanaged"), 1);
+
+    // Undo: the release and its placements are back, the hold is lifted.
+    let (status, body) = app
+        .call("POST", &format!("{edition}/undo"), &headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["release_mbid"], json!(fit.id), "{body}");
+    assert_eq!(placement(&db, &track).0.as_deref(), Some(fit.id.as_str()));
+    assert_eq!(match_state().as_deref(), Some("unconfirmed"));
+    assert_eq!(management_hold(app, &headers, &album).await, Value::Null);
+
+    // A hold the person set before stays through the undo, and "Manage it
+    // again" lifts it.
+    exclude_by_hand(&db, &album);
+    let (status, body) = app
+        .call(
+            "POST",
+            &leave,
+            &headers,
+            Some(json!({"expected_identity_revision": identity().3})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = app
+        .call("POST", &format!("{edition}/undo"), &headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let hold = management_hold(app, &headers, &album).await;
+    assert_eq!(hold["kind"], json!("your_choice"), "{hold}");
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/albums/{album}/management/re-enable"),
+            &headers,
+            Some(json!({"expected_exclusion_revision": hold["exclusion_revision"]})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["reenabled"], json!(true));
+    assert_eq!(management_hold(app, &headers, &album).await, Value::Null);
+    rig.stop().await;
+}
+
 /// A two-file album in `music`, identified as the release its tags name.
 /// Returns the album, that release and the identification switch's
 /// revision.
@@ -9553,6 +9887,39 @@ async fn leave_unmanaged_since_drops_a_queued_choice() {
         1
     );
     assert!(tracks.iter().all(|track| placement(&db, track).0.is_none()));
+}
+
+/// A person's queued choice that runs after the album gained a "leave
+/// unmanaged" (carried by a merge while MusicBrainz was away) places the
+/// files and keeps the album unmanaged.
+#[tokio::test]
+async fn a_queued_choice_keeps_a_carried_leave_unmanaged() {
+    let (scratch, library, album, tracks) = chosen_album_at_rest("lib-place-keeps-hold").await;
+    let db = scratch_db(&scratch);
+    queue_remap_row(&library, &album, "album_pin");
+    db.execute(
+        "INSERT INTO library_management_exclusions (local_album_id, reason, \
+         excluded_by_user_id, excluded_at) VALUES (?1, 'leave_unmanaged', 'curator', 1)",
+        [&album],
+    )
+    .expect("left unmanaged");
+    let recall = fitting_release(&library, &album);
+    remap_once(&library, recall).await;
+    assert_eq!(remap_row(&db, &album), None);
+    assert!(
+        tracks
+            .iter()
+            .all(|track| placement(&db, track).0.as_deref() == Some(REL_1))
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT COUNT(*) FROM library_management_exclusions WHERE local_album_id = ?1",
+            [&album],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("exclusion reads"),
+        1
+    );
 }
 
 /// A person approving a release for an album whose remap came from a

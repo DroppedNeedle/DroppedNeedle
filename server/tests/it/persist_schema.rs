@@ -1159,6 +1159,80 @@ async fn track_aliases_arrive_empty_and_strict() {
     assert_eq!(indexed, vec!["idx_local_track_aliases_track".to_owned()]);
 }
 
+/// Migration 0048 gives the edition undo a place for the album's hold. An
+/// undo kept before it keeps every column and has no hold, so undoing it
+/// restores none.
+#[tokio::test]
+async fn edition_undo_keeps_its_rows_and_gains_the_hold() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 48)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    assert!(
+        !column_names(&pool, "library_edition_choice_undo")
+            .await
+            .contains(&"prior_hold_json".to_owned())
+    );
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+         ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO library_edition_choice_undo (id, local_album_id, action_id, \
+         prior_identity_json, prior_tracks_json, prior_match_state_json, \
+         expected_identity_revision, created_at) \
+         VALUES ('u1', 'al1', 'act-1', '{\"release_group_mbid\":\"rg\"}', '[]', NULL, 3, 4.5);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    type UndoRow = (
+        String,
+        String,
+        Option<String>,
+        String,
+        i64,
+        f64,
+        Option<String>,
+    );
+    let rows: Vec<UndoRow> = sqlx::query_as(
+        "SELECT id, action_id, prior_identity_json, prior_tracks_json, \
+         expected_identity_revision, created_at, prior_hold_json \
+         FROM library_edition_choice_undo",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![(
+            "u1".to_owned(),
+            "act-1".to_owned(),
+            Some("{\"release_group_mbid\":\"rg\"}".to_owned()),
+            "[]".to_owned(),
+            3,
+            4.5,
+            None
+        )]
+    );
+}
+
 /// The causes a takeover may carry in the database are exactly the ones
 /// the code names, in both directions.
 #[tokio::test]

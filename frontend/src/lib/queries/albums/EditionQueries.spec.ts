@@ -29,6 +29,10 @@ vi.mock('$lib/queries/QueryClient', () => ({
 	invalidateQueriesWithPersister: h.invalidate
 }));
 
+vi.mock('$lib/queries/library-management/LibraryManagementInvalidation', () => ({
+	invalidateLibraryManagementSurfaces: h.invalidate
+}));
+
 vi.mock('$lib/utils/albumDetailCache', () => ({
 	albumBasicCache: { remove: h.removeBasic },
 	albumTracksCache: { remove: h.removeTracks }

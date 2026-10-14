@@ -8,6 +8,7 @@ import { purchaseOptionsKey } from '$lib/queries/albums/GetItQueries.svelte';
 import { CATALOG_ENDPOINTS } from '$lib/queries/catalog/endpoints';
 import { DownloadQueryKeyFactory } from '$lib/queries/downloads/DownloadQueryKeyFactory';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
+import { invalidateLibraryManagementSurfaces } from '$lib/queries/library-management/LibraryManagementInvalidation';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { musicBrainzSourceKey } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
@@ -252,6 +253,51 @@ export function confirmAlbumEdition() {
 	}));
 }
 
+// An edition change that may set or lift "leave unmanaged" also changes
+// what Library Management lists and holds.
+function invalidateHeldEditionScope(target: EditionTarget): void {
+	invalidateEditionScope(target);
+	void invalidateLibraryManagementSurfaces();
+}
+
+// Keep the files as they are, as a custom edition of the release's group
+// (admins). The revision is the edition status's `identity_revision`.
+export function sealCustomEdition() {
+	return createMutation(() => ({
+		mutationFn: ({
+			localId,
+			rgMbid,
+			releaseMbid,
+			identityRevision
+		}: EditionTarget & { releaseMbid: string; identityRevision: number }) => {
+			assertLocalAlbumId(localId, rgMbid);
+			return api.global.v3.POST(LibraryV3Api.editionCustom(localId), {
+				release_mbid: releaseMbid,
+				expected_identity_revision: identityRevision
+			});
+		},
+		onSuccess: (_d, variables) => invalidateHeldEditionScope(variables)
+	}));
+}
+
+// Drop the exact edition and keep Library Management away from the album
+// (admins); "Manage it again" lifts it.
+export function leaveAlbumUnmanaged() {
+	return createMutation(() => ({
+		mutationFn: ({
+			localId,
+			rgMbid,
+			identityRevision
+		}: EditionTarget & { identityRevision: number }) => {
+			assertLocalAlbumId(localId, rgMbid);
+			return api.global.v3.POST(LibraryV3Api.editionLeaveUnmanaged(localId), {
+				expected_identity_revision: identityRevision
+			});
+		},
+		onSuccess: (_d, variables) => invalidateHeldEditionScope(variables)
+	}));
+}
+
 /**
  * Refresh every screen that shows the album's edition after a change made
  * elsewhere (an identity report's undo): the album page, its edition
@@ -266,7 +312,7 @@ export function undoAlbumEdition() {
 		mutationFn: ({ localId }: EditionTarget) =>
 			api.global.v3.POST(LibraryV3Api.editionUndo(localId)),
 		onSuccess: (_d, variables) => {
-			invalidateEditionScope(variables);
+			invalidateHeldEditionScope(variables);
 			// Identity reports list this album's change too.
 			void invalidateQueriesWithPersister({
 				queryKey: LibraryQueryKeyFactory.identityPreparationsPrefix(variables.userId ?? undefined)
