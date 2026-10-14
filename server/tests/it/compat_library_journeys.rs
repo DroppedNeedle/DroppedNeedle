@@ -1307,6 +1307,287 @@ async fn jellyfin_addresses_carry_the_base_path() {
     rig.stop().await;
 }
 
+/// `sha256("kind:internal")[:32]`: every Jellyfin id before album and
+/// artist ids were keyed, and still the id of a track.
+fn unkeyed_id(kind: &str, internal: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!(
+        "{:x}",
+        Sha256::digest(format!("{kind}:{internal}").as_bytes())
+    )[..32]
+        .to_owned()
+}
+
+/// Jellyfin ids of the covered album: what a signed-in app is handed for
+/// the album, its artist and its song, and the album's and artist's old
+/// unkeyed ids.
+struct CoveredIds {
+    album: String,
+    artist: String,
+    track: String,
+    old_album: String,
+    old_artist: String,
+}
+
+/// The covered album's ids, read as a signed-in Jellyfin app reads them.
+/// Its artist is given a MusicBrainz id and a cached picture so the
+/// artist's picture has something to serve.
+async fn covered_jellyfin(tag: &str) -> (CompatApp, CoveredIds) {
+    let (rig, _) = covered_album(tag).await;
+    let (track, album, artist): (String, String, String) = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT t.id, t.local_album_id, a.album_artist_id FROM local_tracks t \
+             JOIN local_albums a ON a.id = t.local_album_id \
+             WHERE t.relative_path = 'Covered/Sleeve/01 Sleeve.flac'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("the covered song's catalog ids");
+    let mbid = "5b11f4ce-a62d-471e-81fc-a69a8278c7da";
+    rig.app
+        .db()
+        .execute(
+            "INSERT OR REPLACE INTO local_artist_external_identities \
+             (local_artist_id, provider, provider_artist_id, decision_source, selected_at) \
+             VALUES (?1, 'musicbrainz', ?2, 'manual', 1000)",
+            [artist.as_str(), mbid],
+        )
+        .expect("artist identity seeds");
+    plant_artist_picture(&rig, mbid).await;
+
+    let token = rig.jellyfin_auth();
+    let auth = [("X-Emby-Authorization", token.as_str())];
+    let track_id = unkeyed_id("track", &track);
+    let (status, item) = rig
+        .app
+        .call("GET", &format!("/jellyfin/Items/{track_id}"), &auth, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{item}");
+    assert_eq!(item["Id"], json!(track_id), "a track keeps its unkeyed id");
+    let album_id = item["AlbumId"].as_str().expect("AlbumId").to_owned();
+    let artist_id = item["AlbumArtists"][0]["Id"]
+        .as_str()
+        .expect("album artist id")
+        .to_owned();
+    let (_, albums) = rig
+        .app
+        .call(
+            "GET",
+            "/jellyfin/Items?IncludeItemTypes=MusicAlbum&Recursive=true",
+            &auth,
+            None,
+        )
+        .await;
+    assert!(
+        albums["Items"]
+            .as_array()
+            .expect("albums")
+            .iter()
+            .any(|listed| listed["Id"] == json!(album_id)),
+        "{albums}"
+    );
+    let ids = CoveredIds {
+        album: album_id,
+        artist: artist_id,
+        track: track_id,
+        old_album: unkeyed_id("album", &album),
+        old_artist: unkeyed_id("artist", &artist),
+    };
+    (rig, ids)
+}
+
+/// Put a picture for the artist `mbid` in the cover cache, as a fetch from
+/// a provider stores one.
+async fn plant_artist_picture(rig: &CompatApp, mbid: &str) {
+    let mut png = Vec::new();
+    image::RgbImage::from_pixel(4, 4, image::Rgb([10, 200, 10]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .expect("picture encodes");
+    droppedneedle::reads::platform::artwork::cache::ArtworkCache::new(
+        rig.app.config.cache_dir.join("covers"),
+        64 * 1024 * 1024,
+    )
+    .put(Some(&format!("artist:{mbid}")), png, "image/png")
+    .await;
+}
+
+/// One picture request with no credentials, or with `api_key` when given.
+async fn picture(
+    rig: &CompatApp,
+    id: &str,
+    api_key: Option<&str>,
+) -> (StatusCode, HeaderMap, Vec<u8>) {
+    let query = api_key.map_or(String::new(), |key| format!("?api_key={key}"));
+    rig.app
+        .raw(
+            "GET",
+            &format!("/jellyfin/Items/{id}/Images/Primary{query}"),
+            &[],
+            None,
+        )
+        .await
+}
+
+/// The Jellyfin picture address opens only for ids the server handed out.
+/// The album's and the artist's ids from a signed-in answer open with no
+/// credentials, as an image with `nosniff` and a sandbox policy. Their old
+/// unkeyed ids, which anyone can work out from public data, are an empty
+/// 404 with or without a valid token, and so is a track's id; the track
+/// points at its album's picture instead. None of these refusals counts
+/// as a failed sign-in.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn jellyfin_pictures_open_only_for_ids_the_server_handed_out() {
+    let (rig, ids) = covered_jellyfin("compat-jellyfin-pictures").await;
+    for id in [&ids.album, &ids.artist] {
+        let (status, headers, body) = picture(&rig, id, None).await;
+        assert_eq!(status, StatusCode::OK, "{id}");
+        assert!(
+            header_str(&headers, "content-type").starts_with("image/"),
+            "{id}"
+        );
+        assert_eq!(header_str(&headers, "x-content-type-options"), "nosniff");
+        assert_eq!(
+            header_str(&headers, "content-security-policy"),
+            "sandbox; default-src 'none'"
+        );
+        assert_eq!(
+            header_str(&headers, "cache-control"),
+            "public, max-age=31536000, immutable"
+        );
+        assert!(!body.is_empty(), "{id}");
+    }
+
+    let token = rig.jellyfin_auth();
+    let auth = [("X-Emby-Authorization", token.as_str())];
+    let (_, track) = rig
+        .app
+        .call(
+            "GET",
+            &format!("/jellyfin/Items/{}", ids.track),
+            &auth,
+            None,
+        )
+        .await;
+    assert_eq!(track["AlbumId"], json!(ids.album));
+    assert!(track["AlbumPrimaryImageTag"].is_string(), "{track}");
+    assert_eq!(track["ImageTags"], json!({}), "{track}");
+
+    let unknown = "0123456789abcdef0123456789abcdef".to_owned();
+    let refused = [
+        (&ids.old_album, None),
+        (&ids.old_album, Some(rig.secret.as_str())),
+        (&ids.old_artist, None),
+        (&ids.old_artist, Some(rig.secret.as_str())),
+        (&ids.track, None),
+        (&unknown, None),
+    ];
+    for (id, api_key) in refused {
+        let (status, _, body) = picture(&rig, id, api_key).await;
+        assert_eq!(
+            (status, body.len()),
+            (StatusCode::NOT_FOUND, 0),
+            "{id} with {api_key:?}"
+        );
+    }
+    let (status, me) = rig.app.call("GET", "/jellyfin/Users/Me", &auth, None).await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+    rig.stop().await;
+}
+
+/// A signed-in app that stored an album's old unkeyed id still reaches the
+/// album through it: the item answers with its current id, browsing it
+/// lists its tracks and favouriting it sticks. With no token the same
+/// address is a 401.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn jellyfin_old_album_ids_still_work_signed_in() {
+    let (rig, ids) = covered_jellyfin("compat-jellyfin-old-ids").await;
+    let token = rig.jellyfin_auth();
+    let auth = [("X-Emby-Authorization", token.as_str())];
+    let old = &ids.old_album;
+
+    let (status, item) = rig
+        .app
+        .call("GET", &format!("/jellyfin/Items/{old}"), &auth, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{item}");
+    assert_eq!(item["Id"], json!(ids.album));
+    let (_, children) = rig
+        .app
+        .call(
+            "GET",
+            &format!("/jellyfin/Items?ParentId={old}"),
+            &auth,
+            None,
+        )
+        .await;
+    let listed: Vec<&Value> = children["Items"]
+        .as_array()
+        .expect("children")
+        .iter()
+        .map(|child| &child["Id"])
+        .collect();
+    assert_eq!(listed, [&json!(ids.track)], "{children}");
+    let (status, marked) = rig
+        .app
+        .call(
+            "POST",
+            &format!("/jellyfin/UserFavoriteItems/{old}"),
+            &auth,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{marked}");
+    assert_eq!(marked["ItemId"], json!(ids.album), "{marked}");
+    let (_, favourites) = rig
+        .app
+        .call(
+            "GET",
+            "/jellyfin/Items?IncludeItemTypes=MusicAlbum&Recursive=true&IsFavorite=true",
+            &auth,
+            None,
+        )
+        .await;
+    assert_eq!(
+        favourites["Items"][0]["Id"],
+        json!(ids.album),
+        "{favourites}"
+    );
+
+    let (status, _) = rig
+        .app
+        .call("GET", &format!("/jellyfin/Items/{old}"), &[], None)
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    rig.stop().await;
+}
+
+/// An album keeps its id across a restart, and its picture opens when that
+/// is the first request the new process gets.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn jellyfin_album_ids_survive_a_restart() {
+    let (mut rig, ids) = covered_jellyfin("compat-jellyfin-restart").await;
+    rig.app = rig.app.restart().await;
+    let (status, _, body) = picture(&rig, &ids.album, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!body.is_empty());
+
+    let token = rig.jellyfin_auth();
+    let auth = [("X-Emby-Authorization", token.as_str())];
+    let (_, track) = rig
+        .app
+        .call(
+            "GET",
+            &format!("/jellyfin/Items/{}", ids.track),
+            &auth,
+            None,
+        )
+        .await;
+    assert_eq!(track["AlbumId"], json!(ids.album));
+    rig.stop().await;
+}
+
 /// Tripwire: no golden recorded from the library carries a credential.
 #[test]
 fn library_goldens_carry_no_credentials() {

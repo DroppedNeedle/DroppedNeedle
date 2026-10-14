@@ -110,9 +110,7 @@
             "HasLyrics": false,
             "Id": "2dcdb5c8d11e199ad036df869476ad2e",
             "ImageBlurHashes": {},
-            "ImageTags": {
-              "Primary": "tag-rg-1"
-            },
+            "ImageTags": {},
             "IndexNumber": 1,
             "IsFolder": false,
             "LocationType": "FileSystem",
@@ -168,9 +166,7 @@
             "HasLyrics": false,
             "Id": "7213d9081fe751fcb09ee6183372b4dc",
             "ImageBlurHashes": {},
-            "ImageTags": {
-              "Primary": "tag-rg-1"
-            },
+            "ImageTags": {},
             "IndexNumber": 2,
             "IsFolder": false,
             "LocationType": "FileSystem",
@@ -249,7 +245,7 @@
         "TotalRecordCount": 3
       },
       "headers": {
-        "content-length": "3226",
+        "content-length": "3186",
         "content-type": "application/json"
       },
       "request": "GET /jellyfin/Users/user-alice/Items?includeItemTypes=Audio",
@@ -402,9 +398,7 @@
             "HasLyrics": false,
             "Id": "2dcdb5c8d11e199ad036df869476ad2e",
             "ImageBlurHashes": {},
-            "ImageTags": {
-              "Primary": "tag-rg-1"
-            },
+            "ImageTags": {},
             "IndexNumber": 1,
             "IsFolder": false,
             "LocationType": "FileSystem",
@@ -436,7 +430,7 @@
         "TotalRecordCount": 1
       },
       "headers": {
-        "content-length": "1178",
+        "content-length": "1158",
         "content-type": "application/json"
       },
       "request": "GET /jellyfin/Users/user-alice/Items?includeItemTypes=Audio&IsFavorite=true",
@@ -485,9 +479,7 @@
             "HasLyrics": false,
             "Id": "2dcdb5c8d11e199ad036df869476ad2e",
             "ImageBlurHashes": {},
-            "ImageTags": {
-              "Primary": "tag-rg-1"
-            },
+            "ImageTags": {},
             "IndexNumber": 1,
             "IsFolder": false,
             "LocationType": "FileSystem",
@@ -520,7 +512,7 @@
         "TotalRecordCount": 1
       },
       "headers": {
-        "content-length": "1200",
+        "content-length": "1180",
         "content-type": "application/json"
       },
       "request": "GET /jellyfin/Playlists/0a9350aa48863de03a0040cd77209f02/Items",

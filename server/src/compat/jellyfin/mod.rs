@@ -1,4 +1,6 @@
-//! Jellyfin compat shim: PascalCase shapes, real statuses, anonymous audio.
+//! Jellyfin compat shim: PascalCase shapes, real statuses. Of the library,
+//! only album and artist pictures and the library tile open without
+//! sign-in; album and artist ids are made with the data key.
 //!
 //! Ported from v2's Jellyfin compat package (router, models, builders,
 //! auth, errors, serialization) and its client matrix. Every client quirk

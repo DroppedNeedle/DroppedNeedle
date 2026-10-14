@@ -1,4 +1,9 @@
-//! Item images (anonymous, like v2).
+//! Item images. The address answers without sign-in, as on a real
+//! Jellyfin, because Finamp and Jellify load pictures with no token. It
+//! reads no token and never answers 401 (a 401 counts as a failed sign-in),
+//! and it answers only to ids this server hands out: album and artist ids
+//! are made with the data key, so nobody without an account can work one
+//! out. Everything else is the same empty 404.
 
 use crate::auth::compat_auth::jellyfin::JellyfinPasswordStore;
 use axum::body::Body;
@@ -10,7 +15,10 @@ use super::params::CiParams;
 use super::router::*;
 use super::seams::{IdMap, LibraryRead, PlaybackSessions, StreamEngine};
 
-// ===== Images (anonymous) =====
+// ===== Images (no sign-in) =====
+
+/// The only types a picture goes out under.
+const IMAGE_TYPES: [&str; 4] = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
 /// 1x1 opaque PNG for the library view's advertised `ImageTags.Primary`, so
 /// the request resolves instead of 404ing (v2 `_LIBRARY_COVER_PNG`).
@@ -105,7 +113,7 @@ where
     if !image_type.eq_ignore_ascii_case("primary") {
         return error(StatusCode::NOT_FOUND);
     }
-    let Some((kind, internal)) = state.ids.from_jf(item_id).await else {
+    let Some((kind, internal)) = state.ids.from_jf_anonymous(item_id).await else {
         return error(StatusCode::NOT_FOUND);
     };
     let q = CiParams::parse(query);
@@ -116,23 +124,18 @@ where
             content_type: "image/png".to_owned(),
         }),
         "album" => state.library.cover(&internal, size).await,
-        "track" => match state.library.track("", &internal).await {
-            Some(track) => match track.rg_mbid.as_deref() {
-                Some(rg) => state.library.cover(rg, size).await,
-                None => None,
-            },
-            None => None,
-        },
         "artist" => state.library.artist_image(&internal).await,
         _ => None,
     };
     match found {
-        Some(cover) => Response::builder()
+        Some(cover) if IMAGE_TYPES.contains(&cover.content_type.as_str()) => Response::builder()
             .status(StatusCode::OK)
             .header("Content-Type", cover.content_type)
             .header("Cache-Control", "public, max-age=31536000, immutable")
+            .header("X-Content-Type-Options", "nosniff")
+            .header("Content-Security-Policy", "sandbox; default-src 'none'")
             .body(Body::from(cover.bytes))
             .unwrap_or_else(|_| error(StatusCode::INTERNAL_SERVER_ERROR)),
-        None => error(StatusCode::NOT_FOUND),
+        _ => error(StatusCode::NOT_FOUND),
     }
 }

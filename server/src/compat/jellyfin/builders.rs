@@ -343,10 +343,10 @@ impl<'a, I: IdMap> Builder<'a, I> {
             _ => Vec::new(),
         });
         dto.artists = Some(t.artist_name.clone().map(|n| vec![n]).unwrap_or_default());
-        dto.album_primary_image_tag = album_tag.clone();
-        if let Some(tag) = album_tag {
-            dto.image_tags.insert("Primary".to_owned(), tag);
-        }
+        // A track has no picture of its own: apps fall back to `AlbumId`
+        // with `AlbumPrimaryImageTag`, and the picture address serves only
+        // albums, artists and the library.
+        dto.album_primary_image_tag = album_tag;
         dto.parent_id = album_id;
         dto.container = t.file_format.clone();
         dto.genres = Some(t.genre.clone().map(|g| vec![g]).unwrap_or_default());

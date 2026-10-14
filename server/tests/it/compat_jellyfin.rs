@@ -643,14 +643,10 @@ async fn images_serve_anonymously_with_immutable_cache() {
     assert_eq!(library.header("cache-control"), immutable);
     assert!(library.body.starts_with(b"\x89PNG\r\n\x1a\n"));
     for (uri, bytes) in [
-        // width=200 picks the 250 bucket; tracks resolve through their album.
+        // width=200 picks the 250 bucket.
         (
             format!("/jellyfin/Items/{}/Images/Primary?width=200", fx.album1),
             &b"cover-250-bytes"[..],
-        ),
-        (
-            format!("/jellyfin/Items/{}/Images/Primary", fx.track1),
-            b"cover-500-bytes",
         ),
         (
             format!("/jellyfin/Items/{}/Images/Primary/0", fx.artist1),
@@ -664,14 +660,23 @@ async fn images_serve_anonymously_with_immutable_cache() {
             "{uri}"
         );
         assert_eq!(reply.header("cache-control"), immutable, "{uri}");
+        assert_eq!(reply.header("x-content-type-options"), "nosniff", "{uri}");
+        assert_eq!(
+            reply.header("content-security-policy"),
+            "sandbox; default-src 'none'",
+            "{uri}"
+        );
         assert_eq!(reply.body, bytes, "{uri}");
     }
-    // Misses 404 with no placeholder (unlike Subsonic); only Primary serves.
+    // Misses 404 with no placeholder (unlike Subsonic); only Primary serves,
+    // and a track has no picture of its own (apps ask for its album's).
     for uri in [
         format!("/jellyfin/Items/{}/Images/Primary", fx.album2),
         format!("/jellyfin/Items/{}/Images/Backdrop", fx.album1),
+        format!("/jellyfin/Items/{}/Images/Primary", fx.track1),
     ] {
-        assert_eq!(fx.get(&uri, None).await.status, 404, "{uri}");
+        let reply = fx.get(&uri, None).await;
+        assert_eq!((reply.status, reply.body.len()), (404, 0), "{uri}");
     }
 }
 
