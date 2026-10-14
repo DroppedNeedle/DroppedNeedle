@@ -1450,9 +1450,6 @@ export interface LibraryAlbumDetail extends LibraryAlbumSummary {
 	custom_manifest_track_count: number;
 	custom_manifest_recognized_track_count: number;
 	custom_manifest_stale: boolean;
-	management_excluded: boolean;
-	management_exclusion_revision: number | null;
-	management_excluded_at: number | null;
 	active_edition_conversion: {
 		job_id: string;
 		release_mbid: string;

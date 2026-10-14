@@ -2,6 +2,7 @@ import { createMutation } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { toastStore } from '$lib/stores/toast';
 import { invalidateLibraryCatalog } from './LibraryCatalogInvalidation';
+import { invalidateLibraryManagementSurfaces } from '$lib/queries/library-management/LibraryManagementInvalidation';
 import { LibraryV3Api } from './LibraryV3Api';
 import { toOperationResponse } from './libraryOperationAdapters';
 import { createUuid } from '$lib/utils/uuid';
@@ -90,7 +91,7 @@ export function reenableAlbumManagement() {
 				expected_exclusion_revision: input.expectedRevision
 			}),
 		onSuccess: async () => {
-			await invalidateLibraryCatalog();
+			await Promise.all([invalidateLibraryCatalog(), invalidateLibraryManagementSurfaces()]);
 			toastStore.show({ message: 'File organization re-enabled', type: 'success' });
 		},
 		onError: (error) =>

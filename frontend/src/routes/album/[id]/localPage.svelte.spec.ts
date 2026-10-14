@@ -90,9 +90,6 @@ const album: LibraryAlbumDetail = {
 	custom_manifest_track_count: 0,
 	custom_manifest_recognized_track_count: 0,
 	custom_manifest_stale: false,
-	management_excluded: false,
-	management_exclusion_revision: null,
-	management_excluded_at: null,
 	active_edition_conversion: null,
 	contribution_id: null,
 	contribution_state: null,
@@ -210,6 +207,11 @@ vi.mock('$lib/queries/library/LibraryCatalogMutations.svelte', () => {
 
 vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', () => ({
 	controlLibraryOperation: () => ({ mutateAsync: vi.fn() })
+}));
+
+vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () => ({
+	handBackLibraryAlbumMutation: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
+	handBackRefusalMessage: () => null
 }));
 
 vi.mock('$lib/queries/libraryContributions/LibraryContributionMutations.svelte', () => ({

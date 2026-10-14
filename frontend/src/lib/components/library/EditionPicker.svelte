@@ -3,7 +3,10 @@
 	import { ApiError } from '$lib/api/client';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import { getLibraryAlbumTracksQuery } from '$lib/queries/library/LibraryQueries.svelte';
+	import {
+		getLibraryAlbumDetailQuery,
+		getLibraryAlbumTracksQuery
+	} from '$lib/queries/library/LibraryQueries.svelte';
 	import {
 		acquireEdition,
 		chooseAlbumEdition,
@@ -53,6 +56,13 @@
 		() => Boolean(groupMbid)
 	);
 	const filesQuery = getLibraryAlbumTracksQuery(() => copyId);
+	const albumQuery = getLibraryAlbumDetailQuery(() => copyId);
+	// The app stepped back from this album by itself; choosing an edition
+	// does not hand it back.
+	const steppedBack = $derived.by(() => {
+		const hold = albumQuery.data?.management_hold;
+		return Boolean(hold && hold.kind !== 'your_choice');
+	});
 	const tracksQuery = getEditionTracksQuery(
 		() => groupMbid || copyId,
 		() => selected
@@ -407,6 +417,13 @@
 				<p class="text-sm text-base-content/70">
 					<span class="font-medium">Now:</span>
 					{status.reason.message}
+				</p>
+			{/if}
+			{#if steppedBack}
+				<p class="alert alert-warning py-2 text-sm" role="note">
+					This album is left unmanaged. Choosing an edition does not hand it back: DroppedNeedle
+					leaves its files alone until you choose "Manage it again". Writing the edition's tags to
+					the files overwrites the changes made outside DroppedNeedle.
 				</p>
 			{/if}
 			<div class="grid min-h-0 flex-1 gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">

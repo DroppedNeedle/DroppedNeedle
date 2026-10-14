@@ -1,6 +1,6 @@
 import { createMutation } from '@tanstack/svelte-query';
 
-import { api } from '$lib/api/client';
+import { ApiError, api } from '$lib/api/client';
 import { LIBRARY_MANAGEMENT_ENDPOINTS } from './endpoints';
 import { toPreviewDetail } from './libraryManagementAdapters';
 import type { OperationResponse } from '$lib/queries/library/LibraryOperationsTypes';
@@ -243,6 +243,16 @@ export const resolveLibraryManagementImportBundleMutation = () =>
 			api.global.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.resolveImportBundle(input.bundleId))
 	}));
 
+const HAND_BACK_UNREADABLE = 'HAND_BACK_UNREADABLE';
+
+// The sentence, with what to do, when an album's files could not be read
+// for a hand-back; null for any other outcome.
+export function handBackRefusalMessage(error: unknown): string | null {
+	if (!(error instanceof ApiError) || error.code !== HAND_BACK_UNREADABLE) return null;
+	const action = (error.details as { action?: unknown } | null)?.action;
+	return typeof action === 'string' ? `${error.message} ${action}` : error.message;
+}
+
 // Hands one album the app stepped back from to automatic management again.
 // Its files are then retagged and renamed from its edition.
 export const handBackLibraryAlbumMutation = () =>
@@ -250,7 +260,11 @@ export const handBackLibraryAlbumMutation = () =>
 		mutationFn: (input: { albumId: string }) =>
 			api.global.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.handBackAlbum(input.albumId)),
 		onSuccess: invalidateLibraryManagementSurfaces,
-		onError: showActionError('Could not hand this album back')
+		// Unreadable files are a state the page shows beside the button, not a toast.
+		onError: (error: Error) => {
+			if (handBackRefusalMessage(error) !== null) return;
+			showActionError('Could not hand this album back')(error);
+		}
 	}));
 
 // Hands back every album the app stepped back from. The server works

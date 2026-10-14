@@ -33,7 +33,16 @@
 		reenableAlbumManagement,
 		selectReidentificationCandidate
 	} from '$lib/queries/library/LibraryCatalogMutations.svelte';
-	import { acquireEdition, chooseAlbumEdition } from '$lib/queries/albums/EditionQueries.svelte';
+	import {
+		acquireEdition,
+		chooseAlbumEdition,
+		getAlbumEditionsQuery
+	} from '$lib/queries/albums/EditionQueries.svelte';
+	import {
+		handBackLibraryAlbumMutation,
+		handBackRefusalMessage
+	} from '$lib/queries/library-management/LibraryManagementMutations.svelte';
+	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 
 	interface Props {
 		album: LibraryAlbumDetail;
@@ -70,6 +79,55 @@
 	const start = reidentifyLibraryAlbum();
 	const selectCandidate = selectReidentificationCandidate();
 	const reenableManagement = reenableAlbumManagement();
+	const handBack = handBackLibraryAlbumMutation();
+	const hold = $derived(album.management_hold ?? null);
+	// A hold the app set by itself, as opposed to the person's own choice.
+	const steppedBack = $derived(hold !== null && hold.kind !== 'your_choice');
+	const editionsQuery = getAlbumEditionsQuery(
+		() => authStore.user?.id,
+		() => album.musicbrainz_release_group_id ?? '',
+		() => steppedBack && Boolean(album.musicbrainz_release_group_id)
+	);
+	const editionTitle = $derived(
+		editionsQuery.data?.items.find((item) => item.release_mbid === album.musicbrainz_release_id)
+			?.title ?? null
+	);
+	const holdCopy = $derived.by((): { heading: string; body: string } | null => {
+		if (!hold) return null;
+		const since = new Date(hold.held_at).toLocaleDateString(undefined, { dateStyle: 'medium' });
+		switch (hold.kind) {
+			case 'files_changed':
+				return {
+					heading: 'These files were changed outside DroppedNeedle',
+					body: `DroppedNeedle noticed on ${since} and stopped retagging and renaming this album. Its edition, plays, favorites and playlist entries are as they were.`
+				};
+			case 'retag_followed':
+				return {
+					heading: 'This album was retagged outside DroppedNeedle',
+					body: `Its plays, favorites and playlist entries are as they were. DroppedNeedle has left the files alone since ${since}.`
+				};
+			case 'run_undone':
+				return {
+					heading: "You undid DroppedNeedle's changes to this album",
+					body: `It has left the files alone since ${since}.`
+				};
+			case 'your_choice':
+				return {
+					heading: 'You chose to leave this album unmanaged',
+					body: 'DroppedNeedle does not retag or rename its files.'
+				};
+			default:
+				return { heading: 'This album is left unmanaged', body: '' };
+		}
+	});
+	const handBackNote = $derived(
+		album.musicbrainz_release_id
+			? `DroppedNeedle will retag and rename these files from ${editionTitle ?? 'its edition'}. Changes made outside DroppedNeedle are overwritten. The run can be undone from the operations page.`
+			: 'DroppedNeedle will manage this album again once it has an edition.'
+	);
+	// The files could not be read (a share that is not mounted): said here,
+	// with the same button to try again.
+	const handBackRefusal = $derived(handBackRefusalMessage(handBack.error));
 	const chooseEdition = chooseAlbumEdition();
 	const acquire = acquireEdition();
 	const pause = controlLibraryOperation('pause');
@@ -340,7 +398,47 @@
 		</button>
 		{#if attentionLabel}<span id={attentionDescriptionId}>{attentionLabel}</span>{/if}
 	</div>
+	{@render holdSection('order-last basis-full')}
 {/if}
+
+{#snippet holdSection(placement = '')}
+	{#if hold && holdCopy}
+		<section class="identification-current-edition {placement}" aria-label="Left unmanaged">
+			<div class="identification-current-edition-mark"><CirclePause class="h-5 w-5" /></div>
+			<div class="min-w-0 flex-1">
+				<p class="identification-kicker">Left unmanaged</p>
+				<h3 class="hero-title text-lg font-bold">{holdCopy.heading}</h3>
+				{#if holdCopy.body}<p>{holdCopy.body}</p>{/if}
+				<div class="mt-3 flex flex-wrap items-center gap-3">
+					{#if hold.kind === 'your_choice'}
+						<AsyncButton
+							class="btn btn-outline btn-sm"
+							disabled={hold.exclusion_revision == null}
+							pending={reenableManagement.isPending}
+							onclick={() =>
+								hold.exclusion_revision != null &&
+								reenableManagement
+									.mutateAsync({ albumId: album.id, expectedRevision: hold.exclusion_revision })
+									.catch(() => undefined)}>Manage it again</AsyncButton
+						>
+					{:else}
+						<AsyncButton
+							class="btn btn-outline btn-sm"
+							disabled={hold.handing_back}
+							pending={handBack.isPending}
+							onclick={() => handBack.mutateAsync({ albumId: album.id }).catch(() => undefined)}
+							>{hold.handing_back ? 'Being handed back' : 'Manage it again'}</AsyncButton
+						>
+						<p class="max-w-xl flex-1">{handBackNote}</p>
+					{/if}
+				</div>
+				{#if handBackRefusal}<div class="mt-2 text-sm text-warning" role="status">
+						{handBackRefusal}
+					</div>{/if}
+			</div>
+		</section>
+	{/if}
+{/snippet}
 
 <dialog
 	bind:this={dialog}
@@ -399,26 +497,7 @@
 				</section>
 			{/if}
 
-			{#if album.management_excluded}
-				<section class="identification-current-edition" aria-label="File organization excluded">
-					<div class="identification-current-edition-mark"><CirclePause class="h-5 w-5" /></div>
-					<div class="min-w-0 flex-1">
-						<p class="identification-kicker">Left unmanaged</p>
-						<h3 class="hero-title text-lg font-bold">Management warnings are paused</h3>
-						<p>Valid MusicBrainz links remain attached. Files and tags are unchanged.</p>
-					</div>
-					<button
-						class="btn btn-outline btn-sm"
-						disabled={reenableManagement.isPending || album.management_exclusion_revision === null}
-						onclick={() =>
-							album.management_exclusion_revision !== null &&
-							void reenableManagement.mutateAsync({
-								albumId: album.id,
-								expectedRevision: album.management_exclusion_revision
-							})}>Re-enable management</button
-					>
-				</section>
-			{/if}
+			{#if !showTrigger}{@render holdSection()}{/if}
 
 			{#if album.identification_status === 'local_metadata' && !operation.data}
 				<div class="identification-policy-note">

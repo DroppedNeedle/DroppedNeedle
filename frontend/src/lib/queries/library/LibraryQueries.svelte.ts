@@ -192,10 +192,18 @@ export const getLibraryAlbumDetailQueryOptions = (forUser: LibraryV3UserId, albu
 			toAlbumDetail(await api.global.v3.GET(LibraryV3Api.albumDetail(albumId), { signal }))
 	});
 
+const HAND_BACK_POLL_MS = 5_000;
+
 export const getLibraryAlbumDetailQuery = (getAlbumId: Getter<string>) =>
 	createQuery(() => {
 		const albumId = getAlbumId();
-		return { ...getLibraryAlbumDetailQueryOptions(userId(), albumId), enabled: !!albumId };
+		return {
+			...getLibraryAlbumDetailQueryOptions(userId(), albumId),
+			enabled: !!albumId,
+			// Read again until the album's turn to be handed back has come.
+			refetchInterval: (query: { state: { data?: LibraryAlbumDetail } }) =>
+				query.state.data?.management_hold?.handing_back ? HAND_BACK_POLL_MS : false
+		};
 	});
 
 // Album pages are reachable by local id and by release-group id; once the

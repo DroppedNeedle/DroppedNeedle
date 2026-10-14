@@ -82,9 +82,6 @@ const localAlbum: LibraryAlbumDetail = {
 	custom_manifest_track_count: 0,
 	custom_manifest_recognized_track_count: 0,
 	custom_manifest_stale: false,
-	management_excluded: false,
-	management_exclusion_revision: null,
-	management_excluded_at: null,
 	active_edition_conversion: null,
 	display_release_mbid: null,
 	pick_basis: null
@@ -146,6 +143,11 @@ vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', () => ({
 	controlLibraryOperation: () => ({ mutateAsync: vi.fn() }),
 	controlLibraryRun: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
 	controlIdentification: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false })
+}));
+
+vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () => ({
+	handBackLibraryAlbumMutation: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
+	handBackRefusalMessage: () => null
 }));
 
 vi.mock('$lib/queries/downloads/UpgradeQueries.svelte', () => ({
