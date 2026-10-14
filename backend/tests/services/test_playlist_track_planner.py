@@ -222,40 +222,6 @@ def test_studio_policy_ignores_substitute_for_non_compilation_tracks():
     assert (plan.recording_mbid, plan.release_group_mbid) == ("rec", "rg-bayou")
 
 
-def test_flag_policy_holds_compilation_only_tracks_with_options():
-    tracks = [
-        *_ccr_playlist(),
-        _remaster_only(0, substitute="rg-cosmo"),
-        _remaster_only(1),
-    ]
-    plans = plan_playlist(tracks, CompilationPolicy.FLAG)
-
-    flagged = plans["r0"]
-    assert flagged.status is ResolutionStatus.FLAGGED
-    assert flagged.release_group_mbid is None
-    assert [option.to_json() for option in flagged.options] == [
-        {
-            "kind": "studio",
-            "recording_mbid": "rec-studio-0",
-            "release_group_mbid": "rg-cosmo",
-            "title": "Cosmo's Factory",
-            "tier": "album",
-        },
-        {
-            "kind": "compilation",
-            "recording_mbid": "rec-remaster-0",
-            "release_group_mbid": "rg-chronicle-2",
-            "title": "rg-chronicle-2",
-            "tier": "artist_compilation",
-        },
-    ]
-    assert [option.kind for option in plans["r1"].options] == ["compilation"]
-    # Studio-album tracks are unaffected by the policy.
-    assert all(
-        plans[f"t{i:02d}"].status is ResolutionStatus.RESOLVED for i in range(20)
-    )
-
-
 @pytest.mark.parametrize(
     "track",
     [
@@ -322,3 +288,125 @@ def test_heap_cover_matches_reference_greedy(seed):
         for i in range(rng.randint(1, 60))
     }
     assert _cover_tier(pending) == _reference_cover(pending)
+
+
+# --- per-track policy strategies (manual-test follow-up) ----------------------
+
+LAYERS = HomeCandidate(
+    "rg-layers", "Layers", "Album", (), True, False, True, "2016-11-04"
+)
+MUCHDANCE = HomeCandidate(
+    "rg-muchdance",
+    "MuchDance 2017",
+    "Album",
+    ("Compilation",),
+    True,
+    True,
+    True,
+    "2016-11-18",
+)
+
+
+def _kungs(track_id: str, *, on_layers: bool, playlist_album=None, substitute=None):
+    """A Kungs song whose recording (by ISRC) sits on MuchDance 2017 and,
+    depending on MusicBrainz, also on Layers."""
+    candidates = (MUCHDANCE, LAYERS) if on_layers else (MUCHDANCE,)
+    return PlannerTrack(
+        track_id,
+        f"rec-{track_id}",
+        candidates,
+        substitute,
+        playlist_album,
+    )
+
+
+def test_match_playlist_mirrors_the_playlist_album_even_a_compilation():
+    track = _kungs(
+        "this-girl",
+        on_layers=True,
+        playlist_album=Substitute("rec-this-girl", MUCHDANCE),
+    )
+    plan = plan_playlist([track], CompilationPolicy.MATCH_PLAYLIST)["this-girl"]
+    assert (plan.release_group_mbid, plan.tier) == (
+        "rg-muchdance",
+        HomeTier.OTHER_COMPILATION,
+    )
+
+
+def test_match_playlist_without_a_playlist_album_uses_the_official_release():
+    plan = plan_playlist(
+        [_kungs("s", on_layers=True)], CompilationPolicy.MATCH_PLAYLIST
+    )["s"]
+    assert plan.release_group_mbid == "rg-layers"
+
+
+def test_studio_files_under_the_official_album_not_the_playlists_compilation():
+    track = _kungs(
+        "this-girl",
+        on_layers=True,
+        playlist_album=Substitute("rec-this-girl", MUCHDANCE),
+    )
+    plan = plan_playlist([track], CompilationPolicy.STUDIO)["this-girl"]
+    assert (plan.release_group_mbid, plan.recording_mbid) == (
+        "rg-layers",
+        "rec-this-girl",
+    )
+
+
+def test_studio_uses_the_playlist_album_found_by_search_for_a_compilation_only_recording():
+    """The ISRC's recording is only on MuchDance; Spotify lists Layers, found
+    by album search with Layers' own recording of the song."""
+    track = _kungs(
+        "this-girl",
+        on_layers=False,
+        playlist_album=Substitute("rec-layers-this-girl", LAYERS),
+    )
+    plan = plan_playlist([track], CompilationPolicy.STUDIO)["this-girl"]
+    assert (plan.release_group_mbid, plan.recording_mbid, plan.tier) == (
+        "rg-layers",
+        "rec-layers-this-girl",
+        HomeTier.ALBUM,
+    )
+
+
+def test_flag_holds_tracks_where_playlist_and_official_albums_differ():
+    differ = _kungs(
+        "differ", on_layers=True, playlist_album=Substitute("rec-differ", MUCHDANCE)
+    )
+    agree = _kungs(
+        "agree", on_layers=True, playlist_album=Substitute("rec-agree", LAYERS)
+    )
+    plans = plan_playlist([differ, agree], CompilationPolicy.FLAG)
+
+    flagged = plans["differ"]
+    assert flagged.status is ResolutionStatus.FLAGGED
+    assert [(o.kind, o.release_group_mbid) for o in flagged.options] == [
+        ("studio", "rg-layers"),
+        ("playlist", "rg-muchdance"),
+    ]
+    assert plans["agree"].status is ResolutionStatus.RESOLVED
+    assert plans["agree"].release_group_mbid == "rg-layers"
+
+
+def test_albums_are_created_as_needed_and_later_tracks_join_them():
+    """One Layers song now, another from a later playlist: same album."""
+    first = plan_playlist(
+        [_kungs("i-feel-so-bad", on_layers=True)], CompilationPolicy.STUDIO
+    )
+    later = plan_playlist(
+        [_kungs("this-girl", on_layers=True)], CompilationPolicy.STUDIO
+    )
+    assert first["i-feel-so-bad"].release_group_mbid == "rg-layers"
+    assert later["this-girl"].release_group_mbid == "rg-layers"
+
+
+def test_compilation_only_recording_with_nothing_official_falls_back_to_it():
+    track = _kungs("rare", on_layers=False)
+    plan = plan_playlist([track], CompilationPolicy.STUDIO)["rare"]
+    assert plan.release_group_mbid == "rg-muchdance"
+
+
+def test_playlist_album_alone_makes_a_track_placeable():
+    track = PlannerTrack("t", "rec-t", (), None, Substitute("rec-t", LAYERS))
+    plan = plan_playlist([track], CompilationPolicy.STUDIO)["t"]
+    assert plan.release_group_mbid == "rg-layers"

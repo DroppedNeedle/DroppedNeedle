@@ -42,7 +42,7 @@ describe('SettingsPlaylistTrackRequests', () => {
 		expect(h.load).toHaveBeenCalledOnce();
 		await expect.element(page.getByRole('combobox', { name: 'Mode' })).toHaveValue('review');
 		await expect
-			.element(page.getByRole('combobox', { name: 'Tracks only on compilations' }))
+			.element(page.getByRole('combobox', { name: 'Where each track is filed' }))
 			.toHaveValue('flag');
 		await page.getByRole('button', { name: 'Save' }).click();
 		expect(h.save).toHaveBeenCalledOnce();

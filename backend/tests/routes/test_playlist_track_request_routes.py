@@ -60,6 +60,9 @@ class _Mb:
     async def get_artist_release_groups(self, *args, **kwargs):
         return [], 0
 
+    async def search_release_groups(self, *args, **kwargs):
+        return []
+
 
 class _Sse:
     def __init__(self):
@@ -167,7 +170,10 @@ def test_auto_mode_resolves_then_requests_each_missing_track(env):
     client, _app, playlists, requests, _prefs, sse = env
     pid = _seed_sync(client, playlists)
 
-    resp = client.post(f"/playlists/{pid}/request-tracks", json={"mode": "auto"})
+    resp = client.post(
+        f"/playlists/{pid}/request-tracks",
+        json={"mode": "auto", "compilation_policy": "studio"},
+    )
 
     assert resp.status_code == 202
     body = resp.json()
@@ -195,7 +201,9 @@ def test_review_flow_resolves_then_requests_only_on_confirm(env):
     client, _app, playlists, requests, _prefs, sse = env
     pid = _seed_sync(client, playlists)
 
-    resp = client.post(f"/playlists/{pid}/resolve-tracks", json={})
+    resp = client.post(
+        f"/playlists/{pid}/resolve-tracks", json={"compilation_policy": "studio"}
+    )
     assert resp.json()["job"] == "resolve"
     _channel, event, data = _wait(sse)
     assert event == "playlist_tracks_resolved"
@@ -459,7 +467,10 @@ def test_request_names_the_edition_that_carries_each_recording(env):
     )
     pid = _seed_sync(client, playlists)
 
-    client.post(f"/playlists/{pid}/request-tracks", json={"mode": "auto"})
+    client.post(
+        f"/playlists/{pid}/request-tracks",
+        json={"mode": "auto", "compilation_policy": "studio"},
+    )
 
     _wait(sse)
     items = {

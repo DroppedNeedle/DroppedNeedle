@@ -50,9 +50,14 @@
 		flag: 'Flag for review'
 	};
 	const POLICY_HINTS: Record<CompilationPolicy, string> = {
-		match_playlist: 'Keep the exact recording; use as few compilations as possible',
-		studio: "Swap to the same song on the artist's studio album when found",
-		flag: 'Hold those tracks so you can pick the album'
+		match_playlist: 'File each track under the album the playlist lists, compilations included',
+		studio: "File each track under the artist's official album; compilations only as a last resort",
+		flag: 'Where those two differ, hold the track so you can pick'
+	};
+	const OPTION_LABELS: Record<HomeOption['kind'], string> = {
+		studio: 'Official',
+		playlist: 'Playlist',
+		compilation: 'Compilation'
 	};
 
 	let mode = $state<TrackRequestMode>('auto');
@@ -269,7 +274,7 @@
 					</fieldset>
 					<fieldset>
 						<legend class="mb-1 text-xs font-semibold uppercase text-base-content/50">
-							Only on compilations
+							Where each track is filed
 						</legend>
 						{#each Object.keys(POLICY_LABELS) as CompilationPolicy[] as key (key)}
 							<label class="flex cursor-pointer items-start gap-2 py-1">
@@ -292,7 +297,8 @@
 		<div class="mb-2 flex items-center gap-2 text-sm font-medium">
 			<CircleAlert class="h-4 w-4 text-warning" />
 			{flaggedTracks.length}
-			{flaggedTracks.length === 1 ? 'track is' : 'tracks are'} only on compilations: pick an album
+			{flaggedTracks.length === 1 ? 'track needs' : 'tracks need'} an album choice: the playlist's album
+			and the official one differ
 		</div>
 		<ul class="space-y-2">
 			{#each flaggedTracks as track (track.id)}
@@ -307,7 +313,7 @@
 							disabled={choosing !== null}
 							onclick={() => void choose(track, option)}
 						>
-							{option.kind === 'studio' ? 'Studio' : 'Compilation'}: {option.title}
+							{OPTION_LABELS[option.kind] ?? option.kind}: {option.title}
 						</button>
 					{/each}
 				</li>

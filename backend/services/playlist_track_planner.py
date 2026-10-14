@@ -1,13 +1,20 @@
-"""Choose the release group every playlist track is sourced from (#204).
+"""Choose the album every playlist track is filed under (#204).
 
-Pure and deterministic: the resolver gathers each track's candidate homes
-(and, for the ``studio`` policy, a studio-album substitute) and this module
-decides. The rule is *tier first, then coverage*: every track lands in the
-best tier its recording reaches, and within a tier release groups are taken
-greedily by how many still-unplaced playlist tracks they carry. A playlist of
-Creedence songs therefore lands on their studio albums, and songs only found
-on compilations collapse onto the fewest compilations instead of one
-compilation per song.
+Pure and deterministic: the resolver gathers each track's candidate homes,
+the album its playlist lists (``playlist_album``) and, when the recording has
+no official home, the same song on the artist's own album (``substitute``).
+The compilation policy is the strategy for every track:
+
+- ``match_playlist`` mirrors the source: the album the playlist lists,
+  compilations included; otherwise the official choice.
+- ``studio`` keeps a clean library: the artist's official release (album,
+  then EP, single, soundtrack; earliest), never a compilation unless nothing
+  official exists.
+- ``flag`` files tracks where both agree and holds the rest with both options.
+
+Albums are created as needed, one per release a track belongs to. Within a
+tier, the greedy "most playlist tracks" cover only breaks ties, so a second
+song from an album already chosen joins it.
 """
 
 from __future__ import annotations
@@ -29,8 +36,10 @@ from models.release_home import (
 
 @dataclass(frozen=True, slots=True)
 class Substitute:
-    """The same song on one of the artist's studio albums, as a different
-    recording (typically the original of a compilation-only remaster)."""
+    """A specific album for the song, possibly as a different recording: the
+    artist's own album for a compilation-only recording, or the album the
+    playlist lists when it was found by search rather than among the
+    recording's homes."""
 
     recording_mbid: str
     home: HomeCandidate
@@ -42,13 +51,14 @@ class PlannerTrack:
     recording_mbid: str | None
     candidates: tuple[HomeCandidate, ...] = ()
     substitute: Substitute | None = None
+    playlist_album: Substitute | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class HomeOption:
     """One choice offered for a flagged track."""
 
-    kind: str  # "studio" | "compilation"
+    kind: str  # "studio" (official) | "playlist" (the playlist's album)
     recording_mbid: str
     release_group_mbid: str
     title: str
@@ -76,6 +86,15 @@ class TrackPlan:
 
 def _best_tier(candidates: Iterable[HomeCandidate]) -> HomeTier:
     return min(classify_home(candidate) for candidate in candidates)
+
+
+_OFFICIAL_TIERS = frozenset(
+    {HomeTier.ALBUM, HomeTier.EP, HomeTier.SINGLE, HomeTier.SOUNDTRACK}
+)
+
+
+def _is_official(home: HomeCandidate) -> bool:
+    return classify_home(home) in _OFFICIAL_TIERS
 
 
 def _cover_tier(
@@ -119,20 +138,80 @@ def _cover_tier(
     return placed
 
 
-def _assign(tracks: list[PlannerTrack]) -> dict[str, HomeCandidate]:
-    """Tier first, then coverage, across every placeable track."""
+def _assign(pool: dict[str, list[HomeCandidate]]) -> dict[str, HomeCandidate]:
+    """Tier first, then coverage, over each track's candidates in ``pool``."""
     by_tier: dict[HomeTier, dict[str, list[HomeCandidate]]] = {}
-    for track in tracks:
-        tier = _best_tier(track.candidates)
-        by_tier.setdefault(tier, {})[track.track_id] = [
-            candidate
-            for candidate in track.candidates
-            if classify_home(candidate) is tier
+    for track_id, candidates in pool.items():
+        if not candidates:
+            continue
+        tier = _best_tier(candidates)
+        by_tier.setdefault(tier, {})[track_id] = [
+            candidate for candidate in candidates if classify_home(candidate) is tier
         ]
     placed: dict[str, HomeCandidate] = {}
     for tier in sorted(by_tier):
         placed.update(_cover_tier(by_tier[tier]))
     return placed
+
+
+@dataclass(frozen=True, slots=True)
+class _Choice:
+    recording_mbid: str
+    home: HomeCandidate
+
+    @property
+    def release_group_mbid(self) -> str:
+        return self.home.release_group_mbid.casefold()
+
+
+def _official_choices(tracks: list[PlannerTrack]) -> dict[str, _Choice]:
+    """Each track's official release: the recording's own best official home
+    (coverage breaks ties), else the playlist's album when that is official,
+    else the same song on the artist's own album."""
+    pool = {
+        track.track_id: [c for c in track.candidates if _is_official(c)]
+        for track in tracks
+    }
+    assigned = _assign(pool)
+    choices: dict[str, _Choice] = {}
+    for track in tracks:
+        if track.track_id in assigned:
+            choices[track.track_id] = _Choice(
+                track.recording_mbid or "", assigned[track.track_id]
+            )
+            continue
+        for fallback in (track.playlist_album, track.substitute):
+            if fallback is not None and _is_official(fallback.home):
+                choices[track.track_id] = _Choice(
+                    fallback.recording_mbid, fallback.home
+                )
+                break
+    return choices
+
+
+def _playlist_choice(track: PlannerTrack) -> _Choice | None:
+    album = track.playlist_album
+    return _Choice(album.recording_mbid, album.home) if album is not None else None
+
+
+def _resolved(track_id: str, choice: _Choice) -> TrackPlan:
+    return TrackPlan(
+        track_id,
+        ResolutionStatus.RESOLVED,
+        choice.recording_mbid,
+        choice.home.release_group_mbid,
+        classify_home(choice.home),
+    )
+
+
+def _option(kind: str, choice: _Choice) -> HomeOption:
+    return HomeOption(
+        kind,
+        choice.recording_mbid,
+        choice.home.release_group_mbid,
+        choice.home.title,
+        classify_home(choice.home),
+    )
 
 
 def plan_playlist(
@@ -142,63 +221,56 @@ def plan_playlist(
     plans: dict[str, TrackPlan] = {}
     placeable: list[PlannerTrack] = []
     for track in tracks:
-        if not track.recording_mbid or not track.candidates:
+        if not track.recording_mbid or not (
+            track.candidates or track.playlist_album or track.substitute
+        ):
             plans[track.track_id] = TrackPlan(
                 track.track_id, ResolutionStatus.UNRESOLVED, track.recording_mbid
-            )
-        elif (
-            policy is CompilationPolicy.STUDIO
-            and track.substitute is not None
-            and _best_tier(track.candidates).is_compilation
-        ):
-            # Swapped out before consolidation so a compilation is never
-            # chosen on the strength of tracks that will not come from it.
-            substitute = track.substitute
-            plans[track.track_id] = TrackPlan(
-                track.track_id,
-                ResolutionStatus.RESOLVED,
-                substitute.recording_mbid,
-                substitute.home.release_group_mbid,
-                classify_home(substitute.home),
             )
         else:
             placeable.append(track)
 
-    assigned = _assign(placeable)
+    official = _official_choices(placeable)
+    needs_fallback: list[PlannerTrack] = []
     for track in placeable:
-        home = assigned[track.track_id]
-        tier = classify_home(home)
-        recording = track.recording_mbid or ""
-        if not tier.is_compilation or policy is not CompilationPolicy.FLAG:
+        studio = official.get(track.track_id)
+        playlist = _playlist_choice(track)
+        if policy is CompilationPolicy.MATCH_PLAYLIST:
+            choice = playlist or studio
+        elif policy is CompilationPolicy.STUDIO:
+            choice = studio
+        elif (
+            studio is not None
+            and playlist is not None
+            and studio.release_group_mbid != playlist.release_group_mbid
+        ):
             plans[track.track_id] = TrackPlan(
                 track.track_id,
-                ResolutionStatus.RESOLVED,
-                recording,
-                home.release_group_mbid,
-                tier,
+                ResolutionStatus.FLAGGED,
+                track.recording_mbid,
+                options=(_option("studio", studio), _option("playlist", playlist)),
             )
             continue
-        options: list[HomeOption] = []
-        if track.substitute is not None:
-            substitute = track.substitute
-            options.append(
-                HomeOption(
-                    "studio",
-                    substitute.recording_mbid,
-                    substitute.home.release_group_mbid,
-                    substitute.home.title,
-                    classify_home(substitute.home),
-                )
+        else:
+            choice = studio or playlist
+        if choice is None:
+            needs_fallback.append(track)
+        else:
+            plans[track.track_id] = _resolved(track.track_id, choice)
+
+    # Nothing official and no playlist album: the recording's remaining homes
+    # (compilations, then anything else), as few of them as possible.
+    leftover = _assign(
+        {track.track_id: list(track.candidates) for track in needs_fallback}
+    )
+    for track in needs_fallback:
+        home = leftover.get(track.track_id)
+        if home is None:
+            plans[track.track_id] = TrackPlan(
+                track.track_id, ResolutionStatus.UNRESOLVED, track.recording_mbid
             )
-        options.append(
-            HomeOption(
-                "compilation", recording, home.release_group_mbid, home.title, tier
+        else:
+            plans[track.track_id] = _resolved(
+                track.track_id, _Choice(track.recording_mbid or "", home)
             )
-        )
-        plans[track.track_id] = TrackPlan(
-            track.track_id,
-            ResolutionStatus.FLAGGED,
-            recording,
-            options=tuple(options),
-        )
     return plans

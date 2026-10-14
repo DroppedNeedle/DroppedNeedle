@@ -34,6 +34,12 @@ def _fold(text: str) -> str:
     return unidecode(text)
 
 
+def lead_artist(artist_name: str) -> str:
+    """Spotify joins every credited artist with ", "; folders, searches and
+    credit checks want the lead one."""
+    return (artist_name or "").split(", ")[0].strip() or (artist_name or "")
+
+
 def song_title_key(title: str) -> str:
     """Comparable form of a song title, dropping same-song qualifiers only."""
     stripped = title or ""

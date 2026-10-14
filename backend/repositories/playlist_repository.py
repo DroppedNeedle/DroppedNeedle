@@ -34,6 +34,10 @@ class TrackResolution:
     resolution_status: str
     recording_mbid: Optional[str] = None
     flag_options: Optional[list[dict]] = None
+    # The album the track is filed under, shown on the row (cover and album
+    # link); None keeps what the import stored.
+    album_id: Optional[str] = None
+    cover_url: Optional[str] = None
 
 
 class PlaylistRecord:
@@ -812,11 +816,15 @@ class PlaylistRepository:
                 cur = conn.execute(
                     "UPDATE playlist_tracks SET "
                     "recording_mbid = COALESCE(?, recording_mbid), "
+                    "album_id = COALESCE(?, album_id), "
+                    "cover_url = COALESCE(?, cover_url), "
                     "target_release_group_mbid = ?, home_tier = ?, "
                     "resolution_status = ?, flag_options = ? "
                     "WHERE id = ? AND playlist_id = ?",
                     (
                         resolution.recording_mbid,
+                        resolution.album_id,
+                        resolution.cover_url,
                         resolution.target_release_group_mbid,
                         resolution.home_tier,
                         resolution.resolution_status,

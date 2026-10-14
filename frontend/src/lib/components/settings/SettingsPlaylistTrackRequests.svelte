@@ -46,19 +46,20 @@
 
 			<div class="form-control pt-2">
 				<label class="label" for="track-request-policy">
-					<span class="label-text font-medium">Tracks only on compilations</span>
+					<span class="label-text font-medium">Where each track is filed</span>
 				</label>
 				<select
 					id="track-request-policy"
 					class="select select-bordered w-full max-w-xs"
 					bind:value={form.data.compilation_policy}
 				>
-					<option value="match_playlist">Match playlist: fewest compilations</option>
-					<option value="studio">Studio version: same song on a studio album</option>
-					<option value="flag">Flag: let the user pick</option>
+					<option value="match_playlist">Match playlist: the album the playlist lists</option>
+					<option value="studio">Studio version: the artist's official album</option>
+					<option value="flag">Flag: hold tracks where those differ</option>
 				</select>
 				<p class="mt-1 text-xs text-base-content/50">
-					Applies when a track's exact recording appears only on compilations.
+					Match playlist mirrors the source, compilations included. Studio version keeps an official
+					library and uses a compilation only when nothing official exists.
 				</p>
 			</div>
 

@@ -36,7 +36,8 @@ export type ResolutionStatus = 'resolved' | 'flagged' | 'unresolved' | 'chosen';
 
 /** One album a flagged track can come from. */
 export interface HomeOption {
-	kind: 'studio' | 'compilation';
+	/** 'compilation' is what flags stored before the per-track policies. */
+	kind: 'studio' | 'playlist' | 'compilation';
 	recording_mbid: string;
 	release_group_mbid: string;
 	title: string;

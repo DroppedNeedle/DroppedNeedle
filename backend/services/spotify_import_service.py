@@ -90,6 +90,17 @@ def _carried_resolutions(
     return carried
 
 
+def _filed_album(track: PlaylistTrackRecord) -> dict[str, str | None]:
+    """Row album fields for a resolved or chosen track (#204)."""
+    album = track.target_release_group_mbid
+    if not album or track.resolution_status not in ("resolved", "chosen"):
+        return {}
+    return {
+        "album_id": album,
+        "cover_url": f"/api/v1/covers/release-group/{album}?size=250",
+    }
+
+
 def _playlist_track_count(playlist: dict) -> int:
     """Track count from a GET /me/playlists playlist item.
 
@@ -383,6 +394,9 @@ class SpotifyImportService:
                 home_tier=match.home_tier,
                 resolution_status=match.resolution_status,
                 flag_options=match.flag_options,
+                # Keep showing the album the track is filed under, not the
+                # one the import just picked again.
+                **_filed_album(match),
             )
             for record, match in zip(created or [], previous)
             if match is not None and match.resolution_status

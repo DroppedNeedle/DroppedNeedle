@@ -230,7 +230,7 @@ describe('RequestTracksPanel', () => {
 					tier: 'album'
 				},
 				{
-					kind: 'compilation',
+					kind: 'playlist',
 					recording_mbid: 'rec-fs',
 					release_group_mbid: 'rg-chr',
 					title: 'Chronicle',
@@ -243,9 +243,13 @@ describe('RequestTracksPanel', () => {
 		const { ontrackupdate } = await setup([flagged]);
 
 		await expect
-			.element(page.getByText('1 track is only on compilations: pick an album'))
+			.element(
+				page.getByText(
+					"1 track needs an album choice: the playlist's album and the official one differ"
+				)
+			)
 			.toBeInTheDocument();
-		await page.getByRole('button', { name: 'Studio: Willy and the Poor Boys' }).click();
+		await page.getByRole('button', { name: 'Official: Willy and the Poor Boys' }).click();
 
 		expect(h.chooseTrackHome).toHaveBeenCalledWith(
 			'pl-1',

@@ -3,6 +3,7 @@ persistence over a real playlist DB with a fake MusicBrainz (#204)."""
 
 import sqlite3
 import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -57,6 +58,8 @@ class FakeMb:
         self.homes = homes
         self.artist_groups = list(artist_groups)
         self.home_calls: list[str] = []
+        self.searches: list[tuple[str, str]] = []
+        self.album_results: dict[tuple[str, str], list] = {}
         self.failing: set[str] = set()
 
     async def get_recording_homes(self, recording_mbid, *, priority=None):
@@ -64,6 +67,10 @@ class FakeMb:
         if recording_mbid in self.failing:
             return None
         return self.homes.get(recording_mbid, [])
+
+    async def search_release_groups(self, artist, title, limit=10, **kwargs):
+        self.searches.append((artist, title))
+        return list(self.album_results.get((artist, title), []))
 
     async def get_artist_release_groups(
         self, artist_mbid, offset=0, limit=50, priority=None
@@ -159,7 +166,9 @@ async def test_isrc_tracks_resolve_to_studio_albums_and_persist(playlists):
         {"track_name": "Down on the Corner", "isrc": "USFI86900003"},
     )
 
-    summary = await _resolver(playlists, mb, store=store).resolve_playlist(pid)
+    summary = await _resolver(playlists, mb, store=store).resolve_playlist(
+        pid, CompilationPolicy.STUDIO
+    )
 
     tracks = {t.track_name: t for t in await playlists.get_tracks(pid)}
     assert {name: t.target_release_group_mbid for name, t in tracks.items()} == {
@@ -217,7 +226,9 @@ async def test_isrc_with_several_recordings_picks_the_best_homed(playlists):
         playlists, {"track_name": "Fortunate Son", "isrc": "USFI86900001"}
     )
 
-    await _resolver(playlists, mb, store=store).resolve_playlist(pid)
+    await _resolver(playlists, mb, store=store).resolve_playlist(
+        pid, CompilationPolicy.STUDIO
+    )
 
     (track,) = await playlists.get_tracks(pid)
     assert track.recording_mbid == "rec-original"
@@ -251,7 +262,9 @@ async def test_recording_found_from_imported_album_position(playlists):
         },
     )
 
-    await _resolver(playlists, mb, albums).resolve_playlist(pid)
+    await _resolver(playlists, mb, albums).resolve_playlist(
+        pid, CompilationPolicy.STUDIO
+    )
 
     (track,) = await playlists.get_tracks(pid)
     assert track.recording_mbid == "rec-pm"
@@ -405,16 +418,20 @@ async def test_flag_policy_stores_options_and_requests_nothing(playlists):
 
     by_name = {t.track_name: t for t in await playlists.get_tracks(pid)}
     lodi = by_name["Lodi"]
+    # Spotify lists Chronicle; the official home is Green River: they differ.
     assert lodi.resolution_status == ResolutionStatus.FLAGGED
     assert lodi.target_release_group_mbid is None
     assert [(o["kind"], o["release_group_mbid"]) for o in lodi.flag_options] == [
         ("studio", "rg-green"),
-        ("compilation", "rg-chronicle"),
+        ("playlist", "rg-chronicle"),
     ]
-    assert [o["kind"] for o in by_name["Travelin' Band"].flag_options] == [
-        "compilation"
-    ]
-    assert (summary.flagged, summary.resolved) == (3, 0)
+    # No official version found: nothing to disagree with, filed as listed.
+    travelin = by_name["Travelin' Band"]
+    assert (travelin.resolution_status, travelin.target_release_group_mbid) == (
+        "resolved",
+        "rg-chronicle",
+    )
+    assert (summary.flagged, summary.resolved) == (2, 1)
 
 
 @pytest.mark.asyncio
@@ -463,3 +480,151 @@ def test_same_song_needs_close_length_when_known():
     assert not same_song("Fortunate Son - Live", 140, studio)
     assert same_song("Fortunate Son", None, studio)
     assert not same_song("Fortunate", None, studio)
+
+
+# --- the playlist's album (manual-test follow-up) ------------------------------
+
+
+MUCHDANCE = _album(
+    "rg-muchdance", "MuchDance 2017", "2016-11-18", ("Compilation",), various=True
+)
+KUNGS_LAYERS = [
+    Track(
+        position=1,
+        title="This Girl (Kungs Vs. Cookin' On 3 Burners)",
+        length=195_000,
+        recording_id="rec-layers-tg",
+    ),
+    Track(
+        position=10,
+        title="I Feel So Bad",
+        length=181_000,
+        recording_id="rec-layers-ifsb",
+    ),
+]
+
+
+def _search_hit(title, artist, type_info="Album", rg="rg-layers", year=2016):
+    return SimpleNamespace(
+        title=title, artist=artist, type_info=type_info, musicbrainz_id=rg, year=year
+    )
+
+
+async def _kungs_playlist(playlists):
+    pid, _ = await _playlist(
+        playlists,
+        {
+            "track_name": "This Girl (Kungs Vs. Cookin' On 3 Burners)",
+            "artist_name": "Kungs, Cookin' On 3 Burners",
+            "album_name": "Layers",
+            "album_id": "rg-muchdance",
+            "cover_url": "/api/v1/covers/release-group/rg-muchdance?size=250",
+            "recording_mbid": "rec-isrc-tg",
+            "duration": 195,
+        },
+    )
+    return pid
+
+
+@pytest.mark.asyncio
+async def test_studio_files_a_compilation_only_recording_under_spotifys_album(
+    playlists,
+):
+    """The reported case: the ISRC's recording is only on MuchDance 2017;
+    Spotify lists Layers. Search finds Layers and its own recording."""
+    mb = FakeMb({"rec-isrc-tg": [MUCHDANCE]})
+    mb.album_results[("Kungs", "Layers")] = [_search_hit("Layers", "Kungs")]
+    albums = FakeAlbums({"rg-layers": KUNGS_LAYERS})
+    pid = await _kungs_playlist(playlists)
+
+    await _resolver(playlists, mb, albums).resolve_playlist(
+        pid, CompilationPolicy.STUDIO
+    )
+
+    (track,) = await playlists.get_tracks(pid)
+    assert (track.recording_mbid, track.target_release_group_mbid, track.home_tier) == (
+        "rec-layers-tg",
+        "rg-layers",
+        "album",
+    )
+    # The row now shows the album it is filed under.
+    assert track.cover_url == "/api/v1/covers/release-group/rg-layers?size=250"
+    assert track.album_id == "rg-layers"
+    assert mb.searches == [("Kungs", "Layers")]  # lead artist, not the joined credit
+
+
+@pytest.mark.asyncio
+async def test_match_playlist_keeps_spotifys_compilation(playlists):
+    mb = FakeMb(
+        {"rec-isrc-tg": [MUCHDANCE, _album("rg-layers", "Layers", "2016-11-04")]}
+    )
+    pid, _ = await _playlist(
+        playlists,
+        {
+            "track_name": "This Girl",
+            "artist_name": "Kungs",
+            "album_name": "MuchDance 2017",
+            "recording_mbid": "rec-isrc-tg",
+        },
+    )
+
+    await _resolver(playlists, mb).resolve_playlist(
+        pid, CompilationPolicy.MATCH_PLAYLIST
+    )
+
+    (track,) = await playlists.get_tracks(pid)
+    assert track.target_release_group_mbid == "rg-muchdance"
+    assert mb.searches == []  # found among the recording's own homes
+
+
+@pytest.mark.asyncio
+async def test_album_search_is_strict_about_titles(playlists):
+    mb = FakeMb({"rec-isrc-tg": [MUCHDANCE]})
+    mb.album_results[("Kungs", "Layers")] = [
+        _search_hit("Layers of Fear", "Kungs", rg="rg-wrong")
+    ]
+    albums = FakeAlbums({"rg-wrong": KUNGS_LAYERS})
+    pid = await _kungs_playlist(playlists)
+
+    await _resolver(playlists, mb, albums).resolve_playlist(
+        pid, CompilationPolicy.STUDIO
+    )
+
+    (track,) = await playlists.get_tracks(pid)
+    # No official album found: the compilation is the last resort.
+    assert track.target_release_group_mbid == "rg-muchdance"
+    assert "rg-wrong" not in albums.calls
+
+
+@pytest.mark.asyncio
+async def test_flagged_rows_keep_the_imported_album(playlists):
+    mb = FakeMb(
+        {"rec-isrc-tg": [MUCHDANCE, _album("rg-layers", "Layers", "2016-11-04")]}
+    )
+    pid, _ = await _playlist(
+        playlists,
+        {
+            "track_name": "This Girl",
+            "artist_name": "Kungs",
+            "album_name": "MuchDance 2017",
+            "album_id": "rg-muchdance",
+            "recording_mbid": "rec-isrc-tg",
+        },
+    )
+
+    await _resolver(playlists, mb).resolve_playlist(pid, CompilationPolicy.FLAG)
+
+    (track,) = await playlists.get_tracks(pid)
+    assert track.resolution_status == "flagged"
+    assert track.album_id == "rg-muchdance"
+
+
+def test_parse_type_info():
+    from services.playlist_track_resolver import _parse_type_info
+
+    assert _parse_type_info("Album + Compilation, Live") == (
+        "Album",
+        ("Compilation", "Live"),
+    )
+    assert _parse_type_info("Single") == ("Single", ())
+    assert _parse_type_info(None) == (None, ())

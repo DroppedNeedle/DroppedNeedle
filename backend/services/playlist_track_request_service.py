@@ -16,6 +16,7 @@ from api.v1.schemas.request import BatchRequestResponse
 from api.v1.schemas.settings import PlaylistTrackRequestSettings
 from core.exceptions import ValidationError
 from models.release_home import CompilationPolicy, RecordingHome, ResolutionStatus
+from models.song_identity import lead_artist
 from repositories.playlist_repository import PlaylistTrackRecord, TrackResolution
 from services.playlist_track_resolver import (
     PlaylistTrackResolver,
@@ -53,12 +54,6 @@ class _RequestService(Protocol):
 
 class _Preferences(Protocol):
     def get_playlist_track_request_settings(self) -> PlaylistTrackRequestSettings: ...
-
-
-def _lead_artist(artist_name: str) -> str:
-    """Spotify joins every credited artist with ", "; folders and searches
-    want the lead one."""
-    return artist_name.split(", ")[0].strip() or artist_name
 
 
 def requestable_items(tracks: list[PlaylistTrackRecord]) -> list[dict[str, Any]]:
@@ -154,7 +149,7 @@ class PlaylistTrackRequestService:
             if home and home.artist_credit and not home.is_various:
                 item["artist_name"] = home.artist_credit
             else:
-                item["artist_name"] = _lead_artist(item["artist_name"])
+                item["artist_name"] = lead_artist(item["artist_name"])
         return await self._requests.request_track_batch(
             items,
             user_id=user_id,
@@ -228,6 +223,8 @@ class PlaylistTrackRequestService:
                     home_tier=option.get("tier"),
                     resolution_status=ResolutionStatus.CHOSEN.value,
                     recording_mbid=wanted[0],
+                    album_id=wanted[1],
+                    cover_url=f"/api/v1/covers/release-group/{wanted[1]}?size=250",
                     # Kept so the user can change their mind later.
                     flag_options=track.flag_options,
                 )

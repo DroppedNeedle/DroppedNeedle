@@ -164,6 +164,10 @@ async def test_spotify_resync_keeps_resolutions_on_target_tables(tmp_path):
         second.target_release_group_mbid,
         second.resolution_status,
     ) == ("rec-fs", "rg-willy", "chosen")
+    # The row keeps showing the album the track is filed under, not the one
+    # the import picked again.
+    assert second.album_id == "rg-willy"
+    assert second.cover_url == "/api/v1/covers/release-group/rg-willy?size=250"
 
 
 # --- linking by recording (#204 follow-up) ------------------------------------

@@ -5829,11 +5829,15 @@ class NativeLibraryStore(PersistenceBase):
                 cursor = connection.execute(
                     "UPDATE library_playlist_tracks SET "
                     "recording_mbid = COALESCE(?, recording_mbid), "
+                    "album_id = COALESCE(?, album_id), "
+                    "cover_url = COALESCE(?, cover_url), "
                     "target_release_group_mbid = ?, home_tier = ?, "
                     "resolution_status = ?, flag_options = ? "
                     "WHERE id = ? AND playlist_id = ?",
                     (
                         fields.get("recording_mbid"),
+                        fields.get("album_id"),
+                        fields.get("cover_url"),
                         fields.get("target_release_group_mbid"),
                         fields.get("home_tier"),
                         fields.get("resolution_status"),

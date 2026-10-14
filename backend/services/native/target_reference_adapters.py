@@ -352,6 +352,8 @@ class TargetPlaylistRepository:
                     "home_tier": resolution.home_tier,
                     "resolution_status": resolution.resolution_status,
                     "flag_options": resolution.flag_options,
+                    "album_id": resolution.album_id,
+                    "cover_url": resolution.cover_url,
                 }
                 for track_id, resolution in updates.items()
             },

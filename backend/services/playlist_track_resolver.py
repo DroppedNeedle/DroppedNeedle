@@ -22,15 +22,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 
+from rapidfuzz import fuzz
+
 from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.validators import is_valid_isrc
 from models.album import Track
 from models.release_home import (
+    HomeTier,
     CompilationPolicy,
     HomeCandidate,
     RecordingHome,
@@ -40,14 +44,19 @@ from models.release_home import (
     recording_version_flags,
 )
 from models.release_type_policy import should_include_release
-from models.song_identity import same_song_title, song_title_key
-from repositories.musicbrainz_album import recording_home_candidates
+from models.song_identity import lead_artist, same_song_title, song_title_key
+from repositories.musicbrainz_album import (
+    _artist_name_matches,
+    recording_home_candidates,
+)
 from repositories.musicbrainz_base import (
     capture_mb_source_context,
     mb_api_get,
     normalize_mb_id,
 )
 from repositories.playlist_repository import PlaylistTrackRecord, TrackResolution
+from services.native.edition_suffix import strip_edition_suffix
+from services.native.title_match import fold
 from services.playlist_track_planner import (
     PlannerTrack,
     Substitute,
@@ -81,7 +90,53 @@ def same_song(
     )
 
 
+_ALBUM_TITLE_FLOOR = 90
+_NON_WORD_RE = re.compile(r"[^\w]+")
+_OFFICIAL_TIERS = frozenset(
+    {HomeTier.ALBUM, HomeTier.EP, HomeTier.SINGLE, HomeTier.SOUNDTRACK}
+)
+_VARIOUS_NAMES = frozenset({"various artists", "various", "va"})
+_ALBUM_SEARCH_LIMIT = 5
+
+
+def album_title_key(title: str) -> str:
+    """Comparable album title: edition qualifiers ("Deluxe", "Remastered")
+    dropped, accents and case folded, punctuation collapsed."""
+    return " ".join(
+        _NON_WORD_RE.sub(" ", fold(strip_edition_suffix(title or ""))).split()
+    )
+
+
+def same_album_title(a: str, b: str) -> bool:
+    """Strict on purpose: ``token_set_ratio`` would equate "Layers" with
+    "Layers of Fear"."""
+    key_a, key_b = album_title_key(a), album_title_key(b)
+    return bool(key_a and key_b) and fuzz.ratio(key_a, key_b) >= _ALBUM_TITLE_FLOOR
+
+
+def _parse_type_info(type_info: str | None) -> tuple[str | None, tuple[str, ...]]:
+    """``"Album + Compilation, Live"`` -> (``"Album"``, (``"Compilation"``, ``"Live"``))."""
+    if not type_info:
+        return None, ()
+    primary, _, secondary = type_info.partition(" + ")
+    return primary.strip() or None, tuple(
+        part.strip() for part in secondary.split(",") if part.strip()
+    )
+
+
 class _MbRepo(Protocol):
+    async def search_release_groups(
+        self,
+        artist: str,
+        title: str,
+        limit: int = ...,
+        offset: int = ...,
+        included_secondary_types: set[str] | None = ...,
+        include_all_types: bool = ...,
+        included_primary_types: set[str] | None = ...,
+        priority: RequestPriority = ...,
+    ) -> list[Any]: ...
+
     async def get_recording_homes(
         self, recording_mbid: str, *, priority: RequestPriority = ...
     ) -> list[RecordingHome] | None: ...
@@ -173,6 +228,7 @@ class PlaylistTrackResolver:
         self._semaphore = asyncio.Semaphore(_MB_CONCURRENCY)
         self._tracklists: dict[str, list[Track] | None] = {}
         self._studio_albums: dict[str, list[dict[str, Any]]] = {}
+        self._album_searches: dict[tuple[str, str], Any | None] = {}
 
     async def resolve_playlist(
         self,
@@ -205,12 +261,22 @@ class PlaylistTrackResolver:
             if identity.failed:
                 failed_ids.add(track.id)
                 continue
+            has_official = any(
+                classify_home(c) in _OFFICIAL_TIERS for c in identity.candidates
+            )
+            playlist_album = None
+            if policy is not CompilationPolicy.STUDIO or not has_official:
+                playlist_album = await self._playlist_album_for(track, identity)
             substitute = None
-            if policy is not CompilationPolicy.MATCH_PLAYLIST:
+            if policy is not CompilationPolicy.MATCH_PLAYLIST and not has_official:
                 substitute = await self._substitute_for(track, identity)
             planner_tracks.append(
                 PlannerTrack(
-                    track.id, identity.recording_mbid, identity.candidates, substitute
+                    track.id,
+                    identity.recording_mbid,
+                    identity.candidates,
+                    substitute,
+                    playlist_album,
                 )
             )
         summary.failed = len(failed_ids)
@@ -341,6 +407,96 @@ class PlaylistTrackResolver:
                 self._tracklists[key] = None
         return self._tracklists[key]
 
+    # -- the playlist's album ---------------------------------------------
+
+    async def _playlist_album_for(
+        self, track: PlaylistTrackRecord, identity: _Identity
+    ) -> Substitute | None:
+        """The album the playlist lists for this track (Spotify's), as a home.
+
+        First among the recording's own homes by title (the artist's credit
+        preferred); otherwise by searching that artist and album title and
+        finding the song on its tracklist, which may be another recording
+        of it. None when the playlist names no album or nothing matches.
+        """
+        album_name = (track.album_name or "").strip()
+        if not album_name or not identity.recording_mbid:
+            return None
+        titled = [
+            candidate
+            for candidate in identity.candidates
+            if same_album_title(album_name, candidate.title)
+        ]
+        if titled:
+            credited = [c for c in titled if c.credits_track_artist] or titled
+            home = best_home(credited)
+            if home is not None:
+                return Substitute(identity.recording_mbid, home)
+        try:
+            return await self._search_playlist_album(track, album_name)
+        except Exception:  # noqa: BLE001 - search is best-effort
+            logger.warning("playlist.resolve album search failed", exc_info=True)
+            return None
+
+    async def _search_playlist_album(
+        self, track: PlaylistTrackRecord, album_name: str
+    ) -> Substitute | None:
+        artist = lead_artist(track.artist_name)
+        key = (artist.casefold(), album_title_key(album_name))
+        if key not in self._album_searches:
+            results = await self._mb.search_release_groups(
+                artist,
+                album_name,
+                limit=_ALBUM_SEARCH_LIMIT,
+                include_all_types=True,
+                priority=self._priority,
+            )
+            self._album_searches[key] = next(
+                (
+                    result
+                    for result in results or []
+                    if same_album_title(album_name, getattr(result, "title", ""))
+                    and (
+                        _artist_name_matches(artist, getattr(result, "artist", None))
+                        or (getattr(result, "artist", "") or "").casefold()
+                        in _VARIOUS_NAMES
+                    )
+                ),
+                None,
+            )
+        result = self._album_searches[key]
+        if result is None:
+            return None
+        tracklist = await self._tracklist(result.musicbrainz_id)
+        song = next(
+            (
+                candidate
+                for candidate in tracklist or []
+                if candidate.recording_id
+                and same_song(track.track_name, track.duration, candidate)
+            ),
+            None,
+        )
+        if song is None:
+            return None
+        primary, secondary = _parse_type_info(getattr(result, "type_info", None))
+        various = (getattr(result, "artist", "") or "").casefold() in _VARIOUS_NAMES
+        year = getattr(result, "year", None)
+        return Substitute(
+            normalize_mb_id(song.recording_id),
+            HomeCandidate(
+                release_group_mbid=normalize_mb_id(result.musicbrainz_id),
+                title=result.title,
+                primary_type=primary,
+                secondary_types=secondary,
+                official=True,
+                is_various=various,
+                credits_track_artist=not various
+                and _artist_name_matches(artist, getattr(result, "artist", None)),
+                first_release_date=str(year) if year else None,
+            ),
+        )
+
     # -- studio substitutes ------------------------------------------------
 
     async def _substitute_for(
@@ -422,13 +578,25 @@ def _track_artist_mbid(identity: _Identity) -> str | None:
     return min(counts, key=lambda artist: (-counts[artist], artist))
 
 
+def release_group_cover_url(release_group_mbid: str) -> str:
+    """The cover the Spotify import gives a resolved row."""
+    return f"/api/v1/covers/release-group/{release_group_mbid}?size=250"
+
+
 def _to_resolution(plan: TrackPlan) -> TrackResolution:
+    # A filed track shows the album it is filed under: cover art, album link
+    # and album-based source linking then agree with what is on disk.
+    album = (
+        plan.release_group_mbid if plan.status is ResolutionStatus.RESOLVED else None
+    )
     return TrackResolution(
         target_release_group_mbid=plan.release_group_mbid,
         home_tier=plan.tier.label if plan.tier is not None else None,
         resolution_status=plan.status.value,
         recording_mbid=plan.recording_mbid,
         flag_options=[option.to_json() for option in plan.options] or None,
+        album_id=album,
+        cover_url=release_group_cover_url(album) if album else None,
     )
 
 
