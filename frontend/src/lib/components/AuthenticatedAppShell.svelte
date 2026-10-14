@@ -443,12 +443,12 @@
 					<img
 						src={withBasePath('/logo_wide.png')}
 						alt="DroppedNeedle"
-						class="h-8 hidden sm:block"
+						class="dn-logo h-8 hidden sm:block"
 					/>
 					<img
 						src={withBasePath('/logo_icon.png')}
 						alt="DroppedNeedle"
-						class="h-8 block sm:hidden"
+						class="dn-logo h-8 block sm:hidden"
 					/>
 				</a>
 			</div>

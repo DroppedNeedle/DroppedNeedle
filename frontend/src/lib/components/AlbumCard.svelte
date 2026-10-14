@@ -1,6 +1,5 @@
 <script lang="ts">
 	import type { Album, EnrichmentSource } from '$lib/types';
-	import { colors } from '$lib/colors';
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import { libraryStore } from '$lib/stores/library';
 	import { integrationStore } from '$lib/stores/integration';
@@ -181,16 +180,15 @@
 
 	{#if $integrationStore.download_client && !inLibrary && !isRequested}
 		<button
-			class="absolute bottom-2 left-2 z-20 btn btn-square btn-md opacity-0 group-hover:opacity-100 transition-opacity duration-200 border-none shadow-lg"
-			style="background-color: {colors.accent};"
+			class="absolute bottom-2 left-2 z-20 btn btn-square btn-md opacity-0 group-hover:opacity-100 transition-opacity duration-200 border-none bg-accent text-accent-content shadow-lg"
 			onclick={handleRequest}
 			disabled={requesting}
 			aria-label="Request {album.title}"
 		>
 			{#if requesting}
-				<span class="loading loading-spinner loading-sm" style="color: {colors.secondary};"></span>
+				<span class="loading loading-spinner loading-sm"></span>
 			{:else}
-				<Download class="h-5 w-5" color={colors.secondary} strokeWidth={2.5} />
+				<Download class="h-5 w-5" strokeWidth={2.5} />
 			{/if}
 		</button>
 	{/if}

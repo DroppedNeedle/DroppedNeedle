@@ -51,6 +51,7 @@
 	import MediaServerAccountsCard from '$lib/components/profile/MediaServerAccountsCard.svelte';
 	import NavidromeMusicFoldersCard from '$lib/components/profile/NavidromeMusicFoldersCard.svelte';
 	import SessionsManager from '$lib/components/profile/SessionsManager.svelte';
+	import AppearanceCard from '$lib/components/profile/AppearanceCard.svelte';
 	import ScrobblingDiscoveryCard from '$lib/components/profile/ScrobblingDiscoveryCard.svelte';
 	import SpotifyConnectionCard from '$lib/components/profile/SpotifyConnectionCard.svelte';
 	import ProfileConnectApps from '$lib/components/profile/ProfileConnectApps.svelte';
@@ -158,6 +159,7 @@
 
 		return [
 			{ id: 'account', label: 'Account' },
+			{ id: 'appearance', label: 'Appearance' },
 			{ id: 'sessions', label: 'Sessions' },
 			{ id: 'connected-services', label: 'Connected Services' },
 			...(mediaAccountsEnabled ? [{ id: 'media-accounts', label: 'Media Accounts' }] : []),
@@ -384,11 +386,11 @@
 	}
 
 	function getServiceColor(name: string): string {
-		if (name === 'Jellyfin') return 'text-purple-400';
-		if (name === 'Navidrome') return 'text-green-400';
-		if (name === 'Plex') return 'text-amber-400';
-		if (name === 'ListenBrainz') return 'text-orange-400';
-		if (name === 'Last.fm') return 'text-red-400';
+		if (name === 'Jellyfin') return 'text-purple-400 light:text-purple-700';
+		if (name === 'Navidrome') return 'text-green-400 light:text-green-700';
+		if (name === 'Plex') return 'text-amber-400 light:text-amber-700';
+		if (name === 'ListenBrainz') return 'text-orange-400 light:text-orange-700';
+		if (name === 'Last.fm') return 'text-red-400 light:text-red-700';
 		return 'text-base-content';
 	}
 
@@ -422,9 +424,9 @@
 	}
 
 	function getSourceColor(source: string): string {
-		if (source === 'Jellyfin') return 'text-purple-400';
-		if (source === 'Navidrome') return 'text-green-400';
-		if (source === 'Local Files') return 'text-teal-400';
+		if (source === 'Jellyfin') return 'text-purple-400 light:text-purple-700';
+		if (source === 'Navidrome') return 'text-green-400 light:text-green-700';
+		if (source === 'Local Files') return 'text-teal-400 light:text-teal-700';
 		return 'text-base-content';
 	}
 
@@ -780,6 +782,10 @@
 						</div>
 					</div>
 				</section>
+
+				<div id="appearance" class="scroll-mt-24 xl:ml-40">
+					<AppearanceCard />
+				</div>
 
 				<div id="sessions" class="scroll-mt-24 xl:ml-40">
 					<SessionsManager />

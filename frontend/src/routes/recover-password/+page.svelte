@@ -84,7 +84,12 @@
 <div class="recovery-wrap grain min-h-screen flex items-center justify-center p-4 py-10">
 	<div class="w-full max-w-lg">
 		<div class="recovery-brand">
-			<img src={withBasePath('/logo_icon.png')} alt="" aria-hidden="true" class="recovery-mark" />
+			<img
+				src={withBasePath('/logo_icon.png')}
+				alt=""
+				aria-hidden="true"
+				class="dn-logo recovery-mark"
+			/>
 			<h1 class="recovery-wordmark">DroppedNeedle</h1>
 			<div class="recovery-rule" aria-hidden="true"></div>
 			<p class="recovery-kicker">Account recovery</p>

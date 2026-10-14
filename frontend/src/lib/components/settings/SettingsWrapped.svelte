@@ -31,7 +31,7 @@
 	<div class="card-body gap-4">
 		<div class="flex items-center gap-3">
 			<div
-				class="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-500/10 text-purple-400 ring-1 ring-purple-500/20"
+				class="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-500/10 text-purple-400 light:text-purple-700 ring-1 ring-purple-500/20"
 			>
 				<Gift class="h-5 w-5" />
 			</div>

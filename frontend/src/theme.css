@@ -1,0 +1,53 @@
+/* daisyUI themes, shared by app.css and auth.css so every page switches together */
+@plugin "daisyui" {
+	themes:
+		dark --default,
+		light;
+}
+@plugin "daisyui/theme" {
+	name: 'dark';
+	default: true;
+	--color-base-300: #1f271b;
+	--color-base-200: #161d12;
+	--color-base-100: #0d120a;
+	--color-primary: #aed5f2;
+	--color-primary-content: #071520;
+	--color-accent: #bbdb9b;
+	--color-accent-content: #0f1a0a;
+}
+/* Same hues as dark, darkened until text on base-100 passes WCAG AA. Every
+   role is set, including the status colours: daisyUI's stock values are
+   tuned for dark surfaces and fail as text here. */
+@plugin "daisyui/theme" {
+	name: 'light';
+	--color-base-300: #e0e6d9;
+	--color-base-200: #edf1e8;
+	--color-base-100: #f6f8f3;
+	--color-base-content: #1c2418;
+	--color-primary: #35698d;
+	--color-primary-content: #f4f9fd;
+	--color-secondary: #c22879;
+	--color-secondary-content: #f6f8f3;
+	--color-accent: #586f40;
+	--color-accent-content: #f3f8ee;
+	/* dark's neutral sits a shade below the page (active menu items, count
+	   badges); light keeps that role instead of daisyUI's near-black */
+	--color-neutral: #d3dbca;
+	--color-neutral-content: #1c2418;
+	--color-info: #00759f;
+	--color-info-content: #f6f8f3;
+	--color-success: #0f7c55;
+	--color-success-content: #f6f8f3;
+	--color-warning: #976200;
+	--color-warning-content: #f6f8f3;
+	--color-error: #c12440;
+	--color-error-content: #f6f8f3;
+}
+/* Dark is the base look; `light:` overrides the few raw palette colours that
+   are too pale on a light background. */
+@custom-variant light (&:where([data-theme=light], [data-theme=light] *));
+
+/* The logo PNGs are drawn in the dark theme's pale blue */
+[data-theme='light'] .dn-logo {
+	filter: brightness(0.45) saturate(1.6);
+}

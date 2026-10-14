@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import { ChevronDown, Download } from 'lucide-svelte';
-	import { colors } from '$lib/colors';
 	import { libraryStore } from '$lib/stores/library';
 	import AlbumImage from './AlbumImage.svelte';
 	import SampleButton from './discover/SampleButton.svelte';
@@ -68,8 +67,7 @@
 
 {#snippet requestButton(rg: Release, ariaLabel: string)}
 	<button
-		class="w-8 h-8 sm:w-10 sm:h-10 rounded-full opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity duration-200 border-none flex items-center justify-center shadow-sm"
-		style="background-color: {colors.accent};"
+		class="w-8 h-8 sm:w-10 sm:h-10 rounded-full opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity duration-200 border-none flex items-center justify-center bg-accent text-accent-content shadow-sm"
 		onclick={(e) => {
 			e.stopPropagation();
 			onRequest(rg.id, rg.title);
@@ -78,9 +76,9 @@
 		aria-label={ariaLabel}
 	>
 		{#if requestingIds.has(rg.id)}
-			<span class="loading loading-spinner loading-xs" style="color: {colors.secondary};"></span>
+			<span class="loading loading-spinner loading-xs"></span>
 		{:else}
-			<Download class="h-4 w-4 sm:h-5 sm:w-5" color={colors.secondary} strokeWidth={2.5} />
+			<Download class="h-4 w-4 sm:h-5 sm:w-5" strokeWidth={2.5} />
 		{/if}
 	</button>
 {/snippet}
@@ -172,7 +170,7 @@
 			</div>
 			{#if showLoadingIndicator}
 				<div class="flex items-center justify-center gap-2 p-3">
-					<span class="loading loading-spinner loading-sm" style="color: {colors.accent};"></span>
+					<span class="loading loading-spinner loading-sm text-accent"></span>
 				</div>
 			{/if}
 		</div>

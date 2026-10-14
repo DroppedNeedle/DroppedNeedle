@@ -152,7 +152,12 @@
 <div class="login-wrap grain min-h-screen flex items-center justify-center p-4">
 	<div class="w-full max-w-md">
 		<div class="login-brand">
-			<img src={withBasePath('/logo_icon.png')} alt="" aria-hidden="true" class="login-mark" />
+			<img
+				src={withBasePath('/logo_icon.png')}
+				alt=""
+				aria-hidden="true"
+				class="dn-logo login-mark"
+			/>
 			<h1 class="login-wordmark">DroppedNeedle</h1>
 			<div class="login-rule" aria-hidden="true"></div>
 			<p class="login-sub">Sign in to continue</p>

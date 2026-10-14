@@ -34,6 +34,8 @@ vi.stubGlobal('localStorage', {
 });
 
 vi.mock('$app/environment', () => ({ browser: true }));
+// imported for its side effect (applying the theme), which needs a DOM
+vi.mock('$lib/stores/theme.svelte', () => ({}));
 vi.mock('$lib/api/client', () => {
 	class ApiError extends Error {
 		constructor(

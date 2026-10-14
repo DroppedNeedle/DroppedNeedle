@@ -55,6 +55,16 @@
 			inset 0 24px 48px -36px rgb(0 0 0 / 0.9);
 	}
 
+	/* Light steps down from the page instead of sinking to near-black */
+	:global([data-theme='light']) .ms-footer {
+		background: linear-gradient(180deg, var(--color-base-200), var(--color-base-300));
+		box-shadow: inset 0 1px 0 oklch(from var(--color-base-content) l c h / 0.05);
+	}
+
+	:global([data-theme='light']) .ms-footer__logo {
+		filter: brightness(0.25);
+	}
+
 	.ms-footer__inner {
 		width: 100%;
 		max-width: 80rem;

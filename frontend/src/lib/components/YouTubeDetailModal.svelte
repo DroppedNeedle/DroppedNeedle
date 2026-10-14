@@ -14,7 +14,6 @@
 	import { goto } from '$app/navigation';
 	import { TOAST_DURATION } from '$lib/constants';
 	import { YOUTUBE_ENDPOINTS } from '$lib/queries/youtube/endpoints';
-	import { colors } from '$lib/colors';
 	import { toastStore } from '$lib/stores/toast';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { launchYouTubePlayback } from '$lib/player/launchYouTubePlayback';
@@ -464,9 +463,8 @@
 								<div
 									class={[
 										'flex items-center gap-3 w-full py-2.5 px-3 rounded-lg transition-colors group/track',
-										!isCurrentlyPlaying && 'hover:bg-base-200'
+										isCurrentlyPlaying ? 'bg-accent/8' : 'hover:bg-base-200'
 									]}
-									style={isCurrentlyPlaying ? `background-color: ${colors.accent}15;` : ''}
 								>
 									<button
 										class="flex items-center gap-3 flex-1 min-w-0 text-left cursor-pointer"
@@ -474,9 +472,8 @@
 									>
 										<span
 											class="font-mono w-7 text-right text-sm shrink-0 {isCurrentlyPlaying
-												? ''
+												? 'text-accent'
 												: 'opacity-40'}"
-											style={isCurrentlyPlaying ? `color: ${colors.accent};` : ''}
 										>
 											{#if isCurrentlyPlaying}
 												<NowPlayingIndicator />
@@ -484,18 +481,13 @@
 												{track.track_number}
 											{/if}
 										</span>
-										<span
-											class="text-sm truncate flex-1"
-											style={isCurrentlyPlaying ? `color: ${colors.accent};` : ''}
+										<span class="text-sm truncate flex-1 {isCurrentlyPlaying ? 'text-accent' : ''}"
 											>{track.track_name}</span
 										>
 										<Play
 											class="h-4 w-4 shrink-0 transition-opacity {isCurrentlyPlaying
 												? 'opacity-100'
-												: 'opacity-0 group-hover/track:opacity-100'} fill-current"
-											style={isCurrentlyPlaying
-												? `color: ${colors.accent};`
-												: `color: ${colors.accent};`}
+												: 'opacity-0 group-hover/track:opacity-100'} fill-current text-accent"
 										/>
 									</button>
 

@@ -94,7 +94,7 @@
 		<div class="card-body gap-4">
 			<div class="flex items-center gap-3">
 				<div
-					class="flex h-11 w-11 items-center justify-center rounded-xl bg-orange-500/10 text-orange-400 ring-1 ring-orange-500/20"
+					class="flex h-11 w-11 items-center justify-center rounded-xl bg-orange-500/10 text-orange-400 light:text-orange-700 ring-1 ring-orange-500/20"
 				>
 					<AudioLines class="h-5 w-5" />
 				</div>

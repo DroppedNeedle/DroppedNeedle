@@ -186,13 +186,15 @@
 
 <dialog bind:this={dialogEl} class="modal" onclose={handleClose} aria-label="Playlist Discovery">
 	<div
-		class="modal-box w-[92vw] max-w-4xl max-h-[85vh] sm:max-w-4xl max-sm:w-screen max-sm:max-w-full max-sm:max-h-screen max-sm:rounded-none flex flex-col p-0! overflow-hidden rounded-2xl bg-base-100/80 backdrop-blur-xl shadow-[0_8px_64px_oklch(from_var(--color-primary)_l_c_h_/_0.12)] border border-white/10 relative"
+		class="modal-box w-[92vw] max-w-4xl max-h-[85vh] sm:max-w-4xl max-sm:w-screen max-sm:max-w-full max-sm:max-h-screen max-sm:rounded-none flex flex-col p-0! overflow-hidden rounded-2xl bg-base-100/80 backdrop-blur-xl shadow-[0_8px_64px_oklch(from_var(--color-primary)_l_c_h_/_0.12)] border border-base-content/10 relative"
 	>
 		<div
 			class="absolute top-0 inset-x-0 h-1 bg-linear-to-r from-primary/80 via-secondary/60 to-primary/80 shadow-[0_2px_12px_oklch(from_var(--color-primary)_l_c_h_/_0.3)] z-10 rounded-t-2xl"
 		></div>
 
-		<div class="flex items-center justify-between px-6 pt-6 pb-4 shrink-0 border-b border-white/5">
+		<div
+			class="flex items-center justify-between px-6 pt-6 pb-4 shrink-0 border-b border-base-content/5"
+		>
 			<div class="flex items-center gap-2 min-w-0">
 				<Sparkles class="h-5 w-5 text-primary shrink-0" />
 				<h2 class="text-lg font-bold truncate">
@@ -216,7 +218,7 @@
 		<div class="flex-1 overflow-y-auto px-6 pb-6">
 			{#if showPicker}
 				<div
-					class="flex flex-col gap-4 py-4 rounded-xl bg-base-200/30 p-4 mt-4 border border-white/5"
+					class="flex flex-col gap-4 py-4 rounded-xl bg-base-200/30 p-4 mt-4 border border-base-content/5"
 				>
 					<p class="text-sm text-base-content/60">
 						Pick a playlist to get album suggestions based on its contents.
@@ -299,7 +301,7 @@
 					{#if isLoading}
 						<div class="flex flex-col gap-5 py-4">
 							<div
-								class="rounded-xl bg-gradient-to-r from-primary/10 via-base-200/60 to-secondary/10 p-4 border border-white/10 backdrop-blur-sm"
+								class="rounded-xl bg-gradient-to-r from-primary/10 via-base-200/60 to-secondary/10 p-4 border border-base-content/10 backdrop-blur-sm"
 							>
 								<div class="flex flex-wrap items-center gap-4">
 									<div class="skeleton h-4 w-24 rounded"></div>
@@ -361,7 +363,7 @@
 					{:else}
 						{#if profile}
 							<div
-								class="rounded-xl bg-gradient-to-r from-primary/10 via-base-200/60 to-secondary/10 p-4 mb-5 border border-white/10 backdrop-blur-sm"
+								class="rounded-xl bg-gradient-to-r from-primary/10 via-base-200/60 to-secondary/10 p-4 mb-5 border border-base-content/10 backdrop-blur-sm"
 							>
 								<div class="flex flex-wrap items-center gap-4 text-sm">
 									<span class="inline-flex items-center gap-1.5 text-base-content/70">
@@ -408,7 +410,7 @@
 										</div>
 										{#if isExpanded}
 											<div
-												class="flex-1 min-w-0 rounded-lg bg-base-200/30 border border-white/5 p-2 mt-2 sm:mt-0"
+												class="flex-1 min-w-0 rounded-lg bg-base-200/30 border border-base-content/5 p-2 mt-2 sm:mt-0"
 											>
 												{#if expandLoading}
 													<div class="flex flex-col gap-1.5 py-1">
@@ -463,7 +465,7 @@
 												<div class="tooltip tooltip-bottom" data-tip="Go to album">
 													<a
 														href={albumLink}
-														class="btn btn-circle btn-ghost btn-sm border border-white/10 hover:border-primary/30 hover:text-primary min-h-[36px] min-w-[36px]"
+														class="btn btn-circle btn-ghost btn-sm border border-base-content/10 hover:border-primary/30 hover:text-primary min-h-[36px] min-w-[36px]"
 														aria-label="Go to {album.name}"
 													>
 														<ExternalLink class="h-3.5 w-3.5" />
@@ -504,7 +506,7 @@
 										{/if}
 										<button
 											type="button"
-											class="btn btn-circle btn-ghost btn-sm border border-white/10 hover:border-error/30 hover:text-error min-h-[36px] min-w-[36px]"
+											class="btn btn-circle btn-ghost btn-sm border border-base-content/10 hover:border-error/30 hover:text-error min-h-[36px] min-w-[36px]"
 											onclick={() => ignoreAlbum(album)}
 											title="Ignore suggestion"
 											aria-label="Ignore suggestion"

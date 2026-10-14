@@ -93,7 +93,7 @@
 			<ArrowLeft class="h-4 w-4" />
 		</a>
 		<h1 class="flex min-w-0 flex-1 items-center gap-2 text-2xl font-bold sm:text-3xl">
-			<SpotifyIcon class="h-6 w-6 shrink-0 text-green-400" />
+			<SpotifyIcon class="h-6 w-6 shrink-0 text-green-400 light:text-green-700" />
 			Import from Spotify
 		</h1>
 		{#if unimportedCount > 0 && !importingAll}
@@ -194,7 +194,7 @@
 									<LoaderCircle class="h-8 w-8 animate-spin text-white" />
 								{:else}
 									<div class="flex flex-col items-center gap-1 rounded-xl px-3 py-2 text-white">
-										<SpotifyIcon class="h-6 w-6 text-green-400" />
+										<SpotifyIcon class="h-6 w-6 text-green-400 light:text-green-700" />
 										<span class="text-xs font-semibold">Import</span>
 									</div>
 								{/if}

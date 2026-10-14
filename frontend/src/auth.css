@@ -1,22 +1,9 @@
 @import 'tailwindcss' source(none);
+@import './theme.css';
 @source './routes/login/+page.svelte';
 @source './routes/setup/+page.svelte';
 @source './routes/recover-password/+page.svelte';
 @source './routes/auth/callback/+page.svelte';
-@plugin "daisyui" {
-	themes: dark --default;
-}
-@plugin "daisyui/theme" {
-	name: 'dark';
-	default: true;
-	--color-base-300: #1f271b;
-	--color-base-200: #161d12;
-	--color-base-100: #0d120a;
-	--color-primary: #aed5f2;
-	--color-primary-content: #071520;
-	--color-accent: #bbdb9b;
-	--color-accent-content: #0f1a0a;
-}
 
 /* Auth-free routes keep the established DroppedNeedle type system without loading app.css. */
 @font-face {

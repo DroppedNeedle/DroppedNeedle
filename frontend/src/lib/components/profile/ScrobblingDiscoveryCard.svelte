@@ -223,7 +223,7 @@
 				>
 					<div class="flex min-w-0 items-center gap-3">
 						<div
-							class="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-500/10 text-orange-400 ring-1 ring-orange-500/20"
+							class="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-500/10 text-orange-400 light:text-orange-700 ring-1 ring-orange-500/20"
 						>
 							<Music class="h-[1.15rem] w-[1.15rem]" />
 						</div>
@@ -318,7 +318,7 @@
 				>
 					<div class="flex min-w-0 items-center gap-3">
 						<div
-							class="flex h-10 w-10 items-center justify-center rounded-xl bg-red-500/10 text-red-400 ring-1 ring-red-500/20"
+							class="flex h-10 w-10 items-center justify-center rounded-xl bg-red-500/10 text-red-400 light:text-red-700 ring-1 ring-red-500/20"
 						>
 							<Radio class="h-[1.15rem] w-[1.15rem]" />
 						</div>

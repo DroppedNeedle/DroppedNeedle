@@ -3,7 +3,6 @@
 	import { onMount } from 'svelte';
 	import { Disc3, Download } from 'lucide-svelte';
 	import type { TopAlbum } from '$lib/types';
-	import { colors } from '$lib/colors';
 	import { libraryStore } from '$lib/stores/library';
 	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -155,8 +154,7 @@
 						{#if !isInLibrary(album) && !isRequested(album)}
 							<button
 								type="button"
-								class="btn btn-circle btn-sm opacity-0 group-hover:opacity-100 transition-all shrink-0 hover:scale-110 hover:brightness-110"
-								style="background-color: {colors.accent}; border: none;"
+								class="btn btn-circle btn-sm opacity-0 group-hover:opacity-100 transition-all shrink-0 hover:scale-110 hover:brightness-110 border-none bg-accent text-accent-content"
 								onclick={(e) => {
 									e.stopPropagation();
 									e.preventDefault();
@@ -166,12 +164,9 @@
 								aria-label="Request album"
 							>
 								{#if isRequesting(album)}
-									<span
-										class="loading loading-spinner loading-xs"
-										style="color: {colors.secondary};"
-									></span>
+									<span class="loading loading-spinner loading-xs"></span>
 								{:else}
-									<Download class="h-4 w-4" color={colors.secondary} strokeWidth={2.5} />
+									<Download class="h-4 w-4" strokeWidth={2.5} />
 								{/if}
 							</button>
 						{/if}

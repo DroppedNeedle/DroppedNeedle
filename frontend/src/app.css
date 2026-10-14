@@ -1,19 +1,6 @@
 @import 'tailwindcss';
+@import './theme.css';
 @plugin "@tailwindcss/typography";
-@plugin "daisyui" {
-	themes: dark --default;
-}
-@plugin "daisyui/theme" {
-	name: 'dark';
-	default: true;
-	--color-base-300: #1f271b;
-	--color-base-200: #161d12;
-	--color-base-100: #0d120a;
-	--color-primary: #aed5f2;
-	--color-primary-content: #071520;
-	--color-accent: #bbdb9b;
-	--color-accent-content: #0f1a0a;
-}
 
 /* Self-hosted (SIL OFL) so no external font calls; Latin + Latin-ext subsets */
 @font-face {
@@ -3824,6 +3811,19 @@ details[open] > summary .management-editor-chevron {
 	--ms-page-bottom-gap: 1rem;
 }
 
+/* Brand hues one step darker so they read as text on light surfaces */
+[data-theme='light'] {
+	--color-primary-rgb: 53 105 141;
+	--brand-library: 21 128 61;
+	--brand-listenbrainz: 182 85 0;
+	--brand-jellyfin: 126 34 206;
+	--brand-localfiles: 15 118 110;
+	--brand-discover: 0 116 154;
+	--brand-navidrome: 67 56 202;
+	--brand-plex: 152 102 3;
+	--brand-hero: 113 113 122;
+}
+
 /* colour derives from --color-primary, so a rebrand only needs the theme token changed */
 @utility glow-primary {
 	box-shadow: 0 0 20px oklch(from var(--color-primary) l c h / 0.15);
@@ -4264,9 +4264,9 @@ textarea {
 		background: linear-gradient(
 			90deg,
 			transparent 0%,
-			rgba(255, 255, 255, 0.04) 40%,
-			rgba(255, 255, 255, 0.08) 50%,
-			rgba(255, 255, 255, 0.04) 60%,
+			color-mix(in oklab, var(--color-base-content) 4%, transparent) 40%,
+			color-mix(in oklab, var(--color-base-content) 8%, transparent) 50%,
+			color-mix(in oklab, var(--color-base-content) 4%, transparent) 60%,
 			transparent 100%
 		);
 		background-size: 200% 100%;

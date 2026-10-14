@@ -7,7 +7,6 @@
 		HeldImport,
 		LibraryAlbumSummary
 	} from '$lib/types';
-	import { colors } from '$lib/colors';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
 	import AlbumDownloadStatus from '$lib/components/downloads/AlbumDownloadStatus.svelte';
@@ -481,10 +480,7 @@
 									Unmatched files only
 								</div>
 							{:else}
-								<div
-									class="badge h-8 gap-2 px-3"
-									style="background-color: {colors.accent}; color: {colors.secondary};"
-								>
+								<div class="badge h-8 gap-2 border-none bg-accent px-3 text-accent-content">
 									<Check class="h-4 w-4" />
 									{libraryComplete || !coverageKnown
 										? 'In Library'
@@ -520,8 +516,7 @@
 							{/if}
 						{:else}
 							<button
-								class="btn btn-lg gap-2"
-								style="background-color: {colors.accent}; color: {colors.secondary}; border: none;"
+								class="btn btn-lg gap-2 border-none bg-accent text-accent-content"
 								onclick={() => onrequest()}
 								disabled={requesting}
 							>

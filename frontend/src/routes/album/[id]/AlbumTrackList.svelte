@@ -17,7 +17,6 @@
 	import { resolveSourceTrack } from './albumTrackResolvers';
 	import { normalizeDiscNumber, getDiscTrackKey } from '$lib/player/queueHelpers';
 	import { formatBytes, formatDuration } from '$lib/utils/formatting';
-	import { colors } from '$lib/colors';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
 	import TrackPlayButton from '$lib/components/TrackPlayButton.svelte';
@@ -262,15 +261,15 @@
 					!trackTask &&
 					$integrationStore.download_client}
 				<li
-					class="list-row group hover:bg-base-300/50 transition-colors p-3 sm:p-4"
-					style={isCurrentlyPlaying ? `background-color: ${colors.accent}20;` : ''}
+					class="list-row group transition-colors p-3 sm:p-4 {isCurrentlyPlaying
+						? 'bg-accent/12'
+						: 'hover:bg-base-300/50'}"
 				>
 					<div class="list-col-grow flex items-center gap-4 w-full">
 						<div
 							class="font-medium w-8 text-center shrink-0 {isCurrentlyPlaying
-								? ''
+								? 'text-accent'
 								: 'text-base-content/60'}"
-							style={isCurrentlyPlaying ? `color: ${colors.accent};` : ''}
 						>
 							{#if isCurrentlyPlaying}
 								<NowPlayingIndicator />
@@ -286,10 +285,7 @@
 						{/if}
 
 						<div class="flex-1 min-w-0">
-							<div
-								class="font-medium truncate"
-								style={isCurrentlyPlaying ? `color: ${colors.accent};` : ''}
-							>
+							<div class="font-medium truncate {isCurrentlyPlaying ? 'text-accent' : ''}">
 								{track.title}
 							</div>
 							{#if libMeta?.artist_name && libMeta.artist_name !== album.artist_name}
