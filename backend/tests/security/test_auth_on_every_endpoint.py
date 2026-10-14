@@ -1126,6 +1126,7 @@ def _track_request_service_stub():
         return_value=BatchRequestResponse(success=True, message="ok")
     )
     svc.choose_home = AsyncMock(side_effect=HTTPException(status_code=404))
+    svc.link_by_recording = AsyncMock(return_value=0)
     return svc
 
 

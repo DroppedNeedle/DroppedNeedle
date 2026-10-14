@@ -6154,6 +6154,93 @@ class NativeLibraryStore(PersistenceBase):
             await self._invalidate()
         return result
 
+    async def link_target_playlist_tracks_by_recording(
+        self, playlist_id: str, changed_at: str
+    ) -> int:
+        """Link unlinked entries to the library track carrying their recording (#204).
+
+        Album-based source resolution only finds files in the album an entry
+        was imported against, once that album is identified. A track requested
+        one by one lands in the album the planner chose and may sit in
+        identification review, but the import records its recording on
+        ``local_tracks.embedded_recording_mbid`` either way, so matching on the
+        entry's ``recording_mbid`` links it regardless. Entries already linked
+        are never touched; an entry with no source yet is promoted to ``local``
+        (the #381 healing rule), one that has a source keeps it.
+        """
+
+        def operation(connection: sqlite3.Connection) -> int:
+            entries = connection.execute(
+                "SELECT id, recording_mbid, source_type, available_sources "
+                "FROM library_playlist_tracks WHERE playlist_id = ? "
+                "AND local_track_id IS NULL AND recording_mbid IS NOT NULL "
+                "AND recording_mbid <> ''",
+                (playlist_id,),
+            ).fetchall()
+            updated = 0
+            for entry in entries:
+                recording = str(entry["recording_mbid"]).casefold()
+                match = connection.execute(
+                    "SELECT t.id, t.local_album_id, "
+                    "COALESCE(ta.local_artist_id, a.album_artist_id) AS artist_id "
+                    "FROM local_tracks t JOIN local_albums a ON a.id = t.local_album_id "
+                    "LEFT JOIN local_track_artists ta "
+                    "ON ta.local_track_id = t.id AND ta.position = 0 "
+                    "WHERE t.availability = 'indexed' AND ("
+                    "LOWER(t.embedded_recording_mbid) = ? OR t.id IN ("
+                    "SELECT identity.local_track_id "
+                    "FROM local_track_external_identities identity "
+                    "WHERE LOWER(identity.recording_mbid) = ?)) "
+                    "ORDER BY t.id LIMIT 1",
+                    (recording, recording),
+                ).fetchone()
+                if match is None:
+                    continue
+                local_track_id = str(match["id"])
+                assignments = (
+                    "library_file_id = ?, local_track_id = ?, local_album_id = ?, "
+                    "local_artist_id = ?, reference_tombstone_id = NULL"
+                )
+                params: list[Any] = [
+                    local_track_id,
+                    local_track_id,
+                    match["local_album_id"],
+                    match["artist_id"],
+                ]
+                if not entry["source_type"]:
+                    sources: list[str] = []
+                    raw = entry["available_sources"]
+                    if raw:
+                        try:
+                            decoded = json.loads(raw)
+                        except json.JSONDecodeError:
+                            decoded = []
+                        if isinstance(decoded, list):
+                            sources = [str(item) for item in decoded]
+                    if "local" not in sources:
+                        sources.append("local")
+                    assignments += (
+                        ", source_type = 'local', track_source_id = ?, "
+                        "available_sources = ?"
+                    )
+                    params += [local_track_id, json.dumps(sorted(sources))]
+                updated += connection.execute(
+                    f"UPDATE library_playlist_tracks SET {assignments} "
+                    "WHERE id = ? AND playlist_id = ? AND local_track_id IS NULL",
+                    (*params, entry["id"], playlist_id),
+                ).rowcount
+            if updated:
+                connection.execute(
+                    "UPDATE library_playlists SET updated_at = ? WHERE id = ?",
+                    (changed_at, playlist_id),
+                )
+            return updated
+
+        result = await self._write(operation)
+        if result:
+            await self._invalidate()
+        return result
+
     async def target_playlist_streamable_counts(
         self,
     ) -> dict[str, tuple[int, int]]:

@@ -211,6 +211,14 @@ class PlaylistTrackResolver:
         playlist_id: str,
         policy: CompilationPolicy = CompilationPolicy.MATCH_PLAYLIST,
     ) -> ResolutionSummary:
+        # Entries whose recording is already in the library (under any album,
+        # identified or not) are linked first so they count as owned.
+        link = getattr(self._playlists, "link_tracks_by_recording", None)
+        if link is not None:
+            try:
+                await link(playlist_id)
+            except Exception:  # noqa: BLE001 - ownership falls back to album links
+                logger.warning("playlist.resolve could not link by recording")
         tracks = await self._playlists.get_tracks(playlist_id)
         summary = ResolutionSummary(tracks=len(tracks))
         pending: list[PlaylistTrackRecord] = []

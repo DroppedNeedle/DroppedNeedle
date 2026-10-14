@@ -357,3 +357,69 @@ def test_job_failure_is_reported_not_raised(env):
     _channel, event, data = _wait(sse)
     assert event == "playlist_tracks_failed"
     assert "boom" not in data["message"]
+
+
+# --- linking by recording (#204 follow-up) ------------------------------------
+
+
+def _library_files(tmp_path, *recordings):
+    """The legacy library table, sharing the playlist database."""
+    import sqlite3
+
+    with sqlite3.connect(tmp_path / "library.db") as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS library_files "
+            "(id TEXT PRIMARY KEY, recording_mbid TEXT, deleted_at TEXT)"
+        )
+        for index, recording in enumerate(recordings):
+            conn.execute(
+                "INSERT INTO library_files (id, recording_mbid) VALUES (?, ?)",
+                (f"file-{index}", recording),
+            )
+
+
+def test_resolve_sources_reports_recording_linked_entries_as_local(env, tmp_path):
+    from core.dependencies import (
+        get_jellyfin_library_service,
+        get_local_files_service,
+        get_navidrome_library_service,
+        get_plex_library_service,
+    )
+
+    client, app, playlists, _requests, _prefs, _sse = env
+    for provider in (
+        get_jellyfin_library_service,
+        get_local_files_service,
+        get_navidrome_library_service,
+        get_plex_library_service,
+    ):
+        app.dependency_overrides[provider] = lambda: None
+    app.dependency_overrides[playlist_routes._get_user_navidrome_folder_ids] = lambda: (
+        None
+    )
+    pid = _seed_sync(client, playlists)
+    _library_files(tmp_path, "REC-FS")
+
+    resp = client.post(f"/playlists/{pid}/resolve-sources")
+
+    assert resp.status_code == 200
+    tracks = client.get(f"/playlists/{pid}").json()["tracks"]
+    fortunate = next(t for t in tracks if t["track_name"] == "Fortunate Son")
+    assert resp.json()["sources"][fortunate["id"]] == ["local"]
+    assert (fortunate["source_type"], fortunate["library_file_id"]) == (
+        "local",
+        "file-0",
+    )
+
+
+def test_song_already_in_library_elsewhere_is_owned_not_requested(env, tmp_path):
+    client, _app, playlists, requests, _prefs, sse = env
+    pid = _seed_sync(client, playlists)
+    _library_files(tmp_path, "rec-pm")  # Proud Mary is already in the library
+
+    client.post(f"/playlists/{pid}/request-tracks", json={"mode": "auto"})
+
+    _channel, _event, data = _wait(sse)
+    assert data["summary"]["owned"] == 2  # the seeded owned entry + Proud Mary
+    items = requests.request_track_batch.await_args.args[0]
+    assert [i["recording_mbid"] for i in items] == ["rec-fs"]

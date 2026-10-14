@@ -104,6 +104,19 @@ class PlaylistTrackRequestService:
         # A fresh resolver per run: it caches tracklists for that run only.
         return await self._resolver_factory().resolve_playlist(playlist_id, policy)
 
+    async def link_by_recording(self, playlist_id: str) -> int:
+        """Link entries to library tracks holding their recording; 0 when the
+        backend can't, or on error (linking never fails a job)."""
+        link = getattr(self._playlists, "link_tracks_by_recording", None)
+        if link is None:
+            return 0
+        try:
+            linked = await link(playlist_id)
+        except Exception:  # noqa: BLE001
+            logger.warning("playlist.link_by_recording failed playlist=%s", playlist_id)
+            return 0
+        return linked if isinstance(linked, int) else 0
+
     async def request_resolved(
         self,
         playlist_id: str,

@@ -832,6 +832,67 @@ class PlaylistRepository:
                 conn.commit()
         return updated
 
+    def link_tracks_by_recording(self, playlist_id: str) -> int:
+        """Link unlinked entries to library files by recording (#204).
+
+        The legacy counterpart of the target store's method: matches
+        ``library_files.recording_mbid`` when that table shares this database,
+        and is a no-op otherwise. An entry with no source becomes ``local``.
+        """
+        with self._write_lock:
+            conn = self._get_connection()
+            if (
+                conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                    "AND name = 'library_files'"
+                ).fetchone()
+                is None
+            ):
+                return 0
+            entries = conn.execute(
+                "SELECT id, recording_mbid, source_type, available_sources "
+                "FROM playlist_tracks WHERE playlist_id = ? "
+                "AND library_file_id IS NULL AND recording_mbid IS NOT NULL "
+                "AND recording_mbid != ''",
+                (playlist_id,),
+            ).fetchall()
+            updated = 0
+            for entry in entries:
+                match = conn.execute(
+                    "SELECT id FROM library_files WHERE LOWER(recording_mbid) = ? "
+                    "AND deleted_at IS NULL ORDER BY id LIMIT 1",
+                    (str(entry["recording_mbid"]).casefold(),),
+                ).fetchone()
+                if match is None:
+                    continue
+                file_id = str(match["id"])
+                if entry["source_type"]:
+                    cur = conn.execute(
+                        "UPDATE playlist_tracks SET library_file_id = ? "
+                        "WHERE id = ? AND playlist_id = ? AND library_file_id IS NULL",
+                        (file_id, entry["id"], playlist_id),
+                    )
+                else:
+                    sources = self._parse_available_sources(entry["available_sources"]) or []
+                    if "local" not in sources:
+                        sources = [*sources, "local"]
+                    cur = conn.execute(
+                        "UPDATE playlist_tracks SET library_file_id = ?, "
+                        "source_type = 'local', track_source_id = ?, available_sources = ? "
+                        "WHERE id = ? AND playlist_id = ? AND library_file_id IS NULL",
+                        (
+                            file_id,
+                            file_id,
+                            json.dumps(sorted(sources)),
+                            entry["id"],
+                            playlist_id,
+                        ),
+                    )
+                updated += cur.rowcount
+            if updated:
+                conn.commit()
+        return updated
+
     def get_streamable_counts(self) -> dict[str, tuple[int, int]]:
         """playlist_id -> (count, total duration seconds) over entries linked to a
         library file - what the compat shims can actually serve. Unlinked entries

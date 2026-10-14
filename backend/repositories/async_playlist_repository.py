@@ -124,6 +124,9 @@ class AsyncPlaylistRepository:
             self._repo.batch_update_resolutions, playlist_id, updates,
         )
 
+    async def link_tracks_by_recording(self, playlist_id: str) -> int:
+        return await asyncio.to_thread(self._repo.link_tracks_by_recording, playlist_id)
+
     async def get_streamable_counts(self) -> dict[str, tuple[int, int]]:
         return await asyncio.to_thread(self._repo.get_streamable_counts)
 

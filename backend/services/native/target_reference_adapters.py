@@ -357,6 +357,12 @@ class TargetPlaylistRepository:
             },
         )
 
+    async def link_tracks_by_recording(self, playlist_id: str) -> int:
+        """Link unlinked entries to library tracks by recording (#204)."""
+        return await self._store.link_target_playlist_tracks_by_recording(
+            playlist_id, self._now()
+        )
+
     async def get_streamable_counts(self) -> dict[str, tuple[int, int]]:
         return await self._store.target_playlist_streamable_counts()
 

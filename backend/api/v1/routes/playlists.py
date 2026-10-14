@@ -164,6 +164,31 @@ PlaylistTrackRequestServiceDep = Annotated[
 ]
 
 
+async def _link_by_recording(repository, playlist_id: str) -> int:
+    """Link entries album-based resolution missed, by recording (#204).
+
+    Best-effort and local-only: a failure leaves the playlist as it was.
+    """
+    try:
+        linked = await repository.link_tracks_by_recording(playlist_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("playlist.link_by_recording failed playlist=%s", playlist_id)
+        return 0
+    return linked if isinstance(linked, int) else 0
+
+
+async def _merge_recording_links(
+    repository, playlist_id: str, sources: dict[str, list[str]]
+) -> None:
+    """Link by recording and fold the new ``local`` sources into ``sources``."""
+    if not await _link_by_recording(repository, playlist_id):
+        return
+    for track in await repository.get_tracks(playlist_id):
+        if track.library_file_id and track.available_sources:
+            merged = set(sources.get(track.id) or []) | set(track.available_sources)
+            sources[track.id] = sorted(merged)
+
+
 async def _require_owned_playlist(
     service: PlaylistService, playlist_id: str, current_user
 ) -> None:
@@ -195,6 +220,9 @@ async def _run_track_job(
         if job in ("resolve", "resolve_and_request"):
             summary = await svc.resolve(playlist_id, policy)
             payload["summary"] = summary.to_json()
+        # Songs already in the library under another album now carry their
+        # recording; link them so they count as owned and aren't requested.
+        await svc.link_by_recording(playlist_id)
         if job in ("request", "resolve_and_request"):
             result = await svc.request_resolved(
                 playlist_id,
@@ -203,6 +231,7 @@ async def _run_track_job(
                 requested_by_name=requested_by_name,
             )
             payload["result"] = msgspec.to_builtins(result)
+        payload["linked"] = await svc.link_by_recording(playlist_id)
         event = "playlist_tracks_requested" if "result" in payload else (
             "playlist_tracks_resolved"
         )
@@ -527,6 +556,8 @@ async def resolve_sources(
         nd_service=nd_service, plex_service=plex_service,
         navidrome_folder_ids=navidrome_folder_ids,
     )
+    # resolve_track_sources has checked ownership above.
+    await _merge_recording_links(service.repository, playlist_id, sources)
     return ResolveSourcesResponse(sources=sources)
 
 
