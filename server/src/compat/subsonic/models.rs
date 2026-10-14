@@ -530,6 +530,8 @@ pub struct SPlaylist {
     pub owner: Option<String>,
     /// Public flag.
     pub public: Option<bool>,
+    /// True when the caller may not change the playlist (OpenSubsonic).
+    pub readonly: bool,
     /// Streamable-entry count (#181: matches served entries).
     pub songCount: i64,
     /// Total duration seconds.
@@ -552,6 +554,7 @@ impl Render for SPlaylist {
             ("comment", self.comment.clone().into_val()),
             ("owner", self.owner.clone().into_val()),
             ("public", self.public.into_val()),
+            ("readonly", self.readonly.into_val()),
             ("songCount", self.songCount.into_val()),
             ("duration", self.duration.into_val()),
             ("created", self.created.clone().into_val()),

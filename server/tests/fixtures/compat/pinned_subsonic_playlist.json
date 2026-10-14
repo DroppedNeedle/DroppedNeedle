@@ -72,6 +72,7 @@
       "name": "Journey Mix",
       "owner": "alice",
       "public": false,
+      "readonly": false,
       "songCount": 1
     },
     "serverVersion": "3.0.0-test",

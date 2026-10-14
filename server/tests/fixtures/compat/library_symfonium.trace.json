@@ -532,6 +532,7 @@
             "name": "Journey Mix",
             "owner": "alice",
             "public": false,
+            "readonly": false,
             "songCount": 1
           },
           "serverVersion": "10.10.6",
@@ -619,6 +620,7 @@
             "name": "Journey Mix",
             "owner": "alice",
             "public": false,
+            "readonly": false,
             "songCount": 1
           },
           "serverVersion": "10.10.6",
