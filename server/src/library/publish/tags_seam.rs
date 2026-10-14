@@ -39,8 +39,9 @@ pub struct TagDocument {
     /// Document shape. Version 2 records every writable field the file
     /// held (and its opaque fields); older documents held a subset, so
     /// a restore never infers from them that a field was absent. Version
-    /// 3 adds ISRC and version 4 adds ReplayGain, lyrics, pictures and
-    /// native custom items (see [`recorded_since`]).
+    /// 3 adds ISRC, version 4 adds ReplayGain, lyrics, pictures and
+    /// native custom items, and version 5 the credit, work and AcoustID
+    /// fields (see [`recorded_since`]).
     #[serde(default)]
     pub version: u32,
     /// The embedded pictures, in file order, by the hash of their bytes
@@ -131,7 +132,7 @@ impl PictureRef {
 pub const PICTURES_KEY: &str = "pictures";
 
 /// The current [`TagDocument`] shape.
-pub const TAG_DOCUMENT_VERSION: u32 = 4;
+pub const TAG_DOCUMENT_VERSION: u32 = 5;
 
 /// The first shape that records every writable field it knew of.
 pub const FULL_FIELDS_VERSION: u32 = 2;
@@ -147,6 +148,24 @@ pub fn recorded_since(field: crate::library::tags::fields::TagField) -> u32 {
         | TagField::ReplayGainAlbumGain
         | TagField::ReplayGainAlbumPeak
         | TagField::Lyrics => RICH_FIELDS_VERSION,
+        TagField::AlbumArtists
+        | TagField::Work
+        | TagField::MusicBrainzWorkId
+        | TagField::Movement
+        | TagField::MovementNumber
+        | TagField::MovementCount
+        | TagField::Composer
+        | TagField::Lyricist
+        | TagField::Conductor
+        | TagField::Performer
+        | TagField::Arranger
+        | TagField::Remixer
+        | TagField::Producer
+        | TagField::Comment
+        | TagField::Copyright
+        | TagField::EncodedBy
+        | TagField::AcoustIdId
+        | TagField::AcoustIdFingerprint => CREDIT_FIELDS_VERSION,
         _ => FULL_FIELDS_VERSION,
     }
 }
@@ -155,6 +174,12 @@ pub fn recorded_since(field: crate::library::tags::fields::TagField) -> u32 {
 /// custom items. A restore from an older document leaves pictures and
 /// native items alone.
 pub const RICH_FIELDS_VERSION: u32 = 4;
+
+/// The first shape that records the credit, work, movement, comment,
+/// copyright, encoder and AcoustID fields. Older documents held some of
+/// them as native items and some not at all, so a restore from one
+/// leaves these fields as the file holds them.
+pub const CREDIT_FIELDS_VERSION: u32 = 5;
 
 impl TagDocument {
     /// Empty document.

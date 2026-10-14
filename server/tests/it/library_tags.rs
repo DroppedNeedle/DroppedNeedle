@@ -1020,6 +1020,74 @@ fn restore_updates_spare_opaque_and_older_baselines() {
     assert_eq!(updates, baseline.managed);
 }
 
+/// A restore from a document recorded before the credit fields existed
+/// leaves them as the file holds them: a version 4 document listed only
+/// some as native items (never the TIPL and TMCL pairs or the movement
+/// frames), and a version 2 document lists none.
+#[test]
+fn older_baselines_keep_the_credit_tags() {
+    use droppedneedle::library::publish::staging;
+    let (_scratch, path) = temp_copy("management_full.mp3", "old-baseline");
+    id3_inject_frames(
+        &path,
+        &[
+            ("TMCL", b"\x03guitar\x00A\x00"),
+            ("MVNM", b"\x03Allegro\x00"),
+            ("MVIN", b"\x032/4\x00"),
+        ],
+    );
+    let held = |path: &Path| {
+        (
+            id3_people(path, "TIPL"),
+            id3_people(path, "TMCL"),
+            id3_text_values(path, "MVNM"),
+            id3_text_values(path, "MVIN"),
+            id3_text_values(path, "TCOM"),
+        )
+    };
+    let original = held(&path);
+    assert_eq!(original.0, vec![pair("producer", "Example Producer")]);
+    assert_eq!(original.1, vec![pair("guitar", "A")]);
+    assert_eq!((original.2.len(), original.3.len()), (1, 1));
+    assert!(!original.4.is_empty());
+    // The document as the reader before these fields recorded it.
+    let mut old = staging::document_from_file(&path).unwrap();
+    let new_fields = &TagField::ALL[TagField::ALL
+        .iter()
+        .position(|field| *field == TagField::AlbumArtists)
+        .unwrap()..];
+    for field in new_fields {
+        let Some(values) = old.managed.remove(field.name()) else {
+            continue;
+        };
+        let key = match field {
+            TagField::Composer => "id3:TCOM",
+            TagField::Lyricist => "id3:TEXT",
+            TagField::Work => "id3:TXXX:WORK",
+            TagField::MusicBrainzWorkId => "id3:TXXX:MusicBrainz Work Id",
+            TagField::AcoustIdId => "id3:TXXX:Acoustid Id",
+            TagField::AcoustIdFingerprint => "id3:TXXX:Acoustid Fingerprint",
+            // Key-value and movement frames were never listed.
+            _ => continue,
+        };
+        old.custom.insert(key.to_owned(), values);
+    }
+    for version in [4, 2] {
+        let mut baseline = old.clone();
+        baseline.version = version;
+        if version < 4 {
+            baseline.custom.clear();
+        }
+        tags::save_tags(&path, &[TagEdit::set_title("Later")]).unwrap();
+        let current = staging::document_from_file(&path).unwrap();
+        let updates = staging::restore_updates(&baseline, &current, "a.mp3");
+        let edits = staging::check_managed_updates(&updates).unwrap();
+        tags::save_tags(&path, &edits).unwrap();
+        assert_eq!(held(&path), original, "version {version}");
+        assert_eq!(id3_text_values(&path, "TIT2"), texts(&["Management Track"]));
+    }
+}
+
 /// Values no new edit could carry (a `3/12` track number, a free-text
 /// date) are written back exactly when replayed verbatim.
 #[test]
