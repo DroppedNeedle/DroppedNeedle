@@ -652,25 +652,17 @@ async fn media_path_auth_lockout_blocks_brute_force() {
 }
 
 /// A player trusts `IsAdministrator`: only the admin role is reported as
-/// one, at sign-in and on "who am I".
+/// one, at sign-in and on "who am I". A trusted user is not one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn jellyfin_reports_an_administrator_only_for_an_admin() {
     let rig = CompatApp::start("compat-jellyfin-admin").await;
     let app = &rig.app;
-    let admin = app.login_admin().await;
-    let (status, created) = app
-        .call(
-            "POST",
-            "/api/v3/me/app-passwords",
-            &[("authorization", admin.as_str())],
-            Some(json!({"name": "Owner"})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::CREATED, "{created}");
-    let owner = created["secret"].as_str().expect("secret").to_owned();
+    let owner = rig.admin_secret().await;
+    let trusted = rig.trusted_secret("tris").await;
 
     for (name, secret, is_admin) in [
         (PLAYER, rig.secret.as_str(), false),
+        ("tris", &trusted, false),
         ("admin", &owner, true),
     ] {
         let (status, echo) = app

@@ -128,6 +128,44 @@ impl CompatApp {
         }
     }
 
+    /// A new app password for the account signed in as `authorization`.
+    pub async fn app_password(&self, authorization: &str) -> String {
+        let (status, created) = self
+            .app
+            .call(
+                "POST",
+                "/api/v3/me/app-passwords",
+                &[("authorization", authorization)],
+                Some(json!({"name": "Journey"})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{created}");
+        created["secret"].as_str().expect("secret").to_owned()
+    }
+
+    /// The admin's app password.
+    pub async fn admin_secret(&self) -> String {
+        let admin = self.app.login_admin().await;
+        self.app_password(&admin).await
+    }
+
+    /// A new account with the trusted role, and its app password.
+    pub async fn trusted_secret(&self, username: &str) -> String {
+        let login = self.app.login_user(username).await;
+        let admin = self.app.login_admin().await;
+        let (status, body) = self
+            .app
+            .call(
+                "PUT",
+                &format!("/api/v3/admin/users/{}/role", login.user_id),
+                &[("authorization", admin.as_str())],
+                Some(json!({"role": "trusted"})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        self.app_password(&login.authorization).await
+    }
+
     /// Subsonic query credentials for `client`.
     pub fn subsonic_auth(&self, client: &str) -> String {
         format!("u={PLAYER}&p={}&v=1.16.1&c={client}&f=json", self.secret)
