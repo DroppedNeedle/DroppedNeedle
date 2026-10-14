@@ -4,7 +4,7 @@
 	For settings that hold a few addresses, paths or names.
 -->
 <script lang="ts">
-	import type { Snippet } from 'svelte';
+	import { tick, type Snippet } from 'svelte';
 	import { Plus, X } from 'lucide-svelte';
 
 	interface Props {
@@ -51,16 +51,25 @@
 	);
 	const full = $derived(max !== undefined && values.length >= max);
 
-	function add() {
+	let rows = $state<(HTMLInputElement | undefined)[]>([]);
+	let addButton = $state<HTMLButtonElement>();
+
+	// Keyboard focus follows the change: into the new row, or onto the row
+	// that took the removed one's place (the Add button when none is left).
+	async function add() {
 		values = [...values, ''];
+		await tick();
+		rows[values.length - 1]?.focus();
 	}
 
-	function remove(index: number) {
+	async function remove(index: number) {
 		values = values.filter((_, at) => at !== index);
+		await tick();
+		(rows[Math.min(index, values.length - 1)] ?? addButton)?.focus();
 	}
 </script>
 
-<fieldset class="fieldset" aria-describedby={describedBy}>
+<fieldset class="fieldset">
 	<legend class="fieldset-legend">{label}</legend>
 	{#if values.length === 0 && empty}
 		<p class="text-sm text-base-content/60">{empty}</p>
@@ -72,10 +81,12 @@
 				class="input w-full {mono ? 'font-mono text-sm' : ''} {error ? 'input-error' : ''}"
 				aria-label="{itemLabel} {index + 1}"
 				aria-invalid={Boolean(error)}
+				aria-describedby={describedBy}
 				{placeholder}
 				{disabled}
 				autocomplete="off"
 				spellcheck="false"
+				bind:this={rows[index]}
 				bind:value={values[index]}
 			/>
 			<button
@@ -90,7 +101,13 @@
 		</div>
 	{/each}
 	<div class="flex flex-wrap gap-2">
-		<button type="button" class="btn btn-sm" disabled={disabled || full} onclick={add}>
+		<button
+			type="button"
+			class="btn btn-sm"
+			disabled={disabled || full}
+			bind:this={addButton}
+			onclick={add}
+		>
 			<Plus class="size-4" aria-hidden="true" />
 			{addLabel}
 		</button>

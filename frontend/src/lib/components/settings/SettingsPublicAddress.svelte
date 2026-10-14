@@ -62,6 +62,8 @@
 			filledFrom = stored.origins;
 			status = { tone: 'success', message: 'Saved.' };
 		} catch (error) {
+			// Matched on the server's exact wording, which the README quotes
+			// too. Reword the server's message and this advice is lost.
 			if (error instanceof ApiError && error.message === 'Origin not allowed') {
 				status = {
 					tone: 'error',
