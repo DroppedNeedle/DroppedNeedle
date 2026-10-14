@@ -8,7 +8,7 @@
 //!
 //! All endpoints live under `GET|POST|HEAD /subsonic/rest/{endpoint}`
 //! (one `.view` suffix stripped, name casefolded). Unknown methods are
-//! code 0. Only `getOpenSubsonicExtensions` is public; everything else,
+//! a plain 404. Only `getOpenSubsonicExtensions` is public; everything else,
 //! binary endpoints included, needs app-password auth. Formats: `f` in
 //! `xml` (default), `json`, `jsonp` (unsafe callbacks fall back to JSON).
 //!
@@ -63,11 +63,17 @@
 //! - Feishin playlist cover art (#287): getCoverArt serves playlist art.
 //! - Navidrome 0.62.0: repeated-same musicFolderId accepted, any other
 //!   folder id is 70 (`browse::validate_music_folder`).
+//! - Navidrome 0.62.0 (recordings `error.unknown-method` and
+//!   `error.stream-unknown-id`): an unknown method is a plain 404 text in
+//!   every format; a `stream` failure with code 70 (an unknown id, or no
+//!   audio behind a known one) is the envelope over HTTP 200. `download`
+//!   and `getCoverArt` misses were not recorded, so they stay text 404s.
 //! - Streamable-only playlist counts (#181).
 //! - getAvatar 403-as-text for non-self usernames: the only 403-as-text;
 //!   code 50 anywhere in the dispatch path stays enveloped.
 //! - Binary-vs-envelope split: binary dispatch errors outside
-//!   {10,40,41,42,43,44,50} render `text/plain` (70 -> 404, else 404).
+//!   {10,40,41,42,43,44,50} render `text/plain` (70 -> 404, else 404),
+//!   except a `stream` failure with code 70, which is enveloped.
 //! - Transcode hints on song children only when transcoding is enabled
 //!   and ffmpeg is present.
 //! - getOpenSubsonicExtensions lists every served extension (all v1):
@@ -151,9 +157,13 @@ pub fn is_binary_endpoint(normalized: &str) -> bool {
 }
 
 /// Dispatch rule: binary endpoints render codes outside [`AUTH_CODES`]
-/// as `text/plain`; everything else stays enveloped.
+/// as `text/plain`, except a `stream` failure with code 70, which stays
+/// enveloped as Navidrome 0.62.0 answers it. Other endpoints are always
+/// enveloped.
 pub fn dispatch_uses_envelope(code: u8, normalized_endpoint: &str) -> bool {
-    !is_binary_endpoint(normalized_endpoint) || AUTH_CODES.contains(&code)
+    !is_binary_endpoint(normalized_endpoint)
+        || AUTH_CODES.contains(&code)
+        || (normalized_endpoint == "stream" && code == error::NOT_FOUND)
 }
 
 /// Server settings the Subsonic API reads (filled from preferences).
@@ -444,7 +454,6 @@ pub async fn dispatch_with<V: Verifier, S: Store, B: AudioBackend>(
     preverified: Option<V::Principal>,
 ) -> Rendered {
     let name = normalize_endpoint(&request.endpoint);
-    let is_binary = is_binary_endpoint(&name);
     // Early format sniffing preserves the requested envelope even when
     // strict decoding fails (v2 reads a unique valid query value only).
     let mut format = SubsonicFormat::Xml;
@@ -463,9 +472,7 @@ pub async fn dispatch_with<V: Verifier, S: Store, B: AudioBackend>(
     }
     let failure =
         |code: u8, message: &str, format: SubsonicFormat, callback: Option<&str>| -> Rendered {
-            if is_binary && !AUTH_CODES.contains(&code) {
-                render_binary_error(code, message)
-            } else {
+            if dispatch_uses_envelope(code, &name) {
                 render_error(
                     code,
                     message,
@@ -474,6 +481,8 @@ pub async fn dispatch_with<V: Verifier, S: Store, B: AudioBackend>(
                     &settings.server_name,
                     &settings.server_version,
                 )
+            } else {
+                render_binary_error(code, message)
             }
         };
     let outcome: Result<Rendered, SubsonicError> = async {
@@ -490,7 +499,7 @@ pub async fn dispatch_with<V: Verifier, S: Store, B: AudioBackend>(
             ));
         }
         if !is_known_endpoint(&name) {
-            return Err(SubsonicError::new(0, format!("Unknown method {name}")));
+            return Ok(value::render_unknown_method());
         }
         let principal = if name == PUBLIC_ENDPOINT {
             None
@@ -700,12 +709,7 @@ async fn run_handler<P: Principal, S: Store, B: AudioBackend>(
         "gettopsongs" => library::top_songs(ctx).await?,
         "getsimilarsongs2" => library::similar_songs2(ctx).await?,
         "getsimilarsongs" => library::similar_songs(ctx).await?,
-        _ => {
-            return Err(SubsonicError::new(
-                0,
-                format!("Unknown method {}", ctx.endpoint_name),
-            ));
-        }
+        _ => return Ok(value::render_unknown_method()),
     };
     Ok(render_outcome(outcome, ctx))
 }

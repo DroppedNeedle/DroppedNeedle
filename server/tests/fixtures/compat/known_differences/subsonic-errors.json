@@ -1,6 +1,0 @@
-{
-  "differences": [
-    {"server": "navidrome", "object": "error.stream-unknown-id", "key": "status", "kind": "value", "rows": ["error.stream-unknown-id"], "reason": "For a stream of an id that does not exist the app answers 404 with a short text. Navidrome answers 200 with a Subsonic error body."},
-    {"server": "navidrome", "object": "error.unknown-method", "key": "status", "kind": "value", "rows": ["error.unknown-method"], "reason": "For a method that does not exist the app answers 200 with a Subsonic error body. Navidrome answers a plain 404."}
-  ]
-}

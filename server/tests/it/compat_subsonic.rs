@@ -128,10 +128,20 @@ async fn envelopes_are_byte_exact() {
     }
     assert_ok(&get("Ping.VIEW", &[]).await, "ping.view");
 
-    // Errors keep the requested format.
-    let body = get("nope", &[("f", "json")]).await;
-    assert_eq!(body.content_type, "application/json");
-    assert!(body.body_text().contains("\"code\":0"));
+    // An unknown method is a plain 404 in every format, for GET and POST.
+    for format in ["json", "xml", "jsonp"] {
+        for method in ["GET", "POST"] {
+            let mut req = request("nope", &[("f", format)], true);
+            req.method = method.to_owned();
+            let body = run(&settings(), &store, &req).await;
+            assert_eq!(
+                (body.status, body.content_type.as_str()),
+                (404, "text/plain"),
+                "{method} {format}"
+            );
+            assert_eq!(body.body_text(), "404 page not found\n");
+        }
+    }
 
     // JSONP wraps only a safe callback name, otherwise falls back to JSON.
     let body = get("ping", &[("f", "jsonp"), ("callback", "app.cb$1")]).await;
@@ -171,8 +181,7 @@ async fn error_codes() {
     let good_key = request("ping", &[("apiKey", "key-1"), ("c", "golden")], false);
     assert_ok(&run(&settings(), &store, &good_key).await, "apiKey alone");
 
-    let authed: [Case; 36] = [
-        ("nope", &[], 0),
+    let authed: [Case; 35] = [
         ("ping", &[("f", "yaml")], 10),
         ("getArtists", &[("musicFolderId", "2")], 70),
         ("getArtist", &[("id", "tr-f1")], 70),
@@ -712,10 +721,12 @@ async fn binary_endpoints_render_errors_as_text() {
     );
     assert!(body.body_text().contains("Transcoding is disabled"));
 
-    // Auth failures stay enveloped on binary endpoints; not-found goes text.
+    // Auth failures stay enveloped on binary endpoints. A stream miss is
+    // enveloped too; other not-found answers stay text.
     assert!(dispatch_uses_envelope(50, "stream"));
     assert!(dispatch_uses_envelope(40, "getavatar"));
-    assert!(!dispatch_uses_envelope(70, "stream"));
+    assert!(dispatch_uses_envelope(70, "stream"));
+    assert!(!dispatch_uses_envelope(70, "download"));
     assert!(dispatch_uses_envelope(70, "getsong"));
 }
 

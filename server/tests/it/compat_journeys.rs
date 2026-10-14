@@ -893,11 +893,13 @@ async fn streaming_ranges_and_head_on_both_protocols() {
         }
     }
 
-    // Unknown ids are plain 404s; Subsonic's binary path answers as text.
+    // An unknown Subsonic id is the envelope with code 70 over 200;
+    // Jellyfin's unknown ids are plain 404s.
     let missing = format!("/subsonic/rest/stream?id=tr-nope&{auth}");
-    let (status, headers, _) = raw_call(&apps.subsonic, "GET", &missing, &[]).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(header_str(&headers, "content-type"), "text/plain");
+    let (status, headers, bytes) = raw_call(&apps.subsonic, "GET", &missing, &[]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(header_str(&headers, "content-type"), "application/json");
+    assert!(String::from_utf8_lossy(&bytes).contains("\"code\":70"));
     let (status, _, _) = raw_call(
         &apps.jellyfin,
         "GET",

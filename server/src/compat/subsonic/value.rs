@@ -448,3 +448,15 @@ pub fn render_binary_error(code: u8, message: &str) -> Rendered {
         stream: None,
     }
 }
+
+/// The answer to a method that does not exist: a plain 404 in every
+/// format, the body Navidrome 0.62.0 sends (recording `error.unknown-method`).
+pub fn render_unknown_method() -> Rendered {
+    Rendered {
+        status: 404,
+        content_type: "text/plain".to_owned(),
+        headers: Vec::new(),
+        body: b"404 page not found\n".to_vec(),
+        stream: None,
+    }
+}
