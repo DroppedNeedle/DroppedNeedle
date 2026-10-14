@@ -4,13 +4,13 @@
       "AlbumArtist": "U2",
       "AlbumArtists": [
         {
-          "Id": "<id-4>",
+          "Id": "<id-6>",
           "Name": "U2"
         }
       ],
       "ArtistItems": [
         {
-          "Id": "<id-4>",
+          "Id": "<id-6>",
           "Name": "U2"
         }
       ],
@@ -23,7 +23,7 @@
       "Genres": [
         "Rock"
       ],
-      "Id": "<id-5>",
+      "Id": "<id-7>",
       "ImageBlurHashes": {},
       "ImageTags": {},
       "IsFolder": true,
@@ -39,8 +39,8 @@
       "Type": "MusicAlbum",
       "UserData": {
         "IsFavorite": false,
-        "ItemId": "<id-5>",
-        "Key": "<id-5>",
+        "ItemId": "<id-7>",
+        "Key": "<id-7>",
         "PlayCount": 0,
         "PlaybackPositionTicks": 0,
         "Played": false
@@ -50,13 +50,13 @@
       "AlbumArtist": "Massive Attack",
       "AlbumArtists": [
         {
-          "Id": "<id-6>",
+          "Id": "<id-8>",
           "Name": "Massive Attack"
         }
       ],
       "ArtistItems": [
         {
-          "Id": "<id-6>",
+          "Id": "<id-8>",
           "Name": "Massive Attack"
         }
       ],
@@ -67,7 +67,7 @@
       "ChildCount": 1,
       "DateCreated": "0000-00-00T00:00:00.0000000Z",
       "Genres": [],
-      "Id": "<id-7>",
+      "Id": "<id-9>",
       "ImageBlurHashes": {},
       "ImageTags": {},
       "IsFolder": true,
@@ -83,8 +83,8 @@
       "Type": "MusicAlbum",
       "UserData": {
         "IsFavorite": false,
-        "ItemId": "<id-7>",
-        "Key": "<id-7>",
+        "ItemId": "<id-9>",
+        "Key": "<id-9>",
         "PlayCount": 0,
         "PlaybackPositionTicks": 0,
         "Played": false
@@ -94,13 +94,13 @@
       "AlbumArtist": "Various Artists",
       "AlbumArtists": [
         {
-          "Id": "<id-8>",
+          "Id": "<id-10>",
           "Name": "Various Artists"
         }
       ],
       "ArtistItems": [
         {
-          "Id": "<id-8>",
+          "Id": "<id-10>",
           "Name": "Various Artists"
         }
       ],
@@ -111,7 +111,7 @@
       "ChildCount": 1,
       "DateCreated": "0000-00-00T00:00:00.0000000Z",
       "Genres": [],
-      "Id": "<id-9>",
+      "Id": "<id-11>",
       "ImageBlurHashes": {},
       "ImageTags": {},
       "IsFolder": true,
@@ -127,8 +127,8 @@
       "Type": "MusicAlbum",
       "UserData": {
         "IsFavorite": false,
-        "ItemId": "<id-9>",
-        "Key": "<id-9>",
+        "ItemId": "<id-11>",
+        "Key": "<id-11>",
         "PlayCount": 0,
         "PlaybackPositionTicks": 0,
         "Played": false
@@ -138,13 +138,13 @@
       "AlbumArtist": "Radiohead",
       "AlbumArtists": [
         {
-          "Id": "<id-10>",
+          "Id": "<id-12>",
           "Name": "Radiohead"
         }
       ],
       "ArtistItems": [
         {
-          "Id": "<id-10>",
+          "Id": "<id-12>",
           "Name": "Radiohead"
         }
       ],
@@ -157,7 +157,7 @@
       "Genres": [
         "Alternative Rock"
       ],
-      "Id": "<id-11>",
+      "Id": "<id-13>",
       "ImageBlurHashes": {},
       "ImageTags": {},
       "IsFolder": true,
@@ -173,8 +173,8 @@
       "Type": "MusicAlbum",
       "UserData": {
         "IsFavorite": false,
-        "ItemId": "<id-11>",
-        "Key": "<id-11>",
+        "ItemId": "<id-13>",
+        "Key": "<id-13>",
         "PlayCount": 0,
         "PlaybackPositionTicks": 0,
         "Played": false
@@ -184,13 +184,13 @@
       "AlbumArtist": "ユキ",
       "AlbumArtists": [
         {
-          "Id": "<id-12>",
+          "Id": "<id-14>",
           "Name": "ユキ"
         }
       ],
       "ArtistItems": [
         {
-          "Id": "<id-12>",
+          "Id": "<id-14>",
           "Name": "ユキ"
         }
       ],
@@ -201,7 +201,7 @@
       "ChildCount": 1,
       "DateCreated": "0000-00-00T00:00:00.0000000Z",
       "Genres": [],
-      "Id": "<id-13>",
+      "Id": "<id-15>",
       "ImageBlurHashes": {},
       "ImageTags": {},
       "IsFolder": true,
@@ -217,8 +217,8 @@
       "Type": "MusicAlbum",
       "UserData": {
         "IsFavorite": false,
-        "ItemId": "<id-13>",
-        "Key": "<id-13>",
+        "ItemId": "<id-15>",
+        "Key": "<id-15>",
         "PlayCount": 0,
         "PlaybackPositionTicks": 0,
         "Played": false

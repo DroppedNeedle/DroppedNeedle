@@ -36,17 +36,22 @@ where
     }
     let query = request.uri().query().map(str::to_owned);
     let headers = request.headers().clone();
-    if authed(&state.passwords, &headers, query.as_deref())
-        .await
-        .is_err()
-    {
+    let Ok(authed) = authed(&state.passwords, &headers, query.as_deref()).await else {
         return error(StatusCode::UNAUTHORIZED);
-    }
+    };
     let library_id = state.ids.to_jf("library", LIBRARY_INTERNAL_ID).await;
+    let (_, album_artists) = state
+        .library
+        .artist_page(&authed.principal.id, ArtistScope::Album, None, 0, 0)
+        .await;
     json(
         StatusCode::OK,
         &BaseItemDtoQueryResult {
-            items: vec![builders::music_view(&library_id, &server_id())],
+            items: vec![builders::music_view(
+                &library_id,
+                &server_id(),
+                album_artists,
+            )],
             total_record_count: 1,
             start_index: 0,
         },
@@ -122,6 +127,53 @@ fn result(items: Vec<BaseItemDto>, total: usize, start: usize) -> Response {
             start_index: start,
         },
     )
+}
+
+/// One item in the long form Jellyfin sends for a fetch by id.
+async fn fetch_full_item<S, L, E, P, I>(
+    state: &JellyfinState<S, L, E, P, I>,
+    user: &super::seams::Principal,
+    kind: &str,
+    internal: &str,
+) -> Option<BaseItemDto>
+where
+    S: JellyfinPasswordStore,
+    L: LibraryRead,
+    E: StreamEngine,
+    P: PlaybackSessions,
+    I: IdMap,
+{
+    let b = builder(state);
+    match kind {
+        "track" => {
+            let t = state.library.track(&user.id, internal).await?;
+            let can_download = state
+                .settings
+                .jellyfin()
+                .policy_facts(&user.role)
+                .content_downloading;
+            Some(b.audio_full(&t, can_download).await)
+        }
+        "album" => {
+            let a = state.library.album(&user.id, internal).await?;
+            Some(b.album_full(&a).await)
+        }
+        "artist" => {
+            let a = state.library.artist(&user.id, internal).await?;
+            let library_id = state.ids.to_jf("library", LIBRARY_INTERNAL_ID).await;
+            Some(b.artist_full(&a, &library_id).await)
+        }
+        "playlist" => {
+            let found = state
+                .library
+                .playlists(&user.id)
+                .await
+                .into_iter()
+                .find(|p| p.id == internal)?;
+            Some(b.playlist_full(&found).await)
+        }
+        _ => None,
+    }
 }
 
 /// The empty result (unknown parent, filter that resolved to nothing).
@@ -730,7 +782,7 @@ where
     let Some((kind, internal)) = state.ids.from_jf(&item_id).await else {
         return error(StatusCode::NOT_FOUND);
     };
-    match fetch_item(&state, &authed.principal.id, &kind, &internal).await {
+    match fetch_full_item(&state, &authed.principal, &kind, &internal).await {
         Some(item) => json(StatusCode::OK, &item),
         None => error(StatusCode::NOT_FOUND),
     }

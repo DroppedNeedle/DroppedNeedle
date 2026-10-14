@@ -260,6 +260,7 @@
             "Container": "m4a",
             "DateCreated": "0000-00-00T00:00:00.0000000Z",
             "Genres": [],
+            "HasLyrics": false,
             "Id": "<id-12>",
             "ImageBlurHashes": {},
             "ImageTags": {},
@@ -293,7 +294,7 @@
         "TotalRecordCount": 1
       },
       "headers": {
-        "content-length": "1081",
+        "content-length": "1099",
         "content-type": "application/json"
       },
       "request": "GET /jellyfin/Users/<id-13>/Items?parentId=<id-11>&includeItemTypes=Audio",

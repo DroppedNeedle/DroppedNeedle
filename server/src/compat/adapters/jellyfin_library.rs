@@ -21,7 +21,7 @@ use crate::compat::jellyfin::seams::{
     AlbumFilter, AlbumView, ArtistScope, ArtistView, CoverBytes, GenreView, IdMap, ItemSort,
     LibraryRead, PlaylistDetail, PlaylistEntry, PlaylistView, TrackFilter, TrackView, WriteRefusal,
 };
-use crate::compat::subsonic::views::genre_slug;
+use crate::compat::subsonic::views::{genre_slug, song_path};
 use crate::reads::library::player::{
     AlbumOrder, AlbumQuery, OrderKey, PlayerAlbum, PlayerTrack, TrackOrder, TrackQuery,
 };
@@ -67,6 +67,10 @@ fn track_view(track: PlayerTrack) -> TrackView {
         file_size_bytes: u64::try_from(track.file_size_bytes).ok(),
         created_at: track.date_added,
         recording_mbid: track.recording_mbid,
+        artist_musicbrainz_id: track.artist_mbid,
+        album_artist_musicbrainz_id: track.album_artist_mbid,
+        release_group_mbid: track.release_group_mbid,
+        path: song_path(&track.relative_path),
         starred: false,
         play_count: 0,
         last_played: None,
@@ -81,6 +85,8 @@ fn album_view(album: PlayerAlbum) -> AlbumView {
     AlbumView {
         id: record.id,
         release_group_mbid: record.release_group_mbid,
+        release_mbid: record.release_mbid,
+        artist_musicbrainz_id: record.artist_mbid,
         title: record.title,
         artist_name: Some(record.artist_name),
         artist_id: Some(record.artist_id),
@@ -107,6 +113,8 @@ fn artist_view(artist: ArtistRecord) -> ArtistView {
         artist_mbid: artist.artist_mbid,
         name: artist.name,
         album_count: artist.album_count as usize,
+        appearance_album_count: artist.appearance_album_count as usize,
+        track_count: artist.track_count as usize,
         total_duration_seconds: 0.0,
         date_added: artist.date_added,
         starred: false,
@@ -205,6 +213,7 @@ impl JellyfinLibrary {
             id: visible.row.id,
             name: visible.row.name,
             entries,
+            open_access: visible.row.is_public,
         }))
     }
 }

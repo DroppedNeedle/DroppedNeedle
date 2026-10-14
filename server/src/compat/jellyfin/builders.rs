@@ -3,7 +3,13 @@
 
 use std::collections::BTreeMap;
 
-use super::models::{BaseItemDto, MediaStream, NameGuidPair, UserItemDataDto};
+use sha2::{Digest, Sha256};
+
+use crate::providers::musicbrainz::is_valid_mbid;
+
+use super::models::{
+    BaseItemDto, EmptyList, ExternalUrl, ItemDetail, MediaStream, NameGuidPair, UserItemDataDto,
+};
 use super::seams::{
     AlbumView, ArtistView, GenreView, IdMap, PlaylistView, TICKS_PER_SECOND, TrackView,
 };
@@ -158,16 +164,100 @@ fn base(id: String, name: String, server_id: &str) -> BaseItemDto {
         provider_ids: None,
         user_data: None,
         playlist_item_id: None,
+        has_lyrics: None,
         location_type: "FileSystem".to_owned(),
         backdrop_image_tags: Vec::new(),
         image_blur_hashes: BTreeMap::new(),
+        detail: None,
     }
 }
 
-/// The single "Music" collection-folder view. Strict clients (Manet) report
-/// "No music libraries found" unless it carries `UserData`, a non-empty
-/// `ImageTags.Primary`, `LocationType`, and `SortName` (v2 `_music_view`).
-pub fn music_view(library_id: &str, server_id: &str) -> BaseItemDto {
+/// Jellyfin's empty id, its "no item". The library view's parent: nothing
+/// sits above the library here.
+pub const NO_PARENT_ID: &str = "00000000000000000000000000000000";
+
+/// Where `ExternalUrls` point, Jellyfin's default MusicBrainz server.
+const MUSICBRAINZ_WEB: &str = "https://musicbrainz.org";
+
+/// First 32 hex characters of the SHA-256 of `text`.
+fn hex_id(text: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(text))[..32].to_owned()
+}
+
+/// MusicBrainz links for the `(entity, id)` pairs that hold a well-formed
+/// MBID (a recording's may come from a file tag), each once.
+fn musicbrainz_urls(links: &[(&str, Option<&str>)]) -> Vec<ExternalUrl> {
+    let mut urls: Vec<ExternalUrl> = Vec::new();
+    for (entity, id) in links {
+        let Some(id) = id.map(str::trim).filter(|id| is_valid_mbid(id)) else {
+            continue;
+        };
+        let url = format!("{MUSICBRAINZ_WEB}/{entity}/{id}");
+        if !urls.iter().any(|known| known.url == url) {
+            urls.push(ExternalUrl {
+                name: "MusicBrainz".to_owned(),
+                url,
+            });
+        }
+    }
+    urls
+}
+
+/// The long-form keys with what this API never has: no deleting, no
+/// trailers, extras, people, studios, tags or locked metadata. Jellyfin
+/// 10.10.6 (`BaseItem.DisplayPreferencesId`) gives a collection folder its
+/// own id there and every other item one id per item type; the same here.
+fn item_detail(display_preferences_id: String) -> ItemDetail {
+    ItemDetail {
+        etag: String::new(),
+        can_delete: false,
+        can_download: false,
+        path: String::new(),
+        external_urls: Vec::new(),
+        enable_media_source_display: true,
+        taglines: EmptyList,
+        play_access: "Full".to_owned(),
+        remote_trailers: EmptyList,
+        people: EmptyList,
+        studios: EmptyList,
+        genre_items: Vec::new(),
+        local_trailer_count: 0,
+        special_feature_count: 0,
+        display_preferences_id,
+        tags: EmptyList,
+        locked_fields: EmptyList,
+        lock_data: false,
+        cumulative_run_time_ticks: None,
+        recursive_item_count: None,
+        album_count: None,
+        song_count: None,
+        music_video_count: None,
+    }
+}
+
+fn type_preferences_id(item_type: &str) -> String {
+    hex_id(format!("displaypreferences:{item_type}").as_bytes())
+}
+
+/// Set `Etag` from everything the item says apart from the caller's own
+/// state, so it changes exactly when the item does.
+fn seal(mut dto: BaseItemDto) -> BaseItemDto {
+    let mut shared = dto.clone();
+    shared.user_data = None;
+    let etag = hex_id(&serde_json::to_vec(&shared).unwrap_or_default());
+    if let Some(detail) = dto.detail.as_mut() {
+        detail.etag = etag;
+    }
+    dto
+}
+
+/// The single "Music" collection-folder view, in the long form Jellyfin
+/// sends it. Strict clients (Manet) report "No music libraries found"
+/// unless it carries `UserData`, a non-empty `ImageTags.Primary`,
+/// `LocationType`, and `SortName` (v2 `_music_view`). `child_count` is the
+/// number of album artists, the nearest thing to the top folders Jellyfin
+/// counts.
+pub fn music_view(library_id: &str, server_id: &str, child_count: usize) -> BaseItemDto {
     let mut dto = base(library_id.to_owned(), "Music".to_owned(), server_id);
     dto.item_type = "CollectionFolder".to_owned();
     dto.sort_name = Some("Music".to_owned());
@@ -176,7 +266,13 @@ pub fn music_view(library_id: &str, server_id: &str) -> BaseItemDto {
     dto.image_tags
         .insert("Primary".to_owned(), library_id.to_owned());
     dto.user_data = Some(UserItemDataDto::blank(library_id));
-    dto
+    dto.parent_id = Some(NO_PARENT_ID.to_owned());
+    dto.child_count = Some(child_count);
+    dto.genres = Some(Vec::new());
+    dto.date_created = Some(DEFAULT_DATE.to_owned());
+    dto.provider_ids = Some(BTreeMap::new());
+    dto.detail = Some(item_detail(library_id.to_owned()));
+    seal(dto)
 }
 
 /// View → DTO builder (v2 `JellyfinBuilder`). Image tags ride the views,
@@ -254,6 +350,7 @@ impl<'a, I: IdMap> Builder<'a, I> {
         dto.parent_id = album_id;
         dto.container = t.file_format.clone();
         dto.genres = Some(t.genre.clone().map(|g| vec![g]).unwrap_or_default());
+        dto.has_lyrics = Some(false);
         if let Some(mbid) = t.recording_mbid.as_deref() {
             dto.provider_ids = Some(BTreeMap::from([(
                 "MusicBrainzTrack".to_owned(),
@@ -342,6 +439,81 @@ impl<'a, I: IdMap> Builder<'a, I> {
         dto.run_time_ticks = ticks(p.total_duration_seconds);
         dto.user_data = Some(user_data(&pid, false, 0, None));
         dto
+    }
+
+    /// `GenreItems`: each genre with its id.
+    async fn genre_items(&self, dto: &BaseItemDto) -> Vec<NameGuidPair> {
+        let mut items = Vec::new();
+        for name in dto.genres.iter().flatten() {
+            items.push(NameGuidPair {
+                name: name.clone(),
+                id: self.ids.to_jf("genre", &genre_slug(name)).await,
+            });
+        }
+        items
+    }
+
+    /// One track fetched by id. `can_download` is whether the caller may
+    /// download library files.
+    pub async fn audio_full(&self, t: &TrackView, can_download: bool) -> BaseItemDto {
+        let mut dto = self.audio(t).await;
+        let mut detail = item_detail(type_preferences_id(&dto.item_type));
+        detail.can_download = can_download;
+        detail.path = t.path.clone().unwrap_or_default();
+        detail.external_urls = musicbrainz_urls(&[
+            ("artist", t.artist_musicbrainz_id.as_deref()),
+            ("artist", t.album_artist_musicbrainz_id.as_deref()),
+            ("release-group", t.release_group_mbid.as_deref()),
+            ("recording", t.recording_mbid.as_deref()),
+        ]);
+        detail.genre_items = self.genre_items(&dto).await;
+        dto.detail = Some(detail);
+        seal(dto)
+    }
+
+    /// One album fetched by id: its parent is its album artist.
+    pub async fn album_full(&self, a: &AlbumView) -> BaseItemDto {
+        let mut dto = self.album(a).await;
+        let mut detail = item_detail(type_preferences_id(&dto.item_type));
+        detail.external_urls = musicbrainz_urls(&[
+            ("release", a.release_mbid.as_deref()),
+            ("artist", a.artist_musicbrainz_id.as_deref()),
+            ("release-group", a.release_group_mbid.as_deref()),
+        ]);
+        detail.genre_items = self.genre_items(&dto).await;
+        detail.cumulative_run_time_ticks = dto.run_time_ticks;
+        detail.recursive_item_count = Some(a.track_count);
+        dto.parent_id = dto
+            .album_artists
+            .iter()
+            .flatten()
+            .next()
+            .map(|a| a.id.clone());
+        dto.detail = Some(detail);
+        seal(dto)
+    }
+
+    /// One artist fetched by id: its parent is the library. Jellyfin counts
+    /// albums and songs that credit the artist anywhere.
+    pub async fn artist_full(&self, ar: &ArtistView, library_id: &str) -> BaseItemDto {
+        let mut dto = self.artist(ar).await;
+        let mut detail = item_detail(type_preferences_id(&dto.item_type));
+        detail.external_urls = musicbrainz_urls(&[("artist", ar.artist_mbid.as_deref())]);
+        detail.cumulative_run_time_ticks = dto.run_time_ticks;
+        detail.recursive_item_count = Some(ar.track_count);
+        detail.album_count = Some(ar.album_count + ar.appearance_album_count);
+        detail.song_count = Some(ar.track_count);
+        detail.music_video_count = Some(0);
+        dto.parent_id = Some(library_id.to_owned());
+        dto.detail = Some(detail);
+        seal(dto)
+    }
+
+    /// One playlist fetched by id.
+    pub async fn playlist_full(&self, p: &PlaylistView) -> BaseItemDto {
+        let mut dto = self.playlist(p).await;
+        dto.detail = Some(item_detail(type_preferences_id(&dto.item_type)));
+        seal(dto)
     }
 
     /// Genre → `MusicGenre` DTO (v2 `JellyfinBuilder.genre`).

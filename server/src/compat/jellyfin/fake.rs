@@ -519,6 +519,7 @@ impl LibraryRead for FakeLibrary {
                     id: p.id.clone(),
                     name: p.name.clone(),
                     entries: p.entries.clone(),
+                    open_access: false,
                 })
         })
         .flatten()

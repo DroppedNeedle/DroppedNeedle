@@ -123,6 +123,8 @@ where
                 "Name": detail.name,
                 "Type": "Playlist",
                 "ServerId": state.server_id,
+                "OpenAccess": detail.open_access,
+                "Shares": [],
                 "ItemIds": item_ids,
             }),
         )

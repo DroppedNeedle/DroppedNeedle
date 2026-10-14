@@ -359,9 +359,73 @@ pub struct BaseItemDto {
     /// Only on playlist members: the per-entry remove/reorder handle.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub playlist_item_id: Option<String>,
+    /// Tracks only, always false: these routes serve no lyrics.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_lyrics: Option<bool>,
     pub location_type: String,
     pub backdrop_image_tags: Vec<String>,
     pub image_blur_hashes: BTreeMap<String, BTreeMap<String, String>>,
+    /// The long form Jellyfin sends for one item fetched by id and for the
+    /// library view; lists stay short.
+    #[serde(flatten)]
+    pub detail: Option<ItemDetail>,
+}
+
+/// An array this API always sends empty (people, studios, trailers, tags,
+/// locked fields): nothing here records them.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EmptyList;
+
+impl Serialize for EmptyList {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        serializer.serialize_seq(Some(0))?.end()
+    }
+}
+
+/// One `ExternalUrls` entry.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct ExternalUrl {
+    pub name: String,
+    pub url: String,
+}
+
+/// The keys only the long form of an item carries.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct ItemDetail {
+    /// Changes whenever what is sent about the item changes.
+    pub etag: String,
+    pub can_delete: bool,
+    pub can_download: bool,
+    /// A track's path under its library folder; `""` for the rest, which
+    /// have no one folder here. Never a host path.
+    pub path: String,
+    pub external_urls: Vec<ExternalUrl>,
+    pub enable_media_source_display: bool,
+    pub taglines: EmptyList,
+    pub play_access: String,
+    pub remote_trailers: EmptyList,
+    pub people: EmptyList,
+    pub studios: EmptyList,
+    pub genre_items: Vec<NameGuidPair>,
+    pub local_trailer_count: u32,
+    pub special_feature_count: u32,
+    pub display_preferences_id: String,
+    pub tags: EmptyList,
+    pub locked_fields: EmptyList,
+    pub lock_data: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cumulative_run_time_ticks: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recursive_item_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub album_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub song_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub music_video_count: Option<usize>,
 }
 
 /// Paged browse result (v2 `BaseItemDtoQueryResult`).

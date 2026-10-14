@@ -137,6 +137,7 @@
             "Genres": [
               "Rock"
             ],
+            "HasLyrics": false,
             "Id": "4db941e5bc6fc477f4110c60047a4439",
             "ImageBlurHashes": {},
             "ImageTags": {},
@@ -167,7 +168,7 @@
         "TotalRecordCount": 1
       },
       "headers": {
-        "content-length": "1029",
+        "content-length": "1047",
         "content-type": "application/json"
       },
       "request": "GET /jellyfin/Users/user-alice/Items?parentId=6f43dcd675678c621ef59371a060a637&includeItemTypes=Audio",

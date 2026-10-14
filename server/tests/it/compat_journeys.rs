@@ -108,6 +108,8 @@ pub(crate) fn seed_jellyfin(library: &FakeLibrary, engine: &MemoryEngine) {
                 artist_mbid: Some(mbid.to_owned()),
                 name: name.to_owned(),
                 album_count: albums,
+                appearance_album_count: 0,
+                track_count: 0,
                 total_duration_seconds: 0.0,
                 date_added: Some(added),
                 starred: false,
@@ -132,6 +134,8 @@ pub(crate) fn seed_jellyfin(library: &FakeLibrary, engine: &MemoryEngine) {
         library.add_album(AlbumView {
             id: rg.to_owned(),
             release_group_mbid: Some(rg.to_owned()),
+            release_mbid: None,
+            artist_musicbrainz_id: None,
             title: title.to_owned(),
             artist_name: Some("Blue Giant".to_owned()),
             artist_id: Some("mb-a1".to_owned()),

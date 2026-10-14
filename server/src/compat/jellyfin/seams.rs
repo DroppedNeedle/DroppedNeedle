@@ -172,6 +172,14 @@ pub struct TrackView {
     /// Unix seconds added.
     pub created_at: Option<f64>,
     pub recording_mbid: Option<String>,
+    /// MusicBrainz ids of the track artist, the album artist and the
+    /// album's release group, when identified.
+    pub artist_musicbrainz_id: Option<String>,
+    pub album_artist_musicbrainz_id: Option<String>,
+    pub release_group_mbid: Option<String>,
+    /// Path under the track's own library folder (the Subsonic `path`),
+    /// never a host path.
+    pub path: Option<String>,
     /// Caller-scoped favorite flag, filled by the read methods.
     pub starred: bool,
     pub play_count: u64,
@@ -188,6 +196,10 @@ pub struct AlbumView {
     pub id: String,
     /// Accepted MusicBrainz release group id, when the album has one.
     pub release_group_mbid: Option<String>,
+    /// Exact MusicBrainz release, when known.
+    pub release_mbid: Option<String>,
+    /// MusicBrainz id of the album artist, when identified.
+    pub artist_musicbrainz_id: Option<String>,
     pub title: String,
     pub artist_name: Option<String>,
     /// Local id of the album artist.
@@ -215,8 +227,18 @@ pub struct ArtistView {
     /// Accepted MusicBrainz artist id, when the artist has one.
     pub artist_mbid: Option<String>,
     pub name: String,
+    /// Albums the artist leads.
     pub album_count: usize,
+    /// Albums the artist appears on without leading them.
+    pub appearance_album_count: usize,
+    /// Playable tracks crediting the artist.
+    pub track_count: usize,
     /// Summed length of the playable tracks on the albums the artist leads.
+    /// Jellyfin 10.10.6 means the length of every track crediting the
+    /// artist as track or album artist (`MetadataService`
+    /// `UpdateCumulativeRunTimeTicks` over `ArtistMetadataService`
+    /// `GetChildrenForMetadataUpdates`); the two differ only by tracks the
+    /// artist appears on without leading the album.
     pub total_duration_seconds: f64,
     /// Unix seconds added.
     pub date_added: Option<f64>,
@@ -256,6 +278,8 @@ pub struct PlaylistDetail {
     pub id: String,
     pub name: String,
     pub entries: Vec<PlaylistEntry>,
+    /// Whether every user may read it (the playlist's public flag).
+    pub open_access: bool,
 }
 
 /// Served image bytes plus content type.
