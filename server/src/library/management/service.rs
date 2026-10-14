@@ -113,11 +113,16 @@ impl Management {
         })
     }
 
+    /// The stored settings, with every profile's field list complete even
+    /// before the settings page has read and saved it back.
     pub(super) fn settings(&self) -> Result<LibraryManagement, ManagementError> {
-        self.setup
+        let mut settings = self
+            .setup
             .config
             .get::<LibraryManagement>()
-            .map_err(|error| ManagementError::Store(error.to_string()))
+            .map_err(|error| ManagementError::Store(error.to_string()))?;
+        crate::settings::management::complete_fields(&mut settings);
+        Ok(settings)
     }
 
     pub(super) fn snapshot(&self, job_id: &str) -> Result<Snapshot, ManagementError> {

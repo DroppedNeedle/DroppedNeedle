@@ -25,12 +25,16 @@
 		ArtworkImageType,
 		ArtworkProvider,
 		LibraryManagementProfile,
+		ManagedFieldInfo,
+		ManagementFieldMode,
 		ManagementScriptSettings
 	} from '$lib/queries/library-management/types';
 	import { authStore } from '$lib/stores/authStore.svelte';
 
 	interface Props {
 		profile: LibraryManagementProfile;
+		/** Every tag field a profile manages, from the server. */
+		managedFields: ManagedFieldInfo[];
 		namingScripts: ManagementScriptSettings[];
 		taggingScripts: ManagementScriptSettings[];
 		saving?: boolean;
@@ -42,7 +46,15 @@
 		) => Promise<void>;
 	}
 
-	let { profile, namingScripts, taggingScripts, saving = false, onclose, onsave }: Props = $props();
+	let {
+		profile,
+		managedFields,
+		namingScripts,
+		taggingScripts,
+		saving = false,
+		onclose,
+		onsave
+	}: Props = $props();
 	let dialog: HTMLDialogElement;
 	let heading: HTMLHeadingElement;
 	let resetDialog: HTMLDialogElement;
@@ -143,32 +155,59 @@
 		{ value: 'track', label: 'Track artwork' },
 		{ value: 'other', label: 'Other artwork' }
 	];
-	const mergeableFields = new Set([
-		'artist',
-		'album_artist',
-		'artist_sort',
-		'album_artist_sort',
-		'release_type',
-		'label',
-		'catalog_number',
-		'isrc',
-		'musicbrainz_artist_id',
-		'musicbrainz_album_artist_id',
-		'musicbrainz_work_id',
-		'composer',
-		'lyricist',
-		'conductor',
-		'performer',
-		'arranger',
-		'remixer',
-		'producer'
-	]);
+	const modeLabels: Record<ManagementFieldMode, string> = {
+		disabled: 'Off',
+		replace: 'Replace',
+		fill_missing: 'Fill missing',
+		merge: 'Merge',
+		preserve: 'Keep'
+	};
 
 	const visibleFields = $derived(
-		draft.metadata.fields.filter((field) =>
-			field.field.toLowerCase().includes(fieldFilter.trim().toLowerCase())
-		)
+		managedFields.filter((field) => {
+			const filter = fieldFilter.trim().toLowerCase();
+			return field.name.includes(filter) || field.label.toLowerCase().includes(filter);
+		})
 	);
+
+	function fieldEntry(name: string) {
+		return draft.metadata.fields.find((field) => field.field === name);
+	}
+
+	function fieldMode(name: string): ManagementFieldMode {
+		if (name === 'genre') return draft.genres.enabled ? draft.genres.mode : 'disabled';
+		return fieldEntry(name)?.mode ?? 'disabled';
+	}
+
+	function setFieldMode(name: string, mode: ManagementFieldMode) {
+		if (name === 'genre') {
+			draft.genres.enabled = mode !== 'disabled';
+			if (mode === 'replace' || mode === 'merge' || mode === 'fill_missing') {
+				draft.genres.mode = mode;
+			}
+			return;
+		}
+		const entry = fieldEntry(name);
+		if (entry) {
+			entry.mode = mode;
+			if (mode !== 'replace') entry.clear_when_canonical_missing = false;
+		} else {
+			draft.metadata.fields.push({ field: name, mode, clear_when_canonical_missing: false });
+		}
+	}
+
+	function setFieldClear(name: string, clear: boolean) {
+		const entry = fieldEntry(name);
+		if (entry) entry.clear_when_canonical_missing = clear;
+	}
+
+	function sourceNote(field: ManagedFieldInfo): string {
+		if (field.name === 'genre') return 'Set by the Genres section';
+		if (field.source) return `From MusicBrainz: ${field.source}`;
+		if (!field.written) return 'Not written yet: the file keeps its value';
+		return 'No source: kept, cleared, or set by a script';
+	}
+
 	const managedFieldCount = $derived(
 		draft.metadata.fields.filter((field) => field.mode !== 'disabled').length
 	);
@@ -469,20 +508,28 @@
 							<input class="grow" bind:value={fieldFilter} placeholder="Filter managed fields" />
 						</label>
 						<div class="management-field-table">
-							{#each visibleFields as field (field.field)}
-								<label class="management-field-row">
-									<span class="min-w-0 font-mono text-xs">{field.field.replaceAll('_', ' ')}</span>
+							{#each visibleFields as field (field.name)}
+								{@const entry = fieldEntry(field.name)}
+								<div class="management-field-row">
+									<span class="flex min-w-0 flex-col">
+										<span class="text-xs font-medium">{field.label}</span>
+										<small class="text-[0.7rem] text-base-content/55">{sourceNote(field)}</small>
+									</span>
 									<select
 										class="select select-ghost select-xs"
-										bind:value={field.mode}
-										aria-label={`Mode for ${field.field}`}
+										value={fieldMode(field.name)}
+										onchange={(event) =>
+											setFieldMode(field.name, event.currentTarget.value as ManagementFieldMode)}
+										aria-label={`Mode for ${field.label}`}
 									>
-										<option value="disabled">Off</option>
-										<option value="replace">Replace</option>
-										<option value="fill_missing">Fill missing</option>
-										{#if mergeableFields.has(field.field)}<option value="merge">Merge</option>{/if}
+										{#each field.modes as mode (mode)}
+											<option value={mode}>{modeLabels[mode]}</option>
+										{/each}
+										{#if fieldMode(field.name) === 'preserve'}
+											<option value="preserve">{modeLabels.preserve}</option>
+										{/if}
 									</select>
-									{#if field.mode === 'replace'}
+									{#if field.clearable && entry?.mode === 'replace'}
 										<span
 											class="tooltip"
 											data-tip="Clear this field when the selected release has no value"
@@ -490,14 +537,15 @@
 											<input
 												type="checkbox"
 												class="checkbox checkbox-xs"
-												bind:checked={field.clear_when_canonical_missing}
-												aria-label={`Clear ${field.field} when canonical value is missing`}
+												checked={entry.clear_when_canonical_missing}
+												onchange={(event) => setFieldClear(field.name, event.currentTarget.checked)}
+												aria-label={`Clear ${field.label} when the release has no value`}
 											/>
 										</span>
 									{:else}
 										<span aria-hidden="true"></span>
 									{/if}
-								</label>
+								</div>
 							{/each}
 						</div>
 					{/if}

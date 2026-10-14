@@ -3,12 +3,16 @@
 
 use std::collections::BTreeSet;
 
-use super::presets::{MANAGED_FIELD_NAMES, MERGEABLE_MANAGED_FIELD_NAMES};
+use super::presets::{MANAGED_FIELDS, SCRIPT_APPENDABLE_SPELLINGS, SCRIPT_FIELD_SPELLINGS};
 use crate::settings::error::SettingsError;
 
 /// Naming variable universe (managed fields plus path-only variables).
 pub fn naming_variables() -> BTreeSet<&'static str> {
-    let mut variables: BTreeSet<&'static str> = MANAGED_FIELD_NAMES.iter().copied().collect();
+    let mut variables: BTreeSet<&'static str> = MANAGED_FIELDS
+        .iter()
+        .map(|field| field.name)
+        .chain(SCRIPT_FIELD_SPELLINGS.iter().copied())
+        .collect();
     variables.extend(
         [
             "genre",
@@ -216,15 +220,16 @@ pub(super) fn validate_tagging_language(
     script_name: &str,
     compiler: &dyn ScriptCompiler,
 ) -> Result<(), SettingsError> {
-    let allowed: BTreeSet<&str> = MANAGED_FIELD_NAMES
+    let allowed: BTreeSet<&str> = MANAGED_FIELDS
         .iter()
-        .copied()
-        .chain(["genre"])
+        .map(|field| field.name)
+        .chain(SCRIPT_FIELD_SPELLINGS.iter().copied())
         .collect();
-    let ordered: BTreeSet<&str> = MERGEABLE_MANAGED_FIELD_NAMES
+    let ordered: BTreeSet<&str> = MANAGED_FIELDS
         .iter()
-        .copied()
-        .chain(["genre"])
+        .filter(|field| field.mergeable)
+        .map(|field| field.name)
+        .chain(SCRIPT_APPENDABLE_SPELLINGS.iter().copied())
         .collect();
     let read_only: BTreeSet<&str> = [
         "artist_display",

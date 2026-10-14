@@ -17,8 +17,8 @@ use crate::runtime_config::secret_sections::{
     AdvancedSettings, IdentificationPolicy, TypedLibrary,
 };
 use crate::runtime_config::sections::{
-    DownloadPolicy, LibraryManagement, LibraryManagementProfile, LibraryScanSchedule, MbSourceMode,
-    MusicBrainzSettings, NamingScript, TaggingScript, UsenetBackend,
+    DownloadPolicy, FieldMode, LibraryManagement, LibraryManagementProfile, LibraryScanSchedule,
+    MbSourceMode, MusicBrainzSettings, NamingScript, TaggingScript, UsenetBackend,
 };
 use crate::settings::management::ProfileImportWarning;
 
@@ -114,6 +114,31 @@ pub struct LibraryManagementSettingsResponse {
     pub settings: LibraryManagement,
     /// Settings content revision.
     pub settings_revision: String,
+    /// Every tag field a profile can manage, in the editor's order, with
+    /// the genre row last.
+    pub managed_fields: Vec<ManagedFieldInfo>,
+}
+
+/// One row of a profile's field table.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ManagedFieldInfo {
+    /// The profile's name for the field.
+    pub name: String,
+    /// What the editor calls it.
+    pub label: String,
+    /// What MusicBrainz fact the value comes from. `None`: nothing gives
+    /// one, so the file keeps its value unless a tagging script sets it,
+    /// or replace with clear removes it.
+    pub source: Option<String>,
+    /// Whether merge is offered.
+    pub mergeable: bool,
+    /// Whether replace offers to clear the value when the source has none.
+    pub clearable: bool,
+    /// Whether a profile writes the field yet; when not, the file keeps
+    /// its value.
+    pub written: bool,
+    /// The modes the field offers.
+    pub modes: Vec<FieldMode>,
 }
 
 // --- verify verdicts ------------------------------------------------------------

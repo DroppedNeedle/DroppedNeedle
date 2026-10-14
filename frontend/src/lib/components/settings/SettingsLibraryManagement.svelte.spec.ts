@@ -279,7 +279,36 @@ function baseSettings(): LibraryManagementSettingsResponse {
 			retry_attempts: 3,
 			retry_delay_seconds: 30
 		},
-		settings_revision: 'settings-1'
+		settings_revision: 'settings-1',
+		managed_fields: [
+			{
+				name: 'title',
+				label: 'Title',
+				source: 'Track title',
+				mergeable: false,
+				clearable: true,
+				written: true,
+				modes: ['disabled', 'replace', 'fill_missing']
+			},
+			{
+				name: 'label',
+				label: 'Label',
+				source: 'Release labels',
+				mergeable: true,
+				clearable: true,
+				written: true,
+				modes: ['disabled', 'replace', 'fill_missing', 'merge']
+			},
+			{
+				name: 'genre',
+				label: 'Genre',
+				source: 'The Genres section',
+				mergeable: true,
+				clearable: false,
+				written: true,
+				modes: ['disabled', 'replace', 'fill_missing', 'merge']
+			}
+		]
 	};
 }
 
@@ -430,6 +459,73 @@ describe('SettingsLibraryManagement', () => {
 		expect(checks.elements()).toHaveLength(2);
 		await checks.nth(1).click();
 		expect(h.checkPlacement).toHaveBeenCalledWith('root-2');
+	});
+
+	it('offers merge only where the field catalog does, and edits genre through the Genres section', async () => {
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await page.getByRole('button', { name: 'Edit' }).click();
+		const profileDialog = page.getByRole('dialog', { name: 'Picard-style Organizer' });
+		await profileDialog.getByText('Metadata fields').click();
+
+		const title = profileDialog.getByRole('combobox', { name: 'Mode for Title' });
+		await expect.element(title).toHaveValue('fill_missing');
+		await expect.element(title.getByRole('option', { name: 'Merge' })).not.toBeInTheDocument();
+		const label = profileDialog.getByRole('combobox', { name: 'Mode for Label' });
+		await expect.element(label).toHaveValue('disabled');
+		await expect.element(label.getByRole('option', { name: 'Merge' })).toBeInTheDocument();
+		await expect
+			.element(profileDialog.getByText('No source: kept, cleared, or set by a script'))
+			.not.toBeInTheDocument();
+		await expect.element(profileDialog.getByText('From MusicBrainz: Release labels')).toBeVisible();
+
+		const genre = profileDialog.getByRole('combobox', { name: 'Mode for Genre' });
+		await expect.element(genre).toHaveValue('replace');
+		await expect
+			.element(profileDialog.getByRole('checkbox', { name: /Clear Genre/ }))
+			.not.toBeInTheDocument();
+		await genre.selectOptions('merge');
+		await label.selectOptions('merge');
+		await profileDialog.getByRole('button', { name: 'Save profile' }).click();
+		expect(h.update).toHaveBeenCalledWith(
+			expect.objectContaining({
+				settings: expect.objectContaining({
+					profiles: [
+						expect.objectContaining({
+							genres: expect.objectContaining({ enabled: true, mode: 'merge' }),
+							metadata: expect.objectContaining({
+								fields: [
+									expect.objectContaining({ field: 'title', mode: 'fill_missing' }),
+									expect.objectContaining({ field: 'label', mode: 'merge' })
+								]
+							})
+						})
+					]
+				})
+			})
+		);
+	});
+
+	it('turns genres off from the genre row', async () => {
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await page.getByRole('button', { name: 'Edit' }).click();
+		const profileDialog = page.getByRole('dialog', { name: 'Picard-style Organizer' });
+		await profileDialog.getByText('Metadata fields').click();
+		await profileDialog.getByRole('combobox', { name: 'Mode for Genre' }).selectOptions('disabled');
+		await profileDialog.getByRole('button', { name: 'Save profile' }).click();
+		expect(h.update).toHaveBeenCalledWith(
+			expect.objectContaining({
+				settings: expect.objectContaining({
+					profiles: [
+						expect.objectContaining({
+							genres: expect.objectContaining({ enabled: false }),
+							metadata: expect.objectContaining({
+								fields: [expect.objectContaining({ field: 'title' })]
+							})
+						})
+					]
+				})
+			})
+		);
 	});
 
 	it('starts off everywhere and preserves subordinate profile values while a master toggle is off', async () => {

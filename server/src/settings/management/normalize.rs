@@ -3,17 +3,19 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::activation::pin_profile;
 use super::invalid;
 use super::presets::{
-    LEGACY_DEFAULT_SIDECAR_PATTERNS, MANAGED_FIELD_NAMES, MANAGEMENT_SCHEMA_VERSION,
-    MERGEABLE_MANAGED_FIELD_NAMES, PRESET_CATALOG_VERSION,
+    LEGACY_DEFAULT_SIDECAR_PATTERNS, MANAGED_FIELDS, MANAGEMENT_SCHEMA_VERSION,
+    PRESET_CATALOG_VERSION, managed_field,
 };
 use super::revision::{naming_script_revision, profile_revision, tagging_script_revision};
 use super::script::{ScriptCompiler, validate_naming_language, validate_tagging_language};
 use crate::runtime_config::sections::{
     ArtistStandardization, ArtworkProvider, FieldMode, Id3TextEncoding, Id3Version,
     LibraryManagement, LibraryManagementProfile, LibraryManagementRootAssignment,
-    LibraryManagementRootOverrides, MultiDiscNamingMode, OrganizationManagementSettings,
+    LibraryManagementRootOverrides, ManagedField, MultiDiscNamingMode,
+    OrganizationManagementSettings,
 };
 use crate::settings::error::SettingsError;
 
@@ -32,6 +34,7 @@ pub fn migration_carry(
     suggested_profile_id: &str,
 ) -> Result<Vec<String>, SettingsError> {
     use std::collections::HashMap;
+    complete_fields(incoming);
     let previous_assignments: HashMap<&str, &LibraryManagementRootAssignment> = current
         .root_assignments
         .iter()
@@ -139,6 +142,201 @@ fn clear_activation(assignment: &mut LibraryManagementRootAssignment) {
     assignment.activation_confirmed_by = None;
 }
 
+/// Profile spellings that name another field.
+const FIELD_ALIASES: &[(&str, &str)] = &[
+    ("albumartist", "album_artist"),
+    ("albumartists", "album_artists"),
+    ("track", "track_number"),
+    ("disc", "disc_number"),
+    ("year", "date"),
+];
+
+/// Fields that were written under another field's entry before each had
+/// its own: (field, the entry that wrote it).
+const FORMER_PARENTS: &[(&str, &str)] = &[
+    ("artist_sort", "artist"),
+    ("album_artist_sort", "album_artist"),
+    ("disc_subtitle", "disc_number"),
+    ("original_date", "date"),
+    ("release_status", "album"),
+    ("release_country", "album"),
+    ("release_type", "album"),
+    ("compilation", "album"),
+    ("asin", "album"),
+    ("musicbrainz_release_track_id", "musicbrainz_recording_id"),
+];
+
+fn canonical_field(name: &str) -> &str {
+    FIELD_ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == name)
+        .map_or(name, |(_, field)| field)
+}
+
+/// How much of the source a mode lets through. Entries for one field were
+/// applied in turn, so the strongest one decided what was written.
+fn strength(mode: FieldMode) -> u8 {
+    match mode {
+        FieldMode::Disabled | FieldMode::Preserve => 0,
+        FieldMode::FillMissing => 1,
+        FieldMode::Merge => 2,
+        FieldMode::Replace => 3,
+    }
+}
+
+/// Bring every profile to one entry per managed field, writing exactly
+/// what it wrote before. A folder activation that matched its profile
+/// before still matches it after. Returns whether anything changed.
+pub fn complete_fields(settings: &mut LibraryManagement) -> bool {
+    let matched_before: Vec<bool> = settings
+        .root_assignments
+        .iter()
+        .map(|assignment| {
+            assignment
+                .activation_profile_revision
+                .as_ref()
+                .is_some_and(|pinned| {
+                    pin_profile(settings, assignment)
+                        .is_ok_and(|effective| profile_revision(&effective) == *pinned)
+                })
+        })
+        .collect();
+    let mut changed = false;
+    for profile in &mut settings.profiles {
+        if complete_profile(profile) {
+            profile.revision = profile_revision(profile);
+            changed = true;
+        }
+    }
+    if !changed {
+        return false;
+    }
+    let repinned: Vec<Option<String>> = settings
+        .root_assignments
+        .iter()
+        .zip(&matched_before)
+        .map(|(assignment, matched)| {
+            matched
+                .then(|| pin_profile(settings, assignment).ok())
+                .flatten()
+                .map(|effective| profile_revision(&effective))
+        })
+        .collect();
+    for (assignment, revision) in settings.root_assignments.iter_mut().zip(repinned) {
+        if revision.is_some() {
+            assignment.activation_profile_revision = revision;
+        }
+    }
+    true
+}
+
+/// Complete one profile's field list and preserved fields:
+///
+/// - alias spellings fold onto their field, with the strongest mode of
+///   the entries (clear when any replace entry cleared);
+/// - `genre` and `publisher` entries, which never wrote anything, go;
+/// - a field once written under another entry takes that entry's mode;
+/// - every other missing field is added as off;
+/// - a preserved parent also preserves the fields it used to cover.
+fn complete_profile(profile: &mut LibraryManagementProfile) -> bool {
+    let before = (
+        profile.metadata.fields.clone(),
+        profile.metadata.preserve_fields.clone(),
+    );
+    // A profile saved before every field had its own entry. Its clear on
+    // a field with no source never removed anything, and its merge on
+    // comment wrote nothing; neither starts doing so now.
+    let stored_shape = MANAGED_FIELDS.iter().any(|spec| {
+        !profile
+            .metadata
+            .fields
+            .iter()
+            .any(|field| field.field == spec.name)
+    });
+    let mut fields: Vec<ManagedField> = Vec::new();
+    for entry in std::mem::take(&mut profile.metadata.fields) {
+        if matches!(entry.field.as_str(), "genre" | "publisher") {
+            tracing::info!(
+                profile = %profile.name,
+                field = %entry.field,
+                "dropped a managed field entry that never wrote anything"
+            );
+            continue;
+        }
+        let name = canonical_field(&entry.field);
+        let clears = entry.mode == FieldMode::Replace && entry.clear_when_canonical_missing;
+        match fields.iter_mut().find(|field| field.field == name) {
+            Some(folded) => {
+                if strength(entry.mode) > strength(folded.mode) {
+                    folded.mode = entry.mode;
+                }
+                folded.clear_when_canonical_missing |= clears;
+            }
+            None => fields.push(ManagedField {
+                field: name.to_owned(),
+                mode: entry.mode,
+                clear_when_canonical_missing: clears,
+            }),
+        }
+    }
+    for field in &mut fields {
+        let Some(spec) = managed_field(&field.field) else {
+            continue;
+        };
+        if stored_shape && field.mode == FieldMode::Merge && !spec.mergeable {
+            field.mode = FieldMode::FillMissing;
+        }
+        if field.mode != FieldMode::Replace
+            || !spec.clearable
+            || (stored_shape && spec.source.is_none())
+        {
+            field.clear_when_canonical_missing = false;
+        }
+    }
+    for (name, parent) in FORMER_PARENTS {
+        if fields.iter().any(|field| field.field == *name) {
+            continue;
+        }
+        let (mode, clear) = fields
+            .iter()
+            .find(|field| field.field == *parent)
+            .map_or((FieldMode::Disabled, false), |field| {
+                (field.mode, field.clear_when_canonical_missing)
+            });
+        fields.push(ManagedField {
+            field: (*name).to_owned(),
+            mode,
+            clear_when_canonical_missing: clear,
+        });
+    }
+    for spec in MANAGED_FIELDS {
+        if !fields.iter().any(|field| field.field == spec.name) {
+            fields.push(ManagedField {
+                field: spec.name.to_owned(),
+                mode: FieldMode::Disabled,
+                clear_when_canonical_missing: false,
+            });
+        }
+    }
+
+    let mut preserved: Vec<String> = Vec::new();
+    for name in std::mem::take(&mut profile.metadata.preserve_fields) {
+        let name = canonical_field(&name).to_owned();
+        let children = FORMER_PARENTS
+            .iter()
+            .filter(|(_, parent)| *parent == name)
+            .map(|(child, _)| (*child).to_owned());
+        for value in std::iter::once(name.clone()).chain(children) {
+            if !preserved.contains(&value) {
+                preserved.push(value);
+            }
+        }
+    }
+    profile.metadata.fields = fields;
+    profile.metadata.preserve_fields = preserved;
+    (profile.metadata.fields != before.0) || (profile.metadata.preserve_fields != before.1)
+}
+
 /// Normalize, validate, and populate deterministic derived revisions.
 /// Script sources compile through the injected compiler. Errors are
 /// caller faults (400) with the v2 messages.
@@ -146,6 +344,7 @@ pub fn normalize(
     settings: &mut LibraryManagement,
     compiler: &dyn ScriptCompiler,
 ) -> Result<(), SettingsError> {
+    complete_fields(settings);
     if settings.schema_version != MANAGEMENT_SCHEMA_VERSION {
         return Err(invalid("Unsupported Library Management settings version."));
     }
@@ -392,18 +591,16 @@ fn validate_profile_blocks(
         if field.mode != FieldMode::Replace {
             field.clear_when_canonical_missing = false;
         }
-        if !MANAGED_FIELD_NAMES.contains(&field.field.as_str()) {
+        let Some(spec) = managed_field(&field.field) else {
             return Err(invalid(&format!("Unknown managed field: {}", field.field)));
-        }
+        };
         if !field_names.insert(field.field.clone()) {
             return Err(invalid(&format!(
                 "Managed field is configured twice: {}",
                 field.field
             )));
         }
-        if field.mode == FieldMode::Merge
-            && !MERGEABLE_MANAGED_FIELD_NAMES.contains(&field.field.as_str())
-        {
+        if field.mode == FieldMode::Merge && !spec.mergeable {
             return Err(invalid(&format!(
                 "Managed field does not support merge: {}",
                 field.field

@@ -15943,6 +15943,11 @@ export interface components {
          *     revision (the write CAS token).
          */
         LibraryManagementSettingsResponse: components["schemas"]["LibraryManagementSettings"] & {
+            /**
+             * @description Every tag field a profile can manage, in the editor's order, with
+             *     the genre row last.
+             */
+            managed_fields: components["schemas"]["ManagedFieldInfo"][];
             /** @description Settings content revision. */
             settings_revision: string;
         };
@@ -16642,6 +16647,30 @@ export interface components {
             field: string;
             /** @default replace */
             mode: components["schemas"]["FieldMode"];
+        };
+        /** @description One row of a profile's field table. */
+        ManagedFieldInfo: {
+            /** @description Whether replace offers to clear the value when the source has none. */
+            clearable: boolean;
+            /** @description What the editor calls it. */
+            label: string;
+            /** @description Whether merge is offered. */
+            mergeable: boolean;
+            /** @description The modes the field offers. */
+            modes: components["schemas"]["FieldMode"][];
+            /** @description The profile's name for the field. */
+            name: string;
+            /**
+             * @description What MusicBrainz fact the value comes from. `None`: nothing gives
+             *     one, so the file keeps its value unless a tagging script sets it,
+             *     or replace with clear removes it.
+             */
+            source?: string | null;
+            /**
+             * @description Whether a profile writes the field yet; when not, the file keeps
+             *     its value.
+             */
+            written: boolean;
         };
         /** @description Save settings with the dry runs that confirm them. */
         ManagementActivationConfirmBody: {

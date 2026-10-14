@@ -36977,9 +36977,17 @@
           {
             "type": "object",
             "required": [
-              "settings_revision"
+              "settings_revision",
+              "managed_fields"
             ],
             "properties": {
+              "managed_fields": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ManagedFieldInfo"
+                },
+                "description": "Every tag field a profile can manage, in the editor's order, with\nthe genre row last."
+              },
               "settings_revision": {
                 "type": "string",
                 "description": "Settings content revision."
@@ -38434,6 +38442,54 @@
               }
             ],
             "default": "replace"
+          }
+        }
+      },
+      "ManagedFieldInfo": {
+        "type": "object",
+        "description": "One row of a profile's field table.",
+        "required": [
+          "name",
+          "label",
+          "mergeable",
+          "clearable",
+          "written",
+          "modes"
+        ],
+        "properties": {
+          "clearable": {
+            "type": "boolean",
+            "description": "Whether replace offers to clear the value when the source has none."
+          },
+          "label": {
+            "type": "string",
+            "description": "What the editor calls it."
+          },
+          "mergeable": {
+            "type": "boolean",
+            "description": "Whether merge is offered."
+          },
+          "modes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldMode"
+            },
+            "description": "The modes the field offers."
+          },
+          "name": {
+            "type": "string",
+            "description": "The profile's name for the field."
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What MusicBrainz fact the value comes from. `None`: nothing gives\none, so the file keeps its value unless a tagging script sets it,\nor replace with clear removes it."
+          },
+          "written": {
+            "type": "boolean",
+            "description": "Whether a profile writes the field yet; when not, the file keeps\nits value."
           }
         }
       },

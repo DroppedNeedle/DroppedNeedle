@@ -39,6 +39,7 @@ pub fn release_tags(release: &Release, track: &ReleaseTrack) -> BTreeMap<String,
     put(TagField::ArtistSort, vec![sort_text(track_artists)]);
     put(TagField::Album, vec![release.title.clone()]);
     put(TagField::AlbumArtist, vec![release.artist_text()]);
+    put(TagField::AlbumArtists, names(&release.artists));
     put(TagField::AlbumArtistSort, vec![sort_text(&release.artists)]);
     put(TagField::TrackNumber, vec![track.position.to_string()]);
     if let Some(medium) = medium {

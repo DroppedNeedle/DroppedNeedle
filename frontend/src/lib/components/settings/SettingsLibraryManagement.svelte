@@ -303,7 +303,7 @@
 
 	function settingsPayload(response: LibraryManagementSettingsResponse): LibraryManagementSettings {
 		const value = structuredClone(response);
-		const { settings_revision: _revision, ...settings } = value;
+		const { settings_revision: _revision, managed_fields: _fields, ...settings } = value;
 		return settings;
 	}
 
@@ -1556,6 +1556,7 @@
 {#if selectedProfile}
 	<LibraryManagementProfileEditor
 		profile={selectedProfile}
+		managedFields={settingsQuery.data?.managed_fields ?? []}
 		namingScripts={draft?.naming_scripts ?? []}
 		taggingScripts={draft?.tagging_scripts ?? []}
 		saving={updateSettings.isPending || validateSettings.isPending || impactSettings.isPending}

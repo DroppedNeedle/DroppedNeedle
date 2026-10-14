@@ -30,18 +30,18 @@ use super::bundle::{
 use super::impact::{ChangeImpact, active_automatic, classify};
 use super::invalid;
 use super::normalize::{migration_carry, normalize, validate_preset_provenance};
-use super::presets::{PresetDiff, initial_settings, migrate_presets, preset_diff};
+use super::presets::{MANAGED_FIELDS, PresetDiff, initial_settings, migrate_presets, preset_diff};
 use super::revision::settings_revision;
 use super::script::ScriptCompiler;
 use crate::ids::IdGenerator;
 use crate::runtime_config::ConfigStore;
 use crate::runtime_config::secret_sections::TypedLibrary;
-use crate::runtime_config::sections::{LibraryManagement, LibraryManagementProfile};
+use crate::runtime_config::sections::{FieldMode, LibraryManagement, LibraryManagementProfile};
 use crate::settings::error::SettingsError;
 use crate::settings::models::{
     LibraryManagementProfileExportResponse, LibraryManagementProfileImportPreviewResponse,
     LibraryManagementProfileImportResponse, LibraryManagementProfileMutationResponse,
-    LibraryManagementSettingsResponse,
+    LibraryManagementSettingsResponse, ManagedFieldInfo,
 };
 
 /// What a confirmed dry run pins on its library folder.
@@ -151,6 +151,7 @@ impl LibraryManagementService {
         LibraryManagementSettingsResponse {
             settings_revision: settings_revision(&settings),
             settings,
+            managed_fields: managed_field_catalog(),
         }
     }
 
@@ -580,6 +581,56 @@ fn find_profile<'a>(
         .iter()
         .find(|profile| profile.id == profile_id)
         .ok_or_else(|| invalid(MISSING_PROFILE))
+}
+
+/// The field table the profile editor shows: every managed field, then
+/// the genre row, which edits the Genres section.
+fn managed_field_catalog() -> Vec<ManagedFieldInfo> {
+    let row = |name: &str,
+               label: &str,
+               source: Option<&str>,
+               mergeable: bool,
+               clearable: bool,
+               written: bool| {
+        let mut modes = vec![
+            FieldMode::Disabled,
+            FieldMode::Replace,
+            FieldMode::FillMissing,
+        ];
+        if mergeable {
+            modes.push(FieldMode::Merge);
+        }
+        ManagedFieldInfo {
+            name: name.to_owned(),
+            label: label.to_owned(),
+            source: source.map(str::to_owned),
+            mergeable,
+            clearable,
+            written,
+            modes,
+        }
+    };
+    MANAGED_FIELDS
+        .iter()
+        .map(|field| {
+            row(
+                field.name,
+                field.label,
+                field.source,
+                field.mergeable,
+                field.clearable,
+                field.written,
+            )
+        })
+        .chain([row(
+            "genre",
+            "Genre",
+            Some("The Genres section"),
+            true,
+            false,
+            true,
+        )])
+        .collect()
 }
 
 fn mutation_response(

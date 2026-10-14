@@ -26,6 +26,8 @@ export type DuplicateResolutionAction =
 
 export type ManagedFieldSettings = components['schemas']['ManagedField'];
 
+export type ManagedFieldInfo = components['schemas']['ManagedFieldInfo'];
+
 export type ArtistCreditSettings = components['schemas']['ArtistCreditSettings'];
 
 export type RelationshipCreditSettings = components['schemas']['RelationshipCreditSettings'];

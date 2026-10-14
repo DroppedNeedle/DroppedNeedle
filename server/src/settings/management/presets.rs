@@ -19,7 +19,7 @@ pub const MANAGEMENT_SCHEMA_VERSION: i64 = 1;
 /// Preset catalog version.
 pub const PRESET_CATALOG_VERSION: i64 = 1;
 /// Picard organizer preset version.
-pub const PICARD_ORGANIZER_PRESET_VERSION: i64 = 4;
+pub const PICARD_ORGANIZER_PRESET_VERSION: i64 = 5;
 /// Picard organizer profile id.
 pub const PICARD_ORGANIZER_PROFILE_ID: &str = "c2741223-da7c-5231-bcf5-7cead27b07d9";
 /// Complete organizer profile id.
@@ -38,69 +38,229 @@ pub const PICARD_STANDARD_NAMING_SOURCE: &str = "{albumartist}/{album}{condition
 /// Picard multi-disc naming source.
 pub const PICARD_MULTI_DISC_NAMING_SOURCE: &str = "{albumartist}/{album}{conditional(is_empty(year), \"\", concat(\" (\", year, \")\"))}{conditional(is_empty(album_disambiguation), \"\", concat(\" (\", album_disambiguation, \")\"))}/{default(medium_format, \"Disc\")} {medium_number:02d}/{track:02d} - {title}.{ext}";
 
-/// Managed tag-field names.
-pub const MANAGED_FIELD_NAMES: &[&str] = &[
-    "title",
-    "artist",
-    "artists",
-    "album",
-    "albumartist",
-    "album_artist",
-    "albumartists",
-    "album_artists",
-    "track_number",
-    "track",
-    "disc_number",
-    "disc",
-    "total_tracks",
-    "total_discs",
-    "year",
-    "date",
-    "genre",
-    "comment",
-    "composer",
-    "lyricist",
-    "conductor",
-    "performer",
-    "arranger",
-    "remixer",
-    "producer",
-    "publisher",
-    "copyright",
-    "encoded_by",
-    "isrc",
-    "barcode",
-    "catalog_number",
-    "label",
-    "media",
-    "musicbrainz_recording_id",
-    "musicbrainz_release_id",
-    "musicbrainz_release_group_id",
-    "musicbrainz_artist_id",
-    "musicbrainz_album_artist_id",
-    "musicbrainz_work_id",
-    "acoustid_id",
-    "acoustid_fingerprint",
+/// One tag field a profile manages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ManagedFieldSpec {
+    /// The profile's name for it.
+    pub name: &'static str,
+    /// What the profile editor calls it.
+    pub label: &'static str,
+    /// What MusicBrainz fact the value comes from; `None` when nothing
+    /// gives one, so the file keeps its value unless a tagging script sets
+    /// it or replace with clear removes it.
+    pub source: Option<&'static str>,
+    /// Whether merge is offered (multi-valued fields).
+    pub mergeable: bool,
+    /// Whether replace can clear the file's value when the source has
+    /// none.
+    pub clearable: bool,
+    /// Whether a profile writes the field yet. Credits, works and AcoustID
+    /// wait for their values and leave the file's value alone.
+    pub written: bool,
+}
+
+const fn field(
+    name: &'static str,
+    label: &'static str,
+    source: Option<&'static str>,
+    mergeable: bool,
+) -> ManagedFieldSpec {
+    ManagedFieldSpec {
+        name,
+        label,
+        source,
+        mergeable,
+        clearable: true,
+        written: true,
+    }
+}
+
+/// A field whose value comes later (MusicBrainz credits and works,
+/// AcoustID): until then the profile leaves the file's value alone, and
+/// clear is not offered.
+const fn waiting(name: &'static str, label: &'static str, mergeable: bool) -> ManagedFieldSpec {
+    ManagedFieldSpec {
+        name,
+        label,
+        source: None,
+        mergeable,
+        clearable: false,
+        written: false,
+    }
+}
+
+/// Every tag field a profile manages, in the editor's order, under v2's
+/// names. Mergeable is v2's list plus the multi-valued fields added since.
+pub const MANAGED_FIELDS: &[ManagedFieldSpec] = &[
+    field("title", "Title", Some("Track title"), false),
+    field("title_sort", "Title sort", None, false),
+    field("album", "Album", Some("Release title"), false),
+    field("album_sort", "Album sort", None, false),
+    field("artist", "Artist", Some("Track artist credit"), true),
+    field("artists", "Artists", Some("Track artist names"), true),
+    field(
+        "artist_sort",
+        "Artist sort",
+        Some("Track artist sort names"),
+        true,
+    ),
+    field(
+        "album_artist",
+        "Album artist",
+        Some("Release artist credit"),
+        true,
+    ),
+    field(
+        "album_artists",
+        "Album artists",
+        Some("Release artist names"),
+        true,
+    ),
+    field(
+        "album_artist_sort",
+        "Album artist sort",
+        Some("Release artist sort names"),
+        true,
+    ),
+    field(
+        "track_number",
+        "Track number",
+        Some("Track position"),
+        false,
+    ),
+    field(
+        "total_tracks",
+        "Total tracks",
+        Some("Tracks on the disc"),
+        false,
+    ),
+    field("disc_number", "Disc number", Some("Disc position"), false),
+    field(
+        "total_discs",
+        "Total discs",
+        Some("Discs in the release"),
+        false,
+    ),
+    field("disc_subtitle", "Disc subtitle", Some("Disc title"), false),
+    field("date", "Date", Some("Release date"), false),
+    field(
+        "original_date",
+        "Original date",
+        Some("Release group's first release date"),
+        false,
+    ),
+    field(
+        "release_status",
+        "Release status",
+        Some("Release status"),
+        false,
+    ),
+    field(
+        "release_country",
+        "Release country",
+        Some("Release country"),
+        false,
+    ),
+    field(
+        "release_type",
+        "Release type",
+        Some("Release group types"),
+        true,
+    ),
+    field(
+        "compilation",
+        "Compilation",
+        Some("Release artist is Various Artists"),
+        false,
+    ),
+    field("asin", "ASIN", Some("Release ASIN"), false),
+    field("media", "Media", Some("Disc format"), false),
+    field("label", "Label", Some("Release labels"), true),
+    field(
+        "catalog_number",
+        "Catalog number",
+        Some("Release catalog numbers"),
+        true,
+    ),
+    field("barcode", "Barcode", Some("Release barcode"), false),
+    field("isrc", "ISRC", Some("Recording ISRCs"), true),
+    field(
+        "musicbrainz_recording_id",
+        "MusicBrainz recording ID",
+        Some("Recording ID"),
+        false,
+    ),
+    field(
+        "musicbrainz_release_track_id",
+        "MusicBrainz release track ID",
+        Some("Release track ID"),
+        false,
+    ),
+    field(
+        "musicbrainz_release_id",
+        "MusicBrainz release ID",
+        Some("Release ID"),
+        false,
+    ),
+    field(
+        "musicbrainz_release_group_id",
+        "MusicBrainz release group ID",
+        Some("Release group ID"),
+        false,
+    ),
+    field(
+        "musicbrainz_artist_id",
+        "MusicBrainz artist ID",
+        Some("Track artist IDs"),
+        true,
+    ),
+    field(
+        "musicbrainz_album_artist_id",
+        "MusicBrainz album artist ID",
+        Some("Release artist IDs"),
+        true,
+    ),
+    waiting("work", "Work", false),
+    waiting("musicbrainz_work_id", "MusicBrainz work ID", true),
+    field("movement", "Movement", None, false),
+    field("movement_number", "Movement number", None, false),
+    field("movement_count", "Movement count", None, false),
+    waiting("composer", "Composer", true),
+    waiting("lyricist", "Lyricist", true),
+    waiting("conductor", "Conductor", true),
+    waiting("performer", "Performer", true),
+    waiting("arranger", "Arranger", true),
+    waiting("remixer", "Remixer", true),
+    waiting("producer", "Producer", true),
+    field("comment", "Comment", None, false),
+    field("copyright", "Copyright", None, false),
+    field("encoded_by", "Encoded by", None, false),
+    waiting("acoustid_id", "AcoustID", false),
+    waiting("acoustid_fingerprint", "AcoustID fingerprint", false),
 ];
 
-/// Mergeable managed tag-field names.
-pub const MERGEABLE_MANAGED_FIELD_NAMES: &[&str] = &[
-    "artist",
-    "artists",
+/// The managed field by its profile name.
+pub fn managed_field(name: &str) -> Option<&'static ManagedFieldSpec> {
+    MANAGED_FIELDS.iter().find(|field| field.name == name)
+}
+
+/// Older spellings tagging scripts still accept beside the field names:
+/// `albumartist`, `albumartists`, `track`, `disc` and `year` name their
+/// field, `publisher` is the label's frame, and genre is written by the
+/// Genres section.
+pub const SCRIPT_FIELD_SPELLINGS: &[&str] = &[
     "albumartist",
-    "album_artist",
     "albumartists",
-    "album_artists",
+    "track",
+    "disc",
+    "year",
+    "publisher",
     "genre",
-    "comment",
-    "composer",
-    "lyricist",
-    "conductor",
-    "performer",
-    "arranger",
-    "remixer",
-    "producer",
 ];
+
+/// Older spellings tagging scripts may still append to.
+pub const SCRIPT_APPENDABLE_SPELLINGS: &[&str] =
+    &["albumartist", "albumartists", "comment", "genre"];
 
 /// Legacy default sidecar patterns (pre-#401).
 pub const LEGACY_DEFAULT_SIDECAR_PATTERNS: &[&str] = &[
@@ -123,25 +283,19 @@ pub const LEGACY_DEFAULT_SIDECAR_PATTERNS: &[&str] = &[
 
 /// Picard-style organizer preset profile.
 pub fn picard_style_organizer_profile() -> LibraryManagementProfile {
-    let mut fields: Vec<ManagedField> = MANAGED_FIELD_NAMES
+    // Every field, replace; AcoustID fills only what is missing.
+    let fields: Vec<ManagedField> = MANAGED_FIELDS
         .iter()
-        .filter(|field| **field != "acoustid_id" && **field != "acoustid_fingerprint")
         .map(|field| ManagedField {
-            field: (*field).to_owned(),
-            mode: FieldMode::Replace,
+            field: field.name.to_owned(),
+            mode: if field.name.starts_with("acoustid_") {
+                FieldMode::FillMissing
+            } else {
+                FieldMode::Replace
+            },
             clear_when_canonical_missing: false,
         })
         .collect();
-    fields.push(ManagedField {
-        field: "acoustid_id".to_owned(),
-        mode: FieldMode::FillMissing,
-        clear_when_canonical_missing: false,
-    });
-    fields.push(ManagedField {
-        field: "acoustid_fingerprint".to_owned(),
-        mode: FieldMode::FillMissing,
-        clear_when_canonical_missing: false,
-    });
     let mut profile = LibraryManagementProfile {
         id: PICARD_ORGANIZER_PROFILE_ID.to_owned(),
         name: "Picard-style Organizer".to_owned(),
@@ -173,7 +327,7 @@ pub fn complete_library_organizer_profile() -> LibraryManagementProfile {
         "Best-effort metadata, genres, artwork, lyrics, ReplayGain, and same-root organization."
             .to_owned();
     profile.preset_origin = Some("complete_library_organizer".to_owned());
-    profile.preset_version = Some(1);
+    profile.preset_version = Some(2);
     profile.genres.sources = vec![
         GenreSource::Musicbrainz,
         GenreSource::Listenbrainz,
@@ -315,6 +469,14 @@ fn legacy_naming_profile() -> LibraryManagementProfile {
         ..LibraryManagementProfile::default()
     };
     profile.metadata.enabled = false;
+    profile.metadata.fields = MANAGED_FIELDS
+        .iter()
+        .map(|field| ManagedField {
+            field: field.name.to_owned(),
+            mode: FieldMode::Disabled,
+            clear_when_canonical_missing: false,
+        })
+        .collect();
     profile.genres.enabled = false;
     profile.artwork.embedded_enabled = false;
     profile.artwork.external_enabled = false;

@@ -173,41 +173,53 @@ impl CompiledScripts {
     }
 }
 
-/// Profile field names to the tag fields they cover. Names v3 has no
-/// source for (composer, lyricist, AcoustID and similar) cover nothing:
-/// the file keeps what it has.
-fn targets(name: &str) -> &'static [TagField] {
+/// The tag field a profile field writes. Credits, works and AcoustID
+/// have no values yet, so those entries leave the file as it is; genre is
+/// the Genres section's.
+fn target(name: &str) -> Option<TagField> {
     use TagField::*;
-    match name {
-        "title" => &[Title],
-        "artist" => &[Artist, ArtistSort],
-        "artists" => &[Artists],
-        // Release facts travel with the album title.
-        "album" => &[
-            Album,
-            ReleaseStatus,
-            ReleaseCountry,
-            ReleaseType,
-            Asin,
-            Compilation,
-        ],
-        "albumartist" | "album_artist" => &[AlbumArtist, AlbumArtistSort],
-        "track_number" | "track" => &[TrackNumber],
-        "disc_number" | "disc" => &[DiscNumber, DiscSubtitle],
-        "total_tracks" => &[TrackTotal],
-        "total_discs" => &[DiscTotal],
-        "year" | "date" => &[Date, OriginalDate],
-        "barcode" => &[Barcode],
-        "catalog_number" => &[CatalogNumber],
-        "label" => &[Label],
-        "media" => &[Media],
-        "musicbrainz_recording_id" => &[MusicBrainzRecordingId, MusicBrainzReleaseTrackId],
-        "musicbrainz_release_id" => &[MusicBrainzReleaseId],
-        "musicbrainz_release_group_id" => &[MusicBrainzReleaseGroupId],
-        "musicbrainz_artist_id" => &[MusicBrainzArtistId],
-        "musicbrainz_album_artist_id" => &[MusicBrainzAlbumArtistId],
-        _ => &[],
-    }
+    Some(match name {
+        "title" => Title,
+        "title_sort" => TitleSort,
+        "artist" => Artist,
+        "artists" => Artists,
+        "artist_sort" => ArtistSort,
+        "album" => Album,
+        "album_sort" => AlbumSort,
+        "album_artist" => AlbumArtist,
+        "album_artists" => AlbumArtists,
+        "album_artist_sort" => AlbumArtistSort,
+        "track_number" => TrackNumber,
+        "total_tracks" => TrackTotal,
+        "disc_number" => DiscNumber,
+        "total_discs" => DiscTotal,
+        "disc_subtitle" => DiscSubtitle,
+        "date" => Date,
+        "original_date" => OriginalDate,
+        "release_status" => ReleaseStatus,
+        "release_country" => ReleaseCountry,
+        "release_type" => ReleaseType,
+        "compilation" => Compilation,
+        "asin" => Asin,
+        "media" => Media,
+        "label" => Label,
+        "catalog_number" => CatalogNumber,
+        "barcode" => Barcode,
+        "isrc" => Isrc,
+        "musicbrainz_recording_id" => MusicBrainzRecordingId,
+        "musicbrainz_release_track_id" => MusicBrainzReleaseTrackId,
+        "musicbrainz_release_id" => MusicBrainzReleaseId,
+        "musicbrainz_release_group_id" => MusicBrainzReleaseGroupId,
+        "musicbrainz_artist_id" => MusicBrainzArtistId,
+        "musicbrainz_album_artist_id" => MusicBrainzAlbumArtistId,
+        "movement" => Movement,
+        "movement_number" => MovementNumber,
+        "movement_count" => MovementCount,
+        "comment" => Comment,
+        "copyright" => Copyright,
+        "encoded_by" => EncodedBy,
+        _ => return None,
+    })
 }
 
 /// A tag field by its name or a script and naming spelling of it.
@@ -404,7 +416,7 @@ pub fn plan_tags(
             .metadata
             .preserve_fields
             .iter()
-            .flat_map(|name| targets(name).iter().map(|field| field.name()))
+            .filter_map(|name| target(name).map(TagField::name))
             .collect();
         if super::custom::is_custom(release) {
             // A custom edition has no release behind it: the file keeps
@@ -413,19 +425,20 @@ pub fn plan_tags(
             preserved.insert(TagField::MusicBrainzReleaseTrackId.name());
         }
         for managed in &profile.metadata.fields {
-            for field in targets(&managed.field) {
-                if preserved.contains(field.name()) {
-                    continue;
-                }
-                let existing = desired.get(field.name()).cloned().unwrap_or_default();
-                if let Some(values) = mode_value(
-                    managed.mode,
-                    managed.clear_when_canonical_missing,
-                    &existing,
-                    canonical.get(field.name()),
-                ) {
-                    desired.insert(field.name().to_owned(), values);
-                }
+            let Some(field) = target(&managed.field) else {
+                continue;
+            };
+            if preserved.contains(field.name()) {
+                continue;
+            }
+            let existing = desired.get(field.name()).cloned().unwrap_or_default();
+            if let Some(values) = mode_value(
+                managed.mode,
+                managed.clear_when_canonical_missing,
+                &existing,
+                canonical.get(field.name()),
+            ) {
+                desired.insert(field.name().to_owned(), values);
             }
         }
         let mut protected: BTreeSet<String> =
@@ -493,7 +506,9 @@ pub fn plan_tags(
             ));
             continue;
         }
-        if !new.is_empty() && !save::accepts(&TagEdit::new(field, new.clone())) {
+        // MP4 has no home for some fields (performer, arranger).
+        let homeless = format == "m4a" && field.mp4().is_none();
+        if !new.is_empty() && (homeless || !save::accepts(&TagEdit::new(field, new.clone()))) {
             warnings.push(format!(
                 "\"{name}\" cannot hold {} in a {} file, so it is left as it is.",
                 new.join("; "),
@@ -509,12 +524,10 @@ pub fn plan_tags(
         });
         updates.insert(name.clone(), new);
     }
-    // Scrubbing (v2's rule): every native item outside v2's managed
-    // field names goes, except the ones the profile preserves. Names v2
-    // manages but these fields do not write (composer, performer, work,
-    // every MusicBrainz and AcoustID id and so on) always stay. The
-    // values are recorded in the before-state, so undo and a baseline
-    // restore put them back.
+    // Scrubbing (v2's rule): every native item outside the managed
+    // fields goes, except the ones the profile preserves and v2's other
+    // managed spellings, which always stay. The values are recorded in
+    // the before-state, so undo and a baseline restore put them back.
     let mut scrubbed = Vec::new();
     if profile.metadata.enabled && profile.metadata.scrub_unmanaged_tags {
         let preserved: Vec<String> = profile
@@ -770,44 +783,22 @@ fn scrub_keeps(folded: &str) -> bool {
         || name.starts_with("replaygain")
 }
 
-/// The native items (folded keys) a preserved profile field name keeps
-/// from a scrub, for names outside the managed fields (`composer`,
-/// `comment`, an ISRC) and for any key named outright (`vorbis:mood`).
+/// The native items (folded keys) a preserved name keeps from a scrub,
+/// for common names outside the managed fields (`grouping`, `mood`) and
+/// for any key named outright (`vorbis:mood`). A managed field never
+/// reaches the scrub.
 fn preserved_native(name: &str) -> Vec<String> {
     let name = name.trim().to_ascii_lowercase();
     if name.contains(':') {
         return vec![name];
     }
     let keys: &[&str] = match name.as_str() {
-        "composer" => &["id3:tcom", "vorbis:composer", "mp4:\u{a9}wrt"],
-        "lyricist" => &["id3:text", "vorbis:lyricist", "mp4:----:lyricist"],
-        "conductor" => &["id3:tpe3", "vorbis:conductor", "mp4:----:conductor"],
-        "remixer" => &["id3:tpe4", "vorbis:remixer", "mp4:----:remixer"],
-        "comment" => &["vorbis:comment", "vorbis:description", "mp4:\u{a9}cmt"],
         "grouping" => &["id3:tit1", "vorbis:grouping", "mp4:\u{a9}grp"],
         "bpm" => &["id3:tbpm", "vorbis:bpm"],
-        "isrc" => &["id3:tsrc", "vorbis:isrc", "mp4:----:isrc"],
-        "copyright" => &["id3:tcop", "vorbis:copyright", "mp4:cprt"],
-        "encoded_by" | "encodedby" => &["id3:tenc", "vorbis:encodedby", "mp4:\u{a9}too"],
-        "encoder" => &["id3:tsse", "vorbis:encoder", "mp4:\u{a9}too"],
+        "encoder" => &["id3:tsse", "vorbis:encoder"],
         "mood" => &["id3:tmoo", "vorbis:mood", "mp4:----:mood"],
         "language" => &["id3:tlan", "vorbis:language", "mp4:----:language"],
         "script" => &["id3:txxx:script", "vorbis:script", "mp4:----:script"],
-        "acoustid_id" => &[
-            "id3:txxx:acoustid id",
-            "vorbis:acoustid_id",
-            "mp4:----:acoustid id",
-        ],
-        "acoustid_fingerprint" => &[
-            "id3:txxx:acoustid fingerprint",
-            "vorbis:acoustid_fingerprint",
-            "mp4:----:acoustid fingerprint",
-        ],
-        "musicbrainz_work_id" => &[
-            "id3:txxx:musicbrainz work id",
-            "vorbis:musicbrainz_workid",
-            "mp4:----:musicbrainz work id",
-        ],
         _ => &[],
     };
     keys.iter().map(|key| (*key).to_owned()).collect()
