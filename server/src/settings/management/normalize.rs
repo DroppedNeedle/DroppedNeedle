@@ -166,6 +166,12 @@ const FORMER_PARENTS: &[(&str, &str)] = &[
     ("musicbrainz_release_track_id", "musicbrainz_recording_id"),
 ];
 
+/// Whether a stored field entry names a field, an alias of one, or an
+/// entry the completion drops (`genre`, `publisher`).
+pub(super) fn is_field_name(name: &str) -> bool {
+    matches!(name, "genre" | "publisher") || managed_field(canonical_field(name)).is_some()
+}
+
 fn canonical_field(name: &str) -> &str {
     FIELD_ALIASES
         .iter()
@@ -237,7 +243,8 @@ pub fn complete_fields(settings: &mut LibraryManagement) -> bool {
 /// - `genre` and `publisher` entries, which never wrote anything, go;
 /// - a field once written under another entry takes that entry's mode;
 /// - every other missing field is added as off;
-/// - a preserved parent also preserves the fields it used to cover.
+/// - a preserved parent also preserves the fields that just took its
+///   mode, which it used to cover.
 fn complete_profile(profile: &mut LibraryManagementProfile) -> bool {
     let before = (
         profile.metadata.fields.clone(),
@@ -293,10 +300,12 @@ fn complete_profile(profile: &mut LibraryManagementProfile) -> bool {
             field.clear_when_canonical_missing = false;
         }
     }
+    let mut inherited: Vec<&str> = Vec::new();
     for (name, parent) in FORMER_PARENTS {
         if fields.iter().any(|field| field.field == *name) {
             continue;
         }
+        inherited.push(name);
         let (mode, clear) = fields
             .iter()
             .find(|field| field.field == *parent)
@@ -324,7 +333,7 @@ fn complete_profile(profile: &mut LibraryManagementProfile) -> bool {
         let name = canonical_field(&name).to_owned();
         let children = FORMER_PARENTS
             .iter()
-            .filter(|(_, parent)| *parent == name)
+            .filter(|(child, parent)| *parent == name && inherited.contains(child))
             .map(|(child, _)| (*child).to_owned());
         for value in std::iter::once(name.clone()).chain(children) {
             if !preserved.contains(&value) {

@@ -29,7 +29,7 @@ use super::bundle::{
 };
 use super::impact::{ChangeImpact, active_automatic, classify};
 use super::invalid;
-use super::normalize::{migration_carry, normalize, validate_preset_provenance};
+use super::normalize::{is_field_name, migration_carry, normalize, validate_preset_provenance};
 use super::presets::{MANAGED_FIELDS, PresetDiff, initial_settings, migrate_presets, preset_diff};
 use super::revision::settings_revision;
 use super::script::ScriptCompiler;
@@ -117,6 +117,7 @@ impl LibraryManagementService {
         } else {
             let mut migrated = stored.clone();
             migrate_presets(&mut migrated);
+            drop_unknown_fields(&mut migrated);
             migrated
         };
         normalize(&mut settings, self.compiler.as_ref()).map_err(|error| {
@@ -571,6 +572,28 @@ impl LibraryManagementService {
 }
 
 const MISSING_PROFILE: &str = "The Library Management profile does not exist.";
+
+/// Drop field entries no version of DroppedNeedle has named instead of
+/// refusing the whole section. The caller saves the result, so this warns
+/// once.
+fn drop_unknown_fields(settings: &mut LibraryManagement) {
+    let mut dropped = Vec::new();
+    for profile in &mut settings.profiles {
+        profile.metadata.fields.retain(|field| {
+            let known = is_field_name(&field.field);
+            if !known {
+                dropped.push(format!("{}: {}", profile.name, field.field));
+            }
+            known
+        });
+    }
+    if !dropped.is_empty() {
+        tracing::warn!(
+            fields = ?dropped,
+            "dropped Library Management field entries with unknown names"
+        );
+    }
+}
 
 fn find_profile<'a>(
     settings: &'a LibraryManagement,

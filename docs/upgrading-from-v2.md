@@ -326,6 +326,10 @@ machine and its data folders can run it.
   subdomain of the same domain, nor the same host on another port) shows
   the sign-in page even then, because the browser does not send the
   sign-in cookie to a frame there.
+- **Performer tags.** v3 writes performer credits the way Picard does:
+  "Name (instrument)", and an instrument list in ID3. The first time v3
+  writes performer credits to an album v2 managed, it rewrites the ones v2
+  wrote in that form. Like every managed change, the run can be undone.
 
 ### Moved
 

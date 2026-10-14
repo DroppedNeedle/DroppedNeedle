@@ -1027,3 +1027,155 @@ async fn reimport_with_secrets_leaves_config_bytes_untouched() {
         "fresh nonces must not rewrite the config"
     );
 }
+
+/// Every managed field name v2 accepted.
+const V2_MANAGED_FIELDS: &[&str] = &[
+    "album",
+    "title",
+    "album_sort",
+    "title_sort",
+    "artist",
+    "album_artist",
+    "artist_sort",
+    "album_artist_sort",
+    "track_number",
+    "total_tracks",
+    "disc_number",
+    "total_discs",
+    "disc_subtitle",
+    "date",
+    "original_date",
+    "release_status",
+    "release_country",
+    "release_type",
+    "media",
+    "compilation",
+    "label",
+    "catalog_number",
+    "barcode",
+    "asin",
+    "isrc",
+    "musicbrainz_recording_id",
+    "musicbrainz_release_track_id",
+    "musicbrainz_release_id",
+    "musicbrainz_release_group_id",
+    "musicbrainz_artist_id",
+    "musicbrainz_album_artist_id",
+    "work",
+    "musicbrainz_work_id",
+    "movement",
+    "movement_number",
+    "movement_count",
+    "composer",
+    "lyricist",
+    "conductor",
+    "performer",
+    "arranger",
+    "remixer",
+    "producer",
+    "acoustid_id",
+    "acoustid_fingerprint",
+];
+
+/// A v2 profile carries over whole: every entry keeps its mode and its
+/// clear, a field it did not list stays off, `artists` and
+/// `album_artists` follow `artist` and `album_artist`, preserved names
+/// match in any case and cover nothing else, and the section reads.
+#[tokio::test]
+async fn v2_management_fields_carry_over_as_they_were() {
+    use droppedneedle::runtime_config::ConfigStore;
+    use droppedneedle::runtime_config::sections::FieldMode;
+    use droppedneedle::settings::management::service::LibraryManagementService;
+    use droppedneedle::settings::management::{
+        PICARD_ORGANIZER_PROFILE_ID, StructuralCompiler, initial_settings,
+    };
+    use std::sync::Arc;
+
+    let mut management = serde_json::to_value(initial_settings("")).unwrap();
+    let fields: Vec<Value> = V2_MANAGED_FIELDS
+        .iter()
+        .filter(|name| **name != "artist_sort")
+        .map(|name| {
+            let mode = match *name {
+                "artist" => "merge",
+                "title_sort" => "disabled",
+                _ => "replace",
+            };
+            let clear = *name == "album_sort";
+            json!({"field": name, "mode": mode, "clear_when_canonical_missing": clear})
+        })
+        .collect();
+    let profiles = management["profiles"].as_array_mut().unwrap();
+    let picard = profiles
+        .iter_mut()
+        .find(|profile| profile["id"] == PICARD_ORGANIZER_PROFILE_ID)
+        .unwrap();
+    picard["metadata"]["fields"] = Value::Array(fields);
+    picard["metadata"]["preserve_fields"] = json!(["Artist", "album", "date"]);
+
+    let fixture = Fixture::shared();
+    let mut export = fixture.shell();
+    export["settings"]["library_management"] = management;
+    let pool = migrated_pool().await;
+    let (_dir, config_path, crypto) = scratch_config("management-fields");
+    let report = run_import(import_request(
+        &export,
+        pool.clone(),
+        config_path.clone(),
+        crypto,
+    ))
+    .await;
+    assert_eq!(report.exit.code, ExitCode::Ok, "{}", report.to_json());
+    assert!(
+        !report
+            .items
+            .iter()
+            .any(|item| item.key.contains(".metadata.fields")),
+        "{}",
+        report.to_json()
+    );
+
+    let store = Arc::new(ConfigStore::open(&config_path, test_crypto()).unwrap());
+    let service = LibraryManagementService::new(
+        store,
+        Arc::new(crate::common::FixedIdGenerator::new(
+            crate::common::FIXED_ID,
+        )),
+        Arc::new(StructuralCompiler),
+    );
+    let settings = service.get_settings().expect("the section reads").settings;
+    let picard = settings
+        .profiles
+        .iter()
+        .find(|profile| profile.id == PICARD_ORGANIZER_PROFILE_ID)
+        .unwrap();
+    let mode = |name: &str| {
+        picard
+            .metadata
+            .fields
+            .iter()
+            .find(|field| field.field == name)
+            .map(|field| field.mode)
+    };
+    let album_sort = picard
+        .metadata
+        .fields
+        .iter()
+        .find(|field| field.field == "album_sort")
+        .unwrap();
+    assert_eq!(album_sort.mode, FieldMode::Replace);
+    assert!(album_sort.clear_when_canonical_missing, "v2's clear stays");
+    assert_eq!(mode("title_sort"), Some(FieldMode::Disabled));
+    assert_eq!(mode("artist"), Some(FieldMode::Merge));
+    assert_eq!(mode("artists"), Some(FieldMode::Merge));
+    assert_eq!(mode("album_artists"), Some(FieldMode::Replace));
+    assert_eq!(
+        mode("artist_sort"),
+        Some(FieldMode::Disabled),
+        "v2 left it off"
+    );
+    assert_eq!(mode("comment"), Some(FieldMode::Disabled));
+    let mut preserved = picard.metadata.preserve_fields.clone();
+    preserved.sort();
+    assert_eq!(preserved, ["album", "artist", "artists", "date"]);
+}

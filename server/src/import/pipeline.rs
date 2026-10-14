@@ -560,9 +560,12 @@ fn stage_settings(
     for section in REPLACE_UNIVERSE {
         match exported.get(*section) {
             Some(value) => {
-                let filtered = filter_section(section, value);
+                let mut filtered = filter_section(section, value);
                 if *section == "plugins" {
                     note_unflagged_plugin_settings(&filtered, report);
+                }
+                if *section == "library_management" {
+                    carry_v2_management_fields(&mut filtered);
                 }
                 let applied = rekey_section(
                     &filtered,
@@ -630,6 +633,84 @@ fn note_unflagged_plugin_settings(plugins: &Value, report: &mut ReportBuilder) {
                         .to_owned(),
                 );
             }
+        }
+    }
+}
+
+/// Carry each v2 profile's field entries as they are. A field it did not
+/// list was off in v2 and stays off. `artists` and `album_artists` take
+/// the mode and the preserve of `artist` and `album_artist`: v2's
+/// `artist` wrote the ARTISTS list, and `album_artist` kept the album
+/// artist list (on MP3 and M4A it now also goes to its own ALBUMARTISTS
+/// tag). Preserved names v2 matched in any case take the field's
+/// spelling. A field list that does not decode is left for the settings
+/// reader to report.
+fn carry_v2_management_fields(section: &mut Value) {
+    use crate::runtime_config::sections::{FieldMode, ManagedField};
+    use crate::settings::management::MANAGED_FIELDS;
+    let Some(profiles) = section.get_mut("profiles").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for profile in profiles {
+        let Some(metadata) = profile.get_mut("metadata").and_then(Value::as_object_mut) else {
+            continue;
+        };
+        let Some(Ok(mut parsed)) = metadata
+            .get("fields")
+            .map(|fields| serde_json::from_value::<Vec<ManagedField>>(fields.clone()))
+        else {
+            continue;
+        };
+        let mut preserved: Vec<String> = metadata
+            .get("preserve_fields")
+            .and_then(Value::as_array)
+            .map(|names| {
+                names
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(|name| {
+                        let folded = name.to_lowercase();
+                        if MANAGED_FIELDS.iter().any(|spec| spec.name == folded) {
+                            folded
+                        } else {
+                            name.to_owned()
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let listed =
+            |parsed: &[ManagedField], name: &str| parsed.iter().any(|field| field.field == name);
+        for (name, parent) in [("artists", "artist"), ("album_artists", "album_artist")] {
+            if listed(&parsed, name) {
+                continue;
+            }
+            if let Some(entry) = parsed.iter().find(|field| field.field == parent) {
+                let mut copy = entry.clone();
+                copy.field = name.to_owned();
+                parsed.push(copy);
+                if preserved.iter().any(|kept| kept == parent) {
+                    preserved.push(name.to_owned());
+                }
+            }
+        }
+        for spec in MANAGED_FIELDS {
+            if !listed(&parsed, spec.name) {
+                parsed.push(ManagedField {
+                    field: spec.name.to_owned(),
+                    mode: FieldMode::Disabled,
+                    clear_when_canonical_missing: false,
+                });
+            }
+        }
+        match serde_json::to_value(&parsed) {
+            Ok(carried) => {
+                metadata.insert("fields".to_owned(), carried);
+                if metadata.contains_key("preserve_fields") {
+                    metadata.insert("preserve_fields".to_owned(), Value::from(preserved));
+                }
+            }
+            Err(error) => tracing::warn!(%error, "could not carry a v2 managed field list"),
         }
     }
 }

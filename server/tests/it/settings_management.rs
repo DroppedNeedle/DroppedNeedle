@@ -243,6 +243,63 @@ fn materialize_refuses_legacy_settings() {
     assert!(format!("{error:?}").contains("Legacy Preserve"));
 }
 
+/// Stored settings holding a field entry no version names read again: the
+/// entry is dropped and written back without it, and a save of what was
+/// read succeeds.
+#[test]
+fn stored_unknown_field_is_dropped_on_read() {
+    use droppedneedle::runtime_config::{ConfigStore, Crypto};
+    use droppedneedle::settings::management::service::LibraryManagementService;
+    use droppedneedle::settings::management::{PICARD_ORGANIZER_PROFILE_ID, initial_settings};
+    use std::sync::Arc;
+
+    let mut management = serde_json::to_value(initial_settings("")).expect("serializes");
+    let profile = management["profiles"]
+        .as_array_mut()
+        .expect("profiles")
+        .iter_mut()
+        .find(|profile| profile["id"] == PICARD_ORGANIZER_PROFILE_ID)
+        .expect("picard profile");
+    profile["metadata"]["fields"]
+        .as_array_mut()
+        .expect("fields")
+        .push(serde_json::json!({"field": "album_mood", "mode": "replace"}));
+    let dir = common::ScratchDir::new("management-v2-field");
+    let path = dir.join("config.json");
+    std::fs::write(
+        &path,
+        serde_json::json!({ "library_management": management }).to_string(),
+    )
+    .expect("config writes");
+
+    let store = Arc::new(
+        ConfigStore::open(&path, Crypto::from_key_bytes(&[7u8; 32]).expect("key"))
+            .expect("store opens"),
+    );
+    let service = LibraryManagementService::new(
+        store,
+        Arc::new(FixedIdGenerator::new(common::FIXED_ID)),
+        Arc::new(StructuralCompiler),
+    );
+    let read = service.get_settings().expect("the section reads");
+    assert!(
+        !std::fs::read_to_string(&path)
+            .expect("config reads")
+            .contains("album_mood"),
+        "the read writes the section back without the field"
+    );
+    let saved = service
+        .save_settings(read.settings, &read.settings_revision)
+        .expect("what was read saves");
+    let has_unknown = saved
+        .settings
+        .profiles
+        .iter()
+        .flat_map(|profile| &profile.metadata.fields)
+        .any(|field| field.field == "album_mood");
+    assert!(!has_unknown);
+}
+
 /// One admin creates a profile, exports it, previews the share code, and
 /// imports it back under a new name. Imports never overwrite: the copy
 /// lands beside the original, and a stale revision is refused.
@@ -680,6 +737,21 @@ mod fields {
         assert_eq!(desired["artist_sort"], vec!["Old Sort".to_owned()]);
         assert_eq!(desired["original_date"], vec!["1980".to_owned()]);
         assert_eq!(desired["album_artist"], vec!["The Band".to_owned()]);
+    }
+
+    /// A complete profile preserving `album` and `date` keeps only those:
+    /// the release facts and original date have their own entries now.
+    #[test]
+    fn a_complete_profile_preserves_only_what_it_names() {
+        let named = vec!["album".to_owned(), "date".to_owned()];
+        let mut settings = lm::initial_settings("");
+        for profile in &mut settings.profiles {
+            profile.metadata.preserve_fields.clone_from(&named);
+        }
+        lm::normalize(&mut settings, &StructuralCompiler).expect("valid");
+        for profile in &settings.profiles {
+            assert_eq!(profile.metadata.preserve_fields, named, "{}", profile.name);
+        }
     }
 
     /// v2's mergeable fields take merge.
