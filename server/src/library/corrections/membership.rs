@@ -301,8 +301,10 @@ pub(super) fn identity_state(
 }
 
 /// Retire an emptied album into `successor`, with an alias so links to the
-/// old id land on the new album. Its pending reviews close and its queued
-/// identification goes.
+/// old id land on the new album. Albums retired into it earlier point at
+/// `successor` too, so an id merged twice still opens the album it became.
+/// Its pending reviews close, its queued identification goes, and so do
+/// the open retag pairs it is the old row of.
 pub(crate) fn retire(
     tx: &Transaction<'_>,
     album_id: &str,
@@ -313,6 +315,14 @@ pub(crate) fn retire(
         "UPDATE local_albums SET retired_into_album_id = ?2, grouping_locked = 1, \
          updated_at = ?3, row_revision = row_revision + 1 WHERE id = ?1",
         params![album_id, successor, now],
+    )?;
+    tx.execute(
+        "UPDATE local_albums SET retired_into_album_id = ?2 WHERE retired_into_album_id = ?1",
+        params![album_id, successor],
+    )?;
+    tx.execute(
+        "DELETE FROM library_retag_pairs WHERE old_album_id = ?1 AND state = 'open'",
+        params![album_id],
     )?;
     tx.execute(
         "UPDATE local_album_aliases SET local_album_id = ?2 WHERE local_album_id = ?1",

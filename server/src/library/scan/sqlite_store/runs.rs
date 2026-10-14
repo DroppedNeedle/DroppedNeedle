@@ -630,7 +630,7 @@ fn prune_compat_orphans(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
 /// End every run that was stopping, or was asked to stop, as cancelled.
 /// A run cancelled while it was waiting keeps its stop request and has
 /// ended already: it is left as it is.
-fn cancel_stopping(tx: &Connection, now: f64) -> rusqlite::Result<()> {
+fn cancel_stopping(tx: &rusqlite::Transaction<'_>, now: f64) -> rusqlite::Result<()> {
     const STOPPING: &str =
         "(state = 'stopping' OR requested_control = 'stop') AND terminal_at IS NULL";
     let stopping: Vec<String> = tx
@@ -649,13 +649,13 @@ fn cancel_stopping(tx: &Connection, now: f64) -> rusqlite::Result<()> {
         params![now],
     )?;
     for run_id in &stopping {
-        super::commit::offer_held_back(tx, run_id, now)?;
+        super::commit::settle_ended_run(tx, run_id, now)?;
     }
     Ok(())
 }
 
 fn transition_inner(
-    conn: &Connection,
+    conn: &rusqlite::Transaction<'_>,
     run_id: &str,
     expected_state: ScanState,
     expected_revision: u64,
@@ -688,7 +688,7 @@ fn transition_inner(
             params![state_to_str(new_state), now, terminal_code, run_id],
         )
         .map_err(internal)?;
-        super::commit::offer_held_back(conn, run_id, now).map_err(internal)?;
+        super::commit::settle_ended_run(conn, run_id, now).map_err(internal)?;
     } else {
         conn.execute(
             "UPDATE library_scan_runs SET state = ?1, updated_at = ?2, \
@@ -713,7 +713,7 @@ fn transition_inner(
 }
 
 fn request_control_inner(
-    conn: &Connection,
+    conn: &rusqlite::Transaction<'_>,
     run_id: &str,
     control: ScanControl,
     resume: bool,
@@ -802,7 +802,7 @@ fn request_control_inner(
             params![now, run_id],
         )
         .map_err(internal)?;
-        super::commit::offer_held_back(conn, run_id, now).map_err(internal)?;
+        super::commit::settle_ended_run(conn, run_id, now).map_err(internal)?;
     } else if matches!(
         run_state,
         ScanState::Queued
@@ -819,7 +819,7 @@ fn request_control_inner(
                 params![now, run_id],
             )
             .map_err(internal)?;
-            super::commit::offer_held_back(conn, run_id, now).map_err(internal)?;
+            super::commit::settle_ended_run(conn, run_id, now).map_err(internal)?;
         } else {
             conn.execute(
                 "UPDATE library_scan_runs SET state = 'stopping', requested_control = 'stop', \

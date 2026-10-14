@@ -12,25 +12,27 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 /// Why the two rows were not joined.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetagPairReason {
-    /// Half or more of the old album's track rows stayed behind. Only
-    /// rows written before such an album was followed carry it; the merge
-    /// at the end of a run joins them.
+    /// Half or more of the old album's track rows stayed behind. The scan
+    /// joins such an album itself now, and no row carries this reason.
     MostlyMissing,
-    /// The new row also holds files that arrived with the retag. Only rows
-    /// written before such an album was followed carry it; the merge at
-    /// the end of a run joins them.
+    /// The new row also holds files that arrived with the retag. The scan
+    /// joins such an album itself now, and no row carries this reason.
     NewFilesAdded,
-    /// Some of the old album's tracks went to another album earlier.
+    /// Some of the old album's tracks went to an album of their own in an
+    /// earlier scan, and the rest to another one in a later scan: a set
+    /// split in two, or one track taken out and the album then renamed.
     TracksElsewhere,
     /// Each row holds a match a person chose, and the two differ.
     ChosenMatchesDiffer,
     /// The old row holds a custom edition.
     CustomEdition,
-    /// A preview or a plan is open on one of the rows.
+    /// A preview or a plan is open on one of the rows. Tried again when a
+    /// scan ends.
     LiveWork,
-    /// Work started on the new row names it, so it cannot be deleted.
+    /// Work started on the new row names it, so it cannot be deleted. The
+    /// merge, which keeps the new row, is tried once when the scan ends.
     WorkOnNewRow,
-    /// The store failed while joining them. Tried again.
+    /// The store failed while joining them. Tried again when a scan ends.
     StoreError,
 }
 
@@ -63,6 +65,12 @@ impl RetagPairReason {
         Self::ALL
             .into_iter()
             .find(|reason| reason.as_str() == value)
+    }
+
+    /// Whether an open pair with this reason is tried again when a scan
+    /// ends.
+    pub(super) fn tried_again(self) -> bool {
+        matches!(self, Self::StoreError | Self::LiveWork | Self::WorkOnNewRow)
     }
 }
 
@@ -127,9 +135,10 @@ pub(super) fn recorded(
 }
 
 /// Record the pair as open. A pair already recorded stays as it is,
-/// except that a store error on a pair still open gives way to a reason
-/// found since. Returns whether anything was written, so the caller says
-/// it once.
+/// except that one still open and waiting to be tried again (a store
+/// error, live work, work on the new row) takes a different reason found
+/// since. Returns whether anything was written, so the caller says it
+/// once.
 pub(super) fn record(
     conn: &Connection,
     old_album_id: &str,
@@ -143,8 +152,9 @@ pub(super) fn record(
              recorded_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5) \
              ON CONFLICT (old_album_id, new_album_id) DO UPDATE SET \
              reason = excluded.reason, updated_at = excluded.updated_at \
-             WHERE library_retag_pairs.reason = ?6 AND library_retag_pairs.state = ?4 \
-             AND excluded.reason <> ?6",
+             WHERE library_retag_pairs.reason IN (?6, ?7, ?8) \
+             AND library_retag_pairs.state = ?4 \
+             AND excluded.reason <> library_retag_pairs.reason",
         )?
         .execute(params![
             old_album_id,
@@ -153,6 +163,8 @@ pub(super) fn record(
             RetagPairState::Open.as_str(),
             now_ms,
             RetagPairReason::StoreError.as_str(),
+            RetagPairReason::LiveWork.as_str(),
+            RetagPairReason::WorkOnNewRow.as_str(),
         ])?;
     Ok(written > 0)
 }

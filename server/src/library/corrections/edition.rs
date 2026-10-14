@@ -369,7 +369,7 @@ fn move_edition(tx: &Transaction<'_>, from: &str, to: &str) -> rusqlite::Result<
 }
 
 /// Remove an album's edition and everything that hangs off it.
-fn drop_edition(tx: &Transaction<'_>, album_id: &str) -> rusqlite::Result<()> {
+pub(crate) fn drop_edition(tx: &Transaction<'_>, album_id: &str) -> rusqlite::Result<()> {
     tx.execute(
         "DELETE FROM local_album_external_identities WHERE local_album_id = ?1 AND provider = ?2",
         params![album_id, PROVIDER],

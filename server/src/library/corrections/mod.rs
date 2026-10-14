@@ -16,7 +16,8 @@
 //! Layout: `models` holds the types, `reasons` the refusal and outcome
 //! sentences, `token` the preview tokens, `membership` split, merge and
 //! move, `reset` reset grouping, `edition` what happens to editions,
-//! `artists` the artist merge, and `service` the entry points.
+//! `artists` the artist merge, `retag_merge` the join of an album
+//! retagged across two scans, and `service` the entry points.
 
 mod artists;
 mod edition;
@@ -24,6 +25,7 @@ pub(crate) mod membership;
 pub mod models;
 pub mod reasons;
 mod reset;
+pub(crate) mod retag_merge;
 pub mod service;
 mod token;
 

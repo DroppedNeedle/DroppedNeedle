@@ -1252,6 +1252,12 @@ pub(crate) fn release_chosen(conn: &Connection, album_id: &str) -> rusqlite::Res
     }))
 }
 
+/// Whether the album's match is one a person chose or v2 carried, naming
+/// a release or not ("leave unmanaged" and a custom edition name none).
+pub(crate) fn match_chosen(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
+    Ok(AlbumMatch::of(conn, album_id)?.is_some_and(|chosen| !chosen.revisable()))
+}
+
 /// Settle the matches of two rows of one album before `gone` is deleted
 /// and `kept` carries on: a scan made `gone` for the album while it was
 /// being retagged, and a match or a review landed on it before the scan
@@ -1327,57 +1333,7 @@ pub(crate) fn settle_followed_match(
             false
         }
         Some(arriving) => {
-            let remap: Option<(String, Option<String>, String)> = tx
-                .query_row(
-                    "SELECT release_mbid, chosen_by_user_id, origin \
-                     FROM library_edition_remap_queue WHERE local_album_id = ?1",
-                    params![gone],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .optional()?
-                .filter(|_| !arriving.revisable());
-            let revision: i64 = tx.query_row(
-                "SELECT MAX(row_revision) + 1 FROM local_album_external_identities \
-                 WHERE local_album_id IN (?1, ?2)",
-                params![gone, kept],
-                |row| row.get(0),
-            )?;
-            for table in [
-                "local_album_external_identities",
-                "library_album_match_state",
-                "library_edition_choice_undo",
-                "library_automatic_edition_undo",
-                "library_edition_remap_queue",
-                "library_identify_credit_proofs",
-            ] {
-                tx.execute(
-                    &format!("DELETE FROM {table} WHERE local_album_id = ?1"),
-                    params![kept],
-                )?;
-            }
-            tx.execute(
-                "UPDATE local_album_external_identities SET local_album_id = ?2, \
-                 row_revision = ?3 WHERE local_album_id = ?1",
-                params![gone, kept, revision],
-            )?;
-            tx.execute(
-                "UPDATE library_album_match_state SET local_album_id = ?2 \
-                 WHERE local_album_id = ?1",
-                params![gone, kept],
-            )?;
-            if let Some((release, chosen_by, origin)) = remap {
-                crate::library::operations::choice::queue_remap(
-                    tx,
-                    kept,
-                    &release,
-                    chosen_by.as_deref(),
-                    now,
-                )?;
-                tx.execute(
-                    "UPDATE library_edition_remap_queue SET origin = ?2 WHERE local_album_id = ?1",
-                    params![kept, origin],
-                )?;
-            }
+            carry_match(tx, gone, kept, !arriving.revisable(), now)?;
             true
         }
     };
@@ -1388,6 +1344,147 @@ pub(crate) fn settle_followed_match(
         bump_identification_stream(tx)?;
     }
     Ok(())
+}
+
+/// Put the match of `from` on `to`, with its source, its chooser and its
+/// "unsure" flag, at a revision neither row has had. The match on `to` and
+/// what was made for it go. A person's match (`chosen`) keeps the remap
+/// still waiting to place it on the files. What is left on `from` is the
+/// caller's.
+fn carry_match(
+    tx: &rusqlite::Transaction<'_>,
+    from: &str,
+    to: &str,
+    chosen: bool,
+    now: f64,
+) -> rusqlite::Result<()> {
+    let remap: Option<(String, Option<String>, String)> = tx
+        .query_row(
+            "SELECT release_mbid, chosen_by_user_id, origin \
+             FROM library_edition_remap_queue WHERE local_album_id = ?1",
+            params![from],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?
+        .filter(|_| chosen);
+    let revision: i64 = tx.query_row(
+        "SELECT MAX(row_revision) + 1 FROM local_album_external_identities \
+         WHERE local_album_id IN (?1, ?2)",
+        params![from, to],
+        |row| row.get(0),
+    )?;
+    for table in [
+        "local_album_external_identities",
+        "library_album_match_state",
+        "library_edition_choice_undo",
+        "library_automatic_edition_undo",
+        "library_edition_remap_queue",
+        "library_identify_credit_proofs",
+    ] {
+        tx.execute(
+            &format!("DELETE FROM {table} WHERE local_album_id = ?1"),
+            params![to],
+        )?;
+    }
+    tx.execute(
+        "UPDATE local_album_external_identities SET local_album_id = ?2, \
+         row_revision = ?3 WHERE local_album_id = ?1",
+        params![from, to, revision],
+    )?;
+    tx.execute(
+        "UPDATE library_album_match_state SET local_album_id = ?2 WHERE local_album_id = ?1",
+        params![from, to],
+    )?;
+    if let Some((release, chosen_by, origin)) = remap {
+        crate::library::operations::choice::queue_remap(
+            tx,
+            to,
+            &release,
+            chosen_by.as_deref(),
+            now,
+        )?;
+        tx.execute(
+            "UPDATE library_edition_remap_queue SET origin = ?2 WHERE local_album_id = ?1",
+            params![to, origin],
+        )?;
+    }
+    Ok(())
+}
+
+/// Whether merging `old` into `new` puts the old row's match on `new`
+/// ([`settle_merged_match`]): `old` has a match, and `new` has none, or an
+/// automatic one where the old row's is a person's.
+pub(crate) fn merge_moves_match(conn: &Connection, old: &str, new: &str) -> rusqlite::Result<bool> {
+    let Some(arriving) = AlbumMatch::of(conn, old)? else {
+        return Ok(false);
+    };
+    Ok(match AlbumMatch::of(conn, new)? {
+        None => true,
+        Some(staying) => !arriving.revisable() && staying.revisable(),
+    })
+}
+
+/// Settle the matches of two rows of one album when `old` is merged into
+/// `new` across two scans: the files left `old` in an earlier scan and sit
+/// on `new`, which stays. When each row holds a match a person chose and
+/// the two differ ([`chosen_matches_differ`]) it is refused with an error,
+/// before anything is written.
+///
+/// - When [`merge_moves_match`]: the match on `old` becomes the match of
+///   `new`, with its source, its chooser and its "unsure" flag, and a
+///   person's keeps the remap still waiting to place it on the files. The
+///   match on `new` and what was made for it go. A review waiting on `new`
+///   is closed as a choice by hand closes one when a person's match
+///   arrives (dismissed, by nobody), and goes when an automatic one does:
+///   the offer after the merge judges the whole album.
+/// - Otherwise the match on `new` stays as it is.
+///
+/// A review a person closed on `old` moves to `new`; one still waiting on
+/// it goes. The moved match takes a revision neither row has had. What is
+/// left on `old` of its match is the caller's to clear. Returns whether
+/// the match on `new` changed.
+pub(crate) fn settle_merged_match(
+    tx: &rusqlite::Transaction<'_>,
+    old: &str,
+    new: &str,
+    now: f64,
+) -> rusqlite::Result<bool> {
+    if chosen_matches_differ(tx, old, new)? {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "the two rows hold different chosen matches".to_owned(),
+        ));
+    }
+    let moves = merge_moves_match(tx, old, new)?;
+    let mut reviews = tx.execute(
+        "UPDATE library_identify_reviews SET local_album_id = ?2 \
+         WHERE local_album_id = ?1 AND state <> 'pending'",
+        params![old, new],
+    )?;
+    reviews += tx.execute(
+        "DELETE FROM library_identify_reviews WHERE local_album_id = ?1",
+        params![old],
+    )?;
+    if let (true, Some(arriving)) = (moves, AlbumMatch::of(tx, old)?) {
+        reviews += if arriving.revisable() {
+            tx.execute(
+                "DELETE FROM library_identify_reviews WHERE local_album_id = ?1 \
+                 AND state = 'pending'",
+                params![new],
+            )?
+        } else {
+            tx.execute(
+                "UPDATE library_identify_reviews SET state = 'dismissed', \
+                 resolved_by_user_id = NULL, updated_ms = ?2 \
+                 WHERE local_album_id = ?1 AND state = 'pending'",
+                params![new, now_ms()],
+            )?
+        };
+        carry_match(tx, old, new, !arriving.revisable(), now)?;
+    }
+    if reviews > 0 {
+        bump_identification_stream(tx)?;
+    }
+    Ok(moves)
 }
 
 fn release_input_hash() -> String {
