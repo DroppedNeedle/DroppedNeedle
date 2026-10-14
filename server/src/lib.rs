@@ -44,6 +44,7 @@ pub mod reads;
 pub mod remotes;
 pub mod runtime_config;
 pub mod schema;
+pub mod security_headers;
 pub mod settings;
 pub mod state;
 pub mod stream;

@@ -42,7 +42,8 @@ use crate::{
     auth::session::{middleware::require_session, rate_limit::rate_limit},
     compat::http::fallback_redispatch,
     handlers,
-    middleware::{TransportSecurity, request_scope, strict_transport_security},
+    middleware::request_scope,
+    security_headers::{TransportSecurity, strict_transport_security},
     state::AppState,
     web::WebUi,
 };
