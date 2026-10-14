@@ -17,7 +17,6 @@
 use crate::auth::compat_auth::jellyfin::{
     JellyfinPasswordStore, JellyfinRequest, extract_client, extract_token, resolve_token, server_id,
 };
-use crate::auth::session::middleware::{TrustedProxies, arrived_over_https};
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode};
@@ -26,6 +25,7 @@ use axum::routing::{get, post};
 
 use crate::compat::body::AudioBody;
 use crate::compat::settings::LiveSettings;
+use crate::compat::shared::address::{ListenerConfig, base_address};
 
 use super::audio::*;
 use super::browse::*;
@@ -39,16 +39,6 @@ use super::seams::{
 use super::system::*;
 
 // ===== State + registration =====
-
-/// How clients reach this server: the port it listens on and the proxies
-/// whose forwarded headers are believed.
-#[derive(Debug, Clone)]
-pub struct ListenerConfig {
-    /// TCP port the app listens on, reported as `WebSocketPortNumber`.
-    pub port: u16,
-    /// Proxies whose `X-Forwarded-Proto` sets the scheme of `LocalAddress`.
-    pub trusted_proxies: TrustedProxies,
-}
 
 /// Router dependencies. Every seam is a generic so production binds the
 /// real adapters without touching the routes: `S` app-password store
@@ -68,12 +58,9 @@ pub struct JellyfinState<S, L, E, P, I> {
     pub ids: I,
     /// Connect-apps settings subset, read per request.
     pub settings: LiveSettings,
-    /// Deployment prefix for `TranscodingUrl` (`""` standalone; real base
-    /// path when wired, so players stay inside the prefix).
-    pub base_path: String,
     /// Restart-stable server id, computed once (`compat_auth` owns the value).
     pub server_id: String,
-    /// Port and trusted proxies, from the deployment config.
+    /// Port, trusted proxies and base path, from the deployment config.
     pub listener: ListenerConfig,
 }
 
@@ -95,7 +82,6 @@ impl<S, L, E, P, I> JellyfinState<S, L, E, P, I> {
             sessions,
             ids,
             settings: settings.into(),
-            base_path: String::new(),
             server_id: server_id(),
             listener,
         }
@@ -452,20 +438,16 @@ pub(super) fn gate<S, L, E, P, I>(state: &JellyfinState<S, L, E, P, I>) -> Optio
     }
 }
 
-/// Advertised origin plus shim prefix (v2 `_local_address`). The scheme is
-/// https only when the request arrived over HTTPS: direct TLS, or
-/// `X-Forwarded-Proto` from a trusted proxy.
+/// The address of this API as `request` reached it ([`base_address`]) plus
+/// `/jellyfin`. `LocalAddress` is required, so a request that names no host
+/// gets `http://localhost` and the base path.
 pub(super) fn local_address<S, L, E, P, I>(
     state: &JellyfinState<S, L, E, P, I>,
     request: &Request<Body>,
 ) -> String {
-    let host = header(request.headers(), "host").unwrap_or("localhost");
-    let scheme = if arrived_over_https(request, &state.listener.trusted_proxies) {
-        "https"
-    } else {
-        "http"
-    };
-    format!("{scheme}://{host}{}/jellyfin", state.base_path)
+    let base = base_address(request, &state.listener, &state.settings)
+        .unwrap_or_else(|| format!("http://localhost{}", state.listener.base_path));
+    format!("{base}/jellyfin")
 }
 
 pub(super) fn builder<'a, S, L, E, P, I>(state: &'a JellyfinState<S, L, E, P, I>) -> Builder<'a, I>

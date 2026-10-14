@@ -25,8 +25,9 @@ use crate::compat::adapters::principal::SubsonicVerifier;
 use crate::compat::adapters::queues::CompatQueues;
 use crate::compat::adapters::subsonic_store::SubsonicStore;
 use crate::compat::http::{CompatLimits, SubsonicState, cors_layer, limits_layer, subsonic_router};
-use crate::compat::jellyfin::{JellyfinState, ListenerConfig, router as jellyfin_router};
+use crate::compat::jellyfin::{JellyfinState, router as jellyfin_router};
 use crate::compat::settings::LiveSettings;
+use crate::compat::shared::address::ListenerConfig;
 use crate::library::wiring::LibrarySetup;
 use crate::media::MediaEngine;
 use crate::playback::services::PlaybackDeps;
@@ -234,6 +235,7 @@ impl CompatSetup {
             ListenerConfig {
                 port: crate::config::DEFAULT_PORT,
                 trusted_proxies: crate::auth::session::middleware::TrustedProxies::default(),
+                base_path: String::new(),
             },
         )))
     }

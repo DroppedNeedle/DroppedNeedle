@@ -1,18 +1,22 @@
 //! Compat settings, read per request.
 //!
 //! The kill switches, advertised names and transcode policy live in the
-//! `connect_apps` settings section, and who may download library files in
-//! `security_settings`. [`LiveSettings`] resolves them on every
+//! `connect_apps` settings section, who may download library files in
+//! `security_settings` and the stated public addresses in
+//! `public_address`. [`LiveSettings`] resolves them on every
 //! request, so a change in Settings takes effect at once instead of at the
 //! next restart. Tests pin fixed values with `From<Settings>` and
 //! `From<JellyfinSettings>`.
 
 use std::sync::Arc;
 
+use crate::auth::session::origin::Origin;
 use crate::compat::jellyfin::seams::JellyfinSettings;
 use crate::compat::subsonic::Settings;
 use crate::runtime_config::ConfigStore;
-use crate::runtime_config::sections::{AudioFormat, ConnectApps, DownloadAccess, SecuritySettings};
+use crate::runtime_config::sections::{
+    AudioFormat, ConnectApps, DownloadAccess, PublicAddress, SecuritySettings,
+};
 
 /// Where the compat settings come from.
 pub trait SettingsSource: Send + Sync {
@@ -20,6 +24,8 @@ pub trait SettingsSource: Send + Sync {
     fn subsonic(&self) -> Settings;
     /// Jellyfin settings for one request.
     fn jellyfin(&self) -> JellyfinSettings;
+    /// The addresses the admin stated under Settings > Security.
+    fn public_addresses(&self) -> Vec<Origin>;
 }
 
 /// Shared handle to the settings source.
@@ -37,7 +43,21 @@ impl LiveSettings {
 
     /// Fixed settings for both protocols.
     pub fn fixed(subsonic: Settings, jellyfin: JellyfinSettings) -> Self {
-        Self(Arc::new(Fixed { subsonic, jellyfin }))
+        Self(Arc::new(Fixed {
+            subsonic,
+            jellyfin,
+            public_addresses: Vec::new(),
+        }))
+    }
+
+    /// These settings, fixed as they are now, with `addresses` as the
+    /// stated public addresses.
+    pub fn with_public_addresses(&self, addresses: Vec<Origin>) -> Self {
+        Self(Arc::new(Fixed {
+            subsonic: self.subsonic(),
+            jellyfin: self.jellyfin(),
+            public_addresses: addresses,
+        }))
     }
 
     /// Subsonic settings now.
@@ -48,6 +68,11 @@ impl LiveSettings {
     /// Jellyfin settings now.
     pub fn jellyfin(&self) -> JellyfinSettings {
         self.0.jellyfin()
+    }
+
+    /// The stated public addresses now.
+    pub fn public_addresses(&self) -> Vec<Origin> {
+        self.0.public_addresses()
     }
 }
 
@@ -66,6 +91,7 @@ impl From<JellyfinSettings> for LiveSettings {
 struct Fixed {
     subsonic: Settings,
     jellyfin: JellyfinSettings,
+    public_addresses: Vec<Origin>,
 }
 
 impl SettingsSource for Fixed {
@@ -75,6 +101,10 @@ impl SettingsSource for Fixed {
 
     fn jellyfin(&self) -> JellyfinSettings {
         self.jellyfin.clone()
+    }
+
+    fn public_addresses(&self) -> Vec<Origin> {
+        self.public_addresses.clone()
     }
 }
 
@@ -142,6 +172,18 @@ impl SettingsSource for ConfigSettings {
             transcode_default_format: output_format(apps.transcode_default_format),
             ffmpeg_available: self.ffmpeg_available,
             download_access: self.download_access(),
+        }
+    }
+
+    /// Empty when the list cannot be read: then every app gets the address
+    /// it used, as with no list.
+    fn public_addresses(&self) -> Vec<Origin> {
+        match self.store.get::<PublicAddress>() {
+            Ok(section) => section.stated(),
+            Err(error) => {
+                tracing::warn!(%error, "public address settings unreadable; apps get the address they used");
+                Vec::new()
+            }
         }
     }
 }

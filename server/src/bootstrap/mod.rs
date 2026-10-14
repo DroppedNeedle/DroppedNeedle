@@ -25,7 +25,9 @@ use crate::{
     admin::{AdminDb, AdminSetup, quota::reload_overrides},
     app::create_app_with_web,
     auth::{prod::ProdAuth, users::stores::SystemClock, wiring::AuthSetup},
-    compat::{CompatSetup, jellyfin::ListenerConfig, settings::LiveSettings, setup::CompatDeps},
+    compat::{
+        CompatSetup, settings::LiveSettings, setup::CompatDeps, shared::address::ListenerConfig,
+    },
     db::{BackupService, DbConfig, error::DbError, open_runtime},
     events::EventHub,
     http_client::{HttpClientError, HttpClientFactory},
@@ -418,6 +420,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         ListenerConfig {
             port: config.port,
             trusted_proxies: config.trusted_proxies.clone(),
+            base_path: config.base_path.clone(),
         },
     ));
     let admin = AdminSetup::new(

@@ -17,7 +17,8 @@ use droppedneedle::compat::jellyfin::fake::{
 use droppedneedle::compat::jellyfin::seams::{
     DecideInput, IdMap, JellyfinSettings, StreamPlan, decide,
 };
-use droppedneedle::compat::jellyfin::{JellyfinState, ListenerConfig, router};
+use droppedneedle::compat::jellyfin::{JellyfinState, router};
+use droppedneedle::compat::shared::address::ListenerConfig;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
@@ -93,6 +94,7 @@ impl Fx {
                 ListenerConfig {
                     port: 8096,
                     trusted_proxies: TrustedProxies::default(),
+                    base_path: String::new(),
                 },
             )),
         )

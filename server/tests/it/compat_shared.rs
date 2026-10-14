@@ -1,7 +1,16 @@
 //! Shared compat security posture: which Jellyfin paths are anonymous,
-//! query redaction, and the rate-limit and auth-backoff budgets. The
-//! credential schemes are pinned in `auth_compat_goldens`.
+//! query redaction, the rate-limit and auth-backoff budgets, and the
+//! address player apps are given. The credential schemes are pinned in
+//! `auth_compat_goldens`.
 
+use axum::body::Body;
+use axum::extract::ConnectInfo;
+use axum::http::Request;
+use droppedneedle::auth::session::middleware::TrustedProxies;
+use droppedneedle::auth::session::origin::Origin;
+use droppedneedle::compat::jellyfin::JellyfinSettings;
+use droppedneedle::compat::settings::LiveSettings;
+use droppedneedle::compat::shared::address::{ListenerConfig, base_address};
 use droppedneedle::compat::shared::{auth, ratelimit, redact};
 
 #[test]
@@ -154,4 +163,98 @@ fn auth_backoff_locks_out_then_doubles() {
         auth::record_auth_denial(&mut limits, "10.0.0.9", 24.0),
         Some(20)
     );
+}
+
+/// The address an app is given: the host and scheme a trusted proxy
+/// forwards, never those of an untrusted peer; a plain `http` address
+/// becomes the one stated `https` address on its host name, and only when
+/// there is exactly one; then the base path.
+#[test]
+fn base_address_for_player_apps() {
+    struct Case {
+        name: &'static str,
+        peer: &'static str,
+        forwarded: bool,
+        stated: &'static [&'static str],
+        base_path: &'static str,
+        expected: &'static str,
+    }
+    const LAN: &str = "192.168.1.5:40000";
+    let plain = Case {
+        name: "no proxy, nothing stated",
+        peer: LAN,
+        forwarded: false,
+        stated: &[],
+        base_path: "",
+        expected: "http://music.lan:8688",
+    };
+    let cases = [
+        Case {
+            name: "trusted proxy",
+            peer: "127.0.0.1:40000",
+            forwarded: true,
+            expected: "https://music.example.com",
+            ..plain
+        },
+        Case {
+            name: "untrusted peer",
+            peer: "203.0.113.9:40000",
+            forwarded: true,
+            ..plain
+        },
+        Case {
+            name: "one https address stated on the host name",
+            stated: &["https://music.lan", "http://192.168.1.5:8688"],
+            expected: "https://music.lan",
+            ..plain
+        },
+        Case {
+            name: "two https addresses stated on the host name",
+            stated: &["https://music.lan", "https://music.lan:8443"],
+            ..plain
+        },
+        Case {
+            name: "https address stated on another host name",
+            stated: &["https://music.example.com"],
+            ..plain
+        },
+        Case {
+            name: "base path",
+            base_path: "/music",
+            expected: "http://music.lan:8688/music",
+            ..plain
+        },
+        plain,
+    ];
+    for case in cases {
+        let mut request = Request::builder()
+            .uri("/jellyfin/System/Info/Public")
+            .header("host", "music.lan:8688");
+        if case.forwarded {
+            request = request
+                .header("x-forwarded-host", "music.example.com")
+                .header("x-forwarded-proto", "https");
+        }
+        let mut request = request.body(Body::empty()).expect("request builds");
+        let peer: std::net::SocketAddr = case.peer.parse().expect("peer address");
+        request.extensions_mut().insert(ConnectInfo(peer));
+        let listener = ListenerConfig {
+            port: 8688,
+            trusted_proxies: TrustedProxies::default(),
+            base_path: case.base_path.to_owned(),
+        };
+        let stated = case
+            .stated
+            .iter()
+            .map(|entry| Origin::from_stated(entry).expect("stated address"))
+            .collect();
+        let settings =
+            LiveSettings::from(JellyfinSettings::default()).with_public_addresses(stated);
+        assert_eq!(
+            base_address(&request, &listener, &settings).as_deref(),
+            Some(case.expected),
+            "{}",
+            case.name
+        );
+    }
 }

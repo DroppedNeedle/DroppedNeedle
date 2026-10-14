@@ -972,6 +972,56 @@ async fn download_setting_holds_in_player_apps() {
     rig.stop().await;
 }
 
+/// Served under a base path, the app hands a Jellyfin app addresses that
+/// carry it, and the address it gives for a track plays the file.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn jellyfin_addresses_carry_the_base_path() {
+    let mut rig = CompatApp::start("compat-base-path").await;
+    rig.app.config.base_path = "/music".to_owned();
+    rig.app = rig.app.restart().await;
+    let app = &rig.app;
+    let key = format!("api_key={}", rig.secret);
+
+    let (status, info) = app
+        .call("GET", "/music/jellyfin/System/Info/Public", &[], None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{info}");
+    assert_eq!(info["LocalAddress"], "http://test.local/music/jellyfin");
+
+    let (_, items) = app
+        .call(
+            "GET",
+            &format!("/music/jellyfin/Items?includeItemTypes=Audio&Recursive=true&{key}"),
+            &[],
+            None,
+        )
+        .await;
+    let track = named(&items["Items"], "Name", "Airbag")["Id"]
+        .as_str()
+        .expect("track id")
+        .to_owned();
+    let (status, playback) = app
+        .call(
+            "GET",
+            &format!("/music/jellyfin/Items/{track}/PlaybackInfo?{key}"),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{playback}");
+    let stream = playback["MediaSources"][0]["DirectStreamUrl"]
+        .as_str()
+        .expect("direct stream address");
+    let path = stream
+        .strip_prefix("http://test.local")
+        .unwrap_or_else(|| panic!("{stream} is not at the address the app used"));
+    assert!(path.starts_with("/music/jellyfin/Audio/"), "{stream}");
+    let (status, _, bytes) = app.raw("GET", path, &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{stream}");
+    assert!(bytes == rig.file("airbag"), "{stream} serves another file");
+    rig.stop().await;
+}
+
 /// Tripwire: no golden recorded from the library carries a credential.
 #[test]
 fn library_goldens_carry_no_credentials() {

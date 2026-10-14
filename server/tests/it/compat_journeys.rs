@@ -28,7 +28,8 @@ use droppedneedle::compat::jellyfin::fake::{
 use droppedneedle::compat::jellyfin::seams::{
     AlbumView, ArtistView, GenreView, IdMap, JellyfinSettings, TrackView,
 };
-use droppedneedle::compat::jellyfin::{JellyfinState, ListenerConfig, router as jellyfin_router};
+use droppedneedle::compat::jellyfin::{JellyfinState, router as jellyfin_router};
+use droppedneedle::compat::shared::address::ListenerConfig;
 use droppedneedle::compat::subsonic::Settings as SubsonicSettings;
 use droppedneedle::compat::subsonic::fake::{FakeAudio, FakeStore};
 use serde_json::{Value, json};
@@ -261,6 +262,7 @@ fn apps() -> Apps {
         ListenerConfig {
             port: 8096,
             trusted_proxies: droppedneedle::auth::session::middleware::TrustedProxies::default(),
+            base_path: String::new(),
         },
     );
     // Jellyfin rejects are empty 429s that never read the limit settings,

@@ -11,6 +11,7 @@
 //! Ported from v2's compat package, cited per item. Where v2 disagreed with itself (the `transcoding` advert),
 //! see [`extensions`] for the one documented choice.
 
+pub mod address;
 pub mod auth;
 pub mod cors;
 pub mod extensions;

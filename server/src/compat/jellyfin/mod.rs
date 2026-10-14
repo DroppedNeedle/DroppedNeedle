@@ -45,5 +45,5 @@ pub mod seams;
 mod system;
 
 pub(crate) use router::QueryTokens;
-pub use router::{JellyfinState, ListenerConfig, router};
+pub use router::{JellyfinState, router};
 pub use seams::JellyfinSettings;

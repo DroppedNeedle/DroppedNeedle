@@ -774,7 +774,7 @@ where
         // base path under non-empty BASE_PATH deployments (v2 `_playback_info`).
         src.transcoding_url = Some(format!(
             "{}/jellyfin/Audio/{item_id}/universal?AudioCodec={out}&Container={out}&PlaySessionId={psid}&api_key={}",
-            state.base_path, authed.principal.token,
+            state.listener.base_path, authed.principal.token,
         ));
         src.transcoding_sub_protocol = Some("http".to_owned());
         src.transcoding_container = Some(if out == "mp3" {

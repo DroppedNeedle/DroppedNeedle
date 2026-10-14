@@ -245,9 +245,10 @@ impl E2e {
                 library.clone(),
                 &reads,
                 droppedneedle::compat::settings::LiveSettings::from_config(Arc::clone(&self.store)),
-                droppedneedle::compat::jellyfin::ListenerConfig {
+                droppedneedle::compat::shared::address::ListenerConfig {
                     port: app_config.port,
                     trusted_proxies: app_config.trusted_proxies.clone(),
+                    base_path: app_config.base_path.clone(),
                 },
             ),
         );
