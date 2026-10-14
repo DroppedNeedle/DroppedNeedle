@@ -314,6 +314,14 @@ machine and its data folders can run it.
   address, or on the host with `droppedneedle-tool public-address`: the
   reverse proxy paragraphs in the [README](../README.md#configuration)
   have the steps.
+- **Showing DroppedNeedle in a dashboard.** v2 could be shown in a frame
+  by any page. v3 refuses that by default. If you open DroppedNeedle inside
+  a dashboard such as Homarr or Organizr, add the dashboard's address under
+  Settings > Security > Content-security policy > "Allowed to frame
+  DroppedNeedle" after upgrading. A dashboard on another site (not a
+  subdomain of the same domain, nor the same host on another port) shows
+  the sign-in page even then, because the browser does not send the
+  sign-in cookie to a frame there.
 
 ### Moved
 

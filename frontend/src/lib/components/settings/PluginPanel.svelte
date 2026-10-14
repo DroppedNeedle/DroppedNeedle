@@ -15,7 +15,9 @@
 
 	// The panel is plugin code. The server serves it as a page of its own whose
 	// policy header seals it, and the frame's sandbox seals it again: it gets
-	// its own origin, no cookies and no network. Never add allow-same-origin.
+	// its own origin, no cookies and no requests of its own. The app's own
+	// policy keeps the frame from leaving, while it is enforced. Never add
+	// allow-same-origin.
 	let frame: HTMLIFrameElement | null = $state(null);
 	let src: string = $state('');
 	let loading: boolean = $state(true);
@@ -132,6 +134,8 @@
 			{src}
 			class="h-48 w-full rounded-lg border border-base-content/10 bg-white"
 		></iframe>
-		<p class="mt-1 text-[11px] text-base-content/40">Sandboxed: scripts only, no network.</p>
+		<p class="mt-1 text-[11px] text-base-content/40">
+			Sandboxed: no access to this page or your session.
+		</p>
 	{/if}
 </div>

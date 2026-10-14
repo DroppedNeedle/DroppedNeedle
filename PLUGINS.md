@@ -419,8 +419,8 @@ mode, two plugins paired).
 ### Settings panel
 
 With `[plugin_ui] entry`, the admin's plugin card shows the plugin's own
-script in a locked-down frame: no access to the page, its cookies or the
-network. It can talk to the page only through `postMessage`, with four
+script in a locked-down frame: no access to the page or its cookies, and no
+requests of its own. It can talk to the page only through `postMessage`, with four
 read-only requests: `sources.list`, `search.preview`, `get_settings` (its own,
 secrets masked) and `health.get` (its own). `external_url` shows a link
 instead.
@@ -435,6 +435,12 @@ as `<\/script`, which reads the same inside a JavaScript string. One pair
 is not handled: a file holding `<!--` and, anywhere after it, `<script` gives
 a panel that never runs. If your bundle has both, write one of them another
 way, for example `'<' + '!--'` or `'<' + 'script'`.
+
+One thing the panel page cannot stop by itself: its script sending its own
+frame to another address, with whatever it writes into that address. The
+web UI's content-security policy holds the frame to DroppedNeedle's own
+address, so this is closed only while that policy is enforced (Settings >
+Security), not while it only reports or is off.
 
 ## The Python helper
 
