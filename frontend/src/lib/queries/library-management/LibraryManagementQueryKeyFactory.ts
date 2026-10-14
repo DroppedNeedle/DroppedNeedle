@@ -73,5 +73,7 @@ export const LibraryManagementQueryKeyFactory = {
 	recovery: (userId: string | null | undefined) =>
 		[...LibraryManagementQueryKeyFactory.user(userId), 'recovery'] as const,
 	automaticSkipped: (userId: string | null | undefined) =>
-		[...LibraryManagementQueryKeyFactory.user(userId), 'automatic-skipped'] as const
+		[...LibraryManagementQueryKeyFactory.user(userId), 'automatic-skipped'] as const,
+	takeovers: (userId: string | null | undefined) =>
+		[...LibraryManagementQueryKeyFactory.user(userId), 'takeovers'] as const
 };

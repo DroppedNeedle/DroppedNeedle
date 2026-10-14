@@ -30,9 +30,11 @@
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
-use super::models::PlannedItem;
+use super::models::{ManagementError, PlannedItem};
+use crate::library::clock::now_unix;
 use crate::library::operations::decisions::{CatalogAction, bump_catalog, record_action};
 use crate::library::publish::snapshots::sha256_hex;
+use crate::library::wiring::LibrarySetup;
 
 /// Skip and block code of an album the app stepped back from.
 pub const TAKEN_OVER: &str = "TAKEN_OVER";
@@ -272,4 +274,297 @@ pub(crate) fn copy_mark(tx: &Transaction<'_>, from: &str, to: &str) -> rusqlite:
         params![from, to],
     )?;
     Ok(())
+}
+
+/// Stamp every marked album for handing back and record who asked. The
+/// worker then hands them back one at a time (see [`next_stamped`]).
+/// Returns how many albums were stamped. Reads no file.
+pub(crate) fn stamp_all(tx: &Transaction<'_>, actor: &str, now: f64) -> rusqlite::Result<usize> {
+    let albums: Vec<String> = tx
+        .prepare(
+            "UPDATE library_album_takeovers SET handed_back_at = ?1, hand_back_tries = 0, \
+             hand_back_retry_at = NULL WHERE handed_back_at IS NULL RETURNING local_album_id",
+        )?
+        .query_map(params![millis(now)], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for album_id in &albums {
+        record_action(tx, handed_back_action(actor, album_id), now)?;
+    }
+    if !albums.is_empty() {
+        bump_catalog(tx)?;
+    }
+    Ok(albums.len())
+}
+
+fn handed_back_action<'a>(actor: &'a str, album_id: &'a str) -> CatalogAction<'a> {
+    CatalogAction {
+        actor,
+        kind: "management_handed_back",
+        album_id,
+        job_id: None,
+        before: serde_json::json!({}),
+        after: serde_json::json!({}),
+        reason: "MANAGEMENT_HANDED_BACK",
+    }
+}
+
+/// How many times a stamped album's hand-back is tried before it waits
+/// for a person again, as automatic management's own retries.
+const HAND_BACK_TRIES: i64 = 8;
+/// First wait before a failed hand-back is tried again; it doubles each
+/// time, up to six hours.
+const HAND_BACK_RETRY_SECONDS: f64 = 60.0;
+
+/// The stamped album whose turn is next and due: oldest stamp first.
+pub(crate) fn next_stamped(conn: &Connection, now: f64) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "SELECT local_album_id FROM library_album_takeovers WHERE handed_back_at IS NOT NULL \
+         AND (hand_back_retry_at IS NULL OR hand_back_retry_at <= ?1) \
+         ORDER BY handed_back_at, local_album_id LIMIT 1",
+        params![millis(now)],
+        |row| row.get(0),
+    )
+    .optional()
+}
+
+/// A stamped album's hand-back failed: try it again later, each wait
+/// twice the last. After the last try the stamp goes, the audit log says
+/// so, and the album is listed as left unmanaged again for a person to
+/// hand back.
+pub(crate) fn hand_back_failed(
+    conn: &Transaction<'_>,
+    album_id: &str,
+    now: f64,
+) -> rusqlite::Result<()> {
+    let tries: i64 = conn.query_row(
+        "UPDATE library_album_takeovers SET hand_back_tries = hand_back_tries + 1 \
+         WHERE local_album_id = ?1 RETURNING hand_back_tries",
+        params![album_id],
+        |row| row.get(0),
+    )?;
+    if tries >= HAND_BACK_TRIES {
+        conn.execute(
+            "UPDATE library_album_takeovers SET handed_back_at = NULL, hand_back_tries = 0, \
+             hand_back_retry_at = NULL WHERE local_album_id = ?1",
+            params![album_id],
+        )?;
+        tracing::info!(
+            album_id,
+            tries,
+            "hand-back given up: the album's files could not be read"
+        );
+        record_action(
+            conn,
+            CatalogAction {
+                actor: "",
+                kind: "management_hand_back_given_up",
+                album_id,
+                job_id: None,
+                before: serde_json::json!({}),
+                after: serde_json::json!({ "tries": tries }),
+                reason: "HAND_BACK_UNREADABLE",
+            },
+            now,
+        )?;
+        bump_catalog(conn)?;
+        return Ok(());
+    }
+    let delay = (HAND_BACK_RETRY_SECONDS * 2f64.powi((tries - 1) as i32)).min(6.0 * 3600.0);
+    conn.execute(
+        "UPDATE library_album_takeovers SET hand_back_retry_at = ?2 WHERE local_album_id = ?1",
+        params![album_id, millis(now + delay)],
+    )?;
+    Ok(())
+}
+
+/// How many times a person has handed the album back, as the audit log
+/// has it. It only grows, whatever the clock does.
+pub(crate) fn hand_backs(conn: &Connection, album_id: &str) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM library_catalog_actions \
+         WHERE local_album_id = ?1 AND action_kind = 'management_handed_back'",
+        params![album_id],
+        |row| row.get(0),
+    )
+}
+
+/// Hand one album back to automatic management: record each file's bytes
+/// as they are now, lift the mark and queue the album. The next automatic
+/// run then finds the files as recorded and writes them from the album's
+/// edition; an edit made after this is protected like any other.
+///
+/// `actor` is the person who asked, recorded in the audit log; `None`
+/// when the request for every album already recorded it. False when the
+/// album has no mark. Blocking: reads every file of the album, outside any
+/// transaction. Writes no file.
+pub(crate) fn hand_back(
+    setup: &LibrarySetup,
+    album_id: &str,
+    actor: Option<&str>,
+) -> Result<bool, ManagementError> {
+    let store = &setup.identify_store;
+    let files = store.with_connection(|conn| -> Result<_, ManagementError> {
+        if !is_marked(conn, album_id)? {
+            return Ok(None);
+        }
+        let mut statement = conn.prepare(
+            "SELECT id, root_id, relative_path FROM local_tracks \
+             WHERE local_album_id = ?1 AND availability = 'indexed' ORDER BY id",
+        )?;
+        let rows = statement.query_map(params![album_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
+        Ok(Some(
+            rows.collect::<rusqlite::Result<Vec<(String, String, String)>>>()?,
+        ))
+    })?;
+    let Some(files) = files else {
+        return Ok(false);
+    };
+    // Nothing is recorded and the mark stays when the files cannot be read
+    // at all (a share not mounted yet): recording nothing would hand over
+    // whatever is there when it comes back.
+    let unreadable = || {
+        ManagementError::Conflict(
+            "The album's files could not be read, so it was not handed back.".to_owned(),
+        )
+    };
+    let sandbox = setup.publish_sandbox().map_err(|_| unreadable())?;
+    let hashed: Vec<(String, String, String, Option<String>)> = files
+        .into_iter()
+        .map(|(track_id, root_id, relative_path)| {
+            let sha256 = sandbox
+                .resolve_no_symlink(&root_id, &relative_path)
+                .ok()
+                .and_then(|path| crate::library::publish::paths::read_regular_file(&path).ok())
+                .map(|bytes| sha256_hex(&bytes));
+            if sha256.is_none() {
+                tracing::warn!(
+                    track_id,
+                    "file unreadable at hand-back; its bytes are not recorded"
+                );
+            }
+            (track_id, root_id, relative_path, sha256)
+        })
+        .collect();
+    if !hashed.is_empty() && hashed.iter().all(|(.., sha256)| sha256.is_none()) {
+        return Err(unreadable());
+    }
+    let now = now_unix();
+    store.with_connection(|conn| -> Result<bool, ManagementError> {
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let lifted = tx.execute(
+            "DELETE FROM library_album_takeovers WHERE local_album_id = ?1",
+            params![album_id],
+        )?;
+        if lifted == 0 {
+            return Ok(false);
+        }
+        // v2's record is spent: from here on the bytes below are the record.
+        tx.execute(
+            &format!(
+                "UPDATE library_track_management_state AS s SET managed_path_revision = NULL, \
+                 row_revision = row_revision + 1 WHERE s.local_track_id IN \
+                 (SELECT id FROM local_tracks WHERE local_album_id = ?1) AND {V2_ROW_SQL}"
+            ),
+            params![album_id],
+        )?;
+        tx.execute(
+            "UPDATE library_track_management_state SET written_sha256 = NULL \
+             WHERE written_sha256 IS NOT NULL AND local_track_id IN \
+             (SELECT id FROM local_tracks WHERE local_album_id = ?1)",
+            params![album_id],
+        )?;
+        for (track_id, root_id, relative_path, sha256) in &hashed {
+            let Some(sha256) = sha256 else { continue };
+            // Only for a file still where it was read.
+            tx.execute(
+                "INSERT INTO library_track_management_state (local_track_id, written_sha256) \
+                 SELECT id, ?4 FROM local_tracks WHERE id = ?1 AND local_album_id = ?5 \
+                 AND root_id = ?2 AND relative_path = ?3 AND availability = 'indexed' \
+                 ON CONFLICT (local_track_id) DO UPDATE SET \
+                 written_sha256 = excluded.written_sha256",
+                params![track_id, root_id, relative_path, sha256, album_id],
+            )?;
+        }
+        tx.execute(
+            "UPDATE library_management_automatic_queue SET retag_followed_at = NULL \
+             WHERE local_album_id = ?1",
+            params![album_id],
+        )?;
+        if let Some(actor) = actor {
+            record_action(&tx, handed_back_action(actor, album_id), now)?;
+        }
+        bump_catalog(&tx)?;
+        super::automatic::queue(&tx, album_id, now)?;
+        tx.commit()?;
+        Ok(true)
+    })
+}
+
+/// An album the app stepped back from, for the list a person hands back
+/// from.
+#[derive(Debug, Clone)]
+pub struct TakenOver {
+    pub album_id: String,
+    pub album_title: String,
+    pub artist_name: Option<String>,
+    pub cause: Cause,
+    /// When the app stepped back, in milliseconds.
+    pub noticed_at: i64,
+}
+
+/// The albums the app stepped back from and nobody has handed back yet.
+#[derive(Debug, Clone, Default)]
+pub struct Waiting {
+    /// Newest first, `limit` at most.
+    pub albums: Vec<TakenOver>,
+    /// How many there are in all.
+    pub total: i64,
+    /// Albums already handed back that wait for the worker to get to them.
+    pub handing_back: i64,
+}
+
+impl super::service::Management {
+    /// The albums the app stepped back from, newest first. Blocking.
+    pub fn takeovers(&self, limit: i64) -> Result<Waiting, ManagementError> {
+        self.read(|conn| Ok(waiting(conn, limit.clamp(1, 200))?))
+    }
+}
+
+/// The albums the app stepped back from, newest first.
+pub fn waiting(conn: &Connection, limit: i64) -> rusqlite::Result<Waiting> {
+    let (total, handing_back) = conn.query_row(
+        "SELECT COALESCE(SUM(handed_back_at IS NULL), 0), \
+         COALESCE(SUM(handed_back_at IS NOT NULL), 0) FROM library_album_takeovers",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let mut statement = conn.prepare(
+        "SELECT k.local_album_id, a.title, a.album_artist_name, k.cause, k.noticed_at \
+         FROM library_album_takeovers k JOIN local_albums a ON a.id = k.local_album_id \
+         WHERE k.handed_back_at IS NULL \
+         ORDER BY k.noticed_at DESC, k.local_album_id LIMIT ?1",
+    )?;
+    let rows = statement.query_map(params![limit], |row| {
+        let cause: String = row.get(3)?;
+        Ok(TakenOver {
+            album_id: row.get(0)?,
+            album_title: row.get(1)?,
+            artist_name: row.get(2)?,
+            cause: Cause::parse(&cause).ok_or_else(|| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    3,
+                    rusqlite::types::Type::Text,
+                    format!("unknown takeover cause {cause}").into(),
+                )
+            })?,
+            noticed_at: row.get(4)?,
+        })
+    })?;
+    Ok(Waiting {
+        albums: rows.collect::<rusqlite::Result<_>>()?,
+        total,
+        handing_back,
+    })
 }

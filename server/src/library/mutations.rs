@@ -22,6 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 
+use super::management::takeover;
 use super::operations::reasons::Reason;
 use super::scan::coordinator::ScanRequestError;
 use super::scan::models::{ScanKind, ScanRequest, ScanRequestResult, ScanScope, ScanTrigger};
@@ -89,6 +90,12 @@ pub const LIBRARY_DISABLED: Reason = reason(
     "LIBRARY_DISABLED",
     "The local library is switched off, so nothing can be rescanned.",
     "Turn the library on under Settings > Library, then try again.",
+);
+
+pub const HAND_BACK_UNREADABLE: Reason = reason(
+    "HAND_BACK_UNREADABLE",
+    "The album's files could not be read, so it was not handed back and stays unmanaged.",
+    "Check that the library folder is mounted and readable, then try again.",
 );
 
 pub const NOTHING_TO_RESTORE: Reason = reason(
@@ -548,6 +555,29 @@ impl<'a> Mutations<'a> {
             bump_catalog(tx)?;
             Ok(true)
         })
+    }
+
+    /// Hand an album the app stepped back from to automatic management
+    /// again: its files are recorded as they are now, and the next
+    /// automatic run writes them from the album's edition. False when the
+    /// album is not marked. Reads the album's files.
+    pub fn hand_back_management(&self, album_id: &str, actor: &str) -> Result<bool, MutationError> {
+        let canonical = self
+            .canonical_album(album_id)?
+            .ok_or(MutationError::NotFound(ALBUM_NOT_FOUND))?;
+        takeover::hand_back(self.setup, &canonical, Some(actor)).map_err(|error| match error {
+            super::management::models::ManagementError::Conflict(_) => {
+                MutationError::Conflict(HAND_BACK_UNREADABLE)
+            }
+            other => MutationError::Store(other.to_string()),
+        })
+    }
+
+    /// Ask for every album the app stepped back from to be handed back.
+    /// The management worker does it, one album at a time. Returns how
+    /// many albums now wait for their turn. Reads no file.
+    pub fn hand_back_all(&self, actor: &str) -> Result<usize, MutationError> {
+        self.write(|tx| Ok(takeover::stamp_all(tx, actor, now_secs())?))
     }
 
     /// Recycle (when asked) then mark missing. Files already gone from

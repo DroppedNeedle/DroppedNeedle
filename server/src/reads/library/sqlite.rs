@@ -34,8 +34,8 @@ use sqlx::{Row as _, SqlitePool};
 
 use super::stores::{
     AlbumFilter, AlbumRecord, AlbumSort, ArtistListing, ArtistRecord, ArtistScope, ArtistSort,
-    BoxFuture, DecadeRecord, GenreRecord, StatsRecord, StoreError, TrackFilter, TrackRecord,
-    TrackSort,
+    BoxFuture, DecadeRecord, GenreRecord, ManagementHoldRecord, StatsRecord, StoreError,
+    TrackFilter, TrackRecord, TrackSort,
 };
 use super::stores::{FavoriteReads, LibraryCatalog};
 
@@ -697,6 +697,37 @@ impl LibraryCatalog for SqliteCatalog {
             .await
             .map_err(|error| internal("library.albums.get", error))?;
             Ok(row.as_ref().map(map_album))
+        })
+    }
+
+    fn management_hold<'a>(
+        &'a self,
+        album_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<ManagementHoldRecord>, StoreError>> {
+        Box::pin(async move {
+            let Some(pool) = self.db.live() else {
+                return Err(unwired_store());
+            };
+            let row = sqlx::query(
+                "SELECT 'your_choice' AS kind, CAST(excluded_at * 1000 AS INTEGER) AS held_at, \
+                 row_revision AS exclusion_revision, 0 AS handing_back \
+                 FROM library_management_exclusions WHERE local_album_id = ?1 \
+                 UNION ALL \
+                 SELECT cause, noticed_at, NULL, handed_back_at IS NOT NULL \
+                 FROM library_album_takeovers WHERE local_album_id = ?1 \
+                 AND NOT EXISTS (SELECT 1 FROM library_management_exclusions \
+                 WHERE local_album_id = ?1) LIMIT 1",
+            )
+            .bind(album_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|error| internal("library.albums.management_hold", error))?;
+            Ok(row.map(|row| ManagementHoldRecord {
+                kind: row.get("kind"),
+                held_at: row.get("held_at"),
+                exclusion_revision: row.get("exclusion_revision"),
+                handing_back: row.get("handing_back"),
+            }))
         })
     }
 

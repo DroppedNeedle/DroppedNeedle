@@ -77,6 +77,10 @@ pub fn router() -> Router<LibrarySetup> {
             get(list_management_automatic_skipped),
         )
         .route(
+            "/library/management/takeovers",
+            get(list_management_takeovers),
+        )
+        .route(
             "/settings/library-management/placement",
             get(get_management_placement),
         )
@@ -831,6 +835,63 @@ pub async fn list_management_automatic_skipped(
                 updated_at: album.updated_at,
             })
             .collect(),
+    }))
+}
+
+/// An album DroppedNeedle stepped back from.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ManagementTakeoverView {
+    pub album_id: String,
+    pub album_title: String,
+    pub artist_name: Option<String>,
+    /// `files_changed`, `retag_followed` or `run_undone`.
+    pub cause: String,
+    /// When it stepped back, unix milliseconds.
+    pub noticed_at: i64,
+}
+
+/// Albums DroppedNeedle stepped back from.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ManagementTakeoverPage {
+    /// Newest first, 100 at most.
+    pub items: Vec<ManagementTakeoverView>,
+    /// How many there are in all.
+    pub total: i64,
+    /// Albums already handed back that wait for their turn.
+    pub handing_back: i64,
+}
+
+/// Albums left unmanaged because their files were changed outside
+/// DroppedNeedle and that nobody has handed back yet, newest first.
+#[utoipa::path(
+    get,
+    path = "/api/v3/library/management/takeovers",
+    responses(
+        (status = 200, description = "Albums left unmanaged", body = ManagementTakeoverPage),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required"),
+    )
+)]
+pub async fn list_management_takeovers(
+    State(state): State<LibrarySetup>,
+    _caller: RequireAdmin,
+) -> Result<Json<ManagementTakeoverPage>, LibraryError> {
+    let management = Management::new(&state);
+    let waiting = blocking(move || management.takeovers(100)).await?;
+    Ok(Json(ManagementTakeoverPage {
+        items: waiting
+            .albums
+            .into_iter()
+            .map(|album| ManagementTakeoverView {
+                album_id: album.album_id,
+                album_title: album.album_title,
+                artist_name: album.artist_name,
+                cause: album.cause.as_str().to_owned(),
+                noticed_at: album.noticed_at,
+            })
+            .collect(),
+        total: waiting.total,
+        handing_back: waiting.handing_back,
     }))
 }
 

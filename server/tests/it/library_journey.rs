@@ -6020,6 +6020,403 @@ async fn a_merge_and_a_split_carry_the_step_back() {
     rig.stop().await;
 }
 
+/// "Manage it again" hands a taken-over album back: the files are
+/// recorded as they are at that moment and the worker writes them from
+/// the edition. The permission covers those bytes only: an edit made
+/// while the run could not go ahead is protected like any other, and so
+/// is one made after the app wrote the album again.
+#[tokio::test]
+async fn handing_an_album_back_lets_the_app_write_again() {
+    use droppedneedle::library::mutations::Mutations;
+    use droppedneedle::library::tags::{TagField, read_fields};
+
+    let managed = ManagedLibrary::start("lib-takeover-hand-back", |_| {}).await;
+    let (album, tracks) = managed.add_album("first", 2).await;
+    managed.activate().await;
+    managed.look(&album).await;
+    let title = |path: &Path| read_fields(path).expect("tags read")[&TagField::Title].clone();
+    let hand_back = || {
+        Mutations::new(&managed.library)
+            .hand_back_management(&album, "admin")
+            .expect("hand-back answers")
+    };
+    assert!(!hand_back(), "an album the app manages has nothing to lift");
+
+    // The second file's match names a track the edition does not have, so
+    // no run of the album can go ahead.
+    let mapped: String = managed
+        .db()
+        .query_row(
+            "SELECT release_track_mbid FROM local_track_external_identities \
+             WHERE local_track_id = ?1",
+            [&tracks[1]],
+            |row| row.get(0),
+        )
+        .expect("mapping");
+    let map_second = |release_track: &str| {
+        managed
+            .db()
+            .execute(
+                "UPDATE local_track_external_identities SET release_track_mbid = ?2, \
+                 row_revision = row_revision + 1 WHERE local_track_id = ?1",
+                [tracks[1].as_str(), release_track],
+            )
+            .expect("mapping set");
+    };
+    map_second("no-such-track");
+    managed
+        .edit_outside(&tracks[0], title_edit("By Hand"))
+        .await;
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&album).as_deref(), Some("files_changed"));
+
+    assert!(hand_back());
+    assert_eq!(managed.mark(&album), None);
+    for track in &tracks {
+        assert_eq!(
+            managed.recorded(track),
+            Some(file_sha256(&managed.path(track))),
+            "the bytes as they are at the hand-back"
+        );
+    }
+    assert_eq!(
+        managed.count(
+            "SELECT COUNT(*) FROM library_catalog_actions a JOIN auth_users u \
+             ON u.id = a.actor_user_id WHERE a.action_kind = 'management_handed_back' \
+             AND u.id = 'admin'"
+        ),
+        1
+    );
+    assert!(!hand_back(), "handed back once");
+
+    // The run is blocked. The file is edited again meanwhile, and then the
+    // block goes: that later edit was never handed over.
+    managed.worker_looks().await;
+    assert_eq!(title(&managed.path(&tracks[0])), vec!["By Hand".to_owned()]);
+    managed.edit_outside(&tracks[0], title_edit("Again")).await;
+    let edited = file_sha256(&managed.path(&tracks[0]));
+    map_second(&mapped);
+    managed.look(&album).await;
+    assert_eq!(managed.mark(&album).as_deref(), Some("files_changed"));
+    assert_eq!(
+        file_sha256(&managed.path(&tracks[0])),
+        edited,
+        "nothing written"
+    );
+
+    // Handed back with nothing in the way: the worker writes the edition.
+    assert!(hand_back());
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&album), None);
+    assert_eq!(title(&managed.path(&tracks[0])), vec!["first 1".to_owned()]);
+
+    // And an edit after that takes the album over again.
+    managed.edit_outside(&tracks[0], title_edit("Third")).await;
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&album).as_deref(), Some("files_changed"));
+    assert_eq!(title(&managed.path(&tracks[0])), vec!["Third".to_owned()]);
+}
+
+/// Handing every album back at once only stamps them: no file is read in
+/// the request. The worker then hands back one album a step, and a
+/// restart in between loses none.
+#[tokio::test]
+async fn handing_every_album_back_takes_one_step_each() {
+    use droppedneedle::library::management::automatic::Settle;
+    use droppedneedle::library::management::service::Management;
+    use droppedneedle::library::mutations::Mutations;
+
+    let (scratch, library, music) = bare_library("lib-takeover-hand-back-all");
+    for folder in ["a", "b", "c"] {
+        plant(&music, &format!("{folder}/01.flac"), "management_full.flac");
+    }
+    add_music_root(&library, &music).await;
+    let db = droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db")).expect("db");
+    db.execute_batch(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z'); \
+         INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+         SELECT id, 'files_changed', 1000 FROM local_albums; \
+         DELETE FROM library_management_automatic_queue;",
+    )
+    .expect("three albums marked");
+    let count = |sql: &str| -> i64 { db.query_row(sql, [], |row| row.get(0)).expect("count") };
+    let recorded = "SELECT COUNT(*) FROM library_track_management_state \
+                    WHERE written_sha256 IS NOT NULL";
+
+    assert_eq!(
+        Mutations::new(&library)
+            .hand_back_all("admin")
+            .expect("stamped"),
+        3
+    );
+    assert_eq!(
+        Mutations::new(&library)
+            .hand_back_all("admin")
+            .expect("stamped"),
+        0
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM library_album_takeovers WHERE handed_back_at IS NOT NULL"),
+        3,
+        "still marked, waiting for their turn"
+    );
+    assert_eq!(count(recorded), 0, "no file was read");
+    let waiting = Management::new(&library).takeovers(100).expect("waiting");
+    assert_eq!((waiting.total, waiting.handing_back), (0, 3));
+
+    drop(library);
+    let library = open_library(&scratch);
+    let management = Management::new(&library);
+    let mut settle = Settle::default();
+    for left in [2, 1, 0] {
+        assert!(management.automatic_step(&mut settle).expect("worker step"));
+        assert_eq!(count("SELECT COUNT(*) FROM library_album_takeovers"), left);
+    }
+    assert_eq!(count(recorded), 3);
+    assert_eq!(
+        count("SELECT COUNT(*) FROM library_management_automatic_queue"),
+        3,
+        "each album is queued for automatic management"
+    );
+    assert_eq!(
+        count(
+            "SELECT COUNT(*) FROM library_catalog_actions \
+             WHERE action_kind = 'management_handed_back' AND actor_user_id = 'admin'"
+        ),
+        3,
+        "said once per album, by the person who asked"
+    );
+    for folder in ["a", "b", "c"] {
+        let sha: String = db
+            .query_row(
+                "SELECT s.written_sha256 FROM library_track_management_state s \
+                 JOIN local_tracks t ON t.id = s.local_track_id WHERE t.relative_path = ?1",
+                [format!("{folder}/01.flac")],
+                |row| row.get(0),
+            )
+            .expect("recorded bytes");
+        assert_eq!(sha, file_sha256(&music.join(format!("{folder}/01.flac"))));
+    }
+}
+
+/// What the album page and Library Management read about an album left
+/// unmanaged, and the two routes that hand albums back.
+#[tokio::test]
+async fn left_unmanaged_albums_read_back_and_hand_back() {
+    let rig = Rig::start("lib-takeover-reads").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    plant(&music, "a/01.flac", "flac_full_01.flac");
+    rig.pause_identification().await;
+    app.add_library_folder("music", &music).await;
+    app.scan_library().await;
+    let track = rig
+        .scan_store
+        .track_at("music", "a/01.flac")
+        .expect("track");
+    let album = rig.scan_store.album_for_track(&track).expect("album");
+    let db = app.db();
+    let mark = || {
+        db.execute(
+            "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+             VALUES (?1, 'files_changed', 1234)",
+            [&album],
+        )
+        .expect("album marked");
+    };
+    let album_url = format!("/api/v3/library/albums/{album}");
+    let hold = || async {
+        let (status, body) = app.call("GET", &album_url, &headers, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["id"], json!(album), "the album's own fields stay");
+        body["management_hold"].clone()
+    };
+    assert_eq!(hold().await, Value::Null);
+
+    mark();
+    assert_eq!(
+        hold().await,
+        json!({
+            "kind": "files_changed",
+            "held_at": 1234,
+            "exclusion_revision": null,
+            "handing_back": false
+        })
+    );
+    let (status, list) = app
+        .call(
+            "GET",
+            "/api/v3/library/management/takeovers",
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    assert_eq!(list["total"], json!(1));
+    assert_eq!(list["handing_back"], json!(0));
+    assert_eq!(list["items"][0]["album_id"], json!(album));
+    assert_eq!(list["items"][0]["cause"], json!("files_changed"));
+    assert_eq!(list["items"][0]["noticed_at"], json!(1234));
+
+    // A person's own choice is what the page shows when both are there.
+    db.execute(
+        "INSERT INTO library_management_exclusions (local_album_id, reason, \
+         excluded_by_user_id, excluded_at) SELECT ?1, 'manual', id, 5 FROM auth_users LIMIT 1",
+        [&album],
+    )
+    .expect("album excluded");
+    let own = hold().await;
+    assert_eq!(own["kind"], json!("your_choice"));
+    assert_eq!(own["held_at"], json!(5000));
+    assert_eq!(own["exclusion_revision"], json!(1));
+    db.execute("DELETE FROM library_management_exclusions", [])
+        .expect("exclusion lifted");
+
+    let hand_back = format!("/api/v3/library/albums/{album}/management/hand-back");
+    let (status, body) = app.call("POST", &hand_back, &headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({"handed_back": true}));
+    let (status, body) = app.call("POST", &hand_back, &headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({"handed_back": false}));
+    assert_eq!(hold().await, Value::Null);
+
+    // All at once: the route answers the count and the worker does the
+    // rest.
+    mark();
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/management/hand-back",
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({"albums": 1}));
+    // The app's own worker loop hands it back.
+    app.until("the worker hands the album back", || {
+        let left: i64 = db
+            .query_row("SELECT COUNT(*) FROM library_album_takeovers", [], |row| {
+                row.get(0)
+            })
+            .expect("marks read");
+        async move { (left == 0).then_some(()) }
+    })
+    .await;
+    assert_eq!(hold().await, Value::Null);
+    rig.stop().await;
+}
+
+/// A hand-back that cannot read the album's files changes nothing: the
+/// mark stays and nothing is recorded. Handed back all at once, the
+/// worker then waits before it tries that album again, instead of
+/// trying it on every step.
+#[tokio::test]
+async fn a_hand_back_that_cannot_read_the_files_keeps_the_mark() {
+    use droppedneedle::library::management::automatic::Settle;
+    use droppedneedle::library::management::service::Management;
+    use droppedneedle::library::mutations::{MutationError, Mutations};
+
+    let (scratch, library, music) = bare_library("lib-takeover-hand-back-fails");
+    let file = plant(&music, "a/01.flac", "management_full.flac");
+    add_music_root(&library, &music).await;
+    let db = droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db")).expect("db");
+    db.execute_batch(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z'); \
+         INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+         SELECT id, 'files_changed', 1000 FROM local_albums;",
+    )
+    .expect("album marked");
+    let album: String = db
+        .query_row("SELECT id FROM local_albums", [], |row| row.get(0))
+        .expect("album");
+    // The share went away between the scan and the hand-back.
+    std::fs::remove_file(&file).expect("file gone");
+    let count = |sql: &str| -> i64 { db.query_row(sql, [], |row| row.get(0)).expect("count") };
+    let recorded = "SELECT COUNT(*) FROM library_track_management_state \
+                    WHERE written_sha256 IS NOT NULL";
+
+    let refused = Mutations::new(&library).hand_back_management(&album, "admin");
+    assert!(
+        matches!(refused, Err(MutationError::Conflict(_))),
+        "{refused:?}"
+    );
+    assert_eq!(count("SELECT COUNT(*) FROM library_album_takeovers"), 1);
+    assert_eq!(count(recorded), 0);
+
+    assert_eq!(
+        Mutations::new(&library)
+            .hand_back_all("admin")
+            .expect("stamped"),
+        1
+    );
+    let management = Management::new(&library);
+    let mut settle = Settle::default();
+    for _ in 0..3 {
+        management.automatic_step(&mut settle).expect("worker step");
+    }
+    assert_eq!(
+        count("SELECT hand_back_tries FROM library_album_takeovers"),
+        1,
+        "tried once, then it waits"
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM library_album_takeovers WHERE handed_back_at IS NOT NULL"),
+        1,
+        "still waiting for its turn"
+    );
+    assert_eq!(count(recorded), 0);
+}
+
+/// "Manage it again" always leads to a fresh look: no run made before the
+/// hand-back answers for the album. Here the run is undone and the album
+/// handed back with no scan in between, so nothing about its files has
+/// changed in the catalog since the first run.
+#[tokio::test]
+async fn a_handed_back_album_is_looked_at_afresh() {
+    use droppedneedle::library::mutations::Mutations;
+
+    let managed = ManagedLibrary::start("lib-takeover-afresh", |_| {}).await;
+    let (album, tracks) = managed.add_album("first", 1).await;
+    managed.activate().await;
+    let planted = managed.path(&tracks[0]);
+    managed.look(&album).await;
+    let placed = managed.path(&tracks[0]);
+    assert_ne!(placed, planted);
+
+    let management = managed.management();
+    let (history, _) = management.history(Default::default()).expect("history");
+    let run = history
+        .iter()
+        .find(|item| item.origin == "scan_discovered")
+        .expect("an automatic run");
+    let undo = management
+        .undo_preview(&run.job.id, run.job.row_revision, "undo", "admin")
+        .expect("undo preview");
+    assert!(
+        management_step(&managed.library).await,
+        "undo planning runs"
+    );
+    let undone = management_apply(&managed.library, &undo).await;
+    assert_eq!(undone.job.state.as_str(), "succeeded");
+    assert_eq!(managed.path(&tracks[0]), planted);
+    assert_eq!(managed.mark(&album).as_deref(), Some("run_undone"));
+
+    assert!(
+        Mutations::new(&managed.library)
+            .hand_back_management(&album, "admin")
+            .expect("hand-back answers")
+    );
+    managed.worker_looks().await;
+    assert_eq!(managed.path(&tracks[0]), placed, "the run is done again");
+    assert_eq!(managed.mark(&album), None);
+}
+
 /// Every file below `dir`.
 fn walk_files(dir: &std::path::Path) -> Vec<PathBuf> {
     let mut found = Vec::new();

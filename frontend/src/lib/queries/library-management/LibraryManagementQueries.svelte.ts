@@ -271,6 +271,18 @@ export const getLibraryManagementAutomaticSkippedQuery = (
 			api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.automaticSkipped(), { signal })
 	}));
 
+// Albums left unmanaged because their files were changed outside the app,
+// and how many of them wait to be handed back.
+export const getLibraryManagementTakeoversQuery = (
+	getUserId: Getter<string | null | undefined>,
+	enabled: Getter<boolean> = () => true
+) =>
+	createQuery(() => ({
+		enabled: enabled(),
+		queryKey: LibraryManagementQueryKeyFactory.takeovers(getUserId()),
+		queryFn: ({ signal }) => api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.takeovers(), { signal })
+	}));
+
 export const getLibraryManagementActivationHealthQuery = (
 	getUserId: Getter<string | null | undefined>,
 	enabled: Getter<boolean> = () => true

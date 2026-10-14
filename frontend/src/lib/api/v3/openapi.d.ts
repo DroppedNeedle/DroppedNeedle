@@ -3233,6 +3233,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/albums/{album_id}/management/hand-back": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Have DroppedNeedle manage an album again after it stepped back from it
+         *     because the files were changed outside. The files are then retagged and
+         *     renamed from the album's edition, which overwrites those changes.
+         */
+        post: operations["hand_back_management"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/albums/{album_id}/management/re-enable": {
         parameters: {
             query?: never;
@@ -4277,6 +4298,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/management/hand-back": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Have DroppedNeedle manage every album again that it stepped back from.
+         *     The albums are handed back one after another in the background; until
+         *     its turn comes an album stays left unmanaged.
+         */
+        post: operations["hand_back_all"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/management/identity-preparations": {
         parameters: {
             query?: never;
@@ -4623,6 +4665,26 @@ export interface paths {
         put?: never;
         /** Preview a tag edit; apply it like any preview. */
         post: operations["create_management_tag_edit_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/takeovers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Albums left unmanaged because their files were changed outside
+         *     DroppedNeedle and that nobody has handed back yet, newest first.
+         */
+        get: operations["list_management_takeovers"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -10141,6 +10203,10 @@ export interface components {
              */
             total: number;
         };
+        /** @description One catalog album with what its own page shows. */
+        AlbumDetailView: components["schemas"]["AlbumView"] & {
+            management_hold?: null | components["schemas"]["ManagementHoldView"];
+        };
         /** @description One edition (MusicBrainz release) of an album. */
         AlbumEditionItem: {
             /** @description Barcode, when known. */
@@ -14301,6 +14367,16 @@ export interface components {
             /** @description The pinned edition, or absent after a clear. */
             pinned_release_mbid?: string | null;
         };
+        /** @description Answer to handing every album back. */
+        HandBackAllResponse: {
+            /** @description Albums that now wait for their turn to be handed back. */
+            albums: number;
+        };
+        /** @description Hand-back answer. */
+        HandBackResponse: {
+            /** @description False when DroppedNeedle had not stepped back from the album. */
+            handed_back: boolean;
+        };
         /**
          * @description Health payload. `status` plus the running message keep the v2 shape;
          *     `checkpoint` adds the latest checkpoint pass (`None` until the
@@ -16533,6 +16609,33 @@ export interface components {
             /** @description Pass back as `cursor` for the next page; null on the last. */
             next_cursor?: string | null;
         };
+        /** @description Why library management leaves an album's files alone. */
+        ManagementHoldView: {
+            /**
+             * Format: int64
+             * @description For `your_choice`: the exclusion's revision, which re-enabling
+             *     management echoes.
+             */
+            exclusion_revision?: number | null;
+            /**
+             * @description True while the album waits for its turn after every album was
+             *     handed back at once.
+             */
+            handing_back: boolean;
+            /**
+             * Format: int64
+             * @description Since when, unix milliseconds.
+             */
+            held_at: number;
+            /**
+             * @description `your_choice` when a person chose to leave the album unmanaged.
+             *     Otherwise why DroppedNeedle stepped back by itself: `files_changed`
+             *     (its files were changed outside DroppedNeedle), `retag_followed`
+             *     (it was retagged outside DroppedNeedle) or `run_undone` (a person
+             *     undid DroppedNeedle's changes to it).
+             */
+            kind: string;
+        };
         /** @description A management job: a preview, an apply in progress, or a finished one. */
         ManagementJobView: {
             /** Format: int64 */
@@ -16979,6 +17082,34 @@ export interface components {
             settings_revision: string;
             /** Format: int64 */
             track_revision: number;
+        };
+        /** @description Albums DroppedNeedle stepped back from. */
+        ManagementTakeoverPage: {
+            /**
+             * Format: int64
+             * @description Albums already handed back that wait for their turn.
+             */
+            handing_back: number;
+            /** @description Newest first, 100 at most. */
+            items: components["schemas"]["ManagementTakeoverView"][];
+            /**
+             * Format: int64
+             * @description How many there are in all.
+             */
+            total: number;
+        };
+        /** @description An album DroppedNeedle stepped back from. */
+        ManagementTakeoverView: {
+            album_id: string;
+            album_title: string;
+            artist_name?: string | null;
+            /** @description `files_changed`, `retag_followed` or `run_undone`. */
+            cause: string;
+            /**
+             * Format: int64
+             * @description When it stepped back, unix milliseconds.
+             */
+            noticed_at: number;
         };
         /** @description Preview undoing an applied job. */
         ManagementUndoPreviewBody: {
@@ -29494,6 +29625,57 @@ export interface operations {
             };
         };
     };
+    hand_back_management: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id or release-group MBID */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Hand-back answer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HandBackResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Album not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The album's files could not be read; it stays unmanaged */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     reenable_management: {
         parameters: {
             query?: never;
@@ -30062,7 +30244,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AlbumView"];
+                    "application/json": components["schemas"]["AlbumDetailView"];
                 };
             };
             /** @description Not authenticated */
@@ -32727,6 +32909,40 @@ export interface operations {
             };
         };
     };
+    hand_back_all: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Albums waiting to be handed back */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HandBackAllResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_preparations: {
         parameters: {
             query?: {
@@ -33808,6 +34024,40 @@ export interface operations {
             };
             /** @description Settings or library folders changed */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_management_takeovers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Albums left unmanaged */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementTakeoverPage"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

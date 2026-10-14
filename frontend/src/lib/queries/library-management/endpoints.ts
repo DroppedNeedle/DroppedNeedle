@@ -23,6 +23,12 @@ export const LIBRARY_MANAGEMENT_ENDPOINTS = {
 	duplicateResolutionPreviews: () => v3('/api/v3/library/management/duplicate-resolution-previews'),
 	recoveryDiagnostics: () => v3('/api/v3/library/management/recovery/diagnostics'),
 	automaticSkipped: () => v3('/api/v3/library/management/automatic/skipped'),
+	takeovers: () => v3('/api/v3/library/management/takeovers'),
+	handBackAll: () => v3('/api/v3/library/management/hand-back'),
+	handBackAlbum: (albumId: string) =>
+		v3('/api/v3/library/albums/{album_id}/management/hand-back', {
+			path: { album_id: albumId }
+		}),
 	resolveImportBundle: (bundleId: string) =>
 		v3('/api/v3/library/management/recovery/import-bundles/{bundle_id}/resolve', {
 			path: { bundle_id: bundleId }

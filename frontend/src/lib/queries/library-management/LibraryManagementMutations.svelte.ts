@@ -243,6 +243,25 @@ export const resolveLibraryManagementImportBundleMutation = () =>
 			api.global.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.resolveImportBundle(input.bundleId))
 	}));
 
+// Hands one album the app stepped back from to automatic management again.
+// Its files are then retagged and renamed from its edition.
+export const handBackLibraryAlbumMutation = () =>
+	createMutation(() => ({
+		mutationFn: (input: { albumId: string }) =>
+			api.global.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.handBackAlbum(input.albumId)),
+		onSuccess: invalidateLibraryManagementSurfaces,
+		onError: showActionError('Could not hand this album back')
+	}));
+
+// Hands back every album the app stepped back from. The server works
+// through them in the background.
+export const handBackAllLibraryAlbumsMutation = () =>
+	createMutation(() => ({
+		mutationFn: () => api.global.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.handBackAll()),
+		onSuccess: invalidateLibraryManagementSurfaces,
+		onError: showActionError('Could not hand these albums back')
+	}));
+
 export const controlLibraryManagementOperationMutation = (action: 'pause' | 'resume' | 'stop') =>
 	createMutation(() => ({
 		mutationFn: async (input: {

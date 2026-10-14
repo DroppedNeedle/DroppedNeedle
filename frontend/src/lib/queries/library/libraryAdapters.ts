@@ -12,6 +12,7 @@ import type {
 } from '$lib/types';
 
 export type AlbumView = components['schemas']['AlbumView'];
+type AlbumDetailView = components['schemas']['AlbumDetailView'];
 export type TrackView = components['schemas']['TrackView'];
 type AlbumPage = components['schemas']['AlbumPage'];
 type ArtistView = components['schemas']['ArtistView'];
@@ -55,7 +56,7 @@ export function toAlbumSummary(album: AlbumView): LibraryAlbumSummary {
 	};
 }
 
-export function toAlbumDetail(album: AlbumView): LibraryAlbumDetail {
+export function toAlbumDetail(album: AlbumDetailView): LibraryAlbumDetail {
 	return {
 		...toAlbumSummary(album),
 		row_revision: 0,
@@ -74,6 +75,7 @@ export function toAlbumDetail(album: AlbumView): LibraryAlbumDetail {
 		management_excluded: false,
 		management_exclusion_revision: null,
 		management_excluded_at: null,
+		management_hold: album.management_hold ?? null,
 		active_edition_conversion: null,
 		display_release_mbid: album.release_mbid ?? null,
 		pick_basis: null

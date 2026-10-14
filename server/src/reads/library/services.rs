@@ -6,12 +6,13 @@ use std::collections::HashSet;
 
 use super::LibraryDeps;
 use super::models::{
-    AlbumCard, AlbumCardPage, AlbumPage, AlbumQuery, AlbumView, ArtistPage, ArtistQuery,
-    ArtistView, BrowseQuery, DecadeShelf, DecadesResponse, GenreList, GenreView,
+    AlbumCard, AlbumCardPage, AlbumDetailView, AlbumPage, AlbumQuery, AlbumView, ArtistPage,
+    ArtistQuery, ArtistView, BrowseQuery, DecadeShelf, DecadesResponse, GenreList, GenreView,
     LibraryAlbumStatus, LibraryMbids, LibraryMembershipRequest, LibraryMembershipResponse,
-    LibraryStatusTrack, LyricLine, LyricsView, PageQuery, RecentQuery, ResolveTracksRequest,
-    ResolveTracksResponse, ResolvedTrack, SearchQuery, SearchResults, StatsView, SuggestionTrack,
-    SuggestionsQuery, SuggestionsResponse, TrackPage, TrackQuery, TrackTags, TrackView,
+    LibraryStatusTrack, LyricLine, LyricsView, ManagementHoldView, PageQuery, RecentQuery,
+    ResolveTracksRequest, ResolveTracksResponse, ResolvedTrack, SearchQuery, SearchResults,
+    StatsView, SuggestionTrack, SuggestionsQuery, SuggestionsResponse, TrackPage, TrackQuery,
+    TrackTags, TrackView,
 };
 use super::stores::{
     AlbumFilter, AlbumRecord, AlbumSort, ArtistRecord, ArtistScope, ArtistSort, StoreError,
@@ -314,14 +315,23 @@ pub async fn get_album(
     deps: &LibraryDeps,
     user_id: &str,
     id: &str,
-) -> Result<AlbumView, LibraryFailure> {
+) -> Result<AlbumDetailView, LibraryFailure> {
     let record = deps
         .catalog
         .get_album(id)
         .await?
         .ok_or(LibraryFailure::NotFound)?;
     let favorites = favorites_for(deps, user_id, "album", std::slice::from_ref(&record.id)).await?;
-    Ok(album_view(&record, favorites.contains(&record.id)))
+    let hold = deps.catalog.management_hold(&record.id).await?;
+    Ok(AlbumDetailView {
+        album: album_view(&record, favorites.contains(&record.id)),
+        management_hold: hold.map(|hold| ManagementHoldView {
+            kind: hold.kind,
+            held_at: hold.held_at,
+            exclusion_revision: hold.exclusion_revision,
+            handing_back: hold.handing_back,
+        }),
+    })
 }
 
 /// One page of an album's streamable tracks. Unknown albums are 404.

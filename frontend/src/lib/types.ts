@@ -1424,6 +1424,8 @@ export interface LibraryAlbumSummary {
 }
 
 export interface LibraryAlbumDetail extends LibraryAlbumSummary {
+	// Set when library management leaves the album's files alone.
+	management_hold?: components['schemas']['ManagementHoldView'] | null;
 	row_revision: number;
 	input_revision: string;
 	download_allowed?: boolean;

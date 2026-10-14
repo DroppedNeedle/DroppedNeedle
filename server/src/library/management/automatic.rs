@@ -256,12 +256,26 @@ impl Management {
     }
 
     /// Look at the next waiting album once the catalog has settled and no
-    /// scan runs. True when one was looked at. Blocking.
+    /// scan runs. True when one was looked at or handed back. Blocking.
     pub fn automatic_step(&self, settle: &mut Settle) -> Result<bool, ManagementError> {
+        // Albums a person handed back all at once come first, one a step.
+        // That writes no music file, so it waits for neither a scan nor a
+        // settled catalog.
+        let now = now_unix();
+        if let Some(album_id) = self.read(|conn| Ok(takeover::next_stamped(conn, now)?))? {
+            return match takeover::hand_back(&self.setup, &album_id, None) {
+                Ok(_) => Ok(true),
+                Err(error) => {
+                    // It waits before its next try; the loop pauses too.
+                    tracing::warn!(%error, album_id, "album not handed back; tried again later");
+                    self.write(|tx| Ok(takeover::hand_back_failed(tx, &album_id, now)?))?;
+                    Ok(false)
+                }
+            };
+        }
         if !self.setup.coordinator.current().is_empty() {
             return Ok(false);
         }
-        let now = now_unix();
         let revision = self.read(|conn| Ok(catalog_revision(conn)?))?;
         // A start counts as a change: the first look waits the settle
         // window too, so a boot-time scan or import can begin first.
@@ -510,6 +524,12 @@ impl Management {
             revisions.settings,
             revisions.policy,
         );
+        // A hand-back asks for a fresh look: no run made before it, done,
+        // stepped back or waiting, answers for the album.
+        let key_material = match self.read(|conn| Ok(takeover::hand_backs(conn, album_id)?))? {
+            0 => key_material,
+            count => format!("{key_material}\u{0}handed-back:{count}"),
+        };
         let mut key = format!("automatic:{}", sha256_hex(key_material.as_bytes()));
         if let Some(existing) = self.read(|conn| Ok(store::job_for_key(conn, &key)?))? {
             let snapshot = self.snapshot(&existing)?;

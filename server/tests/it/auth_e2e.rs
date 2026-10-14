@@ -2299,6 +2299,16 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ),
     (
         "GET",
+        "/api/v3/library/management/takeovers",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/management/hand-back",
+        Posture::Admin,
+    ),
+    (
+        "GET",
         "/api/v3/settings/library-management/placement",
         Posture::Admin,
     ),
@@ -2507,6 +2517,11 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     (
         "POST",
         "/api/v3/library/albums/{album_id}/management/re-enable",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/albums/{album_id}/management/hand-back",
         Posture::Admin,
     ),
     (

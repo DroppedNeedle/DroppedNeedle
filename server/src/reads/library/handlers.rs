@@ -19,7 +19,7 @@ use serde::de::DeserializeOwned;
 use super::LibraryDeps;
 use super::error::LibraryError;
 use super::models::{
-    AlbumCardPage, AlbumPage, AlbumQuery, AlbumView, ArtistPage, ArtistQuery, ArtistView,
+    AlbumCardPage, AlbumDetailView, AlbumPage, AlbumQuery, ArtistPage, ArtistQuery, ArtistView,
     BrowseQuery, DecadesResponse, GenreList, LibraryAlbumStatus, LibraryMbids,
     LibraryMembershipRequest, LibraryMembershipResponse, LyricsView, PageQuery, RecentQuery,
     ResolveTracksRequest, ResolveTracksResponse, SearchQuery, SearchResults, StatsView,
@@ -127,7 +127,7 @@ pub async fn list_albums(
     path = "/api/v3/library/albums/{id}",
     params(("id" = String, Path, description = "Local album id")),
     responses(
-        (status = 200, description = "Album", body = AlbumView),
+        (status = 200, description = "Album", body = AlbumDetailView),
         (status = 401, description = "Not authenticated"),
         (status = 404, description = "Unknown album id"),
     )
@@ -136,7 +136,7 @@ pub async fn get_album(
     State(deps): State<LibraryDeps>,
     LibraryUser(ctx): LibraryUser,
     Path(id): Path<String>,
-) -> Result<Json<AlbumView>, LibraryError> {
+) -> Result<Json<AlbumDetailView>, LibraryError> {
     services::get_album(&deps, &ctx.user_id, &id)
         .await
         .map(Json)

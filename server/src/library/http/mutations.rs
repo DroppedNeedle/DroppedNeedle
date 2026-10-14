@@ -1,6 +1,7 @@
 //! Library mutation routes: remove an album (admin) or a track (curator),
-//! rescan one album (admin), and re-enable management on an excluded
-//! album (admin). File removal always goes through the recycle bin; see
+//! rescan one album (admin), re-enable management on an excluded album
+//! (admin), and hand albums the app stepped back from to automatic
+//! management again (admin). File removal always goes through the recycle bin; see
 //! [`crate::library::mutations`].
 
 use axum::{
@@ -29,6 +30,11 @@ pub fn mutations_router() -> Router<LibrarySetup> {
             "/library/albums/{album_id}/management/re-enable",
             post(reenable_management),
         )
+        .route(
+            "/library/albums/{album_id}/management/hand-back",
+            post(hand_back_management),
+        )
+        .route("/library/management/hand-back", post(hand_back_all))
 }
 
 /// Album removal options.
@@ -95,6 +101,20 @@ pub struct ReenableBody {
 pub struct ReenableResponse {
     /// False when the album was not excluded.
     pub reenabled: bool,
+}
+
+/// Hand-back answer.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct HandBackResponse {
+    /// False when DroppedNeedle had not stepped back from the album.
+    pub handed_back: bool,
+}
+
+/// Answer to handing every album back.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct HandBackAllResponse {
+    /// Albums that now wait for their turn to be handed back.
+    pub albums: usize,
 }
 
 /// A refused mutation in the shared error envelope, with the action in
@@ -273,4 +293,51 @@ pub async fn reenable_management(
     })
     .await?;
     Ok(Json(ReenableResponse { reenabled }))
+}
+
+/// Have DroppedNeedle manage an album again after it stepped back from it
+/// because the files were changed outside. The files are then retagged and
+/// renamed from the album's edition, which overwrites those changes.
+#[utoipa::path(
+    post,
+    path = "/api/v3/library/albums/{album_id}/management/hand-back",
+    params(("album_id" = String, Path, description = "Local album id or release-group MBID")),
+    responses(
+        (status = 200, description = "Hand-back answer", body = HandBackResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required"),
+        (status = 404, description = "Album not found"),
+        (status = 409, description = "The album's files could not be read; it stays unmanaged"),
+    )
+)]
+pub async fn hand_back_management(
+    State(state): State<LibrarySetup>,
+    caller: RequireAdmin,
+    Path(album_id): Path<String>,
+) -> Result<Json<HandBackResponse>, Response> {
+    let actor = caller.0.user_id;
+    let handed_back =
+        blocking(move || Mutations::new(&state).hand_back_management(&album_id, &actor)).await?;
+    Ok(Json(HandBackResponse { handed_back }))
+}
+
+/// Have DroppedNeedle manage every album again that it stepped back from.
+/// The albums are handed back one after another in the background; until
+/// its turn comes an album stays left unmanaged.
+#[utoipa::path(
+    post,
+    path = "/api/v3/library/management/hand-back",
+    responses(
+        (status = 200, description = "Albums waiting to be handed back", body = HandBackAllResponse),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required"),
+    )
+)]
+pub async fn hand_back_all(
+    State(state): State<LibrarySetup>,
+    caller: RequireAdmin,
+) -> Result<Json<HandBackAllResponse>, Response> {
+    let actor = caller.0.user_id;
+    let albums = blocking(move || Mutations::new(&state).hand_back_all(&actor)).await?;
+    Ok(Json(HandBackAllResponse { albums }))
 }

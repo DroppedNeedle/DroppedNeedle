@@ -6961,6 +6961,50 @@
         }
       }
     },
+    "/api/v3/library/albums/{album_id}/management/hand-back": {
+      "post": {
+        "tags": [
+          "crate::library::http::mutations"
+        ],
+        "summary": "Have DroppedNeedle manage an album again after it stepped back from it\nbecause the files were changed outside. The files are then retagged and\nrenamed from the album's edition, which overwrites those changes.",
+        "operationId": "hand_back_management",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id or release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Hand-back answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandBackResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Album not found"
+          },
+          "409": {
+            "description": "The album's files could not be read; it stays unmanaged"
+          }
+        }
+      }
+    },
     "/api/v3/library/albums/{album_id}/management/re-enable": {
       "post": {
         "tags": [
@@ -7521,7 +7565,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AlbumView"
+                  "$ref": "#/components/schemas/AlbumDetailView"
                 }
               }
             }
@@ -10080,6 +10124,33 @@
         }
       }
     },
+    "/api/v3/library/management/hand-back": {
+      "post": {
+        "tags": [
+          "crate::library::http::mutations"
+        ],
+        "summary": "Have DroppedNeedle manage every album again that it stepped back from.\nThe albums are handed back one after another in the background; until\nits turn comes an album stays left unmanaged.",
+        "operationId": "hand_back_all",
+        "responses": {
+          "200": {
+            "description": "Albums waiting to be handed back",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandBackAllResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        }
+      }
+    },
     "/api/v3/library/management/identity-preparations": {
       "get": {
         "tags": [
@@ -11218,6 +11289,33 @@
           },
           "409": {
             "description": "Settings or library folders changed"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/takeovers": {
+      "get": {
+        "tags": [
+          "crate::library::http::management_tools"
+        ],
+        "summary": "Albums left unmanaged because their files were changed outside\nDroppedNeedle and that nobody has handed back yet, newest first.",
+        "operationId": "list_management_takeovers",
+        "responses": {
+          "200": {
+            "description": "Albums left unmanaged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementTakeoverPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
           }
         }
       }
@@ -24208,6 +24306,30 @@
           }
         }
       },
+      "AlbumDetailView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/AlbumView"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "management_hold": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ManagementHoldView",
+                    "description": "Set when library management leaves this album's files alone."
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "One catalog album with what its own page shows."
+      },
       "AlbumEditionItem": {
         "type": "object",
         "description": "One edition (MusicBrainz release) of an album.",
@@ -33465,6 +33587,33 @@
           }
         }
       },
+      "HandBackAllResponse": {
+        "type": "object",
+        "description": "Answer to handing every album back.",
+        "required": [
+          "albums"
+        ],
+        "properties": {
+          "albums": {
+            "type": "integer",
+            "description": "Albums that now wait for their turn to be handed back.",
+            "minimum": 0
+          }
+        }
+      },
+      "HandBackResponse": {
+        "type": "object",
+        "description": "Hand-back answer.",
+        "required": [
+          "handed_back"
+        ],
+        "properties": {
+          "handed_back": {
+            "type": "boolean",
+            "description": "False when DroppedNeedle had not stepped back from the album."
+          }
+        }
+      },
       "HealthResponse": {
         "type": "object",
         "description": "Health payload. `status` plus the running message keep the v2 shape;\n`checkpoint` adds the latest checkpoint pass (`None` until the\ncheckpoint loop records one, or on states without a checkpoint service).",
@@ -38338,6 +38487,38 @@
           }
         }
       },
+      "ManagementHoldView": {
+        "type": "object",
+        "description": "Why library management leaves an album's files alone.",
+        "required": [
+          "kind",
+          "held_at",
+          "handing_back"
+        ],
+        "properties": {
+          "exclusion_revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "For `your_choice`: the exclusion's revision, which re-enabling\nmanagement echoes."
+          },
+          "handing_back": {
+            "type": "boolean",
+            "description": "True while the album waits for its turn after every album was\nhanded back at once."
+          },
+          "held_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Since when, unix milliseconds."
+          },
+          "kind": {
+            "type": "string",
+            "description": "`your_choice` when a person chose to leave the album unmanaged.\nOtherwise why DroppedNeedle stepped back by itself: `files_changed`\n(its files were changed outside DroppedNeedle), `retag_followed`\n(it was retagged outside DroppedNeedle) or `run_undone` (a person\nundid DroppedNeedle's changes to it)."
+          }
+        }
+      },
       "ManagementJobView": {
         "type": "object",
         "description": "A management job: a preview, an apply in progress, or a finished one.",
@@ -39620,6 +39801,67 @@
           "track_revision": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "ManagementTakeoverPage": {
+        "type": "object",
+        "description": "Albums DroppedNeedle stepped back from.",
+        "required": [
+          "items",
+          "total",
+          "handing_back"
+        ],
+        "properties": {
+          "handing_back": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Albums already handed back that wait for their turn."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagementTakeoverView"
+            },
+            "description": "Newest first, 100 at most."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many there are in all."
+          }
+        }
+      },
+      "ManagementTakeoverView": {
+        "type": "object",
+        "description": "An album DroppedNeedle stepped back from.",
+        "required": [
+          "album_id",
+          "album_title",
+          "cause",
+          "noticed_at"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string"
+          },
+          "album_title": {
+            "type": "string"
+          },
+          "artist_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cause": {
+            "type": "string",
+            "description": "`files_changed`, `retag_followed` or `run_undone`."
+          },
+          "noticed_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it stepped back, unix milliseconds."
           }
         }
       },

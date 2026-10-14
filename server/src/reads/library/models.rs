@@ -54,6 +54,34 @@ pub struct AlbumView {
     pub contribution_state: Option<String>,
 }
 
+/// Why library management leaves an album's files alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ManagementHoldView {
+    /// `your_choice` when a person chose to leave the album unmanaged.
+    /// Otherwise why DroppedNeedle stepped back by itself: `files_changed`
+    /// (its files were changed outside DroppedNeedle), `retag_followed`
+    /// (it was retagged outside DroppedNeedle) or `run_undone` (a person
+    /// undid DroppedNeedle's changes to it).
+    pub kind: String,
+    /// Since when, unix milliseconds.
+    pub held_at: i64,
+    /// For `your_choice`: the exclusion's revision, which re-enabling
+    /// management echoes.
+    pub exclusion_revision: Option<i64>,
+    /// True while the album waits for its turn after every album was
+    /// handed back at once.
+    pub handing_back: bool,
+}
+
+/// One catalog album with what its own page shows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct AlbumDetailView {
+    #[serde(flatten)]
+    pub album: AlbumView,
+    /// Set when library management leaves this album's files alone.
+    pub management_hold: Option<ManagementHoldView>,
+}
+
 /// One page of catalog albums.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AlbumPage {

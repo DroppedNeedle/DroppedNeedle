@@ -145,6 +145,20 @@ pub struct AlbumRecord {
     pub contribution_state: Option<String>,
 }
 
+/// Why library management leaves an album's files alone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManagementHoldRecord {
+    /// `your_choice` for a person's own exclusion, else why the app
+    /// stepped back: `files_changed`, `retag_followed` or `run_undone`.
+    pub kind: String,
+    /// Since when, unix milliseconds.
+    pub held_at: i64,
+    /// Row revision of a person's exclusion.
+    pub exclusion_revision: Option<i64>,
+    /// True while the album waits for its turn to be handed back.
+    pub handing_back: bool,
+}
+
 /// One artist row with its streamable-only aggregates.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArtistRecord {
@@ -323,6 +337,15 @@ pub trait LibraryCatalog: Send + Sync {
         &'a self,
         id: &'a str,
     ) -> BoxFuture<'a, Result<Option<AlbumRecord>, StoreError>>;
+
+    /// Why library management leaves the album's files alone. None when
+    /// it does not. A person's own choice wins over the app's step back.
+    fn management_hold<'a>(
+        &'a self,
+        _album_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<ManagementHoldRecord>, StoreError>> {
+        Box::pin(async { Ok(None) })
+    }
 
     /// Oldest album carrying one release-group mbid. None is absence,
     /// never failure; siblings order oldest first so the match route is
