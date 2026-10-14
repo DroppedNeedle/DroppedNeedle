@@ -445,6 +445,14 @@ pub enum CrashPoint {
     /// After the unwind of a failed publish settled its first row. Needs
     /// a publish that fails by itself, so not in [`CrashPoint::all`].
     AfterFirstUnwind,
+    /// After the first file of a bundle of several staged, before the
+    /// next one. Recovery must unwind such a bundle, so not in
+    /// [`CrashPoint::all`].
+    AfterFirstFileStaged,
+    /// After a file's staged temp is written, before its before-state is
+    /// captured. Recovery must unwind such a bundle, so not in
+    /// [`CrashPoint::all`].
+    AfterTempWritten,
 }
 
 impl CrashPoint {
@@ -458,6 +466,8 @@ impl CrashPoint {
             Self::AfterCatalogCommit => "after-catalog-commit",
             Self::DuringCleanup => "during-cleanup",
             Self::AfterFirstUnwind => "after-first-unwind",
+            Self::AfterFirstFileStaged => "after-first-file-staged",
+            Self::AfterTempWritten => "after-temp-written",
         }
     }
 
@@ -594,9 +604,20 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         self.run_pregates(sealed, live)?;
         // Durable source operation for undo: recorded after the gates
         // pass, before the first byte stages. Rows for operations that
-        // then fail linger harmlessly (no snapshots, never writable).
+        // then fail linger harmlessly: undo of one compares the published
+        // bytes, which never landed, so it stays put.
         super::operations::record_operation(&self.conn, bundle, self.today_day)?;
-        let staged = self.prepare(bundle, docs)?;
+        // A file that cannot be staged unwinds the ones staged before it,
+        // so no part of the bundle is held or later finished by recovery.
+        let staged = match self.prepare(bundle, docs) {
+            Ok(staged) => staged,
+            Err(err) => {
+                if Self::compensatable(&err) {
+                    self.compensate(bundle)?;
+                }
+                return Err(err);
+            }
+        };
         self.maybe_crash(CrashPoint::AfterStage)?;
         let outcome = self.publish_and_commit(bundle, &staged);
         match outcome {
@@ -684,7 +705,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 .get(&item.track_id)
                 .cloned()
                 .unwrap_or_else(TagDocument::empty);
-            let journal_id = journal_id(&bundle.id, ordinal, "audio");
+            let journal_id = audio_journal_id(&bundle.id, ordinal);
             let dest = self
                 .sandbox
                 .resolve_no_symlink(&item.dest_root, &item.dest_rel)?;
@@ -758,10 +779,17 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 None
             };
             write_staged_temp(&temp, &staged_bytes, mode)?;
-            journals.transition(&journal_id, JournalState::Prepared, JournalState::Staged)?;
+            self.maybe_crash(CrashPoint::AfterTempWritten)?;
             if item.adopt.is_none() {
                 self.capture_before(bundle, item, before)?;
             }
+            // Staged only once its before-state is kept: recovery resumes
+            // a bundle only when every row is staged.
+            JournalStore::new(&self.conn).transition(
+                &journal_id,
+                JournalState::Prepared,
+                JournalState::Staged,
+            )?;
             for (side_ordinal, sidecar) in item.sidecars.iter().enumerate() {
                 self.prepare_sidecar(
                     bundle,
@@ -785,6 +813,9 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 source_root: item.source_root.clone(),
                 source_rel: item.source_rel.clone(),
             });
+            if ordinal == 0 && bundle.items.len() > 1 {
+                self.maybe_crash(CrashPoint::AfterFirstFileStaged)?;
+            }
         }
         Ok(staged_files)
     }
@@ -919,7 +950,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 sidecar.source_rel
             )));
         }
-        let journal_id = format!("{audio_journal_id}-sidecar-{side_ordinal}");
+        let journal_id = sidecar_journal_id(audio_journal_id, side_ordinal);
         let dest = self
             .sandbox
             .resolve_no_symlink(&sidecar.dest_root, &sidecar.dest_rel)?;
@@ -973,7 +1004,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 output.kind, output.dest_rel
             )));
         }
-        let journal_id = format!("{audio_journal_id}-output-{index}");
+        let journal_id = output_journal_id(audio_journal_id, index);
         let dest = self
             .sandbox
             .resolve_no_symlink(&output.dest_root, &output.dest_rel)?;
@@ -1018,7 +1049,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         index: usize,
         removal: &super::planner::GeneratedOutput,
     ) -> Result<(), PublishError> {
-        let journal_id = format!("{audio_journal_id}-remove-{index}");
+        let journal_id = removal_journal_id(audio_journal_id, index);
         let dest = self
             .sandbox
             .resolve_no_symlink(&removal.dest_root, &removal.dest_rel)?;
@@ -1463,9 +1494,35 @@ struct PreparedFile {
     source_rel: String,
 }
 
-/// Deterministic journal id for idempotent retry.
-fn journal_id(bundle_id: &str, ordinal: usize, kind: &str) -> String {
-    format!("{bundle_id}-{ordinal:03}-{kind}")
+/// Deterministic journal ids for idempotent retry: an audio file's row,
+/// then one per sidecar, generated output and removal it carries.
+fn audio_journal_id(bundle_id: &str, ordinal: usize) -> String {
+    format!("{bundle_id}-{ordinal:03}-audio")
+}
+
+fn sidecar_journal_id(audio_journal_id: &str, index: usize) -> String {
+    format!("{audio_journal_id}-sidecar-{index}")
+}
+
+fn output_journal_id(audio_journal_id: &str, index: usize) -> String {
+    format!("{audio_journal_id}-output-{index}")
+}
+
+fn removal_journal_id(audio_journal_id: &str, index: usize) -> String {
+    format!("{audio_journal_id}-remove-{index}")
+}
+
+/// Every journal row `prepare` writes for a bundle staged in full.
+pub(super) fn journal_ids(bundle: &PlanBundle) -> Vec<String> {
+    let mut ids = Vec::new();
+    for (ordinal, item) in bundle.items.iter().enumerate() {
+        let audio = audio_journal_id(&bundle.id, ordinal);
+        ids.extend((0..item.sidecars.len()).map(|index| sidecar_journal_id(&audio, index)));
+        ids.extend((0..item.outputs.len()).map(|index| output_journal_id(&audio, index)));
+        ids.extend((0..item.removals.len()).map(|index| removal_journal_id(&audio, index)));
+        ids.push(audio);
+    }
+    ids
 }
 
 /// Write a staged temp atomically: create, write, fsync, re-read, and

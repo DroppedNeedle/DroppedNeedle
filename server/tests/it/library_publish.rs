@@ -702,6 +702,165 @@ fn same_path_crash_keeps_original_until_commit() {
     );
 }
 
+/// A file the writer refuses in the middle of an album unwinds the files
+/// staged before it: nothing stays held, and recovery never finishes the
+/// part that was staged.
+#[test]
+fn a_refused_file_unwinds_the_files_staged_before_it() {
+    let fix = fixture("refused-second-file");
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
+    bundle.items[1]
+        .managed_updates
+        .insert("not_a_field".to_string(), vec!["x".to_string()]);
+    let path_a = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+    let original_a = std::fs::read(&path_a).unwrap();
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+    assert!(matches!(err, PublishError::Capability(_)), "got {err:?}");
+    drop(publisher);
+
+    let mut conn = open_db(&fix);
+    assert!(
+        JournalStore::new(&conn)
+            .active_bundles()
+            .unwrap()
+            .is_empty(),
+        "no write is held"
+    );
+    assert!(
+        hidden_leftovers(&fix.dir).is_empty(),
+        "no staged copy is left"
+    );
+    assert_eq!(std::fs::read(&path_a).unwrap(), original_a);
+    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    assert!(
+        results.is_empty(),
+        "recovery has nothing to do: {results:?}"
+    );
+    assert_eq!(std::fs::read(&path_a).unwrap(), original_a);
+    drop(conn);
+
+    let mut alone = bundle.clone();
+    alone.id = "bundle-2".to_string();
+    alone.items.truncate(1);
+    let (sealed, live) = seal(&alone);
+    let mut publisher = open_publisher(&fix);
+    publisher.publish(&sealed, &live, &docs).unwrap();
+    assert_staged(&path_a, "track-a");
+}
+
+/// A crash after the first file of an album staged leaves a bundle that
+/// looks complete on disk; recovery unwinds it instead of committing it.
+#[test]
+fn a_crash_after_the_first_file_staged_unwinds() {
+    let fix = fixture("crash-first-file-staged");
+    let (bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let source_a = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+    let original_a = std::fs::read(&source_a).unwrap();
+    let row_a = track_row(&open_db(&fix), "track-a");
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::AfterFirstFileStaged));
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+    assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
+    drop(publisher);
+
+    let mut conn = open_db(&fix);
+    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
+    assert_eq!(std::fs::read(&source_a).unwrap(), original_a);
+    assert!(
+        std::fs::symlink_metadata(fix.sandbox.resolve("music", "organized/a.flac").unwrap())
+            .is_err()
+    );
+    assert_eq!(track_row(&conn, "track-a"), row_a);
+    assert_eq!(
+        std::fs::read(fix.sandbox.resolve("music", "staging/cover.jpg").unwrap()).unwrap(),
+        b"cover-bytes"
+    );
+    assert!(
+        std::fs::symlink_metadata(fix.sandbox.resolve("music", "organized/cover.jpg").unwrap())
+            .is_err()
+    );
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+    assert!(
+        JournalStore::new(&conn)
+            .active_bundles()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// A crash before a file's before-state is captured unwinds its bundle:
+/// a write is never finished without the snapshot its undo needs.
+#[test]
+fn a_crash_before_the_before_state_unwinds() {
+    let fix = fixture("crash-before-state");
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
+    bundle.items.truncate(1);
+    let path_a = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
+    let original_a = std::fs::read(&path_a).unwrap();
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::AfterTempWritten));
+    let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
+    assert!(matches!(err, PublishError::InjectedCrash(_)), "got {err:?}");
+    drop(publisher);
+
+    let mut conn = open_db(&fix);
+    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
+    assert_eq!(std::fs::read(&path_a).unwrap(), original_a);
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// Unwinding a file whose staged copy was never written leaves the file
+/// it was to replace, even when that file holds the very bytes the write
+/// would have placed.
+#[test]
+fn an_unwind_keeps_an_identical_file_it_never_replaced() {
+    let fix = fixture("unwind-identical-replaced");
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    bundle.items.truncate(1);
+    bundle.items[0].sidecars.clear();
+    bundle.items[0].managed_updates.clear();
+    let source = std::fs::read(fix.sandbox.resolve("music", "staging/a.flac").unwrap()).unwrap();
+    let occupier = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
+    std::fs::create_dir_all(occupier.parent().unwrap()).unwrap();
+    std::fs::write(&occupier, &source).unwrap();
+    open_db(&fix)
+        .execute(
+            "UPDATE local_tracks SET relative_path = 'organized/a.flac' WHERE id = 'track-s'",
+            [],
+        )
+        .unwrap();
+    bundle.items[0].replaces = Some(publish::Replacement {
+        sha256: sha256_hex(&source),
+        track_id: Some("track-s".to_string()),
+        recycle_to: fix.dir.join("bin/entry/a.flac").display().to_string(),
+    });
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::AfterTempWritten));
+    assert!(matches!(
+        publisher.publish(&sealed, &live, &docs),
+        Err(PublishError::InjectedCrash(_))
+    ));
+    drop(publisher);
+    // The process stopped before its staged copy reached the disk.
+    for temp in hidden_leftovers(&fix.dir) {
+        std::fs::remove_file(temp).unwrap();
+    }
+
+    let mut conn = open_db(&fix);
+    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    assert_eq!(results[0].action, publish::RecoveryAction::Compensated);
+    assert_eq!(std::fs::read(&occupier).unwrap(), source);
+}
+
 /// Journal rows are synced to disk before the file moves they describe:
 /// the publisher's connection syncs every commit, and recovery refuses a
 /// connection that does not.

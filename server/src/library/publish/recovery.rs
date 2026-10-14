@@ -8,7 +8,10 @@
 //! when the corresponding SQLite transition did not run.
 //!
 //! - A fully prepared bundle finishes publication and the pinned
-//!   catalog transaction.
+//!   catalog transaction. Fully prepared means every journal row its
+//!   recorded operation calls for exists and is staged (its temp
+//!   written, its before-state kept); a bundle that stopped partway
+//!   through staging is unwound, never finished.
 //! - A rejected pre-commit bundle is compensated only when every
 //!   original and staged copy is unambiguous.
 //! - A bundle with a row already compensated or needing attention has
@@ -386,7 +389,13 @@ fn reconcile_bundle<C: Catalog>(
     // A resume that is refused unwinds, as a publish does: the files
     // placed so far come off and their originals go home.
     let mut refused = None;
-    if evidence.resumeable && !unwinding {
+    let resumeable = evidence.resumeable && !unwinding;
+    if resumeable && !staged_in_full(conn, bundle_id, &journals)? {
+        tracing::warn!(
+            bundle_id,
+            "publish bundle stopped before every file staged; unwinding it"
+        );
+    } else if resumeable {
         match resume_precommit(conn, sandbox, catalog, bundle_id, &journals, seams)? {
             None => return Ok(RecoveryAction::ResumedCommitted),
             Some(reason) => {
@@ -405,6 +414,38 @@ fn reconcile_bundle<C: Catalog>(
             }
         },
     )
+}
+
+/// Whether every row `prepare` writes for the bundle exists and is past
+/// `Prepared` (its temp written and its before-state kept). A bundle that
+/// stopped partway through staging can look complete on disk, so only
+/// its recorded operation can tell; one with no readable record is
+/// treated as partial.
+fn staged_in_full(
+    conn: &Connection,
+    bundle_id: &str,
+    journals: &[FileJournal],
+) -> Result<bool, PublishError> {
+    let bundle = match super::operations::load_operation(conn, bundle_id) {
+        Ok(Some(bundle)) => bundle,
+        Ok(None) => return Ok(false),
+        // Unwinding is always safe before a commit; a record that no
+        // longer reads must not hold the bundle's tracks forever.
+        Err(error) => {
+            tracing::warn!(bundle_id, %error, "recorded operation does not read");
+            return Ok(false);
+        }
+    };
+    if journals
+        .iter()
+        .any(|journal| journal.state == JournalState::Prepared)
+    {
+        return Ok(false);
+    }
+    let present: BTreeSet<&str> = journals.iter().map(|journal| journal.id.as_str()).collect();
+    Ok(super::publisher::journal_ids(&bundle)
+        .iter()
+        .all(|id| present.contains(id.as_str())))
 }
 
 /// Whether an earlier unwind found no safe way to put a file back: a
@@ -1211,10 +1252,12 @@ fn unwind_row(
     // with no tag change stages the original's own bytes. It is ours only
     // when the staged temp went there (it is gone, or is this same file)
     // and, for a file written in place, the original was set aside first.
+    // A row still `Prepared` was never placed: its temp may be missing
+    // only because it was never written.
     let staged_bytes_at_dest = paths::read_regular_file(&dest)
         .is_ok_and(|bytes| sha256_hex(&bytes) == journal.staged_sha256);
-    let temp_went_there =
-        std::fs::symlink_metadata(staged).is_err() || paths::same_file(staged, &dest);
+    let temp_went_there = journal.state != JournalState::Prepared
+        && (std::fs::symlink_metadata(staged).is_err() || paths::same_file(staged, &dest));
     let in_place = journal.source.as_ref().is_some_and(|(root, rel)| {
         sandbox
             .resolve_no_symlink(root, rel)
