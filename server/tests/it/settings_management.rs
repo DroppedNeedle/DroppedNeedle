@@ -387,3 +387,383 @@ async fn profile_create_export_preview_import_round_trip() {
     );
     assert_eq!(after["settings_revision"], imported["settings_revision"]);
 }
+
+// ---------------------------------------------------------------------------
+// Profile fields: one name each, completed from the stored shape
+// ---------------------------------------------------------------------------
+
+mod fields {
+    use std::collections::BTreeMap;
+
+    use droppedneedle::library::management::enrich::{AlbumExtras, LyricsAnswer};
+    use droppedneedle::library::management::planner::Overrides;
+    use droppedneedle::library::management::profile::{self, CompiledScripts, FileInput};
+    use droppedneedle::library::matching::model::ReleaseMedium;
+    use droppedneedle::library::matching::{CreditedArtist, Release, ReleaseTrack};
+    use droppedneedle::library::publish::TagDocument;
+    use droppedneedle::library::tags::{TagField, picard};
+    use droppedneedle::runtime_config::sections::{
+        FieldMode, LibraryManagement, LibraryManagementRootAssignment, ManagedField, TaggingScript,
+    };
+    use droppedneedle::settings::management::{
+        self as lm, PICARD_ORGANIZER_PROFILE_ID, StructuralCompiler,
+    };
+
+    /// The Picard preset's fields as stored at version 4: alias spellings
+    /// beside their fields, `genre` and `publisher` entries, and no entry
+    /// of their own for artist sort, the release facts or original date.
+    const STORED_V4_FIELDS: &[&str] = &[
+        "title",
+        "artist",
+        "artists",
+        "album",
+        "albumartist",
+        "album_artist",
+        "albumartists",
+        "album_artists",
+        "track_number",
+        "track",
+        "disc_number",
+        "disc",
+        "total_tracks",
+        "total_discs",
+        "year",
+        "date",
+        "genre",
+        "comment",
+        "composer",
+        "lyricist",
+        "conductor",
+        "performer",
+        "arranger",
+        "remixer",
+        "producer",
+        "publisher",
+        "copyright",
+        "encoded_by",
+        "isrc",
+        "barcode",
+        "catalog_number",
+        "label",
+        "media",
+        "musicbrainz_recording_id",
+        "musicbrainz_release_id",
+        "musicbrainz_release_group_id",
+        "musicbrainz_artist_id",
+        "musicbrainz_album_artist_id",
+        "musicbrainz_work_id",
+        "acoustid_id",
+        "acoustid_fingerprint",
+    ];
+
+    fn entry(name: &str, mode: FieldMode) -> ManagedField {
+        ManagedField {
+            field: name.to_owned(),
+            mode,
+            clear_when_canonical_missing: false,
+        }
+    }
+
+    /// Fresh settings whose Picard profile has these fields, stored as
+    /// the version 4 preset left them.
+    fn stored(fields: Vec<ManagedField>, preserve: &[&str]) -> LibraryManagement {
+        let mut settings = lm::initial_settings("");
+        let picard = settings
+            .profiles
+            .iter_mut()
+            .find(|profile| profile.id == PICARD_ORGANIZER_PROFILE_ID)
+            .expect("picard preset");
+        picard.metadata.fields = fields;
+        picard.metadata.preserve_fields = preserve.iter().map(|name| (*name).to_owned()).collect();
+        picard.preset_version = Some(4);
+        picard.revision = lm::profile_revision(picard);
+        settings
+    }
+
+    fn stored_v4(preserve: &[&str]) -> LibraryManagement {
+        let fields = STORED_V4_FIELDS
+            .iter()
+            .map(|name| {
+                let mode = if name.starts_with("acoustid_") {
+                    FieldMode::FillMissing
+                } else {
+                    FieldMode::Replace
+                };
+                entry(name, mode)
+            })
+            .collect();
+        stored(fields, preserve)
+    }
+
+    fn modes(settings: &LibraryManagement) -> BTreeMap<String, (FieldMode, bool)> {
+        settings
+            .profiles
+            .iter()
+            .find(|profile| profile.id == PICARD_ORGANIZER_PROFILE_ID)
+            .expect("picard preset")
+            .metadata
+            .fields
+            .iter()
+            .map(|field| {
+                (
+                    field.field.clone(),
+                    (field.mode, field.clear_when_canonical_missing),
+                )
+            })
+            .collect()
+    }
+
+    fn artist(name: &str, sort: &str) -> CreditedArtist {
+        CreditedArtist {
+            id: format!("{name}-id"),
+            name: name.to_owned(),
+            sort_name: Some(sort.to_owned()),
+            join: String::new(),
+        }
+    }
+
+    /// A release with every fact the Picard tags read.
+    fn release() -> Release {
+        Release {
+            id: "11111111-1111-4111-8111-111111111111".to_owned(),
+            release_group_id: "22222222-2222-4222-8222-222222222222".to_owned(),
+            title: "The Album".to_owned(),
+            artists: vec![artist("The Band", "Band, The")],
+            date: Some("2001-02-03".to_owned()),
+            original_date: Some("1999".to_owned()),
+            country: Some("GB".to_owned()),
+            status: Some("Official".to_owned()),
+            barcode: Some("5012345678900".to_owned()),
+            asin: Some("B000000001".to_owned()),
+            primary_type: Some("Album".to_owned()),
+            secondary_types: vec!["Live".to_owned()],
+            labels: vec!["Label One".to_owned()],
+            catalog_numbers: vec!["CAT-1".to_owned()],
+            media: vec![ReleaseMedium {
+                position: 1,
+                format: Some("CD".to_owned()),
+                title: Some("The First Disc".to_owned()),
+                track_count: 1,
+            }],
+            tracks: vec![ReleaseTrack {
+                id: "33333333-3333-4333-8333-333333333333".to_owned(),
+                recording_id: "44444444-4444-4444-8444-444444444444".to_owned(),
+                title: "The Song".to_owned(),
+                artists: vec![artist("The Singer", "Singer, The")],
+                disc: 1,
+                position: 1,
+                absolute_position: 1,
+                isrcs: vec!["GBAAA0100001".to_owned()],
+                ..ReleaseTrack::default()
+            }],
+            ..Release::default()
+        }
+    }
+
+    /// A file holding older values for some of the fields.
+    fn file() -> TagDocument {
+        let managed: BTreeMap<String, Vec<String>> = [
+            ("title", "Old Title"),
+            ("album_artist", "Old Album Artist"),
+            ("artist_sort", "Old Sort"),
+            ("original_date", "1980"),
+            ("copyright", "(c) Someone"),
+        ]
+        .iter()
+        .map(|(name, value)| ((*name).to_owned(), vec![(*value).to_owned()]))
+        .collect();
+        serde_json::from_value(serde_json::json!({"managed": managed, "custom": {}}))
+            .expect("document")
+    }
+
+    /// The tags planning gives the file under the Picard profile.
+    fn plan(settings: &LibraryManagement) -> BTreeMap<String, Vec<String>> {
+        plan_with(settings, &Overrides::default())
+    }
+
+    /// [`plan`] with the file's saved tag edits.
+    fn plan_with(
+        settings: &LibraryManagement,
+        overrides: &Overrides,
+    ) -> BTreeMap<String, Vec<String>> {
+        let pinned = profile::pin(settings, PICARD_ORGANIZER_PROFILE_ID, None).expect("pinned");
+        let scripts = CompiledScripts::new(&pinned);
+        let release = release();
+        let doc = file();
+        let plan = profile::plan_tags(
+            &pinned,
+            &scripts,
+            &FileInput {
+                release: &release,
+                track: &release.tracks[0],
+                doc: &doc,
+                format: "flac",
+                writable: true,
+                overrides,
+                extras: &AlbumExtras::default(),
+                track_id: "track-1",
+                lyrics: &LyricsAnswer::Off,
+            },
+        )
+        .unwrap_or_else(|reason| panic!("planned: {reason:?}"));
+        plan.desired
+    }
+
+    /// The version 4 Picard preset reads as one entry per field, each
+    /// writing what it wrote before: the folded spellings, artist sort,
+    /// the release facts and original date under their parents' modes,
+    /// and the names it never listed off. Planning gives the file every
+    /// Picard tag over its own values; ISRC and album artists, which that
+    /// profile listed but never wrote, are now written too.
+    #[test]
+    fn a_stored_profile_completes_and_plans_as_before() {
+        let mut settings = stored_v4(&[]);
+        // A clear on comment never removed anything, and still does not.
+        for field in &mut settings.profiles[0].metadata.fields {
+            field.clear_when_canonical_missing |= field.field == "comment";
+        }
+        lm::normalize(&mut settings, &StructuralCompiler).expect("valid");
+        let mut expected = modes(&lm::initial_settings(""));
+        for name in [
+            "title_sort",
+            "album_sort",
+            "work",
+            "movement",
+            "movement_number",
+            "movement_count",
+        ] {
+            expected.insert(name.to_owned(), (FieldMode::Disabled, false));
+        }
+        assert_eq!(modes(&settings), expected);
+
+        let mut expected = file().managed;
+        expected.extend(picard::release_tags(&release(), &release().tracks[0]));
+        assert!(expected.contains_key("isrc") && expected.contains_key("album_artists"));
+        assert_eq!(plan(&settings), expected);
+
+        // An ISRC saved in the tag editor still wins over the profile's.
+        let by_hand = vec!["XXHAND0000001".to_owned()];
+        let overrides = Overrides {
+            fields: vec![(TagField::Isrc, "replace".to_owned(), by_hand.clone())],
+            revision: 1,
+        };
+        assert_eq!(plan_with(&settings, &overrides)["isrc"], by_hand);
+    }
+
+    /// Two spellings of one field: planning applied them in turn, so
+    /// replace then fill missing wrote the release's value, and still does.
+    #[test]
+    fn folded_spellings_keep_the_strongest_mode() {
+        let mut settings = stored(
+            vec![
+                entry("album_artist", FieldMode::Replace),
+                entry("albumartist", FieldMode::FillMissing),
+            ],
+            &[],
+        );
+        lm::normalize(&mut settings, &StructuralCompiler).expect("valid");
+        assert_eq!(
+            modes(&settings).get("album_artist"),
+            Some(&(FieldMode::Replace, false))
+        );
+        assert!(!modes(&settings).contains_key("albumartist"));
+        assert_eq!(plan(&settings)["album_artist"], vec!["The Band".to_owned()]);
+    }
+
+    /// Preserving `artist` and `year` kept artist sort and original date
+    /// too, and still does.
+    #[test]
+    fn a_preserved_parent_keeps_what_it_covered() {
+        let mut settings = stored_v4(&["artist", "year"]);
+        lm::normalize(&mut settings, &StructuralCompiler).expect("valid");
+        let desired = plan(&settings);
+        assert_eq!(desired["artist_sort"], vec!["Old Sort".to_owned()]);
+        assert_eq!(desired["original_date"], vec!["1980".to_owned()]);
+        assert_eq!(desired["album_artist"], vec!["The Band".to_owned()]);
+    }
+
+    /// v2's mergeable fields take merge.
+    #[test]
+    fn label_and_release_type_merge() {
+        let mut settings = stored(
+            vec![
+                entry("label", FieldMode::Merge),
+                entry("release_type", FieldMode::Merge),
+            ],
+            &[],
+        );
+        lm::normalize(&mut settings, &StructuralCompiler).expect("merge validates");
+        assert_eq!(
+            modes(&settings).get("release_type"),
+            Some(&(FieldMode::Merge, false))
+        );
+
+        // Merge on a field that holds one value is refused.
+        for field in &mut settings.profiles[0].metadata.fields {
+            if field.field == "comment" {
+                field.mode = FieldMode::Merge;
+            }
+        }
+        assert!(lm::normalize(&mut settings, &StructuralCompiler).is_err());
+    }
+
+    /// A folder activated under the stored profile stays activated once
+    /// the completed settings are read, and once a client saves the
+    /// stored shape back.
+    #[test]
+    fn an_activation_survives_completion() {
+        let mut stored = stored_v4(&[]);
+        let assignment = LibraryManagementRootAssignment {
+            root_id: "music".to_owned(),
+            profile_id: Some(PICARD_ORGANIZER_PROFILE_ID.to_owned()),
+            enabled: true,
+            ..LibraryManagementRootAssignment::default()
+        };
+        let profile = lm::pin_profile(&stored, &assignment).expect("profile");
+        let (standard, multi_disc) = lm::pin_naming_scripts(&stored, &profile).expect("scripts");
+        stored
+            .root_assignments
+            .push(LibraryManagementRootAssignment {
+                activation_profile_revision: Some(lm::profile_revision(&profile)),
+                activation_naming_policy_revision: Some(lm::naming_policy_revision(
+                    &standard,
+                    multi_disc.as_ref(),
+                )),
+                activation_policy_revision: Some("policy".to_owned()),
+                activation_preview_token: Some("token".to_owned()),
+                activation_preview_hash: Some("hash".to_owned()),
+                activation_confirmed_at: Some(1.0),
+                ..assignment
+            });
+        let current = |settings: &LibraryManagement| {
+            lm::activation_is_current(settings, &settings.root_assignments[0], "policy")
+        };
+        assert!(current(&stored));
+
+        let mut read = stored.clone();
+        lm::normalize(&mut read, &StructuralCompiler).expect("valid");
+        assert!(current(&read), "current after a read");
+
+        let mut saved = stored.clone();
+        let invalidated =
+            lm::migration_carry(&read, &mut saved, PICARD_ORGANIZER_PROFILE_ID).expect("carried");
+        lm::normalize(&mut saved, &StructuralCompiler).expect("valid");
+        assert!(invalidated.is_empty(), "{invalidated:?}");
+        assert!(current(&saved), "current after a save");
+    }
+
+    /// A tagging script that sets the older spellings still validates.
+    #[test]
+    fn scripts_keep_their_spellings() {
+        let mut settings = stored_v4(&[]);
+        settings.tagging_scripts.push(
+            serde_json::from_value::<TaggingScript>(serde_json::json!({
+                "id": "55555555-5555-4555-8555-555555555555",
+                "name": "Older names",
+                "source": "set albumartist = \"Someone\"\nset publisher = \"Label\""
+            }))
+            .expect("script"),
+        );
+        lm::normalize(&mut settings, &StructuralCompiler).expect("the script validates");
+    }
+}

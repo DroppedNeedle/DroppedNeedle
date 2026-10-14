@@ -5827,13 +5827,30 @@ impl ManagedLibrary {
     /// scan, identify it and confirm the match. Returns the album and its
     /// tracks in order.
     async fn add_album(&self, folder: &str, tracks: usize) -> (String, Vec<String>) {
+        self.add_album_from(folder, &vec!["management_full.flac"; tracks], |_| {})
+            .await
+    }
+
+    /// [`Self::add_album`] from these fixtures, one track each, with the
+    /// editions changed by `edition` before the match is confirmed.
+    async fn add_album_from(
+        &self,
+        folder: &str,
+        fixtures: &[&str],
+        edition: impl Fn(&mut Release),
+    ) -> (String, Vec<String>) {
         use droppedneedle::library::tags::TagField;
         use droppedneedle::library::tags::save::{TagEdit, save_tags};
         let nth = self.albums.replace(self.albums.get() + 1);
         let mut relative = Vec::new();
-        for number in 1..=tracks {
-            let rel = format!("{folder}/{number:02}.flac");
-            let file = plant(&self.music, &rel, "management_full.flac");
+        for (index, fixture) in fixtures.iter().enumerate() {
+            let number = index + 1;
+            let extension = Path::new(fixture)
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .expect("fixture extension");
+            let rel = format!("{folder}/{number:02}.{extension}");
+            let file = plant(&self.music, &rel, fixture);
             // Its own title, so no two files are named alike.
             let mut edits = vec![TagEdit::verbatim(
                 TagField::Title,
@@ -5882,6 +5899,7 @@ impl ManagedLibrary {
                 release.release_group_id = format!("rg-{nth}-{edition}");
             }
         }
+        recall.releases.iter_mut().for_each(&edition);
         self.library
             .test_providers
             .as_ref()
@@ -6391,6 +6409,284 @@ async fn unmanaged_changes_do_not_take_the_album_over() {
     let file = managed.path(track);
     assert_eq!(managed.recorded(track), Some(file_sha256(&file)));
     assert_eq!(mood(&file), Some(vec!["Calm".to_owned()]));
+}
+
+/// The MP3 fixture's main text frames as a clean ID3v2.3 tag over its audio,
+/// written to `path`. The committed v2.3 fixture carries v2.4-only
+/// frames, so the writer refuses it.
+fn clean_v23_mp3(path: &Path) -> String {
+    use crate::library_tags::{id3_frames, id3_strings, id3v23_raw, mp3_audio_tail};
+    const KEPT: &[&str] = &["TIT2", "TPE1", "TALB", "TPE2", "TRCK", "TPOS", "TXXX"];
+    let source = fixtures_dir().join("management_full.mp3");
+    let frames: Vec<(String, Vec<u8>)> = id3_frames(&source)
+        .1
+        .into_iter()
+        .filter(|(id, _)| KEPT.contains(&id.as_str()))
+        .map(|(id, payload)| {
+            let mut utf16 = vec![1];
+            for text in id3_strings(&payload) {
+                utf16.extend_from_slice(&[0xFF, 0xFE]);
+                for unit in text.encode_utf16() {
+                    utf16.extend_from_slice(&unit.to_le_bytes());
+                }
+                utf16.extend_from_slice(&[0, 0]);
+            }
+            (id, utf16)
+        })
+        .collect();
+    let mut refs: Vec<(&str, &[u8])> = frames
+        .iter()
+        .map(|(id, payload)| (id.as_str(), payload.as_slice()))
+        .collect();
+    refs.push(("TYER", b"\x002024"));
+    let mut bytes = id3v23_raw(&refs);
+    bytes.extend_from_slice(mp3_audio_tail(
+        &std::fs::read(&source).expect("fixture reads"),
+    ));
+    std::fs::write(path, bytes).expect("v2.3 file written");
+    path.to_string_lossy().into_owned()
+}
+
+/// An edition with every fact the split fields write: sort names, a disc
+/// title, a first release date, a type, and an ISRC per track.
+fn full_edition(release: &mut Release) {
+    use droppedneedle::library::matching::model::ReleaseMedium;
+    for artist in &mut release.artists {
+        artist.sort_name = Some(format!("{}, Sorted", artist.name));
+    }
+    release.original_date = Some("1999".to_owned());
+    release.primary_type = Some("Album".to_owned());
+    release.media = vec![ReleaseMedium {
+        position: 1,
+        format: Some("CD".to_owned()),
+        title: Some("Disc Title".to_owned()),
+        track_count: release.tracks.len() as u32,
+    }];
+    for (index, track) in release.tracks.iter_mut().enumerate() {
+        track.isrcs = vec![isrc(index)];
+    }
+}
+
+fn isrc(index: usize) -> String {
+    format!("GBAAA99{index:05}")
+}
+
+/// A field's values read from the file's bytes, in its format's home.
+fn native_values(path: &Path, field: droppedneedle::library::tags::TagField) -> Vec<String> {
+    use crate::library_tags::{
+        id3_comments, id3_text_values, id3_txxx_values, mp4_freeform, mp4_text, vorbis_key_values,
+    };
+    use droppedneedle::library::tags::fields::{Id3Target, Mp4Target};
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .expect("extension");
+    let id3 = |target: Id3Target| match target {
+        Id3Target::Text(id) => id3_text_values(path, id),
+        Id3Target::User(description) => id3_txxx_values(path, description),
+        Id3Target::Comment => id3_comments(path)
+            .into_iter()
+            .filter(|(_, description, _)| description.is_empty())
+            .map(|(_, _, text)| text)
+            .collect(),
+        other => panic!("no byte reader for {other:?}"),
+    };
+    match extension {
+        "flac" | "ogg" | "opus" => vorbis_key_values(path, field.vorbis_keys()[0]),
+        "mp3" => {
+            let v23 = std::fs::read(path).expect("file reads")[3] == 3;
+            id3(field.id3(v23))
+        }
+        "m4a" => match field.mp4().expect("an MP4 home") {
+            Mp4Target::Text(kind) => mp4_text(path, &kind),
+            Mp4Target::Freeform(name) => mp4_freeform(path, name),
+            other => panic!("no byte reader for {other:?}"),
+        },
+        other => panic!("no byte reader for {other}"),
+    }
+}
+
+/// The Picard profile applied to one album in every writable format
+/// writes each field in that format's own home: artist sort, album
+/// artists, ISRC, disc subtitle, original date and release type. Comment,
+/// set to replace with clear, removes the file's comment and leaves an
+/// iTunNORM `COMM` alone. Turning artist sort off stops that tag only.
+#[tokio::test]
+async fn the_picard_profile_writes_its_fields_in_every_format() {
+    use crate::library_tags::{id3_frames, id3_inject_frames};
+    use droppedneedle::library::management::models::SelectionKind;
+    use droppedneedle::library::tags::TagField;
+    use droppedneedle::library::tags::save::{TagEdit, save_tags};
+    use droppedneedle::runtime_config::sections::{FieldMode, LibraryManagement};
+
+    let managed = ManagedLibrary::start("lib-fields-formats", |profile| {
+        for field in &mut profile.metadata.fields {
+            if field.field == "comment" {
+                field.clear_when_canonical_missing = true;
+            }
+        }
+    })
+    .await;
+    let v23 = clean_v23_mp3(&managed.scratch.to_path_buf().join("v23.mp3"));
+    let fixtures = [
+        "management_full.flac",
+        "management_full.mp3",
+        v23.as_str(),
+        "management_full.ogg",
+        "management_full.opus",
+        "management_full.m4a",
+    ];
+    let (album, tracks) = managed
+        .add_album_from("formats", &fixtures, full_edition)
+        .await;
+    let itunnorm = b"\x00engiTunNORM\x00 00000A1B 00000C2D".to_vec();
+    for track in &tracks {
+        let file = managed.path(track);
+        save_tags(
+            &file,
+            &[TagEdit::new(TagField::Comment, vec!["Ripped".to_owned()])],
+        )
+        .expect("comment planted");
+        if std::fs::read(&file).expect("file reads")[..4] == *b"ID3\x04" {
+            id3_inject_frames(&file, &[("COMM", &itunnorm)]);
+        }
+    }
+    rescan(&managed.library).await;
+    let apply = |key: &'static str| {
+        let managed = &managed;
+        let album = album.clone();
+        async move {
+            let (handle, items) = managed.preview(SelectionKind::Albums, &[&album], key).await;
+            assert_eq!(items.len(), 6);
+            for item in &items {
+                assert!(item.eligibility.writes(), "{:?}", item.facts);
+            }
+            let applied = management_apply(&managed.library, &handle).await;
+            assert_eq!(applied.job.state.as_str(), "succeeded");
+        }
+    };
+    apply("every-field").await;
+
+    let sort = vec!["Alpha, Sorted".to_owned()];
+    for (index, track) in tracks.iter().enumerate() {
+        let file = managed.path(track);
+        let name = file.display();
+        assert_eq!(native_values(&file, TagField::ArtistSort), sort, "{name}");
+        assert_eq!(
+            native_values(&file, TagField::AlbumArtists),
+            vec!["Alpha".to_owned()],
+            "{name}"
+        );
+        assert_eq!(
+            native_values(&file, TagField::Isrc),
+            vec![isrc(index)],
+            "{name}"
+        );
+        assert_eq!(
+            native_values(&file, TagField::DiscSubtitle),
+            vec!["Disc Title".to_owned()],
+            "{name}"
+        );
+        assert_eq!(
+            native_values(&file, TagField::OriginalDate),
+            vec!["1999".to_owned()],
+            "{name}"
+        );
+        assert_eq!(
+            native_values(&file, TagField::ReleaseType),
+            vec!["album".to_owned()],
+            "{name}"
+        );
+        assert!(
+            native_values(&file, TagField::Comment).is_empty(),
+            "{name}: the comment is cleared"
+        );
+        if std::fs::read(&file).expect("file reads")[..4] == *b"ID3\x04" {
+            let comments: Vec<Vec<u8>> = id3_frames(&file)
+                .1
+                .into_iter()
+                .filter(|(id, _)| id == "COMM")
+                .map(|(_, payload)| payload)
+                .collect();
+            assert_eq!(comments, vec![itunnorm.clone()], "{name}: iTunNORM stays");
+        }
+    }
+
+    // Artist sort off: a hand edit to it stays, while one to the ISRC
+    // beside it is put back.
+    let mut settings: LibraryManagement = managed.library.config.get().expect("settings");
+    for profile in &mut settings.profiles {
+        for field in &mut profile.metadata.fields {
+            if field.field == "artist_sort" {
+                field.mode = FieldMode::Disabled;
+            }
+        }
+    }
+    managed
+        .library
+        .config
+        .save(settings)
+        .expect("settings saved");
+    let by_hand = vec!["By Hand".to_owned()];
+    for track in &tracks {
+        save_tags(
+            &managed.path(track),
+            &[
+                TagEdit::new(TagField::ArtistSort, by_hand.clone()),
+                TagEdit::new(TagField::Isrc, vec!["XXHAND0000001".to_owned()]),
+            ],
+        )
+        .expect("edited by hand");
+    }
+    rescan(&managed.library).await;
+    apply("no-artist-sort").await;
+    for (index, track) in tracks.iter().enumerate() {
+        let file = managed.path(track);
+        let name = file.display();
+        assert_eq!(
+            native_values(&file, TagField::ArtistSort),
+            by_hand,
+            "{name}"
+        );
+        assert_eq!(
+            native_values(&file, TagField::Isrc),
+            vec![isrc(index)],
+            "{name}"
+        );
+    }
+}
+
+/// An ISRC edited by hand after the app wrote the file is the user's: the
+/// worker looks, marks the album and writes nothing.
+#[tokio::test]
+async fn a_hand_edited_isrc_takes_the_album_over() {
+    use droppedneedle::library::tags::{TagEdit, TagField, read_fields};
+
+    let managed = ManagedLibrary::start("lib-takeover-isrc", |_| {}).await;
+    let (album, tracks) = managed
+        .add_album_from("first", &["management_full.flac"], full_edition)
+        .await;
+    managed.activate().await;
+    let track = &tracks[0];
+    managed.look(&album).await;
+    let file = managed.path(track);
+    assert_eq!(
+        read_fields(&file).expect("tags read")[&TagField::Isrc],
+        vec![isrc(0)],
+        "the app wrote the ISRC"
+    );
+    assert_eq!(managed.mark(&album), None);
+
+    managed
+        .edit_outside(
+            track,
+            TagEdit::verbatim(TagField::Isrc, vec!["XXHAND0000001".to_owned()]),
+        )
+        .await;
+    let edited = file_sha256(&file);
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&album).as_deref(), Some("files_changed"));
+    assert_eq!(file_sha256(&file), edited, "nothing written");
 }
 
 /// A hand edit counts even when another file of the album cannot be

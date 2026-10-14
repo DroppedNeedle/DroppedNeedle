@@ -109,7 +109,7 @@ fn vorbis_vendor(path: &Path) -> String {
 }
 
 /// MP3 audio tail: bytes from the first MPEG frame sync after the ID3 tag.
-fn mp3_audio_tail(bytes: &[u8]) -> &[u8] {
+pub(crate) fn mp3_audio_tail(bytes: &[u8]) -> &[u8] {
     let mut start = 0;
     if bytes.len() > 10 && &bytes[..3] == b"ID3" {
         let size = bytes[6..10]
@@ -173,7 +173,7 @@ fn m4a_mdat(bytes: &[u8]) -> &[u8] {
 /// assumed, like the management fixture). Used to plant unknown frames
 /// without going through lofty's save, which cannot write them while the
 /// WORK bug is open.
-fn id3_inject_frames(path: &Path, frames: &[(&str, &[u8])]) {
+pub(crate) fn id3_inject_frames(path: &Path, frames: &[(&str, &[u8])]) {
     let bytes = std::fs::read(path).unwrap();
     assert_eq!(&bytes[..3], b"ID3");
     assert_eq!(bytes[3], 4);
@@ -1638,7 +1638,7 @@ fn id3v2_bytes(major: u8, frames: &[(&str, &[u8])]) -> Vec<u8> {
 
 /// Every ID3 frame of a file in order: id and payload, read from the
 /// bytes.
-fn id3_frames(path: &Path) -> (u8, Vec<(String, Vec<u8>)>) {
+pub(crate) fn id3_frames(path: &Path) -> (u8, Vec<(String, Vec<u8>)>) {
     let bytes = std::fs::read(path).unwrap();
     assert_eq!(&bytes[..3], b"ID3");
     let major = bytes[3];
@@ -1664,7 +1664,7 @@ fn id3_frames(path: &Path) -> (u8, Vec<(String, Vec<u8>)>) {
 
 /// The strings of an ID3 text payload (encoding byte first), without the
 /// trailing terminator.
-fn id3_strings(payload: &[u8]) -> Vec<String> {
+pub(crate) fn id3_strings(payload: &[u8]) -> Vec<String> {
     let (encoding, body) = payload.split_first().unwrap();
     let mut out: Vec<String> = match encoding {
         0 => body
@@ -1708,7 +1708,7 @@ fn id3_strings(payload: &[u8]) -> Vec<String> {
 }
 
 /// The values of one text frame.
-fn id3_text_values(path: &Path, id: &str) -> Vec<String> {
+pub(crate) fn id3_text_values(path: &Path, id: &str) -> Vec<String> {
     id3_frames(path)
         .1
         .iter()
@@ -1718,7 +1718,7 @@ fn id3_text_values(path: &Path, id: &str) -> Vec<String> {
 }
 
 /// The values of the `TXXX` frame with this description.
-fn id3_txxx_values(path: &Path, description: &str) -> Vec<String> {
+pub(crate) fn id3_txxx_values(path: &Path, description: &str) -> Vec<String> {
     id3_frames(path)
         .1
         .iter()
@@ -1750,7 +1750,7 @@ fn id3_people(path: &Path, id: &str) -> Vec<(String, String)> {
 }
 
 /// Every `COMM` frame: language, description, text.
-fn id3_comments(path: &Path) -> Vec<(String, String, String)> {
+pub(crate) fn id3_comments(path: &Path) -> Vec<(String, String, String)> {
     id3_frames(path)
         .1
         .iter()
@@ -1767,7 +1767,7 @@ fn id3_comments(path: &Path) -> Vec<(String, String, String)> {
 }
 
 /// A raw ID3v2.3 tag holding these frames in this order.
-fn id3v23_raw(frames: &[(&str, &[u8])]) -> Vec<u8> {
+pub(crate) fn id3v23_raw(frames: &[(&str, &[u8])]) -> Vec<u8> {
     let mut body = Vec::new();
     for (id, payload) in frames {
         body.extend_from_slice(id.as_bytes());
@@ -1921,7 +1921,7 @@ fn vorbis_pairs(path: &Path) -> Vec<(String, String)> {
     vorbis_comment_pairs(&packet[magic..])
 }
 
-fn vorbis_key_values(path: &Path, key: &str) -> Vec<String> {
+pub(crate) fn vorbis_key_values(path: &Path, key: &str) -> Vec<String> {
     vorbis_pairs(path)
         .into_iter()
         .filter(|(held, _)| held.eq_ignore_ascii_case(key))
@@ -2010,7 +2010,7 @@ fn mp4_atoms(path: &Path) -> Vec<Mp4Atom> {
         .collect()
 }
 
-fn mp4_text(path: &Path, kind: &[u8; 4]) -> Vec<String> {
+pub(crate) fn mp4_text(path: &Path, kind: &[u8; 4]) -> Vec<String> {
     mp4_atoms(path)
         .into_iter()
         .filter(|atom| &atom.kind == kind)
@@ -2019,7 +2019,7 @@ fn mp4_text(path: &Path, kind: &[u8; 4]) -> Vec<String> {
         .collect()
 }
 
-fn mp4_freeform(path: &Path, name: &str) -> Vec<String> {
+pub(crate) fn mp4_freeform(path: &Path, name: &str) -> Vec<String> {
     mp4_atoms(path)
         .into_iter()
         .filter(|atom| &atom.kind == b"----" && atom.name.as_deref() == Some(name))
