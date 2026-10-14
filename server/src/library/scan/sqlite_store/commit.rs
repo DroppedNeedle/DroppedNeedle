@@ -25,6 +25,7 @@ use super::*;
 use crate::library::identify::sqlite::{
     chosen_matches_differ, offer_album, retarget_references, settle_followed_match,
 };
+use crate::library::management::{automatic, takeover};
 use crate::library::scan::naming::{
     album_grouping_key, album_name_key, grouping_directory, parse_names_for_row,
 };
@@ -1413,6 +1414,9 @@ fn write_window(
         .collect();
     let mut adjust: Vec<(&'static str, i64)> = Vec::new();
     let mut offered: Vec<String> = Vec::new();
+    // Albums with a changed file the app has a record of: automatic
+    // management looks at them soon, to see who changed it.
+    let mut changed: Vec<String> = Vec::new();
     let mut emptied: Vec<String> = Vec::new();
     for item in &window.items {
         let written = if isolate {
@@ -1433,6 +1437,11 @@ fn write_window(
         };
         match written {
             Ok((track_id, album_id, moved_from)) => {
+                if item.verdict_counter == counter_names::CHANGED
+                    && takeover::has_record(tx, &track_id)?
+                {
+                    changed.push(album_id.clone());
+                }
                 indexed.push((item.root_id.clone(), item.relative_path.clone(), track_id));
                 if item.effective_policy == EffectivePolicy::Automatic {
                     offered.push(album_id);
@@ -1460,7 +1469,11 @@ fn write_window(
     for album_id in emptied {
         match follow_regrouped(tx, &window.run_id, &album_id, window.now)? {
             Some(gone) => {
-                for offer in offered.iter_mut().filter(|offer| **offer == gone) {
+                for offer in offered
+                    .iter_mut()
+                    .chain(changed.iter_mut())
+                    .filter(|offer| **offer == gone)
+                {
                     offer.clone_from(&album_id);
                 }
             }
@@ -1482,6 +1495,11 @@ fn write_window(
         counter_names::IDENTIFICATION_ENQUEUED,
         outcome.enqueued as i64,
     ));
+    changed.sort();
+    changed.dedup();
+    for album_id in &changed {
+        automatic::queue(tx, album_id, window.now)?;
+    }
     mark_window(tx, window, &indexed, &failed, &adjust)?;
     Ok(outcome)
 }

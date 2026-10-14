@@ -18,7 +18,7 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 use super::models::{JobIntent, JobMode, ManagementError, Origin, Selection, SelectionKind};
 use super::reasons::{self, ItemReason};
 use super::service::{JobSpec, Management};
-use super::{planner, profile, store};
+use super::{planner, profile, store, takeover};
 use crate::library::clock::now_unix;
 use crate::library::publish::Sandbox;
 use crate::library::publish::snapshots::sha256_hex;
@@ -32,7 +32,7 @@ const MAX_ATTEMPTS: i64 = 8;
 /// First wait before looking again; it doubles each time, up to six hours.
 const FIRST_RETRY_SECONDS: f64 = 60.0;
 /// `not_before` of an album skipped until something changes.
-const PARKED: f64 = 1.0e15;
+pub(super) const PARKED: f64 = 1.0e15;
 
 /// The catalog revision the worker saw last, and when it last moved.
 #[derive(Debug, Clone, Default)]
@@ -91,6 +91,11 @@ pub fn skip_reason(code: &str) -> ItemReason {
             code,
             "This album is kept out of file organizing.",
             "Re-enable organizing on the album page.",
+        ),
+        takeover::TAKEN_OVER => reason(
+            code,
+            "This album's files were changed outside DroppedNeedle, so it is left unmanaged.",
+            "Choose \"Manage it again\" on the album page to have DroppedNeedle retag and rename it from its edition.",
         ),
         "SPANS_FOLDERS" => reason(
             code,
@@ -211,7 +216,45 @@ fn album_files(conn: &Connection, album_id: &str) -> rusqlite::Result<Vec<AlbumF
     rows.collect()
 }
 
+/// How the album came in, when its folder manages albums that came in
+/// that way without asking. `None` when it does not.
+fn automatic_origin(
+    assignment: &crate::runtime_config::sections::LibraryManagementRootAssignment,
+    files: &[AlbumFile],
+) -> Option<Origin> {
+    let origin = if files.iter().any(|file| file.ingest_source == "download") {
+        Origin::Acquisition
+    } else if files
+        .iter()
+        .any(|file| file.ingest_source.starts_with("drop"))
+    {
+        Origin::DropImport
+    } else {
+        Origin::ScanDiscovered
+    };
+    let triggered = match origin {
+        Origin::Acquisition => assignment.automatic_acquisitions,
+        Origin::DropImport => assignment.automatic_drop_imports,
+        _ => assignment.automatic_scan_discovered,
+    };
+    (assignment.enabled && triggered).then_some(origin)
+}
+
 impl Management {
+    /// Whether the album sits in one folder that manages it without
+    /// asking: the test automatic management makes before it looks.
+    pub(super) fn managed_automatically(&self, album_id: &str) -> Result<bool, ManagementError> {
+        let files = self.read(|conn| Ok(album_files(conn, album_id)?))?;
+        let Some(first) = files.first() else {
+            return Ok(false);
+        };
+        if files.iter().any(|file| file.root_id != first.root_id) {
+            return Ok(false);
+        }
+        let assignment = profile::root_assignment(&self.settings()?, &first.root_id);
+        Ok(automatic_origin(&assignment, &files).is_some())
+    }
+
     /// Look at the next waiting album once the catalog has settled and no
     /// scan runs. True when one was looked at. Blocking.
     pub fn automatic_step(&self, settle: &mut Settle) -> Result<bool, ManagementError> {
@@ -335,26 +378,11 @@ impl Management {
         if files.iter().any(|file| file.root_id != first.root_id) {
             return Ok(Verdict::Park("SPANS_FOLDERS"));
         }
-        let origin = if files.iter().any(|file| file.ingest_source == "download") {
-            Origin::Acquisition
-        } else if files
-            .iter()
-            .any(|file| file.ingest_source.starts_with("drop"))
-        {
-            Origin::DropImport
-        } else {
-            Origin::ScanDiscovered
-        };
         let stored = self.settings()?;
         let assignment = profile::root_assignment(&stored, &first.root_id);
-        let triggered = match origin {
-            Origin::Acquisition => assignment.automatic_acquisitions,
-            Origin::DropImport => assignment.automatic_drop_imports,
-            _ => assignment.automatic_scan_discovered,
-        };
-        if !assignment.enabled || !triggered {
+        let Some(origin) = automatic_origin(&assignment, &files) else {
             return Ok(Verdict::Done("NOT_AUTOMATIC"));
-        }
+        };
         let registry = self.setup.live_registry();
         let policy = registry.policy_revision().to_owned();
         let pinned_policy = self.activation_policy_revision()?;
@@ -387,6 +415,11 @@ impl Management {
         })?;
         if excluded {
             return Ok(Verdict::Park("EXCLUDED"));
+        }
+        // The only place an automatic file write starts: an album the app
+        // stepped back from waits here until a person hands it back.
+        if self.read(|conn| Ok(takeover::is_marked(conn, album_id)?))? {
+            return Ok(Verdict::Park(takeover::TAKEN_OVER));
         }
         let identities = &self.setup.identify_store;
         let Some(identity) = identities.album_identity(album_id) else {

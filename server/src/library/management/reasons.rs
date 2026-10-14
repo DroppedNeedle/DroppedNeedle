@@ -201,6 +201,17 @@ pub fn album_changed() -> ItemReason {
     )
 }
 
+/// What a person's preview of a taken-over album says on each file.
+pub const TAKEN_OVER_WARNING: &str = "This album is left unmanaged because its files were changed outside DroppedNeedle. Applying this preview overwrites those changes.";
+
+pub fn taken_over() -> ItemReason {
+    ItemReason::new(
+        super::takeover::TAKEN_OVER,
+        "This album is left unmanaged because its files were changed outside DroppedNeedle.",
+        "Preview the album by itself to see what would change, or choose \"Manage it again\" on its page.",
+    )
+}
+
 pub fn bundle_blocked() -> ItemReason {
     ItemReason::new(
         "BUNDLE_BLOCKED",

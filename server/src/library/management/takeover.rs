@@ -28,9 +28,17 @@
 //! differently), reads as "changed since": the album steps back and
 //! nothing is overwritten.
 
-use rusqlite::{Connection, OptionalExtension as _, params};
+use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
+use super::models::PlannedItem;
+use crate::library::operations::decisions::{CatalogAction, bump_catalog, record_action};
 use crate::library::publish::snapshots::sha256_hex;
+
+/// Skip and block code of an album the app stepped back from.
+pub const TAKEN_OVER: &str = "TAKEN_OVER";
+/// Terminal code of an automatic run that wrote nothing because the
+/// album's files were changed outside the app.
+pub const FILES_CHANGED_OUTSIDE: &str = "FILES_CHANGED_OUTSIDE";
 
 /// Why the app stepped back from an album.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,4 +140,136 @@ pub fn has_record(conn: &Connection, track_id: &str) -> rusqlite::Result<bool> {
         .query_row(params![track_id], |_| Ok(()))
         .optional()?
         .is_some())
+}
+
+/// Each track's management state revision, for the tracks of `albums`
+/// that have a state row.
+pub(crate) fn state_revisions(
+    conn: &Connection,
+    albums: &[String],
+) -> rusqlite::Result<std::collections::HashMap<String, i64>> {
+    let mut statement = conn.prepare(
+        "SELECT s.local_track_id, s.row_revision FROM library_track_management_state s \
+         JOIN local_tracks t ON t.id = s.local_track_id WHERE t.local_album_id = ?1",
+    )?;
+    let mut revisions = std::collections::HashMap::new();
+    for album in albums {
+        let rows = statement.query_map(params![album], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        for row in rows {
+            let (track, revision) = row?;
+            revisions.insert(track, revision);
+        }
+    }
+    Ok(revisions)
+}
+
+/// The files of a finished plan that were changed outside the app and
+/// whose tags or embedded pictures the plan would change, as (album,
+/// track). A file the app has no record of does not count, nor one that
+/// was blocked before its bytes were read, nor one whose state the app
+/// itself rewrote while the plan was made (`before` holds each track's
+/// state revision from before).
+pub(crate) fn changed_outside(
+    conn: &Connection,
+    items: &[PlannedItem],
+    before: &std::collections::HashMap<String, i64>,
+) -> rusqlite::Result<Vec<(String, String)>> {
+    let mut changed = Vec::new();
+    for item in items {
+        let rewrites = item.diff.tags_changed
+            || item.diff.artwork_changed
+            || !item.diff.scrubbed_raw_tags.is_empty();
+        let Some(track_id) = item.track_id.as_deref() else {
+            continue;
+        };
+        if !rewrites || item.fingerprint.is_empty() {
+            continue;
+        }
+        let revision: Option<i64> = conn
+            .prepare_cached(
+                "SELECT row_revision FROM library_track_management_state \
+                 WHERE local_track_id = ?1",
+            )?
+            .query_row(params![track_id], |row| row.get(0))
+            .optional()?;
+        if revision != before.get(track_id).copied() {
+            continue;
+        }
+        if record(conn, track_id)?.changed_outside(
+            &item.source_root,
+            &item.source_rel,
+            &item.fingerprint,
+        ) {
+            changed.push((item.album_id.clone(), track_id.to_owned()));
+        }
+    }
+    Ok(changed)
+}
+
+/// Whether the app stepped back from this album.
+pub fn is_marked(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
+    Ok(conn
+        .prepare_cached("SELECT 1 FROM library_album_takeovers WHERE local_album_id = ?1")?
+        .query_row(params![album_id], |_| Ok(()))
+        .optional()?
+        .is_some())
+}
+
+fn millis(now: f64) -> i64 {
+    (now * 1000.0) as i64
+}
+
+/// Mark an album as taken over. Does nothing when it already is; returns
+/// whether it wrote. A new mark parks the album for automatic management,
+/// records one audit action and moves the catalog revision.
+pub(crate) fn mark(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    cause: Cause,
+    changed_track_ids: &[String],
+    job_id: Option<&str>,
+    now: f64,
+) -> rusqlite::Result<bool> {
+    let wrote = tx.execute(
+        "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+         VALUES (?1, ?2, ?3) ON CONFLICT (local_album_id) DO NOTHING",
+        params![album_id, cause.as_str(), millis(now)],
+    )?;
+    if wrote == 0 {
+        return Ok(false);
+    }
+    tx.execute(
+        "INSERT INTO library_management_automatic_queue (local_album_id, queued_at, not_before, \
+         last_reason_code) VALUES (?1, ?2, ?3, ?4) \
+         ON CONFLICT (local_album_id) DO UPDATE SET not_before = excluded.not_before, \
+         attempts = 0, last_reason_code = excluded.last_reason_code",
+        params![album_id, now, super::automatic::PARKED, TAKEN_OVER],
+    )?;
+    record_action(
+        tx,
+        CatalogAction {
+            actor: "",
+            kind: "management_stepped_back",
+            album_id,
+            job_id,
+            before: serde_json::json!({}),
+            after: serde_json::json!({ "changed_track_ids": changed_track_ids }),
+            reason: cause.as_str(),
+        },
+        now,
+    )?;
+    bump_catalog(tx)?;
+    Ok(true)
+}
+
+/// Give `to` the mark `from` carries (cause and times kept), unless it
+/// has one. A merge and a split carry the mark with the tracks.
+pub(crate) fn copy_mark(tx: &Transaction<'_>, from: &str, to: &str) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT OR IGNORE INTO library_album_takeovers (local_album_id, cause, noticed_at, \
+         handed_back_at) SELECT ?2, cause, noticed_at, handed_back_at \
+         FROM library_album_takeovers WHERE local_album_id = ?1",
+        params![from, to],
+    )?;
+    Ok(())
 }

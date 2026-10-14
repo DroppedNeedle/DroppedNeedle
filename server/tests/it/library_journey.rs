@@ -5015,6 +5015,8 @@ struct ManagedLibrary {
     scratch: ScratchDir,
     library: LibrarySetup,
     music: PathBuf,
+    /// Albums added so far.
+    albums: Cell<u32>,
 }
 
 impl ManagedLibrary {
@@ -5055,6 +5057,7 @@ impl ManagedLibrary {
             scratch,
             library,
             music,
+            albums: Cell::new(0),
         }
     }
 
@@ -5083,6 +5086,7 @@ impl ManagedLibrary {
     async fn add_album(&self, folder: &str, tracks: usize) -> (String, Vec<String>) {
         use droppedneedle::library::tags::TagField;
         use droppedneedle::library::tags::save::{TagEdit, save_tags};
+        let nth = self.albums.replace(self.albums.get() + 1);
         let mut relative = Vec::new();
         for number in 1..=tracks {
             let rel = format!("{folder}/{number:02}.flac");
@@ -5092,6 +5096,15 @@ impl ManagedLibrary {
                 TagField::Title,
                 vec![format!("{folder} {number}")],
             )];
+            // Every album after the first is an album of its own, not
+            // another copy of the fixture's.
+            if nth > 0 {
+                edits.extend([
+                    TagEdit::verbatim(TagField::Album, vec![folder.to_owned()]),
+                    TagEdit::verbatim(TagField::MusicBrainzReleaseId, Vec::new()),
+                    TagEdit::verbatim(TagField::MusicBrainzReleaseGroupId, Vec::new()),
+                ]);
+            }
             if number > 1 {
                 edits.extend([
                     TagEdit::verbatim(TagField::TrackNumber, vec![number.to_string()]),
@@ -5117,11 +5130,20 @@ impl ManagedLibrary {
             .scan_store
             .album_for_track(&ids[0])
             .expect("album");
+        // The first album gets `REL_1` and `REL_2`. Every later one gets
+        // editions of its own, or all would be named from one release.
+        let mut recall = ambiguous_recall(&self.library.identify_store, &album);
+        if nth > 0 {
+            for (edition, release) in recall.releases.iter_mut().enumerate() {
+                release.id = format!("{nth:08x}-{edition:04x}-4111-8111-111111111111");
+                release.release_group_id = format!("rg-{nth}-{edition}");
+            }
+        }
         self.library
             .test_providers
             .as_ref()
             .expect("scripted providers")
-            .set_recall(ambiguous_recall(&self.library.identify_store, &album));
+            .set_recall(recall);
         assert_eq!(self.library.identify_tick().await, 1);
         droppedneedle::library::operations::service::Operations::new(&self.library)
             .confirm_match(&album, "admin")
@@ -5138,6 +5160,9 @@ impl ManagedLibrary {
             LibraryManagement, LibraryManagementRootAssignment,
         };
         let management = self.management();
+        // Identification queued the albums while nothing was automatic
+        // yet; the worker looks and drops them.
+        while management.automatic_next().expect("automatic step") {}
         let mut proposed = self
             .library
             .config
@@ -5313,53 +5338,686 @@ fn v2_path_revision_matches_v2() {
     }
 }
 
-/// The app remembers the bytes of every file it writes or accepts: a file
-/// a run wrote has the hash of what the run left, and a file a run found
-/// the way it wanted has the hash of what it found.
+impl ManagedLibrary {
+    /// Why the app stepped back from the album, if it did.
+    fn mark(&self, album: &str) -> Option<String> {
+        use rusqlite::OptionalExtension as _;
+        self.db()
+            .query_row(
+                "SELECT cause FROM library_album_takeovers WHERE local_album_id = ?1",
+                [album],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("mark reads")
+    }
+
+    fn count(&self, sql: &str) -> i64 {
+        self.db()
+            .query_row(sql, [], |row| row.get(0))
+            .expect("count reads")
+    }
+
+    /// Change the track's file from outside the app, then scan.
+    async fn edit_outside(&self, track: &str, edit: droppedneedle::library::tags::TagEdit) {
+        droppedneedle::library::tags::save_tags(&self.path(track), &[edit])
+            .expect("retagged outside the app");
+        rescan(&self.library).await;
+    }
+
+    /// A person's preview with the folder's profile, planned.
+    async fn preview(
+        &self,
+        kind: droppedneedle::library::management::models::SelectionKind,
+        ids: &[&str],
+        key: &str,
+    ) -> (
+        droppedneedle::library::management::models::PreviewHandle,
+        Vec<droppedneedle::library::management::models::PlannedItem>,
+    ) {
+        use droppedneedle::library::management::models::Selection;
+        use droppedneedle::library::management::service::PreviewRequest;
+        let management = self.management();
+        let handle = management
+            .create_preview(
+                PreviewRequest {
+                    selection: Selection {
+                        kind,
+                        ids: ids.iter().map(|id| (*id).to_owned()).collect(),
+                        catalog_filter: None,
+                    },
+                    profile_id: droppedneedle::settings::management::PICARD_ORGANIZER_PROFILE_ID
+                        .to_owned(),
+                    expected_settings_revision: self.settings_revision(),
+                    expected_policy_revision: self
+                        .library
+                        .live_registry()
+                        .policy_revision()
+                        .to_owned(),
+                    idempotency_key: Some(key.to_owned()),
+                    target_root_id: None,
+                    overrides: None,
+                },
+                "admin",
+            )
+            .expect("preview queued");
+        assert!(management_step(&self.library).await, "planning runs");
+        let items = management
+            .items(&handle.job_id, -1, 100, &Default::default())
+            .expect("items")
+            .items;
+        (handle, items)
+    }
+}
+
+fn title_edit(value: &str) -> droppedneedle::library::tags::TagEdit {
+    droppedneedle::library::tags::TagEdit::verbatim(
+        droppedneedle::library::tags::TagField::Title,
+        vec![value.to_owned()],
+    )
+}
+
+/// A file the app wrote that is retagged outside it is the user's: the
+/// next automatic run writes nothing, marks the album as taken over and
+/// parks it, and never touches the album's match. The app's own write
+/// never does that, and neither does a hand edit made before the app
+/// ever wrote the file. A person's preview of the whole folder then
+/// leaves the album alone, and a preview of the album itself warns.
 #[tokio::test]
-async fn the_app_records_the_bytes_it_writes() {
-    let managed = ManagedLibrary::start("lib-written-bytes", |_| {}).await;
-    let (album, tracks) = managed.add_album("incoming", 1).await;
+async fn a_hand_retag_takes_the_album_over() {
+    use droppedneedle::library::management::models::{Eligibility, SelectionKind};
+    use droppedneedle::library::tags::{TagField, read_fields};
+
+    let managed = ManagedLibrary::start("lib-takeover", |_| {}).await;
+    let (album, tracks) = managed.add_album("first", 1).await;
+    let (other, _) = managed.add_album("second", 1).await;
     managed.activate().await;
-    assert_eq!(managed.recorded(&tracks[0]), None, "nothing written yet");
+    let track = &tracks[0];
+    let title = |path: &Path| read_fields(path).expect("tags read")[&TagField::Title].clone();
 
+    // The app has never written this file: its first run goes ahead.
+    managed.edit_outside(track, title_edit("Before")).await;
     managed.look(&album).await;
-    let written = managed.path(&tracks[0]);
-    assert_ne!(written, managed.music.join("incoming/01.flac"), "moved");
+    let file = managed.path(track);
     assert_eq!(
-        managed.recorded(&tracks[0]),
-        Some(file_sha256(&written)),
-        "the commit records what it placed"
+        title(&file),
+        vec!["first 1".to_owned()],
+        "the edition's title"
     );
+    assert_eq!(managed.mark(&album), None);
 
-    // A new match revision with nothing to change: the run ends unchanged
-    // and records the bytes it found.
-    let bytes = std::fs::read(&written).expect("file reads");
-    managed
-        .db()
-        .execute(
-            "UPDATE library_track_management_state SET written_sha256 = NULL",
-            [],
-        )
-        .expect("record cleared");
-    managed
-        .db()
-        .execute(
-            "UPDATE local_album_external_identities SET row_revision = row_revision + 1 \
-             WHERE local_album_id = ?1",
-            [&album],
-        )
-        .expect("identity bumped");
-    managed.look(&album).await;
+    // The scan sees the app's own write as a changed file. The worker
+    // looks and finds the album as it left it.
+    let runs = managed.automatic_runs().len();
+    rescan(&managed.library).await;
+    managed.worker_looks().await;
+    assert_eq!(
+        managed.mark(&album),
+        None,
+        "the app's own write never marks"
+    );
+    assert_eq!(managed.automatic_runs().len(), runs, "no new run");
+
+    // Retagged by hand: the scan queues the album, and the worker steps
+    // back from it.
+    let identity = |album: &str| -> (String, String, i64) {
+        managed
+            .db()
+            .query_row(
+                "SELECT release_mbid, decision_source, row_revision \
+                 FROM local_album_external_identities WHERE local_album_id = ?1",
+                [album],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("match row")
+    };
+    let matched = identity(&album);
+    managed.edit_outside(track, title_edit("By Hand")).await;
+    let edited = file_sha256(&file);
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&album).as_deref(), Some("files_changed"));
     assert_eq!(
         managed.automatic_runs().last(),
         Some(&(
             "succeeded".to_owned(),
-            Some("MANAGEMENT_UNCHANGED".to_owned())
+            Some("FILES_CHANGED_OUTSIDE".to_owned())
         ))
     );
-    assert_eq!(std::fs::read(&written).expect("file reads"), bytes);
-    assert_eq!(managed.recorded(&tracks[0]), Some(file_sha256(&written)));
+    assert_eq!(file_sha256(&file), edited, "nothing written");
+    assert_eq!(identity(&album), matched, "the match is the same row");
+    let skipped = managed.management().automatic_skipped(10).expect("skipped");
+    assert_eq!(skipped.len(), 1);
+    assert_eq!(skipped[0].album_id, album);
+    assert_eq!(skipped[0].reason.code, "TAKEN_OVER");
+    let stepped_back = "SELECT COUNT(*) FROM library_catalog_actions \
+                        WHERE action_kind = 'management_stepped_back'";
+    assert_eq!(managed.count(stepped_back), 1);
+
+    // Scanned and looked at again: still nothing written, said once.
+    let runs = managed.automatic_runs().len();
+    rescan(&managed.library).await;
+    managed.look(&album).await;
+    assert_eq!(file_sha256(&file), edited);
+    assert_eq!(managed.automatic_runs().len(), runs);
+    assert_eq!(managed.count(stepped_back), 1);
+
+    // A preview of more than this one album leaves it alone and plans the
+    // other one as before: the whole folder, or the two albums picked
+    // from a list.
+    assert_ne!(album, other);
+    let whole_folder = managed
+        .preview(SelectionKind::Roots, &["music"], "wide")
+        .await;
+    let both_picked = managed
+        .preview(SelectionKind::Albums, &[&album, &other], "both")
+        .await;
+    for (_, items) in [whole_folder, both_picked] {
+        for item in &items {
+            if item.album_id == album {
+                assert_eq!(item.eligibility, Eligibility::Blocked);
+                assert_eq!(item.reason().expect("a reason").code, "TAKEN_OVER");
+                assert!(item.fingerprint.is_empty(), "blocked before it was read");
+            } else {
+                assert_eq!(item.album_id, other);
+                assert!(item.eligibility.writes(), "{:?}", item.facts);
+            }
+        }
+        assert_eq!(items.len(), 2);
+    }
+
+    // A preview of the album itself plans, and says what applying does.
+    let (_, items) = managed
+        .preview(SelectionKind::Albums, &[&album], "own")
+        .await;
+    assert!(items[0].eligibility.writes(), "{:?}", items[0].facts);
+    assert!(items[0].diff.tags_changed);
+    assert!(
+        items[0]
+            .facts
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Applying this preview overwrites those changes")),
+        "{:?}",
+        items[0].facts.warnings
+    );
+    assert_eq!(file_sha256(&file), edited);
+}
+
+/// What the app does not manage is not a takeover: a tag outside the
+/// profile's fields is left in the file and recorded, a file moved by hand
+/// is put back where the naming rules say, and a tag edit made in the app
+/// is the app's own write.
+#[tokio::test]
+async fn unmanaged_changes_do_not_take_the_album_over() {
+    use droppedneedle::library::management::models::TagEditMode;
+    use droppedneedle::library::management::tag_edit::TagEditRequest;
+    use droppedneedle::library::tags::TagEdit;
+    use droppedneedle::library::tags::save::read_document;
+
+    let managed = ManagedLibrary::start("lib-takeover-unmanaged", |_| {}).await;
+    let (album, tracks) = managed.add_album("first", 1).await;
+    managed.activate().await;
+    let track = &tracks[0];
+    managed.look(&album).await;
+    let file = managed.path(track);
+
+    // A tag the profile does not manage.
+    managed
+        .edit_outside(
+            track,
+            TagEdit::native("vorbis:MOOD", vec!["Calm".to_owned()]),
+        )
+        .await;
+    let edited = file_sha256(&file);
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&album), None);
+    assert_eq!(file_sha256(&file), edited, "the tag is left in the file");
+    assert_eq!(managed.recorded(track), Some(edited), "and recorded");
+    let mood = |path: &Path| {
+        read_document(path)
+            .expect("tags read")
+            .native
+            .get("vorbis:MOOD")
+            .cloned()
+    };
+
+    // The edition changes in the app: the worker writes the file from it,
+    // and the tag it does not manage is still there.
+    let chosen: String = managed
+        .db()
+        .query_row(
+            "SELECT release_mbid FROM local_album_external_identities WHERE local_album_id = ?1",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("edition");
+    let other = if chosen == REL_1 { REL_2 } else { REL_1 };
+    droppedneedle::library::operations::service::Operations::new(&managed.library)
+        .choose_edition(&album, other, Some("admin"))
+        .await
+        .expect("edition chosen");
+    managed.look(&album).await;
+    let last = managed.automatic_runs().pop().expect("a run");
+    assert_eq!(last.0, "succeeded");
+    assert_ne!(last.1.as_deref(), Some("MANAGEMENT_UNCHANGED"), "it wrote");
+    let file = managed.path(track);
+    assert_eq!(mood(&file), Some(vec!["Calm".to_owned()]));
+    assert_eq!(managed.recorded(track), Some(file_sha256(&file)));
+    assert_eq!(managed.mark(&album), None);
+
+    // Moved by hand, tags untouched.
+    let elsewhere = managed.music.join("elsewhere/moved.flac");
+    std::fs::create_dir_all(elsewhere.parent().expect("parent")).expect("mkdir");
+    std::fs::rename(&file, &elsewhere).expect("moved by hand");
+    rescan(&managed.library).await;
+    assert_eq!(managed.path(track), elsewhere, "the track follows the file");
+    managed.look(&album).await;
+    assert_eq!(managed.mark(&album), None);
+    assert_eq!(managed.path(track), file, "put back by the naming rules");
+    assert!(file.exists() && !elsewhere.exists());
+    assert_eq!(mood(&file), Some(vec!["Calm".to_owned()]));
+
+    // A tag edit made in the app.
+    let management = managed.management();
+    let edit = management
+        .create_tag_edit(
+            TagEditRequest {
+                local_track_id: track.clone(),
+                mode: TagEditMode::SaveOverride,
+                expected_settings_revision: managed.settings_revision(),
+                expected_policy_revision: managed
+                    .library
+                    .live_registry()
+                    .policy_revision()
+                    .to_owned(),
+                fields: vec![("title".to_owned(), serde_json::json!("Edited In App"))],
+                idempotency_key: Some("edit".to_owned()),
+            },
+            "admin",
+        )
+        .expect("edit preview");
+    assert!(
+        management_step(&managed.library).await,
+        "edit planning runs"
+    );
+    let applied = management_apply(&managed.library, &edit).await;
+    assert_eq!(applied.job.state.as_str(), "succeeded");
+    rescan(&managed.library).await;
+    managed.look(&album).await;
+    assert_eq!(managed.mark(&album), None, "the app's own edit never marks");
+    let file = managed.path(track);
+    assert_eq!(managed.recorded(track), Some(file_sha256(&file)));
+    assert_eq!(mood(&file), Some(vec!["Calm".to_owned()]));
+}
+
+/// A hand edit counts even when another file of the album cannot be
+/// planned: the run ends with the album marked, and no preview waits for
+/// a person to apply over the edit.
+#[tokio::test]
+async fn a_blocked_file_does_not_hide_a_hand_edit() {
+    let managed = ManagedLibrary::start("lib-takeover-blocked", |_| {}).await;
+    let (album, tracks) = managed.add_album("first", 2).await;
+    managed.activate().await;
+    managed.look(&album).await;
+    assert_eq!(managed.mark(&album), None);
+
+    // The second file's match names a track the edition does not have.
+    managed
+        .db()
+        .execute(
+            "UPDATE local_track_external_identities SET release_track_mbid = 'no-such-track', \
+             row_revision = row_revision + 1 WHERE local_track_id = ?1",
+            [&tracks[1]],
+        )
+        .expect("mapping broken");
+    managed
+        .edit_outside(&tracks[0], title_edit("By Hand"))
+        .await;
+    let edited = file_sha256(&managed.path(&tracks[0]));
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&album).as_deref(), Some("files_changed"));
+    assert_eq!(
+        managed.automatic_runs().last(),
+        Some(&(
+            "succeeded".to_owned(),
+            Some("FILES_CHANGED_OUTSIDE".to_owned())
+        ))
+    );
+    assert!(
+        managed
+            .automatic_runs()
+            .iter()
+            .all(|(state, _)| state == "succeeded"),
+        "no automatic preview waits on the operations page"
+    );
+    assert_eq!(file_sha256(&managed.path(&tracks[0])), edited);
+}
+
+/// A file v2 tagged is recognised by the record v2 left: untouched, v3
+/// goes on managing it; edited by hand since, the album is the user's.
+/// A v2 row that holds no file hash is no record at all.
+#[tokio::test]
+async fn a_file_v2_wrote_is_recognised() {
+    use droppedneedle::library::management::takeover::v2_path_revision;
+
+    let managed = ManagedLibrary::start("lib-takeover-v2", |_| {}).await;
+    let (untouched, untouched_tracks) = managed.add_album("untouched", 1).await;
+    let (edited, edited_tracks) = managed.add_album("edited", 1).await;
+    let (recycled, recycled_tracks) = managed.add_album("recycled", 1).await;
+    managed.activate().await;
+    // What the upgrade carries over: v2's value, its outcome and no job.
+    let v2_row = |track: &str, outcome: &str| {
+        let file = managed.path(track);
+        let relative = file
+            .strip_prefix(&managed.music)
+            .expect("under the root")
+            .to_string_lossy()
+            .into_owned();
+        managed
+            .db()
+            .execute(
+                "INSERT INTO library_track_management_state (local_track_id, managed_root_id, \
+                 managed_path_revision, last_outcome, last_managed_at) \
+                 VALUES (?1, 'music', ?2, ?3, 1)",
+                rusqlite::params![
+                    track,
+                    v2_path_revision("music", &relative, &file_sha256(&file)),
+                    outcome
+                ],
+            )
+            .expect("v2 row");
+    };
+    v2_row(&untouched_tracks[0], "succeeded");
+    v2_row(&edited_tracks[0], "succeeded");
+    v2_row(&recycled_tracks[0], "recycled");
+
+    let before = managed.path(&untouched_tracks[0]);
+    managed.look(&untouched).await;
+    let after = managed.path(&untouched_tracks[0]);
+    assert_ne!(after, before, "the first run goes ahead");
+    assert_eq!(managed.mark(&untouched), None);
+    assert_eq!(
+        managed.recorded(&untouched_tracks[0]),
+        Some(file_sha256(&after))
+    );
+
+    managed
+        .edit_outside(&edited_tracks[0], title_edit("By Hand"))
+        .await;
+    let file = managed.path(&edited_tracks[0]);
+    let bytes = file_sha256(&file);
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&edited).as_deref(), Some("files_changed"));
+    assert_eq!(managed.path(&edited_tracks[0]), file);
+    assert_eq!(file_sha256(&file), bytes, "nothing written");
+
+    managed
+        .edit_outside(&recycled_tracks[0], title_edit("By Hand"))
+        .await;
+    let before = managed.path(&recycled_tracks[0]);
+    managed.look(&recycled).await;
+    assert_eq!(managed.mark(&recycled), None, "no record, so no takeover");
+    assert_ne!(
+        managed.path(&recycled_tracks[0]),
+        before,
+        "the run goes ahead"
+    );
+}
+
+/// Undoing a profile run in a folder that is managed without asking
+/// leaves the album unmanaged, whoever started the run: otherwise the
+/// worker would do the same thing again half a minute later.
+#[tokio::test]
+async fn an_undone_run_is_not_done_again() {
+    use droppedneedle::library::management::models::SelectionKind;
+
+    let managed = ManagedLibrary::start("lib-takeover-undo", |_| {}).await;
+    let (by_worker, worker_tracks) = managed.add_album("first", 1).await;
+    let (by_person, person_tracks) = managed.add_album("second", 1).await;
+    managed.activate().await;
+    let management = managed.management();
+    let undo = |job_id: String, key: &'static str| {
+        let management = management.clone();
+        let library = managed.library.clone();
+        async move {
+            let detail = management.detail(&job_id).expect("detail");
+            let undo = management
+                .undo_preview(&job_id, detail.job.row_revision, key, "admin")
+                .expect("undo preview");
+            assert!(management_step(&library).await, "undo planning runs");
+            let undone = management_apply(&library, &undo).await;
+            assert_eq!(undone.job.state.as_str(), "succeeded");
+        }
+    };
+
+    // A run the worker started.
+    managed.look(&by_worker).await;
+    let (history, _) = management.history(Default::default()).expect("history");
+    let run = history
+        .iter()
+        .find(|item| item.origin == "scan_discovered")
+        .expect("an automatic run")
+        .job
+        .id
+        .clone();
+    undo(run, "undo-worker").await;
+    let file = managed.path(&worker_tracks[0]);
+    let bytes = file_sha256(&file);
+    rescan(&managed.library).await;
+    managed.look(&by_worker).await;
+    assert_eq!(
+        managed.path(&worker_tracks[0]),
+        file,
+        "the worker moves nothing"
+    );
+    assert_eq!(file_sha256(&file), bytes, "the worker writes nothing");
+    assert_eq!(managed.mark(&by_worker).as_deref(), Some("run_undone"));
+
+    // A run a person started, before the worker got to the album.
+    let (handle, items) = managed
+        .preview(SelectionKind::Albums, &[&by_person], "by-person")
+        .await;
+    assert!(
+        items[0].eligibility.writes() && items[0].diff.changes_anything(),
+        "{:?} {:?}",
+        items[0].facts,
+        items[0].diff
+    );
+    let applied = management_apply(&managed.library, &handle).await;
+    assert_eq!(applied.job.state.as_str(), "succeeded");
+    undo(handle.job_id.clone(), "undo-person").await;
+    let file = managed.path(&person_tracks[0]);
+    let bytes = file_sha256(&file);
+    rescan(&managed.library).await;
+    managed.look(&by_person).await;
+    assert_eq!(
+        managed.path(&person_tracks[0]),
+        file,
+        "the worker moves nothing"
+    );
+    assert_eq!(file_sha256(&file), bytes, "the worker writes nothing");
+    assert_eq!(managed.mark(&by_person).as_deref(), Some("run_undone"));
+}
+
+/// Undoing one bundle of an automatic run (the route that undoes a single
+/// bundle) leaves the album unmanaged as well, so the run is not redone.
+#[tokio::test]
+async fn an_undone_bundle_is_not_done_again() {
+    let managed = ManagedLibrary::start("lib-takeover-undo-bundle", |_| {}).await;
+    let (album, tracks) = managed.add_album("first", 1).await;
+    managed.activate().await;
+    let planted = managed.path(&tracks[0]);
+    managed.look(&album).await;
+    assert_ne!(managed.path(&tracks[0]), planted);
+    let bundle: String = managed
+        .db()
+        .query_row(
+            "SELECT json_extract(w.result_json, '$.bundle_id') FROM library_operation_work w \
+             JOIN library_management_job_snapshots s ON s.job_id = w.job_id \
+             WHERE s.origin = 'scan_discovered' \
+             AND json_extract(w.result_json, '$.bundle_id') IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .expect("the run's bundle");
+
+    managed.library.undo_bundle(&bundle).expect("bundle undone");
+    assert_eq!(managed.path(&tracks[0]), planted);
+    let bytes = file_sha256(&planted);
+    rescan(&managed.library).await;
+    managed.look(&album).await;
+    assert_eq!(managed.path(&tracks[0]), planted, "nothing is redone");
+    assert_eq!(file_sha256(&planted), bytes);
+    assert_eq!(managed.mark(&album).as_deref(), Some("run_undone"));
+}
+
+/// A picture replaced by hand takes the album over where the profile
+/// manages pictures, and nowhere else.
+#[tokio::test]
+async fn a_replaced_picture_counts_only_where_pictures_are_managed() {
+    use droppedneedle::library::management::enrich::{Cover, ScriptedEnrichment};
+    use droppedneedle::library::tags::save::{PictureSpec, save_tags_with_pictures};
+
+    let png = |colour: [u8; 3]| {
+        let mut bytes = Vec::new();
+        image::RgbImage::from_pixel(8, 8, image::Rgb(colour))
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("png");
+        bytes
+    };
+    for (tag, artwork) in [("lib-takeover-art", true), ("lib-takeover-no-art", false)] {
+        let managed = ManagedLibrary::start(tag, |profile| {
+            profile.artwork.embedded_enabled = artwork;
+        })
+        .await;
+        assert!(
+            managed
+                .library
+                .enrichment
+                .set(Arc::new(ScriptedEnrichment {
+                    listenbrainz: None,
+                    lyrics: None,
+                    cover: Some(Cover {
+                        bytes: png([30, 30, 200]),
+                        mime: "image/png".to_owned(),
+                    }),
+                }))
+                .is_ok()
+        );
+        let (album, tracks) = managed.add_album("first", 1).await;
+        managed.activate().await;
+        managed.look(&album).await;
+        let file = managed.path(&tracks[0]);
+
+        save_tags_with_pictures(
+            &file,
+            &[],
+            Some(&[PictureSpec {
+                kind: 3,
+                mime: "image/png".to_owned(),
+                description: String::new(),
+                data: png([200, 30, 30]),
+                info: None,
+            }]),
+        )
+        .expect("picture replaced outside the app");
+        let edited = file_sha256(&file);
+        rescan(&managed.library).await;
+        managed.worker_looks().await;
+        assert_eq!(
+            managed.mark(&album).as_deref(),
+            artwork.then_some("files_changed"),
+            "artwork managed: {artwork}"
+        );
+        assert_eq!(file_sha256(&file), edited, "the picture is left alone");
+    }
+}
+
+/// The app's step back goes with the tracks: a merge by hand carries it to
+/// the album that stays, and a split gives it to the album made.
+#[tokio::test]
+async fn a_merge_and_a_split_carry_the_step_back() {
+    let rig = Rig::start("lib-takeover-membership").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    plant(&music, "a/01.flac", "flac_full_01.flac");
+    plant(&music, "a/02.flac", "flac_full_02.flac");
+    plant(&music, "b/01.flac", "flac_full_01.flac");
+    rig.pause_identification().await;
+    app.add_library_folder("music", &music).await;
+    app.scan_library().await;
+    let store = &rig.scan_store;
+    let a2 = store.track_at("music", "a/02.flac").expect("a/02");
+    let b1 = store.track_at("music", "b/01.flac").expect("b/01");
+    let album_a = store.album_for_track(&a2).expect("album a");
+    let album_b = store.album_for_track(&b1).expect("album b");
+    let db = app.db();
+    db.execute(
+        "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+         VALUES (?1, 'retag_followed', 1234)",
+        [&album_b],
+    )
+    .expect("album b marked");
+    let marks = || -> Vec<(String, String, i64)> {
+        let mut statement = db
+            .prepare(
+                "SELECT local_album_id, cause, noticed_at FROM library_album_takeovers \
+                 ORDER BY local_album_id",
+            )
+            .expect("marks read");
+        statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .expect("marks")
+            .collect::<Result<_, _>>()
+            .expect("marks")
+    };
+    let correct = |preview: String, apply: String, selection: Value| async move {
+        let (status, body) = app
+            .call("POST", &preview, &headers, Some(selection.clone()))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let mut request = selection;
+        request["preview_token"] = body["preview_token"].clone();
+        let (status, body) = app.call("POST", &apply, &headers, Some(request)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body
+    };
+
+    correct(
+        "/api/v3/library/albums/merge-preview".to_owned(),
+        "/api/v3/library/albums/merge".to_owned(),
+        json!({"track_ids": [b1], "target_album_id": album_a}),
+    )
+    .await;
+    assert_eq!(
+        marks(),
+        vec![(album_a.clone(), "retag_followed".to_owned(), 1234)],
+        "the mark moved to the album that stays"
+    );
+
+    let split = correct(
+        format!("/api/v3/library/albums/{album_a}/split-preview"),
+        format!("/api/v3/library/albums/{album_a}/split"),
+        json!({"track_ids": [a2], "title": "Bonus"}),
+    )
+    .await;
+    let made = split["target_album_id"].as_str().expect("new album");
+    let mut expected = vec![
+        (album_a.clone(), "retag_followed".to_owned(), 1234),
+        (made.to_owned(), "retag_followed".to_owned(), 1234),
+    ];
+    expected.sort();
+    assert_eq!(
+        marks(),
+        expected,
+        "the album made by the split is marked too"
+    );
+    rig.stop().await;
 }
 
 /// Every file below `dir`.

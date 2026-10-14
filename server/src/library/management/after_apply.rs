@@ -3,9 +3,12 @@
 //! edit asked to keep, and the media servers told to rescan when the job
 //! ends.
 
+use rusqlite::OptionalExtension as _;
+
 use super::models::{JobMode, ManagementError};
 use super::service::Management;
 use super::store::{self, ManagedMark, Snapshot};
+use super::takeover;
 use crate::library::clock::now_unix;
 use crate::runtime_config::secret_sections::JellyfinConnection;
 
@@ -70,14 +73,16 @@ impl Management {
                 .collect();
             extra = Some(serde_json::json!({ "override_revisions": revisions }));
         }
-        // Undoing a tag edit also puts its kept values back.
         if mode == Some(JobMode::Undo)
             && let Some(source) = snapshot.linked_job_id.as_deref()
-            && let Some(edit) = self
-                .read(|conn| Ok(store::snapshot(conn, source)?))?
-                .and_then(|source| source.intent().tag_edit)
+            && let Some(source) = self.read(|conn| Ok(store::snapshot(conn, source)?))?
         {
-            self.write(|tx| Ok(store::revert_tag_edit(tx, &edit, job_id, now)?))?;
+            if let Some(edit) = source.intent().tag_edit {
+                // Undoing a tag edit also puts its kept values back.
+                self.write(|tx| Ok(store::revert_tag_edit(tx, &edit, job_id, now)?))?;
+            } else if let Some(album_id) = items.first().map(|item| item.album_id.as_str()) {
+                self.run_undone(&source, album_id, Some(job_id), now)?;
+            }
         }
         let written = items.iter().filter(|item| item.eligibility.writes());
         match mode {
@@ -156,6 +161,62 @@ impl Management {
             _ => Ok(()),
         }?;
         Ok(extra)
+    }
+
+    /// A person undid `source`'s run on the album. When that was a run of
+    /// the profile in a folder managed without asking, the files are the
+    /// app's own bytes again and automatic management would do the same
+    /// run over, so the album is left to the person.
+    fn run_undone(
+        &self,
+        source: &Snapshot,
+        album_id: &str,
+        job_id: Option<&str>,
+        now: f64,
+    ) -> Result<(), ManagementError> {
+        let profile_run = matches!(
+            source.job_mode(),
+            Some(JobMode::Apply | JobMode::AutomaticApply)
+        ) && source.intent().tag_edit.is_none();
+        if profile_run && self.managed_automatically(album_id)? {
+            self.write(|tx| {
+                Ok(takeover::mark(
+                    tx,
+                    album_id,
+                    takeover::Cause::RunUndone,
+                    &[],
+                    job_id,
+                    now,
+                )?)
+            })?;
+        }
+        Ok(())
+    }
+
+    /// The same for one bundle undone on its own, outside a job (the
+    /// route that undoes a single bundle). Blocking.
+    pub fn bundle_undone(&self, bundle_id: &str) -> Result<(), ManagementError> {
+        let found: Option<(String, i64)> = self.read(|conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT job_id, ordinal FROM library_operation_work \
+                     WHERE json_extract(result_json, '$.bundle_id') = ?1",
+                    [bundle_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?)
+        })?;
+        let Some((source_id, ordinal)) = found else {
+            return Ok(());
+        };
+        let Some(source) = self.read(|conn| Ok(store::snapshot(conn, &source_id)?))? else {
+            return Ok(());
+        };
+        let items = self.read(|conn| Ok(store::bundle_items(conn, &source_id, ordinal)?))?;
+        match items.first() {
+            Some(item) => self.run_undone(&source, &item.album_id, None, now_unix()),
+            None => Ok(()),
+        }
     }
 
     /// Ask the media servers to rescan once a job that wrote files ends,

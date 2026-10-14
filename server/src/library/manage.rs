@@ -1333,7 +1333,16 @@ impl LibrarySetup {
             );
             plan_items.push(file.plan);
         }
-        self.publish_restoration(&mut cell, plan_items, docs)
+        let applied = self.publish_restoration(&mut cell, plan_items, docs)?;
+        drop(cell);
+        // An undone run of the profile is not run again by itself. The
+        // undo stands either way.
+        if let Err(error) =
+            super::management::service::Management::new(self).bundle_undone(bundle_id)
+        {
+            tracing::warn!(%error, bundle_id, "undone bundle not recorded for automatic management");
+        }
+        Ok(applied)
     }
 
     /// What undoing one published bundle would do, file by file. Blocking.

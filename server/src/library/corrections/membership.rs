@@ -20,6 +20,7 @@ use super::models::{
 };
 use super::reasons;
 use crate::library::identify::sqlite::{offer_album, retarget_references};
+use crate::library::management::takeover;
 
 /// One stored track the change reads.
 #[derive(Debug, Clone)]
@@ -325,7 +326,12 @@ pub(crate) fn retire(
     retarget_references(tx, "album", album_id, successor)?;
     // What a curator set on the old album carries over, unless the
     // receiving album has its own: an exclusion from file organizing, and
-    // album field overrides.
+    // album field overrides. So does the app's own step back from it.
+    takeover::copy_mark(tx, album_id, successor)?;
+    tx.execute(
+        "DELETE FROM library_album_takeovers WHERE local_album_id = ?1",
+        params![album_id],
+    )?;
     tx.execute(
         "INSERT OR IGNORE INTO library_management_exclusions (local_album_id, reason, \
          excluded_by_user_id, excluded_at) SELECT ?2, reason, excluded_by_user_id, excluded_at \
@@ -480,7 +486,13 @@ pub(super) fn regroup(
     // The receiving album.
     let (dest, created) = match &target {
         Some(album) => (album.clone(), false),
-        None => (create_split_album(tx, &sources[0], request, now)?, true),
+        None => {
+            let made = create_split_album(tx, &sources[0], request, now)?;
+            // Tracks split out of an album the app stepped back from are
+            // left alone too.
+            takeover::copy_mark(tx, &sources[0].id, &made.id)?;
+            (made, true)
+        }
     };
     lock_to(tx, &dest.id, &track_ids)?;
 

@@ -10,13 +10,14 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 use super::models::{
     HistoryFilter, HistoryItem, ItemFilter, ItemPage, JobDetail, JobIntent, JobMode,
     ManagementError, Origin, PinnedProfile, PlannedItem, PreviewHandle, ResultPage, Revisions,
-    Selection, Summary, TagEditMode,
+    Selection, SelectionKind, Summary, TagEditMode,
 };
 use super::planner::{self, PlanContext};
 use super::profile::{self, CompiledScripts};
 use super::reasons::{self, ItemReason};
 use super::selection;
 use super::store::{self, NewJob, Snapshot};
+use super::takeover;
 use crate::library::clock::{now_unix, today_day};
 use crate::library::manage::SealPins;
 use crate::library::operations::models::OperationJob;
@@ -854,6 +855,16 @@ impl Management {
     /// when a job comes back to it.
     fn plan(&self, job_id: &str, worker: &str) -> Result<(), ManagementError> {
         let snapshot = self.snapshot(job_id)?;
+        let automatic = snapshot.origin != Origin::Manual.as_str();
+        // Where the app's own bookkeeping stood before the files are read:
+        // a file it writes while this plan is made is not someone else's
+        // change (the plan is then stale and its apply is refused).
+        let before = if automatic {
+            let selection: Selection = serde_json::from_str(&snapshot.selection_json)?;
+            self.read(|conn| Ok(takeover::state_revisions(conn, &selection.ids)?))?
+        } else {
+            Default::default()
+        };
         self.read(|conn| Ok(store::clear_items(conn, job_id)?))?;
         let planned = match snapshot.job_mode() {
             Some(JobMode::Undo) => self.plan_undo(&snapshot, worker)?,
@@ -864,12 +875,87 @@ impl Management {
         let Some(summary) = planned else {
             return Ok(());
         };
-        let finished =
-            self.write(|tx| store::finish_planning(tx, job_id, worker, &summary, now_unix()))?;
-        if finished && snapshot.origin != Origin::Manual.as_str() {
+        let (albums, changed) = if automatic {
+            self.changed_outside(job_id, &before)?
+        } else {
+            Default::default()
+        };
+        let now = now_unix();
+        let (finished, stepped_back) = self.write(|tx| {
+            if !store::finish_planning(tx, job_id, worker, &summary, now)? {
+                return Ok((false, false));
+            }
+            // An album marked after this run was queued (an undo, or a
+            // second run after a crash) is never written by it.
+            for album in &albums {
+                if takeover::is_marked(tx, album)? {
+                    store::set_mode(tx, job_id, JobMode::AutomaticApply.as_str())?;
+                    store::complete_without_work(tx, job_id, takeover::TAKEN_OVER, now)?;
+                    return Ok((true, true));
+                }
+            }
+            if changed.is_empty() {
+                return Ok((true, false));
+            }
+            // A file the app wrote was changed outside it, and this run
+            // would write over that change. The run ends here with nothing
+            // written, in the transaction that would have made it ready,
+            // so it never waits for a person to apply it either.
+            store::set_mode(tx, job_id, JobMode::AutomaticApply.as_str())?;
+            store::complete_without_work(tx, job_id, takeover::FILES_CHANGED_OUTSIDE, now)?;
+            let mut albums: Vec<&str> = changed.iter().map(|(album, _)| album.as_str()).collect();
+            albums.sort_unstable();
+            albums.dedup();
+            for album in albums {
+                let tracks: Vec<String> = changed
+                    .iter()
+                    .filter(|(of, _)| of == album)
+                    .map(|(_, track)| track.clone())
+                    .collect();
+                takeover::mark(
+                    tx,
+                    album,
+                    takeover::Cause::FilesChanged,
+                    &tracks,
+                    Some(job_id),
+                    now,
+                )?;
+            }
+            Ok((true, true))
+        })?;
+        if stepped_back {
+            tracing::info!(
+                job_id,
+                files = changed.len(),
+                "automatic management stepped back from the album"
+            );
+        } else if finished && automatic {
             self.apply_automatic(job_id, &summary);
         }
         Ok(())
+    }
+
+    /// The albums a planned job covers, and its files that were changed
+    /// outside the app and that the plan would rewrite, as (album, track).
+    /// `before` is each track's state revision before planning.
+    #[allow(clippy::type_complexity)]
+    fn changed_outside(
+        &self,
+        job_id: &str,
+        before: &std::collections::HashMap<String, i64>,
+    ) -> Result<(Vec<String>, Vec<(String, String)>), ManagementError> {
+        self.read(|conn| {
+            let mut albums = Vec::new();
+            let mut changed = Vec::new();
+            for ordinal in store::bundle_ordinals(conn, job_id)? {
+                let items = store::bundle_items(conn, job_id, ordinal)?;
+                albums.extend(items.iter().map(|item| item.album_id.clone()));
+                changed.extend(takeover::changed_outside(conn, &items, before)?);
+            }
+            albums.sort_unstable();
+            albums.dedup();
+            Ok((albums, changed))
+        })
     }
 
     /// Apply a preview automatic management made, when nothing in it is
@@ -956,6 +1042,7 @@ impl Management {
             ManagementError::Conflict(format!("No library folder can be written: {error}"))
         })?;
         let registry = self.setup.live_registry();
+        let mut albums = self.read(|conn| selection::albums(conn, &selection))?;
         let ctx = PlanContext {
             setup: &self.setup,
             pinned: &pinned,
@@ -967,6 +1054,18 @@ impl Management {
             tag_edit: intent.tag_edit.as_ref(),
             job_id: &snapshot.job.id,
             analysis_until: std::time::Instant::now() + planner::RUN_ANALYSIS_BUDGET,
+            // A folder, an artist or a filter is wide whatever it holds
+            // today; albums or tracks are wide once they span two albums.
+            wide: albums
+                .iter()
+                .map(|scope| scope.album_id.as_str())
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                > 1
+                || matches!(
+                    selection.kind,
+                    SelectionKind::Roots | SelectionKind::Artists | SelectionKind::Filter
+                ),
         };
         // Files that move take their whole album along, so an album is
         // never split between its old and new folder (as in v2). An
@@ -979,7 +1078,6 @@ impl Management {
                     .iter()
                     .any(|field| field.subject_kind == "album")
             });
-        let mut albums = self.read(|conn| selection::albums(conn, &selection))?;
         let picked: usize = albums
             .iter()
             .filter_map(|scope| scope.track_ids.as_ref().map(Vec::len))

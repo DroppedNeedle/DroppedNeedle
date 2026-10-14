@@ -20,6 +20,7 @@ use super::profile::{self, CompiledScripts, NamingFacts};
 use super::reasons::{self, ItemReason};
 use super::script;
 use super::selection::{AlbumScope, CatalogTrack};
+use super::takeover;
 use crate::library::matching::model::Release;
 use crate::library::publish::planner::{
     Capability, CollisionGate, DiskPreflight, FileFingerprint, PlanBundle, PlanItem, PlanKind,
@@ -149,6 +150,10 @@ pub struct PlanContext<'a> {
     /// When loudness measuring stops for the whole run (see
     /// [`RUN_ANALYSIS_BUDGET`]).
     pub analysis_until: std::time::Instant,
+    /// The preview covers more than one album. Such a preview never
+    /// rewrites an album the app stepped back from: a folder, an artist
+    /// or a "select all" in a list did not name that album.
+    pub wide: bool,
 }
 
 /// Most time one run spends measuring loudness, over all its albums.
@@ -208,6 +213,13 @@ enum AlbumState {
 
 fn album_state(ctx: &PlanContext<'_>, album_id: &str) -> Result<AlbumState, ManagementError> {
     let store = &ctx.setup.identify_store;
+    if ctx.wide
+        && store
+            .with_connection(|conn| takeover::is_marked(conn, album_id))
+            .map_err(ManagementError::from)?
+    {
+        return Ok(AlbumState::Blocked(reasons::taken_over()));
+    }
     let Some(identity) = store.album_identity(album_id) else {
         return Ok(AlbumState::Blocked(reasons::identity_not_accepted()));
     };
@@ -1446,6 +1458,23 @@ pub fn plan_album(
     plan_sidecars(ctx, &mut items);
     drop_shadowed_outputs(&mut items);
     check_collisions(ctx, &mut items);
+    // A person's preview of the album itself still plans, and says what
+    // applying it does.
+    if ctx.tag_edit.is_none()
+        && ctx
+            .setup
+            .identify_store
+            .with_connection(|conn| takeover::is_marked(conn, &scope.album_id))?
+    {
+        for item in &mut items {
+            item.facts
+                .warnings
+                .push(reasons::TAKEN_OVER_WARNING.to_owned());
+            if item.eligibility == Eligibility::Eligible {
+                item.eligibility = Eligibility::Warning;
+            }
+        }
+    }
     let writes: Vec<PlanItem> = items
         .iter()
         .filter_map(|item| item.desired.plan.clone())
