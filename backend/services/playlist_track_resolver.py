@@ -24,7 +24,7 @@ import asyncio
 import logging
 import re
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 
@@ -34,6 +34,7 @@ from infrastructure.queue.priority_queue import RequestPriority
 from infrastructure.validators import is_valid_isrc
 from models.album import Track
 from models.release_home import (
+    release_group_cover_url,
     HomeTier,
     CompilationPolicy,
     HomeCandidate,
@@ -246,20 +247,26 @@ class PlaylistTrackResolver:
         tracks = await self._playlists.get_tracks(playlist_id)
         summary = ResolutionSummary(tracks=len(tracks))
         pending: list[PlaylistTrackRecord] = []
+        # Owned rows are planned too, for display only: the row then shows
+        # the album the policy files the song under. They are never
+        # requested (requestable_items skips owned rows).
+        owned_ids: set[str] = set()
         for track in tracks:
             if track.resolution_status == ResolutionStatus.CHOSEN:
                 summary.chosen += 1
-            elif is_owned(track):
+                continue
+            if is_owned(track):
                 summary.owned += 1
-            else:
-                pending.append(track)
+                owned_ids.add(track.id)
+            pending.append(track)
 
         identities = await asyncio.gather(*(self._identify(t) for t in pending))
         planner_tracks: list[PlannerTrack] = []
         failed_ids: set[str] = set()
         for track, identity in zip(pending, identities, strict=True):
             if identity.failed:
-                failed_ids.add(track.id)
+                if track.id not in owned_ids:
+                    failed_ids.add(track.id)
                 continue
             has_official = any(
                 classify_home(c) in _OFFICIAL_TIERS for c in identity.candidates
@@ -282,10 +289,23 @@ class PlaylistTrackResolver:
         summary.failed = len(failed_ids)
 
         plans = plan_playlist(planner_tracks, policy)
-        updates = {track_id: _to_resolution(plan) for track_id, plan in plans.items()}
+        updates = {
+            track_id: _to_resolution(plan)
+            for track_id, plan in plans.items()
+            if track_id not in owned_ids
+        }
+        for track_id in owned_ids & plans.keys():
+            plan = plans[track_id]
+            # An owned song is never held for a choice or marked unmatched,
+            # and keeps the recording it was linked by.
+            if plan.status is ResolutionStatus.RESOLVED:
+                updates[track_id] = replace(_to_resolution(plan), recording_mbid=None)
         if updates:
             await self._playlists.batch_update_resolutions(playlist_id, updates)
-        _tally(summary, plans.values())
+        _tally(
+            summary,
+            [plan for track_id, plan in plans.items() if track_id not in owned_ids],
+        )
         if failed_ids:
             logger.info(
                 "playlist.resolve playlist=%s failed_lookups=%s (kept prior verdicts)",
@@ -576,11 +596,6 @@ def _track_artist_mbid(identity: _Identity) -> str | None:
     if not counts:
         return None
     return min(counts, key=lambda artist: (-counts[artist], artist))
-
-
-def release_group_cover_url(release_group_mbid: str) -> str:
-    """The cover the Spotify import gives a resolved row."""
-    return f"/api/v1/covers/release-group/{release_group_mbid}?size=250"
 
 
 def _to_resolution(plan: TrackPlan) -> TrackResolution:

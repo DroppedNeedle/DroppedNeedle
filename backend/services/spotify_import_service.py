@@ -36,6 +36,7 @@ from repositories.musicbrainz_base import (
 )
 from services.native.musicbrainz_matcher import MusicBrainzMatcher
 from repositories.async_playlist_repository import AsyncPlaylistRepository
+from models.release_home import release_group_cover_url
 from repositories.playlist_repository import TrackResolution
 
 if TYPE_CHECKING:
@@ -95,10 +96,7 @@ def _filed_album(track: PlaylistTrackRecord) -> dict[str, str | None]:
     album = track.target_release_group_mbid
     if not album or track.resolution_status not in ("resolved", "chosen"):
         return {}
-    return {
-        "album_id": album,
-        "cover_url": f"/api/v1/covers/release-group/{album}?size=250",
-    }
+    return {"album_id": album, "cover_url": release_group_cover_url(album)}
 
 
 def _playlist_track_count(playlist: dict) -> int:

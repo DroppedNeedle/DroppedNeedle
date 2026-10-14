@@ -40,6 +40,7 @@ from infrastructure.persistence.native_library_schema import SCHEMA_SQL
 from infrastructure.queue.durable_work_wakeup import DurableWorkWakeups
 from infrastructure.validators import is_valid_mbid
 from models.audio import AudioArtistCredit
+from models.release_home import release_group_cover_url
 from models.song_identity import same_song_title
 from models.artist_reconciliation import (
     ProviderAlbumArtistProjection,
@@ -6179,6 +6180,10 @@ class NativeLibraryStore(PersistenceBase):
 
         An entry with no source becomes ``local`` (the #381 healing rule); one
         that has a source keeps it.
+
+        3. **Display:** a resolved or chosen entry shows the album it is filed
+           under; rows resolved before that was stored get their cover and
+           album refreshed here, from the database alone.
         """
 
         def apply(connection: sqlite3.Connection, entry: sqlite3.Row, match: sqlite3.Row) -> int:
@@ -6289,6 +6294,25 @@ class NativeLibraryStore(PersistenceBase):
                     ),
                 )
                 updated += apply(connection, entry, best)
+
+            filed = connection.execute(
+                "SELECT id, target_release_group_mbid, cover_url "
+                "FROM library_playlist_tracks WHERE playlist_id = ? "
+                "AND resolution_status IN ('resolved', 'chosen') "
+                "AND target_release_group_mbid IS NOT NULL "
+                "AND target_release_group_mbid <> ''",
+                (playlist_id,),
+            ).fetchall()
+            for entry in filed:
+                album = str(entry["target_release_group_mbid"])
+                cover = release_group_cover_url(album)
+                if entry["cover_url"] == cover:
+                    continue
+                updated += connection.execute(
+                    "UPDATE library_playlist_tracks SET cover_url = ?, album_id = ? "
+                    "WHERE id = ? AND playlist_id = ?",
+                    (cover, album, entry["id"], playlist_id),
+                ).rowcount
             if updated:
                 connection.execute(
                     "UPDATE library_playlists SET updated_at = ? WHERE id = ?",

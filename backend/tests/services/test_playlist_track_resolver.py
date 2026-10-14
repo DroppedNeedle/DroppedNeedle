@@ -293,12 +293,23 @@ async def test_owned_chosen_and_unidentifiable_tracks(playlists):
     summary = await _resolver(playlists, mb).resolve_playlist(pid)
 
     by_name = {t.track_name: t for t in await playlists.get_tracks(pid)}
-    assert by_name["Owned"].resolution_status is None
+    # Owned: planned for display only (album and cover), counted as owned.
+    owned = by_name["Owned"]
+    assert (owned.resolution_status, owned.target_release_group_mbid) == (
+        "resolved",
+        "rg-willy",
+    )
+    assert owned.cover_url == "/api/v1/covers/release-group/rg-willy?size=250"
     assert by_name["Chosen"].target_release_group_mbid == "rg-chronicle"
     assert by_name["Nothing to go on"].resolution_status == "unresolved"
     assert by_name["On nothing"].resolution_status == "unresolved"
-    assert (summary.owned, summary.chosen, summary.unresolved) == (1, 1, 2)
-    assert mb.home_calls == ["rec-orphan"]
+    assert (summary.owned, summary.chosen, summary.resolved, summary.unresolved) == (
+        1,
+        1,
+        0,
+        2,
+    )
+    assert sorted(mb.home_calls) == ["rec-fs", "rec-orphan"]
 
 
 @pytest.mark.asyncio
@@ -628,3 +639,31 @@ def test_parse_type_info():
     )
     assert _parse_type_info("Single") == ("Single", ())
     assert _parse_type_info(None) == (None, ())
+
+
+@pytest.mark.asyncio
+async def test_owned_rows_are_never_flagged_and_keep_their_recording(playlists):
+    mb = FakeMb(
+        {
+            "rec-owned": [
+                _album("rg-va", "Hits", "1990", ("Compilation",), various=True),
+                WILLY,
+            ]
+        }
+    )
+    pid, _ = await _playlist(
+        playlists,
+        {
+            "track_name": "Fortunate Son",
+            "album_name": "Hits",
+            "recording_mbid": "rec-owned",
+            "available_sources": ["navidrome"],
+        },
+    )
+
+    await _resolver(playlists, mb).resolve_playlist(pid, CompilationPolicy.FLAG)
+
+    (track,) = await playlists.get_tracks(pid)
+    # Would be flagged (playlist album differs from the official one) if not owned.
+    assert track.resolution_status is None
+    assert track.recording_mbid == "rec-owned"

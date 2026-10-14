@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Optional
 from uuid import uuid4
 
+from models.release_home import release_group_cover_url
+
 
 _UNSET = object()
 
@@ -844,26 +846,30 @@ class PlaylistRepository:
         """Link unlinked entries to library files by recording (#204).
 
         The legacy counterpart of the target store's method: matches
-        ``library_files.recording_mbid`` when that table shares this database,
-        and is a no-op otherwise. An entry with no source becomes ``local``.
+        ``library_files.recording_mbid`` when that table shares this database
+        (an entry with no source becomes ``local``), then refreshes the cover
+        and album shown on rows resolved before those were stored.
         """
         with self._write_lock:
             conn = self._get_connection()
-            if (
+            has_library = (
                 conn.execute(
                     "SELECT 1 FROM sqlite_master WHERE type = 'table' "
                     "AND name = 'library_files'"
                 ).fetchone()
-                is None
-            ):
-                return 0
-            entries = conn.execute(
-                "SELECT id, recording_mbid, source_type, available_sources "
-                "FROM playlist_tracks WHERE playlist_id = ? "
-                "AND library_file_id IS NULL AND recording_mbid IS NOT NULL "
-                "AND recording_mbid != ''",
-                (playlist_id,),
-            ).fetchall()
+                is not None
+            )
+            entries = (
+                conn.execute(
+                    "SELECT id, recording_mbid, source_type, available_sources "
+                    "FROM playlist_tracks WHERE playlist_id = ? "
+                    "AND library_file_id IS NULL AND recording_mbid IS NOT NULL "
+                    "AND recording_mbid != ''",
+                    (playlist_id,),
+                ).fetchall()
+                if has_library
+                else []
+            )
             updated = 0
             for entry in entries:
                 match = conn.execute(
@@ -897,6 +903,24 @@ class PlaylistRepository:
                         ),
                     )
                 updated += cur.rowcount
+            # Rows resolved before the filed album was shown on them.
+            filed = conn.execute(
+                "SELECT id, target_release_group_mbid, cover_url FROM playlist_tracks "
+                "WHERE playlist_id = ? AND resolution_status IN ('resolved', 'chosen') "
+                "AND target_release_group_mbid IS NOT NULL "
+                "AND target_release_group_mbid != ''",
+                (playlist_id,),
+            ).fetchall()
+            for entry in filed:
+                album = str(entry["target_release_group_mbid"])
+                cover = release_group_cover_url(album)
+                if entry["cover_url"] == cover:
+                    continue
+                updated += conn.execute(
+                    "UPDATE playlist_tracks SET cover_url = ?, album_id = ? "
+                    "WHERE id = ? AND playlist_id = ?",
+                    (cover, album, entry["id"], playlist_id),
+                ).rowcount
             if updated:
                 conn.commit()
         return updated

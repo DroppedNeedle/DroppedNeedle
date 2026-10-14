@@ -15,7 +15,12 @@ from typing import Any, Protocol
 from api.v1.schemas.request import BatchRequestResponse
 from api.v1.schemas.settings import PlaylistTrackRequestSettings
 from core.exceptions import ValidationError
-from models.release_home import CompilationPolicy, RecordingHome, ResolutionStatus
+from models.release_home import (
+    CompilationPolicy,
+    RecordingHome,
+    ResolutionStatus,
+    release_group_cover_url,
+)
 from models.song_identity import lead_artist
 from repositories.playlist_repository import PlaylistTrackRecord, TrackResolution
 from services.playlist_track_resolver import (
@@ -224,7 +229,7 @@ class PlaylistTrackRequestService:
                     resolution_status=ResolutionStatus.CHOSEN.value,
                     recording_mbid=wanted[0],
                     album_id=wanted[1],
-                    cover_url=f"/api/v1/covers/release-group/{wanted[1]}?size=250",
+                    cover_url=release_group_cover_url(wanted[1]),
                     # Kept so the user can change their mind later.
                     flag_options=track.flag_options,
                 )

@@ -145,3 +145,29 @@ def test_corrupt_flag_options_read_as_none(repo, tmp_path):
     )
     conn.commit()
     assert repo.get_track(playlist.id, track.id).flag_options is None
+
+
+def test_legacy_rows_resolved_earlier_get_their_filed_album_shown(repo):
+    """Same refresh on the legacy table, even without a library_files table."""
+    playlist = repo.create_playlist("Kungs")
+    stale = "/api/v1/covers/release-group/rg-muchdance?size=250"
+    resolved = _add(repo, playlist.id, album_id="rg-muchdance", cover_url=stale)
+    flagged = _add(repo, playlist.id, album_id="rg-muchdance", cover_url=stale)
+    repo.batch_update_resolutions(
+        playlist.id,
+        {
+            resolved.id: TrackResolution("rg-layers", "album", "resolved"),
+            flagged.id: TrackResolution(None, None, "flagged"),
+        },
+    )
+
+    assert repo.link_tracks_by_recording(playlist.id) == 1
+
+    after = {t.id: t for t in repo.get_tracks(playlist.id)}
+    assert (
+        after[resolved.id].cover_url
+        == "/api/v1/covers/release-group/rg-layers?size=250"
+    )
+    assert after[resolved.id].album_id == "rg-layers"
+    assert after[flagged.id].cover_url == stale
+    assert repo.link_tracks_by_recording(playlist.id) == 0

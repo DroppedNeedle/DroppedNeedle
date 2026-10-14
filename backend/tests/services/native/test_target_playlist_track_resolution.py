@@ -468,3 +468,38 @@ async def test_recording_match_wins_over_same_song(tmp_path):
 
     (track,) = await repo.get_tracks(pid)
     assert track.library_file_id == "track-b-exact"
+
+
+@pytest.mark.asyncio
+async def test_rows_resolved_earlier_get_their_filed_album_shown(tmp_path):
+    """Rows resolved before the filed album was stored on them keep the
+    import's cover (e.g. a compilation's); linking refreshes them."""
+    repo = TargetPlaylistRepository(_store(tmp_path))
+    stale = "/api/v1/covers/release-group/rg-muchdance?size=250"
+    pid, by_name = await _entry_playlist(
+        repo,
+        {"track_name": "Resolved", "album_id": "rg-muchdance", "cover_url": stale},
+        {"track_name": "Chosen", "album_id": "rg-muchdance", "cover_url": stale},
+        {"track_name": "Flagged", "album_id": "rg-muchdance", "cover_url": stale},
+        {"track_name": "Untouched", "album_id": "rg-muchdance", "cover_url": stale},
+    )
+    await repo.batch_update_resolutions(
+        pid,
+        {
+            by_name["Resolved"].id: TrackResolution("rg-layers", "album", "resolved"),
+            by_name["Chosen"].id: TrackResolution("rg-layers", "album", "chosen"),
+            by_name["Flagged"].id: TrackResolution(None, None, "flagged"),
+        },
+    )
+
+    assert await repo.link_tracks_by_recording(pid) == 2
+
+    after = {t.track_name: t for t in await repo.get_tracks(pid)}
+    for name in ("Resolved", "Chosen"):
+        assert (
+            after[name].cover_url == "/api/v1/covers/release-group/rg-layers?size=250"
+        )
+        assert after[name].album_id == "rg-layers"
+    for name in ("Flagged", "Untouched"):
+        assert (after[name].cover_url, after[name].album_id) == (stale, "rg-muchdance")
+    assert await repo.link_tracks_by_recording(pid) == 0  # idempotent

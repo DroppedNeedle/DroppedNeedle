@@ -138,6 +138,11 @@ class RecordingHome(msgspec.Struct, frozen=True):
         )
 
 
+def release_group_cover_url(release_group_mbid: str) -> str:
+    """The cover URL a playlist row shows for the album it is filed under."""
+    return f"/api/v1/covers/release-group/{release_group_mbid}?size=250"
+
+
 def _fold(value: Any) -> str:
     return str(value).strip().casefold() if value is not None else ""
 

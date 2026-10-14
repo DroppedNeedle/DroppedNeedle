@@ -212,10 +212,11 @@ def test_review_flow_resolves_then_requests_only_on_confirm(env):
     requests.request_track_batch.assert_not_awaited()
 
     tracks = client.get(f"/playlists/{pid}").json()["tracks"]
+    # The owned row is planned for display (its album), never requested.
     assert [t["target_release_group_mbid"] for t in tracks] == [
         "rg-willy",
         "rg-bayou",
-        None,
+        "rg-willy",
     ]
     assert tracks[0]["home_tier"] == "album"
 
