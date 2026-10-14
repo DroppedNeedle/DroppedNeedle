@@ -13,7 +13,8 @@
 #   library_user_favorite_names   catalog   moved with their favorite
 #   library_play_history          media     moved to the surviving row
 #   playlist_tracks               catalog   album_id set to the surviving
-#                                           album (a followed retag only)
+#                                           album (a followed retag, or a
+#                                           retag joined across two scans)
 #
 # One more, also by library code in its own transaction: the repair that
 # files plays naming no track, album or artist under the one track they
@@ -115,6 +116,7 @@ youtube_track_links
 
 [library]
 audio_fingerprint_outcomes
+library_album_departures
 library_album_match_state
 library_album_release_pins
 library_album_takeovers

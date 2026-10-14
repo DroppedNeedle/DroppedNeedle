@@ -61,7 +61,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 151);
+    assert_eq!(table_names(&pool).await.len(), 152);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -1000,6 +1000,83 @@ async fn album_takeovers_arrive_empty_and_go_with_their_album() {
         0
     );
     assert_eq!(count("SELECT COUNT(*) FROM local_albums").await, 0);
+}
+
+/// Migration 0045 adds the table of tracks that left an album, empty. An
+/// album merged into one that was merged itself then points at the album
+/// the chain ends on; a chain that loops is left as it is. The two kinds of
+/// retag pair the scan now joins by itself are gone, the others stay.
+#[tokio::test]
+async fn departures_arrive_empty_and_merge_chains_end_on_a_live_album() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 45)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+         ('last', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1), \
+         ('middle', 'r1', 'g2', 'T', 't', 'a1', 'automatic', 1, 1), \
+         ('first', 'r1', 'g3', 'T', 't', 'a1', 'automatic', 1, 1), \
+         ('loop-a', 'r1', 'g4', 'T', 't', 'a1', 'automatic', 1, 1), \
+         ('loop-b', 'r1', 'g5', 'T', 't', 'a1', 'automatic', 1, 1); \
+         UPDATE local_albums SET retired_into_album_id = 'last' WHERE id = 'middle'; \
+         UPDATE local_albums SET retired_into_album_id = 'middle' WHERE id = 'first'; \
+         UPDATE local_albums SET retired_into_album_id = 'loop-b' WHERE id = 'loop-a'; \
+         UPDATE local_albums SET retired_into_album_id = 'loop-a' WHERE id = 'loop-b'; \
+         INSERT INTO library_retag_pairs (old_album_id, new_album_id, reason, state, \
+         recorded_at, updated_at) VALUES \
+         ('first', 'last', 'mostly_missing', 'open', 1, 1), \
+         ('middle', 'last', 'new_files_added', 'open', 1, 1), \
+         ('loop-a', 'last', 'tracks_elsewhere', 'open', 1, 1);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let retired_into = |id: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT retired_into_album_id FROM local_albums WHERE id = ?",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(retired_into("first").await.as_deref(), Some("last"));
+    assert_eq!(retired_into("middle").await.as_deref(), Some("last"));
+    assert_eq!(retired_into("last").await, None);
+    assert_eq!(retired_into("loop-a").await.as_deref(), Some("loop-b"));
+    assert_eq!(retired_into("loop-b").await.as_deref(), Some("loop-a"));
+    let reasons: Vec<String> = sqlx::query_scalar("SELECT reason FROM library_retag_pairs")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(reasons, vec!["tracks_elsewhere".to_owned()]);
+    let departures: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_album_departures")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(departures, 0);
 }
 
 /// The causes a takeover may carry in the database are exactly the ones
