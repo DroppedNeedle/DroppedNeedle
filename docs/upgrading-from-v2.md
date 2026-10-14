@@ -345,6 +345,11 @@ upgrade again.
 The upgrade copies these saved originals while it runs, so it needs more
 free space if v2 managed a big library.
 
+v3 recognises the files v2 tagged and goes on managing them. A file you
+moved or renamed by hand after v2 last wrote it cannot be recognised, so
+its album may show as left unmanaged after the upgrade. "Manage it again"
+on the album page hands it back.
+
 ## After the upgrade
 
 Run one v3 container per data directory, never two.
