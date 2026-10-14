@@ -124,6 +124,12 @@ pub async fn translate_principal(
             }
             .into_response();
         }
+        Err(crate::auth::users::stores::StoreError::Busy) => {
+            return crate::error::busy_response(
+                "library.auth.user",
+                &uuid::Uuid::new_v4().to_string(),
+            );
+        }
         Err(crate::auth::users::stores::StoreError::Internal(cause)) => {
             return LibraryError::internal(&cause).into_response();
         }

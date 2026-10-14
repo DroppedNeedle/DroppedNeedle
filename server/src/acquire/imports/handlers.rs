@@ -235,6 +235,9 @@ async fn auth_context(
             UserStoreError::Conflict => ImportsError::InvalidInput {
                 message: "Conflicting state".to_owned(),
             },
+            UserStoreError::Busy => ImportsError::Busy {
+                operation: "imports.auth.user".to_owned(),
+            },
             UserStoreError::Internal(cause) => ImportsError::internal(&cause, state.ids.as_ref()),
         })?
         .ok_or(ImportsError::Unauthorized {

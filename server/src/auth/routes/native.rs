@@ -431,8 +431,9 @@ fn id_gen<S, V, C>(state: &NativeAuthState<S, V, C>) -> &dyn IdGenerator {
     state.users.ids.as_ref()
 }
 
-/// Store failures: conflicts stay conflicts, internals are logged with an
-/// id. The users error converts into the route error at the call site.
+/// Store failures: conflicts stay conflicts, busy is a 503, internals are
+/// logged with an id. The users error converts into the route error at the
+/// call site.
 fn store_failure(
     error: &crate::auth::users::stores::StoreError,
     ids: &dyn crate::ids::IdGenerator,
@@ -442,6 +443,9 @@ fn store_failure(
             crate::auth::users::error::UsersError::Conflict {
                 message: "Conflicting state".to_owned(),
             }
+        }
+        crate::auth::users::stores::StoreError::Busy => {
+            crate::auth::users::error::UsersError::busy(ids)
         }
         crate::auth::users::stores::StoreError::Internal(cause) => {
             crate::auth::users::error::UsersError::internal(cause, ids)

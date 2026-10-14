@@ -514,6 +514,12 @@ async fn translate_principal(
             })
             .into_response();
         }
+        Err(StoreError::Busy) => {
+            return CollectionsHttpError(CollectionsError::Busy {
+                error_id: uuid::Uuid::new_v4().to_string(),
+            })
+            .into_response();
+        }
         Err(StoreError::Internal(cause)) => {
             return CollectionsHttpError(CollectionsError::internal(&cause)).into_response();
         }

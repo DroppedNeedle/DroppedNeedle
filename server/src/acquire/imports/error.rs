@@ -6,8 +6,8 @@
 //! fixed with only an error id while the cause goes to the structured log.
 
 use crate::error::{
-    ApiError, CONFLICT, FORBIDDEN, INVALID_INPUT, NOT_FOUND, NOT_FOUND_MESSAGE, envelope_response,
-    unauthorized_response,
+    ApiError, CONFLICT, FORBIDDEN, INVALID_INPUT, NOT_FOUND, NOT_FOUND_MESSAGE, busy_response,
+    envelope_response, unauthorized_response,
 };
 use crate::ids::IdGenerator;
 use axum::{
@@ -64,6 +64,11 @@ pub enum ImportsError {
         /// Short summary, e.g. "Lidarr answered with an error".
         message: String,
     },
+    /// The database was too busy to answer in time: 503 with `Retry-After`.
+    Busy {
+        /// Operation name for the log line.
+        operation: String,
+    },
     /// Server fault. Fixed body plus the request-tied id.
     Internal {
         /// Ties the wire response to the server log line.
@@ -91,6 +96,7 @@ impl ImportsError {
             // Bearer challenge must fire.
             Self::AuthFailed { .. } => StatusCode::BAD_GATEWAY,
             Self::Unavailable { .. } => StatusCode::BAD_GATEWAY,
+            Self::Busy { .. } => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -115,6 +121,9 @@ impl IntoResponse for ImportsError {
             }
             Self::Unavailable { message } => {
                 envelope_response(status, IMPORT_UNAVAILABLE, message, None)
+            }
+            Self::Busy { operation } => {
+                busy_response(&operation, &uuid::Uuid::new_v4().to_string())
             }
             Self::Internal { error_id } => ApiError::server_error_response(status, &error_id),
         }

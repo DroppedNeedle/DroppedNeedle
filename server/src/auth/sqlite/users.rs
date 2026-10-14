@@ -6,7 +6,7 @@ use sqlx::Row as _;
 
 use super::{
     AuthDb, USER_COLUMNS, internal, is_write_conflict, op_error, parse_local_data,
-    render_local_data, row_exists,
+    render_local_data, row_exists, store_error,
 };
 use crate::auth::federated::users::ProviderBinding;
 use crate::auth::session::login::{CredentialLookup, LocalCredential, LoginError};
@@ -70,7 +70,7 @@ impl UserStore for SqliteUserStore {
             .bind(id)
             .fetch_optional(pool)
             .await
-            .map_err(|error| internal(map_sqlx_busy("auth.users.get", error)))?;
+            .map_err(|error| store_error(map_sqlx_busy("auth.users.get", error)))?;
             Ok(row.as_ref().map(map_user))
         })
     }
@@ -89,7 +89,7 @@ impl UserStore for SqliteUserStore {
             .bind(username)
             .fetch_optional(pool)
             .await
-            .map_err(|error| internal(map_sqlx_busy("auth.users.get", error)))?;
+            .map_err(|error| store_error(map_sqlx_busy("auth.users.get", error)))?;
             Ok(row.as_ref().map(map_user))
         })
     }
@@ -108,7 +108,7 @@ impl UserStore for SqliteUserStore {
             .bind(email)
             .fetch_optional(pool)
             .await
-            .map_err(|error| internal(map_sqlx_busy("auth.users.get", error)))?;
+            .map_err(|error| store_error(map_sqlx_busy("auth.users.get", error)))?;
             Ok(row.as_ref().map(map_user))
         })
     }
@@ -133,7 +133,7 @@ impl UserStore for SqliteUserStore {
             let rows = query
                 .fetch_all(pool)
                 .await
-                .map_err(|error| internal(map_sqlx_busy("auth.users.get", error)))?;
+                .map_err(|error| store_error(map_sqlx_busy("auth.users.get", error)))?;
             Ok(rows.iter().map(map_user).collect())
         })
     }
@@ -197,7 +197,7 @@ impl UserStore for SqliteUserStore {
             match outcome {
                 Ok(created) => Ok(created),
                 Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
-                Err(error) => Err(internal(error)),
+                Err(error) => Err(store_error(error)),
             }
         })
     }
@@ -227,7 +227,7 @@ impl UserStore for SqliteUserStore {
                 row_exists(tx, "auth_users", &id)
             })
             .await
-            .map_err(internal)
+            .map_err(store_error)
         })
     }
 
@@ -266,7 +266,7 @@ impl UserStore for SqliteUserStore {
             match outcome {
                 Ok(exists) => Ok(exists),
                 Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
-                Err(error) => Err(internal(error)),
+                Err(error) => Err(store_error(error)),
             }
         })
     }
@@ -294,7 +294,7 @@ impl UserStore for SqliteUserStore {
             match outcome {
                 Ok(exists) => Ok(exists),
                 Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
-                Err(error) => Err(internal(error)),
+                Err(error) => Err(store_error(error)),
             }
         })
     }
@@ -324,7 +324,7 @@ impl UserStore for SqliteUserStore {
                 Ok(RoleChange::Changed)
             })
             .await
-            .map_err(internal)
+            .map_err(store_error)
         })
     }
 
@@ -343,7 +343,7 @@ impl UserStore for SqliteUserStore {
                 Ok(())
             })
             .await
-            .map_err(internal)
+            .map_err(store_error)
         })
     }
 
@@ -403,7 +403,7 @@ impl UserStore for SqliteUserStore {
                 Ok(UserDeletion::Deleted)
             })
             .await
-            .map_err(internal)
+            .map_err(store_error)
         })
     }
 
@@ -424,11 +424,11 @@ impl UserStore for SqliteUserStore {
             .bind(offset as i64)
             .fetch_all(pool)
             .await
-            .map_err(|error| internal(map_sqlx_busy("auth.users.list", error)))?;
+            .map_err(|error| store_error(map_sqlx_busy("auth.users.list", error)))?;
             let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM auth_users")
                 .fetch_one(pool)
                 .await
-                .map_err(|error| internal(map_sqlx_busy("auth.users.list", error)))?;
+                .map_err(|error| store_error(map_sqlx_busy("auth.users.list", error)))?;
             Ok((rows.iter().map(map_user).collect(), total.max(0) as u64))
         })
     }
@@ -445,7 +445,7 @@ impl UserStore for SqliteUserStore {
             .bind(id)
             .fetch_all(pool)
             .await
-            .map_err(|error| internal(map_sqlx_busy("auth.users.providers", error)))?;
+            .map_err(|error| store_error(map_sqlx_busy("auth.users.providers", error)))?;
             Ok(rows)
         })
     }
@@ -465,7 +465,7 @@ impl UserStore for SqliteUserStore {
             .bind(id)
             .fetch_optional(pool)
             .await
-            .map_err(|error| internal(map_sqlx_busy("auth.users.credential", error)))?;
+            .map_err(|error| store_error(map_sqlx_busy("auth.users.credential", error)))?;
             let Some(row) = row else {
                 return Ok(None);
             };
@@ -533,7 +533,7 @@ impl UserStore for SqliteUserStore {
                 Ok(true)
             })
             .await
-            .map_err(internal)
+            .map_err(store_error)
         })
     }
 
@@ -573,7 +573,7 @@ impl UserStore for SqliteUserStore {
                 Ok(true)
             })
             .await
-            .map_err(internal)
+            .map_err(store_error)
         })
     }
 
@@ -629,7 +629,7 @@ impl UserStore for SqliteUserStore {
                 },
             )
             .await
-            .map_err(internal)
+            .map_err(store_error)
         })
     }
 
@@ -650,7 +650,7 @@ impl UserStore for SqliteUserStore {
             .bind(provider_uid)
             .fetch_optional(pool)
             .await
-            .map_err(|error| internal(map_sqlx_busy("auth.users.binding", error)))?;
+            .map_err(|error| store_error(map_sqlx_busy("auth.users.binding", error)))?;
             Ok(row.map(|row| ProviderBinding {
                 id: row.get("id"),
                 user_id: row.get("user_id"),
@@ -688,7 +688,7 @@ impl UserStore for SqliteUserStore {
             match outcome {
                 Ok(()) => Ok(()),
                 Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
-                Err(error) => Err(internal(error)),
+                Err(error) => Err(store_error(error)),
             }
         })
     }
@@ -719,7 +719,7 @@ fn conflict_or_internal(outcome: Result<(), crate::db::DbError>) -> Result<(), S
     match outcome {
         Ok(()) => Ok(()),
         Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
-        Err(error) => Err(internal(error)),
+        Err(error) => Err(store_error(error)),
     }
 }
 

@@ -144,6 +144,7 @@ impl FromRequestParts<RemotesDeps> for RemotesUser {
                 UserStoreError::Conflict => RemotesError::InvalidInput {
                     message: "Conflicting state".to_owned(),
                 },
+                UserStoreError::Busy => RemotesError::busy(state.ids.as_ref()),
                 UserStoreError::Internal(cause) => {
                     RemotesError::internal(&cause, state.ids.as_ref())
                 }

@@ -1271,6 +1271,12 @@ async fn translate_principal(
             })
             .into_response();
         }
+        Err(StoreError::Busy) => {
+            return HttpError(RequestsError::Busy {
+                operation: "acquire.auth.user".to_owned(),
+            })
+            .into_response();
+        }
         Err(StoreError::Internal(cause)) => {
             return HttpError(RequestsError::internal(&format_args!(
                 "user lookup failed: {cause}"

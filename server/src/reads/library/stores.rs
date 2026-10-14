@@ -22,9 +22,23 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 /// never the wire: handlers render the fixed 5xx body.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum StoreError {
+    /// The database was too busy to answer in time. The string names the
+    /// operation for the log; handlers answer 503 with `Retry-After`.
+    #[error("database busy during {0}")]
+    Busy(String),
     /// Anything unexpected. The string goes to the log only, never the wire.
     #[error("store failure: {0}")]
     Internal(String),
+}
+
+impl StoreError {
+    /// A read failure: busy stays busy, anything else is internal.
+    pub(crate) fn read(operation: &str, error: sqlx::Error) -> Self {
+        match crate::db::map_sqlx_busy(operation, error) {
+            crate::db::DbError::Busy { .. } => Self::Busy(operation.to_owned()),
+            error => Self::Internal(error.to_string()),
+        }
+    }
 }
 
 /// Album sort orders the list methods accept.

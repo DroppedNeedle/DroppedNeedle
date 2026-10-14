@@ -44,6 +44,12 @@ pub enum UsersError {
         /// Ties the wire response to the server log line.
         error_id: String,
     },
+    /// The database was too busy to answer in time (503 with
+    /// `Retry-After`). Fixed body plus the id.
+    Busy {
+        /// Ties the wire response to the server log line.
+        error_id: String,
+    },
     /// Server fault. Fixed body plus the request-tied id.
     Internal {
         /// Ties the wire response to the server log line.
@@ -57,6 +63,13 @@ impl UsersError {
         let error_id = ids.new_id();
         tracing::error!(error_id, %cause, "users request failed");
         Self::Internal { error_id }
+    }
+
+    /// Build a busy 503, logged as a warning with its id.
+    pub fn busy(ids: &dyn IdGenerator) -> Self {
+        let error_id = ids.new_id();
+        tracing::warn!(error_id, "users request busy; answering 503 with retry");
+        Self::Busy { error_id }
     }
 
     /// Build a 503, logging the real cause with its id.

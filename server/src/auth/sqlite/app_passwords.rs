@@ -2,7 +2,7 @@
 
 use sqlx::Row as _;
 
-use super::{AuthDb, internal, is_write_conflict, op_error};
+use super::{AuthDb, internal, is_write_conflict, op_error, store_error};
 use crate::auth::times::{parse_iso, to_iso};
 use crate::auth::users::models::AppPasswordRecord;
 use crate::auth::users::stores::{AppPasswordStore, BoxFuture, StoreError};
@@ -90,7 +90,7 @@ impl AppPasswordStore for SqliteAppPasswordStore {
             match outcome {
                 Ok(inserted) => Ok(inserted),
                 Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
-                Err(error) => Err(internal(error)),
+                Err(error) => Err(store_error(error)),
             }
         })
     }
@@ -109,7 +109,7 @@ impl AppPasswordStore for SqliteAppPasswordStore {
             .bind(id)
             .fetch_optional(pool)
             .await
-            .map_err(|error| internal(map_sqlx_busy("auth.app_passwords.get", error)))?;
+            .map_err(|error| store_error(map_sqlx_busy("auth.app_passwords.get", error)))?;
             Ok(row.as_ref().map(map_app_password))
         })
     }
@@ -129,7 +129,7 @@ impl AppPasswordStore for SqliteAppPasswordStore {
             .bind(secret_sha256)
             .fetch_optional(pool)
             .await
-            .map_err(|error| internal(map_sqlx_busy("auth.app_passwords.get", error)))?;
+            .map_err(|error| store_error(map_sqlx_busy("auth.app_passwords.get", error)))?;
             Ok(row.as_ref().map(map_app_password))
         })
     }
@@ -149,7 +149,7 @@ impl AppPasswordStore for SqliteAppPasswordStore {
             .bind(user_id)
             .fetch_all(pool)
             .await
-            .map_err(|error| internal(map_sqlx_busy("auth.app_passwords.list", error)))?;
+            .map_err(|error| store_error(map_sqlx_busy("auth.app_passwords.list", error)))?;
             Ok(rows.iter().map(map_app_password).collect())
         })
     }
@@ -165,7 +165,7 @@ impl AppPasswordStore for SqliteAppPasswordStore {
             ))
             .fetch_all(pool)
             .await
-            .map_err(|error| internal(map_sqlx_busy("auth.app_passwords.list", error)))?;
+            .map_err(|error| store_error(map_sqlx_busy("auth.app_passwords.list", error)))?;
             Ok(rows.iter().map(map_app_password).collect())
         })
     }
@@ -186,7 +186,7 @@ impl AppPasswordStore for SqliteAppPasswordStore {
                     .map_err(op_error)
                 })
                 .await
-                .map_err(internal)?;
+                .map_err(store_error)?;
             Ok(changed > 0)
         })
     }
@@ -213,7 +213,7 @@ impl AppPasswordStore for SqliteAppPasswordStore {
                 Ok(())
             })
             .await
-            .map_err(internal)
+            .map_err(store_error)
         })
     }
 }

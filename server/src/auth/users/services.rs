@@ -208,13 +208,15 @@ fn native_scheme() -> &'static str {
     HashScheme::Argon2id.as_tag()
 }
 
-/// Map a store failure to a 500. Callers map `Conflict` themselves first.
+/// Map a store failure: busy to a 503, the rest to a 500. Callers map
+/// `Conflict` themselves first.
 pub(crate) fn store_internal(deps: &UsersDeps, error: StoreError) -> UsersError {
     match error {
         StoreError::Conflict => UsersError::Conflict {
             message: "Conflicting state".to_owned(),
         },
         StoreError::Internal(cause) => UsersError::internal(&cause, deps.ids.as_ref()),
+        StoreError::Busy => UsersError::busy(deps.ids.as_ref()),
     }
 }
 
@@ -299,6 +301,7 @@ pub async fn update_username(
                 message: "Username already taken".to_owned(),
             },
             StoreError::Internal(cause) => UsersError::internal(&cause, deps.ids.as_ref()),
+            StoreError::Busy => UsersError::busy(deps.ids.as_ref()),
         })?;
     user_response(deps, &own_user(deps, ctx).await?).await
 }
@@ -330,6 +333,7 @@ pub async fn update_email(
                 message: "Email already in use".to_owned(),
             },
             StoreError::Internal(cause) => UsersError::internal(&cause, deps.ids.as_ref()),
+            StoreError::Busy => UsersError::busy(deps.ids.as_ref()),
         })?;
     user_response(deps, &own_user(deps, ctx).await?).await
 }
@@ -418,6 +422,7 @@ pub async fn set_local_password(
                 message: "Could not set a local password".to_owned(),
             },
             StoreError::Internal(cause) => UsersError::internal(&cause, deps.ids.as_ref()),
+            StoreError::Busy => UsersError::busy(deps.ids.as_ref()),
         })?;
     user_response(deps, &own_user(deps, ctx).await?).await
 }
@@ -777,6 +782,7 @@ fn create_insert_error(deps: &UsersDeps, error: StoreError) -> UsersError {
     match error {
         StoreError::Conflict => vague_create_conflict(),
         StoreError::Internal(cause) => UsersError::internal(&cause, deps.ids.as_ref()),
+        StoreError::Busy => UsersError::busy(deps.ids.as_ref()),
     }
 }
 

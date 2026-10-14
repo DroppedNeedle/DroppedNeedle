@@ -8,7 +8,7 @@ use sqlx::Row as _;
 
 use super::{
     AuthDb, internal, is_write_conflict, op_error, parse_local_data, render_local_data,
-    store_unavailable,
+    store_error, store_unavailable,
 };
 use crate::auth::federated::password_import::HashScheme;
 use crate::auth::federated::{FederatedError, SessionIssuer};
@@ -344,7 +344,7 @@ impl SessionManager for SqliteSessionManager {
             .bind(user_id)
             .fetch_all(pool)
             .await
-            .map_err(|error| internal(map_sqlx_busy("auth.sessions.list", error)))?;
+            .map_err(|error| store_error(map_sqlx_busy("auth.sessions.list", error)))?;
             let now = self.clock.now_unix();
             let mut sessions: Vec<ManagedSession> = rows
                 .into_iter()
@@ -397,7 +397,7 @@ impl SessionManager for SqliteSessionManager {
                     )?)
                 })
                 .await
-                .map_err(internal)?;
+                .map_err(store_error)?;
             Ok(changed > 0)
         })
     }
@@ -419,7 +419,7 @@ impl SessionManager for SqliteSessionManager {
                     )?)
                 })
                 .await
-                .map_err(internal)?;
+                .map_err(store_error)?;
             Ok(changed as u64)
         })
     }
@@ -485,7 +485,7 @@ impl SessionManager for SqliteSessionManager {
                     expires_at,
                 }),
                 Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
-                Err(error) => Err(internal(error)),
+                Err(error) => Err(store_error(error)),
             }
         })
     }
@@ -505,7 +505,7 @@ impl SessionManager for SqliteSessionManager {
             .bind(token_hash)
             .fetch_optional(pool)
             .await
-            .map_err(|error| internal(map_sqlx_busy("auth.sessions.owner", error)))?;
+            .map_err(|error| store_error(map_sqlx_busy("auth.sessions.owner", error)))?;
             let Some(row) = row else {
                 return Ok(None);
             };

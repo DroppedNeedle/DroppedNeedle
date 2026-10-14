@@ -1,6 +1,6 @@
 //! Per-user Last.fm links over `user_connections`.
 
-use super::{AuthDb, internal, op_error};
+use super::{AuthDb, internal, op_error, store_error};
 use crate::auth::times::to_iso;
 use crate::auth::users::models::LastFmConnection;
 use crate::auth::users::stores::{BoxFuture, LastFmStore, StoreError};
@@ -77,7 +77,7 @@ impl LastFmStore for SqliteLastFmStore {
             .bind(LASTFM_SERVICE)
             .fetch_optional(pool)
             .await
-            .map_err(|error| internal(map_sqlx_busy("auth.lastfm.get", error)))?;
+            .map_err(|error| store_error(map_sqlx_busy("auth.lastfm.get", error)))?;
             let Some(data) = row else {
                 return Ok(None);
             };
@@ -121,7 +121,7 @@ impl LastFmStore for SqliteLastFmStore {
                 Ok(())
             })
             .await
-            .map_err(internal)
+            .map_err(store_error)
         })
     }
 
@@ -140,7 +140,7 @@ impl LastFmStore for SqliteLastFmStore {
                     .map_err(op_error)
                 })
                 .await
-                .map_err(internal)?;
+                .map_err(store_error)?;
             Ok(changed > 0)
         })
     }

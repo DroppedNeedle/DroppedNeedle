@@ -2,7 +2,7 @@
 
 use sqlx::Row as _;
 
-use super::{AuthDb, internal, op_error};
+use super::{AuthDb, internal, op_error, store_error};
 use crate::auth::times::{parse_iso, to_iso};
 use crate::auth::users::models::RecoveryCode;
 use crate::auth::users::stores::{BoxFuture, RecoveryStore, StoreError};
@@ -50,7 +50,7 @@ impl RecoveryStore for SqliteRecoveryStore {
                 Ok(())
             })
             .await
-            .map_err(internal)
+            .map_err(store_error)
         })
     }
 
@@ -70,7 +70,7 @@ impl RecoveryStore for SqliteRecoveryStore {
             .bind(code_hash)
             .fetch_optional(pool)
             .await
-            .map_err(|error| internal(map_sqlx_busy("auth.recovery.get", error)))?;
+            .map_err(|error| store_error(map_sqlx_busy("auth.recovery.get", error)))?;
             let Some(row) = row else {
                 return Ok(None);
             };
@@ -106,7 +106,7 @@ impl RecoveryStore for SqliteRecoveryStore {
                 Ok(())
             })
             .await
-            .map_err(internal)
+            .map_err(store_error)
         })
     }
 }

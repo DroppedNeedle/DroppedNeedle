@@ -66,7 +66,7 @@ impl LibraryDb {
 }
 
 pub(crate) fn internal(op: &str, error: sqlx::Error) -> StoreError {
-    StoreError::Internal(crate::db::map_sqlx_busy(op, error).to_string())
+    StoreError::read(op, error)
 }
 
 pub(crate) fn unwired_store() -> StoreError {

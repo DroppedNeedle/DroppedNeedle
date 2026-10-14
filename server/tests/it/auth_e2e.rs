@@ -3341,11 +3341,13 @@ async fn sign_in_waits_out_a_full_read_pool_as_busy_not_a_fault() {
         held.push(e2e.pool().acquire().await.expect("reader checks out"));
     }
     let headers = [("authorization", auth.as_str())];
-    let (signed_in, gated) = tokio::join!(
+    let setup = json!({"username": "second", "password": "second-password-12"});
+    let (signed_in, gated, set_up) = tokio::join!(
         login(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer"),
         call(e2e.router(), "GET", "/api/v3/me", &headers, None),
+        call(e2e.router(), "POST", "/api/v3/auth/setup", &[], Some(setup)),
     );
-    for (status, body, headers) in [signed_in, gated] {
+    for (status, body, headers) in [signed_in, gated, set_up] {
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
         assert_eq!(
             headers.get("retry-after").map(|v| v.as_bytes()),

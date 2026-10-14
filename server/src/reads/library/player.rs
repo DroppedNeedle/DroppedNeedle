@@ -444,7 +444,7 @@ fn map_album(row: &sqlx::sqlite::SqliteRow) -> Result<PlayerAlbum, sqlx::Error> 
 }
 
 fn read_error(operation: &str) -> impl Fn(sqlx::Error) -> StoreError + '_ {
-    move |error| StoreError::Internal(crate::db::map_sqlx_busy(operation, error).to_string())
+    move |error| StoreError::read(operation, error)
 }
 
 fn placeholders(len: usize) -> String {

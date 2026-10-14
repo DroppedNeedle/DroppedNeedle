@@ -28,6 +28,10 @@ pub enum StoreError {
     /// A uniqueness or state precondition failed (username taken, id busy).
     #[error("conflicting state")]
     Conflict,
+    /// The database was too busy to answer in time. Callers answer 503 with
+    /// `Retry-After`; nothing is wrong with the store.
+    #[error("database busy")]
+    Busy,
     /// Anything unexpected. The string goes to the log only, never the wire.
     #[error("store failure: {0}")]
     Internal(String),

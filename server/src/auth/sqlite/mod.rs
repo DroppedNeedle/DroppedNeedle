@@ -27,10 +27,10 @@
 //! - Federated `provider_data` is `Crypto` ciphertext of the token JSON,
 //!   sealed on every write and never decrypted on read (no port reads it).
 //! - A busy database (a lock, a full lane queue, no free reader in time)
-//!   is its own error on the sign-in path: the session store and the login
-//!   lookup answer busy, which the routes render as a 503 with
-//!   `Retry-After`. The other ports have no busy variant yet, so there a
-//!   busy database still surfaces as the generic failure, a 500.
+//!   is its own error, never the generic failure: the session store, the
+//!   login lookup and the user stores answer busy, which the routes render
+//!   as a 503 with `Retry-After`. The federated store has no busy variant,
+//!   so there a busy database is still the generic failure.
 
 mod app_passwords;
 mod federated;
@@ -120,6 +120,15 @@ fn is_constraint(error: &rusqlite::Error) -> bool {
 /// operation, never SQL text or row contents.
 fn internal(error: impl std::fmt::Display) -> StoreError {
     StoreError::Internal(error.to_string())
+}
+
+/// Store failure from a lane or pool error: busy stays busy, the rest is
+/// [`internal`].
+fn store_error(error: crate::db::DbError) -> StoreError {
+    match error {
+        crate::db::DbError::Busy { .. } => StoreError::Busy,
+        error => internal(error),
+    }
 }
 
 /// Log-safe federated failure, same rule as [`internal`].

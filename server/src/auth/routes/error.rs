@@ -120,6 +120,7 @@ impl From<UsersError> for AuthRouteError {
             UsersError::Unavailable { error_id } | UsersError::Upstream { error_id } => {
                 Self::Unavailable { error_id }
             }
+            UsersError::Busy { error_id } => Self::Busy { error_id },
             UsersError::Internal { error_id } => Self::Internal { error_id },
         }
     }

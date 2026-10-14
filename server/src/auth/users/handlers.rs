@@ -10,7 +10,7 @@ use axum::{
     Json,
     body::{Body, Bytes, to_bytes},
     extract::{FromRequest, Path, Query, Request, State},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use serde::de::DeserializeOwned;
@@ -86,6 +86,18 @@ impl IntoResponse for UsersHttpError {
                 FIXED_UPSTREAM_MESSAGE,
                 &error_id,
             ),
+            UsersError::Busy { error_id } => {
+                let mut response = fault_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    INTERNAL_ERROR,
+                    FIXED_INTERNAL_MESSAGE,
+                    &error_id,
+                );
+                response
+                    .headers_mut()
+                    .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+                response
+            }
             UsersError::Internal { error_id } => fault_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 INTERNAL_ERROR,

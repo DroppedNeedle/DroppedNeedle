@@ -29,6 +29,8 @@ pub enum LibraryFailure {
     InvalidInput(String),
     /// Not allowed. The message is user-facing.
     Forbidden(String),
+    /// The database was too busy to answer in time. Names the operation.
+    Busy(String),
     /// Store or port fault. The string goes to the log only.
     Internal(String),
 }
@@ -36,6 +38,7 @@ pub enum LibraryFailure {
 impl From<StoreError> for LibraryFailure {
     fn from(error: StoreError) -> Self {
         match error {
+            StoreError::Busy(operation) => Self::Busy(operation),
             StoreError::Internal(cause) => Self::Internal(cause),
         }
     }

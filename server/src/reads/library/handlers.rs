@@ -55,6 +55,9 @@ impl FromRequestParts<LibraryDeps> for LibraryUser {
                 UserStoreError::Conflict => LibraryError::InvalidInput {
                     message: "Conflicting state".to_owned(),
                 },
+                UserStoreError::Busy => {
+                    LibraryError::busy(&UserStoreError::Busy, state.ids.as_ref())
+                }
                 UserStoreError::Internal(cause) => {
                     LibraryError::internal(&cause, state.ids.as_ref())
                 }
@@ -95,6 +98,7 @@ fn failed(failure: LibraryFailure, deps: &LibraryDeps) -> LibraryError {
         LibraryFailure::NotFound => LibraryError::NotFound,
         LibraryFailure::InvalidInput(message) => LibraryError::InvalidInput { message },
         LibraryFailure::Forbidden(message) => LibraryError::Forbidden { message },
+        LibraryFailure::Busy(operation) => LibraryError::busy(&operation, deps.ids.as_ref()),
         LibraryFailure::Internal(cause) => LibraryError::internal(&cause, deps.ids.as_ref()),
     }
 }

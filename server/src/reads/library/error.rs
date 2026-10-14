@@ -45,6 +45,11 @@ pub enum LibraryError {
         /// What was wrong.
         message: String,
     },
+    /// The database was too busy to answer in time: 503 with `Retry-After`.
+    Busy {
+        /// Ties the wire response to the server log line.
+        error_id: String,
+    },
     /// Server fault. Fixed body plus the request-tied id.
     Internal {
         /// Ties the wire response to the server log line.
@@ -60,12 +65,20 @@ impl LibraryError {
         Self::Internal { error_id }
     }
 
+    /// Build a busy 503, logged as a warning with its id.
+    pub fn busy(cause: &dyn std::fmt::Display, ids: &dyn IdGenerator) -> Self {
+        let error_id = ids.new_id();
+        tracing::warn!(error_id, %cause, "library request busy; answering 503 with retry");
+        Self::Busy { error_id }
+    }
+
     fn status(&self) -> StatusCode {
         match self {
             Self::Unauthorized { .. } => StatusCode::UNAUTHORIZED,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::Forbidden { .. } => StatusCode::FORBIDDEN,
             Self::InvalidInput { .. } => StatusCode::BAD_REQUEST,
+            Self::Busy { .. } => StatusCode::SERVICE_UNAVAILABLE,
             Self::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -82,7 +95,7 @@ impl LibraryError {
                 (crate::error::FORBIDDEN.to_owned(), message.clone(), None)
             }
             Self::InvalidInput { message } => (INVALID_INPUT.to_owned(), message.clone(), None),
-            Self::Internal { error_id } => (
+            Self::Busy { error_id } | Self::Internal { error_id } => (
                 crate::error::INTERNAL_ERROR.to_owned(),
                 crate::error::FIXED_INTERNAL_MESSAGE.to_owned(),
                 Some(json!({ "error_id": error_id })),
@@ -102,6 +115,12 @@ impl IntoResponse for LibraryError {
     fn into_response(self) -> Response {
         let status = self.status();
         let mut response = (status, Json(self.envelope())).into_response();
+        if status == StatusCode::SERVICE_UNAVAILABLE {
+            response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                HeaderValue::from_static("1"),
+            );
+        }
         if status == StatusCode::UNAUTHORIZED
             && let Ok(challenge) = HeaderValue::from_str(WWW_AUTHENTICATE_BEARER)
         {

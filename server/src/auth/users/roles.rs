@@ -142,6 +142,7 @@ async fn resolve(parts: &Parts, deps: &UsersDeps) -> Result<AuthContext, UsersEr
                 message: "Conflicting state".to_owned(),
             },
             StoreError::Internal(cause) => UsersError::internal(&cause, deps.ids.as_ref()),
+            StoreError::Busy => UsersError::busy(deps.ids.as_ref()),
         })?
         .ok_or_else(missing_session)?;
     Ok(AuthContext {
