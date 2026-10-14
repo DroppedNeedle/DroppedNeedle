@@ -8,6 +8,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+use crate::auth::compat_auth::jellyfin::PolicyFacts;
+
 // ===== System / identity =====
 
 /// `GET /System/Info/Public` shape (v2 `PublicSystemInfo`).
@@ -114,12 +116,17 @@ impl Default for UserConfiguration {
 /// present or Finamp's non-nullable casts crash login (v2 issues #144, #376).
 ///
 /// A permission is true only when the Jellyfin API here lets the user do
-/// it. Nothing can be deleted through it, it has no collections, and it
-/// takes no lyrics or subtitles, so those are false for everyone.
+/// it. Nothing can be deleted through it, it has no collections, channels,
+/// video, remuxing, sync jobs or SyncPlay groups, it takes no lyrics or
+/// subtitles and it saves no user preferences, so those are false (or
+/// `"None"`) for everyone.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct UserPolicy {
     pub is_administrator: bool,
+    /// True: Jellyfin hides a hidden user from the list of accounts it
+    /// shows before sign-in (`/Users/Public`, read in the 10.10.6 source),
+    /// and this API shows nobody there.
     pub is_hidden: bool,
     pub is_disabled: bool,
     pub enable_all_folders: bool,
@@ -129,6 +136,7 @@ pub struct UserPolicy {
     pub enable_all_devices: bool,
     pub enabled_devices: Vec<String>,
     pub enable_media_playback: bool,
+    /// True while transcoding is switched on and ffmpeg is present.
     pub enable_audio_playback_transcoding: bool,
     pub enable_video_playback_transcoding: bool,
     pub enable_playback_remuxing: bool,
@@ -169,26 +177,26 @@ pub struct UserPolicy {
 }
 
 impl UserPolicy {
-    /// Permissive defaults with `EnableAllFolders`, v2 `_user_dto` verbatim.
-    pub fn permissive(is_admin: bool) -> Self {
+    /// The policy of one user. Key for key what `login_echo_json` writes.
+    pub fn for_user(is_admin: bool, facts: PolicyFacts) -> Self {
         Self {
             is_administrator: is_admin,
-            is_hidden: false,
+            is_hidden: true,
             is_disabled: false,
             enable_all_folders: true,
             enabled_folders: Vec::new(),
-            enable_all_channels: true,
+            enable_all_channels: false,
             enabled_channels: Vec::new(),
             enable_all_devices: true,
             enabled_devices: Vec::new(),
             enable_media_playback: true,
-            enable_audio_playback_transcoding: true,
-            enable_video_playback_transcoding: true,
-            enable_playback_remuxing: true,
+            enable_audio_playback_transcoding: facts.audio_transcoding,
+            enable_video_playback_transcoding: false,
+            enable_playback_remuxing: false,
             enable_content_downloading: true,
             enable_remote_access: true,
-            enable_sync_transcoding: true,
-            enable_user_preference_access: true,
+            enable_sync_transcoding: false,
+            enable_user_preference_access: false,
             enable_live_tv_access: false,
             enable_live_tv_management: false,
             enable_content_deletion: false,
@@ -198,7 +206,7 @@ impl UserPolicy {
             enable_shared_device_control: false,
             invalid_login_attempt_count: 0,
             remote_client_bitrate_limit: 0,
-            sync_play_access: "CreateAndJoinGroups".to_owned(),
+            sync_play_access: "None".to_owned(),
             blocked_tags: Vec::new(),
             allowed_tags: Vec::new(),
             access_schedules: Vec::new(),

@@ -280,6 +280,14 @@ pub struct SessionFacts {
     pub remote_end_point: String,
 }
 
+/// The policy values that are not the same for every user at every moment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PolicyFacts {
+    /// Transcoding is switched on and ffmpeg is present, so a request for
+    /// transcoded audio is served.
+    pub audio_transcoding: bool,
+}
+
 /// The date Jellyfin 10.10.6 sends for "never" (.NET's `DateTime.MinValue`).
 const NEVER: &str = "0001-01-01T00:00:00.0000000Z";
 
@@ -291,8 +299,14 @@ const NEVER: &str = "0001-01-01T00:00:00.0000000Z";
 /// sign-in answer), each with what is true in this app: a permission is
 /// true only when the Jellyfin API here lets this user do it, and a key
 /// naming a part the app lacks (a sign-in provider, a cast receiver) is
-/// empty. The user object stays in step with `UserDto`.
-pub fn login_echo_json(user: &JellyfinUser, access_token: &str, session: &SessionFacts) -> String {
+/// empty. The user object stays in step with `UserDto`, and `UserPolicy`
+/// says why each policy value is what it is.
+pub fn login_echo_json(
+    user: &JellyfinUser,
+    access_token: &str,
+    session: &SessionFacts,
+    policy: PolicyFacts,
+) -> String {
     let server_id = server_id();
     let name = effective_name(user);
     let is_admin = user.role == "admin";
@@ -325,22 +339,27 @@ pub fn login_echo_json(user: &JellyfinUser, access_token: &str, session: &Sessio
     push_kv(&mut out, false, "CastReceiverId", "");
     out.push_str("},\"Policy\":{");
     push_bool(&mut out, true, "IsAdministrator", is_admin);
-    push_bool(&mut out, false, "IsHidden", false);
+    push_bool(&mut out, false, "IsHidden", true);
     push_bool(&mut out, false, "IsDisabled", false);
     push_bool(&mut out, false, "EnableAllFolders", true);
     push_raw(&mut out, false, "EnabledFolders", "[]");
-    push_bool(&mut out, false, "EnableAllChannels", true);
+    push_bool(&mut out, false, "EnableAllChannels", false);
     push_raw(&mut out, false, "EnabledChannels", "[]");
     push_bool(&mut out, false, "EnableAllDevices", true);
     push_raw(&mut out, false, "EnabledDevices", "[]");
     push_bool(&mut out, false, "EnableMediaPlayback", true);
-    push_bool(&mut out, false, "EnableAudioPlaybackTranscoding", true);
-    push_bool(&mut out, false, "EnableVideoPlaybackTranscoding", true);
-    push_bool(&mut out, false, "EnablePlaybackRemuxing", true);
+    push_bool(
+        &mut out,
+        false,
+        "EnableAudioPlaybackTranscoding",
+        policy.audio_transcoding,
+    );
+    push_bool(&mut out, false, "EnableVideoPlaybackTranscoding", false);
+    push_bool(&mut out, false, "EnablePlaybackRemuxing", false);
     push_bool(&mut out, false, "EnableContentDownloading", true);
     push_bool(&mut out, false, "EnableRemoteAccess", true);
-    push_bool(&mut out, false, "EnableSyncTranscoding", true);
-    push_bool(&mut out, false, "EnableUserPreferenceAccess", true);
+    push_bool(&mut out, false, "EnableSyncTranscoding", false);
+    push_bool(&mut out, false, "EnableUserPreferenceAccess", false);
     push_bool(&mut out, false, "EnableLiveTvAccess", false);
     push_bool(&mut out, false, "EnableLiveTvManagement", false);
     push_bool(&mut out, false, "EnableContentDeletion", false);
@@ -350,7 +369,7 @@ pub fn login_echo_json(user: &JellyfinUser, access_token: &str, session: &Sessio
     push_bool(&mut out, false, "EnableSharedDeviceControl", false);
     push_raw(&mut out, false, "InvalidLoginAttemptCount", "0");
     push_raw(&mut out, false, "RemoteClientBitrateLimit", "0");
-    push_kv(&mut out, false, "SyncPlayAccess", "CreateAndJoinGroups");
+    push_kv(&mut out, false, "SyncPlayAccess", "None");
     push_raw(&mut out, false, "BlockedTags", "[]");
     push_raw(&mut out, false, "AllowedTags", "[]");
     push_raw(&mut out, false, "AccessSchedules", "[]");

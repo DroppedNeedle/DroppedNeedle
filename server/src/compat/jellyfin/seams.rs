@@ -20,7 +20,7 @@
 //! - Playback sessions: [`PlaybackSessions`]. Production binds the
 //!   scrobble adapter (presence + scrobble forwarding).
 
-use crate::auth::compat_auth::jellyfin::{JellyfinUser, effective_name};
+use crate::auth::compat_auth::jellyfin::{JellyfinUser, PolicyFacts, effective_name};
 
 use super::models::UserDto;
 
@@ -45,6 +45,15 @@ pub struct JellyfinSettings {
     pub transcode_default_format: String,
     /// Whether ffmpeg is present (silent direct fallback when absent).
     pub ffmpeg_available: bool,
+}
+
+impl JellyfinSettings {
+    /// The policy values that depend on these settings.
+    pub fn policy_facts(&self) -> PolicyFacts {
+        PolicyFacts {
+            audio_transcoding: self.transcoding_enabled && self.ffmpeg_available,
+        }
+    }
 }
 
 impl Default for JellyfinSettings {
@@ -94,7 +103,7 @@ impl Principal {
     /// request in unix seconds. An app password with no recorded use is
     /// being used for the first time by this request, so its last use is
     /// `now` as well.
-    pub fn user_dto(&self, server_id: &str, now: f64) -> UserDto {
+    pub fn user_dto(&self, server_id: &str, now: f64, policy: PolicyFacts) -> UserDto {
         let last_used = self.last_used_at.map_or(now, |at| at as f64);
         UserDto {
             id: self.id.clone(),
@@ -107,7 +116,7 @@ impl Principal {
             last_login_date: super::builders::iso_o(Some(last_used)),
             last_activity_date: super::builders::iso_o(Some(now)),
             configuration: super::models::UserConfiguration::default(),
-            policy: super::models::UserPolicy::permissive(self.role == "admin"),
+            policy: super::models::UserPolicy::for_user(self.role == "admin", policy),
         }
     }
 }

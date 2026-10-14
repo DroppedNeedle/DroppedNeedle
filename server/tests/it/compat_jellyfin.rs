@@ -224,22 +224,22 @@ fn expected_user(name: &str, id: &str, is_admin: bool) -> Value {
     });
     user["Policy"] = json!({
         "IsAdministrator": is_admin,
-        "IsHidden": false,
+        "IsHidden": true,
         "IsDisabled": false,
         "EnableAllFolders": true,
         "EnabledFolders": [],
-        "EnableAllChannels": true,
+        "EnableAllChannels": false,
         "EnabledChannels": [],
         "EnableAllDevices": true,
         "EnabledDevices": [],
         "EnableMediaPlayback": true,
         "EnableAudioPlaybackTranscoding": true,
-        "EnableVideoPlaybackTranscoding": true,
-        "EnablePlaybackRemuxing": true,
+        "EnableVideoPlaybackTranscoding": false,
+        "EnablePlaybackRemuxing": false,
         "EnableContentDownloading": true,
         "EnableRemoteAccess": true,
-        "EnableSyncTranscoding": true,
-        "EnableUserPreferenceAccess": true,
+        "EnableSyncTranscoding": false,
+        "EnableUserPreferenceAccess": false,
         "EnableLiveTvAccess": false,
         "EnableLiveTvManagement": false,
         "EnableContentDeletion": false,
@@ -249,7 +249,7 @@ fn expected_user(name: &str, id: &str, is_admin: bool) -> Value {
         "EnableSharedDeviceControl": false,
         "InvalidLoginAttemptCount": 0,
         "RemoteClientBitrateLimit": 0,
-        "SyncPlayAccess": "CreateAndJoinGroups",
+        "SyncPlayAccess": "None",
         "BlockedTags": [],
         "AllowedTags": [],
         "AccessSchedules": [],
@@ -486,6 +486,31 @@ async fn login_echoes_the_app_password_and_users_me_matches() {
     }
     for uri in ["/jellyfin/Users/Me", "/jellyfin/Users/someone-else"] {
         assert_shape(&fx.json(uri, Some(&auth)).await, &signed_in, uri);
+    }
+
+    // Transcoded audio is offered only while it can be served.
+    let transcoding = "EnableAudioPlaybackTranscoding";
+    for cannot in [
+        JellyfinSettings {
+            ffmpeg_available: false,
+            ..settings()
+        },
+        JellyfinSettings {
+            transcoding_enabled: false,
+            ..settings()
+        },
+    ] {
+        let echo = send(fx.app(cannot.clone()), "POST", login, None, body.as_bytes()).await;
+        assert_eq!(echo.json()["User"]["Policy"][transcoding], false);
+        let me = send(
+            fx.app(cannot),
+            "GET",
+            "/jellyfin/Users/Me",
+            Some(&auth),
+            b"",
+        )
+        .await;
+        assert_eq!(me.json()["Policy"][transcoding], false);
     }
 }
 

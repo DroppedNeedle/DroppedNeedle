@@ -238,7 +238,11 @@ where
         application_version,
         remote_end_point,
     };
-    raw_json(StatusCode::OK, &login_echo_json(&user, &login.pw, &facts))
+    let policy = state.settings.jellyfin().policy_facts();
+    raw_json(
+        StatusCode::OK,
+        &login_echo_json(&user, &login.pw, &facts, policy),
+    )
 }
 
 fn unix_now() -> f64 {
@@ -267,7 +271,11 @@ where
     match authed(&state.passwords, &headers, query.as_deref()).await {
         Ok(authed) => json(
             StatusCode::OK,
-            &authed.principal.user_dto(&server_id(), unix_now()),
+            &authed.principal.user_dto(
+                &server_id(),
+                unix_now(),
+                state.settings.jellyfin().policy_facts(),
+            ),
         ),
         Err(denied) => denied,
     }

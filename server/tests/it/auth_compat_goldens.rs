@@ -5,7 +5,7 @@
 #[allow(dead_code)]
 use droppedneedle::auth::compat_auth::fakes::FakeCompatPasswords;
 use droppedneedle::auth::compat_auth::jellyfin::{
-    JellyfinRequest, JellyfinUser, MAX_AUTH_VALUE_LENGTH, SessionFacts, UNAUTHORIZED,
+    JellyfinRequest, JellyfinUser, MAX_AUTH_VALUE_LENGTH, PolicyFacts, SessionFacts, UNAUTHORIZED,
     authenticate_by_name, effective_name, extract_client, extract_device, extract_token,
     login_echo_json, resolve_token, server_id,
 };
@@ -547,6 +547,10 @@ fn jellyfin_user() -> JellyfinUser {
     }
 }
 
+const POLICY: PolicyFacts = PolicyFacts {
+    audio_transcoding: true,
+};
+
 fn session_facts() -> SessionFacts {
     SessionFacts {
         id: "0123456789abcdef0123456789abcdef".to_owned(),
@@ -562,10 +566,10 @@ fn session_facts() -> SessionFacts {
 #[test]
 fn jellyfin_login_echo_golden() {
     assert_eq!(effective_name(&jellyfin_user()), "Alice");
-    let echo = login_echo_json(&jellyfin_user(), "pw-1", &session_facts());
+    let echo = login_echo_json(&jellyfin_user(), "pw-1", &session_facts(), POLICY);
     assert_eq!(
         echo,
-        "{\"User\":{\"Id\":\"user-7\",\"Name\":\"Alice\",\"ServerId\":\"2f54b621b8fde6d933fab26bd6378f85\",\"HasPassword\":true,\"HasConfiguredPassword\":true,\"HasConfiguredEasyPassword\":false,\"EnableAutoLogin\":false,\"LastLoginDate\":\"2026-09-28T12:00:00.1234560Z\",\"LastActivityDate\":\"2026-09-28T12:00:00.1234560Z\",\"Configuration\":{\"PlayDefaultAudioTrack\":true,\"SubtitleLanguagePreference\":\"\",\"DisplayMissingEpisodes\":false,\"GroupedFolders\":[],\"SubtitleMode\":\"Default\",\"DisplayCollectionsView\":false,\"EnableLocalPassword\":false,\"OrderedViews\":[],\"LatestItemsExcludes\":[],\"MyMediaExcludes\":[],\"HidePlayedInLatest\":true,\"RememberAudioSelections\":true,\"RememberSubtitleSelections\":true,\"EnableNextEpisodeAutoPlay\":true,\"CastReceiverId\":\"\"},\"Policy\":{\"IsAdministrator\":true,\"IsHidden\":false,\"IsDisabled\":false,\"EnableAllFolders\":true,\"EnabledFolders\":[],\"EnableAllChannels\":true,\"EnabledChannels\":[],\"EnableAllDevices\":true,\"EnabledDevices\":[],\"EnableMediaPlayback\":true,\"EnableAudioPlaybackTranscoding\":true,\"EnableVideoPlaybackTranscoding\":true,\"EnablePlaybackRemuxing\":true,\"EnableContentDownloading\":true,\"EnableRemoteAccess\":true,\"EnableSyncTranscoding\":true,\"EnableUserPreferenceAccess\":true,\"EnableLiveTvAccess\":false,\"EnableLiveTvManagement\":false,\"EnableContentDeletion\":false,\"EnableMediaConversion\":false,\"EnablePublicSharing\":false,\"EnableRemoteControlOfOtherUsers\":false,\"EnableSharedDeviceControl\":false,\"InvalidLoginAttemptCount\":0,\"RemoteClientBitrateLimit\":0,\"SyncPlayAccess\":\"CreateAndJoinGroups\",\"BlockedTags\":[],\"AllowedTags\":[],\"AccessSchedules\":[],\"BlockUnratedItems\":[],\"EnableCollectionManagement\":false,\"EnableSubtitleManagement\":false,\"EnableLyricManagement\":false,\"ForceRemoteSourceTranscoding\":false,\"EnableContentDeletionFromFolders\":[],\"LoginAttemptsBeforeLockout\":-1,\"MaxActiveSessions\":0,\"BlockedMediaFolders\":[],\"BlockedChannels\":[],\"AuthenticationProviderId\":\"\",\"PasswordResetProviderId\":\"\"}},\"AccessToken\":\"pw-1\",\"SessionInfo\":{\"Id\":\"0123456789abcdef0123456789abcdef\",\"UserId\":\"user-7\",\"UserName\":\"Alice\",\"LastActivityDate\":\"2026-09-28T12:00:00.1234560Z\",\"Client\":\"Finamp\",\"DeviceName\":\"Pixel\",\"DeviceId\":\"dev-1\",\"IsActive\":true,\"SupportsRemoteControl\":false,\"SupportsMediaControl\":false,\"HasCustomDeviceName\":false,\"ServerId\":\"2f54b621b8fde6d933fab26bd6378f85\",\"PlayState\":{\"CanSeek\":false,\"IsPaused\":false,\"IsMuted\":false,\"RepeatMode\":\"RepeatNone\",\"PlaybackOrder\":\"Default\"},\"AdditionalUsers\":[],\"Capabilities\":{\"PlayableMediaTypes\":[],\"SupportedCommands\":[],\"SupportsMediaControl\":false,\"SupportsPersistentIdentifier\":true},\"RemoteEndPoint\":\"203.0.113.7\",\"PlayableMediaTypes\":[],\"LastPlaybackCheckIn\":\"0001-01-01T00:00:00.0000000Z\",\"ApplicationVersion\":\"0.9.4\",\"NowPlayingQueue\":[],\"NowPlayingQueueFullItems\":[],\"SupportedCommands\":[]},\"ServerId\":\"2f54b621b8fde6d933fab26bd6378f85\"}"
+        "{\"User\":{\"Id\":\"user-7\",\"Name\":\"Alice\",\"ServerId\":\"2f54b621b8fde6d933fab26bd6378f85\",\"HasPassword\":true,\"HasConfiguredPassword\":true,\"HasConfiguredEasyPassword\":false,\"EnableAutoLogin\":false,\"LastLoginDate\":\"2026-09-28T12:00:00.1234560Z\",\"LastActivityDate\":\"2026-09-28T12:00:00.1234560Z\",\"Configuration\":{\"PlayDefaultAudioTrack\":true,\"SubtitleLanguagePreference\":\"\",\"DisplayMissingEpisodes\":false,\"GroupedFolders\":[],\"SubtitleMode\":\"Default\",\"DisplayCollectionsView\":false,\"EnableLocalPassword\":false,\"OrderedViews\":[],\"LatestItemsExcludes\":[],\"MyMediaExcludes\":[],\"HidePlayedInLatest\":true,\"RememberAudioSelections\":true,\"RememberSubtitleSelections\":true,\"EnableNextEpisodeAutoPlay\":true,\"CastReceiverId\":\"\"},\"Policy\":{\"IsAdministrator\":true,\"IsHidden\":true,\"IsDisabled\":false,\"EnableAllFolders\":true,\"EnabledFolders\":[],\"EnableAllChannels\":false,\"EnabledChannels\":[],\"EnableAllDevices\":true,\"EnabledDevices\":[],\"EnableMediaPlayback\":true,\"EnableAudioPlaybackTranscoding\":true,\"EnableVideoPlaybackTranscoding\":false,\"EnablePlaybackRemuxing\":false,\"EnableContentDownloading\":true,\"EnableRemoteAccess\":true,\"EnableSyncTranscoding\":false,\"EnableUserPreferenceAccess\":false,\"EnableLiveTvAccess\":false,\"EnableLiveTvManagement\":false,\"EnableContentDeletion\":false,\"EnableMediaConversion\":false,\"EnablePublicSharing\":false,\"EnableRemoteControlOfOtherUsers\":false,\"EnableSharedDeviceControl\":false,\"InvalidLoginAttemptCount\":0,\"RemoteClientBitrateLimit\":0,\"SyncPlayAccess\":\"None\",\"BlockedTags\":[],\"AllowedTags\":[],\"AccessSchedules\":[],\"BlockUnratedItems\":[],\"EnableCollectionManagement\":false,\"EnableSubtitleManagement\":false,\"EnableLyricManagement\":false,\"ForceRemoteSourceTranscoding\":false,\"EnableContentDeletionFromFolders\":[],\"LoginAttemptsBeforeLockout\":-1,\"MaxActiveSessions\":0,\"BlockedMediaFolders\":[],\"BlockedChannels\":[],\"AuthenticationProviderId\":\"\",\"PasswordResetProviderId\":\"\"}},\"AccessToken\":\"pw-1\",\"SessionInfo\":{\"Id\":\"0123456789abcdef0123456789abcdef\",\"UserId\":\"user-7\",\"UserName\":\"Alice\",\"LastActivityDate\":\"2026-09-28T12:00:00.1234560Z\",\"Client\":\"Finamp\",\"DeviceName\":\"Pixel\",\"DeviceId\":\"dev-1\",\"IsActive\":true,\"SupportsRemoteControl\":false,\"SupportsMediaControl\":false,\"HasCustomDeviceName\":false,\"ServerId\":\"2f54b621b8fde6d933fab26bd6378f85\",\"PlayState\":{\"CanSeek\":false,\"IsPaused\":false,\"IsMuted\":false,\"RepeatMode\":\"RepeatNone\",\"PlaybackOrder\":\"Default\"},\"AdditionalUsers\":[],\"Capabilities\":{\"PlayableMediaTypes\":[],\"SupportedCommands\":[],\"SupportsMediaControl\":false,\"SupportsPersistentIdentifier\":true},\"RemoteEndPoint\":\"203.0.113.7\",\"PlayableMediaTypes\":[],\"LastPlaybackCheckIn\":\"0001-01-01T00:00:00.0000000Z\",\"ApplicationVersion\":\"0.9.4\",\"NowPlayingQueue\":[],\"NowPlayingQueueFullItems\":[],\"SupportedCommands\":[]},\"ServerId\":\"2f54b621b8fde6d933fab26bd6378f85\"}"
     );
     let parsed: serde_json::Value = serde_json::from_str(&echo).unwrap();
     assert_eq!(parsed["AccessToken"], "pw-1");
@@ -586,7 +590,7 @@ fn jellyfin_login_echo_strips_missing_session_fields_and_echoes_verbatim() {
         application_version: Some("1\"}\\\n\u{1}".to_owned()),
         remote_end_point: String::new(),
     };
-    let echo = login_echo_json(&user, "a\"b\\c", &facts);
+    let echo = login_echo_json(&user, "a\"b\\c", &facts, POLICY);
     assert!(echo.contains("\"IsAdministrator\":false"));
     assert!(echo.contains("\"AccessToken\":\"a\\\"b\\\\c\""));
     assert!(!echo.contains("\"Client\""));
