@@ -19,7 +19,11 @@
 	import AlbumPluginDetails from './AlbumPluginDetails.svelte';
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import LibraryAlbumCard from '$lib/components/library/LibraryAlbumCard.svelte';
-	import { getLibraryAlbumCopiesQuery } from '$lib/queries/library/LibraryQueries.svelte';
+	import {
+		getLibraryAlbumCopiesQuery,
+		getLibraryAlbumDetailQuery,
+		getLibraryAlbumStatusQuery
+	} from '$lib/queries/library/LibraryQueries.svelte';
 	import LocalAlbumPage from './LocalAlbumPage.svelte';
 
 	// The outage fallback only needs the local id; the v3 album view the
@@ -32,8 +36,22 @@
 	let { data, localAlbum }: Props = $props();
 
 	const state = createAlbumPageState(() => data.albumId);
-	const localCopiesQuery = getLibraryAlbumCopiesQuery(() => data.albumId);
-	const localCopies = $derived(localCopiesQuery.data?.items ?? []);
+	// The page is keyed by release group, but the library reads take local
+	// album ids: the album status names the local album holding the group,
+	// and its copies are the group's other local albums. A status that echoes
+	// the asked id back found no local album.
+	const libraryStatusQuery = getLibraryAlbumStatusQuery(() => data.albumId);
+	const localAlbumId = $derived.by(() => {
+		if (localAlbum) return localAlbum.id;
+		const statusAlbumId = libraryStatusQuery.data?.album_id;
+		return statusAlbumId && statusAlbumId !== data.albumId ? statusAlbumId : '';
+	});
+	const localAlbumQuery = getLibraryAlbumDetailQuery(() => localAlbumId);
+	const localCopiesQuery = getLibraryAlbumCopiesQuery(() => localAlbumId);
+	const fallbackAlbum = $derived(localAlbum ?? localAlbumQuery.data ?? null);
+	const localCopies = $derived(
+		localAlbumQuery.data ? [localAlbumQuery.data, ...(localCopiesQuery.data?.items ?? [])] : []
+	);
 	const primaryError = $derived(state.primaryError);
 	const albumNotFound = $derived(primaryError instanceof ApiError && primaryError.status === 404);
 	const providerUnavailable = $derived.by(() => {
@@ -60,7 +78,7 @@
 				<span>Album not found.</span>
 			</div>
 		</div>
-	{:else if providerUnavailable && localAlbum}
+	{:else if providerUnavailable && fallbackAlbum}
 		<div class="mb-4 flex justify-center">
 			<div class="alert alert-info text-sm">
 				<span
@@ -69,7 +87,7 @@
 				>
 			</div>
 		</div>
-		<LocalAlbumPage albumId={localAlbum.id} />
+		<LocalAlbumPage albumId={fallbackAlbum.id} />
 	{:else if providerUnavailable}
 		<div class="flex items-center justify-center min-h-[50vh]">
 			<div class="alert alert-error">

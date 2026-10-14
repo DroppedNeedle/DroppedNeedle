@@ -22,6 +22,8 @@ const {
 	mockHeldData,
 	mockLibraryStatusData,
 	mockLocalCopiesData,
+	mockLocalDetailData,
+	mockEditionsData,
 	mockLocalMatch,
 	mockNavidromeMatch
 } = vi.hoisted(() => ({
@@ -44,7 +46,9 @@ const {
 	mockDownloadsData: { value: undefined as unknown },
 	mockHeldData: { value: { items: [] } as unknown },
 	mockLibraryStatusData: { value: undefined as unknown },
-	mockLocalCopiesData: { value: { items: [] } as unknown }
+	mockLocalCopiesData: { value: {} as Record<string, unknown> },
+	mockLocalDetailData: { value: {} as Record<string, unknown> },
+	mockEditionsData: { value: undefined as unknown }
 }));
 
 vi.mock('$app/environment', () => ({ browser: true }));
@@ -140,14 +144,17 @@ vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 		},
 		refetch: vi.fn()
 	}),
-	getLibraryAlbumCopiesQuery: () => ({
+	// Keyed by the asked id: these reads only answer local album ids.
+	getLibraryAlbumCopiesQuery: (getAlbumId: () => string) => ({
 		get data() {
-			return mockLocalCopiesData.value;
+			return mockLocalCopiesData.value[getAlbumId()];
 		},
 		isLoading: false
 	}),
-	getLibraryAlbumDetailQuery: () => ({
-		data: undefined,
+	getLibraryAlbumDetailQuery: (getAlbumId: () => string) => ({
+		get data() {
+			return mockLocalDetailData.value[getAlbumId()];
+		},
 		isLoading: false,
 		isError: false
 	}),
@@ -211,7 +218,7 @@ vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
 vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	getAlbumEditionsQuery: () => ({
 		get data() {
-			return undefined;
+			return mockEditionsData.value;
 		}
 	}),
 	setEditionPin: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -326,6 +333,12 @@ vi.mock('$lib/components/NowPlayingIndicator.svelte', () => {
 	Comp.prototype = {};
 	return { default: Comp };
 });
+// The re-identify control reads its own queries; its presence is not what these specs check.
+vi.mock('./LocalAlbumIdentificationControl.svelte', () => {
+	const Comp = function () {};
+	Comp.prototype = {};
+	return { default: Comp };
+});
 
 vi.mock('$lib/player/launchJellyfinPlayback', () => ({ launchJellyfinPlayback: vi.fn() }));
 vi.mock('$lib/player/launchLocalPlayback', () => ({ launchLocalPlayback: vi.fn() }));
@@ -352,7 +365,9 @@ describe('album detail page track rendering', () => {
 		mockDownloadsData.value = undefined;
 		mockHeldData.value = { items: [] };
 		mockLibraryStatusData.value = undefined;
-		mockLocalCopiesData.value = { items: [] };
+		mockLocalCopiesData.value = {};
+		mockLocalDetailData.value = {};
+		mockEditionsData.value = undefined;
 		mockHydrateDetailCacheEntry.mockImplementation(({ cache, onHydrate }: HydrateOptions) => {
 			if (cache === mockAlbumBasicCache) {
 				onHydrate({
@@ -654,5 +669,72 @@ describe('album detail page track rendering', () => {
 		const before = oldAlbumReads();
 		await options.onSuccess();
 		expect(oldAlbumReads()).toBe(before);
+	});
+
+	describe('matched album edition controls', () => {
+		const localAlbumId = 'local-album-1';
+
+		function holdLocalCopy(): void {
+			mockLibraryStatusData.value = {
+				in_library: true,
+				album_id: localAlbumId,
+				track_count: 0,
+				tracks: []
+			};
+			mockLocalDetailData.value = {
+				[localAlbumId]: {
+					id: localAlbumId,
+					title: 'Visions',
+					artist_name: 'Grimes',
+					musicbrainz_release_group_id: albumId
+				}
+			};
+			mockLocalCopiesData.value = { [localAlbumId]: { items: [] } };
+		}
+
+		async function renderMatchedAlbum(): Promise<void> {
+			await render(AlbumPage, {
+				props: { data: { albumId } }
+			} as Parameters<typeof render<typeof AlbumPage>>[1]);
+			await expect.element(page.getByRole('heading', { name: 'Visions', level: 1 })).toBeVisible();
+		}
+
+		beforeEach(() => {
+			mockEditionsData.value = {
+				items: [
+					{
+						release_mbid: 'release-1',
+						disambiguation: null,
+						date: '2012-02-21',
+						country: 'US',
+						track_count: 4,
+						is_pinned: false
+					}
+				],
+				selected_release_mbid: 'release-1'
+			};
+		});
+
+		it('offers Change edition when the release group has a local copy', async () => {
+			holdLocalCopy();
+			await renderMatchedAlbum();
+
+			await expect.element(page.getByRole('button', { name: 'Change edition' })).toBeVisible();
+		});
+
+		it('offers no Change edition when the library holds no copy', async () => {
+			mockLibraryStatusData.value = {
+				in_library: false,
+				album_id: albumId,
+				track_count: 0,
+				tracks: []
+			};
+			await renderMatchedAlbum();
+
+			await expect.element(page.getByText(/Edition: Automatic/)).toBeVisible();
+			await expect
+				.element(page.getByRole('button', { name: 'Change edition' }))
+				.not.toBeInTheDocument();
+		});
 	});
 });
