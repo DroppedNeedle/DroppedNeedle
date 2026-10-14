@@ -6209,6 +6209,31 @@ impl ManagedLibrary {
             save_tags(&file, &edits).expect("track retagged");
             relative.push(rel);
         }
+        self.index_album(nth, &relative, edition).await
+    }
+
+    /// The fixture planted byte for byte, never retagged, as the only file
+    /// of the first album, so it keeps the fixture's release and track ids.
+    async fn add_untouched_album(&self, folder: &str, fixture: &str) -> (String, Vec<String>) {
+        let nth = self.albums.replace(self.albums.get() + 1);
+        assert_eq!(nth, 0, "only the first album keeps the fixture's ids");
+        let extension = Path::new(fixture)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .expect("fixture extension");
+        let rel = format!("{folder}/01.{extension}");
+        plant(&self.music, &rel, fixture);
+        self.index_album(nth, &[rel], |_| {}).await
+    }
+
+    /// Scan the `nth` album's planted files, identify the album and
+    /// confirm the match.
+    async fn index_album(
+        &self,
+        nth: u32,
+        relative: &[String],
+        edition: impl Fn(&mut Release),
+    ) -> (String, Vec<String>) {
         rescan(&self.library).await;
         let ids: Vec<String> = relative
             .iter()
@@ -6838,6 +6863,113 @@ fn native_values(path: &Path, field: droppedneedle::library::tags::TagField) -> 
         },
         other => panic!("no byte reader for {other}"),
     }
+}
+
+/// An MP3 whose ID3v2.3 tag also holds ID3v2.4 frames is managed like any
+/// other file: its preview warns that it is saved as ID3v2.4, Apply
+/// writes it so, and Undo and Restore originals put every value back in
+/// the ID3v2.4 tag.
+#[tokio::test]
+async fn a_mixed_id3v23_file_is_saved_as_v24() {
+    use crate::library_tags::{id3_frames, id3_txxx_values, mp3_audio_tail};
+    use droppedneedle::library::management::models::{Eligibility, Selection, SelectionKind};
+    use droppedneedle::library::management::restore::RestoreRequest;
+    use droppedneedle::library::tags::read_fields;
+
+    let managed = ManagedLibrary::start("lib-mixed-v23", |_| {}).await;
+    let (album, tracks) = managed
+        .add_untouched_album("mixed", "management_full_v23.mp3")
+        .await;
+    let file = || managed.path(&tracks[0]);
+    let original = read_fields(&file()).expect("tags read");
+    let audio = mp3_audio_tail(&std::fs::read(file()).expect("file reads")).to_vec();
+    let saved_as_v24 = |what: &str| {
+        assert_eq!(id3_frames(&file()).0, 4, "{what}");
+        let bytes = std::fs::read(file()).expect("file reads");
+        assert_eq!(mp3_audio_tail(&bytes), audio, "{what}: the audio");
+        assert_eq!(
+            id3_txxx_values(&file(), "CUSTOM_KEEP"),
+            vec!["opaque local value".to_owned()],
+            "{what}: an unrelated tag"
+        );
+    };
+
+    let (handle, items) = managed
+        .preview(SelectionKind::Albums, &[&album], "mixed")
+        .await;
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0].eligibility,
+        Eligibility::Warning,
+        "{:?}",
+        items[0].facts
+    );
+    assert!(items[0].diff.tags_changed);
+    assert!(
+        items[0].facts.warnings.iter().any(|warning| warning
+            == "Its ID3v2.3 tag also holds newer ID3v2.4 tags, so it is saved as ID3v2.4."),
+        "{:?}",
+        items[0].facts.warnings
+    );
+    let applied = management_apply(&managed.library, &handle).await;
+    assert_eq!(applied.job.state.as_str(), "succeeded");
+    saved_as_v24("applied");
+
+    let management = managed.management();
+    let detail = management.detail(&handle.job_id).expect("detail");
+    let undo = management
+        .undo_preview(&handle.job_id, detail.job.row_revision, "undo", "admin")
+        .expect("undo preview");
+    assert!(
+        management_step(&managed.library).await,
+        "undo planning runs"
+    );
+    let undone = management_apply(&managed.library, &undo).await;
+    assert_eq!(undone.job.state.as_str(), "succeeded");
+    assert_eq!(read_fields(&file()).expect("tags read"), original, "undone");
+    saved_as_v24("undone");
+
+    let (handle, _) = managed
+        .preview(SelectionKind::Albums, &[&album], "again")
+        .await;
+    let applied = management_apply(&managed.library, &handle).await;
+    assert_eq!(applied.job.state.as_str(), "succeeded");
+    let restore = management
+        .create_restore_preview(
+            RestoreRequest {
+                selection: Selection {
+                    kind: SelectionKind::Albums,
+                    ids: vec![album.clone()],
+                    catalog_filter: None,
+                },
+                expected_settings_revision: managed.settings_revision(),
+                expected_policy_revision: managed
+                    .library
+                    .live_registry()
+                    .policy_revision()
+                    .to_owned(),
+                idempotency_key: "restore".to_owned(),
+            },
+            "admin",
+        )
+        .expect("restore preview");
+    assert!(
+        management_step(&managed.library).await,
+        "restore planning runs"
+    );
+    let restored = management_apply(&managed.library, &restore).await;
+    assert_eq!(
+        restored.job.state.as_str(),
+        "succeeded",
+        "{:?}",
+        restored.job.terminal_code
+    );
+    assert_eq!(
+        read_fields(&file()).expect("tags read"),
+        original,
+        "restored"
+    );
+    saved_as_v24("restored");
 }
 
 /// The Picard profile applied to one album in every writable format

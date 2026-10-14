@@ -571,6 +571,14 @@ fn plan_file(
     item.diff.deferred_sources = tag_plan.deferred.clone();
     item.diff.field_mutations = tag_plan.mutations;
     item.diff.tags_changed = !tag_plan.updates.is_empty();
+    if item.diff.tags_changed {
+        // A tag write that also changes the file's ID3 version says so.
+        let notes = tags::save::id3_upgrade_notes(&path).map_err(|error| {
+            tracing::info!(%error, track = track.id, "tags unreadable at preview");
+            reasons::file_unreadable()
+        })?;
+        item.facts.warnings.extend(notes);
+    }
     item.diff.path_changed = moves;
     let mut outputs = Vec::new();
     let lyrics_settings = &ctx.pinned.profile.enrichment.lyrics;
