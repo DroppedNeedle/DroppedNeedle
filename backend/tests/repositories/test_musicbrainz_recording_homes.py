@@ -248,3 +248,28 @@ def test_unmatched_track_artist_keeps_album_above_compilations():
     assert best_home(candidates).release_group_mbid == "rg-willy"
     by_id = {c.release_group_mbid: c for c in candidates}
     assert classify_home(by_id["rg-va"]) is HomeTier.OTHER_COMPILATION
+
+
+def test_each_home_keeps_the_best_edition_carrying_the_recording():
+    homes = {
+        home.release_group_mbid: home
+        for home in _recording_homes_from_releases(
+            [
+                {
+                    **_release("rg-willy", status="Bootleg"),
+                    "id": "rel-boot",
+                    "date": "1960",
+                },
+                {
+                    **_release("rg-willy", status=None),
+                    "id": "rel-nostatus",
+                    "date": "1965",
+                },
+                {**_release("rg-willy"), "id": "rel-2008", "date": "2008-09-30"},
+                {**_release("rg-willy"), "id": "rel-1969", "date": "1969-11-02"},
+                {**_release("rg-chronicle"), "id": "REL-CHR"},
+            ]
+        )
+    }
+    assert homes["rg-willy"].release_mbid == "rel-1969"
+    assert homes["rg-chronicle"].release_mbid == "rel-chr"

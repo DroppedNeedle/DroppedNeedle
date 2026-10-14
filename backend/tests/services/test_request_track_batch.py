@@ -202,3 +202,25 @@ async def test_repeat_batch_reports_already_requested(tmp_path):
         "already_requested",
     )
     assert downloads.request_track.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_edition_carrying_the_recording_is_requested_and_recorded(tmp_path):
+    """Without an edition the downloader uses the album's default one, which
+    may not carry the recording and makes it refuse the request (#204)."""
+    service, store, downloads = _service(tmp_path)
+
+    await service.request_track_batch(
+        [_item(1, release_mbid="rel-1969"), _item(2)],
+        user_id="u1",
+        user_role="trusted",
+    )
+
+    calls = {
+        c.kwargs["recording_mbid"]: c.kwargs
+        for c in downloads.request_track.await_args_list
+    }
+    assert calls["rec-0001"]["release_mbid"] == "rel-1969"
+    assert calls["rec-0002"]["release_mbid"] is None
+    record = await store.async_get_record("rec-0001", request_kind="track")
+    assert record.release_mbid == "rel-1969"

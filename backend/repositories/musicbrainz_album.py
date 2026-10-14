@@ -269,22 +269,35 @@ def _recording_homes_from_releases(
     """Collapse a recording's releases to one home per release group.
 
     A group counts as official unless every one of the recording's releases
-    in it is a bootleg (or cancelled); a missing status is not evidence.
+    in it is a bootleg (or cancelled); a missing status is not evidence. Each
+    home keeps the edition best placed to supply the recording: Official,
+    then no status, then others; earliest date; lowest MBID.
     """
     homes: dict[str, RecordingHome] = {}
+    edition_rank: dict[str, tuple[int, str, str]] = {}
     for release in releases:
         rg = release.get("release-group") or {}
         rg_id = normalize_mb_id(rg.get("id"))
         if not rg_id:
             continue
-        official = (
-            release.get("status") or ""
-        ).casefold() not in _UNOFFICIAL_RELEASE_STATUSES
+        status = (release.get("status") or "").casefold()
+        official = status not in _UNOFFICIAL_RELEASE_STATUSES
+        release_id = normalize_mb_id(release.get("id")) or None
+        rank = (
+            0 if status == "official" else 1 if not status else 2 if official else 3,
+            release.get("date") or "9999-99-99",
+            release_id or "~",
+        )
         current = homes.get(rg_id)
         if current is not None:
             if official and not current.official:
-                homes[rg_id] = msgspec.structs.replace(current, official=True)
+                current = msgspec.structs.replace(current, official=True)
+            if release_id and rank < edition_rank[rg_id]:
+                current = msgspec.structs.replace(current, release_mbid=release_id)
+                edition_rank[rg_id] = rank
+            homes[rg_id] = current
             continue
+        edition_rank[rg_id] = rank
         credit = rg.get("artist-credit") or release.get("artist-credit") or []
         homes[rg_id] = RecordingHome(
             release_group_mbid=rg_id,
@@ -301,6 +314,7 @@ def _recording_homes_from_releases(
                 if isinstance(entry, dict)
                 and (artist_id := normalize_mb_id((entry.get("artist") or {}).get("id")))
             ),
+            release_mbid=release_id,
         )
     return [homes[key] for key in sorted(homes)]
 

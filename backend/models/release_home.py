@@ -120,6 +120,10 @@ class RecordingHome(msgspec.Struct, frozen=True):
     artist_credit: str
     first_release_date: str | None = None
     artist_mbids: tuple[str, ...] = ()
+    release_mbid: str | None = None
+    """An edition of this group that carries the recording (official, then
+    earliest), so a track request can name it instead of the group's default
+    edition, which may not hold this recording at all."""
 
     def to_candidate(self, *, credits_track_artist: bool) -> HomeCandidate:
         return HomeCandidate(

@@ -29,6 +29,7 @@ def _home(rg: str, **overrides) -> RecordingHome:
         "is_various": False,
         "artist_credit": "Creedence Clearwater Revival",
         "first_release_date": "1969-11-02",
+        "release_mbid": f"rel-{rg.lower()}",
     }
     fields.update(overrides)
     return RecordingHome(**fields)
@@ -160,3 +161,20 @@ async def test_batch_read_beyond_sqlite_parameter_limit(store):
     )
     assert len(got) == 1200
     assert got["rec-1199"][0].release_group_mbid == "rg-rec-1199"
+
+
+@pytest.mark.asyncio
+async def test_rows_without_an_edition_are_stale(store):
+    """Homes banked before editions were recorded must be refetched: a track
+    request needs the edition that carries the recording."""
+    await store.save_recording_release_groups(
+        "rec-old", [_home("rg-a", release_mbid=None)], source_context=_CONTEXT
+    )
+    await store.save_recording_release_groups(
+        "rec-new", [_home("rg-a")], source_context=_CONTEXT
+    )
+    got = await store.get_recording_release_groups(
+        ["rec-old", "rec-new"], source_context=_CONTEXT, max_age_seconds=_DAY
+    )
+    assert list(got) == ["rec-new"]
+    assert got["rec-new"][0].release_mbid == "rel-rg-a"

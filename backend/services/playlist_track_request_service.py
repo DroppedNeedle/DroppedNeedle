@@ -9,13 +9,13 @@ track. Ownership is enforced by the routes before any of this runs.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 from api.v1.schemas.request import BatchRequestResponse
 from api.v1.schemas.settings import PlaylistTrackRequestSettings
 from core.exceptions import ValidationError
-from models.release_home import CompilationPolicy, ResolutionStatus
+from models.release_home import CompilationPolicy, RecordingHome, ResolutionStatus
 from repositories.playlist_repository import PlaylistTrackRecord, TrackResolution
 from services.playlist_track_resolver import (
     PlaylistTrackResolver,
@@ -86,11 +86,15 @@ class PlaylistTrackRequestService:
         resolver_factory: Callable[[], PlaylistTrackResolver],
         request_service: _RequestService,
         preferences_service: _Preferences,
+        homes_lookup: Callable[[str], Awaitable[list[RecordingHome] | None]]
+        | None = None,
     ) -> None:
         self._playlists = playlist_repo
         self._resolver_factory = resolver_factory
         self._requests = request_service
         self._preferences = preferences_service
+        # Recording -> homes (durable-store first); names the edition to fetch.
+        self._homes_lookup = homes_lookup
 
     def defaults(self) -> PlaylistTrackRequestSettings:
         return self._preferences.get_playlist_track_request_settings()
@@ -132,11 +136,39 @@ class PlaylistTrackRequestService:
                 message="No resolved tracks left to request",
                 status="nothing_to_request",
             )
+        for item in items:
+            item["release_mbid"] = await self._edition_for(
+                item["recording_mbid"], item["release_group_mbid"]
+            )
         return await self._requests.request_track_batch(
             items,
             user_id=user_id,
             user_role=user_role,
             requested_by_name=requested_by_name,
+        )
+
+    async def _edition_for(self, recording_mbid: str, release_group_mbid: str) -> str | None:
+        """The edition of the chosen album that carries this recording.
+
+        Without it the downloader uses the album's default edition, which may
+        not hold the recording, and refuses the request. None keeps that
+        default (lookup unavailable or failed).
+        """
+        if self._homes_lookup is None:
+            return None
+        try:
+            homes = await self._homes_lookup(recording_mbid)
+        except Exception:  # noqa: BLE001 - the default edition is the fallback
+            logger.warning("playlist.request edition lookup failed")
+            return None
+        wanted = release_group_mbid.casefold()
+        return next(
+            (
+                home.release_mbid
+                for home in homes or []
+                if home.release_group_mbid.casefold() == wanted and home.release_mbid
+            ),
+            None,
         )
 
     async def choose_home(

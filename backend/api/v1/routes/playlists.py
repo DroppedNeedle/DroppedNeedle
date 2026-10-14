@@ -151,11 +151,17 @@ def get_playlist_track_request_service(
             priority=RequestPriority.BACKGROUND_SYNC,
         )
 
+    async def homes(recording_mbid: str):
+        return await mb_repo.get_recording_homes(
+            recording_mbid, priority=RequestPriority.BACKGROUND_SYNC
+        )
+
     return PlaylistTrackRequestService(
         playlist_repo=repository,
         resolver_factory=resolver,
         request_service=request_service,
         preferences_service=get_preferences_service(),
+        homes_lookup=homes,
     )
 
 

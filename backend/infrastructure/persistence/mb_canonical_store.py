@@ -179,6 +179,7 @@ class MbCanonicalStore(PersistenceBase):
                     artist_credit TEXT NOT NULL DEFAULT '',
                     first_release_date TEXT,
                     artist_mbids TEXT NOT NULL DEFAULT '[]',
+                    release_mbid TEXT,
                     PRIMARY KEY (recording_mbid_lower, rg_mbid_lower)
                 )
                 """
@@ -212,6 +213,10 @@ class MbCanonicalStore(PersistenceBase):
                 conn,
                 "ALTER TABLE recording_release_groups "
                 "ADD COLUMN artist_mbids TEXT NOT NULL DEFAULT '[]'",
+            )
+            _safe_alter(
+                conn,
+                "ALTER TABLE recording_release_groups ADD COLUMN release_mbid TEXT",
             )
             self._ratchet_source_labels(conn)
             conn.commit()
@@ -579,10 +584,15 @@ class MbCanonicalStore(PersistenceBase):
                 chunk = normalized[start : start + _IN_CLAUSE_CHUNK]
                 placeholders = ",".join("?" for _ in chunk)
                 fetched = conn.execute(
-                    "SELECT recording_mbid_lower FROM recording_release_group_fetch "
+                    "SELECT recording_mbid_lower FROM recording_release_group_fetch f "
                     f"WHERE recording_mbid_lower IN ({placeholders}) "
                     "AND source_mode = ? AND source_id = ? "
-                    "AND source_generation = ? AND saved_at >= ?",
+                    "AND source_generation = ? AND saved_at >= ? "
+                    # Rows banked before editions were kept are stale: a track
+                    # request needs the edition that carries the recording.
+                    "AND NOT EXISTS (SELECT 1 FROM recording_release_groups g "
+                    "WHERE g.recording_mbid_lower = f.recording_mbid_lower "
+                    "AND g.release_mbid IS NULL)",
                     [
                         *chunk,
                         source_context.source_mode,
@@ -617,6 +627,7 @@ class MbCanonicalStore(PersistenceBase):
                         artist_credit=str(row["artist_credit"]),
                         first_release_date=row["first_release_date"],
                         artist_mbids=tuple(json.loads(row["artist_mbids"])),
+                        release_mbid=row["release_mbid"],
                     )
                 )
             return result
@@ -653,8 +664,8 @@ class MbCanonicalStore(PersistenceBase):
                 INSERT INTO recording_release_groups (
                     recording_mbid_lower, rg_mbid_lower, title, primary_type,
                     secondary_types, official, is_various, artist_credit,
-                    first_release_date, artist_mbids
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    first_release_date, artist_mbids, release_mbid
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -668,6 +679,7 @@ class MbCanonicalStore(PersistenceBase):
                         home.artist_credit,
                         home.first_release_date,
                         json.dumps(list(home.artist_mbids)),
+                        home.release_mbid,
                     )
                     for rg, home in sorted(rows.items())
                 ],

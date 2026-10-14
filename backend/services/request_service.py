@@ -1132,6 +1132,9 @@ class RequestService:
                     "track_title": item.get("track_title") or "",
                     "duration_seconds": item.get("duration_seconds"),
                     "track_release_group_mbid": item.get("release_group_mbid"),
+                    # The edition carrying the recording; recorded so approval
+                    # later dispatches the same one.
+                    "release_mbid": item.get("release_mbid"),
                     "request_kind": "track",
                 }
                 for item in new_items
@@ -1210,7 +1213,7 @@ class RequestService:
                         release_group_mbid=record["track_release_group_mbid"],
                         artist_mbid=record["artist_mbid"],
                         origin="user",
-                        release_mbid=None,
+                        release_mbid=record["release_mbid"],
                     )
                     kwargs: dict[str, object] = {"request_kind": "track"}
                     if generation is not None:

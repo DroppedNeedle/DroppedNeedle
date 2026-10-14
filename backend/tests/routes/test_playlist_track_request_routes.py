@@ -4,6 +4,8 @@ the defaults endpoint."""
 
 import asyncio
 import threading
+
+import msgspec
 from unittest.mock import AsyncMock
 
 import pytest
@@ -423,3 +425,45 @@ def test_song_already_in_library_elsewhere_is_owned_not_requested(env, tmp_path)
     assert data["summary"]["owned"] == 2  # the seeded owned entry + Proud Mary
     items = requests.request_track_batch.await_args.args[0]
     assert [i["recording_mbid"] for i in items] == ["rec-fs"]
+
+
+def test_request_names_the_edition_that_carries_each_recording(env):
+    client, app, playlists, requests, prefs, sse = env
+    homes = {
+        "rec-fs": [
+            msgspec.structs.replace(
+                _home("rg-willy", "Willy"), release_mbid="rel-willy-1969"
+            ),
+        ],
+        "rec-pm": [],  # lookup knows nothing: keep the album's default edition
+    }
+
+    async def lookup(recording):
+        return homes.get(recording)
+
+    def service():
+        return PlaylistTrackRequestService(
+            playlist_repo=playlists.repository,
+            resolver_factory=lambda: PlaylistTrackResolver(
+                playlist_repo=playlists.repository,
+                mb_repo=_Mb(),
+                album_service=AsyncMock(),
+            ),
+            request_service=requests,
+            preferences_service=prefs,
+            homes_lookup=lookup,
+        )
+
+    app.dependency_overrides[playlist_routes.get_playlist_track_request_service] = (
+        service
+    )
+    pid = _seed_sync(client, playlists)
+
+    client.post(f"/playlists/{pid}/request-tracks", json={"mode": "auto"})
+
+    _wait(sse)
+    items = {
+        i["recording_mbid"]: i for i in requests.request_track_batch.await_args.args[0]
+    }
+    assert items["rec-fs"]["release_mbid"] == "rel-willy-1969"
+    assert items["rec-pm"]["release_mbid"] is None
