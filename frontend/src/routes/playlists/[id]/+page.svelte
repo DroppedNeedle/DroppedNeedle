@@ -166,8 +166,25 @@
 		return false;
 	}
 
+	// Local playback needs the row's library link, so a cached "local" for a
+	// row the server reports without one is stale: the file was removed
+	// (#204). Re-applying it would offer a source that can't play and hide
+	// the track from "Request all tracks".
+	function cacheContradictsLive(
+		cached: Record<string, string[]>,
+		tracks: PlaylistTrack[]
+	): boolean {
+		return tracks.some((t) => !t.library_file_id && (cached[t.id] ?? []).includes('local'));
+	}
+
 	async function resolveAndCacheSources(playlistId: string) {
-		const cached = getSourcesFromCache(playlistId);
+		let cached = getSourcesFromCache(playlistId);
+		if (cached && playlist && playlist.id === playlistId) {
+			if (cacheContradictsLive(cached, playlist.tracks)) {
+				invalidateSourcesCache(playlistId);
+				cached = null;
+			}
+		}
 		if (cached && playlist && playlist.id === playlistId) {
 			const ids = new Set(playlist.tracks.map((t) => t.id));
 			if (hasUsableSourcesForPlaylist(cached, ids)) {

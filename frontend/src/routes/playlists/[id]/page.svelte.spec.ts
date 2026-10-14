@@ -408,6 +408,25 @@ describe('Playlist detail page', () => {
 			.toBeVisible();
 	});
 
+	it('drops a cached local source once the library file is gone', async () => {
+		// The row was unlinked after its file was removed from the library.
+		detailQuery.data = makePlaylist({
+			tracks: [makeTrack({ id: 't-1', library_file_id: null, available_sources: null })]
+		});
+		localStorage.setItem(
+			'droppedneedle_playlist_sources_anon_pl-1',
+			JSON.stringify({ ts: Date.now(), data: { 't-1': ['local', 'navidrome'] } })
+		);
+		mockResolvePlaylistSources.mockResolvedValue({});
+		await renderDetail('pl-1');
+
+		// The stale cache is not trusted: sources are resolved live instead.
+		await vi.waitFor(() => {
+			expect(mockResolvePlaylistSources).toHaveBeenCalledWith('pl-1');
+		});
+		expect(localStorage.getItem('droppedneedle_playlist_sources_anon_pl-1')).toBeNull();
+	});
+
 	it('does not cache empty resolve results', async () => {
 		detailQuery.data = makePlaylist();
 		mockResolvePlaylistSources.mockResolvedValue({});
