@@ -12,7 +12,8 @@
 //!   The handoff itself renders in the route layer
 //!   ([`crate::auth::routes::login_handoff`]).
 //! - Password hashing runs on the blocking pool, never on an async worker.
-//! - A store outage is [`LoginError::Unavailable`], never a failed login.
+//! - A store outage is [`LoginError::Unavailable`], never a failed login. A
+//!   store too busy to answer in time is [`LoginError::Busy`], never either.
 //!
 //! Password hashing seam: production wires bcrypt verification for imported
 //! rows with opportunistic Argon2id rehash on success, rows tagged
@@ -30,7 +31,7 @@ use thiserror::Error;
 
 use super::{
     extract::Transport,
-    store::{SessionKind, SessionRecord, SessionStore},
+    store::{SessionKind, SessionRecord, SessionStore, SessionStoreError},
     tokens,
 };
 
@@ -79,7 +80,7 @@ pub struct LoginSuccess {
     pub raw_token: String,
 }
 
-/// Login failure. Both variants render identically on the wire.
+/// Login failure. Only `InvalidCredentials` is the caller's fault.
 #[derive(Debug, Error)]
 pub enum LoginError {
     /// Unknown user or wrong password: one uniform message, no oracle.
@@ -88,6 +89,9 @@ pub enum LoginError {
     /// Storage or entropy failure: 500 without detail.
     #[error("login unavailable")]
     Unavailable,
+    /// The database was too busy to answer in time: 503 with `Retry-After`.
+    #[error("login store busy")]
+    Busy,
 }
 
 /// Stored local credential returned by the user lookup.
@@ -190,7 +194,12 @@ where
         self.sessions
             .insert(record)
             .await
-            .map_err(|_| LoginError::Unavailable)?;
+            .map_err(|error| match error {
+                SessionStoreError::Busy => LoginError::Busy,
+                SessionStoreError::Unavailable | SessionStoreError::Duplicate => {
+                    LoginError::Unavailable
+                }
+            })?;
         Ok(LoginSuccess {
             user_id: credential.user_id,
             display_name: credential.display_name,

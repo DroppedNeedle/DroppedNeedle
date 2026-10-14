@@ -15,7 +15,7 @@ use crate::error::{
 use crate::ids::IdGenerator;
 use axum::{
     extract::{FromRequest, Query, Request},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use serde::de::DeserializeOwned;
@@ -55,6 +55,12 @@ pub enum AuthRouteError {
         /// Ties the wire response to the server log line.
         error_id: String,
     },
+    /// The database was too busy to answer in time. Fixed body, the id and
+    /// `Retry-After`.
+    Busy {
+        /// Ties the wire response to the server log line.
+        error_id: String,
+    },
     /// Server fault. Fixed body plus the request-tied id.
     Internal {
         /// Ties the wire response to the server log line.
@@ -84,6 +90,14 @@ impl AuthRouteError {
         let error_id = ids.new_id();
         tracing::error!(error_id, %cause, "auth route failed");
         Self::Internal { error_id }
+    }
+
+    /// Build a busy 503, logging the cause with its id as a warning: the
+    /// store is working, only late.
+    pub fn busy(cause: &dyn std::fmt::Display, ids: &dyn IdGenerator) -> Self {
+        let error_id = ids.new_id();
+        tracing::warn!(error_id, %cause, "auth route busy; answering 503 with retry");
+        Self::Busy { error_id }
     }
 
     /// Build a 503, logging the real cause with its id.
@@ -146,6 +160,18 @@ impl IntoResponse for AuthRouteError {
                 FIXED_UPSTREAM_MESSAGE,
                 &error_id,
             ),
+            Self::Busy { error_id } => {
+                let mut response = fault_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    INTERNAL_ERROR,
+                    FIXED_INTERNAL_MESSAGE,
+                    &error_id,
+                );
+                response
+                    .headers_mut()
+                    .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+                response
+            }
             Self::Internal { error_id } => fault_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 INTERNAL_ERROR,

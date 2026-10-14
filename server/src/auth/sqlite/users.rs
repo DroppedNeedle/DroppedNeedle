@@ -870,9 +870,12 @@ impl CredentialLookup for SqliteCredentialLookup {
         .bind(username_lc)
         .fetch_optional(pool)
         .await
-        .map_err(|error| {
-            tracing::error!(error = %map_sqlx_busy("auth.login.lookup", error), "login lookup failed");
-            LoginError::Unavailable
+        .map_err(|error| match map_sqlx_busy("auth.login.lookup", error) {
+            crate::db::DbError::Busy { .. } => LoginError::Busy,
+            error => {
+                tracing::error!(%error, "login lookup failed");
+                LoginError::Unavailable
+            }
         })?;
         let Some(row) = row else {
             return Ok(None);

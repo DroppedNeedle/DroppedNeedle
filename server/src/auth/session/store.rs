@@ -53,12 +53,17 @@ pub struct SessionRecord {
     pub user_agent: Option<String>,
 }
 
-/// Storage failure. Transports map this to a 500 without leaking detail.
+/// Storage failure. Transports map `Busy` to a 503 with `Retry-After` and
+/// the rest to a 500, without leaking detail.
 #[derive(Debug, Error)]
 pub enum SessionStoreError {
     /// The backend failed (lock poisoned in the fake; io in production).
     #[error("session store unavailable")]
     Unavailable,
+    /// The database is busy: no reader or write turn came in time. Nothing
+    /// is wrong with it, and the same call succeeds once the load passes.
+    #[error("session store busy")]
+    Busy,
     /// A programming error supplied a duplicate hash.
     #[error("token hash already stored")]
     Duplicate,

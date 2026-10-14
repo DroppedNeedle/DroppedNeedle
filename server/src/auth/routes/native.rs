@@ -200,6 +200,10 @@ where
             &LoginError::Unavailable,
             state.users.ids.as_ref(),
         )),
+        Err(LoginError::Busy) => Err(AuthRouteError::busy(
+            &LoginError::Busy,
+            state.users.ids.as_ref(),
+        )),
     }
 }
 

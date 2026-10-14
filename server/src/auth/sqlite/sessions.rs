@@ -27,8 +27,8 @@ const LAST_SEEN_TOUCH_SECS: i64 = 5 * 60;
 
 /// Session storage for logins and the middleware, over `auth_tokens`.
 ///
-/// Each insert also deletes a batch of revoked and expired rows, so the
-/// table does not grow without bound.
+/// Each insert is followed by a separate write that deletes a batch of
+/// revoked and expired rows, so the table does not grow without bound.
 ///
 /// Successful lookups refresh `last_seen_at` when it is older than
 /// [`LAST_SEEN_TOUCH_SECS`]; the refresh is best-effort (a failed touch logs
@@ -79,6 +79,7 @@ impl SessionStore for SqliteSessionStore {
         // A failed transaction drops what it was given, so keep a copy for
         // the requeue below. Almost always an empty vec (legacy logins only).
         let retry = pending.clone();
+        let record_issued_at = record.issued_at;
         let outcome: Result<Vec<PendingRehash>, crate::db::DbError> = lane
             .write(Lane::Foreground, "auth.session.insert", move |tx| {
                 tx.execute(
@@ -97,24 +98,40 @@ impl SessionStore for SqliteSessionStore {
                     ],
                 )
                 .map_err(op_error)?;
-                sweep_dead_tokens(tx, record.issued_at)?;
                 apply_pending_rehash(tx, &record.user_id, pending)
             })
             .await;
         match outcome {
             Ok(unmatched) => {
                 self.rehash.requeue(unmatched);
-                Ok(())
             }
             Err(error) if is_write_conflict(&error) => {
                 self.rehash.requeue(retry);
-                Err(SessionStoreError::Duplicate)
+                return Err(SessionStoreError::Duplicate);
             }
-            Err(_) => {
+            // A write past its budget was rolled back whole: nothing of the
+            // sign-in was kept, so the client may simply try again.
+            Err(crate::db::DbError::TxTimeout { .. }) => {
                 self.rehash.requeue(retry);
-                Err(SessionStoreError::Unavailable)
+                return Err(SessionStoreError::Busy);
+            }
+            Err(error) => {
+                self.rehash.requeue(retry);
+                return Err(session_store_error("auth.session.insert", error));
             }
         }
+        // Cleanup in a write of its own, so a large batch can never push
+        // the sign-in past its budget. The session is already stored, so a
+        // failed sweep is logged and the next sign-in tries again.
+        if let Err(error) = lane
+            .write(Lane::Foreground, "auth.session.sweep", move |tx| {
+                sweep_dead_tokens(tx, record_issued_at)
+            })
+            .await
+        {
+            tracing::warn!(%error, "dead session sweep failed");
+        }
+        Ok(())
     }
 
     async fn lookup_valid(
@@ -132,7 +149,12 @@ impl SessionStore for SqliteSessionStore {
         .bind(token_hash)
         .fetch_optional(pool)
         .await
-        .map_err(|_| SessionStoreError::Unavailable)?;
+        .map_err(|error| {
+            session_store_error(
+                "auth.session.lookup",
+                map_sqlx_busy("auth.session.lookup", error),
+            )
+        })?;
         let Some(row) = row else {
             return Ok(None);
         };
@@ -195,6 +217,16 @@ impl SessionStore for SqliteSessionStore {
             user_agent,
         }))
     }
+}
+
+/// Session-port failure from a lane or pool error: busy stays busy, and
+/// anything else is logged here, since the port's error carries no cause.
+fn session_store_error(operation: &str, error: crate::db::DbError) -> SessionStoreError {
+    if matches!(error, crate::db::DbError::Busy { .. }) {
+        return SessionStoreError::Busy;
+    }
+    tracing::error!(operation, %error, "session store failed");
+    SessionStoreError::Unavailable
 }
 
 /// Most dead token rows one login removes. Logins are frequent enough

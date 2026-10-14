@@ -26,9 +26,11 @@
 //!   missing hash reads as no credential, matching v2's verify-false shape.
 //! - Federated `provider_data` is `Crypto` ciphertext of the token JSON,
 //!   sealed on every write and never decrypted on read (no port reads it).
-//! - Lock contention surfaces as the port's generic failure, not a retryable
-//!   busy: the auth error types have no busy variant, so a busy lane reads
-//!   as a 500 rather than a 503.
+//! - A busy database (a lock, a full lane queue, no free reader in time)
+//!   is its own error on the sign-in path: the session store and the login
+//!   lookup answer busy, which the routes render as a 503 with
+//!   `Retry-After`. The other ports have no busy variant yet, so there a
+//!   busy database still surfaces as the generic failure, a 500.
 
 mod app_passwords;
 mod federated;

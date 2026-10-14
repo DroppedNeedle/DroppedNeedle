@@ -3306,7 +3306,9 @@ async fn login_store_failure_is_a_500_not_bad_credentials() {
     setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
     e2e.runtime
         .lane()
-        .write(droppedneedle::db::Lane::Foreground, "test.break", |tx| {
+        // A rename re-parses the whole schema, which outruns the request
+        // budget on a busy host; the job budget fits it.
+        .write(droppedneedle::db::Lane::Background, "test.break", |tx| {
             tx.execute_batch("ALTER TABLE auth_providers RENAME TO auth_providers_gone")?;
             Ok(())
         })
@@ -3315,6 +3317,37 @@ async fn login_store_failure_is_a_500_not_bad_credentials() {
     let (status, body, _) =
         login(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+}
+
+#[tokio::test]
+async fn sign_in_waits_out_a_full_read_pool_as_busy_not_a_fault() {
+    let e2e = E2e::open("pool-full").await;
+    let (_, token) = setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
+    let auth = bearer(token.as_str().expect("setup token"));
+    // Every reader checked out: the stand-in for a host too busy to hand
+    // one over before the checkout limit.
+    let mut held = Vec::new();
+    for _ in 0..droppedneedle::db::MAX_READERS {
+        held.push(e2e.pool().acquire().await.expect("reader checks out"));
+    }
+    let headers = [("authorization", auth.as_str())];
+    let (signed_in, gated) = tokio::join!(
+        login(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer"),
+        call(e2e.router(), "GET", "/api/v3/me", &headers, None),
+    );
+    for (status, body, headers) in [signed_in, gated] {
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(
+            headers.get("retry-after").map(|v| v.as_bytes()),
+            Some(&b"1"[..])
+        );
+        assert_eq!(body["error"]["code"], "INTERNAL_ERROR", "{body}");
+        assert!(body["error"]["details"]["error_id"].is_string(), "{body}");
+    }
+    drop(held);
+    let (status, body, _) =
+        login(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
 }
 
 #[tokio::test]

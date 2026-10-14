@@ -71,7 +71,7 @@ use super::{
     origin::{Origin, OriginDecision, check_origin, is_unsafe_method, named_origin},
     rate_limit::{AUTH_FAILURE_CLASS, RateLimiter, rate_limited_response},
     stated::StatedAddresses,
-    store::{SessionKind, SessionStore, now_unix},
+    store::{SessionKind, SessionStore, SessionStoreError, now_unix},
     tokens::hash_token,
 };
 
@@ -352,6 +352,9 @@ where
                 .get::<crate::ids::RequestId>()
                 .map(|id| id.0.clone())
                 .unwrap_or_default();
+            if matches!(error, SessionStoreError::Busy) {
+                return crate::error::busy_response("auth.session.lookup", &error_id);
+            }
             tracing::error!(%error, error_id, "session store lookup failed");
             return crate::error::ApiError::internal_response(&error_id);
         }

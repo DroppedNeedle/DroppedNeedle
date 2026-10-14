@@ -4,7 +4,8 @@
 //! writes and every connection waits out the 5 s busy timeout before SQLite
 //! reports busy. When busy still escapes, the data path maps it to the typed
 //! retryable [`DbError::Busy`]. The lane answers the same way when a
-//! foreground write finds its queue full or has waited 5 s for its turn.
+//! foreground write finds its queue full or has waited 5 s for its turn, and
+//! a read when it has waited 5 s for a pooled connection.
 //! Handlers render that as HTTP 503 with
 //! `Retry-After: 1` through [`crate::error::busy_response`]. The client
 //! retries; this process never spins.
@@ -165,12 +166,18 @@ pub enum DbError {
     Json(#[from] serde_json::Error),
 }
 
-/// True when a sqlx error is lock contention (SQLITE_BUSY or SQLITE_LOCKED).
+/// True when a sqlx error is lock contention (SQLITE_BUSY or SQLITE_LOCKED),
+/// or a read that waited out the pool's checkout limit.
 ///
-/// The check mirrors the v2 rule: either the primary result code is busy or
-/// locked, or the message names a lock. Only lock errors convert; anything
-/// else keeps its failure semantics.
+/// The lock check mirrors the v2 rule: either the primary result code is
+/// busy or locked, or the message names a lock. A checkout that timed out
+/// is the sqlx pool's form of the read pool's `Busy`: every reader was in
+/// use, which a busy host causes without anything being wrong. Only these
+/// convert; anything else keeps its failure semantics.
 pub fn sqlx_is_busy(error: &sqlx::Error) -> bool {
+    if matches!(error, sqlx::Error::PoolTimedOut) {
+        return true;
+    }
     if let sqlx::Error::Database(database) = error {
         if let Some(code) = database.code()
             && (code.as_ref() == "5" || code.as_ref() == "6")
