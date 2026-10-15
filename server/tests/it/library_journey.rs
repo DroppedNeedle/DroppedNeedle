@@ -10709,6 +10709,39 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
         "{audit}"
     );
 
+    let titles: Vec<String> = db
+        .prepare(
+            "SELECT title FROM local_tracks WHERE id IN (?1, ?2) \
+             ORDER BY disc_number, track_number",
+        )
+        .expect("prepare")
+        .query_map([&n4, &n5], |row| row.get(0))
+        .expect("titles")
+        .collect::<Result<_, _>>()
+        .expect("titles read");
+    // Newest first: the move, then the scan's join of the retagged half
+    // and its first half left as it was.
+    let history = album_history(&library, &joined, "listener");
+    assert_eq!(
+        history["items"][0],
+        json!({"kind": "tracks_continued", "at": history["items"][0]["at"], "by": null,
+               "track_count": 2, "track_titles": titles, "other_album_title": null}),
+        "{history}"
+    );
+    assert_eq!(
+        history_kinds(&history),
+        ["tracks_continued", "retag_joined", "retag_half_left_alone"],
+        "{history}"
+    );
+    assert!(history["items"][0]["at"].as_i64().is_some(), "{history}");
+    let sent = history.to_string();
+    for private in [
+        "curator", "listener", "Curator", "Listener", "mine", "later", "earlier", "p1", o4, o5,
+        &n4, &n5, &album, &joined,
+    ] {
+        assert!(!sent.contains(private), "{private} in {sent}");
+    }
+
     rescan(&library).await;
     assert_eq!(continuations(&db), 1, "a second scan moves nothing");
 
@@ -10723,6 +10756,28 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
     rescan(&library).await;
     assert_eq!(holdings(&db, o5)[..3], [0, 0, 0]);
     assert_eq!(holdings(&db, &n5)[1..3], [1, 2]);
+    assert_eq!(
+        history_kinds(&album_history(&library, &joined, "listener")),
+        ["tracks_continued", "retag_joined", "retag_half_left_alone"],
+        "a sweep adds no entry"
+    );
+}
+
+fn history_kinds(history: &Value) -> Vec<String> {
+    history["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|item| item["kind"].as_str().expect("kind").to_owned())
+        .collect()
+}
+
+/// An album's history as the route sends it to `caller`.
+fn album_history(library: &LibrarySetup, album: &str, caller: &str) -> Value {
+    use droppedneedle::library::http::history::album_history_view;
+    use droppedneedle::library::operations::service::Operations;
+    let view = album_history_view(&Operations::new(library), album, caller).expect("history reads");
+    serde_json::to_value(view).expect("history serialises")
 }
 
 /// An album the app chose by itself, retagged to a new name with its
@@ -11784,6 +11839,42 @@ async fn retag_pairs_list_join_and_dismiss() {
     ] {
         assert_eq!(count(sql), 1, "{sql}");
     }
+
+    // The album's history tells the join, and who asked as each caller
+    // may know it; the old id is no album of its own any more.
+    let old_title: String = db
+        .query_row(
+            "SELECT title FROM local_albums WHERE id = ?1",
+            [&a_old],
+            |row| row.get(0),
+        )
+        .expect("old title");
+    let history_a = format!("/api/v3/library/albums/{a_new}/history");
+    for (auth, by) in [
+        (admin.as_str(), "you"),
+        (user.authorization.as_str(), "person"),
+    ] {
+        let (status, body) = app
+            .call("GET", &history_a, &[("authorization", auth)], None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["items"],
+            json!([{"kind": "retag_joined", "at": body["items"][0]["at"], "by": by,
+                    "track_count": 0, "track_titles": [], "other_album_title": old_title}]),
+            "{body}"
+        );
+    }
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/albums/{a_old}/history"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"]["code"], json!("ALBUM_NOT_FOUND"));
 
     // Keep the new album's: the mirror case.
     let (b_old, b_new) = (id("b-old"), id("b-new"));

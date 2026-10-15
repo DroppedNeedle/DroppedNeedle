@@ -110,6 +110,8 @@ export const LibraryQueryKeyFactory = {
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'album-tracks', albumId] as const,
 		albumCopiesPrefix: (userId: LibraryV3UserId) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'album-copies'] as const,
+		albumHistory: (userId: LibraryV3UserId, albumId: string) =>
+			[...LibraryQueryKeyFactory.catalog.root(userId), 'album-history', albumId] as const,
 		unconfirmed: (userId: LibraryV3UserId, state: string, offset: number) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'unconfirmed', state, offset] as const
 	},

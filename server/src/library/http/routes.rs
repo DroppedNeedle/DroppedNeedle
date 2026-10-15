@@ -37,6 +37,7 @@ pub fn library_router(state: LibrarySetup) -> Router {
         .merge(super::reviews::reviews_router())
         .merge(super::mutations::mutations_router())
         .merge(super::edition::edition_router())
+        .merge(super::history::history_router())
         .with_state(state.clone())
         .merge(super::contrib::router(state))
 }

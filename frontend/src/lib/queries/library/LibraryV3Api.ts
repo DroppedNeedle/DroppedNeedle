@@ -68,6 +68,8 @@ export const LibraryV3Api = {
 		v3('/api/v3/library/albums/{id}/status', { path: { id: albumId } }),
 	membership: () => v3('/api/v3/library/membership'),
 	resolveTracks: () => v3('/api/v3/library/resolve-tracks'),
+	albumHistory: (albumId: string) =>
+		v3('/api/v3/library/albums/{album_id}/history', { path: { album_id: albumId } }),
 	// The album's edition: read, choose, hand back, confirm, undo.
 	edition: (albumId: string) =>
 		v3('/api/v3/library/albums/{album_id}/edition', { path: { album_id: albumId } }),

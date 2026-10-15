@@ -645,6 +645,7 @@ use crate::{
         crate::library::http::edition::remove_extras,
         crate::library::http::edition::restore_extras,
         crate::library::http::edition::list_unconfirmed,
+        crate::library::http::history::get_album_history,
         crate::admin::handlers::list_backups,
         crate::admin::handlers::run_backup,
         crate::admin::handlers::restore_report,

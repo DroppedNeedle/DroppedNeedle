@@ -16,6 +16,7 @@
 pub mod choice;
 pub mod control;
 pub mod decisions;
+pub mod history;
 pub mod models;
 pub mod plan;
 pub mod port;

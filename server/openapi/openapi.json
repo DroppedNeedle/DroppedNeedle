@@ -7081,6 +7081,44 @@
         }
       }
     },
+    "/api/v3/library/albums/{album_id}/history": {
+      "get": {
+        "tags": [
+          "crate::library::http::history"
+        ],
+        "summary": "What the app did by itself to the album's tracks and to the albums it\nis made of.",
+        "operationId": "get_album_history",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The album's history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlbumHistoryView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "Unknown album"
+          }
+        }
+      }
+    },
     "/api/v3/library/albums/{album_id}/management/hand-back": {
       "post": {
         "tags": [
@@ -24790,6 +24828,90 @@
           "musicbrainz_id": {
             "type": "string",
             "description": "Provider release-group id."
+          }
+        }
+      },
+      "AlbumHistoryByView": {
+        "type": "string",
+        "description": "Who asked for a join.",
+        "enum": [
+          "you",
+          "person"
+        ]
+      },
+      "AlbumHistoryEntryView": {
+        "type": "object",
+        "description": "One line of an album's history.",
+        "required": [
+          "kind",
+          "at",
+          "track_count",
+          "track_titles"
+        ],
+        "properties": {
+          "at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix milliseconds."
+          },
+          "by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AlbumHistoryByView",
+                "description": "Who asked, for `retag_joined` only; null when the app did it."
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AlbumHistoryKindView"
+          },
+          "other_album_title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The other album's title, null when its row is gone."
+          },
+          "track_count": {
+            "type": "integer",
+            "description": "How many tracks the entry is about; 0 for album entries.",
+            "minimum": 0
+          },
+          "track_titles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The first five of those tracks' titles, in album order."
+          }
+        }
+      },
+      "AlbumHistoryKindView": {
+        "type": "string",
+        "description": "What one history entry tells.",
+        "enum": [
+          "tracks_continued",
+          "tracks_replaced",
+          "retag_joined",
+          "retag_half_left_alone",
+          "leftover_joined"
+        ]
+      },
+      "AlbumHistoryView": {
+        "type": "object",
+        "description": "An album's history, newest first: at most ten entries, none older than\n180 days.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AlbumHistoryEntryView"
+            }
           }
         }
       },

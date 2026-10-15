@@ -19,7 +19,7 @@ use super::plan::{self, EditionPlan};
 use super::reasons;
 use super::reidentify::{MAX_ATTEMPTS, RETRY_SECS, evaluation, unavailable};
 use super::store::{self, NewReidentification};
-use super::{choice, decisions, reviews};
+use super::{choice, decisions, history, reviews};
 use crate::ids::IdGenerator;
 use crate::library::clock::now_unix;
 use crate::library::identify::models::IdentifyKind;
@@ -617,6 +617,19 @@ impl Operations {
             );
         }
         Ok(())
+    }
+
+    /// What the app did by itself to the album, newest first, as
+    /// `caller_user_id` may see it. Blocking.
+    pub fn album_history(
+        &self,
+        album_id: &str,
+        caller_user_id: &str,
+    ) -> Result<Vec<history::HistoryEntry>, OperationError> {
+        self.read(|conn| {
+            history::album_history(conn, album_id, caller_user_id, now_unix())?
+                .ok_or(OperationError::NotFound(reasons::ALBUM_NOT_FOUND))
+        })
     }
 
     /// "Looks right": confirm the album's unconfirmed match. Blocking.

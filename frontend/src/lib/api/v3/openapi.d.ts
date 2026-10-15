@@ -3281,6 +3281,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/albums/{album_id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What the app did by itself to the album's tracks and to the albums it
+         *     is made of.
+         */
+        get: operations["get_album_history"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/albums/{album_id}/management/hand-back": {
         parameters: {
             query?: never;
@@ -10393,6 +10413,39 @@ export interface components {
             artist_name?: string;
             /** @description Provider release-group id. */
             musicbrainz_id: string;
+        };
+        /**
+         * @description Who asked for a join.
+         * @enum {string}
+         */
+        AlbumHistoryByView: "you" | "person";
+        /** @description One line of an album's history. */
+        AlbumHistoryEntryView: {
+            /**
+             * Format: int64
+             * @description Unix milliseconds.
+             */
+            at: number;
+            by?: null | components["schemas"]["AlbumHistoryByView"];
+            kind: components["schemas"]["AlbumHistoryKindView"];
+            /** @description The other album's title, null when its row is gone. */
+            other_album_title?: string | null;
+            /** @description How many tracks the entry is about; 0 for album entries. */
+            track_count: number;
+            /** @description The first five of those tracks' titles, in album order. */
+            track_titles: string[];
+        };
+        /**
+         * @description What one history entry tells.
+         * @enum {string}
+         */
+        AlbumHistoryKindView: "tracks_continued" | "tracks_replaced" | "retag_joined" | "retag_half_left_alone" | "leftover_joined";
+        /**
+         * @description An album's history, newest first: at most ten entries, none older than
+         *     180 days.
+         */
+        AlbumHistoryView: {
+            items: components["schemas"]["AlbumHistoryEntryView"][];
         };
         /** @description TheAudioDB album images. Every field is optional. */
         AlbumImages: {
@@ -30101,6 +30154,43 @@ export interface operations {
             };
             /** @description The edition changed again since */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_album_history: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The album's history */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumHistoryView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

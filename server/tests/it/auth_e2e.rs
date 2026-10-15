@@ -2561,6 +2561,11 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         Posture::User,
     ),
     (
+        "GET",
+        "/api/v3/library/albums/{album_id}/history",
+        Posture::User,
+    ),
+    (
         "PUT",
         "/api/v3/library/albums/{album_id}/edition",
         Posture::Curator,
