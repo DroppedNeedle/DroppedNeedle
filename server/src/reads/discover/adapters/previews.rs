@@ -2,12 +2,12 @@
 //! `/album-preview`). Both services are keyless. Preview URLs expire, so
 //! they are resolved for every request and never cached here.
 
-use crate::providers::adapters::ReqwestGet;
-use crate::providers::preview::{PreviewClient, PreviewTrack};
 use crate::reads::discover::{
     models::{PreviewTrackItem, TrackPreviewResponse},
     ports::{AlbumSamples, BoxFuture, PreviewSource, ProviderFailure},
 };
+use droppedneedle_providers::adapters::ReqwestGet;
+use droppedneedle_providers::preview::{PreviewClient, PreviewTrack};
 
 /// Live previews over the shared HTTP client.
 pub struct LivePreviews {

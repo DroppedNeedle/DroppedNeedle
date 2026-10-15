@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::providers::RequestPriority;
-use crate::providers::digest_key;
-use crate::providers::musicbrainz::{Criticality, hit_score};
+use droppedneedle_providers::RequestPriority;
+use droppedneedle_providers::digest_key;
+use droppedneedle_providers::musicbrainz::{Criticality, hit_score};
 
 use super::error::CatalogError;
 use super::mapping;
@@ -219,8 +219,10 @@ impl Catalog {
                         .title
                         .clone()
                         .unwrap_or_else(|| "Unknown Album".to_owned()),
-                    artist: crate::providers::musicbrainz::credit_display_name(&hit.artist_credit)
-                        .map(str::to_owned),
+                    artist: droppedneedle_providers::musicbrainz::credit_display_name(
+                        &hit.artist_credit,
+                    )
+                    .map(str::to_owned),
                     year: mapping::year_of(hit.first_release_date.as_deref()),
                     disambiguation: hit.disambiguation.clone().filter(|text| !text.is_empty()),
                     type_info: mapping::type_info(
@@ -286,9 +288,9 @@ impl Catalog {
                 RemoteState::Timeout
             }
         };
-        crate::providers::record_current(
+        droppedneedle_providers::record_current(
             "musicbrainz",
-            crate::providers::IntegrationStatus::Error,
+            droppedneedle_providers::IntegrationStatus::Error,
             false,
         );
         if let Some(bytes) = self.upstream().cache().get_bytes(&stale_key).await

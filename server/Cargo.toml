@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = [".", "kernel", "testkit"]
+members = [".", "kernel", "providers", "testkit"]
 
 [workspace.package]
 version = "3.0.0"
@@ -10,6 +10,7 @@ license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
 droppedneedle-kernel = { path = "kernel", version = "3.0.0" }
+droppedneedle-providers = { path = "providers", version = "3.0.0" }
 argon2 = { version = "0.5", features = ["alloc"] }
 axum = { version = "0.8", features = ["json", "query", "http1", "matched-path", "multipart"] }
 base64 = "0.22"
@@ -70,6 +71,7 @@ license.workspace = true
 
 [dependencies]
 droppedneedle-kernel.workspace = true
+droppedneedle-providers.workspace = true
 argon2.workspace = true
 axum.workspace = true
 base64.workspace = true
@@ -116,7 +118,10 @@ regex.workspace = true
 
 [features]
 # Fakes, mocks, memory stores and test constructors for the test suite.
-test-support = ["droppedneedle-kernel/test-support"]
+test-support = [
+    "droppedneedle-kernel/test-support",
+    "droppedneedle-providers/test-support",
+]
 
 [dev-dependencies]
 droppedneedle = { path = ".", features = ["test-support"] }

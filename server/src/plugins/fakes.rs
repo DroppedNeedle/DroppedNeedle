@@ -22,7 +22,7 @@ use super::runtime::{
     BoxFuture, CallError, EventKind, HostServices, LaunchSpec, PluginConnection, PluginEvent,
     PluginLauncher, RuntimeState, RuntimeStatus, ScrobbleEvent,
 };
-use crate::providers::listenbrainz::{ListenBrainzVerifier, VerifyOutcome};
+use droppedneedle_providers::listenbrainz::{ListenBrainzVerifier, VerifyOutcome};
 
 /// Scripted plugin runtime. Answers each method from a script (default
 /// `null`), records every call, and can make host requests as the plugin.

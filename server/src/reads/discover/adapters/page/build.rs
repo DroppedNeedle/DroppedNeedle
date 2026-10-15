@@ -768,7 +768,7 @@ impl Builder<'_> {
                 .get(genre)
                 .into_iter()
                 .flatten()
-                .filter(|mbid| crate::providers::musicbrainz::is_valid_mbid(mbid))
+                .filter(|mbid| droppedneedle_providers::musicbrainz::is_valid_mbid(mbid))
                 .filter(|mbid| !seen.contains(*mbid))
                 .cloned()
                 .collect();

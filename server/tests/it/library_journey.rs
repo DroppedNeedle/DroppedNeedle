@@ -12692,7 +12692,7 @@ fn probe_credits(
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/musicbrainz")
         .join(fixture);
-    let wire: droppedneedle::providers::musicbrainz::MbRelease =
+    let wire: droppedneedle_providers::musicbrainz::MbRelease =
         serde_json::from_slice(&std::fs::read(path).expect("probe reads")).expect("probe decodes");
     droppedneedle::library::identify::sources::relations_from_wire(&wire, 0)
         .tracks
@@ -13614,8 +13614,8 @@ fn acoustid_result(
     id: &str,
     score: f64,
     recordings: &[&str],
-) -> droppedneedle::providers::acoustid::BatchResult {
-    use droppedneedle::providers::acoustid::{BatchRecording, BatchResult};
+) -> droppedneedle_providers::acoustid::BatchResult {
+    use droppedneedle_providers::acoustid::{BatchRecording, BatchResult};
     BatchResult {
         id: id.to_owned(),
         score: Some(score),
@@ -14356,7 +14356,7 @@ const TAKATANI: &str = "7493b80f-de18-4f9c-a7bd-08d1ea5adcff";
 fn recorded_names() -> droppedneedle::library::matching::model::ArtistNames {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/musicbrainz/release_names_sakamoto.json");
-    let wire: droppedneedle::providers::musicbrainz::MbRelease =
+    let wire: droppedneedle_providers::musicbrainz::MbRelease =
         serde_json::from_slice(&std::fs::read(path).expect("probe reads")).expect("probe decodes");
     droppedneedle::library::identify::sources::names_from_wire(&wire, 0)
 }

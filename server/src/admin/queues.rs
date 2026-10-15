@@ -19,7 +19,7 @@ use super::{
         WakeupChannelView,
     },
 };
-use crate::providers::Providers;
+use droppedneedle_providers::Providers;
 
 /// Channel demand plus registry rows.
 pub async fn queue_stats(db: &AdminDb) -> Result<QueueStatsResponse, AdminError> {

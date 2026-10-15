@@ -77,7 +77,7 @@ pub trait EnrichmentPort: Send + Sync {
         wants: ExtrasWanted,
         background: bool,
     ) -> BoxFuture<'a, Result<ReleaseExtras, String>>;
-    /// Look up to [`MAX_BATCH`](crate::providers::acoustid::MAX_BATCH)
+    /// Look up to [`MAX_BATCH`](droppedneedle_providers::acoustid::MAX_BATCH)
     /// AcoustID prints in one request. An empty list asks only whether a
     /// key is set: `NoKey`, or an empty answer.
     fn acoustid_lookup<'a>(&'a self, prints: &'a [AcoustIdPrint]) -> BoxFuture<'a, AcoustIdAnswer>;
@@ -98,7 +98,7 @@ pub enum AcoustIdAnswer {
     /// AcoustID could not be reached, or its answer was unreadable.
     Unavailable,
     /// The results for each print, in the order asked.
-    Answered(Vec<Vec<crate::providers::acoustid::BatchResult>>),
+    Answered(Vec<Vec<droppedneedle_providers::acoustid::BatchResult>>),
 }
 
 /// Which parts of a release one lookup asks for.
@@ -603,7 +603,7 @@ pub struct ScriptedEnrichment {
 #[derive(Debug, Clone)]
 pub enum ScriptedAcoustId {
     /// These results for every print.
-    Answers(Vec<crate::providers::acoustid::BatchResult>),
+    Answers(Vec<droppedneedle_providers::acoustid::BatchResult>),
     Unavailable,
 }
 

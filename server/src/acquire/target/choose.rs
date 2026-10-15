@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::lookup::ReleaseCandidate;
 use crate::acquire::edition::{ChosenEdition, EditionBasis};
-use crate::providers::musicbrainz::recording_release_group_rank;
+use droppedneedle_providers::musicbrainz::recording_release_group_rank;
 
 /// Release groups whose library edition is read, at most. Each costs one
 /// local query.

@@ -245,16 +245,18 @@ impl LibrarySetup {
         users: UsersDeps,
         http: &droppedneedle_kernel::http_client::HttpClientFactory,
         ids: Arc<dyn IdGenerator>,
-        providers: Arc<crate::providers::Providers>,
-        mb_source: crate::providers::musicbrainz::SourceFn,
+        providers: Arc<droppedneedle_providers::Providers>,
+        mb_source: droppedneedle_providers::musicbrainz::SourceFn,
         db_path: &Path,
         config: Arc<ConfigStore>,
         endpoints: Endpoints,
     ) -> Result<Self, String> {
-        use crate::providers::RequestPriority;
-        use crate::providers::acoustid::AcoustIdClient;
-        use crate::providers::adapters::{CorePacer, HealthSink};
-        use crate::providers::musicbrainz::{MbPacing, MusicBrainzClient, ReqwestMbTransport};
+        use droppedneedle_providers::RequestPriority;
+        use droppedneedle_providers::acoustid::AcoustIdClient;
+        use droppedneedle_providers::adapters::{CorePacer, HealthSink};
+        use droppedneedle_providers::musicbrainz::{
+            MbPacing, MusicBrainzClient, ReqwestMbTransport,
+        };
 
         // Identification is background work on the source settings name,
         // read per request; user page loads go ahead of it at the limiter.
@@ -282,7 +284,7 @@ impl LibrarySetup {
             .contribution_providers
             .unwrap_or_else(|| ContribProviders {
                 discogs: Arc::new(super::adapters::LiveDiscogsContrib::new(
-                    crate::providers::ReqwestGet::shared(http),
+                    droppedneedle_providers::ReqwestGet::shared(http),
                     &endpoints.discogs,
                 )),
                 musicbrainz: Arc::new(super::adapters::LiveMusicBrainzContrib::new(

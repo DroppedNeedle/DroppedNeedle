@@ -18,11 +18,10 @@ use crate::{
     auth::{users::hibp::RANGE_URL_PREFIX, wiring::Upstreams},
     library::{contrib::ContribProviders, identify::providers::IdentifyProviders},
     plugins::install::GitHubHosts,
-    providers::{
-        acoustid, audiodb, coverart, discogs, geocoding, github, itunes, lastfm, listenbrainz,
-        lrclib, musicbrainz, plextv::PLEX_TV_BASE, preview, skiddle, ticketmaster, wikidata,
-        youtube,
-    },
+};
+use droppedneedle_providers::{
+    acoustid, audiodb, coverart, discogs, geocoding, github, itunes, lastfm, listenbrainz, lrclib,
+    musicbrainz, plextv::PLEX_TV_BASE, preview, skiddle, ticketmaster, wikidata, youtube,
 };
 
 /// A provider port the builder fills with its live client unless one is

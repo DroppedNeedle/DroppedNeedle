@@ -30,13 +30,15 @@ use super::matching::{
 use super::publish::PublishError;
 use super::publish::planner::SpaceProbe;
 use super::scan::seams::{ScannedTags, TagReadError, TagReader};
-use crate::providers::adapters::{HealthSink, ReqwestGet};
-use crate::providers::discogs;
-use crate::providers::musicbrainz::models::{
+use droppedneedle_providers::adapters::{HealthSink, ReqwestGet};
+use droppedneedle_providers::discogs;
+use droppedneedle_providers::musicbrainz::models::{
     ArtistCreditName, LabelInfo, Medium as MbMedium, ReleaseGroupRef,
 };
-use crate::providers::musicbrainz::{Criticality, MbError, MusicBrainzClient, ReqwestMbTransport};
-use crate::providers::slots::RequestPriority;
+use droppedneedle_providers::musicbrainz::{
+    Criticality, MbError, MusicBrainzClient, ReqwestMbTransport,
+};
+use droppedneedle_providers::slots::RequestPriority;
 
 // ---------------------------------------------------------------------------
 // Scan -> tags: read-only tag access over the tags module.
@@ -640,8 +642,8 @@ impl MusicBrainzContrib for LiveMusicBrainzContrib {
         bypass_cache: bool,
     ) -> BoxFuture<'a, Result<Option<MusicBrainzVerifiedRelease>, ProviderFailure>> {
         Box::pin(async move {
-            let mbid = crate::providers::musicbrainz::normalize_mb_id(release_mbid);
-            if !crate::providers::musicbrainz::is_valid_mbid(&mbid) {
+            let mbid = droppedneedle_providers::musicbrainz::normalize_mb_id(release_mbid);
+            if !droppedneedle_providers::musicbrainz::is_valid_mbid(&mbid) {
                 return Ok(None);
             }
             if !bypass_cache && let Some(hit) = self.releases.get(&mbid) {
@@ -714,7 +716,7 @@ impl MusicBrainzContrib for LiveMusicBrainzContrib {
         priority: RequestPriority,
     ) -> BoxFuture<'a, Result<Vec<MusicBrainzVerifiedRelease>, ContribError>> {
         Box::pin(async move {
-            use crate::providers::musicbrainz::escape_lucene_phrase;
+            use droppedneedle_providers::musicbrainz::escape_lucene_phrase;
             let bounded = limit.clamp(1, 10) as u32;
             let mut query = format!(
                 r#"release:"{}" AND artist:"{}""#,

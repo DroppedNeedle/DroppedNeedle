@@ -29,12 +29,6 @@ use sqlx::SqlitePool;
 use super::ownership::{owned_albums, owned_artists};
 use crate::auth::users::UsersDeps;
 use crate::plugins::scrobble::ListenBrainzLinkStore;
-use crate::providers::adapters::{CorePacer, CoreSink};
-use crate::providers::lastfm::{self, LastFmClient, LastFmCredentials, TopItem};
-use crate::providers::listenbrainz::{
-    ListenBrainzClient, Outcome,
-    stats::{ArtistStat, ReleaseGroupStat},
-};
 use crate::reads::catalog::upstream::{InstanceLastFmKey, user_lastfm};
 use crate::reads::discover::{
     models::{
@@ -42,6 +36,12 @@ use crate::reads::discover::{
         TrendingArtistsPage,
     },
     ports::{BoxFuture, ChartsSource, ProviderFailure},
+};
+use droppedneedle_providers::adapters::{CorePacer, CoreSink};
+use droppedneedle_providers::lastfm::{self, LastFmClient, LastFmCredentials, TopItem};
+use droppedneedle_providers::listenbrainz::{
+    ListenBrainzClient, Outcome,
+    stats::{ArtistStat, ReleaseGroupStat},
 };
 
 /// Most rows one Last.fm range page reads (v2 `min(limit + offset + 1, 200)`).
@@ -457,8 +457,8 @@ mod tests {
     use super::*;
     use crate::auth::users::memory::TestRig;
     use crate::plugins::scrobble::MemoryListenBrainzLinkStore;
-    use crate::providers::Providers;
     use droppedneedle_kernel::http_client::HttpClientFactory;
+    use droppedneedle_providers::Providers;
 
     /// Last.fm charts read the instance key on every call: no key answers
     /// "not configured", a key saved later serves the chart with it.

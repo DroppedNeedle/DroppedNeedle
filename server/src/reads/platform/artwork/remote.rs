@@ -3,10 +3,10 @@
 
 use futures_util::future::BoxFuture;
 
-use crate::providers::coverart::{
+use droppedneedle_kernel::http_client::{BodyError, read_capped};
+use droppedneedle_providers::coverart::{
     ArtworkBytes, CaaClient, CaaError, CaaTransport, DownloadSize, EntityKind, RateGate,
 };
-use droppedneedle_kernel::http_client::{BodyError, read_capped};
 
 use super::MAX_REMOTE_BYTES;
 
@@ -159,7 +159,7 @@ impl HttpImages {
                 return ImageFetch::Failed;
             }
         };
-        match crate::providers::coverart::sniff_image_content_type(&bytes) {
+        match droppedneedle_providers::coverart::sniff_image_content_type(&bytes) {
             Some(content_type) => ImageFetch::Found(ArtworkBytes {
                 content_type: content_type.to_owned(),
                 bytes,

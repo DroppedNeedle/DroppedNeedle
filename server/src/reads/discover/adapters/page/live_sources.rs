@@ -10,8 +10,6 @@ use super::sources::{
     LastFmChartAlbum, PageSources, PlayedArtist, PlaylistTrack, RankedAlbum, ScoredArtist,
     SourceContext, WeeklyPlaylist,
 };
-use crate::providers::RequestPriority;
-use crate::providers::musicbrainz::Criticality;
 use crate::reads::discover::adapters::queue::live_sources::{
     ARTIST_TTL, LiveSources, USER_STATS_TTL, lastfm_result,
 };
@@ -22,11 +20,15 @@ use crate::reads::discover::ports::BoxFuture;
 use crate::remotes::connections::ResolveError;
 use crate::remotes::jellyfin::JellyfinAdapter;
 use crate::remotes::models::SourceName;
+use droppedneedle_providers::RequestPriority;
+use droppedneedle_providers::musicbrainz::Criticality;
 
 /// The algorithm ListenBrainz names its weekly exploration playlist after.
 const WEEKLY_EXPLORATION_PATCH: &str = "weekly-exploration";
 
-fn ranked(row: crate::providers::listenbrainz::stats::ReleaseGroupStat) -> Option<RankedAlbum> {
+fn ranked(
+    row: droppedneedle_providers::listenbrainz::stats::ReleaseGroupStat,
+) -> Option<RankedAlbum> {
     Some(RankedAlbum {
         album: AlbumRow {
             release_group_mbid: row.release_group_mbid?,
@@ -38,7 +40,7 @@ fn ranked(row: crate::providers::listenbrainz::stats::ReleaseGroupStat) -> Optio
     })
 }
 
-fn chart_album(row: crate::providers::lastfm::TopItem) -> LastFmChartAlbum {
+fn chart_album(row: droppedneedle_providers::lastfm::TopItem) -> LastFmChartAlbum {
     LastFmChartAlbum {
         name: row.name,
         artist_name: row.artist_name,
@@ -411,9 +413,9 @@ impl PageSources for LiveSources {
                     .artist_info(&creds, &artist.name, artist.mbid.as_deref())
                     .await
                 {
-                    crate::providers::lastfm::Outcome::Found(info) => info,
-                    crate::providers::lastfm::Outcome::Missing => return Ok(Vec::new()),
-                    crate::providers::lastfm::Outcome::Unavailable { message, .. } => {
+                    droppedneedle_providers::lastfm::Outcome::Found(info) => info,
+                    droppedneedle_providers::lastfm::Outcome::Missing => return Ok(Vec::new()),
+                    droppedneedle_providers::lastfm::Outcome::Unavailable { message, .. } => {
                         return Err(message);
                     }
                 };

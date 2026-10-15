@@ -18,8 +18,8 @@ use super::wrapped::{
 };
 use crate::auth::users::stores::UserStore;
 use crate::plugins::scrobble::ListenBrainzLinkStore;
-use crate::providers::adapters::{CorePacer, CoreSink};
-use crate::providers::listenbrainz::{ListenBrainzClient, Outcome};
+use droppedneedle_providers::adapters::{CorePacer, CoreSink};
+use droppedneedle_providers::listenbrainz::{ListenBrainzClient, Outcome};
 
 /// Rows per top list (v2 `_TOP_N`).
 const TOP_N: u32 = 10;

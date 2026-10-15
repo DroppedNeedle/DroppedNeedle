@@ -19,7 +19,6 @@ use droppedneedle::auth::session::tokens::hash_token;
 use droppedneedle::auth::users::memory::TestRig;
 use droppedneedle::auth::users::models::LastFmConnection;
 use droppedneedle::middleware::request_scope;
-use droppedneedle::providers::Providers;
 use droppedneedle::reads::catalog::{
     self, Catalog, CatalogDeps,
     library::LocalCatalog,
@@ -30,6 +29,7 @@ use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_kernel::runtime_config::sections::{
     MbSourceMode, MusicBrainzSettings, MusicSource, UserPreferences,
 };
+use droppedneedle_providers::Providers;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use tower::ServiceExt as _;

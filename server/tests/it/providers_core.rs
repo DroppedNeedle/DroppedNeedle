@@ -2,7 +2,7 @@
 //! coalescing, slots and the degradation matrix are pinned by the unit
 //! tests in `src/providers`.
 
-use droppedneedle::providers::Providers;
+use droppedneedle_providers::Providers;
 
 use std::time::Duration;
 

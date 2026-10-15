@@ -576,6 +576,7 @@ dependencies = [
  "chacha20poly1305",
  "droppedneedle",
  "droppedneedle-kernel",
+ "droppedneedle-providers",
  "droppedneedle-testkit",
  "flate2",
  "futures-util",
@@ -640,6 +641,25 @@ dependencies = [
  "unicode-normalization",
  "utoipa",
  "uuid",
+]
+
+[[package]]
+name = "droppedneedle-providers"
+version = "3.0.0"
+dependencies = [
+ "caseless",
+ "droppedneedle-kernel",
+ "futures-util",
+ "md5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "time",
+ "tokio",
+ "tracing",
+ "unicode-normalization",
 ]
 
 [[package]]

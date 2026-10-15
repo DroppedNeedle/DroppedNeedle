@@ -100,13 +100,13 @@ pub fn build_version() -> VersionInfo {
 /// Production release data: the build tag plus GitHub releases.
 #[derive(Debug, Clone)]
 pub struct GitHubReleases {
-    client: crate::providers::github::GitHubClient,
+    client: droppedneedle_providers::github::GitHubClient,
     current: VersionInfo,
 }
 
 impl GitHubReleases {
     /// Wrap the releases client for the running build.
-    pub fn new(client: crate::providers::github::GitHubClient) -> Self {
+    pub fn new(client: droppedneedle_providers::github::GitHubClient) -> Self {
         Self {
             client,
             current: build_version(),
@@ -114,7 +114,7 @@ impl GitHubReleases {
     }
 }
 
-fn from_github(release: crate::providers::github::GitHubRelease) -> GitHubRelease {
+fn from_github(release: droppedneedle_providers::github::GitHubRelease) -> GitHubRelease {
     GitHubRelease {
         tag_name: release.tag_name,
         published_at: release.published_at,

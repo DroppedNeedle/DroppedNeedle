@@ -179,12 +179,12 @@ impl SettingsSetup {
     ) -> Result<Self, String> {
         use std::sync::atomic::{AtomicU64, Ordering};
 
-        use crate::providers::InMemoryProviderCache;
-        use crate::providers::cache::ProviderCache;
         use crate::settings::effects::LiveSaveEffects;
         use crate::settings::section_prefs::{MemorySectionPrefsStore, StaticLinkStatus};
         use droppedneedle_kernel::jobs::events_kick::NoopKick;
         use droppedneedle_kernel::runtime_config::Crypto;
+        use droppedneedle_providers::InMemoryProviderCache;
+        use droppedneedle_providers::cache::ProviderCache;
 
         /// Scratch-dir sequence so parallel test states never share a store.
         static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);

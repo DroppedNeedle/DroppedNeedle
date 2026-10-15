@@ -29,7 +29,6 @@ pub mod media;
 pub mod middleware;
 pub mod playback;
 pub mod plugins;
-pub mod providers;
 pub mod reads;
 pub mod remotes;
 pub mod security_headers;

@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 use sqlx::{Row as _, SqlitePool};
 
-use crate::providers::coverart::sniff_image_content_type;
+use droppedneedle_providers::coverart::sniff_image_content_type;
 
 /// Folder images and embedded pictures larger than this are not served
 /// (the scan uses the same bound).

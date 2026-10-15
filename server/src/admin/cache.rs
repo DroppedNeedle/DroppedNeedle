@@ -14,11 +14,11 @@ use super::{
     error::AdminError,
     models::{CacheClearBody, CacheClearResponse, CacheStatsResponse},
 };
-use crate::providers::{
+use crate::reads::platform::artwork::cache::ArtworkCache;
+use droppedneedle_providers::{
     InMemoryProviderCache, ProviderCache, cache::PROVIDER_CACHE_PREFIXES, invalidate_source,
     prefixes_for,
 };
-use crate::reads::platform::artwork::cache::ArtworkCache;
 
 /// Live entry count, the registered sources in registry order, and the
 /// images on disk.

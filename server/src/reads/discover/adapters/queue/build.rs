@@ -24,8 +24,8 @@ use super::sources::{
     StatsRange, UserMusic,
 };
 use super::store::QueueDb;
-use crate::providers::musicbrainz::is_valid_mbid;
 use crate::reads::discover::models::QueueItemLight;
+use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 /// The "Various Artists" placeholder; never a real recommendation.
 pub const VARIOUS_ARTISTS_MBID: &str = "89ad4ac3-39f7-470e-963a-56509c546377";

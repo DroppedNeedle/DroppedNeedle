@@ -10,9 +10,11 @@ use sqlx::SqlitePool;
 
 use super::mix::MixSources;
 use crate::plugins::scrobble::ListenBrainzLinkStore;
-use crate::providers::adapters::{CorePacer, CoreSink};
-use crate::providers::listenbrainz::playlists::{RecommendationPlaylist, RecommendationTrack};
-use crate::providers::listenbrainz::{
+use droppedneedle_providers::adapters::{CorePacer, CoreSink};
+use droppedneedle_providers::listenbrainz::playlists::{
+    RecommendationPlaylist, RecommendationTrack,
+};
+use droppedneedle_providers::listenbrainz::{
     ListenBrainzClient, ListenBrainzCredentials, Outcome, SimilarArtist, TopRecording,
     TopReleaseGroup,
 };
@@ -159,7 +161,7 @@ impl MixSources for LiveMixSources {
 #[allow(clippy::too_many_arguments)]
 pub fn live_builder(
     requests: &super::RequestsState,
-    providers: Arc<crate::providers::Providers>,
+    providers: Arc<droppedneedle_providers::Providers>,
     http: reqwest::Client,
     links: Arc<dyn ListenBrainzLinkStore>,
     prefs: Arc<dyn crate::plugins::scrobble::ScrobblePrefsStore>,
@@ -167,7 +169,7 @@ pub fn live_builder(
     events: droppedneedle_kernel::events::EventSink,
     listenbrainz: &str,
 ) -> Option<Arc<super::mix::PersonalMixBuilder>> {
-    use crate::providers::listenbrainz::SOURCE;
+    use droppedneedle_providers::listenbrainz::SOURCE;
 
     let Some(pacer) = CorePacer::for_source(providers, SOURCE) else {
         tracing::error!("no listenbrainz rate limit row; Weekly Mix is off");

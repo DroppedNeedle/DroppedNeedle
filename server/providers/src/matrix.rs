@@ -136,7 +136,7 @@ fn apply_failure<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::degradation;
+    use crate::degradation;
 
     fn transport(source: &'static str) -> ProviderError {
         ProviderError::Transport {

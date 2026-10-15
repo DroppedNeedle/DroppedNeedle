@@ -348,7 +348,7 @@ pub struct ReadsInputs {
     /// The factory's no-redirect client (cover fetches check each hop).
     pub no_redirect: reqwest::Client,
     /// Shared provider limiters.
-    pub providers: Arc<crate::providers::Providers>,
+    pub providers: Arc<droppedneedle_providers::Providers>,
     /// Users' ListenBrainz links (your-top charts, wrapped).
     pub listenbrainz_links: Arc<dyn crate::plugins::scrobble::ListenBrainzLinkStore>,
     /// The YouTube quota file (`<cache_dir>/youtube_quota.json`).
@@ -372,10 +372,10 @@ fn platform_state(
     users: &UsersDeps,
     inputs: ReadsInputs,
 ) -> (platform::PlatformState, platform::artwork::ArtworkService) {
-    use crate::providers::adapters::{CorePacer, CoreSink};
-    use crate::providers::coverart::ReqwestCaaTransport;
-    use crate::providers::github::GitHubClient;
-    use crate::providers::listenbrainz::ListenBrainzClient;
+    use droppedneedle_providers::adapters::{CorePacer, CoreSink};
+    use droppedneedle_providers::coverart::ReqwestCaaTransport;
+    use droppedneedle_providers::github::GitHubClient;
+    use droppedneedle_providers::listenbrainz::ListenBrainzClient;
     use platform::{
         artwork::{
             ArtworkService,

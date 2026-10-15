@@ -18,10 +18,10 @@ use super::plex_models::{AccountListWire, AccountWire, PinPollWire, PinWire};
 use super::settings::{InstallIds, plex_login_enabled};
 use super::users::PROVIDER_PLEX;
 use crate::auth::users::stores::{BoxFuture, DirectoryError, DirectoryUser, UserDirectory};
-use crate::providers::plextv::Resource;
 use droppedneedle_kernel::http_client::{BodyError, read_capped};
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::PlexConnection;
+use droppedneedle_providers::plextv::Resource;
 
 /// PIN create and account calls (v2 parity).
 const TIMEOUT: Duration = Duration::from_secs(15);

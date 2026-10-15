@@ -43,8 +43,8 @@ use axum::{
 };
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::providers::Singleflight;
-use crate::providers::musicbrainz::MbError;
+use droppedneedle_providers::Singleflight;
+use droppedneedle_providers::musicbrainz::MbError;
 
 use self::error::CatalogError;
 use self::library::LocalCatalog;
@@ -201,7 +201,8 @@ impl Catalog {
         if token.is_empty() {
             return Ok(models::PluginDetails::default());
         }
-        let key = crate::providers::digest_key("plugin_details:", &[kind, mbid, &token], "v1");
+        let key =
+            droppedneedle_providers::digest_key("plugin_details:", &[kind, mbid, &token], "v1");
         let catalog = self.clone();
         let value = self
             .cached(&self.inner.flights.other, key, move || async move {
@@ -296,9 +297,9 @@ where
 /// Record a MusicBrainz outage in the request's degradation context.
 fn record_mb_down(cause: &CatalogError) {
     if matches!(cause, CatalogError::Unavailable(_)) {
-        crate::providers::record_current(
+        droppedneedle_providers::record_current(
             "musicbrainz",
-            crate::providers::IntegrationStatus::Error,
+            droppedneedle_providers::IntegrationStatus::Error,
             false,
         );
     }
@@ -306,7 +307,7 @@ fn record_mb_down(cause: &CatalogError) {
 
 /// True for a MusicBrainz id shape (`8-4-4-4-12` hex).
 pub fn is_mbid(value: &str) -> bool {
-    crate::providers::musicbrainz::is_valid_mbid(value)
+    droppedneedle_providers::musicbrainz::is_valid_mbid(value)
 }
 
 /// Seconds from a settings value, never negative.

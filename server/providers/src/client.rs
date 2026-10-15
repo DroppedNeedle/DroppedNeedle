@@ -16,8 +16,8 @@
 //! Example:
 //!
 //! ```rust,no_run
-//! use droppedneedle::providers::client::ProviderClient;
-//! use droppedneedle::providers::limiter::{RatePolicy, policy_for};
+//! use droppedneedle_providers::client::ProviderClient;
+//! use droppedneedle_providers::limiter::{RatePolicy, policy_for};
 //!
 //! pub struct MusicBrainzClient {
 //!     // ... http client, cache handle, singleflight, deps ...

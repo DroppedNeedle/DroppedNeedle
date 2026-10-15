@@ -10,12 +10,12 @@ use axum::{
     http::{Request, StatusCode},
 };
 use droppedneedle::library::scan::SqliteScanStore;
-use droppedneedle::providers::coverart::{CaaRequest, CaaTransport, RawResponse, TransportError};
 use droppedneedle::reads::platform::artwork::{
     ArtworkService, cache::ArtworkCache, local::LocalArtwork, remote::cover_client,
 };
 use droppedneedle::reads::platform::covers::{self, CoversState};
 use droppedneedle_kernel::db::{DbRuntime, Lane, OpError};
+use droppedneedle_providers::coverart::{CaaRequest, CaaTransport, RawResponse, TransportError};
 use tower::ServiceExt as _;
 
 use crate::common::ScratchDir;

@@ -12,12 +12,6 @@ use std::sync::Arc;
 
 use crate::auth::users::UsersDeps;
 use crate::auth::users::stores::LastFmSwitch;
-use crate::providers::adapters::{CorePacer, HealthSink, ReqwestGet};
-use crate::providers::audiodb::{self, AudioDbClient};
-use crate::providers::lastfm::{self, LastFmClient, LastFmCredentials};
-use crate::providers::listenbrainz::{self, ListenBrainzClient, ListenBrainzCredentials};
-use crate::providers::musicbrainz::{MbPacing, MbSource, MusicBrainzClient, ReqwestMbTransport};
-use crate::providers::{ProviderCache, Providers, RequestPriority};
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     AdvancedSettings, ListenBrainzConnection,
@@ -25,6 +19,14 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
 use droppedneedle_kernel::runtime_config::sections::{
     GetIt, MusicBrainzSettings, MusicSource, PrimaryMusicSource, UserPreferences,
 };
+use droppedneedle_providers::adapters::{CorePacer, HealthSink, ReqwestGet};
+use droppedneedle_providers::audiodb::{self, AudioDbClient};
+use droppedneedle_providers::lastfm::{self, LastFmClient, LastFmCredentials};
+use droppedneedle_providers::listenbrainz::{self, ListenBrainzClient, ListenBrainzCredentials};
+use droppedneedle_providers::musicbrainz::{
+    MbPacing, MbSource, MusicBrainzClient, ReqwestMbTransport,
+};
+use droppedneedle_providers::{ProviderCache, Providers, RequestPriority};
 
 /// The settings the catalog reads, once per call.
 pub trait CatalogSettings: Send + Sync {

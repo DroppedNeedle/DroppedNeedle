@@ -23,9 +23,9 @@ pub struct LiveEnrichment {
     pub http: reqwest::Client,
     pub artwork: Option<ArtworkService>,
     pub lrclib: LrclibGate,
-    pub acoustid: crate::providers::acoustid::AcoustIdClient<
-        crate::providers::adapters::CorePacer,
-        crate::providers::adapters::HealthSink,
+    pub acoustid: droppedneedle_providers::acoustid::AcoustIdClient<
+        droppedneedle_providers::adapters::CorePacer,
+        droppedneedle_providers::adapters::HealthSink,
     >,
     /// Where the AcoustID key is read, per lookup.
     pub config: Arc<droppedneedle_kernel::runtime_config::ConfigStore>,
@@ -147,7 +147,7 @@ impl EnrichmentPort for LiveEnrichment {
         &'a self,
         release_group_mbid: &'a str,
     ) -> BoxFuture<'a, Result<Vec<Candidate>, String>> {
-        use crate::providers::listenbrainz::Outcome;
+        use droppedneedle_providers::listenbrainz::Outcome;
         Box::pin(async move {
             let (client, creds) = self
                 .upstream
@@ -183,7 +183,7 @@ impl EnrichmentPort for LiveEnrichment {
         artist: &'a str,
         album: &'a str,
     ) -> BoxFuture<'a, Result<Vec<Candidate>, String>> {
-        use crate::providers::lastfm::Outcome;
+        use droppedneedle_providers::lastfm::Outcome;
         Box::pin(async move {
             let (client, creds) = self
                 .upstream
@@ -213,7 +213,7 @@ impl EnrichmentPort for LiveEnrichment {
         &'a self,
         query: &'a LyricsQuery,
     ) -> BoxFuture<'a, Result<Option<LyricsFound>, String>> {
-        use crate::providers::lrclib::{FetchError, LrclibClient};
+        use droppedneedle_providers::lrclib::{FetchError, LrclibClient};
         Box::pin(async move {
             let duration = query.duration_seconds.round();
             if !duration.is_finite() || duration <= 0.0 {
@@ -225,7 +225,7 @@ impl EnrichmentPort for LiveEnrichment {
             }
             self.lrclib.check_held()?;
             self.lrclib.pace().await;
-            let transport = crate::providers::adapters::ReqwestGet::new(self.http.clone());
+            let transport = droppedneedle_providers::adapters::ReqwestGet::new(self.http.clone());
             let client = LrclibClient::with_base(&transport, &self.upstream.endpoints().lrclib);
             let found = match client
                 .get_exact_lyrics(&query.title, &query.artist, &query.album, duration as u32)
@@ -276,8 +276,8 @@ impl EnrichmentPort for LiveEnrichment {
         use crate::library::identify::sources::{
             NAME_INCLUDES, RELATION_INCLUDES, names_from_wire, relations_from_wire,
         };
-        use crate::providers::RequestPriority;
-        use crate::providers::musicbrainz::Criticality;
+        use droppedneedle_providers::RequestPriority;
+        use droppedneedle_providers::musicbrainz::Criticality;
         Box::pin(async move {
             let mut includes: Vec<&str> = Vec::new();
             if wants.relations {
@@ -315,7 +315,7 @@ impl EnrichmentPort for LiveEnrichment {
     }
 
     fn acoustid_lookup<'a>(&'a self, prints: &'a [AcoustIdPrint]) -> BoxFuture<'a, AcoustIdAnswer> {
-        use crate::providers::acoustid::{BatchOutcome, BatchQuery};
+        use droppedneedle_providers::acoustid::{BatchOutcome, BatchQuery};
         Box::pin(async move {
             let key = self.acoustid_key();
             if key.is_empty() {
@@ -358,9 +358,9 @@ impl EnrichmentPort for LiveEnrichment {
 /// signature, within two seconds, and not instrumental.
 fn lyrics_answer(
     query: &LyricsQuery,
-    found: crate::providers::lrclib::LyricsLookup,
+    found: droppedneedle_providers::lrclib::LyricsLookup,
 ) -> Option<LyricsFound> {
-    use crate::providers::lrclib::signature_matches;
+    use droppedneedle_providers::lrclib::signature_matches;
     let candidate = found.candidate.filter(|_| found.found)?;
     let same = signature_matches(&candidate.track_name, &query.title)
         && signature_matches(&candidate.artist_name, &query.artist)

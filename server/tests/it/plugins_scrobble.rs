@@ -22,10 +22,10 @@ use droppedneedle::plugins::scrobble::{
     ScrobblePrefsStore, SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore, StaticMixState,
     connect_listenbrainz,
 };
-use droppedneedle::providers::listenbrainz::{HttpListenBrainzVerifier, VerifyOutcome};
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, Lane, open_runtime};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
+use droppedneedle_providers::listenbrainz::{HttpListenBrainzVerifier, VerifyOutcome};
 use tower::ServiceExt as _;
 
 /// Fixed id generator so error ids assert stably.
@@ -272,7 +272,7 @@ impl axum::response::IntoResponse for JsonStub {
 
 #[tokio::test]
 async fn http_verifier_maps_stub_statuses() {
-    use droppedneedle::providers::listenbrainz::ListenBrainzVerifier;
+    use droppedneedle_providers::listenbrainz::ListenBrainzVerifier;
     let (base, server) = stub_server().await;
     let verifier = HttpListenBrainzVerifier::new(reqwest::Client::new(), &base);
 

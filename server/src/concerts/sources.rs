@@ -11,12 +11,12 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::providers::error::ProviderError;
-use crate::providers::geocoding::{self, DEFAULT_CITY_COUNT, GeoCity, GeocodingClient};
-use crate::providers::limiter::{RateLimiter, RatePolicy};
-use crate::providers::retry::{self, RetryPolicy, TokioClock};
-use crate::providers::skiddle::{self, SkiddleArtist, SkiddleClient, SkiddleEvent};
-use crate::providers::ticketmaster::{self, TicketmasterClient, TmAttraction, TmEvent};
+use droppedneedle_providers::error::ProviderError;
+use droppedneedle_providers::geocoding::{self, DEFAULT_CITY_COUNT, GeoCity, GeocodingClient};
+use droppedneedle_providers::limiter::{RateLimiter, RatePolicy};
+use droppedneedle_providers::retry::{self, RetryPolicy, TokioClock};
+use droppedneedle_providers::skiddle::{self, SkiddleArtist, SkiddleClient, SkiddleEvent};
+use droppedneedle_providers::ticketmaster::{self, TicketmasterClient, TmAttraction, TmEvent};
 
 /// Consecutive failed calls that open a breaker, from v2.
 const BREAKER_THRESHOLD: u32 = 5;

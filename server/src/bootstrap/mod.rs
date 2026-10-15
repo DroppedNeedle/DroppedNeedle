@@ -37,7 +37,6 @@ use crate::{
     media::MediaSetup,
     playback::plugin_events::PluginPlayEvents,
     plugins::{scrobble::SqliteListenBrainzLinkStore, wiring::PluginsSetup},
-    providers::{InMemoryProviderCache, Providers},
     reads::{
         ReadsInputs, ReadsSetup,
         catalog::{
@@ -81,6 +80,7 @@ use droppedneedle_kernel::{
         secret_sections::ListenBrainzConnection, sections::LyricsSettings,
     },
 };
+use droppedneedle_providers::{InMemoryProviderCache, Providers};
 
 /// Why the server could not boot.
 #[derive(Debug, Error)]
@@ -307,7 +307,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     );
     // Read per request, so a source switch in Settings reaches the
     // long-lived clients without a restart.
-    let mb_source: crate::providers::musicbrainz::SourceFn = {
+    let mb_source: droppedneedle_providers::musicbrainz::SourceFn = {
         let settings = config_store.clone();
         let outbound = outbound.clone();
         Arc::new(move || {
@@ -539,15 +539,15 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // clients and artwork cache the pages use, and AcoustID ids on
     // identification's shared rate limit.
     let acoustid_pacer =
-        crate::providers::adapters::CorePacer::for_source(providers.clone(), "acoustid")
+        droppedneedle_providers::adapters::CorePacer::for_source(providers.clone(), "acoustid")
             .ok_or_else(|| "acoustid has no verified rate row".to_owned())
             .map_err(stage("library management"))?;
     let enrichment = LiveEnrichment {
-        acoustid: crate::providers::acoustid::AcoustIdClient::new(
+        acoustid: droppedneedle_providers::acoustid::AcoustIdClient::new(
             http.shared().clone(),
             &outbound.acoustid,
             acoustid_pacer,
-            crate::providers::adapters::HealthSink::new(&providers),
+            droppedneedle_providers::adapters::HealthSink::new(&providers),
         ),
         config: config_store.clone(),
         upstream: Upstream::new(

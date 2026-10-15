@@ -421,7 +421,7 @@ impl VerifyProbes for LiveProbes {
         token: &'a str,
     ) -> BoxFuture<'a, ListenBrainzVerdict> {
         Box::pin(async move {
-            use crate::providers::listenbrainz::{
+            use droppedneedle_providers::listenbrainz::{
                 HttpListenBrainzVerifier, ListenBrainzVerifier as _,
             };
             let verifier = HttpListenBrainzVerifier::new(self.http.clone(), base);

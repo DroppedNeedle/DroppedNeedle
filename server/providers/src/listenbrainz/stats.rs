@@ -17,7 +17,7 @@ use serde::Deserialize;
 use super::{
     Body, ListenBrainzClient, ListenBrainzCredentials, Outcome, RequestFailure, path_segment,
 };
-use crate::providers::{DegradationSink, Pacer};
+use crate::{DegradationSink, Pacer};
 
 /// Ranges the stats endpoints accept (v2 `ALLOWED_STATS_RANGE`, the
 /// spellings the charts use).

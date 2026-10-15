@@ -6,8 +6,8 @@
 
 use futures_util::future::BoxFuture;
 
-use crate::providers::degradation::DegradationSink;
-use crate::providers::musicbrainz::{
+use droppedneedle_providers::degradation::DegradationSink;
+use droppedneedle_providers::musicbrainz::{
     Criticality, MbRelease, MbTransport, MusicBrainzClient, parse_year,
 };
 
@@ -173,15 +173,15 @@ impl<T: MbTransport, S: DegradationSink> AlbumLookup for MusicBrainzAlbums<T, S>
 /// toward system health.
 pub fn live_albums(
     http: &droppedneedle_kernel::http_client::HttpClientFactory,
-    providers: std::sync::Arc<crate::providers::Providers>,
-    source: crate::providers::musicbrainz::SourceFn,
+    providers: std::sync::Arc<droppedneedle_providers::Providers>,
+    source: droppedneedle_providers::musicbrainz::SourceFn,
 ) -> MusicBrainzAlbums<
-    crate::providers::musicbrainz::ReqwestMbTransport,
-    crate::providers::adapters::HealthSink,
+    droppedneedle_providers::musicbrainz::ReqwestMbTransport,
+    droppedneedle_providers::adapters::HealthSink,
 > {
-    use crate::providers::RequestPriority;
-    use crate::providers::adapters::HealthSink;
-    use crate::providers::musicbrainz::{MbPacing, ReqwestMbTransport};
+    use droppedneedle_providers::RequestPriority;
+    use droppedneedle_providers::adapters::HealthSink;
+    use droppedneedle_providers::musicbrainz::{MbPacing, ReqwestMbTransport};
 
     let health = HealthSink::new(&providers);
     MusicBrainzAlbums::new(

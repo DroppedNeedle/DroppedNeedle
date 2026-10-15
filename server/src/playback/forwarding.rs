@@ -553,7 +553,7 @@ impl Courier {
         if let Some(mbid) = track.mbid.as_deref().filter(|mbid| !mbid.is_empty()) {
             params.push(("mbid".to_owned(), mbid.to_owned()));
         }
-        let signature = crate::providers::lastfm::api_sig(&params, &session.shared_secret);
+        let signature = droppedneedle_providers::lastfm::api_sig(&params, &session.shared_secret);
         params.push(("api_sig".to_owned(), signature));
         params.push(("format".to_owned(), "json".to_owned()));
         let response = self

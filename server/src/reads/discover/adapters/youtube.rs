@@ -5,12 +5,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::providers::youtube::{SearchKind, YouTubeClient, YouTubeSettings, YoutubeError};
 use crate::reads::discover::{
     models::YouTubeQuotaResponse,
     ports::{BoxFuture, ProviderFailure, YouTubeSource},
 };
 use droppedneedle_kernel::runtime_config::{ConfigStore, secret_sections::YouTubeConnection};
+use droppedneedle_providers::youtube::{SearchKind, YouTubeClient, YouTubeSettings, YoutubeError};
 
 /// Live YouTube search.
 pub struct LiveYouTube {

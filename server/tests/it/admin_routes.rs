@@ -15,8 +15,8 @@ use droppedneedle::auth::session::extract::Transport;
 use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::users::memory::TestRig;
 use droppedneedle::auth::users::roles::{Role, SessionKind};
-use droppedneedle::providers::ProviderCache as _;
 use droppedneedle_kernel::db::{DbRuntime, Lane};
+use droppedneedle_providers::ProviderCache as _;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
@@ -30,7 +30,7 @@ struct Rig {
     rig: TestRig,
     admin_id: String,
     user_id: String,
-    cache: Arc<droppedneedle::providers::InMemoryProviderCache>,
+    cache: Arc<droppedneedle_providers::InMemoryProviderCache>,
     quota: Arc<droppedneedle::acquire::requests::quota::QuotaLedger>,
     jobs: droppedneedle::bootstrap::jobs::JobsSetup,
     _scratch: crate::common::ScratchDir,
@@ -56,8 +56,8 @@ impl Rig {
                 droppedneedle::acquire::db::AcquireDb::from_runtime(&runtime),
             ),
         );
-        let cache = Arc::new(droppedneedle::providers::InMemoryProviderCache::new());
-        let providers = Arc::new(droppedneedle::providers::Providers::new(cache.clone()));
+        let cache = Arc::new(droppedneedle_providers::InMemoryProviderCache::new());
+        let providers = Arc::new(droppedneedle_providers::Providers::new(cache.clone()));
         let mut jobs = droppedneedle::bootstrap::jobs::JobsSetup::for_tests(rig.deps.clone());
         if let Some(sources) = precache {
             jobs = jobs.with_precache_sources(sources);

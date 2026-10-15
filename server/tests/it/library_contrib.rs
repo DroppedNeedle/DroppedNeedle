@@ -23,7 +23,7 @@ use contrib::worker::{
     VerificationWorker, VerificationWorkerConfig, shutdown_channel, spawn_verification_worker,
 };
 use droppedneedle::library::adapters::MatchingAttachmentEvidence;
-use droppedneedle::providers::slots::RequestPriority;
+use droppedneedle_providers::slots::RequestPriority;
 use futures_util::future::BoxFuture;
 use rusqlite::{OptionalExtension as _, params};
 

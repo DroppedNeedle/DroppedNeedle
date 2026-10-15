@@ -25,16 +25,16 @@ use crate::library::matching::model::{VARIOUS_ARTISTS_MBID, credit_text};
 use crate::library::matching::{CreditedArtist, Genre, Release, ReleaseMedium, ReleaseTrack};
 use crate::library::scan::pool::BlockingPool;
 use crate::library::scan::roots::RootRegistry;
-use crate::providers::acoustid::{AcoustIdClient, BatchQuery};
-use crate::providers::degradation::DegradationSink;
-use crate::providers::limiter::Pacer;
-use crate::providers::musicbrainz::models::Relation;
-use crate::providers::musicbrainz::{
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
+use droppedneedle_providers::acoustid::{AcoustIdClient, BatchQuery};
+use droppedneedle_providers::degradation::DegradationSink;
+use droppedneedle_providers::limiter::Pacer;
+use droppedneedle_providers::musicbrainz::models::Relation;
+use droppedneedle_providers::musicbrainz::{
     ArtistCreditName, Criticality, MbRelease, MbTransport, MusicBrainzClient, ReleaseSearchHit,
     build_release_match_query, hit_score,
 };
-use droppedneedle_kernel::runtime_config::ConfigStore;
-use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 
 /// The provider could not answer; the job waits and retries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -627,7 +627,7 @@ pub fn relations_from_wire(wire: &MbRelease, fetched_at_ms: i64) -> ReleaseRelat
     }
 }
 
-fn wire_genres(genres: &[crate::providers::musicbrainz::models::MbGenre]) -> Vec<Genre> {
+fn wire_genres(genres: &[droppedneedle_providers::musicbrainz::models::MbGenre]) -> Vec<Genre> {
     genres
         .iter()
         .filter(|genre| !genre.name.trim().is_empty())
@@ -887,7 +887,7 @@ impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
     async fn heard_in_paths(
         &self,
         files: &[(String, PathBuf)],
-    ) -> HashMap<String, crate::providers::acoustid::BatchMatch> {
+    ) -> HashMap<String, droppedneedle_providers::acoustid::BatchMatch> {
         let key = self.api_key();
         if key.is_empty() || files.is_empty() {
             return HashMap::new();

@@ -1222,9 +1222,9 @@ mod tests {
     /// The classical probe: Gould and Karajan's Beethoven concerto, then
     /// Sibelius and a spoken track that performs no work.
     fn classical() -> (Release, ReleaseRelations) {
-        let wire: crate::providers::musicbrainz::MbRelease = serde_json::from_str(include_str!(
-            "../../../tests/fixtures/musicbrainz/release_relations_classical.json"
-        ))
+        let wire: droppedneedle_providers::musicbrainz::MbRelease = serde_json::from_str(
+            include_str!("../../../tests/fixtures/musicbrainz/release_relations_classical.json"),
+        )
         .expect("probe decodes");
         let relations = crate::library::identify::sources::relations_from_wire(&wire, 1);
         let tracks = wire.media[0]
@@ -1628,7 +1628,7 @@ mod tests {
             .expect("the conductor credit");
         conductor["target-credit"] = "H. v. Karajan".into();
         conductor["artist"]["name"] = "".into();
-        let wire: crate::providers::musicbrainz::MbRelease =
+        let wire: droppedneedle_providers::musicbrainz::MbRelease =
             serde_json::from_value(probe).expect("probe decodes");
         let relations = crate::library::identify::sources::relations_from_wire(&wire, 1);
         let first = &relations.tracks[&wire.media[0].tracks[0].id];
@@ -1657,7 +1657,7 @@ mod tests {
         ))
         .expect("probe parses");
         probe["release-group"] = serde_json::json!({"id": "22222222-2222-4222-8222-222222222222"});
-        let wire: crate::providers::musicbrainz::MbRelease =
+        let wire: droppedneedle_providers::musicbrainz::MbRelease =
             serde_json::from_value(probe).expect("probe decodes");
         let names = crate::library::identify::sources::names_from_wire(&wire, 1);
         let bare = crate::library::identify::sources::release_from_wire(wire, Vec::new())

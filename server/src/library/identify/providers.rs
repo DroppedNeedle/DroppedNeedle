@@ -36,7 +36,7 @@ use super::stores::{fresh_release, keep_releases};
 use crate::library::matching::decide::STRONG;
 use crate::library::matching::strings::fold;
 use crate::library::matching::{LocalAlbum, Release, match_release, should_fingerprint};
-use crate::providers::musicbrainz::Criticality;
+use droppedneedle_providers::musicbrainz::Criticality;
 
 /// Tracklists fetched per album after a search.
 pub const FETCH_LIMIT: usize = 5;

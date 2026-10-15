@@ -44,9 +44,6 @@ use super::queue::select::{MAX_PER_ARTIST, Shuffler, round_robin};
 use super::queue::sources::{ArtistRow, MusicSource, UserMusic};
 use super::queue::store::QueueDb;
 use super::queue::{QueueSettings, SettingsFn};
-use crate::providers::adapters::ReqwestGet;
-use crate::providers::musicbrainz::is_valid_mbid;
-use crate::providers::preview::PreviewClient;
 use crate::reads::catalog::Catalog;
 use crate::reads::catalog::error::CatalogError;
 use crate::reads::catalog::library::LocalCatalog;
@@ -57,6 +54,9 @@ use crate::reads::discover::models::{
     RadioPlanTrack, RadioRequest, RadioSeedItem, SectionItem,
 };
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure, RadioFailure, RadioPlanner};
+use droppedneedle_providers::adapters::ReqwestGet;
+use droppedneedle_providers::musicbrainz::is_valid_mbid;
+use droppedneedle_providers::preview::PreviewClient;
 use library::RadioLibrary;
 use plan::{LIBRARY_POOL, MAX_SEED_ARTISTS, TRACKS_PER_ARTIST, clean_pool, mix, song_key};
 

@@ -18,13 +18,13 @@ use std::sync::Arc;
 use axum::Router;
 
 use crate::auth::users::{UsersDeps, roles::Role};
-use crate::providers::cache::{ProviderCache, invalidate_source};
 use droppedneedle_kernel::db::WriteLane;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::jobs::plugin_ticks::SqliteTickStore;
 use droppedneedle_kernel::jobs::registry::JobRegistry;
 use droppedneedle_kernel::jobs::registry::StoreKind;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
+use droppedneedle_providers::cache::{ProviderCache, invalidate_source};
 
 use super::handlers::{
     ExtRateLimiter, PluginsDeps, ScrobbleHttpDeps, UserRoles, plugins_router, scrobble_router,
@@ -38,7 +38,7 @@ use super::scrobble::{
     ScrobblePrefsStore, SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore, StaticMixState,
 };
 use super::ticks::{PluginTickLoops, TICK_CANCEL_GRACE, TickLoopSync, TickStoreKind};
-use crate::providers::listenbrainz::HttpListenBrainzVerifier;
+use droppedneedle_providers::listenbrainz::HttpListenBrainzVerifier;
 
 /// The Python helper module, shipped inside the binary.
 const PYTHON_SDK: &str = include_str!("../../../sdk/python/droppedneedle_plugin.py");
@@ -198,9 +198,9 @@ impl PluginsSetup {
 
         use super::fakes::FakeLauncher;
         use super::scrobble::{MemoryListenBrainzLinkStore, MemoryScrobblePrefsStore};
-        use crate::providers::InMemoryProviderCache;
         use droppedneedle_kernel::http_client::HttpClientFactory;
         use droppedneedle_kernel::jobs::plugin_ticks::MemoryTickStore;
+        use droppedneedle_providers::InMemoryProviderCache;
 
         /// Scratch-dir sequence so parallel test states never share a store.
         static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -233,7 +233,7 @@ impl PluginsSetup {
                 api: super::install::API_BASE.to_owned(),
                 codeload: super::install::CODELOAD_BASE.to_owned(),
             },
-            crate::providers::listenbrainz::DEFAULT_BASE_URL,
+            droppedneedle_providers::listenbrainz::DEFAULT_BASE_URL,
             ids,
             cache,
             registry,

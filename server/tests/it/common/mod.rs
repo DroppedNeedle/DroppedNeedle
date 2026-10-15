@@ -239,11 +239,11 @@ fn test_auth() -> droppedneedle::auth::wiring::AuthSetup {
 /// Provider deps with the byte cache shared out, so the admin bundle
 /// observes the same entries the clients read.
 fn test_providers() -> (
-    Arc<droppedneedle::providers::Providers>,
-    Arc<droppedneedle::providers::InMemoryProviderCache>,
+    Arc<droppedneedle_providers::Providers>,
+    Arc<droppedneedle_providers::InMemoryProviderCache>,
 ) {
-    let cache = Arc::new(droppedneedle::providers::InMemoryProviderCache::new());
-    let providers = Arc::new(droppedneedle::providers::Providers::new(cache.clone()));
+    let cache = Arc::new(droppedneedle_providers::InMemoryProviderCache::new());
+    let providers = Arc::new(droppedneedle_providers::Providers::new(cache.clone()));
     (providers, cache)
 }
 
@@ -331,7 +331,7 @@ pub fn reads_inputs(
         cover_cache_max_bytes: 16 * 1024 * 1024,
         http: http.shared().clone(),
         no_redirect: http.no_redirect().clone(),
-        providers: Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
+        providers: Arc::new(droppedneedle_providers::Providers::with_memory_cache()),
         listenbrainz_links: Arc::new(
             droppedneedle::plugins::scrobble::MemoryListenBrainzLinkStore::new(Arc::new(
                 droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32])

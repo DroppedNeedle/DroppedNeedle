@@ -51,6 +51,9 @@
 //! [`HttpPort`](client::HttpPort)) live in the core modules and are
 //! re-exported at this root; see [`adapters`] for their production bridges.
 
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+
 pub mod acoustid;
 pub mod adapters;
 pub mod audiodb;

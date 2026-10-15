@@ -22,8 +22,8 @@ use super::{
     build_release_search_query, escape_lucene_phrase, is_valid_mbid, normalize_mb_id,
     parse_retry_after_secs,
 };
-use crate::providers::RequestPriority;
-use crate::providers::degradation::{DegradationSink, NoopSink};
+use crate::RequestPriority;
+use crate::degradation::{DegradationSink, NoopSink};
 
 /// Lookup result: the entity plus the redirect proof behind it.
 #[derive(Debug, Clone)]

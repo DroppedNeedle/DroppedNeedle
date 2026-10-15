@@ -43,9 +43,9 @@ use super::plex_models::{Container, Envelope, Metadata};
 use crate::auth::federated::FederatedError;
 use crate::auth::federated::plex::PlexServerIdentity;
 use crate::auth::federated::settings::InstallIds;
-use crate::providers::plextv::Resource;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::PlexConnection;
+use droppedneedle_providers::plextv::Resource;
 
 /// Request timeout per upstream call, matching the v2 repository.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);

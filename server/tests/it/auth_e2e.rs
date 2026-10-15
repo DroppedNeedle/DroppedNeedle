@@ -29,7 +29,6 @@ use droppedneedle::auth::users::UsersDeps;
 use droppedneedle::auth::users::stores::SystemClock;
 use droppedneedle::auth::wiring::{AuthSetup, Upstreams};
 use droppedneedle::docs::ApiDoc;
-use droppedneedle::providers::{InMemoryProviderCache, Providers};
 use droppedneedle::reads::catalog::{
     Catalog,
     library::LocalCatalog,
@@ -45,6 +44,7 @@ use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 use droppedneedle_kernel::runtime_config::{
     ConfigStore, Crypto, Secret, secret_sections::WrappedSettings,
 };
+use droppedneedle_providers::{InMemoryProviderCache, Providers};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 use utoipa::OpenApi as _;

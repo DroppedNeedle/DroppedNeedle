@@ -15,13 +15,13 @@ use super::flows::seams::{Candidate, CandidateSearch, ObservedRelease, ReleasePo
 use super::slskd::{ReqwestSlskdHttp, SlskdRepository};
 use super::usenet::newznab::NewznabIndexer;
 use super::usenet::prowlarr::ProwlarrIndexer;
-use crate::providers::RequestPriority;
-use crate::providers::adapters::HealthSink;
-use crate::providers::degradation::DegradationSink;
-use crate::providers::musicbrainz::{
+use droppedneedle_kernel::runtime_config::sections::{UsenetBackend, UsenetBackendSetting};
+use droppedneedle_providers::RequestPriority;
+use droppedneedle_providers::adapters::HealthSink;
+use droppedneedle_providers::degradation::DegradationSink;
+use droppedneedle_providers::musicbrainz::{
     Criticality, MbPacing, MbTransport, MusicBrainzClient, ReqwestMbTransport,
 };
-use droppedneedle_kernel::runtime_config::sections::{UsenetBackend, UsenetBackendSetting};
 
 /// Candidates returned per search, at most. The wanted loop only needs to
 /// know a candidate exists; the worker re-searches at enqueue time.
@@ -219,8 +219,8 @@ impl<T: MbTransport, S: DegradationSink> ReleasePoll for MusicBrainzReleasePoll<
 /// toward system health.
 pub fn live_release_poll(
     http: &droppedneedle_kernel::http_client::HttpClientFactory,
-    providers: Arc<crate::providers::Providers>,
-    source: crate::providers::musicbrainz::SourceFn,
+    providers: Arc<droppedneedle_providers::Providers>,
+    source: droppedneedle_providers::musicbrainz::SourceFn,
 ) -> MusicBrainzReleasePoll<ReqwestMbTransport, HealthSink> {
     let health = HealthSink::new(&providers);
     MusicBrainzReleasePoll::new(

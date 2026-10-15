@@ -5,7 +5,7 @@
 //! across restarts).
 
 use crate::common::ScratchDir;
-use droppedneedle::providers::{geocoding, github, skiddle, ticketmaster, youtube};
+use droppedneedle_providers::{geocoding, github, skiddle, ticketmaster, youtube};
 
 use std::collections::HashMap;
 use std::path::PathBuf;

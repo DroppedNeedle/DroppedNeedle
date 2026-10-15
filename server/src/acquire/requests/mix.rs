@@ -26,16 +26,18 @@ use super::models::AlbumIntake;
 use super::service::RequestsService;
 
 use crate::plugins::scrobble::{ScrobblePrefsPatch, ScrobblePrefsStore};
-use crate::providers::listenbrainz::playlists::{RecommendationPlaylist, RecommendationTrack};
-use crate::providers::listenbrainz::{
-    ListenBrainzCredentials, SimilarArtist, TopRecording, TopReleaseGroup,
-};
 use crate::reads::catalog::library::LocalCatalog;
 use crate::reads::collections::store::playlists::{NewEntry, PlaylistStore, Written};
 use crate::reads::discover::adapters::queue::select::{self, Shuffler};
 use crate::reads::discover::models::QueueItemLight;
 use droppedneedle_kernel::events::{
     EventSink, PersonalMixRefreshed, UserNotice, model::new_event_id,
+};
+use droppedneedle_providers::listenbrainz::playlists::{
+    RecommendationPlaylist, RecommendationTrack,
+};
+use droppedneedle_providers::listenbrainz::{
+    ListenBrainzCredentials, SimilarArtist, TopRecording, TopReleaseGroup,
 };
 
 /// The playlist's display name (v2).

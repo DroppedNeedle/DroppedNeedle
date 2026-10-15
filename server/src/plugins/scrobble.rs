@@ -20,7 +20,7 @@ use crate::auth::times::to_iso;
 use droppedneedle_kernel::db::{WriteLane, writer::Lane};
 
 use super::runtime::BoxFuture;
-use crate::providers::listenbrainz::ListenBrainzVerifier;
+use droppedneedle_providers::listenbrainz::ListenBrainzVerifier;
 
 /// Allowed `primary_music_source` values.
 pub const PRIMARY_SOURCES: &[&str] = &["listenbrainz", "lastfm"];

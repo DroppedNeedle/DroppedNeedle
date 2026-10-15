@@ -9,12 +9,12 @@ use std::sync::Arc;
 use crate::{
     acquire::AcquireSetup, admin::AdminSetup, auth::wiring::AuthSetup, bootstrap::jobs::JobsSetup,
     compat::CompatSetup, concerts::ConcertsSetup, library::wiring::LibrarySetup, media::MediaSetup,
-    plugins::wiring::PluginsSetup, providers::Providers, reads::ReadsSetup,
-    settings::wiring::SettingsSetup,
+    plugins::wiring::PluginsSetup, reads::ReadsSetup, settings::wiring::SettingsSetup,
 };
 use droppedneedle_kernel::{
     config::AppConfig, events::EventHub, http_client::HttpClientFactory, ids::IdGenerator,
 };
+use droppedneedle_providers::Providers;
 
 /// All long-lived server dependencies.
 #[derive(Clone)]

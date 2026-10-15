@@ -15,15 +15,15 @@ use droppedneedle::plugins::scrobble::{
     MemoryScrobblePrefsStore, MixApprovalHook as _, MixStateReader as _, ScrobblePrefsPatch,
     ScrobblePrefsStore as _,
 };
-use droppedneedle::providers::listenbrainz::playlists::{
-    RecommendationPlaylist, RecommendationTrack,
-};
-use droppedneedle::providers::listenbrainz::{
-    ListenBrainzCredentials, SimilarArtist, TopRecording, TopReleaseGroup,
-};
 use droppedneedle::reads::collections::db::CollectionsDb;
 use droppedneedle::reads::collections::store::playlists::PlaylistStore;
 use droppedneedle_kernel::events::EventSink;
+use droppedneedle_providers::listenbrainz::playlists::{
+    RecommendationPlaylist, RecommendationTrack,
+};
+use droppedneedle_providers::listenbrainz::{
+    ListenBrainzCredentials, SimilarArtist, TopRecording, TopReleaseGroup,
+};
 use futures_util::future::BoxFuture;
 
 use axum::{

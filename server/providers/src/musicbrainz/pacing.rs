@@ -16,8 +16,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::{BRAINZMASH_MAX_COOLDOWN_SECS, MbSource};
-use crate::providers::limiter::{RateLimiter, RatePolicy};
-use crate::providers::{Providers, RequestPriority};
+use crate::limiter::{RateLimiter, RatePolicy};
+use crate::{Providers, RequestPriority};
 
 /// Longest BrainzMash cooldown a user request waits out. Past it the
 /// request fails at once and the page answers from what it has; the

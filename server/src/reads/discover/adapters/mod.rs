@@ -23,13 +23,6 @@ use std::sync::Arc;
 
 use crate::auth::users::UsersDeps;
 use crate::plugins::scrobble::ListenBrainzLinkStore;
-use crate::providers::{
-    Providers,
-    adapters::{CorePacer, CoreSink, ReqwestGet},
-    lastfm::{self, LastFmClient},
-    listenbrainz::ListenBrainzClient,
-    youtube::{DEFAULT_DAILY_QUOTA_LIMIT, YouTubeClient, YouTubeSettings},
-};
 use crate::reads::catalog::Catalog;
 use crate::reads::catalog::library::LocalCatalog;
 use crate::reads::catalog::upstream::{InstanceLastFmKey, Upstream};
@@ -43,6 +36,13 @@ use crate::remotes::connections::{
 use droppedneedle_kernel::db::WriteLane;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::{ConfigStore, secret_sections::AdvancedSettings};
+use droppedneedle_providers::{
+    Providers,
+    adapters::{CorePacer, CoreSink, ReqwestGet},
+    lastfm::{self, LastFmClient},
+    listenbrainz::ListenBrainzClient,
+    youtube::{DEFAULT_DAILY_QUOTA_LIMIT, YouTubeClient, YouTubeSettings},
+};
 
 /// What production discover needs from the composition root.
 pub struct DiscoverInputs {

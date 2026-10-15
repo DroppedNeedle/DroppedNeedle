@@ -1222,11 +1222,11 @@ fn acoustid_wanted(
 /// above the batch threshold that list the recording, the best score's
 /// (the first on a tie), when it is a UUID.
 fn acoustid_id_for(
-    results: &[crate::providers::acoustid::BatchResult],
+    results: &[droppedneedle_providers::acoustid::BatchResult],
     recording: &str,
 ) -> Option<String> {
-    use crate::providers::acoustid::BATCH_MIN_SCORE;
-    let mut best: Option<&crate::providers::acoustid::BatchResult> = None;
+    use droppedneedle_providers::acoustid::BATCH_MIN_SCORE;
+    let mut best: Option<&droppedneedle_providers::acoustid::BatchResult> = None;
     for result in results {
         let names = result
             .recordings()
@@ -1261,7 +1261,7 @@ pub(crate) fn acoustid_values(
     extras: &mut super::enrich::AlbumExtras,
 ) -> AcoustIdLookup {
     use super::enrich::{AcoustIdAnswer, AcoustIdPrint};
-    use crate::providers::acoustid::MAX_BATCH;
+    use droppedneedle_providers::acoustid::MAX_BATCH;
 
     let port = setup.enrichment.get();
     // Without a key no id is looked up, so a file that wants only an id
@@ -1400,7 +1400,7 @@ pub(crate) fn acoustid_values(
             outcome = AcoustIdLookup::Answered;
             for ((track, revision, print, recording), results) in chunk.iter().zip(&results) {
                 let matched = results.iter().any(|result| {
-                    result.score() > crate::providers::acoustid::BATCH_MIN_SCORE
+                    result.score() > droppedneedle_providers::acoustid::BATCH_MIN_SCORE
                         && !result.recordings().is_empty()
                 });
                 setup.identify_store.save_fingerprint(

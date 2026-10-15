@@ -4,8 +4,8 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use crate::providers::degradation::{DegradationContext, IntegrationStatus};
-use crate::providers::musicbrainz::{ArtistCreditName, MbRelease, Relation};
+use droppedneedle_providers::degradation::{DegradationContext, IntegrationStatus};
+use droppedneedle_providers::musicbrainz::{ArtistCreditName, MbRelease, Relation};
 
 use super::models::{
     AlbumTrack, ExternalLink, PurchaseKind, PurchaseLink, ServiceStatus, SourceStatus,
@@ -95,7 +95,7 @@ pub fn type_info(primary_type: Option<&str>, secondary_types: &[String]) -> Opti
 
 /// Leading year of a MusicBrainz date.
 pub fn year_of(date: Option<&str>) -> Option<i32> {
-    crate::providers::musicbrainz::parse_year(date)
+    droppedneedle_providers::musicbrainz::parse_year(date)
 }
 
 /// First credited artist: credited name (canonical name as fallback) and
@@ -236,7 +236,7 @@ pub fn wiki_info(relations: &[Relation]) -> (Option<String>, Option<String>) {
             continue;
         };
         if relation.rel_type == "wikidata" && wikidata_id.is_none() {
-            wikidata_id = crate::providers::wikidata::extract_wikidata_id(url);
+            wikidata_id = droppedneedle_providers::wikidata::extract_wikidata_id(url);
         }
         if (relation.rel_type == "wikipedia" || relation.rel_type == "wikidata")
             && wiki_url.is_none()
@@ -527,7 +527,7 @@ pub fn quote_plus(text: &str) -> String {
 /// The covers route for a release group (v2 `release_group_cover_url`),
 /// or `None` when the id is not an MBID.
 pub fn release_group_cover_url(release_group_mbid: &str) -> Option<String> {
-    crate::providers::musicbrainz::is_valid_mbid(release_group_mbid).then(|| {
+    droppedneedle_providers::musicbrainz::is_valid_mbid(release_group_mbid).then(|| {
         format!(
             "/api/v3/covers/release-group/{}?size=500",
             release_group_mbid.trim().to_ascii_lowercase()

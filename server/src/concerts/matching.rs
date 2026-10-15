@@ -13,8 +13,8 @@
 //!
 //! When both sources list the same gig, the Ticketmaster row wins.
 
-use crate::providers::skiddle::{SkiddleArtist, SkiddleEvent};
-use crate::providers::ticketmaster::{TmAttraction, TmEvent};
+use droppedneedle_providers::skiddle::{SkiddleArtist, SkiddleEvent};
+use droppedneedle_providers::ticketmaster::{TmAttraction, TmEvent};
 
 use super::models::{ConcertStatus, EventCity, EventSource};
 
@@ -384,7 +384,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::providers::ticketmaster::TmExternalId;
+    use droppedneedle_providers::ticketmaster::TmExternalId;
 
     fn attraction(id: &str, name: &str, mbids: &[&str]) -> TmAttraction {
         let links = (!mbids.is_empty()).then(|| {

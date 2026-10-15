@@ -10,8 +10,6 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::providers::RequestPriority;
-use crate::providers::musicbrainz::Criticality;
 use crate::reads::catalog::mapping::should_include_release;
 use crate::reads::discover::adapters::page::build::weekly_exploration;
 use crate::reads::discover::adapters::page::sources::{LastFmChartAlbum, PageSources, RankedAlbum};
@@ -23,6 +21,8 @@ use crate::reads::discover::adapters::queue::sources::{
 };
 use crate::reads::discover::models::WeeklyExploration;
 use crate::reads::discover::ports::BoxFuture;
+use droppedneedle_providers::RequestPriority;
+use droppedneedle_providers::musicbrainz::Criticality;
 
 /// One loved track (ListenBrainz feedback or Last.fm loved tracks).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -143,7 +143,7 @@ fn tag_ttl(sources: &LiveSources) -> Duration {
     )
 }
 
-fn loved_from_lastfm(row: crate::providers::lastfm::TopItem) -> LovedTrack {
+fn loved_from_lastfm(row: droppedneedle_providers::lastfm::TopItem) -> LovedTrack {
     LovedTrack {
         name: row.name,
         artist_name: row.artist_name,

@@ -2,8 +2,8 @@
 //! loopback server: the decode of each real wire shape, rate limits and
 //! Retry-After, degradation recording, and credential handling.
 
-use droppedneedle::providers::{DegradationSink, Pacer};
-use droppedneedle::providers::{acoustid, audiodb, lastfm, listenbrainz};
+use droppedneedle_providers::{DegradationSink, Pacer};
+use droppedneedle_providers::{acoustid, audiodb, lastfm, listenbrainz};
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

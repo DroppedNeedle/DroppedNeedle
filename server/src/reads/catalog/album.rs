@@ -5,11 +5,11 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::providers::degradation::scoped;
-use crate::providers::itunes::ITunesClient;
-use crate::providers::lastfm;
-use crate::providers::musicbrainz::{Criticality, MbRelease, MbReleaseGroup};
-use crate::providers::{IntegrationStatus, RequestPriority, record_current};
+use droppedneedle_providers::degradation::scoped;
+use droppedneedle_providers::itunes::ITunesClient;
+use droppedneedle_providers::lastfm;
+use droppedneedle_providers::musicbrainz::{Criticality, MbRelease, MbReleaseGroup};
+use droppedneedle_providers::{IntegrationStatus, RequestPriority, record_current};
 
 use super::artist::{LASTFM_TTL, checked_mbid};
 use super::error::CatalogError;
@@ -203,7 +203,7 @@ impl ReleaseDetail {
 }
 
 fn collect_links(
-    relations: &[crate::providers::musicbrainz::Relation],
+    relations: &[droppedneedle_providers::musicbrainz::Relation],
     into: &mut Vec<PurchaseLink>,
 ) {
     for relation in relations {
@@ -713,13 +713,13 @@ impl Catalog {
             return Some(entry.images);
         }
         let mut outcome = client.album_by_mbid(&group.mbid).await;
-        if matches!(outcome, crate::providers::audiodb::Outcome::Missing)
+        if matches!(outcome, droppedneedle_providers::audiodb::Outcome::Missing)
             && advanced.audiodb_name_search_fallback
         {
             outcome = client.search_album(&group.artist_name, &group.title).await;
         }
         let (images, ttl) = match outcome {
-            crate::providers::audiodb::Outcome::Found(album) => (
+            droppedneedle_providers::audiodb::Outcome::Found(album) => (
                 Some(AlbumImages {
                     album_thumb_url: album.thumb,
                     album_back_url: album.back,
@@ -732,10 +732,10 @@ impl Catalog {
                 }),
                 secs(advanced.cache_ttl_audiodb_found),
             ),
-            crate::providers::audiodb::Outcome::Missing => {
+            droppedneedle_providers::audiodb::Outcome::Missing => {
                 (None, secs(advanced.cache_ttl_audiodb_not_found))
             }
-            crate::providers::audiodb::Outcome::Unavailable { .. } => return None,
+            droppedneedle_providers::audiodb::Outcome::Unavailable { .. } => return None,
         };
         if let Ok(bytes) = serde_json::to_vec(&AudioDbAlbumEntry {
             images: images.clone(),
@@ -1008,7 +1008,7 @@ impl Catalog {
     fn purchase_key(&self, mbid: &str) -> String {
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
         let region = self.upstream().settings().store_region();
-        crate::providers::digest_key(
+        droppedneedle_providers::digest_key(
             "getit:",
             &[
                 &namespace,
@@ -1181,8 +1181,11 @@ impl Catalog {
         let Some((client, creds)) = self.upstream().lastfm(user_id).await else {
             return Ok(LastFmAlbumEnrichment::default());
         };
-        let key =
-            crate::providers::digest_key("lfm_album_info:", &[&id, artist_name, album_name], "v1");
+        let key = droppedneedle_providers::digest_key(
+            "lfm_album_info:",
+            &[&id, artist_name, album_name],
+            "v1",
+        );
         let artist = artist_name.to_owned();
         let album = album_name.to_owned();
         let value = self

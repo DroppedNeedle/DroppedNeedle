@@ -40,7 +40,7 @@ use rusqlite::params;
 use sha2::{Digest as _, Sha256};
 
 use super::{SqliteScanStore, retry_on_busy};
-use crate::providers::coverart::sniff_image_content_type;
+use droppedneedle_providers::coverart::sniff_image_content_type;
 
 /// Folder image names, most deliberate first, matched case-insensitively
 /// (v2 `_LOCAL_COVER_STEMS`).

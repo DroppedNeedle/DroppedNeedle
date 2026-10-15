@@ -234,7 +234,7 @@ pub async fn record_activity(
         let valid_artist = body
             .artist_mbid
             .as_deref()
-            .is_some_and(crate::providers::musicbrainz::is_valid_mbid);
+            .is_some_and(droppedneedle_providers::musicbrainz::is_valid_mbid);
         if !valid_artist || body.section.is_none() || body.provider.is_none() {
             return Err(ServiceError::InvalidInput(
                 "Artist activity needs an artist MBID, a section and a provider".to_owned(),
@@ -414,7 +414,7 @@ pub async fn queue_generate(
 /// not a MusicBrainz id is a bad request.
 fn checked_release_group(value: &str) -> Result<String, ServiceError> {
     let trimmed = value.trim();
-    if !crate::providers::musicbrainz::is_valid_mbid(trimmed) {
+    if !droppedneedle_providers::musicbrainz::is_valid_mbid(trimmed) {
         return Err(ServiceError::InvalidInput(
             "release_group_mbid must be a MusicBrainz id".to_owned(),
         ));

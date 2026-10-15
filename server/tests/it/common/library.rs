@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use droppedneedle::library::identify::models::{LocalAlbumFacts, RecallResult};
 use droppedneedle::library::identify::providers::{IdentifyProviders, RecallOutcome};
 use droppedneedle::library::identify::sources::{EditionPage, EditionQuery, SourceError};
-use droppedneedle::providers::musicbrainz::Criticality;
+use droppedneedle_providers::musicbrainz::Criticality;
 
 type Recall = Box<dyn Fn(&LocalAlbumFacts) -> RecallResult + Send>;
 

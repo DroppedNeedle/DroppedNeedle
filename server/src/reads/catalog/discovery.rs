@@ -11,9 +11,11 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::providers::musicbrainz::Criticality;
-use crate::providers::{IntegrationStatus, RequestPriority, lastfm, listenbrainz, record_current};
 use droppedneedle_kernel::runtime_config::sections::MusicSource;
+use droppedneedle_providers::musicbrainz::Criticality;
+use droppedneedle_providers::{
+    IntegrationStatus, RequestPriority, lastfm, listenbrainz, record_current,
+};
 
 use super::artist::ReleaseGroupList;
 use super::artist::checked_mbid;

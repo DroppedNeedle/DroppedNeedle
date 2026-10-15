@@ -8,14 +8,14 @@
 //!   the catalog (v2 `invalidate_catalog_scope` / `on_identified`).
 //! - Provider reads (`DiscogsContrib`, `MusicBrainzContrib`) sit on the
 //!   provider clients; every signature takes an explicit
-//!   [`RequestPriority`](crate::providers::slots::RequestPriority) so
+//!   [`RequestPriority`](droppedneedle_providers::slots::RequestPriority) so
 //!   each call site states its lane.
 //!
 //! Futures are boxed by hand per repo idiom (no async-trait dependency).
 
 use std::collections::HashMap;
 
-use crate::providers::slots::RequestPriority;
+use droppedneedle_providers::slots::RequestPriority;
 use futures_util::future::BoxFuture;
 
 use super::error::ContribError;

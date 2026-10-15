@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::providers::slots::RequestPriority;
+use droppedneedle_providers::slots::RequestPriority;
 use sha2::{Digest as _, Sha256};
 
 use super::error::ContribError;

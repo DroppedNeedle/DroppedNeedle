@@ -15,8 +15,8 @@ use std::sync::{Arc, Mutex};
 
 use droppedneedle::library::identify;
 use droppedneedle::library::matching::decide::REVIEW_CEILING;
-use droppedneedle::providers::Providers;
-use droppedneedle::providers::musicbrainz::{
+use droppedneedle_providers::Providers;
+use droppedneedle_providers::musicbrainz::{
     MbPacing, MbRequest, MbTransport, MusicBrainzClient, RawResponse, TransportError,
 };
 use identify::models::EvidenceClass;

@@ -21,20 +21,20 @@ use super::sources::{
     QueueSources, ReleaseGroupFacts, SourceResult, StatsRange, UserMusic,
 };
 use crate::plugins::scrobble::ListenBrainzLinkStore;
-use crate::providers::adapters::{CorePacer, CoreSink};
-use crate::providers::cache::cache_aside_json;
-use crate::providers::lastfm::{self, LastFmCredentials};
-use crate::providers::listenbrainz::{self, ListenBrainzClient, ListenBrainzCredentials};
-use crate::providers::musicbrainz::models::{ArtistCreditName, Relation};
-use crate::providers::musicbrainz::{Criticality, MbError, is_valid_mbid};
-use crate::providers::wikidata::WikidataClient;
-use crate::providers::{Providers, RequestPriority};
 use crate::reads::catalog::mapping::should_include_release;
 use crate::reads::catalog::upstream::{CatalogLastFm, Upstream, user_lastfm};
 use crate::reads::discover::ports::BoxFuture;
 use crate::remotes::connections::{ConnectionResolver, ResolveError};
 use crate::remotes::jellyfin::JellyfinAdapter;
 use crate::remotes::models::SourceName;
+use droppedneedle_providers::adapters::{CorePacer, CoreSink};
+use droppedneedle_providers::cache::cache_aside_json;
+use droppedneedle_providers::lastfm::{self, LastFmCredentials};
+use droppedneedle_providers::listenbrainz::{self, ListenBrainzClient, ListenBrainzCredentials};
+use droppedneedle_providers::musicbrainz::models::{ArtistCreditName, Relation};
+use droppedneedle_providers::musicbrainz::{Criticality, MbError, is_valid_mbid};
+use droppedneedle_providers::wikidata::WikidataClient;
+use droppedneedle_providers::{Providers, RequestPriority};
 
 /// How long a popularity refusal keeps Last.fm standing in.
 const POPULARITY_DOWN_FOR: Duration = Duration::from_secs(10 * 60);

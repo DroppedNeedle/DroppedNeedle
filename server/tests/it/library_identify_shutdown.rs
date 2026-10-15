@@ -27,12 +27,12 @@ use droppedneedle::library::identify::models::{
 };
 use droppedneedle::library::identify::providers::{IdentifyProviders, RecallOutcome};
 use droppedneedle::library::wiring::LibrarySetup;
-use droppedneedle::providers::musicbrainz::Criticality;
 use droppedneedle::remotes::plex::ConfiguredPlexServer;
 use droppedneedle_kernel::db::DbRuntime;
 use droppedneedle_kernel::http_client::HttpClientFactory;
 use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
+use droppedneedle_providers::musicbrainz::Criticality;
 use tokio::sync::{oneshot, watch};
 
 /// Empty recall, no side effects: every attempt lands NoCandidate.

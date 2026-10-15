@@ -462,7 +462,7 @@ mod tests {
         let mut value: serde_json::Value =
             serde_json::from_slice(&std::fs::read(path).expect("fixture reads")).expect("parses");
         value["release-group"] = serde_json::json!({"id": "22222222-2222-4222-8222-222222222222"});
-        let wire: crate::providers::musicbrainz::MbRelease =
+        let wire: droppedneedle_providers::musicbrainz::MbRelease =
             serde_json::from_value(value).expect("decodes");
         let names = crate::library::identify::sources::names_from_wire(&wire, 1);
         let mut release = crate::library::identify::sources::release_from_wire(wire, Vec::new())

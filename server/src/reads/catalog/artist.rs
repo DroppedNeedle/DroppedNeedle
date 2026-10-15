@@ -5,11 +5,13 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::providers::degradation::scoped;
-use crate::providers::lastfm;
-use crate::providers::musicbrainz::{Criticality, MAX_PAGE_LIMIT, MbArtist, ReleaseGroupRef};
-use crate::providers::wikidata::WikidataClient;
-use crate::providers::{IntegrationStatus, RequestPriority, record_current};
+use droppedneedle_providers::degradation::scoped;
+use droppedneedle_providers::lastfm;
+use droppedneedle_providers::musicbrainz::{
+    Criticality, MAX_PAGE_LIMIT, MbArtist, ReleaseGroupRef,
+};
+use droppedneedle_providers::wikidata::WikidataClient;
+use droppedneedle_providers::{IntegrationStatus, RequestPriority, record_current};
 
 use super::error::CatalogError;
 use super::mapping;
@@ -427,14 +429,14 @@ impl Catalog {
             return Some(entry.images);
         }
         let mut outcome = client.artist_by_mbid(mbid).await;
-        if matches!(outcome, crate::providers::audiodb::Outcome::Missing)
+        if matches!(outcome, droppedneedle_providers::audiodb::Outcome::Missing)
             && advanced.audiodb_name_search_fallback
             && !name.is_empty()
         {
             outcome = client.search_artist(name).await;
         }
         let (images, ttl) = match outcome {
-            crate::providers::audiodb::Outcome::Found(artist) => (
+            droppedneedle_providers::audiodb::Outcome::Found(artist) => (
                 Some(ArtistImages {
                     thumb_url: artist.thumb,
                     fanart_url: artist.fanart,
@@ -449,12 +451,12 @@ impl Catalog {
                 }),
                 secs(advanced.cache_ttl_audiodb_found),
             ),
-            crate::providers::audiodb::Outcome::Missing => {
+            droppedneedle_providers::audiodb::Outcome::Missing => {
                 (None, secs(advanced.cache_ttl_audiodb_not_found))
             }
             // Already recorded by the client; nothing cached so the next
             // visit tries again.
-            crate::providers::audiodb::Outcome::Unavailable { .. } => return None,
+            droppedneedle_providers::audiodb::Outcome::Unavailable { .. } => return None,
         };
         if let Ok(bytes) = serde_json::to_vec(&AudioDbArtistEntry {
             images: images.clone(),

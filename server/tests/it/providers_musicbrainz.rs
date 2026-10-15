@@ -4,8 +4,8 @@
 //! (redirects, ranking without substitution), the mirror's path and URL
 //! allowlists, and CAA URL and image-type checks.
 
-use droppedneedle::providers::DegradationSink;
-use droppedneedle::providers::{coverart, musicbrainz};
+use droppedneedle_providers::DegradationSink;
+use droppedneedle_providers::{coverart, musicbrainz};
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
@@ -218,7 +218,7 @@ impl coverart::CaaTransport for SharedCaa {
 }
 
 fn unpaced() -> musicbrainz::MbPacing {
-    musicbrainz::MbPacing::new(Arc::new(droppedneedle::providers::Providers::unpaced()))
+    musicbrainz::MbPacing::new(Arc::new(droppedneedle_providers::Providers::unpaced()))
 }
 
 fn official_client(
@@ -1017,7 +1017,7 @@ async fn brainzmash_binding_invalid_fails_closed_without_wire() {
 #[tokio::test]
 async fn user_requests_fail_fast_during_a_long_brainzmash_cooldown() {
     let (fake, sink) = fast_mb(vec![]);
-    let providers = Arc::new(droppedneedle::providers::Providers::unpaced());
+    let providers = Arc::new(droppedneedle_providers::Providers::unpaced());
     let pacing = musicbrainz::MbPacing::new(providers);
     pacing.cooldown().note_cooldown(Some(30.0));
     let client = musicbrainz::MusicBrainzClient::brainzmash(SharedMb(fake.clone()), true, pacing)
@@ -1560,7 +1560,7 @@ async fn credits_decode_from_the_recorded_answers() {
 #[test]
 fn names_decode_from_the_recorded_answers() {
     use droppedneedle::library::identify::sources::{names_from_wire, relations_from_wire};
-    use droppedneedle::providers::musicbrainz::MbRelease;
+    use droppedneedle_providers::musicbrainz::MbRelease;
     let decode = |name: &str| -> MbRelease {
         serde_json::from_value(relations_probe(name)).expect("probe decodes")
     };

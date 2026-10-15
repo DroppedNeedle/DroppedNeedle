@@ -32,14 +32,12 @@ use axum::{
 };
 use sqlx::SqlitePool;
 
-use crate::{
-    auth::{
-        session::middleware::CurrentSession,
-        users::{UsersDeps, models::UserRecord, roles::Role},
-    },
-    providers::{InMemoryProviderCache, Providers},
+use crate::auth::{
+    session::middleware::CurrentSession,
+    users::{UsersDeps, models::UserRecord, roles::Role},
 };
 use droppedneedle_kernel::db::{BackupService, CheckpointService, DurableWorkWakeups, WriteLane};
+use droppedneedle_providers::{InMemoryProviderCache, Providers};
 
 pub use error::AdminError;
 pub use handlers::AdminHttpError;

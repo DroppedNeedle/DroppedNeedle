@@ -6,10 +6,10 @@
 
 use std::sync::Arc;
 
-use crate::providers::youtube::utc_today;
 use crate::reads::collections::db::StoreError;
 use crate::reads::discover::ports::{ProviderFailure, YouTubeSource};
 use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_providers::youtube::utc_today;
 
 use super::models::{
     YouTubeLink, YouTubeLinkGenerateRequest, YouTubeLinkUpdateRequest, YouTubeManualLinkRequest,

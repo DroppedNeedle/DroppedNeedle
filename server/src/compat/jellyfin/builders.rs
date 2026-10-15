@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use sha2::{Digest, Sha256};
 
-use crate::providers::musicbrainz::is_valid_mbid;
+use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 use super::models::{
     BaseItemDto, EmptyList, ExternalUrl, ItemDetail, MediaStream, NameGuidPair, UserItemDataDto,

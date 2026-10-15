@@ -46,11 +46,11 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 
-use crate::providers::Singleflight;
-use crate::providers::coverart::{
+use crate::reads::platform::covers::{CoverArt, CoverBytes, CoverLookup};
+use droppedneedle_providers::Singleflight;
+use droppedneedle_providers::coverart::{
     ArtworkBytes, DownloadSize, EntityKind, sniff_image_content_type,
 };
-use crate::reads::platform::covers::{CoverArt, CoverBytes, CoverLookup};
 
 use self::cache::{ArtworkCache, KeyEntry, unix_now};
 use self::local::{LocalArt, LocalArtwork, read_local_art};
@@ -349,7 +349,7 @@ impl ArtworkService {
         wait: Duration,
     ) -> CoverLookup {
         let mbid = mbid.trim().to_ascii_lowercase();
-        if !crate::providers::coverart::is_valid_mbid(&mbid) {
+        if !droppedneedle_providers::coverart::is_valid_mbid(&mbid) {
             return CoverLookup::Missing;
         }
         let prefer_local = (self.prefer_local)();
@@ -584,7 +584,7 @@ async fn fetch_and_store(
     size: DownloadSize,
     key: &str,
 ) -> Option<CoverBytes> {
-    use crate::providers::coverart::CaaError;
+    use droppedneedle_providers::coverart::CaaError;
     match remote.front(entity, mbid, size).await {
         Ok(Some(art)) => {
             let hash = cache
@@ -737,7 +737,7 @@ impl CoverArt for ArtworkService {
     ) -> BoxFuture<'a, CoverLookup> {
         Box::pin(async move {
             let mbid = artist_id.trim().to_ascii_lowercase();
-            if !crate::providers::coverart::is_valid_mbid(&mbid) {
+            if !droppedneedle_providers::coverart::is_valid_mbid(&mbid) {
                 return CoverLookup::Missing;
             }
             match self.artist_original(&mbid, WARM_WAIT).await {
@@ -772,7 +772,7 @@ impl CoverArt for ArtworkService {
             }
             if let Some(group) = &context.release_group_mbid {
                 let group = group.trim().to_ascii_lowercase();
-                if crate::providers::coverart::is_valid_mbid(&group)
+                if droppedneedle_providers::coverart::is_valid_mbid(&group)
                     && let CoverLookup::Found(cover) = self
                         .remote_cover(EntityKind::ReleaseGroup, &group, size, COMPAT_WAIT)
                         .await

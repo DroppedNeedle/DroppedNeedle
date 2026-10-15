@@ -11,7 +11,7 @@
 use super::{
     Body, ListenBrainzClient, ListenBrainzCredentials, Outcome, RequestFailure, path_segment,
 };
-use crate::providers::{DegradationSink, Pacer};
+use crate::{DegradationSink, Pacer};
 
 /// JSPF extension key for playlist-level MusicBrainz metadata.
 const PLAYLIST_EXTENSION: &str = "https://musicbrainz.org/doc/jspf#playlist";

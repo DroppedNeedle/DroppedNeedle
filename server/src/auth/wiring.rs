@@ -429,8 +429,8 @@ impl AuthSetup {
         };
         use super::users::hibp::{HibpScreen, PwnedPasswordsHttp};
         use super::users::stores::SystemClock;
-        use crate::providers::{lastfm, plextv::PLEX_TV_BASE};
         use droppedneedle_kernel::ids::UuidGenerator;
+        use droppedneedle_providers::{lastfm, plextv::PLEX_TV_BASE};
 
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let tag = COUNTER.fetch_add(1, Ordering::Relaxed);

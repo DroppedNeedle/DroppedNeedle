@@ -26,8 +26,6 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::providers::ProviderCache;
-use crate::providers::singleflight::Singleflight;
 use crate::reads::discover::models::{
     DiscoverQueuePreview, DiscoverQueueStatusResponse, IgnoredRelease, QueueEnrichment,
     QueueGenerateResponse, QueueIgnoreRequest, QueueItem, QueueItemLight,
@@ -36,6 +34,8 @@ use crate::reads::discover::ports::{
     BoxFuture, ProviderFailure, QueueDeck, QueueStore, QueueTrigger, YouTubeSource,
 };
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
+use droppedneedle_providers::ProviderCache;
+use droppedneedle_providers::singleflight::Singleflight;
 
 use build::{BuildContext, build_deck};
 use sources::QueueSources;

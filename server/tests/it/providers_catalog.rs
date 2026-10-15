@@ -2,8 +2,8 @@
 //! clients over a scripted transport: the decode of each real
 //! wire shape, identity gates, rate limits and degradation.
 
-use droppedneedle::providers::{HttpFault, HttpPort, HttpReply};
-use droppedneedle::providers::{discogs, itunes, lrclib, preview, wikidata};
+use droppedneedle_providers::{HttpFault, HttpPort, HttpReply};
+use droppedneedle_providers::{discogs, itunes, lrclib, preview, wikidata};
 
 // ---------------------------------------------------------------------------
 // Scripted fakes

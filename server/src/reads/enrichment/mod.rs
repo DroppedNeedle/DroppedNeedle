@@ -36,13 +36,13 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::providers::degradation::{IntegrationStatus as CoreStatus, record_current};
 use crate::reads::library::stores::{LibraryCatalog, LyricDoc, LyricsPort, StoreError};
 use crate::reads::search::models::{
     AlbumEnrichment, ArtistEnrichment, Degradation, EnrichmentBatchRequest, EnrichmentResponse,
     EnrichmentSource,
 };
 use crate::reads::search::ports::{EnrichmentPort, MAX_ENRICHMENT_PER_BUCKET};
+use droppedneedle_providers::degradation::{IntegrationStatus as CoreStatus, record_current};
 
 // ---------------------------------------------------------------------------
 // Typed degradation results (v2 `integration_result.py`)

@@ -8,7 +8,8 @@
 
 use std::sync::Arc;
 
-use crate::providers::{
+use crate::reads::enrichment as enrich;
+use droppedneedle_providers::{
     Providers,
     adapters::{CorePacer, CoreSink, ReqwestGet},
     degradation::IntegrationStatus as CoreStatus,
@@ -16,7 +17,6 @@ use crate::providers::{
     listenbrainz::{ListenBrainzClient, ListenBrainzCredentials},
     lrclib::LrclibClient,
 };
-use crate::reads::enrichment as enrich;
 
 impl From<CoreError> for enrich::ProviderError {
     /// Translate a typed core failure into an enrichment leg failure,
@@ -117,15 +117,15 @@ impl enrich::ListenBrainzClient for LiveListenBrainz {
                 .artist_top_release_groups(mbid, count, &creds)
                 .await
             {
-                crate::providers::listenbrainz::Outcome::Found(top) => Ok(top
+                droppedneedle_providers::listenbrainz::Outcome::Found(top) => Ok(top
                     .into_iter()
                     .map(|row| enrich::TopRelease {
                         mbid: row.release_group_mbid,
                         listen_count: row.listen_count,
                     })
                     .collect()),
-                crate::providers::listenbrainz::Outcome::Missing => Ok(Vec::new()),
-                crate::providers::listenbrainz::Outcome::Unavailable { message, .. } => {
+                droppedneedle_providers::listenbrainz::Outcome::Missing => Ok(Vec::new()),
+                droppedneedle_providers::listenbrainz::Outcome::Unavailable { message, .. } => {
                     Err(enrich::ProviderError::new("listenbrainz", message))
                 }
             }
@@ -143,11 +143,11 @@ impl enrich::ListenBrainzClient for LiveListenBrainz {
             }
             let creds = ListenBrainzCredentials::default();
             match self.client.release_group_popularity(mbids, &creds).await {
-                crate::providers::listenbrainz::Outcome::Found(counts) => Ok(counts),
-                crate::providers::listenbrainz::Outcome::Missing => {
+                droppedneedle_providers::listenbrainz::Outcome::Found(counts) => Ok(counts),
+                droppedneedle_providers::listenbrainz::Outcome::Missing => {
                     Ok(std::collections::HashMap::new())
                 }
-                crate::providers::listenbrainz::Outcome::Unavailable { message, .. } => {
+                droppedneedle_providers::listenbrainz::Outcome::Unavailable { message, .. } => {
                     Err(enrich::ProviderError::new("listenbrainz", message))
                 }
             }
@@ -227,13 +227,17 @@ impl enrich::LyricsClient for LiveLrclib {
 
 /// Log-only cause for an LRCLIB leg failure. The wire never sees this; the
 /// response carries the fixed degradation note.
-fn lrclib_cause(error: &crate::providers::lrclib::FetchError) -> String {
+fn lrclib_cause(error: &droppedneedle_providers::lrclib::FetchError) -> String {
     match error {
-        crate::providers::lrclib::FetchError::Transport => "lrclib transport failure".to_owned(),
-        crate::providers::lrclib::FetchError::RateLimited { retry_after_secs } => {
+        droppedneedle_providers::lrclib::FetchError::Transport => {
+            "lrclib transport failure".to_owned()
+        }
+        droppedneedle_providers::lrclib::FetchError::RateLimited { retry_after_secs } => {
             format!("lrclib rate limited; retry in {retry_after_secs:.1}s")
         }
-        crate::providers::lrclib::FetchError::Unusable => "lrclib answer unusable".to_owned(),
+        droppedneedle_providers::lrclib::FetchError::Unusable => {
+            "lrclib answer unusable".to_owned()
+        }
     }
 }
 
