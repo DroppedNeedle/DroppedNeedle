@@ -1,0 +1,1394 @@
+{
+ "barcode": "888880520562",
+ "cover-art-archive": {
+  "artwork": true,
+  "back": false,
+  "front": true,
+  "darkened": false,
+  "count": 1
+ },
+ "media": [
+  {
+   "id": "e5abc044-7880-439d-80dc-2f3311efd5f5",
+   "position": 1,
+   "track-count": 7,
+   "format": "Digital Media",
+   "title": "",
+   "format-id": "907a28d9-b3b2-3ef6-89a8-7b18d91d4794",
+   "tracks": [
+    {
+     "recording": {
+      "disambiguation": "",
+      "length": 979306,
+      "title": "Piano Concerto no. 3 in C minor, op. 37: I. Allegro con brio",
+      "video": false,
+      "id": "33ea7e59-3691-4414-92d3-6bce48d5d9cc",
+      "relations": [
+       {
+        "source-credit": "",
+        "attribute-values": {},
+        "artist": {
+         "name": "Herbert von Karajan",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "disambiguation": "conductor",
+         "country": "AT",
+         "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99",
+         "sort-name": "Karajan, Herbert von",
+         "type": "Person"
+        },
+        "end": "1957-05-26",
+        "attribute-ids": {},
+        "type-id": "234670ce-5f22-4fd0-921b-ef1662695c5d",
+        "ended": true,
+        "target-credit": "",
+        "begin": "1957-05-26",
+        "direction": "backward",
+        "type": "conductor",
+        "attributes": [],
+        "target-type": "artist"
+       },
+       {
+        "attribute-credits": {},
+        "target-credit": "",
+        "artist": {
+         "country": "CA",
+         "name": "Glenn Gould",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "disambiguation": "pianist",
+         "id": "7002bf88-1269-4965-a772-4ba1e7a91eaa",
+         "sort-name": "Gould, Glenn",
+         "type": "Person"
+        },
+        "attribute-values": {},
+        "source-credit": "",
+        "ended": true,
+        "type-id": "59054b12-01ac-43ee-a618-285fd397e461",
+        "attribute-ids": {
+         "piano": "b3eac5f9-7859-4416-ac39-7154e2e8d348"
+        },
+        "end": "1957-05-26",
+        "type": "instrument",
+        "target-type": "artist",
+        "attributes": [
+         "piano"
+        ],
+        "direction": "backward",
+        "begin": "1957-05-26"
+       },
+       {
+        "type": "performing orchestra",
+        "attributes": [],
+        "target-type": "artist",
+        "begin": "1957-05-26",
+        "direction": "backward",
+        "target-credit": "",
+        "source-credit": "",
+        "attribute-values": {},
+        "artist": {
+         "disambiguation": "",
+         "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+         "name": "Berliner Philharmoniker",
+         "country": null,
+         "type": "Orchestra",
+         "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+         "sort-name": "Berliner Philharmoniker"
+        },
+        "attribute-ids": {},
+        "end": "1957-05-26",
+        "ended": true,
+        "type-id": "3b6616c5-88ba-4341-b4ee-81ce1e6d7ebb"
+       },
+       {
+        "direction": "forward",
+        "work": {
+         "attributes": [],
+         "id": "d6843235-961a-37ab-85a4-a0e7e027f752",
+         "type": null,
+         "type-id": null,
+         "languages": [
+          "zxx"
+         ],
+         "disambiguation": "",
+         "iswcs": [],
+         "language": "zxx",
+         "relations": [
+          {
+           "ended": true,
+           "type-id": "d59d99ea-23d4-4a80-b066-edca32ee158f",
+           "attribute-ids": {},
+           "end": "1800",
+           "attribute-values": {},
+           "artist": {
+            "id": "1f9df192-a621-4f54-8850-2c5373b7eac9",
+            "sort-name": "Beethoven, Ludwig van",
+            "type": "Person",
+            "country": "DE",
+            "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+            "name": "Ludwig van Beethoven",
+            "disambiguation": "German composer"
+           },
+           "source-credit": "",
+           "target-credit": "",
+           "direction": "backward",
+           "begin": "1800",
+           "target-type": "artist",
+           "attributes": [],
+           "type": "composer"
+          },
+          {
+           "source-credit": "",
+           "attribute-values": {},
+           "artist": {
+            "sort-name": "Beethoven, Ludwig van",
+            "id": "1f9df192-a621-4f54-8850-2c5373b7eac9",
+            "type": "Person",
+            "country": "DE",
+            "name": "Ludwig van Beethoven",
+            "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+            "disambiguation": "German composer"
+           },
+           "end": "1809",
+           "attribute-ids": {
+            "additional": "0a5341f8-3b1d-4f99-a0c6-26b7f4e42c7f"
+           },
+           "type-id": "d59d99ea-23d4-4a80-b066-edca32ee158f",
+           "ended": true,
+           "target-credit": "",
+           "begin": "1809",
+           "direction": "backward",
+           "type": "composer",
+           "attributes": [
+            "additional"
+           ],
+           "target-type": "artist"
+          },
+          {
+           "direction": "forward",
+           "begin": null,
+           "work": {
+            "id": "f73e4f68-aae9-4511-a22d-5b35d350d3ec",
+            "type": null,
+            "attributes": [],
+            "language": null,
+            "title": "Concerto for Piano and Orchestra no. 3 in C minor, op. 37: I. Allegro con brio",
+            "languages": [],
+            "type-id": null,
+            "disambiguation": "for piano solo, Alkan",
+            "iswcs": []
+           },
+           "type": "arrangement",
+           "target-type": "work",
+           "attributes": [],
+           "attribute-values": {},
+           "source-credit": "",
+           "ended": false,
+           "type-id": "51975ed8-bbfa-486b-9f28-5947f4370299",
+           "attribute-ids": {},
+           "end": null,
+           "target-credit": ""
+          },
+          {
+           "direction": "forward",
+           "begin": null,
+           "work": {
+            "title": "Concerto for Piano and Orchestra no. 3 in C minor, op. 37: I. Allegro con brio",
+            "language": null,
+            "iswcs": [],
+            "disambiguation": "for piano and string quintet, Lachner",
+            "type-id": null,
+            "languages": [],
+            "type": null,
+            "id": "650e96da-057d-4d93-aa18-484d2cff77da",
+            "attributes": []
+           },
+           "type": "arrangement",
+           "target-type": "work",
+           "attributes": [],
+           "attribute-values": {},
+           "source-credit": "",
+           "ended": false,
+           "type-id": "51975ed8-bbfa-486b-9f28-5947f4370299",
+           "attribute-ids": {},
+           "end": null,
+           "target-credit": ""
+          },
+          {
+           "begin": null,
+           "work": {
+            "attributes": [],
+            "type": null,
+            "id": "6fe3b8e7-f088-4283-b499-d15944fad53f",
+            "disambiguation": "",
+            "iswcs": [],
+            "languages": [],
+            "type-id": null,
+            "title": "Cadenza to the first movement of Beethoven's Piano Concerto no. 3, S. 389a",
+            "language": null
+           },
+           "direction": "forward",
+           "attributes": [],
+           "target-type": "work",
+           "type": "based on",
+           "attribute-ids": {},
+           "end": null,
+           "ended": false,
+           "type-id": "6bb1df6b-57f3-434d-8a39-5dc363d2eb78",
+           "source-credit": "",
+           "attribute-values": {},
+           "target-credit": ""
+          },
+          {
+           "type": "based on",
+           "attributes": [],
+           "target-type": "work",
+           "begin": null,
+           "work": {
+            "attributes": [],
+            "id": "96a9cad9-6869-4071-8bc0-bd262d738f38",
+            "type": null,
+            "type-id": null,
+            "languages": [],
+            "disambiguation": "Alkan, as part of solo piano reduction",
+            "iswcs": [],
+            "language": null,
+            "title": "Cadenza to the first movement of Beethoven's Piano Concerto no. 3"
+           },
+           "direction": "forward",
+           "target-credit": "",
+           "source-credit": "",
+           "attribute-values": {},
+           "attribute-ids": {},
+           "end": null,
+           "ended": false,
+           "type-id": "6bb1df6b-57f3-434d-8a39-5dc363d2eb78"
+          },
+          {
+           "begin": null,
+           "work": {
+            "languages": [],
+            "type-id": null,
+            "disambiguation": "Smetana, completed",
+            "iswcs": [],
+            "language": null,
+            "title": "Cadenza to the first movement of Beethoven's Piano Concerto no. 3",
+            "attributes": [],
+            "id": "68422271-1946-49f7-94cf-2857df4b9e1a",
+            "type": null
+           },
+           "direction": "forward",
+           "type": "based on",
+           "attributes": [],
+           "target-type": "work",
+           "source-credit": "",
+           "attribute-values": {},
+           "end": null,
+           "attribute-ids": {},
+           "type-id": "6bb1df6b-57f3-434d-8a39-5dc363d2eb78",
+           "ended": false,
+           "target-credit": ""
+          },
+          {
+           "attributes": [],
+           "target-type": "work",
+           "type": "based on",
+           "work": {
+            "type": null,
+            "id": "7e89d37e-5863-46cf-8f23-8f8c1e6f4da6",
+            "attributes": [],
+            "title": "Cadenza to the first movement of Beethoven's Piano Concerto no. 3",
+            "language": null,
+            "iswcs": [],
+            "disambiguation": "Clara Schumann",
+            "languages": [],
+            "type-id": null
+           },
+           "begin": null,
+           "direction": "forward",
+           "target-credit": "",
+           "attribute-ids": {},
+           "end": null,
+           "ended": false,
+           "type-id": "6bb1df6b-57f3-434d-8a39-5dc363d2eb78",
+           "source-credit": "",
+           "attribute-values": {}
+          },
+          {
+           "attribute-values": {},
+           "source-credit": "",
+           "type-id": "6bb1df6b-57f3-434d-8a39-5dc363d2eb78",
+           "ended": false,
+           "end": null,
+           "attribute-ids": {},
+           "target-credit": "",
+           "direction": "forward",
+           "begin": null,
+           "work": {
+            "languages": [],
+            "type-id": null,
+            "disambiguation": "Schwartz",
+            "iswcs": [],
+            "language": null,
+            "title": "Cadenza to the 1st movement of Piano Concerto no. 3, op. 37",
+            "attributes": [],
+            "id": "9387b288-2e3a-44e5-9604-34132998d076",
+            "type": null
+           },
+           "type": "based on",
+           "target-type": "work",
+           "attributes": []
+          },
+          {
+           "source-credit": "",
+           "attribute-values": {},
+           "attribute-ids": {},
+           "end": null,
+           "ended": false,
+           "type-id": "6bb1df6b-57f3-434d-8a39-5dc363d2eb78",
+           "target-credit": "",
+           "work": {
+            "attributes": [],
+            "id": "d0705045-f5ee-4b1e-a971-aba288fd63b0",
+            "type": null,
+            "languages": [],
+            "type-id": null,
+            "iswcs": [],
+            "disambiguation": "Busoni, BV B 2/2",
+            "language": null,
+            "title": "Cadenza for the first movement of Beethoven’s Piano Concerto no. 3, op. 37"
+           },
+           "begin": null,
+           "direction": "forward",
+           "type": "based on",
+           "attributes": [],
+           "target-type": "work"
+          },
+          {
+           "type": "parts",
+           "target-type": "work",
+           "attributes": [
+            "movement"
+           ],
+           "ordering-key": 1,
+           "direction": "backward",
+           "work": {
+            "languages": [],
+            "type-id": "dad81031-607b-3039-bd5b-80c0f4575272",
+            "iswcs": [],
+            "disambiguation": "",
+            "language": null,
+            "title": "Concerto for Piano and Orchestra no. 3 in C minor, op. 37",
+            "attributes": [],
+            "id": "82506d40-77ad-4aa7-9e3d-392d5cfb13c7",
+            "type": "Concerto"
+           },
+           "begin": null,
+           "target-credit": "",
+           "attribute-values": {},
+           "source-credit": "",
+           "type-id": "ca8d3642-ce5f-49f8-91f2-125d72524e6a",
+           "ended": false,
+           "end": null,
+           "attribute-ids": {
+            "movement": "1d05bc4b-9884-4c9f-9f69-616f119047f3"
+           }
+          }
+         ],
+         "title": "Concerto for Piano and Orchestra no. 3 in C minor, op. 37: I. Allegro con brio"
+        },
+        "begin": "1957-05-26",
+        "type": "performance",
+        "target-type": "work",
+        "attributes": [
+         "live"
+        ],
+        "attribute-values": {},
+        "source-credit": "",
+        "type-id": "a3005666-a872-32c3-ad06-98af558e99b0",
+        "ended": true,
+        "end": "1957-05-26",
+        "attribute-ids": {
+         "live": "70007db6-a8bc-46d7-a770-80e6a0bb551a"
+        },
+        "target-credit": ""
+       }
+      ]
+     },
+     "length": 979293,
+     "position": 1,
+     "title": "Piano Concerto no. 3 in C minor, op. 37: I. Allegro con brio",
+     "id": "ed4f20f0-61cf-439d-9c64-1d9acb043cbb",
+     "number": "1"
+    },
+    {
+     "title": "Piano Concerto no. 3 in C minor, op. 37: II. Largo",
+     "position": 2,
+     "length": 570427,
+     "recording": {
+      "relations": [
+       {
+        "target-credit": "",
+        "ended": true,
+        "type-id": "234670ce-5f22-4fd0-921b-ef1662695c5d",
+        "attribute-ids": {},
+        "end": "1957-05-26",
+        "attribute-values": {},
+        "artist": {
+         "sort-name": "Karajan, Herbert von",
+         "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99",
+         "type": "Person",
+         "name": "Herbert von Karajan",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "disambiguation": "conductor",
+         "country": "AT"
+        },
+        "source-credit": "",
+        "target-type": "artist",
+        "attributes": [],
+        "type": "conductor",
+        "direction": "backward",
+        "begin": "1957-05-26"
+       },
+       {
+        "source-credit": "",
+        "attribute-values": {},
+        "artist": {
+         "country": "CA",
+         "disambiguation": "pianist",
+         "name": "Glenn Gould",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "type": "Person",
+         "id": "7002bf88-1269-4965-a772-4ba1e7a91eaa",
+         "sort-name": "Gould, Glenn"
+        },
+        "end": "1957-05-26",
+        "attribute-ids": {
+         "piano": "b3eac5f9-7859-4416-ac39-7154e2e8d348"
+        },
+        "type-id": "59054b12-01ac-43ee-a618-285fd397e461",
+        "ended": true,
+        "target-credit": "",
+        "attribute-credits": {},
+        "begin": "1957-05-26",
+        "direction": "backward",
+        "type": "instrument",
+        "attributes": [
+         "piano"
+        ],
+        "target-type": "artist"
+       },
+       {
+        "target-credit": "",
+        "source-credit": "",
+        "attribute-values": {},
+        "artist": {
+         "disambiguation": "",
+         "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+         "name": "Berliner Philharmoniker",
+         "country": null,
+         "type": "Orchestra",
+         "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+         "sort-name": "Berliner Philharmoniker"
+        },
+        "attribute-ids": {},
+        "end": "1957-05-26",
+        "ended": true,
+        "type-id": "3b6616c5-88ba-4341-b4ee-81ce1e6d7ebb",
+        "type": "performing orchestra",
+        "attributes": [],
+        "target-type": "artist",
+        "begin": "1957-05-26",
+        "direction": "backward"
+       },
+       {
+        "target-type": "work",
+        "attributes": [
+         "live"
+        ],
+        "type": "performance",
+        "direction": "forward",
+        "begin": "1957-05-26",
+        "work": {
+         "disambiguation": "",
+         "iswcs": [],
+         "languages": [
+          "zxx"
+         ],
+         "type-id": null,
+         "title": "Concerto for Piano and Orchestra no. 3 in C minor, op. 37: II. Largo",
+         "relations": [
+          {
+           "source-credit": "",
+           "attribute-values": {},
+           "artist": {
+            "country": "DE",
+            "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+            "name": "Ludwig van Beethoven",
+            "disambiguation": "German composer",
+            "id": "1f9df192-a621-4f54-8850-2c5373b7eac9",
+            "sort-name": "Beethoven, Ludwig van",
+            "type": "Person"
+           },
+           "end": "1803",
+           "attribute-ids": {},
+           "type-id": "d59d99ea-23d4-4a80-b066-edca32ee158f",
+           "ended": true,
+           "target-credit": "",
+           "begin": "1800",
+           "direction": "backward",
+           "type": "composer",
+           "attributes": [],
+           "target-type": "artist"
+          },
+          {
+           "end": null,
+           "attribute-ids": {},
+           "type-id": "51975ed8-bbfa-486b-9f28-5947f4370299",
+           "ended": false,
+           "source-credit": "",
+           "attribute-values": {},
+           "target-credit": "",
+           "begin": null,
+           "work": {
+            "disambiguation": "for piano and string quintet, Lachner",
+            "iswcs": [],
+            "languages": [],
+            "type-id": null,
+            "title": "Concerto for Piano and Orchestra no. 3 in C minor, op. 37: II. Largo",
+            "language": null,
+            "attributes": [],
+            "type": null,
+            "id": "eceedaea-adcb-412e-9cab-af36c0c77efb"
+           },
+           "direction": "forward",
+           "attributes": [],
+           "target-type": "work",
+           "type": "arrangement"
+          },
+          {
+           "type": "parts",
+           "attributes": [
+            "movement"
+           ],
+           "target-type": "work",
+           "begin": null,
+           "work": {
+            "title": "Concerto for Piano and Orchestra no. 3 in C minor, op. 37",
+            "language": null,
+            "disambiguation": "",
+            "iswcs": [],
+            "type-id": "dad81031-607b-3039-bd5b-80c0f4575272",
+            "languages": [],
+            "type": "Concerto",
+            "id": "82506d40-77ad-4aa7-9e3d-392d5cfb13c7",
+            "attributes": []
+           },
+           "ordering-key": 2,
+           "direction": "backward",
+           "target-credit": "",
+           "source-credit": "",
+           "attribute-values": {},
+           "end": null,
+           "attribute-ids": {
+            "movement": "1d05bc4b-9884-4c9f-9f69-616f119047f3"
+           },
+           "type-id": "ca8d3642-ce5f-49f8-91f2-125d72524e6a",
+           "ended": false
+          }
+         ],
+         "language": "zxx",
+         "attributes": [],
+         "type": null,
+         "id": "125f5a1f-9868-35e9-85dc-22944c888b13"
+        },
+        "target-credit": "",
+        "type-id": "a3005666-a872-32c3-ad06-98af558e99b0",
+        "ended": true,
+        "end": "1957-05-26",
+        "attribute-ids": {
+         "live": "70007db6-a8bc-46d7-a770-80e6a0bb551a"
+        },
+        "attribute-values": {},
+        "source-credit": ""
+       }
+      ],
+      "id": "4dc5cfc5-75f0-4fec-9604-ade18169a55c",
+      "video": false,
+      "title": "Piano Concerto no. 3 in C minor, op. 37: II. Largo",
+      "length": 569360,
+      "disambiguation": ""
+     },
+     "number": "2",
+     "id": "c638fd85-2e96-4529-9e4e-61ec2085a16f"
+    },
+    {
+     "id": "fc2ed76e-b15f-42ea-9b58-523e9db6229e",
+     "number": "3",
+     "position": 3,
+     "length": 608307,
+     "title": "Piano Concerto no. 3 in C minor, op. 37: III. Rondo. Allegro",
+     "recording": {
+      "id": "b0cdd16b-765d-48ab-bd87-a066ca9eb923",
+      "video": false,
+      "relations": [
+       {
+        "type": "conductor",
+        "target-type": "artist",
+        "attributes": [],
+        "direction": "backward",
+        "begin": "1957-05-26",
+        "target-credit": "",
+        "artist": {
+         "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99",
+         "sort-name": "Karajan, Herbert von",
+         "type": "Person",
+         "country": "AT",
+         "name": "Herbert von Karajan",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "disambiguation": "conductor"
+        },
+        "attribute-values": {},
+        "source-credit": "",
+        "ended": true,
+        "type-id": "234670ce-5f22-4fd0-921b-ef1662695c5d",
+        "attribute-ids": {},
+        "end": "1957-05-26"
+       },
+       {
+        "type": "instrument",
+        "target-type": "artist",
+        "attributes": [
+         "piano"
+        ],
+        "direction": "backward",
+        "begin": "1957-05-26",
+        "attribute-credits": {},
+        "target-credit": "",
+        "artist": {
+         "country": "CA",
+         "disambiguation": "pianist",
+         "name": "Glenn Gould",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "type": "Person",
+         "sort-name": "Gould, Glenn",
+         "id": "7002bf88-1269-4965-a772-4ba1e7a91eaa"
+        },
+        "attribute-values": {},
+        "source-credit": "",
+        "type-id": "59054b12-01ac-43ee-a618-285fd397e461",
+        "ended": true,
+        "end": "1957-05-26",
+        "attribute-ids": {
+         "piano": "b3eac5f9-7859-4416-ac39-7154e2e8d348"
+        }
+       },
+       {
+        "direction": "backward",
+        "begin": "1957-05-26",
+        "target-type": "artist",
+        "attributes": [],
+        "type": "performing orchestra",
+        "ended": true,
+        "type-id": "3b6616c5-88ba-4341-b4ee-81ce1e6d7ebb",
+        "attribute-ids": {},
+        "end": "1957-05-26",
+        "attribute-values": {},
+        "artist": {
+         "type": "Orchestra",
+         "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+         "sort-name": "Berliner Philharmoniker",
+         "country": null,
+         "disambiguation": "",
+         "name": "Berliner Philharmoniker",
+         "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5"
+        },
+        "source-credit": "",
+        "target-credit": ""
+       },
+       {
+        "target-credit": "",
+        "source-credit": "",
+        "attribute-values": {},
+        "end": "1957-05-26",
+        "attribute-ids": {
+         "live": "70007db6-a8bc-46d7-a770-80e6a0bb551a"
+        },
+        "type-id": "a3005666-a872-32c3-ad06-98af558e99b0",
+        "ended": true,
+        "type": "performance",
+        "attributes": [
+         "live"
+        ],
+        "target-type": "work",
+        "work": {
+         "iswcs": [],
+         "disambiguation": "",
+         "languages": [
+          "zxx"
+         ],
+         "type-id": null,
+         "title": "Concerto for Piano and Orchestra no. 3 in C minor, op. 37: III. Rondo. Allegro",
+         "relations": [
+          {
+           "target-credit": "",
+           "attribute-ids": {},
+           "end": "1803",
+           "ended": true,
+           "type-id": "d59d99ea-23d4-4a80-b066-edca32ee158f",
+           "source-credit": "",
+           "attribute-values": {},
+           "artist": {
+            "sort-name": "Beethoven, Ludwig van",
+            "id": "1f9df192-a621-4f54-8850-2c5373b7eac9",
+            "type": "Person",
+            "country": "DE",
+            "name": "Ludwig van Beethoven",
+            "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+            "disambiguation": "German composer"
+           },
+           "attributes": [],
+           "target-type": "artist",
+           "type": "composer",
+           "begin": "1800",
+           "direction": "backward"
+          },
+          {
+           "target-credit": "",
+           "source-credit": "",
+           "attribute-values": {},
+           "attribute-ids": {},
+           "end": null,
+           "ended": false,
+           "type-id": "51975ed8-bbfa-486b-9f28-5947f4370299",
+           "type": "arrangement",
+           "attributes": [],
+           "target-type": "work",
+           "work": {
+            "iswcs": [],
+            "disambiguation": "for piano and string quintet, Lachner",
+            "type-id": null,
+            "languages": [],
+            "title": "Concerto for Piano and Orchestra no. 3 in C minor, op. 37: III. Rondo. Allegro",
+            "language": null,
+            "attributes": [],
+            "type": null,
+            "id": "14ff1b0a-fb9d-4b32-84d3-a29ab041804d"
+           },
+           "begin": null,
+           "direction": "forward"
+          },
+          {
+           "target-credit": "",
+           "source-credit": "",
+           "attribute-values": {},
+           "attribute-ids": {},
+           "end": null,
+           "ended": false,
+           "type-id": "6bb1df6b-57f3-434d-8a39-5dc363d2eb78",
+           "type": "based on",
+           "attributes": [],
+           "target-type": "work",
+           "work": {
+            "type-id": null,
+            "languages": [],
+            "disambiguation": "",
+            "iswcs": [],
+            "language": null,
+            "title": "Rondo",
+            "attributes": [],
+            "id": "2ff75eae-b0da-3d63-b13b-a8532750042c",
+            "type": null
+           },
+           "begin": null,
+           "direction": "forward"
+          },
+          {
+           "begin": null,
+           "work": {
+            "disambiguation": "Brahms",
+            "iswcs": [],
+            "languages": [],
+            "type-id": null,
+            "title": "Cadenza for Beethoven's Piano Concerto no. 3 in C minor (op. 37), Anh. 4/7",
+            "language": null,
+            "attributes": [],
+            "type": null,
+            "id": "94ef8242-0f11-4b3d-b5fe-56f8bbef2040"
+           },
+           "direction": "forward",
+           "attributes": [],
+           "target-type": "work",
+           "type": "based on",
+           "attribute-ids": {},
+           "end": null,
+           "ended": false,
+           "type-id": "6bb1df6b-57f3-434d-8a39-5dc363d2eb78",
+           "source-credit": "",
+           "attribute-values": {},
+           "target-credit": ""
+          },
+          {
+           "target-credit": "",
+           "source-credit": "",
+           "attribute-values": {},
+           "attribute-ids": {
+            "movement": "1d05bc4b-9884-4c9f-9f69-616f119047f3"
+           },
+           "end": null,
+           "ended": false,
+           "type-id": "ca8d3642-ce5f-49f8-91f2-125d72524e6a",
+           "type": "parts",
+           "attributes": [
+            "movement"
+           ],
+           "target-type": "work",
+           "begin": null,
+           "work": {
+            "languages": [],
+            "type-id": "dad81031-607b-3039-bd5b-80c0f4575272",
+            "disambiguation": "",
+            "iswcs": [],
+            "language": null,
+            "title": "Concerto for Piano and Orchestra no. 3 in C minor, op. 37",
+            "attributes": [],
+            "id": "82506d40-77ad-4aa7-9e3d-392d5cfb13c7",
+            "type": "Concerto"
+           },
+           "direction": "backward",
+           "ordering-key": 3
+          }
+         ],
+         "language": "zxx",
+         "attributes": [],
+         "type": null,
+         "id": "0117bb25-80f2-317a-a274-aadff00d53ca"
+        },
+        "begin": "1957-05-26",
+        "direction": "forward"
+       }
+      ],
+      "length": 613973,
+      "title": "Concerto for Piano and Orchestra no. 3 in C minor op. 37: III. Rondo (Allegro)",
+      "disambiguation": ""
+     }
+    },
+    {
+     "number": "4",
+     "id": "5152988f-752f-4487-b9e3-b694cd20ed9e",
+     "recording": {
+      "relations": [
+       {
+        "attribute-values": {},
+        "artist": {
+         "disambiguation": "conductor",
+         "name": "Herbert von Karajan",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "AT",
+         "type": "Person",
+         "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99",
+         "sort-name": "Karajan, Herbert von"
+        },
+        "source-credit": "",
+        "type-id": "234670ce-5f22-4fd0-921b-ef1662695c5d",
+        "ended": true,
+        "end": "1957-05-26",
+        "attribute-ids": {},
+        "target-credit": "",
+        "direction": "backward",
+        "begin": "1957-05-26",
+        "type": "conductor",
+        "target-type": "artist",
+        "attributes": []
+       },
+       {
+        "direction": "backward",
+        "begin": "1957-05-26",
+        "target-type": "artist",
+        "attributes": [],
+        "type": "performing orchestra",
+        "ended": true,
+        "type-id": "3b6616c5-88ba-4341-b4ee-81ce1e6d7ebb",
+        "attribute-ids": {},
+        "end": "1957-05-26",
+        "attribute-values": {},
+        "artist": {
+         "type": "Orchestra",
+         "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+         "sort-name": "Berliner Philharmoniker",
+         "country": null,
+         "disambiguation": "",
+         "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+         "name": "Berliner Philharmoniker"
+        },
+        "source-credit": "",
+        "target-credit": ""
+       },
+       {
+        "direction": "forward",
+        "work": {
+         "relations": [
+          {
+           "begin": "1915",
+           "direction": "backward",
+           "attributes": [],
+           "target-type": "artist",
+           "type": "composer",
+           "attribute-ids": {},
+           "end": "1919",
+           "ended": true,
+           "type-id": "d59d99ea-23d4-4a80-b066-edca32ee158f",
+           "source-credit": "",
+           "attribute-values": {},
+           "artist": {
+            "id": "691b0e9d-9e57-41cf-932d-a3d21b068e75",
+            "sort-name": "Sibelius, Jean",
+            "type": "Person",
+            "country": "FI",
+            "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+            "name": "Jean Sibelius",
+            "disambiguation": "Finnish composer"
+           },
+           "target-credit": ""
+          },
+          {
+           "target-type": "work",
+           "attributes": [],
+           "type": "arrangement",
+           "direction": "forward",
+           "work": {
+            "type": null,
+            "id": "c83a6054-077d-4acc-9758-b71a1120ec6a",
+            "attributes": [],
+            "title": "Symphony no. 5 in E-flat major, op. 82: I. Tempo molto moderato",
+            "language": null,
+            "iswcs": [],
+            "disambiguation": "transcr. for piano by Ekman",
+            "type-id": null,
+            "languages": []
+           },
+           "begin": null,
+           "target-credit": "",
+           "ended": false,
+           "type-id": "51975ed8-bbfa-486b-9f28-5947f4370299",
+           "attribute-ids": {},
+           "end": null,
+           "attribute-values": {},
+           "source-credit": ""
+          },
+          {
+           "begin": null,
+           "work": {
+            "attributes": [],
+            "id": "0e9918ea-a7c4-46d6-912b-eff2f380cc20",
+            "type": "Symphony",
+            "languages": [],
+            "type-id": "174314aa-0aa4-30cf-96a6-50b281d8d208",
+            "disambiguation": "",
+            "iswcs": [],
+            "language": null,
+            "title": "Symphony no. 5 in E-flat major, op. 82"
+           },
+           "ordering-key": 1,
+           "direction": "backward",
+           "type": "parts",
+           "attributes": [
+            "movement"
+           ],
+           "target-type": "work",
+           "source-credit": "",
+           "attribute-values": {},
+           "attribute-ids": {
+            "movement": "1d05bc4b-9884-4c9f-9f69-616f119047f3"
+           },
+           "end": null,
+           "ended": false,
+           "type-id": "ca8d3642-ce5f-49f8-91f2-125d72524e6a",
+           "target-credit": ""
+          }
+         ],
+         "language": "zxx",
+         "title": "Symphony no. 5 in E-flat major, op. 82: I. Tempo molto moderato - Allegro moderato (ma poco a poco stretto) - Presto - Più presto",
+         "languages": [
+          "zxx"
+         ],
+         "type-id": null,
+         "disambiguation": "",
+         "iswcs": [],
+         "id": "675dbbe1-b260-3523-af06-b6d8455cff88",
+         "type": null,
+         "attributes": []
+        },
+        "begin": "1957-05-26",
+        "type": "performance",
+        "target-type": "work",
+        "attributes": [
+         "live"
+        ],
+        "attribute-values": {},
+        "source-credit": "",
+        "ended": true,
+        "type-id": "a3005666-a872-32c3-ad06-98af558e99b0",
+        "attribute-ids": {
+         "live": "70007db6-a8bc-46d7-a770-80e6a0bb551a"
+        },
+        "end": "1957-05-26",
+        "target-credit": ""
+       }
+      ],
+      "video": false,
+      "id": "aeba0607-2a02-47e0-a167-21cdf59a8bea",
+      "length": 745480,
+      "title": "Symphony no. 5 in E-flat major op. 82: I. Tempo molto morderato – Largamente – Allegro moderato",
+      "disambiguation": ""
+     },
+     "position": 4,
+     "length": 745414,
+     "title": "Symphony no. 5 in E-flat major, op. 82: I. Tempo molto moderato - Largamente Allegro moderato"
+    },
+    {
+     "id": "e0b9f0ae-7d10-46b6-ac09-2cd5c61d6e55",
+     "number": "5",
+     "length": 465648,
+     "position": 5,
+     "title": "Symphony no. 5 in E-flat major, op. 82: II. Andante mosso, quasi allegretto",
+     "recording": {
+      "disambiguation": "",
+      "relations": [
+       {
+        "artist": {
+         "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99",
+         "sort-name": "Karajan, Herbert von",
+         "type": "Person",
+         "country": "AT",
+         "name": "Herbert von Karajan",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "disambiguation": "conductor"
+        },
+        "attribute-values": {},
+        "source-credit": "",
+        "type-id": "234670ce-5f22-4fd0-921b-ef1662695c5d",
+        "ended": true,
+        "end": "1957-05-26",
+        "attribute-ids": {},
+        "target-credit": "",
+        "direction": "backward",
+        "begin": "1957-05-26",
+        "type": "conductor",
+        "target-type": "artist",
+        "attributes": []
+       },
+       {
+        "attributes": [],
+        "target-type": "artist",
+        "type": "performing orchestra",
+        "begin": "1957-05-26",
+        "direction": "backward",
+        "target-credit": "",
+        "attribute-ids": {},
+        "end": "1957-05-26",
+        "ended": true,
+        "type-id": "3b6616c5-88ba-4341-b4ee-81ce1e6d7ebb",
+        "source-credit": "",
+        "attribute-values": {},
+        "artist": {
+         "country": null,
+         "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+         "name": "Berliner Philharmoniker",
+         "disambiguation": "",
+         "sort-name": "Berliner Philharmoniker",
+         "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+         "type": "Orchestra"
+        }
+       },
+       {
+        "target-credit": "",
+        "attribute-ids": {
+         "live": "70007db6-a8bc-46d7-a770-80e6a0bb551a"
+        },
+        "end": "1957-05-26",
+        "ended": true,
+        "type-id": "a3005666-a872-32c3-ad06-98af558e99b0",
+        "source-credit": "",
+        "attribute-values": {},
+        "attributes": [
+         "live"
+        ],
+        "target-type": "work",
+        "type": "performance",
+        "begin": "1957-05-26",
+        "work": {
+         "id": "158f45a6-df55-3c54-960e-5e76ada7f4cb",
+         "type": null,
+         "attributes": [],
+         "relations": [
+          {
+           "end": "1919",
+           "attribute-ids": {},
+           "type-id": "d59d99ea-23d4-4a80-b066-edca32ee158f",
+           "ended": true,
+           "source-credit": "",
+           "attribute-values": {},
+           "artist": {
+            "type": "Person",
+            "id": "691b0e9d-9e57-41cf-932d-a3d21b068e75",
+            "sort-name": "Sibelius, Jean",
+            "country": "FI",
+            "disambiguation": "Finnish composer",
+            "name": "Jean Sibelius",
+            "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df"
+           },
+           "target-credit": "",
+           "begin": "1915",
+           "direction": "backward",
+           "attributes": [],
+           "target-type": "artist",
+           "type": "composer"
+          },
+          {
+           "target-credit": "",
+           "attribute-values": {},
+           "source-credit": "",
+           "type-id": "ca8d3642-ce5f-49f8-91f2-125d72524e6a",
+           "ended": false,
+           "end": null,
+           "attribute-ids": {
+            "movement": "1d05bc4b-9884-4c9f-9f69-616f119047f3"
+           },
+           "type": "parts",
+           "target-type": "work",
+           "attributes": [
+            "movement"
+           ],
+           "direction": "backward",
+           "ordering-key": 2,
+           "work": {
+            "type": "Symphony",
+            "id": "0e9918ea-a7c4-46d6-912b-eff2f380cc20",
+            "attributes": [],
+            "title": "Symphony no. 5 in E-flat major, op. 82",
+            "language": null,
+            "iswcs": [],
+            "disambiguation": "",
+            "type-id": "174314aa-0aa4-30cf-96a6-50b281d8d208",
+            "languages": []
+           },
+           "begin": null
+          }
+         ],
+         "language": "zxx",
+         "title": "Symphony no. 5 in E-flat major, op. 82: II. Andante mosso, quasi allegretto",
+         "languages": [
+          "zxx"
+         ],
+         "type-id": null,
+         "disambiguation": "",
+         "iswcs": []
+        },
+        "direction": "forward"
+       }
+      ],
+      "video": false,
+      "id": "db9b31a7-6f37-4505-917c-f2fdb4782cec",
+      "title": "Symphony no. 5 in E-flat major op. 82: II. Andante mosso",
+      "length": 465720
+     }
+    },
+    {
+     "number": "6",
+     "id": "d48bc653-137d-48be-bf31-2f73f10adf0c",
+     "recording": {
+      "disambiguation": "",
+      "relations": [
+       {
+        "ended": true,
+        "type-id": "234670ce-5f22-4fd0-921b-ef1662695c5d",
+        "attribute-ids": {},
+        "end": "1957-05-26",
+        "artist": {
+         "type": "Person",
+         "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99",
+         "sort-name": "Karajan, Herbert von",
+         "disambiguation": "conductor",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "name": "Herbert von Karajan",
+         "country": "AT"
+        },
+        "attribute-values": {},
+        "source-credit": "",
+        "target-credit": "",
+        "direction": "backward",
+        "begin": "1957-05-26",
+        "target-type": "artist",
+        "attributes": [],
+        "type": "conductor"
+       },
+       {
+        "attribute-ids": {},
+        "end": "1957-05-26",
+        "ended": true,
+        "type-id": "3b6616c5-88ba-4341-b4ee-81ce1e6d7ebb",
+        "source-credit": "",
+        "attribute-values": {},
+        "artist": {
+         "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+         "sort-name": "Berliner Philharmoniker",
+         "type": "Orchestra",
+         "country": null,
+         "name": "Berliner Philharmoniker",
+         "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+         "disambiguation": ""
+        },
+        "target-credit": "",
+        "begin": "1957-05-26",
+        "direction": "backward",
+        "attributes": [],
+        "target-type": "artist",
+        "type": "performing orchestra"
+       },
+       {
+        "attribute-ids": {
+         "live": "70007db6-a8bc-46d7-a770-80e6a0bb551a"
+        },
+        "end": "1957-05-26",
+        "ended": true,
+        "type-id": "a3005666-a872-32c3-ad06-98af558e99b0",
+        "source-credit": "",
+        "attribute-values": {},
+        "target-credit": "",
+        "begin": "1957-05-26",
+        "work": {
+         "title": "Symphony no. 5 in E-flat major, op. 82: III. Allegro molto",
+         "relations": [
+          {
+           "type": "composer",
+           "target-type": "artist",
+           "attributes": [],
+           "direction": "backward",
+           "begin": "1915",
+           "target-credit": "",
+           "attribute-values": {},
+           "artist": {
+            "country": "FI",
+            "disambiguation": "Finnish composer",
+            "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+            "name": "Jean Sibelius",
+            "type": "Person",
+            "sort-name": "Sibelius, Jean",
+            "id": "691b0e9d-9e57-41cf-932d-a3d21b068e75"
+           },
+           "source-credit": "",
+           "type-id": "d59d99ea-23d4-4a80-b066-edca32ee158f",
+           "ended": true,
+           "end": "1919",
+           "attribute-ids": {}
+          },
+          {
+           "type": "parts",
+           "attributes": [
+            "movement"
+           ],
+           "target-type": "work",
+           "begin": null,
+           "work": {
+            "type": "Symphony",
+            "id": "0e9918ea-a7c4-46d6-912b-eff2f380cc20",
+            "attributes": [],
+            "title": "Symphony no. 5 in E-flat major, op. 82",
+            "language": null,
+            "disambiguation": "",
+            "iswcs": [],
+            "languages": [],
+            "type-id": "174314aa-0aa4-30cf-96a6-50b281d8d208"
+           },
+           "direction": "backward",
+           "ordering-key": 3,
+           "target-credit": "",
+           "source-credit": "",
+           "attribute-values": {},
+           "attribute-ids": {
+            "movement": "1d05bc4b-9884-4c9f-9f69-616f119047f3"
+           },
+           "end": null,
+           "ended": false,
+           "type-id": "ca8d3642-ce5f-49f8-91f2-125d72524e6a"
+          }
+         ],
+         "language": "zxx",
+         "iswcs": [],
+         "disambiguation": "",
+         "type-id": null,
+         "languages": [
+          "zxx"
+         ],
+         "type": null,
+         "id": "4b9c0f1f-05ba-371e-a495-b911b3d8b89f",
+         "attributes": []
+        },
+        "direction": "forward",
+        "attributes": [
+         "live"
+        ],
+        "target-type": "work",
+        "type": "performance"
+       }
+      ],
+      "id": "10ba649f-8cf1-4b6f-b117-86552f5964f4",
+      "video": false,
+      "length": 614066,
+      "title": "Symphony no. 5 in E-flat major op. 82: III. Allegro molto"
+     },
+     "length": 614012,
+     "position": 6,
+     "title": "Symphony no. 5 in E-flat major, op. 82: III. Allegro molto - Largamente assai"
+    },
+    {
+     "length": 731948,
+     "title": "Glenn Gould und Herbert von Karajan - Protokoll einer \"unmöglichen Partnerschaft\"",
+     "position": 7,
+     "recording": {
+      "disambiguation": "",
+      "title": "Glenn Gould und Herbert von Karajan - Protokoll einer \"unmöglichen Partnerschaft\"",
+      "length": 731948,
+      "relations": [],
+      "video": false,
+      "id": "81a06ba7-b9f6-447b-ac6a-4cef8d8fa067"
+     },
+     "number": "7",
+     "id": "c1d6d454-853d-428f-b4d1-8ac6d9b46180"
+    }
+   ],
+   "track-offset": 0
+  }
+ ],
+ "disambiguation": "",
+ "country": "XW",
+ "relations": [],
+ "packaging-id": "119eba76-b343-3e02-a292-f0f00644bb9b",
+ "date": "",
+ "packaging": "None",
+ "status": "Official",
+ "id": "7ce871a0-34b2-40e0-a77e-39b1268f1f61",
+ "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+ "quality": "normal",
+ "asin": null,
+ "text-representation": {
+  "script": "Latn",
+  "language": null
+ },
+ "title": "Beethoven: Piano Concerto no. 3 / Sibelius: Symphony no. 5",
+ "release-events": [
+  {
+   "area": {
+    "type-id": null,
+    "name": "[Worldwide]",
+    "disambiguation": "",
+    "iso-3166-1-codes": [
+     "XW"
+    ],
+    "id": "525d4e18-3d00-31b9-a58b-a146a916de8f",
+    "sort-name": "[Worldwide]",
+    "type": null
+   },
+   "date": ""
+  }
+ ]
+}

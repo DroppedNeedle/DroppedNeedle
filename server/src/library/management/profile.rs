@@ -173,9 +173,8 @@ impl CompiledScripts {
     }
 }
 
-/// The tag field a profile field writes. Credits, works and AcoustID
-/// have no values yet, so those entries leave the file as it is; genre is
-/// the Genres section's.
+/// The tag field a profile field writes. AcoustID has no values yet, so
+/// its entries leave the file as it is; genre is the Genres section's.
 fn target(name: &str) -> Option<TagField> {
     use TagField::*;
     Some(match name {
@@ -212,6 +211,15 @@ fn target(name: &str) -> Option<TagField> {
         "musicbrainz_release_group_id" => MusicBrainzReleaseGroupId,
         "musicbrainz_artist_id" => MusicBrainzArtistId,
         "musicbrainz_album_artist_id" => MusicBrainzAlbumArtistId,
+        "work" => Work,
+        "musicbrainz_work_id" => MusicBrainzWorkId,
+        "composer" => Composer,
+        "lyricist" => Lyricist,
+        "conductor" => Conductor,
+        "performer" => Performer,
+        "arranger" => Arranger,
+        "remixer" => Remixer,
+        "producer" => Producer,
         "movement" => Movement,
         "movement_number" => MovementNumber,
         "movement_count" => MovementCount,
@@ -272,6 +280,43 @@ fn mode_value(
     }
 }
 
+/// Whether an ID3v2.3 write joins this field's values into one: a plain
+/// text or TXXX frame (ISRC reads back split, so it stays a list).
+fn joined_on_v23(field: TagField) -> bool {
+    use crate::library::tags::fields::Id3Target;
+    match field.id3(true) {
+        Id3Target::Text(id) => id != "TSRC",
+        Id3Target::User(_) => true,
+        _ => false,
+    }
+}
+
+/// [`mode_value`] for a field an ID3v2.3 file holds as one "/"-joined
+/// value: the release's values are joined the same way, and merge counts
+/// a value as present when it stands between slashes in the file's
+/// ("AC/DC" stays whole).
+fn joined_mode_value(
+    mode: FieldMode,
+    clear: bool,
+    existing: &[String],
+    canonical: &[String],
+) -> Option<Vec<String>> {
+    if mode != FieldMode::Merge {
+        let joined = vec![canonical.join("/")];
+        return mode_value(mode, clear, existing, Some(&joined));
+    }
+    let mut merged = existing.join("/");
+    for value in canonical {
+        if !format!("/{merged}/").contains(&format!("/{value}/")) {
+            if !merged.is_empty() {
+                merged.push('/');
+            }
+            merged.push_str(value);
+        }
+    }
+    Some(vec![merged])
+}
+
 /// Every field as a script value: one value as text, several as a list.
 pub fn field_variables(fields: &BTreeMap<String, Vec<String>>) -> Variables {
     fields
@@ -310,6 +355,9 @@ pub struct FileInput<'a> {
     /// The file's tags now.
     pub doc: &'a TagDocument,
     pub format: &'a str,
+    /// The write lands as ID3v2.3, which holds several values of one text
+    /// frame as one "/"-joined value.
+    pub id3v23: bool,
     /// False for containers the writer cannot tag.
     pub writable: bool,
     pub overrides: &'a super::planner::Overrides,
@@ -334,6 +382,7 @@ pub fn plan_tags(
         track,
         doc,
         format,
+        id3v23,
         writable,
         overrides,
         extras,
@@ -411,14 +460,27 @@ pub fn plan_tags(
         &mut warnings,
     )?;
     if profile.metadata.enabled {
-        let canonical = picard::release_tags(release, track);
+        let custom = super::custom::is_custom(release);
+        let mut canonical = picard::release_tags(release, track);
+        // Credits come from the recording's MusicBrainz relationships;
+        // without them (not fetched, or fetched for another recording) a
+        // credit field is left alone, never cleared.
+        let relations = if custom {
+            None
+        } else {
+            release.track_relations(track)
+        };
+        if let Some(relations) = relations {
+            canonical.extend(picard::credit_tags(relations));
+        }
+        let mut credits_missing = false;
         let mut preserved: BTreeSet<&str> = profile
             .metadata
             .preserve_fields
             .iter()
             .filter_map(|name| target(name).map(TagField::name))
             .collect();
-        if super::custom::is_custom(release) {
+        if custom {
             // A custom edition has no release behind it: the file keeps
             // whatever release ids it holds (v2's custom release claims).
             preserved.insert(TagField::MusicBrainzReleaseId.name());
@@ -431,7 +493,37 @@ pub fn plan_tags(
             if preserved.contains(field.name()) {
                 continue;
             }
+            if let Some(asked) = super::enrich::credit_asked(profile, &managed.field) {
+                // Custom editions and roles the Relationships settings
+                // leave out keep the file's credits.
+                if custom || !asked {
+                    continue;
+                }
+                if relations.is_none() {
+                    credits_missing |= extras.credits != super::enrich::Credits::NotAsked
+                        && !matches!(managed.mode, FieldMode::Disabled | FieldMode::Preserve);
+                    continue;
+                }
+                // A medley's work has no one title: the file keeps its own.
+                if field == TagField::Work && relations.is_some_and(|found| found.works.len() > 1) {
+                    continue;
+                }
+            }
             let existing = desired.get(field.name()).cloned().unwrap_or_default();
+            if id3v23
+                && joined_on_v23(field)
+                && let Some(values) = canonical.get(field.name())
+            {
+                if let Some(values) = joined_mode_value(
+                    managed.mode,
+                    managed.clear_when_canonical_missing,
+                    &existing,
+                    values,
+                ) {
+                    desired.insert(field.name().to_owned(), values);
+                }
+                continue;
+            }
             if let Some(values) = mode_value(
                 managed.mode,
                 managed.clear_when_canonical_missing,
@@ -440,6 +532,15 @@ pub fn plan_tags(
             ) {
                 desired.insert(field.name().to_owned(), values);
             }
+        }
+        if credits_missing {
+            if extras.automatic {
+                return Err(credits_unavailable());
+            }
+            warnings.push(
+                "MusicBrainz credits could not be read, so the file keeps its credits and work."
+                    .to_owned(),
+            );
         }
         let mut protected: BTreeSet<String> =
             preserved.iter().map(|name| (*name).to_owned()).collect();
@@ -488,6 +589,15 @@ pub fn plan_tags(
         }
     }
     desired.retain(|_, values| !values.is_empty());
+    if id3v23 {
+        // Compare in the form the file can hold, or every plan would see
+        // a change.
+        for (name, values) in desired.iter_mut() {
+            if values.len() > 1 && TagField::from_name(name).is_some_and(joined_on_v23) {
+                *values = vec![values.join("/")];
+            }
+        }
+    }
     let mut updates = BTreeMap::new();
     let mut mutations = Vec::new();
     let names: BTreeSet<&String> = before.keys().chain(desired.keys()).collect();
@@ -578,6 +688,19 @@ pub fn plan_tags(
         scrubbed,
         deferred,
     })
+}
+
+/// An automatic run's file whose MusicBrainz credits could not be read:
+/// it is written once they can be, never with its credits left stale.
+fn credits_unavailable() -> ItemReason {
+    ItemReason {
+        code: "METADATA_UNAVAILABLE".to_owned(),
+        message: "MusicBrainz credits for this file could not be read, so it was not written."
+            .to_owned(),
+        action: "Automatic management looks again by itself; a preview by hand writes the other \
+                 fields and keeps the file's credits."
+            .to_owned(),
+    }
 }
 
 /// Native spellings (folded keys) a scrub never removes: every spelling
@@ -999,6 +1122,415 @@ pub fn naming_variables(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::library::management::enrich::{AlbumExtras, Credits, LyricsAnswer};
+    use crate::library::management::planner::Overrides;
+    use crate::library::matching::model::{
+        RecordingRelations, ReleaseRelations, RoleCredit, WorkCredit,
+    };
+    use crate::runtime_config::sections::RelationshipType;
+
+    /// The classical probe: Gould and Karajan's Beethoven concerto, then
+    /// Sibelius and a spoken track that performs no work.
+    fn classical() -> (Release, ReleaseRelations) {
+        let wire: crate::providers::musicbrainz::MbRelease = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/musicbrainz/release_relations_classical.json"
+        ))
+        .expect("probe decodes");
+        let relations = crate::library::identify::sources::relations_from_wire(&wire, 1);
+        let tracks = wire.media[0]
+            .tracks
+            .iter()
+            .map(|track| ReleaseTrack {
+                id: track.id.clone(),
+                recording_id: track.recording.as_ref().expect("recording").id.clone(),
+                title: track.title.clone().unwrap_or_default(),
+                disc: 1,
+                position: track.position.unwrap_or(0),
+                ..ReleaseTrack::default()
+            })
+            .collect();
+        let release = Release {
+            id: wire.id.clone(),
+            release_group_id: "22222222-2222-4222-8222-222222222222".to_owned(),
+            title: wire.title.clone().unwrap_or_default(),
+            tracks,
+            ..Release::default()
+        };
+        (release, relations)
+    }
+
+    /// The Picard profile with every credit field on replace, clear as
+    /// given, and `relationships` adjusted by `adjust`.
+    fn credit_profile(
+        clear: bool,
+        adjust: impl Fn(&mut crate::runtime_config::sections::RelationshipCreditSettings),
+    ) -> PinnedProfile {
+        let mut settings = settings::initial_settings("");
+        for profile in &mut settings.profiles {
+            for field in &mut profile.metadata.fields {
+                if super::super::enrich::CREDIT_FIELDS
+                    .iter()
+                    .any(|(name, _)| *name == field.field)
+                {
+                    field.mode = FieldMode::Replace;
+                    field.clear_when_canonical_missing = clear;
+                }
+            }
+            adjust(&mut profile.metadata.relationships);
+            profile.genres.enabled = false;
+        }
+        pin(&settings, settings::PICARD_ORGANIZER_PROFILE_ID, None).expect("pinned")
+    }
+
+    /// A file holding a credit of every kind already.
+    fn tagged() -> TagDocument {
+        let managed: BTreeMap<String, Vec<String>> = [
+            "composer",
+            "lyricist",
+            "conductor",
+            "performer",
+            "arranger",
+            "remixer",
+            "producer",
+            "work",
+            "musicbrainz_work_id",
+        ]
+        .iter()
+        .map(|name| ((*name).to_owned(), vec![format!("Old {name}")]))
+        .collect();
+        serde_json::from_value(serde_json::json!({"managed": managed, "custom": {}}))
+            .expect("document")
+    }
+
+    fn plan_credits(
+        pinned: &PinnedProfile,
+        release: &Release,
+        index: usize,
+        extras: &AlbumExtras,
+    ) -> Result<TagPlan, ItemReason> {
+        let doc = tagged();
+        plan_tags(
+            pinned,
+            &CompiledScripts::new(pinned),
+            &FileInput {
+                release,
+                track: &release.tracks[index],
+                doc: &doc,
+                format: "flac",
+                id3v23: false,
+                writable: true,
+                overrides: &Overrides::default(),
+                extras,
+                track_id: "track",
+                lyrics: &LyricsAnswer::Off,
+            },
+        )
+    }
+
+    fn credit(role: &str, relation_type: &str, name: &str, attributes: &[&str]) -> RoleCredit {
+        RoleCredit {
+            role: role.to_owned(),
+            relation_type: relation_type.to_owned(),
+            name: name.to_owned(),
+            artist_id: format!("id-{name}"),
+            attributes: attributes.iter().map(|value| (*value).to_owned()).collect(),
+            ..RoleCredit::default()
+        }
+    }
+
+    /// Credits from the recording's and its work's MusicBrainz
+    /// relationships, each role as Picard writes it. Only what was
+    /// fetched for this very recording is used; anything else leaves the
+    /// file's credits alone, even with clear ticked, and an automatic run
+    /// will not write the file at all.
+    #[test]
+    fn credits_come_from_the_fetched_relationships() {
+        let (mut release, relations) = classical();
+        release.graft_relations(&relations);
+        let ready = AlbumExtras {
+            credits: Credits::Ready,
+            ..AlbumExtras::default()
+        };
+        let pinned = credit_profile(true, |_| {});
+        let value =
+            |plan: &TagPlan, name: &str| plan.desired.get(name).cloned().unwrap_or_default();
+        let owned = |values: &[&str]| values.iter().map(|v| (*v).to_owned()).collect::<Vec<_>>();
+        let old = |name: &str| vec![format!("Old {name}")];
+
+        // Each role's values; roles nobody holds are cleared.
+        let plan = plan_credits(&pinned, &release, 0, &ready).expect("planned");
+        assert_eq!(value(&plan, "composer"), owned(&["Ludwig van Beethoven"]));
+        assert_eq!(value(&plan, "conductor"), owned(&["Herbert von Karajan"]));
+        assert_eq!(value(&plan, "performer"), owned(&["Glenn Gould (piano)"]));
+        assert_eq!(
+            value(&plan, "work"),
+            owned(&[
+                "Concerto for Piano and Orchestra no. 3 in C minor, op. 37: I. Allegro con brio"
+            ])
+        );
+        assert_eq!(
+            value(&plan, "musicbrainz_work_id"),
+            owned(&["d6843235-961a-37ab-85a4-a0e7e027f752"])
+        );
+        for name in ["lyricist", "arranger", "remixer", "producer"] {
+            assert_eq!(value(&plan, name), Vec::<String>::new(), "{name}");
+        }
+        assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+
+        // Fetched with nothing there: clear removes them.
+        let plan = plan_credits(&pinned, &release, 6, &ready).expect("planned");
+        assert_eq!(value(&plan, "composer"), Vec::<String>::new());
+        assert_eq!(value(&plan, "work"), Vec::<String>::new());
+
+        // A role switched off, or the switch itself, is left alone; the
+        // work fields ignore those settings.
+        let no_conductor = credit_profile(true, |relationships| {
+            relationships
+                .types
+                .retain(|kind| *kind != RelationshipType::Conductor);
+        });
+        let plan = plan_credits(&no_conductor, &release, 0, &ready).expect("planned");
+        assert_eq!(value(&plan, "conductor"), old("conductor"));
+        assert_eq!(value(&plan, "composer"), owned(&["Ludwig van Beethoven"]));
+        let switched_off = credit_profile(true, |relationships| relationships.enabled = false);
+        let plan = plan_credits(&switched_off, &release, 0, &ready).expect("planned");
+        assert_eq!(value(&plan, "composer"), old("composer"));
+        assert_eq!(
+            value(&plan, "musicbrainz_work_id"),
+            owned(&["d6843235-961a-37ab-85a4-a0e7e027f752"])
+        );
+
+        // Not fetched: left alone with one warning, or an automatic run
+        // refuses the file.
+        let (bare, _) = classical();
+        let unavailable = AlbumExtras {
+            credits: Credits::Unavailable,
+            ..AlbumExtras::default()
+        };
+        let plan = plan_credits(&pinned, &bare, 0, &unavailable).expect("planned");
+        assert_eq!(value(&plan, "composer"), old("composer"));
+        assert_eq!(plan.warnings.len(), 1, "{:?}", plan.warnings);
+        let automatic = AlbumExtras {
+            credits: Credits::Unavailable,
+            automatic: true,
+            ..AlbumExtras::default()
+        };
+        let reason = plan_credits(&pinned, &bare, 0, &automatic)
+            .err()
+            .expect("an automatic run refuses the file");
+        assert_eq!(reason.code, "METADATA_UNAVAILABLE");
+
+        // A track the answer left out, or one fetched for another
+        // recording, keeps its credits.
+        let mut partial = relations.clone();
+        partial.tracks.remove(&release.tracks[1].id);
+        if let Some(entry) = partial.tracks.get_mut(&release.tracks[2].id) {
+            entry.recording_id = "another-recording".to_owned();
+        }
+        let (mut grafted, _) = classical();
+        grafted.graft_relations(&partial);
+        for index in [1, 2] {
+            let plan = plan_credits(&pinned, &grafted, index, &ready).expect("planned");
+            assert_eq!(value(&plan, "composer"), old("composer"), "track {index}");
+        }
+        release.recording_relations = grafted.recording_relations.clone();
+        if let Some(stored) = release.recording_relations.as_mut() {
+            stored.tracks.insert(
+                release.tracks[2].id.clone(),
+                RecordingRelations {
+                    recording_id: "another-recording".to_owned(),
+                    ..RecordingRelations::default()
+                },
+            );
+        }
+        let plan = plan_credits(&pinned, &release, 2, &ready).expect("planned");
+        assert_eq!(value(&plan, "composer"), old("composer"));
+    }
+
+    /// ID3v2.3 holds several values as one "/"-joined value. Planned in
+    /// that form, a second plan finds nothing to change, and merge never
+    /// adds a name the joined value already holds ("AC/DC" stays whole).
+    #[test]
+    fn id3v23_joined_credits_are_stable_under_merge() {
+        let (mut release, _) = classical();
+        let track = release.tracks[0].clone();
+        release.recording_relations = Some(ReleaseRelations {
+            fetched_at_ms: 1,
+            tracks: [(
+                track.id.clone(),
+                RecordingRelations {
+                    recording_id: track.recording_id.clone(),
+                    credits: vec![
+                        credit("composer", "composer", "Lady Gaga", &[]),
+                        credit("composer", "composer", "RedOne", &[]),
+                        credit("producer", "producer", "AC/DC", &[]),
+                    ],
+                    ..RecordingRelations::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+        });
+        let mut settings = settings::initial_settings("");
+        for profile in &mut settings.profiles {
+            profile.genres.enabled = false;
+            for field in &mut profile.metadata.fields {
+                if matches!(field.field.as_str(), "composer" | "producer") {
+                    field.mode = FieldMode::Merge;
+                }
+            }
+        }
+        let pinned = pin(&settings, settings::PICARD_ORGANIZER_PROFILE_ID, None).expect("pinned");
+        let ready = AlbumExtras {
+            credits: Credits::Ready,
+            ..AlbumExtras::default()
+        };
+        let mut doc: TagDocument = serde_json::from_value(serde_json::json!({
+            "managed": {"producer": ["AC/DC"]},
+            "custom": {}
+        }))
+        .expect("document");
+        for pass in 0..2 {
+            let plan = plan_tags(
+                &pinned,
+                &CompiledScripts::new(&pinned),
+                &FileInput {
+                    release: &release,
+                    track: &release.tracks[0],
+                    doc: &doc,
+                    format: "mp3",
+                    id3v23: true,
+                    writable: true,
+                    overrides: &Overrides::default(),
+                    extras: &ready,
+                    track_id: "track",
+                    lyrics: &LyricsAnswer::Off,
+                },
+            )
+            .expect("planned");
+            assert_eq!(
+                plan.desired["composer"],
+                vec!["Lady Gaga/RedOne"],
+                "pass {pass}"
+            );
+            assert_eq!(plan.desired["producer"], vec!["AC/DC"], "pass {pass}");
+            let credits_changed = plan
+                .updates
+                .keys()
+                .any(|name| matches!(name.as_str(), "composer" | "producer"));
+            assert_eq!(
+                credits_changed,
+                pass == 0,
+                "pass {pass}: {:?}",
+                plan.updates
+            );
+            doc.managed = plan.desired.clone();
+        }
+    }
+
+    /// Picard's performer wording and the work rules, case by case.
+    #[test]
+    fn performers_and_works_read_as_picard_writes_them() {
+        let (mut release, _) = classical();
+        let track = release.tracks[0].clone();
+        let entry = RecordingRelations {
+            recording_id: track.recording_id.clone(),
+            credits: vec![
+                credit("performer", "instrument", "A", &["drums (drum set)"]),
+                credit("performer", "instrument", "B", &["additional", "guitar"]),
+                credit(
+                    "performer",
+                    "instrument",
+                    "C",
+                    &["guest", "solo", "violin", "viola"],
+                ),
+                credit("performer", "vocal", "D", &[]),
+                credit("performer", "vocal", "E", &["guest"]),
+                credit("performer", "performer", "F", &[]),
+                credit("performer", "instrument", "A", &["piano"]),
+                credit("performer", "instrument", "A", &["drums (drum set)"]),
+                credit("composer", "composer", "G", &[]),
+                credit("composer", "composer", "G", &["additional"]),
+            ],
+            works: vec![
+                WorkCredit {
+                    id: "work-1".to_owned(),
+                    title: Some("Part One".to_owned()),
+                },
+                WorkCredit {
+                    id: "work-2".to_owned(),
+                    title: Some("Part Two".to_owned()),
+                },
+            ],
+        };
+        release.recording_relations = Some(ReleaseRelations {
+            fetched_at_ms: 1,
+            tracks: [(track.id.clone(), entry)].into_iter().collect(),
+        });
+        let ready = AlbumExtras {
+            credits: Credits::Ready,
+            ..AlbumExtras::default()
+        };
+        let plan =
+            plan_credits(&credit_profile(true, |_| {}), &release, 0, &ready).expect("planned");
+        assert_eq!(
+            plan.desired["performer"],
+            vec![
+                "A (drums (drum set))",
+                "B (additional guitar)",
+                "C (guest solo violin and viola)",
+                "D (vocals)",
+                "E (guest vocals)",
+                "F",
+                "A (piano)",
+            ]
+        );
+        assert_eq!(plan.desired["composer"], vec!["G"]);
+        // A medley's title would be wrong: the file keeps its own.
+        assert_eq!(plan.desired["work"], vec!["Old work"]);
+        assert_eq!(
+            plan.desired["musicbrainz_work_id"],
+            vec!["work-1", "work-2"]
+        );
+    }
+
+    /// An artist credited under another name is written under their
+    /// MusicBrainz name; the credited name stands in only when the
+    /// artist has none.
+    #[test]
+    fn a_credit_uses_the_artists_own_name() {
+        let mut probe: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/musicbrainz/release_relations_classical.json"
+        ))
+        .expect("probe parses");
+        let relations = probe["media"][0]["tracks"][0]["recording"]["relations"]
+            .as_array_mut()
+            .expect("relations");
+        let piano = relations
+            .iter_mut()
+            .find(|relation| relation["type"] == "instrument")
+            .expect("the piano credit");
+        piano["target-credit"] = "G. Gould".into();
+        let conductor = relations
+            .iter_mut()
+            .find(|relation| relation["type"] == "conductor")
+            .expect("the conductor credit");
+        conductor["target-credit"] = "H. v. Karajan".into();
+        conductor["artist"]["name"] = "".into();
+        let wire: crate::providers::musicbrainz::MbRelease =
+            serde_json::from_value(probe).expect("probe decodes");
+        let relations = crate::library::identify::sources::relations_from_wire(&wire, 1);
+        let first = &relations.tracks[&wire.media[0].tracks[0].id];
+        let name = |kind: &str| {
+            first
+                .credits
+                .iter()
+                .find(|credit| credit.relation_type == kind)
+                .map(|credit| credit.name.clone())
+        };
+        assert_eq!(name("instrument").as_deref(), Some("Glenn Gould"));
+        assert_eq!(name("conductor").as_deref(), Some("H. v. Karajan"));
+    }
 
     #[test]
     fn field_modes_follow_v2() {

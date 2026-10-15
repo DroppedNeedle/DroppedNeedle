@@ -190,6 +190,53 @@ pub struct Release {
     /// The release's and its release group's MusicBrainz genres.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub genres: Vec<Genre>,
+    /// Recording and work credits, fetched on their own when a profile
+    /// writes them. `None` until then; identification never fetches them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recording_relations: Option<ReleaseRelations>,
+}
+
+/// The credits MusicBrainz gave for a release's recordings, and when.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ReleaseRelations {
+    /// Unix milliseconds.
+    pub fetched_at_ms: i64,
+    /// By release-track id. A track missing here was not fetched; it is
+    /// never read as "no credits".
+    pub tracks: std::collections::BTreeMap<String, RecordingRelations>,
+}
+
+/// One recording's credits and the works it performs.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RecordingRelations {
+    /// The recording the credits were fetched for.
+    pub recording_id: String,
+    /// The recording's credits, then each performed work's.
+    pub credits: Vec<RoleCredit>,
+    /// Works the recording performs (`performance` links only).
+    pub works: Vec<WorkCredit>,
+}
+
+/// One credited artist relationship.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RoleCredit {
+    /// The tag role: composer, lyricist, conductor, performer, arranger,
+    /// remixer or producer.
+    pub role: String,
+    /// MusicBrainz's relationship type (`instrument`, `vocal`, ...).
+    pub relation_type: String,
+    /// The artist's MusicBrainz name, else the name credited.
+    pub name: String,
+    pub sort_name: Option<String>,
+    pub artist_id: String,
+    pub attributes: Vec<String>,
+}
+
+/// One performed work.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct WorkCredit {
+    pub id: String,
+    pub title: Option<String>,
 }
 
 impl Release {
@@ -214,6 +261,37 @@ impl Release {
 
     pub fn year(&self) -> Option<i32> {
         year_of(self.date.as_deref())
+    }
+
+    /// The credits fetched for one of this release's tracks: `None` when
+    /// none were fetched for it, or they were fetched for another
+    /// recording.
+    pub fn track_relations(&self, track: &ReleaseTrack) -> Option<&RecordingRelations> {
+        self.recording_relations
+            .as_ref()?
+            .tracks
+            .get(&track.id)
+            .filter(|found| found.recording_id.eq_ignore_ascii_case(&track.recording_id))
+    }
+
+    /// Put fetched credits on this document. Only tracks it holds, under
+    /// the same recording, take them.
+    pub fn graft_relations(&mut self, fetched: &ReleaseRelations) {
+        let tracks = self
+            .tracks
+            .iter()
+            .filter_map(|track| {
+                let found = fetched.tracks.get(&track.id)?;
+                found
+                    .recording_id
+                    .eq_ignore_ascii_case(&track.recording_id)
+                    .then(|| (track.id.clone(), found.clone()))
+            })
+            .collect();
+        self.recording_relations = Some(ReleaseRelations {
+            fetched_at_ms: fetched.fetched_at_ms,
+            tracks,
+        });
     }
 
     pub fn original_year(&self) -> Option<i32> {

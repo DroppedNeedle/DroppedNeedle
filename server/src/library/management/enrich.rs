@@ -11,6 +11,11 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 
 use super::genre::Candidate;
+use crate::library::identify::sqlite::SqliteIdentifyStore;
+use crate::library::identify::stores::RELEASE_FRESH_SECS;
+use crate::library::matching::Release;
+use crate::library::matching::model::ReleaseRelations;
+use crate::runtime_config::sections::RelationshipType;
 
 /// Longest one outside call may take while planning.
 const CALL_LIMIT: Duration = Duration::from_secs(20);
@@ -60,6 +65,119 @@ pub trait EnrichmentPort: Send + Sync {
         release_mbid: &'a str,
         release_group_mbid: &'a str,
     ) -> BoxFuture<'a, Result<Option<Cover>, String>>;
+    /// A release's recording and work credits. `Err` when MusicBrainz
+    /// could not answer or no longer has the release: the credits were
+    /// not fetched, which is never the same as "there are none".
+    /// `background` asks at background priority (automatic runs).
+    fn release_relations<'a>(
+        &'a self,
+        release_mbid: &'a str,
+        background: bool,
+    ) -> BoxFuture<'a, Result<ReleaseRelations, String>>;
+}
+
+/// Whether a plan has the recording and work credits it asks for.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Credits {
+    /// The profile writes no credit or work field, the edition is a
+    /// custom one, or no outside sources are attached (a test bundle).
+    #[default]
+    NotAsked,
+    /// The stored document carries them.
+    Ready,
+    /// They could not be fetched now.
+    Unavailable,
+}
+
+/// The profile fields filled from MusicBrainz credits, with the
+/// Relationships type each needs (`None`: work fields, which ignore those
+/// settings).
+pub const CREDIT_FIELDS: [(&str, Option<RelationshipType>); 9] = [
+    ("composer", Some(RelationshipType::Composer)),
+    ("lyricist", Some(RelationshipType::Lyricist)),
+    ("conductor", Some(RelationshipType::Conductor)),
+    ("performer", Some(RelationshipType::Performer)),
+    ("arranger", Some(RelationshipType::Arranger)),
+    ("remixer", Some(RelationshipType::Remixer)),
+    ("producer", Some(RelationshipType::Producer)),
+    ("work", None),
+    ("musicbrainz_work_id", None),
+];
+
+/// Whether the profile asks for a credit field: `None` when the name is
+/// not one, `Some(false)` when its Relationships type or switch is off.
+pub fn credit_asked(
+    profile: &crate::runtime_config::sections::LibraryManagementProfile,
+    field: &str,
+) -> Option<bool> {
+    let (_, kind) = CREDIT_FIELDS.iter().find(|(name, _)| *name == field)?;
+    let relationships = &profile.metadata.relationships;
+    Some(kind.is_none_or(|kind| relationships.enabled && relationships.types.contains(&kind)))
+}
+
+/// Whether planning with this profile needs the credits: a credit field
+/// it asks for is managed and not preserved.
+pub fn credits_wanted(profile: &crate::runtime_config::sections::LibraryManagementProfile) -> bool {
+    use crate::runtime_config::sections::FieldMode;
+    let metadata = &profile.metadata;
+    metadata.enabled
+        && metadata.fields.iter().any(|field| {
+            !matches!(field.mode, FieldMode::Disabled | FieldMode::Preserve)
+                && credit_asked(profile, &field.field) == Some(true)
+                && !metadata.preserve_fields.contains(&field.field)
+        })
+}
+
+/// Make sure the stored document for `release` carries fresh credits when
+/// the profile writes them: fetch them when missing or older than
+/// [`RELEASE_FRESH_SECS`], graft them onto the stored document, and put
+/// them on `release`. Never inside a transaction. Stale credits are kept
+/// and used when a refetch fails.
+pub fn ensure_credits(
+    slot: &EnrichmentSlot,
+    store: &SqliteIdentifyStore,
+    profile: &crate::runtime_config::sections::LibraryManagementProfile,
+    release: &mut Release,
+    background: bool,
+) -> Credits {
+    let Some(port) = slot.get() else {
+        return Credits::NotAsked;
+    };
+    if super::custom::is_custom(release) || !credits_wanted(profile) {
+        return Credits::NotAsked;
+    }
+    let now_ms = now_ms();
+    let fresh_ms = (RELEASE_FRESH_SECS * 1000) as i64;
+    let stored = release.recording_relations.as_ref();
+    if stored.is_some_and(|relations| now_ms - relations.fetched_at_ms < fresh_ms) {
+        return Credits::Ready;
+    }
+    match wait(port.release_relations(&release.id, background)) {
+        Some(mut fetched) => {
+            fetched.fetched_at_ms = now_ms;
+            match store.graft_relations(&release.id, &fetched) {
+                Some(grafted) => *release = grafted,
+                None => release.graft_relations(&fetched),
+            }
+            Credits::Ready
+        }
+        None if release.recording_relations.is_some() => {
+            tracing::info!(
+                release = release.id,
+                "credits could not be refreshed; the stored ones are used"
+            );
+            Credits::Ready
+        }
+        None => Credits::Unavailable,
+    }
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |span| {
+            i64::try_from(span.as_millis()).unwrap_or(i64::MAX)
+        })
 }
 
 /// The slot the port is attached to at boot (empty in test bundles until a
@@ -100,6 +218,11 @@ pub struct AlbumExtras {
     pub cover_deferred: bool,
     /// The library track whose plan carries the album's cover file.
     pub cover_owner: Option<String>,
+    /// Whether the recording and work credits are on the release.
+    pub credits: Credits,
+    /// An automatic run: a file whose credits are missing is blocked
+    /// rather than planned with a warning.
+    pub automatic: bool,
 }
 
 /// What planning gathered for one file.
@@ -118,14 +241,23 @@ pub struct ReplayGainValues {
     pub album_peak: Option<String>,
 }
 
-/// Ask the outside sources the profile needs for one album.
+/// Ask the outside sources the profile needs for one album. Credits the
+/// profile writes are fetched onto `release` (and its stored document)
+/// first; `automatic` runs ask at background priority.
 pub fn gather(
     slot: &EnrichmentSlot,
+    store: &SqliteIdentifyStore,
     profile: &crate::runtime_config::sections::LibraryManagementProfile,
-    release: &crate::library::matching::Release,
+    release: &mut Release,
+    automatic: bool,
 ) -> AlbumExtras {
     use crate::runtime_config::sections::GenreSource;
-    let mut extras = AlbumExtras::default();
+    let mut extras = AlbumExtras {
+        credits: ensure_credits(slot, store, profile, release, automatic),
+        automatic,
+        ..AlbumExtras::default()
+    };
+    let release = &*release;
     let Some(port) = slot.get() else {
         return extras;
     };
@@ -525,6 +657,37 @@ impl EnrichmentPort for LiveEnrichment {
             }
         })
     }
+
+    fn release_relations<'a>(
+        &'a self,
+        release_mbid: &'a str,
+        background: bool,
+    ) -> BoxFuture<'a, Result<ReleaseRelations, String>> {
+        use crate::library::identify::sources::{RELATION_INCLUDES, relations_from_wire};
+        use crate::providers::RequestPriority;
+        use crate::providers::musicbrainz::Criticality;
+        Box::pin(async move {
+            let priority = if background {
+                RequestPriority::BackgroundSync
+            } else {
+                RequestPriority::UserInitiated
+            };
+            let (client, _) = self.upstream.musicbrainz(priority);
+            // Identity-critical: a best-effort lookup turns an outage into
+            // "not found", which must never read as "no credits".
+            let found = client
+                .lookup_release(
+                    release_mbid,
+                    &RELATION_INCLUDES,
+                    Criticality::IdentityCritical,
+                )
+                .await
+                .map_err(|error| format!("MusicBrainz credits could not be read: {error}"))?;
+            let lookup =
+                found.ok_or_else(|| "MusicBrainz no longer has this release".to_owned())?;
+            Ok(relations_from_wire(&lookup.entity, 0))
+        })
+    }
 }
 
 /// v2's accuracy gate on an exact LRCLIB answer: the same recording
@@ -560,6 +723,10 @@ pub struct ScriptedEnrichment {
     pub listenbrainz: Option<Vec<Candidate>>,
     pub lyrics: Option<LyricsFound>,
     pub cover: Option<Cover>,
+    /// The credits MusicBrainz answers with; `None` while it is down.
+    pub relations: std::sync::Mutex<Option<ReleaseRelations>>,
+    /// Credit lookups asked for, and whether each was background.
+    pub relation_calls: std::sync::Mutex<Vec<bool>>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -597,6 +764,23 @@ impl EnrichmentPort for ScriptedEnrichment {
         _release_group_mbid: &'a str,
     ) -> BoxFuture<'a, Result<Option<Cover>, String>> {
         let answer = Ok(self.cover.clone());
+        Box::pin(async move { answer })
+    }
+
+    fn release_relations<'a>(
+        &'a self,
+        _release_mbid: &'a str,
+        background: bool,
+    ) -> BoxFuture<'a, Result<ReleaseRelations, String>> {
+        if let Ok(mut calls) = self.relation_calls.lock() {
+            calls.push(background);
+        }
+        let answer = self
+            .relations
+            .lock()
+            .ok()
+            .and_then(|relations| relations.clone())
+            .ok_or_else(|| "MusicBrainz is down".to_owned());
         Box::pin(async move { answer })
     }
 }

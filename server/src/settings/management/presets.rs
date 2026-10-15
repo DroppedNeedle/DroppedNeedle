@@ -54,8 +54,8 @@ pub struct ManagedFieldSpec {
     /// Whether replace can clear the file's value when the source has
     /// none.
     pub clearable: bool,
-    /// Whether a profile writes the field yet. Credits, works and AcoustID
-    /// wait for their values and leave the file's value alone.
+    /// Whether a profile writes the field yet. AcoustID waits for its
+    /// values and leaves the file's value alone.
     pub written: bool,
 }
 
@@ -75,9 +75,8 @@ const fn field(
     }
 }
 
-/// A field whose value comes later (MusicBrainz credits and works,
-/// AcoustID): until then the profile leaves the file's value alone, and
-/// clear is not offered.
+/// A field whose value comes later (AcoustID): until then the profile
+/// leaves the file's value alone, and clear is not offered.
 const fn waiting(name: &'static str, label: &'static str, mergeable: bool) -> ManagedFieldSpec {
     ManagedFieldSpec {
         name,
@@ -220,18 +219,58 @@ pub const MANAGED_FIELDS: &[ManagedFieldSpec] = &[
         Some("Release artist IDs"),
         true,
     ),
-    waiting("work", "Work", false),
-    waiting("musicbrainz_work_id", "MusicBrainz work ID", true),
+    field("work", "Work", Some("Performed work's title"), false),
+    field(
+        "musicbrainz_work_id",
+        "MusicBrainz work ID",
+        Some("Performed work IDs"),
+        true,
+    ),
     field("movement", "Movement", None, false),
     field("movement_number", "Movement number", None, false),
     field("movement_count", "Movement count", None, false),
-    waiting("composer", "Composer", true),
-    waiting("lyricist", "Lyricist", true),
-    waiting("conductor", "Conductor", true),
-    waiting("performer", "Performer", true),
-    waiting("arranger", "Arranger", true),
-    waiting("remixer", "Remixer", true),
-    waiting("producer", "Producer", true),
+    field(
+        "composer",
+        "Composer",
+        Some("Recording and work credits"),
+        true,
+    ),
+    field(
+        "lyricist",
+        "Lyricist",
+        Some("Recording and work credits"),
+        true,
+    ),
+    field(
+        "conductor",
+        "Conductor",
+        Some("Recording and work credits"),
+        true,
+    ),
+    field(
+        "performer",
+        "Performer",
+        Some("Recording and work credits"),
+        true,
+    ),
+    field(
+        "arranger",
+        "Arranger",
+        Some("Recording and work credits"),
+        true,
+    ),
+    field(
+        "remixer",
+        "Remixer",
+        Some("Recording and work credits"),
+        true,
+    ),
+    field(
+        "producer",
+        "Producer",
+        Some("Recording and work credits"),
+        true,
+    ),
     field("comment", "Comment", None, false),
     field("copyright", "Copyright", None, false),
     field("encoded_by", "Encoded by", None, false),

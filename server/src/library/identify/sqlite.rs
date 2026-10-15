@@ -1153,6 +1153,91 @@ impl SqliteIdentifyStore {
     }
 }
 
+impl SqliteIdentifyStore {
+    /// Graft fetched credits onto the stored document for a release, in
+    /// one transaction: the current row is read, grafted and written back
+    /// under every id that shares its payload (merged ids too), keeping
+    /// when the document was fetched and when it expires. Returns the
+    /// grafted document, or `None` when none is stored or the write
+    /// failed.
+    pub fn graft_relations(
+        &self,
+        release_mbid: &str,
+        fetched: &crate::library::matching::model::ReleaseRelations,
+    ) -> Option<Release> {
+        let entity = release_mbid.trim().to_ascii_lowercase();
+        self.write("graft release credits", |tx| {
+            let current: Option<(String, String)> = tx
+                .query_row(
+                    "SELECT canonical_payload_json, payload_sha256 \
+                     FROM library_management_metadata_snapshots \
+                     WHERE provider = ?1 AND entity_kind = ?2 AND entity_id = ?3 \
+                     AND input_hash = ?4 ORDER BY fetched_at DESC LIMIT 1",
+                    params![PROVIDER, RELEASE_KIND, entity, release_input_hash()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            let Some((payload, old_sha)) = current else {
+                return Ok(None);
+            };
+            let mut release: Release = match serde_json::from_str(&payload) {
+                Ok(release) => release,
+                Err(error) => {
+                    tracing::warn!(%error, release_mbid, "stored release document did not decode");
+                    return Ok(None);
+                }
+            };
+            release.graft_relations(fetched);
+            let payload = match serde_json::to_string(&release) {
+                Ok(payload) => payload,
+                Err(error) => {
+                    tracing::error!(%error, release_mbid, "release document did not encode");
+                    return Ok(None);
+                }
+            };
+            let payload_sha = hex_sha256(payload.as_bytes());
+            let rows: Vec<(String, String, f64, Option<f64>)> = {
+                let mut statement = tx.prepare(
+                    "SELECT entity_id, input_hash, fetched_at, expires_at \
+                     FROM library_management_metadata_snapshots \
+                     WHERE provider = ?1 AND entity_kind = ?2 AND payload_sha256 = ?3",
+                )?;
+                statement
+                    .query_map(params![PROVIDER, RELEASE_KIND, old_sha], |row| {
+                        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                    })?
+                    .collect::<rusqlite::Result<_>>()?
+            };
+            // Rows are immutable, so each is replaced.
+            tx.execute(
+                "DELETE FROM library_management_metadata_snapshots \
+                 WHERE provider = ?1 AND entity_kind = ?2 AND payload_sha256 = ?3",
+                params![PROVIDER, RELEASE_KIND, old_sha],
+            )?;
+            for (entity, input_hash, fetched_at, expires_at) in rows {
+                tx.execute(
+                    "INSERT INTO library_management_metadata_snapshots (id, provider, \
+                     entity_kind, entity_id, input_hash, canonical_payload_json, payload_sha256, \
+                     fetched_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    params![
+                        hex_sha256(format!("{entity}\0{payload_sha}").as_bytes()),
+                        PROVIDER,
+                        RELEASE_KIND,
+                        entity,
+                        input_hash,
+                        payload,
+                        payload_sha,
+                        fetched_at,
+                        expires_at,
+                    ],
+                )?;
+            }
+            Ok(Some(release))
+        })
+        .flatten()
+    }
+}
+
 /// Point what people made of a merged album, artist or track (favorites,
 /// play history) at the record it merged into.
 /// A person who already favorited the survivor keeps one row.

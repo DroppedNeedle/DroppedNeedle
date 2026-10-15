@@ -150,6 +150,11 @@ pub struct RecordingRef {
     /// Community genres, under the `genres` include.
     #[serde(default)]
     pub genres: Vec<MbGenre>,
+    /// Relationships, under the relation includes. Absent (not empty)
+    /// when the request did not ask for them, so a missing key never
+    /// reads as "MusicBrainz has none".
+    #[serde(default)]
+    pub relations: Option<Vec<Relation>>,
 }
 
 /// One release track. The release-track `id` is not the recording MBID:
@@ -218,6 +223,10 @@ pub struct WorkRef {
     /// must not fail decoding of an otherwise valid release.
     #[serde(rename = "type-id", default)]
     pub type_id: Option<String>,
+    /// The work's own relationships (composer, lyricist), under
+    /// `work-level-rels`; absent when not asked for.
+    #[serde(default)]
+    pub relations: Option<Vec<Relation>>,
 }
 
 /// Generic entity pointer for relationship targets.
@@ -231,6 +240,14 @@ pub struct EntityRef {
 /// relationship-rich probe on 2026-08-15 returned null only for relation
 /// `begin`/`end`, so identifiers stay strict until a live payload proves
 /// otherwise (management notes).
+///
+/// The credit fields (artist name and sort name, `attributes`,
+/// `target-credit`, `direction`, works' own `relations`) were checked on
+/// 2026-10-15 against two release lookups from BrainzMash ws/2 with
+/// `inc=recordings+artist-rels+recording-level-rels+work-rels+work-level-rels`
+/// (`tests/fixtures/musicbrainz/release_relations_*.json`): `target-credit`
+/// is an empty string when the artist is credited under their own name,
+/// and `attributes` is always a list, empty when there are none.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Relation {
     /// Relationship type name.
@@ -239,12 +256,25 @@ pub struct Relation {
     /// Relationship type MBID: required until proven otherwise.
     #[serde(rename = "type-id")]
     pub type_id: String,
+    /// What the relationship links to (`artist`, `work`, `url`, ...).
+    #[serde(rename = "target-type", default)]
+    pub target_type: Option<String>,
+    /// `forward` or `backward`, from the entity that carries the list.
+    #[serde(default)]
+    pub direction: Option<String>,
+    /// Attributes (`piano`, `guest`, `lead vocals`, `live`).
+    #[serde(default)]
+    pub attributes: Vec<String>,
+    /// The name the artist is credited as here; empty when it is their
+    /// own name.
+    #[serde(rename = "target-credit", default)]
+    pub target_credit: Option<String>,
     /// Linked work, for work relationships.
     #[serde(default)]
     pub work: Option<WorkRef>,
     /// Linked artist, for artist relationships.
     #[serde(default)]
-    pub artist: Option<EntityRef>,
+    pub artist: Option<ArtistRef>,
     /// Linked release, for release relationships.
     #[serde(default)]
     pub release: Option<EntityRef>,

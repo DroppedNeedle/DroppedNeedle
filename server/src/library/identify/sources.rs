@@ -17,6 +17,9 @@ use futures_util::future::BoxFuture;
 
 use super::models::LocalTrackFacts;
 use super::sqlite::SqliteIdentifyStore;
+use crate::library::matching::model::{
+    RecordingRelations, ReleaseRelations, RoleCredit, WorkCredit,
+};
 use crate::library::matching::model::{VARIOUS_ARTISTS_MBID, credit_text};
 use crate::library::matching::{CreditedArtist, Genre, Release, ReleaseMedium, ReleaseTrack};
 use crate::library::scan::pool::BlockingPool;
@@ -24,6 +27,7 @@ use crate::library::scan::roots::RootRegistry;
 use crate::providers::acoustid::{AcoustIdClient, BatchQuery};
 use crate::providers::degradation::DegradationSink;
 use crate::providers::limiter::Pacer;
+use crate::providers::musicbrainz::models::Relation;
 use crate::providers::musicbrainz::{
     ArtistCreditName, Criticality, MbRelease, MbTransport, MusicBrainzClient, ReleaseSearchHit,
     build_release_match_query, hit_score,
@@ -404,7 +408,116 @@ pub fn release_from_wire(wire: MbRelease, old_ids: Vec<String>) -> Result<Releas
             }
             genres
         },
+        recording_relations: None,
     })
+}
+
+/// Includes for a release's recording and work credits, asked for on
+/// their own once a profile writes them.
+pub const RELATION_INCLUDES: [&str; 5] = [
+    "artist-rels",
+    "recording-level-rels",
+    "recordings",
+    "work-level-rels",
+    "work-rels",
+];
+
+/// The tag role a MusicBrainz artist relationship credits (v2's
+/// `_RELATIONSHIP_ROLE`); other types write no tag.
+fn credit_role(relation_type: &str) -> Option<&'static str> {
+    Some(match relation_type {
+        "arranger" => "arranger",
+        "composer" => "composer",
+        "conductor" => "conductor",
+        "instrument" | "performer" | "vocal" => "performer",
+        "lyricist" => "lyricist",
+        "producer" => "producer",
+        "remixer" => "remixer",
+        _ => return None,
+    })
+}
+
+/// The credits on one recording's (or work's) relationships.
+fn role_credits(relations: &[Relation]) -> Vec<RoleCredit> {
+    relations
+        .iter()
+        .filter_map(|relation| {
+            let role = credit_role(&relation.rel_type)?;
+            let artist = relation.artist.as_ref()?;
+            let credited = relation
+                .target_credit
+                .as_deref()
+                .map(str::trim)
+                .filter(|name| !name.is_empty());
+            let name = Some(artist.name.trim())
+                .filter(|name| !name.is_empty())
+                .or(credited)?
+                .to_owned();
+            Some(RoleCredit {
+                role: role.to_owned(),
+                relation_type: relation.rel_type.clone(),
+                name,
+                sort_name: artist
+                    .sort_name
+                    .clone()
+                    .filter(|sort| !sort.trim().is_empty()),
+                artist_id: artist.id.to_ascii_lowercase(),
+                attributes: relation.attributes.clone(),
+            })
+        })
+        .collect()
+}
+
+/// The credits a relation lookup gave, by release-track id. A recording,
+/// or a work it performs, that came without its `relations` list is left
+/// out: not fetched, never "no credits".
+pub fn relations_from_wire(wire: &MbRelease, fetched_at_ms: i64) -> ReleaseRelations {
+    let mut tracks = std::collections::BTreeMap::new();
+    for track in wire.media.iter().flat_map(|medium| &medium.tracks) {
+        let Some(recording) = track.recording.as_ref() else {
+            continue;
+        };
+        let Some(relations) = recording.relations.as_ref() else {
+            continue;
+        };
+        let mut credits = role_credits(relations);
+        let mut works: Vec<WorkCredit> = Vec::new();
+        let mut complete = true;
+        for relation in relations
+            .iter()
+            .filter(|relation| relation.rel_type == "performance")
+        {
+            let Some(work) = relation.work.as_ref() else {
+                continue;
+            };
+            match work.relations.as_ref() {
+                Some(work_relations) => credits.extend(role_credits(work_relations)),
+                None => complete = false,
+            }
+            let id = work.id.to_ascii_lowercase();
+            if !works.iter().any(|known| known.id == id) {
+                works.push(WorkCredit {
+                    id,
+                    title: work.title.clone().filter(|title| !title.trim().is_empty()),
+                });
+            }
+        }
+        if !complete {
+            continue;
+        }
+        tracks.insert(
+            track.id.to_ascii_lowercase(),
+            RecordingRelations {
+                recording_id: recording.id.to_ascii_lowercase(),
+                credits,
+                works,
+            },
+        );
+    }
+    ReleaseRelations {
+        fetched_at_ms,
+        tracks,
+    }
 }
 
 fn wire_genres(genres: &[crate::providers::musicbrainz::models::MbGenre]) -> Vec<Genre> {

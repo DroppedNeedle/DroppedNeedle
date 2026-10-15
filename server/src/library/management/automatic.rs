@@ -151,6 +151,11 @@ pub fn skip_reason(code: &str) -> ItemReason {
             "This album is a custom edition, and the library folder does not manage custom editions automatically.",
             "Turn on \"Custom editions\" for the folder in Settings > Library Management, or manage the album with a preview by hand.",
         ),
+        "METADATA_UNAVAILABLE" => reason(
+            code,
+            "MusicBrainz credits for this album could not be read, so it waits.",
+            "Nothing to do: it is looked at again by itself, at least every six hours.",
+        ),
         "UNCONFIRMED_MATCH" => reasons::unconfirmed_match(),
         "IDENTITY_NOT_ACCEPTED" => reasons::identity_not_accepted(),
         "TRACK_NOT_MAPPED" => reasons::track_not_mapped(),
@@ -457,7 +462,11 @@ impl Management {
                 tracing::info!(album_id, code, "automatic management skipped an album");
                 Some((PARKED, 0, code))
             }
-            Verdict::Wait(code) if attempts + 1 >= MAX_ATTEMPTS => {
+            // MusicBrainz coming back is something the worker sees by
+            // itself, so that wait never parks.
+            Verdict::Wait(code)
+                if attempts + 1 >= MAX_ATTEMPTS && code != "METADATA_UNAVAILABLE" =>
+            {
                 tracing::info!(
                     album_id,
                     code,
@@ -690,6 +699,21 @@ impl Management {
                 });
         if managed {
             return Ok(Verdict::Done("ALREADY_MANAGED"));
+        }
+        // Credits are fetched before the run starts: an album whose
+        // credits cannot be read now waits and is looked at again by
+        // itself, rather than being planned without them.
+        if let Some(release_mbid) = identity.release_mbid.as_deref()
+            && let Some(mut release) = self.setup.identify_store.release(release_mbid, None)
+            && super::enrich::ensure_credits(
+                &self.setup.enrichment,
+                &self.setup.identify_store,
+                &pinned.profile,
+                &mut release,
+                true,
+            ) == super::enrich::Credits::Unavailable
+        {
+            return Ok(Verdict::Wait("METADATA_UNAVAILABLE"));
         }
         let key_material = format!(
             "{album_id}\u{0}{}\u{0}{}\u{0}{}\u{0}{}\u{0}{}\u{0}{}",

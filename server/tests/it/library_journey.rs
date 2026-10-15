@@ -4341,6 +4341,16 @@ async fn library_journey_catalog_corrections() {
 }
 
 /// Run one Library Management worker step off the async runtime.
+/// One look by the automatic worker, on the blocking pool as in
+/// production (it may wait for MusicBrainz).
+async fn automatic_next(library: &LibrarySetup) -> bool {
+    let management = droppedneedle::library::management::service::Management::new(library);
+    tokio::task::spawn_blocking(move || management.automatic_next())
+        .await
+        .expect("worker joins")
+        .expect("automatic step")
+}
+
 async fn management_step(library: &LibrarySetup) -> bool {
     let management = droppedneedle::library::management::service::Management::new(library);
     tokio::task::spawn_blocking(move || management.run_next("test-worker"))
@@ -5085,10 +5095,16 @@ async fn library_management_tools_journey() {
     droppedneedle::library::operations::service::Operations::new(&library)
         .confirm_match(&album, "admin")
         .expect("match confirmed");
-    library
-        .config
-        .save(lm::initial_settings(""))
-        .expect("settings saved");
+    // No MusicBrainz credits are scripted here, so the profile writes none.
+    let mut settings = lm::initial_settings("");
+    for profile in &mut settings.profiles {
+        profile.metadata.fields.retain(|field| {
+            !droppedneedle::library::management::enrich::CREDIT_FIELDS
+                .iter()
+                .any(|(name, _)| *name == field.field)
+        });
+    }
+    library.config.save(settings).expect("settings saved");
     // The settings page reads them first, which stores them normalized.
     lm::service::LibraryManagementService::new(
         library.config.clone(),
@@ -5154,6 +5170,7 @@ async fn library_management_tools_journey() {
                         bytes: cover.clone(),
                         mime: "image/png".to_owned(),
                     }),
+                    ..Default::default()
                 }))
                 .is_ok()
         );
@@ -5504,7 +5521,7 @@ async fn library_management_tools_journey() {
 
     // The album is then managed without asking: moved by the profile.
     library.queue_automatic_management(&album);
-    assert!(management.automatic_next().expect("automatic step"));
+    assert!(automatic_next(&library).await);
     assert!(management_step(&library).await, "automatic planning runs");
     assert!(management_step(&library).await, "automatic apply runs");
     assert!(!file.exists(), "the profile moved the file");
@@ -5518,7 +5535,7 @@ async fn library_management_tools_journey() {
 
     // Looked at again, the album is already managed: nothing new runs.
     library.queue_automatic_management(&album);
-    assert!(management.automatic_next().expect("automatic step"));
+    assert!(automatic_next(&library).await);
     let (again, _) = management.history(Default::default()).expect("history");
     assert_eq!(again.len(), history.len());
 
@@ -5532,7 +5549,7 @@ async fn library_management_tools_journey() {
     )
     .expect("identity bumped");
     library.queue_automatic_management(&album);
-    assert!(management.automatic_next().expect("automatic step"));
+    assert!(automatic_next(&library).await);
     let (renewed, _) = management.history(Default::default()).expect("history");
     assert_eq!(
         renewed.len(),
@@ -6006,6 +6023,7 @@ async fn library_management_artwork_journey() {
                     bytes: cover,
                     mime: "image/png".to_owned(),
                 }),
+                ..Default::default()
             }))
             .is_ok()
     );
@@ -6374,7 +6392,7 @@ impl ManagedLibrary {
         let management = self.management();
         // Identification queued the albums while nothing was automatic
         // yet; the worker looks and drops them.
-        while management.automatic_next().expect("automatic step") {}
+        while automatic_next(&self.library).await {}
         let mut proposed = self
             .library
             .config
@@ -6447,8 +6465,7 @@ impl ManagedLibrary {
 
     /// Let the worker look at every waiting album and finish its runs.
     async fn worker_looks(&self) {
-        let management = self.management();
-        while management.automatic_next().expect("automatic step") {}
+        while automatic_next(&self.library).await {}
         while management_step(&self.library).await {}
     }
 
@@ -7488,6 +7505,12 @@ async fn a_replaced_picture_counts_only_where_pictures_are_managed() {
     for (tag, artwork) in [("lib-takeover-art", true), ("lib-takeover-no-art", false)] {
         let managed = ManagedLibrary::start(tag, |profile| {
             profile.artwork.embedded_enabled = artwork;
+            // No credits are scripted here.
+            profile.metadata.fields.retain(|field| {
+                !droppedneedle::library::management::enrich::CREDIT_FIELDS
+                    .iter()
+                    .any(|(name, _)| *name == field.field)
+            });
         })
         .await;
         assert!(
@@ -7501,6 +7524,7 @@ async fn a_replaced_picture_counts_only_where_pictures_are_managed() {
                         bytes: png([30, 30, 200]),
                         mime: "image/png".to_owned(),
                     }),
+                    ..Default::default()
                 }))
                 .is_ok()
         );
@@ -11525,4 +11549,372 @@ async fn retag_pairs_list_join_and_dismiss() {
     let listed = list().await;
     assert_eq!(listed, json!({"pairs": [], "total": 0}));
     rig.stop().await;
+}
+
+/// One recording's credits from a recorded MusicBrainz answer, by its
+/// release-track id.
+fn probe_credits(
+    fixture: &str,
+    track_id: &str,
+) -> droppedneedle::library::matching::model::RecordingRelations {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/musicbrainz")
+        .join(fixture);
+    let wire: droppedneedle::providers::musicbrainz::MbRelease =
+        serde_json::from_slice(&std::fs::read(path).expect("probe reads")).expect("probe decodes");
+    droppedneedle::library::identify::sources::relations_from_wire(&wire, 0)
+        .tracks
+        .remove(track_id)
+        .expect("the probe has the track")
+}
+
+/// Gould's piano on Beethoven's concerto (composer, conductor, performer,
+/// work).
+fn concerto_credits() -> droppedneedle::library::matching::model::RecordingRelations {
+    probe_credits(
+        "release_relations_classical.json",
+        "ed4f20f0-61cf-439d-9c64-1d9acb043cbb",
+    )
+}
+
+/// A remix of "Alejandro" (producer, remixer, composer, lyricist, work).
+fn remix_credits() -> droppedneedle::library::matching::model::RecordingRelations {
+    probe_credits(
+        "release_relations_pop.json",
+        "aa235c36-5662-3709-ab97-06a1b4757d7e",
+    )
+}
+
+impl ManagedLibrary {
+    /// Credits MusicBrainz answers for the album's edition: `pick` gives
+    /// the probe credits for the n-th file, moved onto that file's
+    /// release track and recording.
+    fn scripted_credits(
+        &self,
+        tracks: &[String],
+        pick: impl Fn(usize) -> droppedneedle::library::matching::model::RecordingRelations,
+    ) -> droppedneedle::library::matching::model::ReleaseRelations {
+        let store = &self.library.identify_store;
+        let mut relations = droppedneedle::library::matching::model::ReleaseRelations::default();
+        for (index, track) in tracks.iter().enumerate() {
+            let identity = store.track_identity(track).expect("track mapped");
+            let mut credits = pick(index);
+            credits.recording_id = identity.recording_mbid.expect("recording");
+            relations
+                .tracks
+                .insert(identity.release_track_mbid.expect("release track"), credits);
+        }
+        relations
+    }
+}
+
+/// The Picard profile writes MusicBrainz credits in every format's home
+/// from a recorded answer: composer, performer with the instrument,
+/// producer, work and work id. M4A says it cannot hold a performer. The
+/// credits are fetched once and kept on the stored edition: a second
+/// plan asks MusicBrainz nothing.
+#[tokio::test]
+async fn the_picard_profile_writes_musicbrainz_credits() {
+    use droppedneedle::library::management::enrich::ScriptedEnrichment;
+    use droppedneedle::library::management::models::SelectionKind;
+    use droppedneedle::library::tags::{TagField, read_fields};
+
+    let managed = ManagedLibrary::start("lib-credits", |_| {}).await;
+    let scripted = Arc::new(ScriptedEnrichment::default());
+    assert!(managed.library.enrichment.set(scripted.clone()).is_ok());
+    let v23 = clean_v23_mp3(&managed.scratch.to_path_buf().join("v23.mp3"));
+    let formats = [
+        "management_full.flac",
+        "management_full.mp3",
+        v23.as_str(),
+        "management_full.m4a",
+    ];
+    let fixtures: Vec<&str> = formats.iter().chain(formats.iter()).copied().collect();
+    let (album, tracks) = managed.add_album_from("credits", &fixtures, |_| {}).await;
+    *scripted.relations.lock().expect("script") = Some(managed.scripted_credits(&tracks, |n| {
+        if n < 4 {
+            concerto_credits()
+        } else {
+            remix_credits()
+        }
+    }));
+
+    let (handle, items) = managed
+        .preview(SelectionKind::Albums, &[&album], "credits")
+        .await;
+    assert_eq!(scripted.relation_calls.lock().expect("calls").len(), 1);
+    for item in &items {
+        assert!(item.eligibility.writes(), "{:?}", item.facts);
+        let homeless = item
+            .facts
+            .warnings
+            .iter()
+            .any(|warning| warning.starts_with("\"performer\" cannot hold"));
+        assert!(
+            !homeless || item.facts.audio_format == "m4a",
+            "{:?}",
+            item.facts.warnings
+        );
+    }
+    let homeless = items
+        .iter()
+        .filter(|item| {
+            item.facts
+                .warnings
+                .iter()
+                .any(|warning| warning.starts_with("\"performer\" cannot hold"))
+        })
+        .count();
+    assert_eq!(
+        homeless, 1,
+        "only the concerto's M4A has a performer to refuse"
+    );
+    let applied = management_apply(&managed.library, &handle).await;
+    assert_eq!(applied.job.state.as_str(), "succeeded");
+
+    let owned = |values: &[&str]| values.iter().map(|v| (*v).to_owned()).collect::<Vec<_>>();
+    for (index, track) in tracks.iter().enumerate() {
+        let file = managed.path(track);
+        let name = file.display().to_string();
+        let fields = read_fields(&file).expect("tags read");
+        let get = |field: TagField| fields.get(&field).cloned().unwrap_or_default();
+        let m4a = name.ends_with(".m4a");
+        if index < 4 {
+            assert_eq!(
+                get(TagField::Composer),
+                owned(&["Ludwig van Beethoven"]),
+                "{name}"
+            );
+            assert_eq!(
+                get(TagField::Conductor),
+                owned(&["Herbert von Karajan"]),
+                "{name}"
+            );
+            let performer = if m4a {
+                vec![]
+            } else {
+                owned(&["Glenn Gould (piano)"])
+            };
+            assert_eq!(get(TagField::Performer), performer, "{name}");
+            assert_eq!(
+                get(TagField::Work),
+                owned(&[
+                    "Concerto for Piano and Orchestra no. 3 in C minor, op. 37: I. Allegro con brio"
+                ]),
+                "{name}"
+            );
+            assert_eq!(
+                get(TagField::MusicBrainzWorkId),
+                owned(&["d6843235-961a-37ab-85a4-a0e7e027f752"]),
+                "{name}"
+            );
+        } else {
+            // ID3v2.3 holds several names in one frame, joined by "/".
+            assert_eq!(
+                get(TagField::Producer).join("/"),
+                "Lady Gaga/RedOne",
+                "{name}"
+            );
+            assert_eq!(
+                get(TagField::Remixer),
+                owned(&["The Sound of Arrows"]),
+                "{name}"
+            );
+            assert_eq!(
+                get(TagField::Composer).join("/"),
+                "Lady Gaga/RedOne",
+                "{name}"
+            );
+            assert_eq!(get(TagField::Work), owned(&["Alejandro"]), "{name}");
+        }
+    }
+
+    // The credits are on the stored edition now; a second plan asks
+    // nothing.
+    let (_, again) = managed
+        .preview(SelectionKind::Albums, &[&album], "credits-again")
+        .await;
+    assert_eq!(scripted.relation_calls.lock().expect("calls").len(), 1);
+    // ID3v2.3 holds several names as one "/"-joined value; read back that
+    // way, it is no change.
+    for index in [2, 6] {
+        let item = again
+            .iter()
+            .find(|item| item.track_id.as_deref() == Some(tracks[index].as_str()))
+            .expect("the v2.3 file is planned");
+        assert!(
+            item.diff.field_mutations.is_empty(),
+            "{:?}",
+            item.diff.field_mutations
+        );
+    }
+}
+
+/// While MusicBrainz is down an automatic look writes nothing and the
+/// album waits, saying why; a look once it answers writes the credits by
+/// itself. A composer edited by hand after that is the user's: the
+/// worker marks the album and writes nothing.
+#[tokio::test]
+async fn automatic_credits_wait_for_musicbrainz_and_respect_a_hand_edit() {
+    use droppedneedle::library::management::enrich::ScriptedEnrichment;
+    use droppedneedle::library::tags::{TagEdit, TagField, read_fields};
+
+    let managed = ManagedLibrary::start("lib-credits-auto", |_| {}).await;
+    let scripted = Arc::new(ScriptedEnrichment::default());
+    assert!(managed.library.enrichment.set(scripted.clone()).is_ok());
+    let (album, tracks) = managed
+        .add_album_from("first", &["management_full.flac"], |_| {})
+        .await;
+    managed.activate().await;
+    let file = managed.path(&tracks[0]);
+    let before = file_sha256(&file);
+    // The dry run was a person's; the worker's lookups come after it.
+    let asked_by_people = scripted.relation_calls.lock().expect("calls").len();
+
+    managed.look(&album).await;
+    assert_eq!(
+        file_sha256(&file),
+        before,
+        "nothing written while it is down"
+    );
+    assert!(managed.automatic_runs().is_empty());
+    let waiting: String = managed
+        .db()
+        .query_row(
+            "SELECT last_reason_code FROM library_management_automatic_queue \
+             WHERE local_album_id = ?1",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("the album waits");
+    assert_eq!(waiting, "METADATA_UNAVAILABLE");
+
+    // However long MusicBrainz stays down, the album is never parked: the
+    // worker keeps looking by itself.
+    managed
+        .db()
+        .execute(
+            "UPDATE library_management_automatic_queue SET attempts = 7, not_before = 0 \
+             WHERE local_album_id = ?1",
+            [&album],
+        )
+        .expect("many tries");
+    managed.worker_looks().await;
+    let (attempts, not_before): (i64, f64) = managed
+        .db()
+        .query_row(
+            "SELECT attempts, not_before FROM library_management_automatic_queue \
+             WHERE local_album_id = ?1",
+            [&album],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("the album still waits");
+    assert_eq!(attempts, 8);
+    assert!(not_before < 1.0e12, "not parked: {not_before}");
+
+    *scripted.relations.lock().expect("script") =
+        Some(managed.scripted_credits(&tracks, |_| concerto_credits()));
+    droppedneedle::library::management::automatic::wake(
+        &managed.db(),
+        Some("METADATA_UNAVAILABLE"),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_secs_f64(),
+    )
+    .expect("woken");
+    managed.worker_looks().await;
+    let file = managed.path(&tracks[0]);
+    assert_eq!(
+        read_fields(&file).expect("tags read")[&TagField::Composer],
+        vec!["Ludwig van Beethoven".to_owned()],
+        "the credits are written once MusicBrainz answers"
+    );
+    assert!(
+        scripted
+            .relation_calls
+            .lock()
+            .expect("calls")
+            .iter()
+            .skip(asked_by_people)
+            .all(|background| *background),
+        "automatic lookups wait behind people's"
+    );
+    assert_eq!(managed.mark(&album), None);
+
+    managed
+        .edit_outside(
+            &tracks[0],
+            TagEdit::verbatim(TagField::Composer, vec!["By Hand".to_owned()]),
+        )
+        .await;
+    let edited = file_sha256(&file);
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&album).as_deref(), Some("files_changed"));
+    assert_eq!(file_sha256(&file), edited, "nothing written");
+}
+
+/// Grafting fetched credits onto a stored edition keeps everything else
+/// in it, every row it answers to, and when it was fetched, so an old
+/// tracklist never reads as fresh.
+#[test]
+fn grafted_credits_keep_the_stored_edition() {
+    let (_scratch, library, _music) = bare_library("lib-graft-credits");
+    let store = &library.identify_store;
+    let release = Release {
+        id: "rel-new".to_owned(),
+        title: "Kept".to_owned(),
+        old_ids: vec!["rel-old".to_owned()],
+        tracks: vec![ReleaseTrack {
+            id: "ed4f20f0-61cf-439d-9c64-1d9acb043cbb".to_owned(),
+            recording_id: "33ea7e59-3691-4414-92d3-6bce48d5d9cc".to_owned(),
+            title: "Allegro".to_owned(),
+            ..ReleaseTrack::default()
+        }],
+        ..Release::default()
+    };
+    store.save_release(&release);
+    let db = droppedneedle::db::open_connection(&_scratch.to_path_buf().join("app.db"))
+        .expect("db opens");
+    let times = || -> Vec<(String, f64, Option<f64>)> {
+        let mut statement = db
+            .prepare(
+                "SELECT entity_id, fetched_at, expires_at \
+                 FROM library_management_metadata_snapshots ORDER BY entity_id",
+            )
+            .expect("prepared");
+        statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .expect("rows")
+            .collect::<rusqlite::Result<_>>()
+            .expect("rows read")
+    };
+    let saved = times();
+    assert_eq!(saved.len(), 2);
+
+    let mut fetched = droppedneedle::library::matching::model::ReleaseRelations {
+        fetched_at_ms: 42,
+        ..Default::default()
+    };
+    fetched
+        .tracks
+        .insert(release.tracks[0].id.clone(), concerto_credits());
+    fetched
+        .tracks
+        .insert("not-on-this-edition".to_owned(), remix_credits());
+    let grafted = store.graft_relations("rel-new", &fetched).expect("grafted");
+    assert_eq!(times(), saved, "fetched and expiry times are kept");
+    for id in ["rel-new", "rel-old"] {
+        let found = store.release(id, None).expect("document found");
+        assert_eq!(found, grafted);
+        assert_eq!(found.title, "Kept");
+        assert_eq!(found.old_ids, vec!["rel-old".to_owned()]);
+        let relations = found.recording_relations.expect("credits stored");
+        assert_eq!(relations.fetched_at_ms, 42);
+        assert_eq!(
+            relations.tracks.keys().collect::<Vec<_>>(),
+            vec![&release.tracks[0].id],
+            "only the edition's own tracks take credits"
+        );
+    }
 }

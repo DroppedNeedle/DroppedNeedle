@@ -1419,3 +1419,135 @@ fn sniff_accepts_raster_only() {
     assert_eq!(coverart::sniff_image_content_type(b"<svg></svg>!!!!"), None);
     assert_eq!(coverart::sniff_image_content_type(b"short"), None);
 }
+
+// ---------------------------------------------------------------------------
+// Recording and work credits (recorded BrainzMash answers, 2026-10-15).
+// ---------------------------------------------------------------------------
+
+const CLASSICAL_MBID: &str = "7ce871a0-34b2-40e0-a77e-39b1268f1f61";
+
+fn relations_probe(name: &str) -> serde_json::Value {
+    let path = format!(
+        "{}/tests/fixtures/musicbrainz/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    serde_json::from_slice(&std::fs::read(path).expect("probe reads")).expect("probe parses")
+}
+
+async fn lookup_relations(
+    body: &serde_json::Value,
+) -> droppedneedle::library::matching::model::ReleaseRelations {
+    use droppedneedle::library::identify::sources::{RELATION_INCLUDES, relations_from_wire};
+    let (fake, sink) = fast_mb(vec![]);
+    fake.script(
+        &mb_url(&format!("/release/{CLASSICAL_MBID}")),
+        Ok(musicbrainz::RawResponse::new(
+            200,
+            vec![],
+            serde_json::to_vec(body).expect("body"),
+        )),
+    );
+    let client = official_client(fake.clone(), sink);
+    let lookup = client
+        .lookup_release(
+            CLASSICAL_MBID,
+            &RELATION_INCLUDES,
+            musicbrainz::Criticality::IdentityCritical,
+        )
+        .await
+        .expect("lookup decodes")
+        .expect("found");
+    assert_eq!(
+        query_value(&fake.seen()[0], "inc").as_deref(),
+        Some("artist-rels+recording-level-rels+recordings+work-level-rels+work-rels")
+    );
+    relations_from_wire(&lookup.entity, 7)
+}
+
+/// The credit lookup decodes both recorded answers, takes the
+/// recording's credits and those of each work it performs, and maps
+/// MusicBrainz's types to tag roles as v2 did (a performing orchestra or
+/// a writer is no tag). A recording or work that came without its
+/// relationship list is left out, never read as "no credits".
+#[tokio::test]
+async fn credits_decode_from_the_recorded_answers() {
+    let relations = lookup_relations(&relations_probe("release_relations_classical.json")).await;
+    assert_eq!(relations.fetched_at_ms, 7);
+    assert_eq!(relations.tracks.len(), 7);
+    let first = &relations.tracks["ed4f20f0-61cf-439d-9c64-1d9acb043cbb"];
+    assert_eq!(first.recording_id, "33ea7e59-3691-4414-92d3-6bce48d5d9cc");
+    let roles: Vec<(&str, &str, &str)> = first
+        .credits
+        .iter()
+        .map(|credit| {
+            (
+                credit.role.as_str(),
+                credit.relation_type.as_str(),
+                credit.name.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        roles,
+        vec![
+            ("conductor", "conductor", "Herbert von Karajan"),
+            ("performer", "instrument", "Glenn Gould"),
+            ("composer", "composer", "Ludwig van Beethoven"),
+            ("composer", "composer", "Ludwig van Beethoven"),
+        ]
+    );
+    assert_eq!(first.credits[1].attributes, vec!["piano".to_owned()]);
+    assert_eq!(first.credits[1].sort_name.as_deref(), Some("Gould, Glenn"));
+    assert_eq!(first.works.len(), 1);
+    assert!(
+        relations.tracks["c1d6d454-853d-428f-b4d1-8ac6d9b46180"]
+            .works
+            .is_empty(),
+        "the spoken track performs no work"
+    );
+
+    let pop = lookup_relations(&relations_probe("release_relations_pop.json")).await;
+    let alejandro = &pop.tracks["aa235c36-5662-3709-ab97-06a1b4757d7e"];
+    let names = |role: &str| -> Vec<&str> {
+        alejandro
+            .credits
+            .iter()
+            .filter(|credit| credit.role == role)
+            .map(|credit| credit.name.as_str())
+            .collect()
+    };
+    assert_eq!(names("producer"), vec!["Lady Gaga", "RedOne"]);
+    assert_eq!(names("remixer"), vec!["The Sound of Arrows"]);
+    assert_eq!(names("composer"), vec!["Lady Gaga", "RedOne"]);
+    assert_eq!(names("lyricist"), vec!["Lady Gaga", "RedOne"]);
+
+    let mut body = relations_probe("release_relations_classical.json");
+    let tracks = body["media"][0]["tracks"].as_array_mut().expect("tracks");
+    tracks[0]["recording"]
+        .as_object_mut()
+        .expect("recording")
+        .remove("relations");
+    tracks[1]["recording"]["relations"]
+        .as_array_mut()
+        .expect("relations")
+        .iter_mut()
+        .filter(|relation| relation["type"] == "performance")
+        .for_each(|relation| {
+            relation["work"]
+                .as_object_mut()
+                .expect("work")
+                .remove("relations");
+        });
+    let partial = lookup_relations(&body).await;
+    assert_eq!(partial.tracks.len(), 5);
+    assert!(
+        !partial
+            .tracks
+            .contains_key("ed4f20f0-61cf-439d-9c64-1d9acb043cbb")
+    );
+    assert!(
+        !partial
+            .tracks
+            .contains_key("c638fd85-2e96-4529-9e4e-61ec2085a16f")
+    );
+}

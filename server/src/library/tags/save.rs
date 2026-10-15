@@ -2091,6 +2091,25 @@ pub fn id3_unkept_frames(path: &Path) -> Result<Option<String>, TagsError> {
     Ok(None)
 }
 
+/// Whether a save of this file writes ID3v2.3: an MP3 whose tag is v2.3
+/// and holds no v2.4 frames (a mixed tag is saved as v2.4). Such a save
+/// joins several values of one text frame with "/", and a read gives
+/// them back as one value.
+pub fn id3_lands_as_v23(path: &Path) -> Result<bool, TagsError> {
+    if format_for_path(path)? != AudioFormat::Mp3 {
+        return Ok(false);
+    }
+    let bytes = fs::read(path).map_err(|source| TagsError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    let tag = parse_id3_deep(&bytes).map_err(|refusal| TagsError::TagRead {
+        path: path.display().to_string(),
+        reason: refusal.to_string(),
+    })?;
+    Ok(tag.is_some_and(|tag| tag.major == 3 && !is_mixed_v23(&tag)))
+}
+
 /// A mixed tag as ID3v2.4, and its conflict notes.
 struct Upgrade {
     tag: DeepId3,

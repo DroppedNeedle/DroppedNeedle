@@ -7,7 +7,9 @@
 use std::collections::BTreeMap;
 
 use super::fields::TagField;
-use crate::library::matching::model::{CreditedArtist, Release, ReleaseTrack, credit_text};
+use crate::library::matching::model::{
+    CreditedArtist, RecordingRelations, Release, ReleaseTrack, credit_text,
+};
 
 /// The full tag set for one release track.
 pub fn release_tags(release: &Release, track: &ReleaseTrack) -> BTreeMap<String, Vec<String>> {
@@ -118,4 +120,80 @@ fn sort_text(artists: &[CreditedArtist]) -> String {
         .collect::<String>()
         .trim()
         .to_owned()
+}
+
+/// The credit and work tags one recording's MusicBrainz relationships
+/// give, keyed by [`TagField`] name; roles with no credit are left out.
+///
+/// - Each role lists its artists in order, each value once.
+/// - A performer reads `Name (instrument)`, worded as Picard 2.13.3 words
+///   it (`picard/mbjson.py`, `_parse_attributes`, with its default of
+///   standardized instrument names): `guest`, `additional`, `minor` and
+///   `solo` lead the other attributes, several instruments read "a, b
+///   and c", a vocal with no attribute is "vocals", and a performer with
+///   none is the plain name (`picard/formats/vorbis.py`). One artist on
+///   two instruments gives two values.
+/// - The work is the performed work's title, only when the recording
+///   performs exactly one (a medley's would be wrong); the work id lists
+///   every performed work.
+pub fn credit_tags(relations: &RecordingRelations) -> BTreeMap<String, Vec<String>> {
+    let mut tags: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut add = |field: TagField, value: String| {
+        let value = value.trim().to_owned();
+        if value.is_empty() {
+            return;
+        }
+        let values = tags.entry(field.name().to_owned()).or_default();
+        if !values.contains(&value) {
+            values.push(value);
+        }
+    };
+    for credit in &relations.credits {
+        let field = match credit.role.as_str() {
+            "composer" => TagField::Composer,
+            "lyricist" => TagField::Lyricist,
+            "conductor" => TagField::Conductor,
+            "performer" => TagField::Performer,
+            "arranger" => TagField::Arranger,
+            "remixer" => TagField::Remixer,
+            "producer" => TagField::Producer,
+            _ => continue,
+        };
+        let value = if field == TagField::Performer {
+            match performer_role(&credit.attributes, &credit.relation_type) {
+                role if role.is_empty() => credit.name.clone(),
+                role => format!("{} ({role})", credit.name),
+            }
+        } else {
+            credit.name.clone()
+        };
+        add(field, value);
+    }
+    if let [work] = relations.works.as_slice()
+        && let Some(title) = &work.title
+    {
+        add(TagField::Work, title.clone());
+    }
+    for work in &relations.works {
+        add(TagField::MusicBrainzWorkId, work.id.clone());
+    }
+    tags
+}
+
+/// Picard's performer role text from a relationship's attributes.
+fn performer_role(attributes: &[String], relation_type: &str) -> String {
+    const PREFIXES: [&str; 4] = ["guest", "additional", "minor", "solo"];
+    let (prefixes, nouns): (Vec<&str>, Vec<&str>) = attributes
+        .iter()
+        .map(String::as_str)
+        .partition(|attribute| PREFIXES.contains(attribute));
+    let noun = match nouns.as_slice() {
+        [] if relation_type == "vocal" => "vocals".to_owned(),
+        [] => String::new(),
+        [one] => (*one).to_owned(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    };
+    let mut parts = prefixes;
+    parts.push(&noun);
+    parts.join(" ").trim().to_owned()
 }

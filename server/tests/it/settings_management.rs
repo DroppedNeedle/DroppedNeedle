@@ -655,6 +655,7 @@ mod fields {
                 track: &release.tracks[0],
                 doc: &doc,
                 format: "flac",
+                id3v23: false,
                 writable: true,
                 overrides,
                 extras: &AlbumExtras::default(),

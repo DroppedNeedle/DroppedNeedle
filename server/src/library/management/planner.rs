@@ -497,6 +497,10 @@ fn plan_file(
         reasons::file_unreadable()
     })?;
     let writable = tags::save::writable(format);
+    let id3v23 = tags::save::id3_lands_as_v23(&path).map_err(|error| {
+        tracing::info!(%error, track = track.id, "tags unreadable at preview");
+        reasons::file_unreadable()
+    })?;
     let lyrics = super::enrich::lyrics(
         &ctx.setup.enrichment,
         &ctx.pinned.profile.enrichment.lyrics,
@@ -511,6 +515,7 @@ fn plan_file(
             track: release_track,
             doc: &doc,
             format: &format_name,
+            id3v23,
             writable,
             overrides,
             extras,
@@ -1458,7 +1463,7 @@ pub fn plan_album(
         }
         return Ok(items);
     }
-    let (release, release_mbid, release_group_mbid, album_identity_revision) =
+    let (mut release, release_mbid, release_group_mbid, album_identity_revision) =
         match album_state(ctx, &scope.album_id, person)? {
             AlbumState::Blocked(reason) => {
                 for item in &mut items {
@@ -1478,7 +1483,14 @@ pub fn plan_album(
                 album_identity_revision,
             ),
         };
-    let mut extras = super::enrich::gather(&ctx.setup.enrichment, &ctx.pinned.profile, &release);
+    // Only a person's own preview asks MusicBrainz at their priority.
+    let mut extras = super::enrich::gather(
+        &ctx.setup.enrichment,
+        &ctx.setup.identify_store,
+        &ctx.pinned.profile,
+        &mut release,
+        !person,
+    );
     extras.cover_owner = tracks.first().map(|track| track.id.clone());
     // A selection of single files is not the whole album.
     measure_replaygain(ctx, tracks, scope.track_ids.is_none(), &mut extras);
@@ -1572,7 +1584,7 @@ pub fn plan_one(
     match album_state(ctx, &scope.album_id, false)? {
         AlbumState::Blocked(reason) => item.block(reason),
         AlbumState::Ready {
-            release,
+            mut release,
             release_mbid,
             release_group_mbid,
             album_identity_revision,
@@ -1581,8 +1593,13 @@ pub fn plan_one(
                 .setup
                 .identify_store
                 .with_connection(|conn| overrides(conn, &scope.album_id, &track.id))?;
-            let mut extras =
-                super::enrich::gather(&ctx.setup.enrichment, &ctx.pinned.profile, &release);
+            let mut extras = super::enrich::gather(
+                &ctx.setup.enrichment,
+                &ctx.setup.identify_store,
+                &ctx.pinned.profile,
+                &mut release,
+                false,
+            );
             measure_replaygain(ctx, std::slice::from_ref(track), false, &mut extras);
             if let Err(reason) = plan_file(
                 ctx,
