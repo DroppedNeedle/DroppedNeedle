@@ -36,19 +36,17 @@
 		class:mt-12={hasDegradation}
 	>
 		<div
-			class="alert alert-info shadow-lg mx-auto mt-2 max-w-xl pointer-events-auto text-sm gap-2 py-2 banner-enter"
+			class="alert border-info/40 shadow-lg mx-auto mt-2 max-w-xl pointer-events-auto text-sm gap-2 py-2 banner-enter"
 			role="status"
 		>
-			<CircleArrowUp class="h-4 w-4 shrink-0" />
+			<CircleArrowUp class="h-4 w-4 shrink-0 text-info" />
 			<span>
 				A new version of DroppedNeedle is available
 				{#if latestVersion}
 					<span class="font-semibold">({latestVersion})</span>
 				{/if}
 			</span>
-			<a href={withBasePath('/settings?tab=about')} class="btn btn-accent btn-xs btn-outline"
-				>Details</a
-			>
+			<a href={withBasePath('/settings?tab=about')} class="btn btn-info btn-xs">Details</a>
 			<button
 				class="btn btn-ghost btn-sm btn-circle"
 				onclick={dismiss}

@@ -4160,6 +4160,10 @@ textarea {
 	background-color: rgb(var(--brand-listenbrainz));
 	color: #1a1205;
 	border-color: rgb(var(--brand-listenbrainz));
+	/* light's orange is darker, so dark text drops below AA there */
+	[data-theme='light'] & {
+		color: white;
+	}
 	&:hover {
 		background-color: rgb(var(--brand-listenbrainz) / 0.85);
 		border-color: rgb(var(--brand-listenbrainz) / 0.85);
