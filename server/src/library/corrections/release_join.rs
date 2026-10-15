@@ -192,7 +192,7 @@ fn pass(
 }
 
 /// What became of one pair of rows.
-enum Verdict {
+pub(crate) enum Verdict {
     /// O is replaced by N.
     Replaced,
     /// O stays behind: the pair does not count.
@@ -265,8 +265,10 @@ fn replaced_by(
     Ok(Some(targets))
 }
 
-/// Whether `pair.old` is replaced by `pair.new`. Times are seconds.
-fn judge(tx: &Transaction<'_>, pair: &Pair, now: f64) -> rusqlite::Result<Verdict> {
+/// Whether `pair.old` is replaced by `pair.new` (rule 3.1 to 3.5). Reads
+/// only the two rows' times and paths and the run history, never their
+/// identities. Times are seconds.
+pub(crate) fn judge(tx: &Transaction<'_>, pair: &Pair, now: f64) -> rusqlite::Result<Verdict> {
     let (missing_since, old_root, old_path): (Option<f64>, String, String) = tx
         .prepare_cached(
             "SELECT missing_since, root_id, relative_path FROM local_tracks WHERE id = ?1",

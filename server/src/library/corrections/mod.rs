@@ -19,7 +19,8 @@
 //! `artists` the artist merge, `retag_merge` the join of an album
 //! retagged across two scans, `retag_pairs` the pairs a person joins or
 //! dismisses, `release_join` the join of an album whose files another
-//! album replaced on the same edition, `continuation` a missing track
+//! album replaced on the same edition, `placement` a scanned file placed
+//! on its album's edition by its own ids, `continuation` a missing track
 //! continuing into the track that took its place, and `service` the entry
 //! points.
 
@@ -28,6 +29,7 @@ pub(crate) mod continuation;
 mod edition;
 pub(crate) mod membership;
 pub mod models;
+pub(crate) mod placement;
 pub mod reasons;
 pub(crate) mod release_join;
 mod reset;

@@ -8580,9 +8580,11 @@ async fn an_unmanaged_change_stays_accepted_through_every_write() {
 }
 
 /// A file retagged and renamed together comes back as a new track row
-/// with no record, beside the row of the file the app wrote. It still
-/// counts as changed since the app wrote it: the album is left unmanaged
-/// and nothing is written. Files that only went away mark nothing.
+/// with no record, beside the row of the file the app wrote, and is placed
+/// on the old row's track by its ids at that scan's end, with the old
+/// row's history. It still counts as changed since the app wrote it: the
+/// album is left unmanaged and nothing is written. Files that only went
+/// away mark nothing.
 #[tokio::test]
 async fn a_file_retagged_and_renamed_together_is_still_the_users() {
     use droppedneedle::library::mutations::Mutations;
@@ -8611,6 +8613,14 @@ async fn a_file_retagged_and_renamed_together_is_still_the_users() {
 
     let old_paths: Vec<PathBuf> = whole_tracks.iter().map(|t| managed.path(t)).collect();
     let edition_tag = album_tag(&old_paths[0]);
+    managed
+        .db()
+        .execute(
+            "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+             VALUES ('admin', 'track', ?1, 1)",
+            [&whole_tracks[0]],
+        )
+        .expect("track starred");
     // Every file of the album: its release kept, the album retitled.
     let files: Vec<PathBuf> = whole_tracks
         .iter()
@@ -8641,48 +8651,28 @@ async fn a_file_retagged_and_renamed_together_is_still_the_users() {
             .track_at("music", &relative)
             .expect("track indexed")
     };
-    for file in &files {
+    let db = managed.db();
+    for (old, file) in whole_tracks.iter().zip(&files) {
         let track = new_row(file);
         assert!(!whole_tracks.contains(&track), "a new track row");
         assert_eq!(managed.album_of(&track), whole, "beside the old rows");
         assert_eq!(managed.recorded(&track), None);
+        let on = placement(&db, &track).1;
+        assert!(on.is_some(), "placed at the scan's end");
+        assert_eq!(on, placement(&db, old).1, "on the old row's track");
     }
+    assert_eq!(managed.mark(&whole), None, "the check of the bytes tells");
+    assert_eq!(holdings(&db, &new_row(&files[0]))[1], 1, "the star follows");
     assert_eq!(managed.album_of(&new_row(&retitled)), one);
     let bytes =
         |paths: &[PathBuf]| -> Vec<String> { paths.iter().map(|p| file_sha256(p)).collect() };
     let whole_bytes = bytes(&files);
     let one_bytes = bytes(std::slice::from_ref(&retitled));
 
+    // The worker counts the placed rows as changed and steps back.
     for album in [&whole, &one, &pruned] {
         managed.look(album).await;
     }
-    // The whole album's new rows never get track matches here, so the
-    // worker waits for them and writes nothing.
-    let skipped = managed.management().automatic_skipped(10).expect("skipped");
-    assert!(
-        skipped
-            .iter()
-            .any(|album| album.album_id == whole && album.reason.code == "TRACK_NOT_MAPPED"),
-        "{skipped:?}"
-    );
-    assert_eq!(bytes(&files), whole_bytes, "nothing written");
-    // Mapped the way the old rows were, as identification would map
-    // them: the worker counts the new rows as changed and steps back.
-    for (old, file) in whole_tracks.iter().zip(&files) {
-        managed
-            .db()
-            .execute(
-                "INSERT INTO local_track_external_identities (local_track_id, provider, \
-                 recording_mbid, release_mbid, release_track_mbid, medium_position, \
-                 release_track_position, decision_source, selected_at) \
-                 SELECT ?2, provider, recording_mbid, release_mbid, release_track_mbid, \
-                 medium_position, release_track_position, 'automatic', selected_at \
-                 FROM local_track_external_identities WHERE local_track_id = ?1",
-                [old, &new_row(file)],
-            )
-            .expect("track mapped");
-    }
-    managed.look(&whole).await;
     assert_eq!(managed.mark(&whole).as_deref(), Some("files_changed"));
     assert_eq!(bytes(&files), whole_bytes, "nothing written");
     assert_eq!(album_tag(&files[0]), vec!["Retagged"]);
@@ -13338,4 +13328,411 @@ async fn fill_missing_acoustid_looks_up_only_the_file_without_values() {
         1,
         "only the file without values is looked up"
     );
+}
+
+// ---------------------------------------------------------------------------
+// A file a scan adds to an album with an edition is placed by its own ids.
+// ---------------------------------------------------------------------------
+
+/// The edition a curator chose for the albums [`ManagedLibrary::chosen_with_ids`]
+/// builds. Its tracks are `rt-N` with the recordings `rec-N`.
+const CHOSEN_REL: &str = "33333333-3333-4333-8333-333333333333";
+
+/// [`CHOSEN_REL`]'s document, with `count` tracks on one disc.
+fn chosen_release(count: u32) -> Release {
+    Release {
+        id: CHOSEN_REL.to_owned(),
+        release_group_id: "rg-chosen".to_owned(),
+        title: "Chosen".to_owned(),
+        artists: vec![CreditedArtist {
+            id: "artist-1".to_owned(),
+            name: "Chosen Artist".to_owned(),
+            sort_name: None,
+            join: String::new(),
+        }],
+        tracks: (1..=count)
+            .map(|n| ReleaseTrack {
+                id: format!("rt-{n}"),
+                recording_id: format!("rec-{n}"),
+                title: format!("Chosen {n}"),
+                disc: 1,
+                position: n,
+                absolute_position: n,
+                ..ReleaseTrack::default()
+            })
+            .collect(),
+        ..Release::default()
+    }
+}
+
+/// The edition's ids, as MusicBrainz tools write them, on track `n`.
+fn chosen_ids(n: usize) -> Vec<droppedneedle::library::tags::TagEdit> {
+    use droppedneedle::library::tags::{TagEdit, TagField};
+    vec![
+        TagEdit::verbatim(TagField::Title, vec![format!("Chosen {n}")]),
+        TagEdit::verbatim(TagField::TrackNumber, vec![n.to_string()]),
+        TagEdit::verbatim(TagField::DiscNumber, vec!["1".to_owned()]),
+        TagEdit::verbatim(TagField::Album, vec!["Chosen".to_owned()]),
+        TagEdit::verbatim(TagField::MusicBrainzReleaseId, vec![CHOSEN_REL.to_owned()]),
+        TagEdit::verbatim(TagField::MusicBrainzReleaseTrackId, vec![format!("rt-{n}")]),
+        TagEdit::verbatim(TagField::MusicBrainzRecordingId, vec![format!("rec-{n}")]),
+    ]
+}
+
+/// A track's placement as a person's history reads it: release, release
+/// track, source, disc and position.
+type Placed = (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+    Option<i64>,
+);
+
+fn placed(db: &rusqlite::Connection, track: &str) -> Placed {
+    use rusqlite::OptionalExtension as _;
+    db.query_row(
+        "SELECT release_mbid, release_track_mbid, decision_source, medium_position, \
+         release_track_position FROM local_track_external_identities WHERE local_track_id = ?1",
+        [track],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
+    )
+    .optional()
+    .expect("placement reads")
+    .unwrap_or_default()
+}
+
+impl ManagedLibrary {
+    /// `count` files carrying [`CHOSEN_REL`]'s ids planted in `folder`
+    /// and scanned, on an album a curator chose that edition for long
+    /// before, its tracks mapped and its document on file. The app has
+    /// never written them. Returns the album and its tracks in order.
+    async fn chosen_with_ids(&self, folder: &str, count: usize) -> (String, Vec<String>) {
+        use droppedneedle::library::tags::save_tags;
+        for n in 1..=count {
+            let file = plant(
+                &self.music,
+                &format!("{folder}/{n:02}.flac"),
+                "management_full.flac",
+            );
+            save_tags(&file, &chosen_ids(n)).expect("ids written");
+        }
+        rescan(&self.library).await;
+        let tracks: Vec<String> = (1..=count)
+            .map(|n| indexed_at(&self.library, &format!("{folder}/{n:02}.flac")))
+            .collect();
+        let album = self
+            .library
+            .scan_store
+            .album_for_track(&tracks[0])
+            .expect("album");
+        let mut sql = format!(
+            "INSERT OR IGNORE INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'); \
+             INSERT OR REPLACE INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
+             selected_at, row_revision) VALUES ('{album}', 'musicbrainz', 'rg-chosen', \
+             '{CHOSEN_REL}', 'manual', 'curator', 1234.5, 7);"
+        );
+        for (index, track) in tracks.iter().enumerate() {
+            let n = index + 1;
+            sql.push_str(&format!(
+                "INSERT INTO local_track_external_identities (local_track_id, provider, \
+                 recording_mbid, release_mbid, release_track_mbid, medium_position, \
+                 release_track_position, decision_source, selected_at) VALUES ('{track}', \
+                 'musicbrainz', 'rec-{n}', '{CHOSEN_REL}', 'rt-{n}', 1, {n}, 'manual', 1);"
+            ));
+        }
+        self.db().execute_batch(&sql).expect("edition chosen");
+        self.library
+            .identify_store
+            .save_release(&chosen_release(count as u32));
+        (album, tracks)
+    }
+
+    /// Retitle every file of `tracks` to "Retagged", keeping their ids,
+    /// and rename each into `retagged/`, in one go; scan. Returns the
+    /// new paths.
+    async fn retag_keeping_ids(&self, tracks: &[String]) -> Vec<PathBuf> {
+        use droppedneedle::library::tags::{TagEdit, TagField, save_tags};
+        let paths: Vec<PathBuf> = tracks
+            .iter()
+            .enumerate()
+            .map(|(index, track)| {
+                let from = self.path(track);
+                save_tags(
+                    &from,
+                    &[TagEdit::verbatim(
+                        TagField::Album,
+                        vec!["Retagged".to_owned()],
+                    )],
+                )
+                .expect("retagged outside the app");
+                let to = self.music.join(format!("retagged/{:02}.flac", index + 1));
+                std::fs::create_dir_all(to.parent().expect("parent")).expect("mkdir");
+                std::fs::rename(&from, &to).expect("renamed by hand");
+                to
+            })
+            .collect();
+        rescan(&self.library).await;
+        paths
+    }
+
+    fn row_at(&self, path: &Path) -> String {
+        let relative = path
+            .strip_prefix(&self.music)
+            .expect("under the root")
+            .to_string_lossy()
+            .into_owned();
+        indexed_at(&self.library, &relative)
+    }
+}
+
+/// An album whose edition a person chose, in a folder managed
+/// automatically, that the app never wrote: every file retagged to a new
+/// album name with its MusicBrainz ids kept, and renamed. At that scan's
+/// end, with no identification, each new file is on its old file's track
+/// as the person's, the album is left unmanaged, and the play, star and
+/// playlist entry are on the new files. The worker writes nothing, and a
+/// second scan changes nothing.
+#[tokio::test]
+async fn a_chosen_edition_retagged_with_its_ids_is_placed_and_left_to_the_person() {
+    let managed = ManagedLibrary::start("lib-place-retag-kept-ids", |_| {}).await;
+    let (album, old) = managed.chosen_with_ids("chosen", 2).await;
+    managed.activate().await;
+    let db = managed.db();
+    db.execute_batch(&format!(
+        "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+         track_name, artist_name, played_at) VALUES ('p1', 'admin', '{o1}', '{album}', \
+         'One', 'A', '2026-01-01T00:00:00Z'); \
+         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('admin', 'track', '{o1}', 1); \
+         INSERT INTO playlists (id, name, created_at, updated_at) VALUES ('list', 'List', '', ''); \
+         INSERT INTO playlist_tracks (id, playlist_id, position, track_name, artist_name, \
+         album_name, album_id, track_source_id, library_file_id, source_type, created_at) \
+         VALUES ('entry', 'list', 0, 'Two', 'A', 'Chosen', '{album}', '{o2}', '{o2}', \
+         'local', '');",
+        o1 = old[0],
+        o2 = old[1],
+    ))
+    .expect("people made things");
+    let chosen = choice_row(&db, &album);
+
+    let files = managed.retag_keeping_ids(&old).await;
+    let new: Vec<String> = files.iter().map(|file| managed.row_at(file)).collect();
+    for (index, track) in new.iter().enumerate() {
+        assert!(!old.contains(track), "a new track row");
+        assert_eq!(managed.album_of(track), album);
+        let n = index as i64 + 1;
+        assert_eq!(
+            placed(&db, track),
+            (
+                Some(CHOSEN_REL.to_owned()),
+                Some(format!("rt-{n}")),
+                Some("manual".to_owned()),
+                Some(1),
+                Some(n)
+            ),
+            "placed at the scan's end"
+        );
+    }
+    assert_eq!(choice_row(&db, &album), chosen, "the match is as it was");
+    assert_eq!(managed.mark(&album).as_deref(), Some("retag_followed"));
+    assert_eq!(holdings(&db, &new[0])[..2], [1, 1], "play and star");
+    assert_eq!(holdings(&db, &new[1])[2], 1, "playlist entry");
+    assert_eq!(continuations(&db), 1);
+
+    let bytes: Vec<String> = files.iter().map(|file| file_sha256(file)).collect();
+    managed.look(&album).await;
+    assert_eq!(managed.mark(&album).as_deref(), Some("retag_followed"));
+    let after: Vec<String> = files.iter().map(|file| file_sha256(file)).collect();
+    assert_eq!(after, bytes, "nothing written");
+
+    let actions = managed.count("SELECT COUNT(*) FROM library_catalog_actions");
+    let revisions: Vec<i64> = new.iter().map(|track| placement(&db, track).2).collect();
+    rescan(&managed.library).await;
+    assert_eq!(
+        managed.count("SELECT COUNT(*) FROM library_catalog_actions"),
+        actions
+    );
+    let again: Vec<i64> = new.iter().map(|track| placement(&db, track).2).collect();
+    assert_eq!(again, revisions, "placed once");
+}
+
+/// The same retag in a folder whose automatic management is off: the
+/// album is marked at the scan's end, so a preview of it and another
+/// album leaves it alone, and a preview of the album itself plans it with
+/// the warning.
+#[tokio::test]
+async fn a_retag_placed_where_management_is_by_hand_is_left_out_of_wide_previews() {
+    use droppedneedle::library::management::models::{Eligibility, SelectionKind};
+
+    let managed = ManagedLibrary::start("lib-place-retag-by-hand", |_| {}).await;
+    let (other, _) = managed.add_album("other", 1).await;
+    let (album, old) = managed.chosen_with_ids("chosen", 2).await;
+    managed.activate().await;
+    managed.set_automatic(false, false);
+    let files = managed.retag_keeping_ids(&old).await;
+    assert_eq!(managed.mark(&album).as_deref(), Some("retag_followed"));
+    let bytes: Vec<String> = files.iter().map(|file| file_sha256(file)).collect();
+
+    let (_, items) = managed
+        .preview(SelectionKind::Albums, &[&album, &other], "both")
+        .await;
+    assert_eq!(items.len(), 3, "a file each");
+    for item in &items {
+        if item.album_id == album {
+            assert_eq!(item.eligibility, Eligibility::Blocked);
+            assert_eq!(item.reason().expect("a reason").code, "TAKEN_OVER");
+        } else {
+            assert_eq!(item.album_id, other);
+            assert!(item.eligibility.writes(), "{:?}", item.facts);
+        }
+    }
+    let (_, items) = managed
+        .preview(SelectionKind::Albums, &[&album], "own")
+        .await;
+    assert_eq!(items.len(), 2);
+    for item in &items {
+        assert!(item.eligibility.writes(), "{:?}", item.facts);
+        assert!(
+            item.facts
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("Applying this preview overwrites those changes")),
+            "{:?}",
+            item.facts.warnings
+        );
+    }
+    let after: Vec<String> = files.iter().map(|file| file_sha256(file)).collect();
+    assert_eq!(after, bytes, "nothing written");
+}
+
+/// A person's edition the app never wrote, with a second copy of a track
+/// beside the original, left over by an earlier placement with only its
+/// recording: nothing moves while both are there. The original deleted,
+/// the copy is placed on its track at that scan's end with the original's
+/// star, the original's id opens it, and the album is not left unmanaged:
+/// a finished scan saw both files. The worker then looks at it as usual.
+#[tokio::test]
+async fn a_copy_takes_the_place_of_a_deleted_original_on_a_chosen_edition() {
+    let managed = ManagedLibrary::start("lib-place-copy-chosen", |_| {}).await;
+    let (album, tracks) = managed.chosen_with_ids("chosen", 2).await;
+    managed.activate().await;
+    let db = managed.db();
+    let original = &tracks[1];
+    std::fs::copy(
+        managed.path(original),
+        managed.music.join("chosen/02 copy.flac"),
+    )
+    .expect("copied");
+    rescan(&managed.library).await;
+    let copy = indexed_at(&managed.library, "chosen/02 copy.flac");
+    assert_eq!(managed.album_of(&copy), album);
+    db.execute_batch(&format!(
+        "INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, decision_source, selected_at) VALUES \
+         ('{copy}', 'musicbrainz', 'rec-2', 'manual', 1); \
+         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('admin', 'track', '{original}', 1);"
+    ))
+    .expect("left over with its recording");
+    rescan(&managed.library).await;
+    assert_eq!(placed(&db, &copy).1, None, "both there: nothing placed");
+    assert_eq!(holdings(&db, original)[1], 1, "nothing moves");
+    assert_eq!(managed.mark(&album), None);
+
+    std::fs::remove_file(managed.path(original)).expect("original deleted");
+    rescan(&managed.library).await;
+    assert_eq!(
+        placed(&db, &copy),
+        (
+            Some(CHOSEN_REL.to_owned()),
+            Some("rt-2".to_owned()),
+            Some("manual".to_owned()),
+            Some(1),
+            Some(2)
+        )
+    );
+    assert_eq!(holdings(&db, &copy)[1], 1);
+    assert_eq!(holdings(&db, original)[1], 0);
+    assert_eq!(
+        managed.count(&format!(
+            "SELECT COUNT(*) FROM local_track_aliases WHERE alias = '{original}' \
+             AND local_track_id = '{copy}'"
+        )),
+        1,
+        "the original's id opens the copy"
+    );
+    assert_eq!(managed.mark(&album), None, "a finished scan saw both");
+    let runs = managed.automatic_runs().len();
+    managed.look(&album).await;
+    assert_eq!(managed.mark(&album), None);
+    let after = managed.automatic_runs();
+    assert!(after.len() > runs, "the worker plans the album");
+    assert_eq!(after.last().map(|run| run.0.as_str()), Some("succeeded"));
+}
+
+/// An edition the app chose, with a second copy of a track beside the
+/// original: when the original is deleted, the copy is placed on the
+/// track as the app's own, revisable, and the original's star is on it.
+#[tokio::test]
+async fn a_copy_takes_the_place_of_a_deleted_original_on_an_automatic_edition() {
+    use droppedneedle::library::tags::save_tags;
+
+    let (scratch, library, music) = bare_library("lib-place-copy-automatic");
+    for n in 1..=3 {
+        let file = plant(&music, &format!("album/{n:02}.flac"), "flac_full_02.flac");
+        save_tags(&file, &chosen_ids(n)).expect("ids written");
+    }
+    add_music_root(&library, &music).await;
+    let old: Vec<String> = (1..=3)
+        .map(|n| indexed_at(&library, &format!("album/{n:02}.flac")))
+        .collect();
+    let album = library.scan_store.album_for_track(&old[0]).expect("album");
+    let db = scratch_db(&scratch);
+    let mut recall = fitting_release(&library, &album);
+    recall.releases[0].id = CHOSEN_REL.to_owned();
+    library
+        .test_providers
+        .as_ref()
+        .expect("scripted providers")
+        .set_recall(recall);
+    while library.identify_tick().await > 0 {}
+    let release_track = placement(&db, &old[1]).1.expect("original mapped");
+    std::fs::copy(
+        music.join("album/02.flac"),
+        music.join("album/02 copy.flac"),
+    )
+    .expect("copied");
+    rescan(&library).await;
+    let copy = indexed_at(&library, "album/02 copy.flac");
+    assert_eq!(
+        library.scan_store.album_for_track(&copy).as_deref(),
+        Some(album.as_str())
+    );
+    db.execute_batch(&format!(
+        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('listener', 'track', '{}', 1);",
+        old[1]
+    ))
+    .expect("starred");
+    rescan(&library).await;
+    assert_eq!(placed(&db, &copy).1, None, "both there: nothing placed");
+
+    std::fs::remove_file(music.join("album/02.flac")).expect("original deleted");
+    rescan(&library).await;
+    let (_, on, source, _, _) = placed(&db, &copy);
+    assert_eq!(on, Some(release_track));
+    assert_eq!(source.as_deref(), Some("automatic"));
+    assert_eq!(holdings(&db, &copy)[1], 1);
+    assert_eq!(holdings(&db, &old[1])[1], 0);
 }

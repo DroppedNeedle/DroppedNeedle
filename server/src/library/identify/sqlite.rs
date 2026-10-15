@@ -1044,33 +1044,10 @@ impl SqliteIdentifyStore {
     /// `max_age_secs` ago (`None` accepts any age).
     pub fn release(&self, release_mbid: &str, max_age_secs: Option<u64>) -> Option<Release> {
         let oldest = max_age_secs.map_or(0.0, |age| now_secs() - age as f64);
-        let payload: Option<String> = self
-            .read("release document", |conn| {
-                conn.query_row(
-                    "SELECT canonical_payload_json FROM library_management_metadata_snapshots \
-                     WHERE provider = ?1 AND entity_kind = ?2 AND entity_id = ?3 \
-                     AND input_hash = ?4 AND fetched_at >= ?5 \
-                     ORDER BY fetched_at DESC LIMIT 1",
-                    params![
-                        PROVIDER,
-                        RELEASE_KIND,
-                        release_mbid.trim().to_ascii_lowercase(),
-                        release_input_hash(),
-                        oldest,
-                    ],
-                    |row| row.get(0),
-                )
-                .optional()
-            })
-            .flatten();
-        let payload = payload?;
-        match serde_json::from_str(&payload) {
-            Ok(release) => Some(release),
-            Err(error) => {
-                tracing::warn!(%error, release_mbid, "stored release document did not decode");
-                None
-            }
-        }
+        self.read("release document", |conn| {
+            stored_release(conn, release_mbid, oldest)
+        })
+        .flatten()
     }
 
     pub fn save_release(&self, release: &Release) {
@@ -1350,6 +1327,43 @@ pub(crate) fn chosen_matches_differ(
         return Ok(false);
     };
     Ok(!one.revisable() && !other.revisable() && one.differs_from(&other))
+}
+
+/// The release document on file for `mbid`, fetched at or after `oldest`
+/// (seconds). `None` when there is none, or it does not decode.
+pub(crate) fn stored_release(
+    conn: &Connection,
+    mbid: &str,
+    oldest: f64,
+) -> rusqlite::Result<Option<Release>> {
+    let payload: Option<String> = conn
+        .prepare_cached(
+            "SELECT canonical_payload_json FROM library_management_metadata_snapshots \
+             WHERE provider = ?1 AND entity_kind = ?2 AND entity_id = ?3 \
+             AND input_hash = ?4 AND fetched_at >= ?5 \
+             ORDER BY fetched_at DESC LIMIT 1",
+        )?
+        .query_row(
+            params![
+                PROVIDER,
+                RELEASE_KIND,
+                mbid.trim().to_ascii_lowercase(),
+                release_input_hash(),
+                oldest,
+            ],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(payload) = payload else {
+        return Ok(None);
+    };
+    match serde_json::from_str(&payload) {
+        Ok(release) => Ok(Some(release)),
+        Err(error) => {
+            tracing::warn!(%error, release_mbid = mbid, "stored release document did not decode");
+            Ok(None)
+        }
+    }
 }
 
 /// Whether the album's match is a release someone chose: made by a person

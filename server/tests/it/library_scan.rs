@@ -422,6 +422,8 @@ type Meanwhile = Box<dyn FnOnce() + Send>;
 /// `meanwhile`.
 struct RetagReader {
     albums: std::sync::Mutex<HashMap<String, String>>,
+    /// The MusicBrainz ids and numbers a file carries, when it has any.
+    ids: std::sync::Mutex<HashMap<String, FileIds>>,
     /// File name, and what happens just before it is read.
     meanwhile: std::sync::Mutex<Option<(String, Meanwhile)>>,
 }
@@ -455,6 +457,14 @@ impl TagReader for RetagReader {
         read.tag.artist = "Artist".to_owned();
         read.tag.album_artist = Some("Artist".to_owned());
         read.tag.album = self.albums.lock().expect("albums")[&relative].clone();
+        if let Some(ids) = self.ids.lock().expect("ids").get(&relative) {
+            let some = |value: &str| (!value.is_empty()).then(|| value.to_owned());
+            read.tag.musicbrainz_release_id = some(&ids.release);
+            read.tag.musicbrainz_release_track_id = some(&ids.release_track);
+            read.tag.musicbrainz_recording_id = some(&ids.recording);
+            read.tag.disc_number = ids.disc;
+            read.tag.track_number = ids.track;
+        }
         Ok(read)
     }
 }
@@ -485,6 +495,7 @@ impl RegroupRig {
         let store = Arc::new(SqliteScanStore::open(&db).expect("scan store opens"));
         let reader = Arc::new(RetagReader {
             albums: std::sync::Mutex::default(),
+            ids: std::sync::Mutex::default(),
             meanwhile: std::sync::Mutex::default(),
         });
         let registry = RootRegistry::new(
@@ -672,7 +683,10 @@ fn retag_warnings() -> &'static std::sync::Mutex<Vec<String>> {
     impl std::io::Write for Capture {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
             let line = String::from_utf8_lossy(buf);
-            if line.contains("retagged album") || line.contains("tracks not continued") {
+            if line.contains("retagged album")
+                || line.contains("tracks not continued")
+                || line.contains("not placed on the album's edition")
+            {
                 retag_warnings()
                     .lock()
                     .expect("lines")
@@ -4459,4 +4473,590 @@ async fn an_album_replaced_on_two_albums_is_left_to_a_person() {
         .expect("joined");
     assert_eq!(rig.retired_into(&old), Some(one));
     assert_eq!(corrections.retag_pairs().expect("pairs listed").total, 0);
+}
+
+// ---------------------------------------------------------------------------
+// A scanned file placed on its album's edition by its own ids.
+// ---------------------------------------------------------------------------
+
+/// The MusicBrainz ids and numbers one file carries.
+#[derive(Clone, Default)]
+struct FileIds {
+    release: String,
+    release_track: String,
+    recording: String,
+    disc: u32,
+    track: u32,
+}
+
+fn ids(release: &str, release_track: &str, recording: &str, disc: u32, track: u32) -> FileIds {
+    FileIds {
+        release: release.to_owned(),
+        release_track: release_track.to_owned(),
+        recording: recording.to_owned(),
+        disc,
+        track,
+    }
+}
+
+/// The edition the placement briefs' albums are matched to, its merged
+/// old id and another release.
+const REL_P: &str = "rel-p";
+const REL_P_OLD: &str = "rel-p-old";
+const REL_Q: &str = "rel-q";
+
+/// A file on track `n` of [`REL_P`]'s first disc: `p-rt-n`, `rec-n`.
+fn on_p(n: u32) -> FileIds {
+    ids(REL_P, &format!("p-rt-{n}"), &format!("rec-{n}"), 1, n)
+}
+
+/// [`REL_P`]'s document: `p-rt-1` and `p-rt-2` on disc 1, `p-rt-3` first
+/// on disc 2; recordings `rec-1` to `rec-3`. MusicBrainz merged
+/// [`REL_P_OLD`] into it.
+fn edition_p() -> droppedneedle::library::matching::Release {
+    use droppedneedle::library::matching::{Release, ReleaseTrack};
+    let track = |n: u32, disc: u32, position: u32| ReleaseTrack {
+        id: format!("p-rt-{n}"),
+        recording_id: format!("rec-{n}"),
+        title: format!("Track {n}"),
+        disc,
+        position,
+        absolute_position: n,
+        ..ReleaseTrack::default()
+    };
+    Release {
+        id: REL_P.to_owned(),
+        release_group_id: "rg-p".to_owned(),
+        title: "P".to_owned(),
+        tracks: vec![track(1, 1, 1), track(2, 1, 2), track(3, 2, 1)],
+        old_ids: vec![REL_P_OLD.to_owned()],
+        ..Release::default()
+    }
+}
+
+/// A person's identity on `release_track` of `release` with `recording`,
+/// at the disc and position given.
+fn map_on(
+    track: &str,
+    release: &str,
+    release_track: &str,
+    recording: &str,
+    place: Option<(u32, u32)>,
+) -> String {
+    let (disc, position) = place.map_or(("NULL".to_owned(), "NULL".to_owned()), |(d, p)| {
+        (d.to_string(), p.to_string())
+    });
+    format!(
+        "INSERT OR REPLACE INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_mbid, release_track_mbid, medium_position, \
+         release_track_position, decision_source, selected_at) VALUES ('{track}', \
+         'musicbrainz', '{recording}', '{release}', '{release_track}', {disc}, {position}, \
+         'manual', 0);"
+    )
+}
+
+impl RegroupRig {
+    /// Write `files` with these ids, tagged with the album `album`.
+    fn plant_ids(&mut self, files: &[(String, FileIds)], album: &str) {
+        for (file, ids) in files {
+            self.reader
+                .ids
+                .lock()
+                .expect("ids")
+                .insert(file.clone(), ids.clone());
+        }
+        let names: Vec<String> = files.iter().map(|(file, _)| file.clone()).collect();
+        self.tag(&names, album);
+    }
+
+    fn store_release(&self, release: &droppedneedle::library::matching::Release) {
+        SqliteIdentifyStore::open(&self.db())
+            .expect("identify store opens")
+            .save_release(release);
+    }
+
+    /// The album matched to `release` with `source`, chosen at `at`.
+    fn choose(&self, album: &str, release: &str, source: &str, at: f64) {
+        self.run(&format!(
+            "INSERT OR REPLACE INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, release_mbid, decision_source, selected_at) \
+             VALUES ('{album}', 'musicbrainz', 'rg-p', '{release}', '{source}', {at});"
+        ));
+    }
+
+    /// The track's identity: release track, release, recording, source,
+    /// disc, position and revision.
+    fn identity(&self, track: &str) -> Option<String> {
+        self.text(&format!(
+            "SELECT release_track_mbid || '|' || COALESCE(release_mbid, '') || '|' || \
+             recording_mbid || '|' || decision_source || '|' || \
+             COALESCE(medium_position, '') || '|' || COALESCE(release_track_position, '') \
+             || '|' || row_revision FROM local_track_external_identities \
+             WHERE local_track_id = '{track}'"
+        ))
+    }
+
+    fn release_track_of(&self, track: &str) -> Option<String> {
+        self.text(&format!(
+            "SELECT release_track_mbid FROM local_track_external_identities \
+             WHERE local_track_id = '{track}'"
+        ))
+    }
+
+    fn mark_of(&self, album: &str) -> Option<String> {
+        self.text(&format!(
+            "SELECT cause FROM library_album_takeovers WHERE local_album_id = '{album}'"
+        ))
+    }
+
+    /// Marks, stamps and aliases anywhere.
+    fn marks_stamps_aliases(&self) -> (i64, i64, i64) {
+        (
+            self.count("SELECT COUNT(*) FROM library_album_takeovers"),
+            self.count(
+                "SELECT COUNT(*) FROM library_management_automatic_queue \
+                 WHERE retag_followed_at IS NOT NULL",
+            ),
+            self.count("SELECT COUNT(*) FROM local_track_aliases"),
+        )
+    }
+}
+
+/// A match state on the album.
+fn match_state_row(album: &str, state: &str, code: &str) -> String {
+    format!(
+        "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+         release_mbid, updated_at) VALUES ('{album}', '{state}', '{code}', '{REL_P}', 0);"
+    )
+}
+
+/// What a scan adds to an album with an edition is placed on the track its
+/// own ids name, and only then. Each case is an album a person matched to
+/// [`REL_P`], whose document is on file unless the case says otherwise,
+/// with files carrying the ids given; the last file is the one looked at,
+/// after one more scan (or the scan that finds the files `lose` names
+/// gone). A refusal leaves its identity as it was, marks nothing and
+/// makes no alias.
+#[tokio::test]
+async fn a_scanned_file_is_placed_by_its_own_ids() {
+    struct Case {
+        name: &'static str,
+        files: Vec<FileIds>,
+        /// Statements over the album and its rows, before the last scan.
+        setup: fn(&str, &[String]) -> String,
+        document: bool,
+        lose: &'static [usize],
+        /// The release track the last file ends on; `None` for a refusal.
+        placed: Option<&'static str>,
+    }
+    fn none(_: &str, _: &[String]) -> String {
+        String::new()
+    }
+    let case = |name, files, placed| Case {
+        name,
+        files,
+        setup: none,
+        document: true,
+        lose: &[],
+        placed,
+    };
+    let cases = vec![
+        case(
+            "release track, no release id",
+            vec![ids("", "p-rt-1", "rec-1", 1, 1)],
+            Some("p-rt-1"),
+        ),
+        case(
+            "release track, a recording found elsewhere on the release",
+            vec![ids(REL_P, "p-rt-1", "rec-2", 1, 2)],
+            None,
+        ),
+        case(
+            "release track, a merged recording at the track's place",
+            vec![ids(REL_P, "p-rt-1", "rec-merged", 1, 1)],
+            Some("p-rt-1"),
+        ),
+        case(
+            "release and recording at the place, another edition's track id",
+            vec![ids(REL_P, "q-rt-2", "rec-2", 1, 2)],
+            Some("p-rt-2"),
+        ),
+        case(
+            "recording at the place, no release id",
+            vec![ids("", "q-rt-2", "rec-2", 1, 2)],
+            None,
+        ),
+        case(
+            "release and recording on another disc",
+            vec![ids(REL_P, "", "rec-2", 2, 2)],
+            None,
+        ),
+        case(
+            "release and recording at another position",
+            vec![ids(REL_P, "", "rec-2", 1, 3)],
+            None,
+        ),
+        case("names and position only", vec![ids("", "", "", 1, 2)], None),
+        case(
+            "release id of another release",
+            vec![ids(REL_Q, "p-rt-1", "rec-1", 1, 1)],
+            None,
+        ),
+        case(
+            "release id merged into the edition",
+            vec![ids(REL_P_OLD, "p-rt-1", "rec-1", 1, 1)],
+            Some("p-rt-1"),
+        ),
+        case("two files on one free track", vec![on_p(1), on_p(1)], None),
+        Case {
+            setup: |_, rows| map_on(&rows[0], REL_P, "p-rt-1", "rec-1", Some((1, 1))),
+            ..case(
+                "the track held by an indexed row",
+                vec![on_p(1), on_p(1)],
+                None,
+            )
+        },
+        Case {
+            setup: |_, rows| map_on(&rows[0], REL_P, "p-rt-1", "rec-1", Some((1, 1))),
+            lose: &[0],
+            ..case(
+                "the track held by a missing row only",
+                vec![on_p(1), on_p(1)],
+                Some("p-rt-1"),
+            )
+        },
+        Case {
+            setup: |album, _| match_state_row(album, "unconfirmed", "EDITION_UNCERTAIN"),
+            ..case("a best guess", vec![on_p(1)], None)
+        },
+        Case {
+            setup: |album, _| match_state_row(album, "unmatched", "CHOSEN_EDITION_NOT_LISTED"),
+            ..case("a chosen edition not listed", vec![on_p(1)], None)
+        },
+        Case {
+            setup: |album, _| {
+                format!(
+                    "INSERT INTO auth_users (id, display_name, role, created_at) \
+                     VALUES ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'); \
+                     INSERT INTO library_custom_edition_manifests (id, local_album_id, \
+                     version, release_group_mbid, album_title, album_artist_name, \
+                     source_album_revision, input_revision, content_hash, \
+                     sealed_by_user_id, sealed_at) VALUES ('m1', '{album}', 1, 'rg-p', \
+                     'T', 'A', 1, 'in', 'hash', 'curator', 0); \
+                     INSERT INTO library_custom_edition_active (local_album_id, \
+                     manifest_id, activated_at) VALUES ('{album}', 'm1', 0);"
+                )
+            },
+            ..case("a custom edition", vec![on_p(1)], None)
+        },
+        Case {
+            setup: |album, _| {
+                format!(
+                    "UPDATE local_album_external_identities SET release_mbid = NULL \
+                     WHERE local_album_id = '{album}';"
+                )
+            },
+            ..case("leave unmanaged", vec![on_p(1)], None)
+        },
+        Case {
+            setup: |album, _| match_state_row(album, "unmatched", "CHOSEN_EDITION_FITS_NO_FILE"),
+            ..case(
+                "a chosen edition that fitted no file",
+                vec![on_p(1)],
+                Some("p-rt-1"),
+            )
+        },
+        Case {
+            setup: |_, rows| {
+                format!(
+                    "UPDATE local_tracks SET availability = 'excluded', manual_excluded = 1, \
+                     excluded_at = 1 WHERE id = '{}';",
+                    rows[0]
+                )
+            },
+            ..case("an excluded row", vec![on_p(1)], None)
+        },
+        Case {
+            setup: |_, rows| map_on(&rows[0], REL_Q, "q-rt-1", "rec-1", None),
+            ..case(
+                "a row mapped to another release's track",
+                vec![on_p(1)],
+                None,
+            )
+        },
+        Case {
+            setup: |_, rows| map_on(&rows[0], REL_P, "p-rt-1", "rec-1", None),
+            document: false,
+            lose: &[0],
+            ..case(
+                "no document: the track an old row named",
+                vec![on_p(1), on_p(1)],
+                Some("p-rt-1"),
+            )
+        },
+        Case {
+            setup: |_, rows| map_on(&rows[0], REL_P, "p-rt-2", "rec-2", Some((1, 2))),
+            document: false,
+            lose: &[0],
+            ..case(
+                "no document: recording at the place an old row recorded",
+                vec![
+                    ids(REL_P, "", "rec-2", 1, 2),
+                    ids(REL_P, "q-rt-2", "rec-2", 1, 2),
+                ],
+                Some("p-rt-2"),
+            )
+        },
+        Case {
+            setup: |_, rows| map_on(&rows[0], REL_P, "p-rt-2", "rec-2", None),
+            document: false,
+            lose: &[0],
+            ..case(
+                "no document: recording at a place no old row recorded",
+                vec![
+                    ids(REL_P, "", "rec-2", 1, 2),
+                    ids(REL_P, "q-rt-2", "rec-2", 1, 2),
+                ],
+                None,
+            )
+        },
+    ];
+    for (index, case) in cases.iter().enumerate() {
+        let mut rig = RegroupRig::new(&format!("scan-place-{index}"));
+        let files: Vec<(String, FileIds)> = case
+            .files
+            .iter()
+            .enumerate()
+            .map(|(n, ids)| (format!("a/t{n:03}.flac"), ids.clone()))
+            .collect();
+        let before = rig.before.clone();
+        rig.plant_ids(&files, &before);
+        rig.scan().await;
+        let names: Vec<String> = files.iter().map(|(file, _)| file.clone()).collect();
+        let rows = rig.rows_at(&names);
+        let album = rig.album_of("a/t000.flac");
+        for file in &names {
+            assert_eq!(rig.album_of(file), album, "{}", case.name);
+        }
+        if case.document {
+            rig.store_release(&edition_p());
+        }
+        rig.choose(&album, REL_P, "manual", 0.0);
+        rig.run(&(case.setup)(&album, &rows));
+        let last = rows.last().expect("a file");
+        let identity = rig.identity(last);
+        let lost: Vec<String> = case.lose.iter().map(|&n| names[n].clone()).collect();
+        if lost.is_empty() {
+            rig.scan().await;
+        } else {
+            rig.lose(&lost).await;
+        }
+        match case.placed {
+            Some(release_track) => {
+                assert_eq!(
+                    rig.release_track_of(last).as_deref(),
+                    Some(release_track),
+                    "{}",
+                    case.name
+                );
+                let written = rig.identity(last).expect("placed");
+                assert!(
+                    written.contains(&format!("|{REL_P}|")) && written.contains("|manual|"),
+                    "{}: {written}",
+                    case.name
+                );
+                assert_eq!(
+                    rig.count(&format!(
+                        "SELECT COUNT(*) FROM library_album_match_state \
+                         WHERE local_album_id = '{album}'"
+                    )),
+                    0,
+                    "{}",
+                    case.name
+                );
+                assert_eq!(rig.mark_of(&album), None, "{}", case.name);
+            }
+            None => {
+                assert_eq!(rig.identity(last), identity, "{}", case.name);
+                assert_eq!(rig.marks_stamps_aliases(), (0, 0, 0), "{}", case.name);
+            }
+        }
+    }
+}
+
+/// One file of [`REL_P`]'s track 1, `a/t000.flac`, on an album matched to
+/// it by `source` at `chosen_at`, mapped, with the document on file.
+/// Returns the rig, the album and the row.
+async fn placed_album(name: &str, source: &str, chosen_at: f64) -> (RegroupRig, String, String) {
+    let mut rig = RegroupRig::new(name);
+    let before = rig.before.clone();
+    rig.plant_ids(&[("a/t000.flac".to_owned(), on_p(1))], &before);
+    rig.scan().await;
+    let album = rig.album_of("a/t000.flac");
+    let old = rig.rows_at(&["a/t000.flac".to_owned()]).remove(0);
+    rig.store_release(&edition_p());
+    rig.choose(&album, REL_P, source, chosen_at);
+    rig.run(&map_on(&old, REL_P, "p-rt-1", "rec-1", Some((1, 1))));
+    (rig, album, old)
+}
+
+impl RegroupRig {
+    /// The file at `file`, which must be on track 1 of [`REL_P`].
+    fn placed_at(&self, file: &str, case: &str) -> String {
+        let row = self.rows_at(&[file.to_owned()]).remove(0);
+        assert_eq!(
+            self.release_track_of(&row).as_deref(),
+            Some("p-rt-1"),
+            "{case}"
+        );
+        row
+    }
+
+    /// Retag the album's file to the new album name and rename it into
+    /// `b/` in one go, and scan.
+    async fn retag_and_rename(&mut self) {
+        let after = self.after.clone();
+        self.plant_ids(&[("b/t000.flac".to_owned(), on_p(1))], &after);
+        self.lose(&["a/t000.flac".to_owned()]).await;
+    }
+}
+
+/// An album whose edition a person chose and that the app never wrote is
+/// marked taken over, and parked, when a placed file is the old one
+/// retagged by hand, and only then. Every case places the new file on the
+/// old file's track.
+#[tokio::test]
+async fn a_placement_marks_only_a_hand_retag() {
+    let (mut rig, album, _) = placed_album("scan-place-mark-retag", "manual", 0.0).await;
+    rig.retag_and_rename().await;
+    rig.placed_at("b/t000.flac", "retag");
+    assert_eq!(rig.mark_of(&album).as_deref(), Some("retag_followed"));
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM library_management_automatic_queue \
+             WHERE local_album_id = '{album}' AND last_reason_code = 'TAKEN_OVER'"
+        )),
+        1,
+        "parked"
+    );
+
+    let (mut rig, album, _) = placed_album("scan-place-mark-later", "manual", 1e12).await;
+    rig.retag_and_rename().await;
+    rig.placed_at("b/t000.flac", "chosen after the file came");
+    assert_eq!(rig.mark_of(&album), None, "chosen after the file came");
+
+    // A copy a finished scan saw beside the original, then the original
+    // deleted: with the same tags it is not marked; retitled while the
+    // original was still there, it is.
+    for (retitled, mark) in [(false, None), (true, Some("retag_followed"))] {
+        let (mut rig, album, _) =
+            placed_album(&format!("scan-place-mark-copy-{retitled}"), "manual", 0.0).await;
+        let title = if retitled {
+            rig.after.clone()
+        } else {
+            rig.before.clone()
+        };
+        rig.plant_ids(&[("a/t000 copy.flac".to_owned(), on_p(1))], &title);
+        rig.scan().await;
+        assert_eq!(rig.album_of("a/t000 copy.flac"), album);
+        rig.lose(&["a/t000.flac".to_owned()]).await;
+        rig.placed_at("a/t000 copy.flac", "copy");
+        assert_eq!(rig.mark_of(&album).as_deref(), mark, "retitled: {retitled}");
+    }
+
+    // The album keeps a second track, so it is still there when the file
+    // comes back.
+    let (mut rig, album, _) = placed_album("scan-place-mark-readded", "manual", 0.0).await;
+    let before = rig.before.clone();
+    rig.plant_ids(&[("a/t001.flac".to_owned(), on_p(2))], &before);
+    rig.scan().await;
+    rig.lose(&["a/t000.flac".to_owned()]).await;
+    rig.plant_ids(&[("a/again.flac".to_owned(), on_p(1))], &before);
+    rig.scan().await;
+    assert_eq!(rig.album_of("a/again.flac"), album);
+    rig.placed_at("a/again.flac", "added after a scan saw it gone");
+    assert_eq!(rig.mark_of(&album), None, "added after a scan saw it gone");
+
+    let (mut rig, album, old) = placed_album("scan-place-mark-record", "manual", 0.0).await;
+    rig.run(&format!(
+        "INSERT INTO library_track_management_state (local_track_id, written_sha256) \
+         VALUES ('{old}', 'sha');"
+    ));
+    rig.retag_and_rename().await;
+    rig.placed_at("b/t000.flac", "a missing row with a record");
+    assert_eq!(rig.mark_of(&album), None, "a missing row with a record");
+
+    let (mut rig, album, _) = placed_album("scan-place-mark-automatic", "automatic", 0.0).await;
+    rig.retag_and_rename().await;
+    let row = rig.placed_at("b/t000.flac", "an edition the app chose");
+    assert!(
+        rig.identity(&row).expect("placed").contains("|automatic|"),
+        "revisable"
+    );
+    assert_eq!(rig.mark_of(&album), None, "an edition the app chose");
+}
+
+/// A store error in one album rolls back its placement and its mark
+/// together, with one warning naming it; the other album is placed and
+/// the run ends. The next run end places and marks it.
+#[tokio::test]
+async fn a_failed_placement_takes_its_mark_with_it() {
+    use droppedneedle::library::matching::{Release, ReleaseTrack};
+
+    retag_warnings();
+    let (mut rig, album, _) = placed_album("scan-place-store-error", "manual", 0.0).await;
+    rig.store_release(&Release {
+        id: REL_Q.to_owned(),
+        tracks: vec![ReleaseTrack {
+            id: "q-rt-1".to_owned(),
+            recording_id: "rec-q".to_owned(),
+            disc: 1,
+            position: 1,
+            ..ReleaseTrack::default()
+        }],
+        ..Release::default()
+    });
+    rig.plant_ids(
+        &[(
+            "c/t000.flac".to_owned(),
+            ids(REL_Q, "q-rt-1", "rec-q", 1, 1),
+        )],
+        "Other",
+    );
+    rig.scan().await;
+    let other = rig.album_of("c/t000.flac");
+    assert_ne!(other, album);
+    rig.choose(&other, REL_Q, "manual", 0.0);
+    rig.run(
+        "CREATE TRIGGER refuse_placement BEFORE INSERT ON local_track_external_identities \
+         WHEN NEW.release_track_mbid = 'p-rt-1' \
+         BEGIN SELECT RAISE(ABORT, 'refused for the test'); END;",
+    );
+    rig.retag_and_rename().await;
+    let new = rig.rows_at(&["b/t000.flac".to_owned()]).remove(0);
+    assert_eq!(rig.release_track_of(&new), None);
+    assert_eq!(
+        rig.mark_of(&album),
+        None,
+        "the mark goes with the placement"
+    );
+    let other_row = rig.rows_at(&["c/t000.flac".to_owned()]).remove(0);
+    assert_eq!(rig.release_track_of(&other_row).as_deref(), Some("q-rt-1"));
+    let warned = || {
+        retag_warnings()
+            .lock()
+            .expect("lines")
+            .iter()
+            .filter(|line| {
+                line.contains("not placed on the album's edition") && line.contains(&album)
+            })
+            .count()
+    };
+    assert_eq!(warned(), 1);
+
+    rig.run("DROP TRIGGER refuse_placement");
+    rig.scan().await;
+    assert_eq!(rig.release_track_of(&new).as_deref(), Some("p-rt-1"));
+    assert_eq!(rig.mark_of(&album).as_deref(), Some("retag_followed"));
+    assert_eq!(warned(), 1);
 }

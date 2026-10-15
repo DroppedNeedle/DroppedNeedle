@@ -27,6 +27,7 @@ use std::collections::BTreeMap;
 use super::retag_pairs::{self, RetagPairReason, RetagPairState};
 use super::*;
 use crate::library::corrections::continuation::{Scope, continue_tracks};
+use crate::library::corrections::placement::place_scanned;
 use crate::library::corrections::release_join::join_replaced;
 use crate::library::corrections::retag_merge::{
     JoinCause, MergeOutcome, album_has_record, merge_retagged,
@@ -1436,9 +1437,11 @@ fn released_by(tx: &Connection, run_id: &str, album_id: &str) -> rusqlite::Resul
 ///    edition are joined to it ([`join_replaced`]);
 /// 4. the tracks that left an album are kept on record past the run
 ///    ([`keep_departures`]);
-/// 5. missing tracks continue into the tracks that took their place
+/// 5. files filed onto an album with an edition are placed on its tracks
+///    by their own ids ([`place_scanned`]);
+/// 6. missing tracks continue into the tracks that took their place
 ///    ([`continue_tracks`]);
-/// 6. the albums the run held back are offered ([`offer_held_back`]).
+/// 7. the albums the run held back are offered ([`offer_held_back`]).
 pub(super) fn settle_ended_run(
     tx: &rusqlite::Transaction<'_>,
     run_id: &str,
@@ -1448,6 +1451,7 @@ pub(super) fn settle_ended_run(
     carry_to_first_half(tx, run_id, now)?;
     join_replaced(tx, Scope::Library, now)?;
     keep_departures(tx, run_id, now)?;
+    place_scanned(tx, now)?;
     continue_tracks(tx, Scope::Library, now)?;
     enqueued += offer_held_back(tx, run_id, now)?;
     if enqueued > 0
