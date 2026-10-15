@@ -181,6 +181,31 @@ def _matches(expected: str | None, actual: str | None) -> bool:
 # (the always-available signal), with tags + filename as tie-breakers.
 _TRACK_NUM_RE = re.compile(r"^\s*(\d{1,3})\s*[\.\-_)]+\s*")  # "01. ", "1 - ", "03_ "
 _DISC_DIR_RE = re.compile(r"\b(?:cd|disc|disk)\s*(\d+)\b", re.IGNORECASE)
+# A leading disc/track PAIR: "2-01 ", "2.01 ", "02-03. ", "1_01 ". Bounded to two digits
+# for the disc and requiring digits after the separator, so a bare "485 - Title"
+# (compilation/box-set numbering) is still read as one track number and never as disc 485.
+_DISC_TRACK_RE = re.compile(r"^\s*(\d{1,2})\s*[\.\-_)]\s*(\d{1,3})\s*(?=[\.\-_)\s]|$)")
+
+
+def _filename_disc_track(name: str) -> tuple[int | None, int | None]:
+    """Disc + track from a leading ``D-TT`` filename (``02-03. Artist - Title.flac``).
+
+    ``(None, None)`` when the name carries no disc prefix, so single-number names keep
+    their existing reading (``01 - Title`` -> track 1, disc from tag/dir).
+    """
+    match = _DISC_TRACK_RE.match(name)
+    return (int(match.group(1)), int(match.group(2))) if match else (None, None)
+
+
+def _disc_from_path(path: str | Path | None) -> int | None:
+    """``CD2``/``Disc 3``/``disk 1`` in any path segment (slskd flattens the local copy,
+    so for downloads the *remote* filename is the one that still carries it)."""
+    if not path:
+        return None
+    parts = str(path).replace("\\", "/").rsplit("/", 1)
+    directory = parts[0] if len(parts) > 1 else ""
+    match = _DISC_DIR_RE.search(directory)
+    return int(match.group(1)) if match else None
 
 
 class _FolderCandidate(NamedTuple):
@@ -222,11 +247,16 @@ def _filename_title(path: Path) -> str:
 
 
 def _candidate_disc(candidate: _FolderCandidate) -> int:
-    if candidate.tag.disc_number:
+    # AudioTag.disc_number defaults to 1, so only a non-default value is evidence.
+    if candidate.tag.disc_number and candidate.tag.disc_number != 1:
         return candidate.tag.disc_number
-    # CD1/Disc 2 path heuristic for multi-disc rips that lack disc tags (review C).
+    # CD1/Disc 2 path heuristic for multi-disc rips that lack disc tags (review C) …
     match = _DISC_DIR_RE.search(candidate.path.parent.name)
-    return int(match.group(1)) if match else 1
+    if match:
+        return int(match.group(1))
+    # … and the same signal from a leading "2-01 " filename prefix.
+    file_disc, _ = _filename_disc_track(candidate.path.name)
+    return file_disc or candidate.tag.disc_number or 1
 
 
 def _slskd_expected_track(
@@ -235,27 +265,52 @@ def _slskd_expected_track(
     info: AudioInfo,
     expected_tracks: list[ExpectedTrack],
     used_positions: set[tuple[int, int]],
+    remote_filename: str | None = None,
 ) -> tuple[ExpectedTrack | None, bool, str | None]:
-    """Map a Soulseek file to one exact release position and verify its evidence."""
+    """Map a Soulseek file to one exact release position and verify its evidence.
+
+    ``remote_filename`` (the peer's path, which slskd flattens out of the local copy)
+    is consulted for the disc so a multi-disc rip whose files are numbered per disc
+    (``2-01 Broken Harbors, Part 1.flac``, no disc tag) is no longer read as disc 1.
+    """
 
     if not expected_tracks:
         return None, False, None
-    track_number = tag.track_number or _filename_track_number(source)
+    file_disc, file_track = _filename_disc_track(source.name)
+    track_number = tag.track_number or file_track or _filename_track_number(source)
     disc_number = tag.disc_number or 1
-    disc_match = _DISC_DIR_RE.search(source.parent.name)
-    if disc_match and not tag.disc_number:
-        disc_number = int(disc_match.group(1))
     if not track_number and len(expected_tracks) == 1:
         track_number = expected_tracks[0].track_number
         disc_number = expected_tracks[0].disc_number
-    matches = [
-        value
-        for value in expected_tracks
-        if value.disc_number == disc_number and value.track_number == track_number
-    ]
-    if len(matches) != 1 or (disc_number, track_number or 0) in used_positions:
+
+    def _resolve(disc: int, track: int | None) -> list[ExpectedTrack]:
+        return [
+            value
+            for value in expected_tracks
+            if value.disc_number == disc and value.track_number == track
+        ]
+
+    matches = _resolve(disc_number, track_number)
+    position = (disc_number, track_number or 0)
+
+    # ``AudioTag.disc_number`` defaults to 1, so a tag that does not carry a disc is
+    # indistinguishable from "disc 1" - and that default is what mis-filed every file of
+    # a per-disc-numbered multi-disc rip onto disc 1. Prefer the disc the filename
+    # ("2-01 …") or the remote path ("…/CD2/01 …", which slskd flattens out of the local
+    # copy) advertises, unless the tag names a disc other than that default.
+    derived_disc = (
+        _disc_from_path(remote_filename) or _disc_from_path(source.parent) or file_disc
+    )
+    derived_track = file_track or track_number
+    if disc_number == 1 and derived_disc and derived_disc != 1:
+        alternative = _resolve(derived_disc, derived_track)
+        alternative_position = (derived_disc, derived_track or 0)
+        if len(alternative) == 1 and alternative_position not in used_positions:
+            matches, position = alternative, alternative_position
+    if len(matches) != 1 or position in used_positions:
         return None, False, "track position is missing, duplicated, or ambiguous"
     track = matches[0]
+    disc_number, track_number = position
     used_positions.add((disc_number, track.track_number))
 
     corroborated = False
@@ -264,7 +319,13 @@ def _slskd_expected_track(
             return track, False, "recording MBID conflicts with the exact edition"
         corroborated = True
     if tag.title and track.title:
-        if title_containment_score(track.title, tag.title) < _TAG_TITLE_WEAK:
+        if (
+            title_containment_score(
+                normalize_recording_title(track.title),
+                normalize_recording_title(tag.title),
+            )
+            < _TAG_TITLE_WEAK
+        ):
             return track, False, "title conflicts with the exact edition"
         corroborated = True
     if track.duration_seconds and info.duration_seconds:
@@ -2232,6 +2293,7 @@ class FileProcessor:
                 used_expected_positions
                 if used_expected_positions is not None
                 else set(),
+                remote_filename=expected.filename,
             )
             if conflict == "track position is missing, duplicated, or ambiguous":
                 raise VerificationFailed(
