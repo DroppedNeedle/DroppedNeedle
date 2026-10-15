@@ -386,11 +386,11 @@
 	}
 
 	function getServiceColor(name: string): string {
-		if (name === 'Jellyfin') return 'text-purple-400 light:text-purple-700';
-		if (name === 'Navidrome') return 'text-green-400 light:text-green-700';
-		if (name === 'Plex') return 'text-amber-400 light:text-amber-700';
-		if (name === 'ListenBrainz') return 'text-orange-400 light:text-orange-700';
-		if (name === 'Last.fm') return 'text-red-400 light:text-red-700';
+		if (name === 'Jellyfin') return 'text-jellyfin';
+		if (name === 'Navidrome') return 'text-navidrome';
+		if (name === 'Plex') return 'text-plex';
+		if (name === 'ListenBrainz') return 'text-listenbrainz';
+		if (name === 'Last.fm') return 'text-lastfm';
 		return 'text-base-content';
 	}
 
@@ -424,9 +424,9 @@
 	}
 
 	function getSourceColor(source: string): string {
-		if (source === 'Jellyfin') return 'text-purple-400 light:text-purple-700';
-		if (source === 'Navidrome') return 'text-green-400 light:text-green-700';
-		if (source === 'Local Files') return 'text-teal-400 light:text-teal-700';
+		if (source === 'Jellyfin') return 'text-jellyfin';
+		if (source === 'Navidrome') return 'text-navidrome';
+		if (source === 'Local Files') return 'text-localfiles';
 		return 'text-base-content';
 	}
 

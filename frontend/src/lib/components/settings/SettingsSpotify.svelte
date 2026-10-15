@@ -68,7 +68,7 @@
 	<div class="card-body gap-4">
 		<div class="flex items-center gap-3">
 			<div
-				class="flex h-11 w-11 items-center justify-center rounded-xl bg-green-500/10 text-green-400 light:text-green-700 ring-1 ring-green-500/20"
+				class="flex h-11 w-11 items-center justify-center rounded-xl bg-spotify/10 text-spotify ring-1 ring-spotify/20"
 			>
 				<svg class="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
 					<path

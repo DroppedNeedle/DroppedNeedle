@@ -41,7 +41,7 @@
 	<h2
 		class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-base-content/50"
 	>
-		<SpotifyIcon class="h-4 w-4 text-green-400 light:text-green-700" />
+		<SpotifyIcon class="h-4 w-4 text-spotify" />
 		Spotify
 	</h2>
 
@@ -53,7 +53,7 @@
 		>
 			<div class="flex min-w-0 items-center gap-3">
 				<div
-					class="flex h-10 w-10 items-center justify-center rounded-xl bg-green-500/10 text-green-400 light:text-green-700 ring-1 ring-green-500/20"
+					class="flex h-10 w-10 items-center justify-center rounded-xl bg-spotify/10 text-spotify ring-1 ring-spotify/20"
 				>
 					<SpotifyIcon class="h-[1.15rem] w-[1.15rem]" />
 				</div>

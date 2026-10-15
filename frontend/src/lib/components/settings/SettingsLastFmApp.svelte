@@ -28,7 +28,7 @@
 	<div class="card-body gap-4">
 		<div class="flex items-center gap-3">
 			<div
-				class="flex h-11 w-11 items-center justify-center rounded-xl bg-red-500/10 text-red-400 light:text-red-700 ring-1 ring-red-500/20"
+				class="flex h-11 w-11 items-center justify-center rounded-xl bg-lastfm/10 text-lastfm ring-1 ring-lastfm/20"
 			>
 				<Radio class="h-5 w-5" />
 			</div>

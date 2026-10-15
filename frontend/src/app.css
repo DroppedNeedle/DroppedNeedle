@@ -3800,6 +3800,7 @@ details[open] > summary .management-editor-chevron {
 	--brand-navidrome: 99 102 241;
 	--brand-plex: 229 160 13;
 	--brand-lastfm: 213 16 7;
+	--brand-spotify: 29 185 84;
 	--brand-hero: 161 161 170;
 	--color-youtube: #ff0000;
 	--color-youtube-hover: #cc0000;
@@ -3821,7 +3822,20 @@ details[open] > summary .management-editor-chevron {
 	--brand-discover: 0 116 154;
 	--brand-navidrome: 67 56 202;
 	--brand-plex: 152 102 3;
+	--brand-spotify: 21 128 61;
 	--brand-hero: 113 113 122;
+}
+
+/* Service colours as utilities (text-jellyfin, bg-plex/10, …), so they follow
+   the theme without light: overrides */
+@theme inline {
+	--color-jellyfin: rgb(var(--brand-jellyfin));
+	--color-navidrome: rgb(var(--brand-navidrome));
+	--color-plex: rgb(var(--brand-plex));
+	--color-listenbrainz: rgb(var(--brand-listenbrainz));
+	--color-lastfm: rgb(var(--brand-lastfm));
+	--color-localfiles: rgb(var(--brand-localfiles));
+	--color-spotify: rgb(var(--brand-spotify));
 }
 
 /* colour derives from --color-primary, so a rebrand only needs the theme token changed */

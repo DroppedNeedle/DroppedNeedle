@@ -133,19 +133,19 @@
 				service: 'navidrome',
 				label: 'Navidrome',
 				icon: NavidromeIcon,
-				tint: 'bg-green-500/10 text-green-400 light:text-green-700 ring-green-500/20'
+				tint: 'bg-navidrome/10 text-navidrome ring-navidrome/20'
 			},
 			jellyfinEnabled && {
 				service: 'jellyfin',
 				label: 'Jellyfin',
 				icon: JellyfinIcon,
-				tint: 'bg-purple-500/10 text-purple-400 light:text-purple-700 ring-purple-500/20'
+				tint: 'bg-jellyfin/10 text-jellyfin ring-jellyfin/20'
 			},
 			plexEnabled && {
 				service: 'plex',
 				label: 'Plex',
 				icon: PlexIcon,
-				tint: 'bg-amber-500/10 text-amber-400 light:text-amber-700 ring-amber-500/20'
+				tint: 'bg-plex/10 text-plex ring-plex/20'
 			}
 		].filter(Boolean) as Row[]
 	);
