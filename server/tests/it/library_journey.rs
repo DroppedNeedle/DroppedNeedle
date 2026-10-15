@@ -12369,7 +12369,10 @@ impl ManagedLibrary {
         pick: impl Fn(usize) -> droppedneedle::library::matching::model::RecordingRelations,
     ) -> droppedneedle::library::matching::model::ReleaseRelations {
         let store = &self.library.identify_store;
-        let mut relations = droppedneedle::library::matching::model::ReleaseRelations::default();
+        let mut relations = droppedneedle::library::matching::model::ReleaseRelations {
+            version: droppedneedle::library::matching::model::RELATIONS_VERSION,
+            ..Default::default()
+        };
         for (index, track) in tracks.iter().enumerate() {
             let identity = store.track_identity(track).expect("track mapped");
             let mut credits = pick(index);
@@ -12416,7 +12419,7 @@ async fn the_picard_profile_writes_musicbrainz_credits() {
     let (handle, items) = managed
         .preview(SelectionKind::Albums, &[&album], "credits")
         .await;
-    assert_eq!(scripted.relation_calls.lock().expect("calls").len(), 1);
+    assert_eq!(scripted.lookups.lock().expect("calls").len(), 1);
     for item in &items {
         assert!(item.eligibility.writes(), "{:?}", item.facts);
         let homeless = item
@@ -12508,7 +12511,7 @@ async fn the_picard_profile_writes_musicbrainz_credits() {
     let (_, again) = managed
         .preview(SelectionKind::Albums, &[&album], "credits-again")
         .await;
-    assert_eq!(scripted.relation_calls.lock().expect("calls").len(), 1);
+    assert_eq!(scripted.lookups.lock().expect("calls").len(), 1);
     // ID3v2.3 holds several names as one "/"-joined value; read back that
     // way, it is no change.
     for index in [2, 6] {
@@ -12543,7 +12546,7 @@ async fn automatic_credits_wait_for_musicbrainz_and_respect_a_hand_edit() {
     let file = managed.path(&tracks[0]);
     let before = file_sha256(&file);
     // The dry run was a person's; the worker's lookups come after it.
-    let asked_by_people = scripted.relation_calls.lock().expect("calls").len();
+    let asked_by_people = scripted.lookups.lock().expect("calls").len();
 
     managed.look(&album).await;
     assert_eq!(
@@ -12606,12 +12609,12 @@ async fn automatic_credits_wait_for_musicbrainz_and_respect_a_hand_edit() {
     );
     assert!(
         scripted
-            .relation_calls
+            .lookups
             .lock()
             .expect("calls")
             .iter()
             .skip(asked_by_people)
-            .all(|background| *background),
+            .all(|(_, background)| *background),
         "automatic lookups wait behind people's"
     );
     assert_eq!(managed.mark(&album), None);
@@ -12628,9 +12631,9 @@ async fn automatic_credits_wait_for_musicbrainz_and_respect_a_hand_edit() {
     assert_eq!(file_sha256(&file), edited, "nothing written");
 }
 
-/// Grafting fetched credits onto a stored edition keeps everything else
-/// in it, every row it answers to, and when it was fetched, so an old
-/// tracklist never reads as fresh.
+/// Grafting fetched credits and artist names onto a stored edition keeps
+/// everything else in it, every row it answers to, and when it was
+/// fetched, so an old tracklist never reads as fresh.
 #[test]
 fn grafted_credits_keep_the_stored_edition() {
     let (_scratch, library, _music) = bare_library("lib-graft-credits");
@@ -12643,6 +12646,11 @@ fn grafted_credits_keep_the_stored_edition() {
             id: "ed4f20f0-61cf-439d-9c64-1d9acb043cbb".to_owned(),
             recording_id: "33ea7e59-3691-4414-92d3-6bce48d5d9cc".to_owned(),
             title: "Allegro".to_owned(),
+            artists: vec![CreditedArtist {
+                id: "gould".to_owned(),
+                name: "Glenn Gould".to_owned(),
+                ..CreditedArtist::default()
+            }],
             ..ReleaseTrack::default()
         }],
         ..Release::default()
@@ -12676,7 +12684,27 @@ fn grafted_credits_keep_the_stored_edition() {
     fetched
         .tracks
         .insert("not-on-this-edition".to_owned(), remix_credits());
-    let grafted = store.graft_relations("rel-new", &fetched).expect("grafted");
+    let artist = |name: &str| droppedneedle::library::matching::model::ArtistName {
+        name: name.to_owned(),
+        ..Default::default()
+    };
+    let names = droppedneedle::library::matching::model::ArtistNames {
+        fetched_at_ms: 43,
+        artists: [
+            ("gould".to_owned(), artist("Glenn Gould")),
+            ("stranger".to_owned(), artist("Not credited here")),
+        ]
+        .into(),
+    };
+    let grafted = store
+        .graft_extras(
+            "rel-new",
+            &droppedneedle::library::matching::model::ReleaseExtras {
+                relations: Some(fetched),
+                names: Some(names),
+            },
+        )
+        .expect("grafted");
     assert_eq!(times(), saved, "fetched and expiry times are kept");
     for id in ["rel-new", "rel-old"] {
         let found = store.release(id, None).expect("document found");
@@ -12689,6 +12717,13 @@ fn grafted_credits_keep_the_stored_edition() {
             relations.tracks.keys().collect::<Vec<_>>(),
             vec![&release.tracks[0].id],
             "only the edition's own tracks take credits"
+        );
+        let names = found.artist_names.expect("names stored");
+        assert_eq!(names.fetched_at_ms, 43);
+        assert_eq!(
+            names.artists.keys().collect::<Vec<_>>(),
+            vec!["gould"],
+            "only artists the edition credits are kept"
         );
     }
 }
@@ -13951,4 +13986,413 @@ async fn a_copy_takes_the_place_of_a_deleted_original_on_an_automatic_edition() 
     assert_eq!(source.as_deref(), Some("automatic"));
     assert_eq!(holdings(&db, &copy)[1], 1);
     assert_eq!(holdings(&db, &old[1])[1], 0);
+}
+
+/// 坂本龍一, credited "Ryuichi Sakamoto", in the recorded names lookup.
+const SAKAMOTO: &str = "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8";
+/// 高谷史郎, credited "Shiro Takatani", with no aliases.
+const TAKATANI: &str = "7493b80f-de18-4f9c-a7bd-08d1ea5adcff";
+
+/// The names MusicBrainz answers for _async surround_, through the
+/// production parser.
+fn recorded_names() -> droppedneedle::library::matching::model::ArtistNames {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/musicbrainz/release_names_sakamoto.json");
+    let wire: droppedneedle::providers::musicbrainz::MbRelease =
+        serde_json::from_slice(&std::fs::read(path).expect("probe reads")).expect("probe decodes");
+    droppedneedle::library::identify::sources::names_from_wire(&wire, 0)
+}
+
+/// The edition credited as _async surround_ is: the album to Ryuichi
+/// Sakamoto + Shiro Takatani, every track to Sakamoto.
+fn sakamoto_edition(release: &mut Release) {
+    let artist = |id: &str, name: &str, sort: &str, join: &str| CreditedArtist {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        sort_name: Some(sort.to_owned()),
+        join: join.to_owned(),
+    };
+    release.artists = vec![
+        artist(SAKAMOTO, "Ryuichi Sakamoto", "Sakamoto, Ryūichi", " + "),
+        artist(TAKATANI, "Shiro Takatani", "Takatani, Shiro", ""),
+    ];
+    for track in &mut release.tracks {
+        track.artists = vec![artist(
+            SAKAMOTO,
+            "Ryuichi Sakamoto",
+            "Sakamoto, Ryūichi",
+            "",
+        )];
+    }
+}
+
+/// The Picard profile translating artist names to English, with every
+/// artist field on replace.
+fn translating(profile: &mut droppedneedle::runtime_config::sections::LibraryManagementProfile) {
+    use droppedneedle::library::management::enrich::ARTIST_FIELDS;
+    use droppedneedle::runtime_config::sections::FieldMode;
+    profile.metadata.artist_credits.translate_names = true;
+    profile.metadata.artist_credits.preferred_locales = vec!["en".to_owned()];
+    for field in &mut profile.metadata.fields {
+        if ARTIST_FIELDS.contains(&field.field.as_str()) {
+            field.mode = FieldMode::Replace;
+        }
+    }
+}
+
+/// An ID3 file's `TXXX` values under `description`, read from its bytes.
+fn id3_user_values(path: &Path, description: &str) -> Vec<Vec<String>> {
+    use crate::library_tags::{id3_frames, id3_strings};
+    id3_frames(path)
+        .1
+        .into_iter()
+        .filter(|(id, _)| id == "TXXX")
+        .map(|(_, payload)| id3_strings(&payload))
+        .filter(|strings| strings.first().map(String::as_str) == Some(description))
+        .map(|strings| strings[1..].to_vec())
+        .collect()
+}
+
+/// Translating to English writes each artist field in every format's
+/// home: the primary English alias with its sort name, and Shiro
+/// Takatani, who has no alias, from his sort name. The album folder
+/// follows the translated album artist; Undo puts names and paths back; a
+/// second plan asks MusicBrainz nothing; and after a rescan the album and
+/// its artist are the same rows.
+#[tokio::test]
+async fn a_translating_profile_writes_english_artist_names() {
+    use droppedneedle::library::management::enrich::ScriptedEnrichment;
+    use droppedneedle::library::management::models::SelectionKind;
+    use droppedneedle::library::management::service::ApplyRequest;
+    use droppedneedle::library::tags::{TagField, read_fields};
+
+    let managed = ManagedLibrary::start("lib-names", translating).await;
+    let scripted = Arc::new(ScriptedEnrichment::default());
+    assert!(managed.library.enrichment.set(scripted.clone()).is_ok());
+    *scripted.names.lock().expect("script") = Some(recorded_names());
+    let v23 = clean_v23_mp3(&managed.scratch.to_path_buf().join("v23.mp3"));
+    let fixtures = [
+        "management_full.flac",
+        "management_full.mp3",
+        v23.as_str(),
+        "management_full.m4a",
+    ];
+    let (album, tracks) = managed
+        .add_album_from("names", &fixtures, sakamoto_edition)
+        .await;
+    // The files credit the edition's artists, with their MusicBrainz ids,
+    // under the names as credited.
+    for track in &tracks {
+        use droppedneedle::library::tags::{TagEdit, save_tags};
+        let owned = |values: &[&str]| values.iter().map(|v| (*v).to_owned()).collect::<Vec<_>>();
+        save_tags(
+            &managed.path(track),
+            &[
+                TagEdit::verbatim(TagField::Artist, owned(&["Ryuichi Sakamoto"])),
+                TagEdit::verbatim(TagField::Artists, owned(&["Ryuichi Sakamoto"])),
+                TagEdit::verbatim(TagField::MusicBrainzArtistId, owned(&[SAKAMOTO])),
+                TagEdit::verbatim(
+                    TagField::AlbumArtist,
+                    owned(&["Ryuichi Sakamoto + Shiro Takatani"]),
+                ),
+                TagEdit::verbatim(
+                    TagField::AlbumArtists,
+                    owned(&["Ryuichi Sakamoto", "Shiro Takatani"]),
+                ),
+                TagEdit::verbatim(
+                    TagField::MusicBrainzAlbumArtistId,
+                    owned(&[SAKAMOTO, TAKATANI]),
+                ),
+            ],
+        )
+        .expect("credited as the edition credits them");
+    }
+    rescan(&managed.library).await;
+    let album_artist = |album: &str| -> String {
+        managed
+            .db()
+            .query_row(
+                "SELECT album_artist_id FROM local_albums WHERE id = ?1",
+                [album],
+                |row| row.get(0),
+            )
+            .expect("album row")
+    };
+    let artist_row = album_artist(&album);
+    // The profile writes credits too: they come in the same lookup.
+    *scripted.relations.lock().expect("script") =
+        Some(managed.scripted_credits(&tracks, |_| concerto_credits()));
+    let before: Vec<(PathBuf, _)> = tracks
+        .iter()
+        .map(|track| {
+            let path = managed.path(track);
+            let tags = read_fields(&path).expect("tags read");
+            (path, tags)
+        })
+        .collect();
+
+    let (handle, items) = managed
+        .preview(SelectionKind::Albums, &[&album], "names")
+        .await;
+    assert_eq!(scripted.lookups.lock().expect("lookups").len(), 1);
+    assert!(items.iter().all(|item| item.eligibility.writes()));
+    let applied = management_apply(&managed.library, &handle).await;
+    assert_eq!(applied.job.state.as_str(), "succeeded");
+
+    let owned = |values: &[&str]| values.iter().map(|v| (*v).to_owned()).collect::<Vec<_>>();
+    for track in &tracks {
+        let file = managed.path(track);
+        let name = file.display().to_string();
+        let rel = file.strip_prefix(&managed.music).expect("in the library");
+        assert!(
+            rel.starts_with("Ryūichi Sakamoto + Shiro Takatani"),
+            "the folder follows the album artist: {name}"
+        );
+        let fields = read_fields(&file).expect("tags read");
+        let get = |field: TagField| fields.get(&field).cloned().unwrap_or_default();
+        assert_eq!(
+            get(TagField::Artist),
+            owned(&["Ryūichi Sakamoto"]),
+            "{name}"
+        );
+        assert_eq!(
+            get(TagField::Artists),
+            owned(&["Ryūichi Sakamoto"]),
+            "{name}"
+        );
+        assert_eq!(
+            get(TagField::ArtistSort),
+            owned(&["Sakamoto, Ryūichi"]),
+            "{name}"
+        );
+        assert_eq!(
+            get(TagField::AlbumArtist),
+            owned(&["Ryūichi Sakamoto + Shiro Takatani"]),
+            "{name}"
+        );
+        assert_eq!(
+            get(TagField::AlbumArtistSort),
+            owned(&["Sakamoto, Ryūichi + Takatani, Shiro"]),
+            "{name}"
+        );
+        if name.ends_with(".flac") {
+            assert_eq!(
+                crate::library_tags::vorbis_values(&file, "ALBUMARTISTS"),
+                owned(&["Ryūichi Sakamoto", "Shiro Takatani"])
+            );
+        } else if file == managed.path(&tracks[2]) {
+            // ID3v2.3 holds the list as one "/"-joined value.
+            assert_eq!(
+                id3_user_values(&file, "ALBUMARTISTS"),
+                vec![owned(&["Ryūichi Sakamoto/Shiro Takatani"])]
+            );
+        } else if name.ends_with(".mp3") {
+            assert_eq!(
+                id3_user_values(&file, "ALBUMARTISTS"),
+                vec![owned(&["Ryūichi Sakamoto", "Shiro Takatani"])]
+            );
+        } else {
+            assert_eq!(
+                crate::library_tags::mp4_freeform(&file, "ALBUMARTISTS"),
+                owned(&["Ryūichi Sakamoto", "Shiro Takatani"]),
+                "{name}"
+            );
+        }
+    }
+
+    // The names are on the stored edition: a second plan asks nothing.
+    let (_, again) = managed
+        .preview(SelectionKind::Albums, &[&album], "names-again")
+        .await;
+    assert_eq!(scripted.lookups.lock().expect("lookups").len(), 1);
+    assert!(
+        again
+            .iter()
+            .all(|item| item.diff.field_mutations.is_empty()),
+        "nothing left to change"
+    );
+
+    // A rescan keeps the album and its artist.
+    rescan(&managed.library).await;
+    assert_eq!(
+        managed
+            .library
+            .scan_store
+            .album_for_track(&tracks[0])
+            .as_deref(),
+        Some(album.as_str())
+    );
+    assert_eq!(album_artist(&album), artist_row);
+
+    // Undo puts the names and the paths back.
+    let management = managed.management();
+    let source = management.detail(&handle.job_id).expect("detail");
+    let undo = management
+        .undo_preview(
+            &handle.job_id,
+            source.job.row_revision,
+            "names-undo",
+            "admin",
+        )
+        .expect("undo preview queued");
+    assert!(
+        management_step(&managed.library).await,
+        "undo planning runs"
+    );
+    let undo_detail = management.detail(&undo.job_id).expect("undo detail");
+    assert!(
+        undo_detail.ready_for_confirmation,
+        "{:?}",
+        undo_detail.stale_reasons
+    );
+    management
+        .apply(
+            &undo.job_id,
+            ApplyRequest {
+                preview_token: undo.preview_token.clone(),
+                expected_row_revision: undo_detail.job.row_revision,
+                idempotency_key: "names-undo-apply".to_owned(),
+                confirmation: true,
+            },
+        )
+        .expect("undo queued");
+    assert!(management_step(&managed.library).await, "undo runs");
+    // ID3v2.3 puts a list back as one "/"-joined value.
+    let joined = |tags: &std::collections::BTreeMap<TagField, Vec<String>>| {
+        tags.iter()
+            .map(|(field, values)| (*field, values.join("/")))
+            .collect::<Vec<_>>()
+    };
+    for (path, tags) in &before {
+        let restored = read_fields(path).expect("restored file reads");
+        assert_eq!(
+            joined(&restored),
+            joined(tags),
+            "{} is back",
+            path.display()
+        );
+    }
+}
+
+/// While MusicBrainz is down a preview keeps the six artist tags, says
+/// why, and writes the rest; an automatic look waits; once MusicBrainz
+/// answers, waking the queue writes the translated names by itself.
+#[tokio::test]
+async fn translated_names_wait_for_musicbrainz() {
+    use droppedneedle::library::management::enrich::ScriptedEnrichment;
+    use droppedneedle::library::management::models::SelectionKind;
+    use droppedneedle::library::tags::{TagField, read_fields};
+
+    let managed = ManagedLibrary::start("lib-names-down", translating).await;
+    let scripted = Arc::new(ScriptedEnrichment::default());
+    assert!(managed.library.enrichment.set(scripted.clone()).is_ok());
+    let (album, tracks) = managed
+        .add_album_from("down", &["management_full.flac"], sakamoto_edition)
+        .await;
+    *scripted.relations.lock().expect("script") =
+        Some(managed.scripted_credits(&tracks, |_| concerto_credits()));
+    let file = managed.path(&tracks[0]);
+    let original = read_fields(&file).expect("tags read");
+
+    let (_, items) = managed
+        .preview(SelectionKind::Albums, &[&album], "names-down")
+        .await;
+    let item = &items[0];
+    assert!(item.eligibility.writes(), "{:?}", item.facts);
+    assert!(
+        item.facts.warnings.contains(
+            &"MusicBrainz artist names could not be read, so the file keeps its artist tags."
+                .to_owned()
+        ),
+        "{:?}",
+        item.facts.warnings
+    );
+    let changed: Vec<&str> = item
+        .diff
+        .field_mutations
+        .iter()
+        .map(|mutation| mutation.name.as_str())
+        .collect();
+    assert!(!changed.is_empty(), "the other fields are written");
+    for field in droppedneedle::library::management::enrich::ARTIST_FIELDS {
+        assert!(!changed.contains(&field), "{field} kept: {changed:?}");
+    }
+
+    managed.activate().await;
+    let before = file_sha256(&file);
+    managed.look(&album).await;
+    assert_eq!(
+        file_sha256(&file),
+        before,
+        "nothing written while it is down"
+    );
+    let waiting: String = managed
+        .db()
+        .query_row(
+            "SELECT last_reason_code FROM library_management_automatic_queue \
+             WHERE local_album_id = ?1",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("the album waits");
+    assert_eq!(waiting, "METADATA_UNAVAILABLE");
+
+    *scripted.names.lock().expect("script") = Some(recorded_names());
+    droppedneedle::library::management::automatic::wake(
+        &managed.db(),
+        Some("METADATA_UNAVAILABLE"),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_secs_f64(),
+    )
+    .expect("woken");
+    managed.worker_looks().await;
+    let fields = read_fields(&managed.path(&tracks[0])).expect("tags read");
+    assert_eq!(
+        fields[&TagField::Artist],
+        vec!["Ryūichi Sakamoto".to_owned()]
+    );
+    assert_ne!(
+        fields.get(&TagField::Artist),
+        original.get(&TagField::Artist)
+    );
+}
+
+/// A profile writing credits and translated names asks MusicBrainz once
+/// per album, for both parts together.
+#[tokio::test]
+async fn credits_and_names_come_in_one_lookup() {
+    use droppedneedle::library::management::enrich::{ExtrasWanted, ScriptedEnrichment};
+    use droppedneedle::library::management::models::SelectionKind;
+
+    let managed = ManagedLibrary::start("lib-names-once", translating).await;
+    let scripted = Arc::new(ScriptedEnrichment::default());
+    assert!(managed.library.enrichment.set(scripted.clone()).is_ok());
+    let (album, tracks) = managed
+        .add_album_from(
+            "once",
+            &["management_full.flac", "management_full.flac"],
+            sakamoto_edition,
+        )
+        .await;
+    *scripted.relations.lock().expect("script") =
+        Some(managed.scripted_credits(&tracks, |_| concerto_credits()));
+    *scripted.names.lock().expect("script") = Some(recorded_names());
+
+    let (_, items) = managed
+        .preview(SelectionKind::Albums, &[&album], "once")
+        .await;
+    assert!(items.iter().all(|item| item.eligibility.writes()));
+    let lookups = scripted.lookups.lock().expect("lookups").clone();
+    assert_eq!(
+        lookups,
+        vec![(
+            ExtrasWanted {
+                relations: true,
+                names: true
+            },
+            false
+        )]
+    );
 }

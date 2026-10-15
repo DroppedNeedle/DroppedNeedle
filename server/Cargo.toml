@@ -56,6 +56,10 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 # dependency (memchr, already in the tree). No features: it never touches
 # the network, never reads a DTD and expands no declared entities.
 quick-xml = { version = "0.42", default-features = false }
+# Unicode script classes for Picard's "is this name in Latin script" test
+# when translating artist names. Already in the tree under tracing's
+# env-filter (regex-automata, regex-syntax).
+regex = "1.13.1"
 
 [features]
 # Fakes, mocks, memory stores and test constructors for the test suite.
@@ -63,7 +67,6 @@ test-support = []
 
 [dev-dependencies]
 droppedneedle = { path = ".", features = ["test-support"] }
-regex = "1.13.1"
 tokio = { version = "1", features = ["test-util"] }
 
 # Debug builds carry line tables for this crate and no debug info for

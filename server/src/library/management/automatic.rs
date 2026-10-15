@@ -706,18 +706,20 @@ impl Management {
         if managed {
             return Ok(Verdict::Done("ALREADY_MANAGED"));
         }
-        // Credits are fetched before the run starts: an album whose
-        // credits cannot be read now waits and is looked at again by
-        // itself, rather than being planned without them.
+        // Credits and artist names are fetched before the run starts: an
+        // album whose credits or names cannot be read now waits and is
+        // looked at again by itself, rather than being planned without
+        // them.
         if let Some(release_mbid) = identity.release_mbid.as_deref()
             && let Some(mut release) = self.setup.identify_store.release(release_mbid, None)
-            && super::enrich::ensure_credits(
+            && super::enrich::ensure_release_extras(
                 &self.setup.enrichment,
                 &self.setup.identify_store,
                 &pinned.profile,
                 &mut release,
                 true,
-            ) == super::enrich::Credits::Unavailable
+            )
+            .unavailable()
         {
             return Ok(Verdict::Wait("METADATA_UNAVAILABLE"));
         }

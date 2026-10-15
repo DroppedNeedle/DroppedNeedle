@@ -1,0 +1,2721 @@
+{
+ "packaging": "None",
+ "cover-art-archive": {
+  "back": false,
+  "artwork": false,
+  "front": false,
+  "darkened": false,
+  "count": 0
+ },
+ "country": "JP",
+ "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+ "disambiguation": "Mastered for iTunes",
+ "packaging-id": "119eba76-b343-3e02-a292-f0f00644bb9b",
+ "status": "Official",
+ "id": "d4ed5eba-fa9d-4325-8279-093fccdb4a45",
+ "artist-credit": [
+  {
+   "name": "宇多田ヒカル",
+   "artist": {
+    "aliases": [
+     {
+      "ended": false,
+      "primary": false,
+      "name": "Cubic U",
+      "sort-name": "Cubic U",
+      "type": "Artist name",
+      "locale": "en",
+      "begin": null,
+      "end": null,
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+     },
+     {
+      "end": null,
+      "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+      "ended": false,
+      "primary": null,
+      "sort-name": "Cubic U (Utada Hikaru)",
+      "name": "Cubic U (Utada Hikaru)",
+      "locale": null,
+      "type": "Search hint",
+      "begin": null
+     },
+     {
+      "primary": true,
+      "ended": false,
+      "locale": "en",
+      "type": "Artist name",
+      "begin": null,
+      "sort-name": "Utada, Hikaru",
+      "name": "Hikaru Utada",
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "end": null
+     },
+     {
+      "end": null,
+      "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+      "type": "Legal name",
+      "locale": "en",
+      "begin": null,
+      "sort-name": "Utada, Hikaru",
+      "name": "Hikaru Utada",
+      "primary": false,
+      "ended": false
+     },
+     {
+      "end": null,
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "name": "Hikaru Utada",
+      "sort-name": "Utada, Hikaru",
+      "locale": "lt",
+      "type": "Artist name",
+      "begin": null,
+      "ended": false,
+      "primary": true
+     },
+     {
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "end": null,
+      "primary": false,
+      "ended": false,
+      "locale": "en",
+      "type": "Artist name",
+      "begin": null,
+      "name": "Hikki",
+      "sort-name": "Hikki"
+     },
+     {
+      "end": null,
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "primary": false,
+      "ended": false,
+      "begin": null,
+      "type": "Artist name",
+      "locale": "en",
+      "name": "Utada",
+      "sort-name": "Utada"
+     },
+     {
+      "sort-name": "Utada, Hikaru",
+      "name": "Utada Hikaru",
+      "type": "Artist name",
+      "locale": "en_PH",
+      "begin": null,
+      "ended": false,
+      "primary": true,
+      "end": null,
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+     },
+     {
+      "locale": "ja",
+      "type": "Artist name",
+      "begin": null,
+      "sort-name": "ヒッキー",
+      "name": "ヒッキー",
+      "primary": false,
+      "ended": false,
+      "end": null,
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+     },
+     {
+      "end": null,
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "begin": null,
+      "locale": "ja",
+      "type": "Artist name",
+      "name": "宇多田ヒカル",
+      "sort-name": "うただヒカル",
+      "primary": true,
+      "ended": false
+     },
+     {
+      "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+      "end": null,
+      "primary": false,
+      "ended": false,
+      "begin": null,
+      "locale": "ja",
+      "type": "Legal name",
+      "name": "宇多田光",
+      "sort-name": "うただひかる"
+     },
+     {
+      "end": null,
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "locale": "zh_Hans",
+      "type": "Artist name",
+      "begin": null,
+      "sort-name": "宇多田光",
+      "name": "宇多田光",
+      "primary": true,
+      "ended": false
+     },
+     {
+      "type": "Artist name",
+      "locale": "zh_Hant_TW",
+      "begin": null,
+      "name": "宇多田光",
+      "sort-name": "宇多田光",
+      "primary": false,
+      "ended": false,
+      "end": null,
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+     },
+     {
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "end": null,
+      "begin": null,
+      "type": "Artist name",
+      "locale": "ko",
+      "name": "우타다히카루",
+      "sort-name": "히카루, 우타다",
+      "primary": false,
+      "ended": false
+     }
+    ],
+    "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+    "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+    "disambiguation": "Japanese-American singer-songwriter",
+    "name": "宇多田ヒカル",
+    "sort-name": "Utada, Hikaru",
+    "type": "Person",
+    "country": "JP"
+   },
+   "joinphrase": ""
+  }
+ ],
+ "asin": null,
+ "title": "Fantôme",
+ "media": [
+  {
+   "format": "Digital Media",
+   "track-offset": 0,
+   "title": "",
+   "format-id": "907a28d9-b3b2-3ef6-89a8-7b18d91d4794",
+   "id": "2bc3d384-7091-34cd-b3e6-06cf016d36fa",
+   "track-count": 11,
+   "position": 1,
+   "tracks": [
+    {
+     "title": "道",
+     "position": 1,
+     "recording": {
+      "disambiguation": "",
+      "length": 216013,
+      "id": "a0ecfb0d-91a4-4b37-8293-6dd0733bd290",
+      "artist-credit": [
+       {
+        "artist": {
+         "disambiguation": "Japanese-American singer-songwriter",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+         "name": "宇多田ヒカル",
+         "sort-name": "Utada, Hikaru",
+         "country": "JP",
+         "type": "Person"
+        },
+        "name": "宇多田ヒカル",
+        "joinphrase": ""
+       }
+      ],
+      "aliases": [],
+      "video": false,
+      "title": "道"
+     },
+     "artist-credit": [
+      {
+       "joinphrase": "",
+       "artist": {
+        "aliases": [
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "primary": false,
+          "ended": false,
+          "begin": null,
+          "locale": "en",
+          "type": "Artist name",
+          "name": "Cubic U",
+          "sort-name": "Cubic U"
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "end": null,
+          "primary": null,
+          "ended": false,
+          "locale": null,
+          "type": "Search hint",
+          "begin": null,
+          "sort-name": "Cubic U (Utada Hikaru)",
+          "name": "Cubic U (Utada Hikaru)"
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "primary": true,
+          "ended": false,
+          "begin": null,
+          "type": "Artist name",
+          "locale": "en",
+          "sort-name": "Utada, Hikaru",
+          "name": "Hikaru Utada"
+         },
+         {
+          "name": "Hikaru Utada",
+          "sort-name": "Utada, Hikaru",
+          "type": "Legal name",
+          "locale": "en",
+          "begin": null,
+          "ended": false,
+          "primary": false,
+          "end": null,
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf"
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "begin": null,
+          "locale": "lt",
+          "type": "Artist name",
+          "name": "Hikaru Utada",
+          "sort-name": "Utada, Hikaru",
+          "primary": true,
+          "ended": false
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "locale": "en",
+          "begin": null,
+          "sort-name": "Hikki",
+          "name": "Hikki",
+          "primary": false,
+          "ended": false
+         },
+         {
+          "sort-name": "Utada",
+          "name": "Utada",
+          "locale": "en",
+          "type": "Artist name",
+          "begin": null,
+          "ended": false,
+          "primary": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "begin": null,
+          "type": "Artist name",
+          "locale": "en_PH",
+          "sort-name": "Utada, Hikaru",
+          "name": "Utada Hikaru",
+          "primary": true,
+          "ended": false,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "sort-name": "ヒッキー",
+          "name": "ヒッキー",
+          "locale": "ja",
+          "type": "Artist name",
+          "begin": null,
+          "ended": false,
+          "primary": false
+         },
+         {
+          "begin": null,
+          "locale": "ja",
+          "type": "Artist name",
+          "name": "宇多田ヒカル",
+          "sort-name": "うただヒカル",
+          "primary": true,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "end": null,
+          "ended": false,
+          "primary": false,
+          "sort-name": "うただひかる",
+          "name": "宇多田光",
+          "begin": null,
+          "locale": "ja",
+          "type": "Legal name"
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "locale": "zh_Hans",
+          "begin": null,
+          "sort-name": "宇多田光",
+          "name": "宇多田光",
+          "primary": true,
+          "ended": false
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "primary": false,
+          "ended": false,
+          "begin": null,
+          "locale": "zh_Hant_TW",
+          "type": "Artist name",
+          "name": "宇多田光",
+          "sort-name": "宇多田光"
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "ended": false,
+          "primary": false,
+          "sort-name": "히카루, 우타다",
+          "name": "우타다히카루",
+          "begin": null,
+          "type": "Artist name",
+          "locale": "ko"
+         }
+        ],
+        "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "disambiguation": "Japanese-American singer-songwriter",
+        "name": "宇多田ヒカル",
+        "sort-name": "Utada, Hikaru",
+        "type": "Person",
+        "country": "JP"
+       },
+       "name": "宇多田ヒカル"
+      }
+     ],
+     "length": 216000,
+     "id": "48f64466-62d8-4476-a97e-83b4c45f89ac",
+     "number": "1"
+    },
+    {
+     "title": "俺の彼女",
+     "length": 304000,
+     "artist-credit": [
+      {
+       "name": "宇多田ヒカル",
+       "artist": {
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "disambiguation": "Japanese-American singer-songwriter",
+        "aliases": [
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "name": "Cubic U",
+          "sort-name": "Cubic U",
+          "begin": null,
+          "locale": "en",
+          "type": "Artist name",
+          "ended": false,
+          "primary": false
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "end": null,
+          "ended": false,
+          "primary": null,
+          "sort-name": "Cubic U (Utada Hikaru)",
+          "name": "Cubic U (Utada Hikaru)",
+          "begin": null,
+          "locale": null,
+          "type": "Search hint"
+         },
+         {
+          "primary": true,
+          "ended": false,
+          "type": "Artist name",
+          "locale": "en",
+          "begin": null,
+          "sort-name": "Utada, Hikaru",
+          "name": "Hikaru Utada",
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "primary": false,
+          "ended": false,
+          "type": "Legal name",
+          "locale": "en",
+          "begin": null,
+          "sort-name": "Utada, Hikaru",
+          "name": "Hikaru Utada",
+          "end": null,
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf"
+         },
+         {
+          "name": "Hikaru Utada",
+          "sort-name": "Utada, Hikaru",
+          "begin": null,
+          "type": "Artist name",
+          "locale": "lt",
+          "ended": false,
+          "primary": true,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "sort-name": "Hikki",
+          "name": "Hikki",
+          "begin": null,
+          "locale": "en",
+          "type": "Artist name",
+          "ended": false,
+          "primary": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "type": "Artist name",
+          "locale": "en",
+          "begin": null,
+          "sort-name": "Utada",
+          "name": "Utada",
+          "primary": false,
+          "ended": false,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "type": "Artist name",
+          "locale": "en_PH",
+          "begin": null,
+          "name": "Utada Hikaru",
+          "sort-name": "Utada, Hikaru",
+          "primary": true,
+          "ended": false,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "primary": false,
+          "ended": false,
+          "begin": null,
+          "locale": "ja",
+          "type": "Artist name",
+          "name": "ヒッキー",
+          "sort-name": "ヒッキー",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "primary": true,
+          "ended": false,
+          "begin": null,
+          "type": "Artist name",
+          "locale": "ja",
+          "name": "宇多田ヒカル",
+          "sort-name": "うただヒカル",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "name": "宇多田光",
+          "sort-name": "うただひかる",
+          "type": "Legal name",
+          "locale": "ja",
+          "begin": null,
+          "ended": false,
+          "primary": false,
+          "end": null,
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf"
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "ended": false,
+          "primary": true,
+          "sort-name": "宇多田光",
+          "name": "宇多田光",
+          "begin": null,
+          "locale": "zh_Hans",
+          "type": "Artist name"
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "ended": false,
+          "primary": false,
+          "sort-name": "宇多田光",
+          "name": "宇多田光",
+          "locale": "zh_Hant_TW",
+          "type": "Artist name",
+          "begin": null
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "primary": false,
+          "ended": false,
+          "type": "Artist name",
+          "locale": "ko",
+          "begin": null,
+          "sort-name": "히카루, 우타다",
+          "name": "우타다히카루"
+         }
+        ],
+        "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+        "name": "宇多田ヒカル",
+        "sort-name": "Utada, Hikaru",
+        "type": "Person",
+        "country": "JP"
+       },
+       "joinphrase": ""
+      }
+     ],
+     "id": "fd830cf0-4cbb-4fdd-924b-f861c8bf019c",
+     "number": "2",
+     "position": 2,
+     "recording": {
+      "aliases": [],
+      "length": 304093,
+      "id": "cc99e018-a7a7-4120-98ae-38217fc70c24",
+      "artist-credit": [
+       {
+        "joinphrase": "",
+        "artist": {
+         "type": "Person",
+         "country": "JP",
+         "name": "宇多田ヒカル",
+         "sort-name": "Utada, Hikaru",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "disambiguation": "Japanese-American singer-songwriter",
+         "id": "b539e453-c4fe-47e3-8a07-8517eac74429"
+        },
+        "name": "宇多田ヒカル"
+       }
+      ],
+      "disambiguation": "",
+      "title": "俺の彼女",
+      "video": false
+     }
+    },
+    {
+     "recording": {
+      "disambiguation": "",
+      "aliases": [],
+      "artist-credit": [
+       {
+        "name": "宇多田ヒカル",
+        "artist": {
+         "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+         "disambiguation": "Japanese-American singer-songwriter",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "name": "宇多田ヒカル",
+         "sort-name": "Utada, Hikaru",
+         "country": "JP",
+         "type": "Person"
+        },
+        "joinphrase": ""
+       }
+      ],
+      "id": "2c792c66-a9ce-4ebc-8ae9-c451083d36c0",
+      "length": 278240,
+      "title": "花束を君に",
+      "video": false
+     },
+     "position": 3,
+     "number": "3",
+     "id": "0d6ae239-f3ce-4bad-a7ea-dabcfdc23f53",
+     "artist-credit": [
+      {
+       "joinphrase": "",
+       "artist": {
+        "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+        "aliases": [
+         {
+          "begin": null,
+          "type": "Artist name",
+          "locale": "en",
+          "name": "Cubic U",
+          "sort-name": "Cubic U",
+          "primary": false,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "end": null,
+          "ended": false,
+          "primary": null,
+          "sort-name": "Cubic U (Utada Hikaru)",
+          "name": "Cubic U (Utada Hikaru)",
+          "type": "Search hint",
+          "locale": null,
+          "begin": null
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "primary": true,
+          "ended": false,
+          "begin": null,
+          "locale": "en",
+          "type": "Artist name",
+          "name": "Hikaru Utada",
+          "sort-name": "Utada, Hikaru"
+         },
+         {
+          "ended": false,
+          "primary": false,
+          "sort-name": "Utada, Hikaru",
+          "name": "Hikaru Utada",
+          "locale": "en",
+          "type": "Legal name",
+          "begin": null,
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "end": null
+         },
+         {
+          "begin": null,
+          "locale": "lt",
+          "type": "Artist name",
+          "sort-name": "Utada, Hikaru",
+          "name": "Hikaru Utada",
+          "primary": true,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "begin": null,
+          "locale": "en",
+          "type": "Artist name",
+          "sort-name": "Hikki",
+          "name": "Hikki",
+          "primary": false,
+          "ended": false
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "primary": false,
+          "ended": false,
+          "begin": null,
+          "type": "Artist name",
+          "locale": "en",
+          "name": "Utada",
+          "sort-name": "Utada"
+         },
+         {
+          "begin": null,
+          "type": "Artist name",
+          "locale": "en_PH",
+          "sort-name": "Utada, Hikaru",
+          "name": "Utada Hikaru",
+          "primary": true,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "ended": false,
+          "primary": false,
+          "sort-name": "ヒッキー",
+          "name": "ヒッキー",
+          "type": "Artist name",
+          "locale": "ja",
+          "begin": null
+         },
+         {
+          "ended": false,
+          "primary": true,
+          "sort-name": "うただヒカル",
+          "name": "宇多田ヒカル",
+          "locale": "ja",
+          "type": "Artist name",
+          "begin": null,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "sort-name": "うただひかる",
+          "name": "宇多田光",
+          "type": "Legal name",
+          "locale": "ja",
+          "begin": null,
+          "ended": false,
+          "primary": false,
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "end": null
+         },
+         {
+          "sort-name": "宇多田光",
+          "name": "宇多田光",
+          "locale": "zh_Hans",
+          "type": "Artist name",
+          "begin": null,
+          "ended": false,
+          "primary": true,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "name": "宇多田光",
+          "sort-name": "宇多田光",
+          "type": "Artist name",
+          "locale": "zh_Hant_TW",
+          "begin": null,
+          "ended": false,
+          "primary": false
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "begin": null,
+          "type": "Artist name",
+          "locale": "ko",
+          "sort-name": "히카루, 우타다",
+          "name": "우타다히카루",
+          "primary": false,
+          "ended": false
+         }
+        ],
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "disambiguation": "Japanese-American singer-songwriter",
+        "type": "Person",
+        "country": "JP",
+        "sort-name": "Utada, Hikaru",
+        "name": "宇多田ヒカル"
+       },
+       "name": "宇多田ヒカル"
+      }
+     ],
+     "length": 278000,
+     "title": "花束を君に"
+    },
+    {
+     "artist-credit": [
+      {
+       "name": "宇多田ヒカル",
+       "artist": {
+        "type": "Person",
+        "country": "JP",
+        "name": "宇多田ヒカル",
+        "sort-name": "Utada, Hikaru",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "disambiguation": "Japanese-American singer-songwriter",
+        "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+        "aliases": [
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "primary": false,
+          "sort-name": "Cubic U",
+          "name": "Cubic U",
+          "type": "Artist name",
+          "locale": "en",
+          "begin": null
+         },
+         {
+          "end": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "primary": null,
+          "sort-name": "Cubic U (Utada Hikaru)",
+          "name": "Cubic U (Utada Hikaru)",
+          "type": "Search hint",
+          "locale": null,
+          "begin": null
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "ended": false,
+          "primary": true,
+          "sort-name": "Utada, Hikaru",
+          "name": "Hikaru Utada",
+          "type": "Artist name",
+          "locale": "en",
+          "begin": null
+         },
+         {
+          "end": null,
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "begin": null,
+          "type": "Legal name",
+          "locale": "en",
+          "sort-name": "Utada, Hikaru",
+          "name": "Hikaru Utada",
+          "primary": false,
+          "ended": false
+         },
+         {
+          "ended": false,
+          "primary": true,
+          "name": "Hikaru Utada",
+          "sort-name": "Utada, Hikaru",
+          "type": "Artist name",
+          "locale": "lt",
+          "begin": null,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "primary": false,
+          "ended": false,
+          "begin": null,
+          "type": "Artist name",
+          "locale": "en",
+          "name": "Hikki",
+          "sort-name": "Hikki"
+         },
+         {
+          "locale": "en",
+          "type": "Artist name",
+          "begin": null,
+          "name": "Utada",
+          "sort-name": "Utada",
+          "primary": false,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "primary": true,
+          "ended": false,
+          "locale": "en_PH",
+          "type": "Artist name",
+          "begin": null,
+          "sort-name": "Utada, Hikaru",
+          "name": "Utada Hikaru",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "ended": false,
+          "primary": false,
+          "sort-name": "ヒッキー",
+          "name": "ヒッキー",
+          "begin": null,
+          "locale": "ja",
+          "type": "Artist name",
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "ended": false,
+          "primary": true,
+          "sort-name": "うただヒカル",
+          "name": "宇多田ヒカル",
+          "type": "Artist name",
+          "locale": "ja",
+          "begin": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "name": "宇多田光",
+          "sort-name": "うただひかる",
+          "locale": "ja",
+          "type": "Legal name",
+          "begin": null,
+          "ended": false,
+          "primary": false,
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "end": null
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "zh_Hans",
+          "type": "Artist name",
+          "begin": null,
+          "name": "宇多田光",
+          "sort-name": "宇多田光",
+          "primary": true,
+          "ended": false
+         },
+         {
+          "type": "Artist name",
+          "locale": "zh_Hant_TW",
+          "begin": null,
+          "sort-name": "宇多田光",
+          "name": "宇多田光",
+          "primary": false,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "ended": false,
+          "primary": false,
+          "sort-name": "히카루, 우타다",
+          "name": "우타다히카루",
+          "begin": null,
+          "type": "Artist name",
+          "locale": "ko",
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         }
+        ]
+       },
+       "joinphrase": " feat. "
+      },
+      {
+       "artist": {
+        "country": "JP",
+        "type": "Person",
+        "name": "椎名林檎",
+        "sort-name": "Sheena, Ringo",
+        "disambiguation": "",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "id": "9e414497-23b7-4ab7-9ec6-8ea9864c9e87",
+        "aliases": [
+         {
+          "name": "Ringo Sheena",
+          "sort-name": "Sheena, Ringo",
+          "begin": null,
+          "type": "Artist name",
+          "locale": "en",
+          "ended": false,
+          "primary": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "name": "Ringo Shiina",
+          "sort-name": "Shiina, Ringo",
+          "begin": null,
+          "locale": "fr",
+          "type": "Artist name",
+          "ended": false,
+          "primary": true,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "ended": false,
+          "primary": true,
+          "name": "Sheena Ringo",
+          "sort-name": "Sheena, Ringo",
+          "locale": "en",
+          "type": "Artist name",
+          "begin": null
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "primary": false,
+          "ended": false,
+          "locale": "en",
+          "type": "Artist name",
+          "begin": null,
+          "sort-name": "Sheena, Ringo",
+          "name": "Shiina Ringo"
+         },
+         {
+          "begin": null,
+          "type": "Artist name",
+          "locale": "en",
+          "sort-name": "Sheena, Ringo",
+          "name": "Shiina, Ringo",
+          "primary": false,
+          "ended": false,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "type": "Artist name",
+          "locale": "en",
+          "begin": null,
+          "name": "Shéna Ringo",
+          "sort-name": "Sheena, Ringo",
+          "primary": false,
+          "ended": false,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "end": null,
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "ended": false,
+          "primary": false,
+          "name": "Yumiko Shiina",
+          "sort-name": "Shiina, Yumiko",
+          "type": "Legal name",
+          "locale": "en",
+          "begin": null
+         },
+         {
+          "sort-name": "しいな りんご",
+          "name": "しいな りんご",
+          "type": null,
+          "locale": null,
+          "begin": null,
+          "ended": false,
+          "primary": null,
+          "end": null,
+          "type-id": null
+         },
+         {
+          "type-id": null,
+          "end": null,
+          "type": null,
+          "locale": null,
+          "begin": null,
+          "sort-name": "しいなりんご",
+          "name": "しいなりんご",
+          "primary": null,
+          "ended": false
+         },
+         {
+          "primary": false,
+          "ended": false,
+          "type": "Artist name",
+          "locale": "ja",
+          "begin": null,
+          "name": "椎名 林檎",
+          "sort-name": "しいなりんご",
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "primary": true,
+          "ended": false,
+          "locale": "ja",
+          "type": "Artist name",
+          "begin": null,
+          "name": "椎名林檎",
+          "sort-name": "しいなりんご",
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "end": null,
+          "primary": false,
+          "ended": false,
+          "type": "Legal name",
+          "locale": "ja",
+          "begin": null,
+          "name": "椎名裕美子",
+          "sort-name": "しいなゆみこ"
+         },
+         {
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "end": null,
+          "name": "椎名裕美子",
+          "sort-name": "しいなゆみこ",
+          "begin": null,
+          "type": "Legal name",
+          "locale": "ja",
+          "ended": false,
+          "primary": false
+         }
+        ]
+       },
+       "name": "椎名林檎",
+       "joinphrase": ""
+      }
+     ],
+     "length": 282000,
+     "id": "b68bd4b5-8091-4960-9c80-4c07aef3d81d",
+     "number": "4",
+     "position": 4,
+     "recording": {
+      "video": false,
+      "title": "二時間だけのバカンス",
+      "id": "b4683ccd-7abb-484f-9682-391a1b7ece4e",
+      "length": 282200,
+      "artist-credit": [
+       {
+        "joinphrase": " feat. ",
+        "name": "宇多田ヒカル",
+        "artist": {
+         "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+         "disambiguation": "Japanese-American singer-songwriter",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "JP",
+         "type": "Person",
+         "sort-name": "Utada, Hikaru",
+         "name": "宇多田ヒカル"
+        }
+       },
+       {
+        "name": "椎名林檎",
+        "artist": {
+         "type": "Person",
+         "country": "JP",
+         "sort-name": "Sheena, Ringo",
+         "name": "椎名林檎",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "disambiguation": "",
+         "id": "9e414497-23b7-4ab7-9ec6-8ea9864c9e87"
+        },
+        "joinphrase": ""
+       }
+      ],
+      "aliases": [],
+      "disambiguation": ""
+     },
+     "title": "二時間だけのバカンス"
+    },
+    {
+     "artist-credit": [
+      {
+       "artist": {
+        "sort-name": "Utada, Hikaru",
+        "name": "宇多田ヒカル",
+        "country": "JP",
+        "type": "Person",
+        "aliases": [
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "sort-name": "Cubic U",
+          "name": "Cubic U",
+          "type": "Artist name",
+          "locale": "en",
+          "begin": null,
+          "ended": false,
+          "primary": false
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "end": null,
+          "sort-name": "Cubic U (Utada Hikaru)",
+          "name": "Cubic U (Utada Hikaru)",
+          "begin": null,
+          "type": "Search hint",
+          "locale": null,
+          "ended": false,
+          "primary": null
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "name": "Hikaru Utada",
+          "sort-name": "Utada, Hikaru",
+          "begin": null,
+          "locale": "en",
+          "type": "Artist name",
+          "ended": false,
+          "primary": true
+         },
+         {
+          "end": null,
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "name": "Hikaru Utada",
+          "sort-name": "Utada, Hikaru",
+          "begin": null,
+          "locale": "en",
+          "type": "Legal name",
+          "ended": false,
+          "primary": false
+         },
+         {
+          "begin": null,
+          "locale": "lt",
+          "type": "Artist name",
+          "sort-name": "Utada, Hikaru",
+          "name": "Hikaru Utada",
+          "primary": true,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "name": "Hikki",
+          "sort-name": "Hikki",
+          "type": "Artist name",
+          "locale": "en",
+          "begin": null,
+          "ended": false,
+          "primary": false,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "begin": null,
+          "locale": "en",
+          "type": "Artist name",
+          "name": "Utada",
+          "sort-name": "Utada",
+          "primary": false,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "begin": null,
+          "locale": "en_PH",
+          "type": "Artist name",
+          "sort-name": "Utada, Hikaru",
+          "name": "Utada Hikaru",
+          "primary": true,
+          "ended": false,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "begin": null,
+          "locale": "ja",
+          "type": "Artist name",
+          "name": "ヒッキー",
+          "sort-name": "ヒッキー",
+          "primary": false,
+          "ended": false,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "primary": true,
+          "ended": false,
+          "locale": "ja",
+          "type": "Artist name",
+          "begin": null,
+          "sort-name": "うただヒカル",
+          "name": "宇多田ヒカル",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "end": null,
+          "begin": null,
+          "locale": "ja",
+          "type": "Legal name",
+          "sort-name": "うただひかる",
+          "name": "宇多田光",
+          "primary": false,
+          "ended": false
+         },
+         {
+          "ended": false,
+          "primary": true,
+          "sort-name": "宇多田光",
+          "name": "宇多田光",
+          "begin": null,
+          "type": "Artist name",
+          "locale": "zh_Hans",
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "name": "宇多田光",
+          "sort-name": "宇多田光",
+          "begin": null,
+          "type": "Artist name",
+          "locale": "zh_Hant_TW",
+          "ended": false,
+          "primary": false
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "type": "Artist name",
+          "locale": "ko",
+          "begin": null,
+          "sort-name": "히카루, 우타다",
+          "name": "우타다히카루",
+          "primary": false,
+          "ended": false
+         }
+        ],
+        "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+        "disambiguation": "Japanese-American singer-songwriter",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df"
+       },
+       "name": "宇多田ヒカル",
+       "joinphrase": ""
+      }
+     ],
+     "length": 256000,
+     "id": "63228d40-ab75-433a-85c3-6176a1fc135f",
+     "number": "5",
+     "position": 5,
+     "recording": {
+      "video": false,
+      "title": "人魚",
+      "length": 256106,
+      "id": "bc67ae14-5330-44da-b1f9-2707690b9d5d",
+      "artist-credit": [
+       {
+        "joinphrase": "",
+        "name": "宇多田ヒカル",
+        "artist": {
+         "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "disambiguation": "Japanese-American singer-songwriter",
+         "type": "Person",
+         "country": "JP",
+         "name": "宇多田ヒカル",
+         "sort-name": "Utada, Hikaru"
+        }
+       }
+      ],
+      "aliases": [],
+      "disambiguation": ""
+     },
+     "title": "人魚"
+    },
+    {
+     "position": 6,
+     "recording": {
+      "video": false,
+      "title": "ともだち",
+      "disambiguation": "",
+      "id": "5b0160b6-dc9c-4a36-909f-1ec4ce709d69",
+      "artist-credit": [
+       {
+        "name": "宇多田ヒカル",
+        "artist": {
+         "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "disambiguation": "Japanese-American singer-songwriter",
+         "name": "宇多田ヒカル",
+         "sort-name": "Utada, Hikaru",
+         "type": "Person",
+         "country": "JP"
+        },
+        "joinphrase": " with "
+       },
+       {
+        "name": "小袋成彬",
+        "artist": {
+         "name": "小袋成彬",
+         "sort-name": "Obukuro, Nariaki",
+         "country": "GB",
+         "type": "Person",
+         "disambiguation": "",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "id": "a672ed48-a0f0-47bc-8969-a52f9a11b6ea"
+        },
+        "joinphrase": ""
+       }
+      ],
+      "length": 262973,
+      "aliases": []
+     },
+     "artist-credit": [
+      {
+       "name": "宇多田ヒカル",
+       "artist": {
+        "name": "宇多田ヒカル",
+        "sort-name": "Utada, Hikaru",
+        "country": "JP",
+        "type": "Person",
+        "aliases": [
+         {
+          "ended": false,
+          "primary": false,
+          "name": "Cubic U",
+          "sort-name": "Cubic U",
+          "type": "Artist name",
+          "locale": "en",
+          "begin": null,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "end": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "primary": null,
+          "ended": false,
+          "locale": null,
+          "type": "Search hint",
+          "begin": null,
+          "name": "Cubic U (Utada Hikaru)",
+          "sort-name": "Cubic U (Utada Hikaru)"
+         },
+         {
+          "name": "Hikaru Utada",
+          "sort-name": "Utada, Hikaru",
+          "begin": null,
+          "type": "Artist name",
+          "locale": "en",
+          "ended": false,
+          "primary": true,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "ended": false,
+          "primary": false,
+          "name": "Hikaru Utada",
+          "sort-name": "Utada, Hikaru",
+          "begin": null,
+          "type": "Legal name",
+          "locale": "en",
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "end": null
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "primary": true,
+          "ended": false,
+          "begin": null,
+          "type": "Artist name",
+          "locale": "lt",
+          "name": "Hikaru Utada",
+          "sort-name": "Utada, Hikaru"
+         },
+         {
+          "sort-name": "Hikki",
+          "name": "Hikki",
+          "begin": null,
+          "type": "Artist name",
+          "locale": "en",
+          "ended": false,
+          "primary": false,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "type": "Artist name",
+          "locale": "en",
+          "begin": null,
+          "sort-name": "Utada",
+          "name": "Utada",
+          "primary": false,
+          "ended": false
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "locale": "en_PH",
+          "begin": null,
+          "sort-name": "Utada, Hikaru",
+          "name": "Utada Hikaru",
+          "primary": true,
+          "ended": false
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "primary": false,
+          "ended": false,
+          "begin": null,
+          "type": "Artist name",
+          "locale": "ja",
+          "name": "ヒッキー",
+          "sort-name": "ヒッキー"
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "primary": true,
+          "ended": false,
+          "type": "Artist name",
+          "locale": "ja",
+          "begin": null,
+          "name": "宇多田ヒカル",
+          "sort-name": "うただヒカル"
+         },
+         {
+          "ended": false,
+          "primary": false,
+          "sort-name": "うただひかる",
+          "name": "宇多田光",
+          "locale": "ja",
+          "type": "Legal name",
+          "begin": null,
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "end": null
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "name": "宇多田光",
+          "sort-name": "宇多田光",
+          "type": "Artist name",
+          "locale": "zh_Hans",
+          "begin": null,
+          "ended": false,
+          "primary": true
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "ended": false,
+          "primary": false,
+          "sort-name": "宇多田光",
+          "name": "宇多田光",
+          "begin": null,
+          "locale": "zh_Hant_TW",
+          "type": "Artist name"
+         },
+         {
+          "type": "Artist name",
+          "locale": "ko",
+          "begin": null,
+          "name": "우타다히카루",
+          "sort-name": "히카루, 우타다",
+          "primary": false,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         }
+        ],
+        "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+        "disambiguation": "Japanese-American singer-songwriter",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df"
+       },
+       "joinphrase": " with "
+      },
+      {
+       "joinphrase": "",
+       "name": "小袋成彬",
+       "artist": {
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "disambiguation": "",
+        "aliases": [
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "primary": true,
+          "ended": false,
+          "begin": null,
+          "locale": "en",
+          "type": "Artist name",
+          "sort-name": "Nariaki Obukuro",
+          "name": "Nariaki Obukuro"
+         },
+         {
+          "primary": false,
+          "ended": false,
+          "begin": null,
+          "locale": "en",
+          "type": "Artist name",
+          "sort-name": "OBKR",
+          "name": "OBKR",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         }
+        ],
+        "id": "a672ed48-a0f0-47bc-8969-a52f9a11b6ea",
+        "name": "小袋成彬",
+        "sort-name": "Obukuro, Nariaki",
+        "type": "Person",
+        "country": "GB"
+       }
+      }
+     ],
+     "id": "e2b1b1df-1ff5-4846-a55a-85d7a83e3f11",
+     "length": 262000,
+     "number": "6",
+     "title": "ともだち"
+    },
+    {
+     "title": "真夏の通り雨",
+     "position": 7,
+     "recording": {
+      "disambiguation": "",
+      "aliases": [],
+      "artist-credit": [
+       {
+        "joinphrase": "",
+        "artist": {
+         "name": "宇多田ヒカル",
+         "sort-name": "Utada, Hikaru",
+         "type": "Person",
+         "country": "JP",
+         "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "disambiguation": "Japanese-American singer-songwriter"
+        },
+        "name": "宇多田ヒカル"
+       }
+      ],
+      "id": "68343d79-2827-4570-a423-92284041a275",
+      "length": 338346,
+      "title": "真夏の通り雨",
+      "video": false
+     },
+     "artist-credit": [
+      {
+       "joinphrase": "",
+       "name": "宇多田ヒカル",
+       "artist": {
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "disambiguation": "Japanese-American singer-songwriter",
+        "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+        "aliases": [
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "primary": false,
+          "sort-name": "Cubic U",
+          "name": "Cubic U",
+          "begin": null,
+          "locale": "en",
+          "type": "Artist name"
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "end": null,
+          "sort-name": "Cubic U (Utada Hikaru)",
+          "name": "Cubic U (Utada Hikaru)",
+          "begin": null,
+          "locale": null,
+          "type": "Search hint",
+          "ended": false,
+          "primary": null
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "type": "Artist name",
+          "locale": "en",
+          "begin": null,
+          "sort-name": "Utada, Hikaru",
+          "name": "Hikaru Utada",
+          "primary": true,
+          "ended": false
+         },
+         {
+          "ended": false,
+          "primary": false,
+          "name": "Hikaru Utada",
+          "sort-name": "Utada, Hikaru",
+          "begin": null,
+          "locale": "en",
+          "type": "Legal name",
+          "end": null,
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf"
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "name": "Hikaru Utada",
+          "sort-name": "Utada, Hikaru",
+          "begin": null,
+          "type": "Artist name",
+          "locale": "lt",
+          "ended": false,
+          "primary": true
+         },
+         {
+          "primary": false,
+          "ended": false,
+          "locale": "en",
+          "type": "Artist name",
+          "begin": null,
+          "sort-name": "Hikki",
+          "name": "Hikki",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "primary": false,
+          "sort-name": "Utada",
+          "name": "Utada",
+          "locale": "en",
+          "type": "Artist name",
+          "begin": null
+         },
+         {
+          "begin": null,
+          "locale": "en_PH",
+          "type": "Artist name",
+          "name": "Utada Hikaru",
+          "sort-name": "Utada, Hikaru",
+          "primary": true,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "name": "ヒッキー",
+          "sort-name": "ヒッキー",
+          "begin": null,
+          "locale": "ja",
+          "type": "Artist name",
+          "ended": false,
+          "primary": false
+         },
+         {
+          "begin": null,
+          "type": "Artist name",
+          "locale": "ja",
+          "name": "宇多田ヒカル",
+          "sort-name": "うただヒカル",
+          "primary": true,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "primary": false,
+          "ended": false,
+          "begin": null,
+          "type": "Legal name",
+          "locale": "ja",
+          "name": "宇多田光",
+          "sort-name": "うただひかる",
+          "end": null,
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf"
+         },
+         {
+          "ended": false,
+          "primary": true,
+          "name": "宇多田光",
+          "sort-name": "宇多田光",
+          "begin": null,
+          "type": "Artist name",
+          "locale": "zh_Hans",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "primary": false,
+          "ended": false,
+          "begin": null,
+          "type": "Artist name",
+          "locale": "zh_Hant_TW",
+          "sort-name": "宇多田光",
+          "name": "宇多田光",
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "primary": false,
+          "sort-name": "히카루, 우타다",
+          "name": "우타다히카루",
+          "locale": "ko",
+          "type": "Artist name",
+          "begin": null
+         }
+        ],
+        "type": "Person",
+        "country": "JP",
+        "sort-name": "Utada, Hikaru",
+        "name": "宇多田ヒカル"
+       }
+      }
+     ],
+     "length": 338000,
+     "id": "0e0d6bdd-a4c5-4f70-9a20-9726c3f7018a",
+     "number": "7"
+    },
+    {
+     "position": 8,
+     "recording": {
+      "aliases": [],
+      "artist-credit": [
+       {
+        "joinphrase": "",
+        "name": "宇多田ヒカル",
+        "artist": {
+         "sort-name": "Utada, Hikaru",
+         "name": "宇多田ヒカル",
+         "country": "JP",
+         "type": "Person",
+         "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+         "disambiguation": "Japanese-American singer-songwriter",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df"
+        }
+       }
+      ],
+      "id": "0d2829fe-da6d-4a41-9ae6-93e33fd171d6",
+      "length": 274680,
+      "disambiguation": "",
+      "title": "荒野の狼",
+      "video": false
+     },
+     "artist-credit": [
+      {
+       "name": "宇多田ヒカル",
+       "artist": {
+        "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+        "aliases": [
+         {
+          "begin": null,
+          "type": "Artist name",
+          "locale": "en",
+          "sort-name": "Cubic U",
+          "name": "Cubic U",
+          "primary": false,
+          "ended": false,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "end": null,
+          "name": "Cubic U (Utada Hikaru)",
+          "sort-name": "Cubic U (Utada Hikaru)",
+          "locale": null,
+          "type": "Search hint",
+          "begin": null,
+          "ended": false,
+          "primary": null
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "name": "Hikaru Utada",
+          "sort-name": "Utada, Hikaru",
+          "locale": "en",
+          "type": "Artist name",
+          "begin": null,
+          "ended": false,
+          "primary": true
+         },
+         {
+          "ended": false,
+          "primary": false,
+          "sort-name": "Utada, Hikaru",
+          "name": "Hikaru Utada",
+          "begin": null,
+          "type": "Legal name",
+          "locale": "en",
+          "end": null,
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf"
+         },
+         {
+          "primary": true,
+          "ended": false,
+          "type": "Artist name",
+          "locale": "lt",
+          "begin": null,
+          "name": "Hikaru Utada",
+          "sort-name": "Utada, Hikaru",
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "name": "Hikki",
+          "sort-name": "Hikki",
+          "locale": "en",
+          "type": "Artist name",
+          "begin": null,
+          "ended": false,
+          "primary": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "name": "Utada",
+          "sort-name": "Utada",
+          "type": "Artist name",
+          "locale": "en",
+          "begin": null,
+          "ended": false,
+          "primary": false,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "begin": null,
+          "type": "Artist name",
+          "locale": "en_PH",
+          "name": "Utada Hikaru",
+          "sort-name": "Utada, Hikaru",
+          "primary": true,
+          "ended": false
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "begin": null,
+          "locale": "ja",
+          "type": "Artist name",
+          "name": "ヒッキー",
+          "sort-name": "ヒッキー",
+          "primary": false,
+          "ended": false
+         },
+         {
+          "begin": null,
+          "type": "Artist name",
+          "locale": "ja",
+          "sort-name": "うただヒカル",
+          "name": "宇多田ヒカル",
+          "primary": true,
+          "ended": false,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "end": null,
+          "primary": false,
+          "ended": false,
+          "begin": null,
+          "type": "Legal name",
+          "locale": "ja",
+          "name": "宇多田光",
+          "sort-name": "うただひかる"
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "primary": true,
+          "name": "宇多田光",
+          "sort-name": "宇多田光",
+          "begin": null,
+          "type": "Artist name",
+          "locale": "zh_Hans"
+         },
+         {
+          "primary": false,
+          "ended": false,
+          "locale": "zh_Hant_TW",
+          "type": "Artist name",
+          "begin": null,
+          "name": "宇多田光",
+          "sort-name": "宇多田光",
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "primary": false,
+          "ended": false,
+          "begin": null,
+          "locale": "ko",
+          "type": "Artist name",
+          "name": "우타다히카루",
+          "sort-name": "히카루, 우타다",
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         }
+        ],
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "disambiguation": "Japanese-American singer-songwriter",
+        "type": "Person",
+        "country": "JP",
+        "name": "宇多田ヒカル",
+        "sort-name": "Utada, Hikaru"
+       },
+       "joinphrase": ""
+      }
+     ],
+     "length": 274000,
+     "id": "068fbf72-ce0a-451e-b2dd-2c49db9f732c",
+     "number": "8",
+     "title": "荒野の狼"
+    },
+    {
+     "title": "忘却",
+     "recording": {
+      "disambiguation": "",
+      "aliases": [],
+      "artist-credit": [
+       {
+        "name": "宇多田ヒカル",
+        "artist": {
+         "type": "Person",
+         "country": "JP",
+         "name": "宇多田ヒカル",
+         "sort-name": "Utada, Hikaru",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "disambiguation": "Japanese-American singer-songwriter",
+         "id": "b539e453-c4fe-47e3-8a07-8517eac74429"
+        },
+        "joinphrase": " feat. "
+       },
+       {
+        "joinphrase": "",
+        "name": "KOHH",
+        "artist": {
+         "disambiguation": "Japanese hip-hop artist",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "id": "0c0cb24e-0c76-40ad-b5d9-c454602d972b",
+         "country": "JP",
+         "type": "Person",
+         "sort-name": "KOHH",
+         "name": "KOHH"
+        }
+       }
+      ],
+      "id": "3c99ed54-cf44-4ac6-a77c-cc73b4e72d87",
+      "length": 305106,
+      "title": "忘却",
+      "video": false
+     },
+     "position": 9,
+     "number": "9",
+     "artist-credit": [
+      {
+       "artist": {
+        "aliases": [
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "locale": "en",
+          "type": "Artist name",
+          "begin": null,
+          "sort-name": "Cubic U",
+          "name": "Cubic U",
+          "primary": false,
+          "ended": false
+         },
+         {
+          "name": "Cubic U (Utada Hikaru)",
+          "sort-name": "Cubic U (Utada Hikaru)",
+          "locale": null,
+          "type": "Search hint",
+          "begin": null,
+          "ended": false,
+          "primary": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "end": null
+         },
+         {
+          "primary": true,
+          "ended": false,
+          "type": "Artist name",
+          "locale": "en",
+          "begin": null,
+          "name": "Hikaru Utada",
+          "sort-name": "Utada, Hikaru",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "ended": false,
+          "primary": false,
+          "sort-name": "Utada, Hikaru",
+          "name": "Hikaru Utada",
+          "locale": "en",
+          "type": "Legal name",
+          "begin": null,
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "end": null
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "name": "Hikaru Utada",
+          "sort-name": "Utada, Hikaru",
+          "begin": null,
+          "type": "Artist name",
+          "locale": "lt",
+          "ended": false,
+          "primary": true
+         },
+         {
+          "ended": false,
+          "primary": false,
+          "name": "Hikki",
+          "sort-name": "Hikki",
+          "type": "Artist name",
+          "locale": "en",
+          "begin": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "name": "Utada",
+          "sort-name": "Utada",
+          "begin": null,
+          "type": "Artist name",
+          "locale": "en",
+          "ended": false,
+          "primary": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "name": "Utada Hikaru",
+          "sort-name": "Utada, Hikaru",
+          "type": "Artist name",
+          "locale": "en_PH",
+          "begin": null,
+          "ended": false,
+          "primary": true
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "begin": null,
+          "type": "Artist name",
+          "locale": "ja",
+          "name": "ヒッキー",
+          "sort-name": "ヒッキー",
+          "primary": false,
+          "ended": false
+         },
+         {
+          "locale": "ja",
+          "type": "Artist name",
+          "begin": null,
+          "sort-name": "うただヒカル",
+          "name": "宇多田ヒカル",
+          "primary": true,
+          "ended": false,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "sort-name": "うただひかる",
+          "name": "宇多田光",
+          "locale": "ja",
+          "type": "Legal name",
+          "begin": null,
+          "ended": false,
+          "primary": false,
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "end": null
+         },
+         {
+          "locale": "zh_Hans",
+          "type": "Artist name",
+          "begin": null,
+          "sort-name": "宇多田光",
+          "name": "宇多田光",
+          "primary": true,
+          "ended": false,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "name": "宇多田光",
+          "sort-name": "宇多田光",
+          "type": "Artist name",
+          "locale": "zh_Hant_TW",
+          "begin": null,
+          "ended": false,
+          "primary": false,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "primary": false,
+          "ended": false,
+          "locale": "ko",
+          "type": "Artist name",
+          "begin": null,
+          "sort-name": "히카루, 우타다",
+          "name": "우타다히카루"
+         }
+        ],
+        "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+        "disambiguation": "Japanese-American singer-songwriter",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "name": "宇多田ヒカル",
+        "sort-name": "Utada, Hikaru",
+        "country": "JP",
+        "type": "Person"
+       },
+       "name": "宇多田ヒカル",
+       "joinphrase": " feat. "
+      },
+      {
+       "name": "KOHH",
+       "artist": {
+        "type": "Person",
+        "country": "JP",
+        "sort-name": "KOHH",
+        "name": "KOHH",
+        "id": "0c0cb24e-0c76-40ad-b5d9-c454602d972b",
+        "aliases": [
+         {
+          "primary": false,
+          "ended": false,
+          "begin": "2024-02",
+          "locale": "ja",
+          "type": "Artist name",
+          "sort-name": "Chiba, Yūki",
+          "name": "千葉雄喜",
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         }
+        ],
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "disambiguation": "Japanese hip-hop artist"
+       },
+       "joinphrase": ""
+      }
+     ],
+     "length": 305000,
+     "id": "2a884d51-21dc-4cda-be36-927124563362"
+    },
+    {
+     "id": "a03f3895-0749-4bdb-aa2a-46914758d488",
+     "artist-credit": [
+      {
+       "name": "宇多田ヒカル",
+       "artist": {
+        "name": "宇多田ヒカル",
+        "sort-name": "Utada, Hikaru",
+        "type": "Person",
+        "country": "JP",
+        "aliases": [
+         {
+          "primary": false,
+          "ended": false,
+          "begin": null,
+          "locale": "en",
+          "type": "Artist name",
+          "name": "Cubic U",
+          "sort-name": "Cubic U",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "primary": null,
+          "ended": false,
+          "begin": null,
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "Cubic U (Utada Hikaru)",
+          "name": "Cubic U (Utada Hikaru)",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "end": null
+         },
+         {
+          "primary": true,
+          "ended": false,
+          "type": "Artist name",
+          "locale": "en",
+          "begin": null,
+          "sort-name": "Utada, Hikaru",
+          "name": "Hikaru Utada",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "primary": false,
+          "ended": false,
+          "type": "Legal name",
+          "locale": "en",
+          "begin": null,
+          "sort-name": "Utada, Hikaru",
+          "name": "Hikaru Utada",
+          "end": null,
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf"
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "primary": true,
+          "ended": false,
+          "locale": "lt",
+          "type": "Artist name",
+          "begin": null,
+          "sort-name": "Utada, Hikaru",
+          "name": "Hikaru Utada"
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "name": "Hikki",
+          "sort-name": "Hikki",
+          "begin": null,
+          "locale": "en",
+          "type": "Artist name",
+          "ended": false,
+          "primary": false
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "begin": null,
+          "locale": "en",
+          "type": "Artist name",
+          "name": "Utada",
+          "sort-name": "Utada",
+          "primary": false,
+          "ended": false
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "begin": null,
+          "locale": "en_PH",
+          "type": "Artist name",
+          "sort-name": "Utada, Hikaru",
+          "name": "Utada Hikaru",
+          "primary": true,
+          "ended": false
+         },
+         {
+          "type": "Artist name",
+          "locale": "ja",
+          "begin": null,
+          "name": "ヒッキー",
+          "sort-name": "ヒッキー",
+          "primary": false,
+          "ended": false,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "name": "宇多田ヒカル",
+          "sort-name": "うただヒカル",
+          "type": "Artist name",
+          "locale": "ja",
+          "begin": null,
+          "ended": false,
+          "primary": true,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "end": null,
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "begin": null,
+          "type": "Legal name",
+          "locale": "ja",
+          "sort-name": "うただひかる",
+          "name": "宇多田光",
+          "primary": false,
+          "ended": false
+         },
+         {
+          "ended": false,
+          "primary": true,
+          "sort-name": "宇多田光",
+          "name": "宇多田光",
+          "begin": null,
+          "type": "Artist name",
+          "locale": "zh_Hans",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "name": "宇多田光",
+          "sort-name": "宇多田光",
+          "type": "Artist name",
+          "locale": "zh_Hant_TW",
+          "begin": null,
+          "ended": false,
+          "primary": false,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "ended": false,
+          "primary": false,
+          "sort-name": "히카루, 우타다",
+          "name": "우타다히카루",
+          "begin": null,
+          "locale": "ko",
+          "type": "Artist name",
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         }
+        ],
+        "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "disambiguation": "Japanese-American singer-songwriter"
+       },
+       "joinphrase": ""
+      }
+     ],
+     "length": 190000,
+     "number": "10",
+     "position": 10,
+     "recording": {
+      "length": 190000,
+      "id": "1f1c8a49-e1bc-4b69-a0bf-0171fb1a433e",
+      "artist-credit": [
+       {
+        "joinphrase": "",
+        "artist": {
+         "disambiguation": "Japanese-American singer-songwriter",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+         "sort-name": "Utada, Hikaru",
+         "name": "宇多田ヒカル",
+         "country": "JP",
+         "type": "Person"
+        },
+        "name": "宇多田ヒカル"
+       }
+      ],
+      "aliases": [
+       {
+        "sort-name": "Jinsei Saikou No Hi",
+        "name": "Jinsei Saikou No Hi",
+        "locale": null,
+        "type": null,
+        "begin": null,
+        "ended": false,
+        "primary": null,
+        "type-id": null,
+        "end": null
+       }
+      ],
+      "disambiguation": "",
+      "video": false,
+      "title": "人生最高の日"
+     },
+     "title": "人生最高の日"
+    },
+    {
+     "title": "桜流し",
+     "recording": {
+      "id": "7087278a-101b-4ec5-ba0c-d60efd081ca2",
+      "artist-credit": [
+       {
+        "joinphrase": "",
+        "artist": {
+         "sort-name": "Utada, Hikaru",
+         "name": "宇多田ヒカル",
+         "country": "JP",
+         "type": "Person",
+         "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+         "disambiguation": "Japanese-American singer-songwriter",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df"
+        },
+        "name": "宇多田ヒカル"
+       }
+      ],
+      "length": 280760,
+      "aliases": [
+       {
+        "end": null,
+        "type-id": null,
+        "ended": false,
+        "primary": null,
+        "name": "桜流し -2021 Remastered-",
+        "sort-name": "桜流し -2021 Remastered-",
+        "type": null,
+        "locale": null,
+        "begin": null
+       }
+      ],
+      "disambiguation": "",
+      "video": false,
+      "title": "桜流し"
+     },
+     "position": 11,
+     "number": "11",
+     "length": 280000,
+     "artist-credit": [
+      {
+       "name": "宇多田ヒカル",
+       "artist": {
+        "aliases": [
+         {
+          "primary": false,
+          "ended": false,
+          "begin": null,
+          "type": "Artist name",
+          "locale": "en",
+          "name": "Cubic U",
+          "sort-name": "Cubic U",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "primary": null,
+          "ended": false,
+          "begin": null,
+          "type": "Search hint",
+          "locale": null,
+          "name": "Cubic U (Utada Hikaru)",
+          "sort-name": "Cubic U (Utada Hikaru)",
+          "end": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "primary": true,
+          "ended": false,
+          "type": "Artist name",
+          "locale": "en",
+          "begin": null,
+          "sort-name": "Utada, Hikaru",
+          "name": "Hikaru Utada",
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "end": null,
+          "ended": false,
+          "primary": false,
+          "sort-name": "Utada, Hikaru",
+          "name": "Hikaru Utada",
+          "type": "Legal name",
+          "locale": "en",
+          "begin": null
+         },
+         {
+          "ended": false,
+          "primary": true,
+          "name": "Hikaru Utada",
+          "sort-name": "Utada, Hikaru",
+          "begin": null,
+          "locale": "lt",
+          "type": "Artist name",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "primary": false,
+          "ended": false,
+          "begin": null,
+          "locale": "en",
+          "type": "Artist name",
+          "sort-name": "Hikki",
+          "name": "Hikki",
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "name": "Utada",
+          "sort-name": "Utada",
+          "begin": null,
+          "type": "Artist name",
+          "locale": "en",
+          "ended": false,
+          "primary": false
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "begin": null,
+          "type": "Artist name",
+          "locale": "en_PH",
+          "name": "Utada Hikaru",
+          "sort-name": "Utada, Hikaru",
+          "primary": true,
+          "ended": false
+         },
+         {
+          "ended": false,
+          "primary": false,
+          "name": "ヒッキー",
+          "sort-name": "ヒッキー",
+          "type": "Artist name",
+          "locale": "ja",
+          "begin": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "locale": "ja",
+          "begin": null,
+          "name": "宇多田ヒカル",
+          "sort-name": "うただヒカル",
+          "primary": true,
+          "ended": false
+         },
+         {
+          "end": null,
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "name": "宇多田光",
+          "sort-name": "うただひかる",
+          "type": "Legal name",
+          "locale": "ja",
+          "begin": null,
+          "ended": false,
+          "primary": false
+         },
+         {
+          "primary": true,
+          "ended": false,
+          "begin": null,
+          "type": "Artist name",
+          "locale": "zh_Hans",
+          "sort-name": "宇多田光",
+          "name": "宇多田光",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         },
+         {
+          "locale": "zh_Hant_TW",
+          "type": "Artist name",
+          "begin": null,
+          "sort-name": "宇多田光",
+          "name": "宇多田光",
+          "primary": false,
+          "ended": false,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "primary": false,
+          "ended": false,
+          "begin": null,
+          "locale": "ko",
+          "type": "Artist name",
+          "sort-name": "히카루, 우타다",
+          "name": "우타다히카루",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null
+         }
+        ],
+        "id": "b539e453-c4fe-47e3-8a07-8517eac74429",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "disambiguation": "Japanese-American singer-songwriter",
+        "sort-name": "Utada, Hikaru",
+        "name": "宇多田ヒカル",
+        "type": "Person",
+        "country": "JP"
+       },
+       "joinphrase": ""
+      }
+     ],
+     "id": "2f077db4-9b0b-45c6-aed8-a5bf474c0ab5"
+    }
+   ]
+  }
+ ],
+ "text-representation": {
+  "script": "Jpan",
+  "language": "jpn"
+ },
+ "date": "2016-09-28",
+ "quality": "normal",
+ "barcode": "600406798350",
+ "release-events": [
+  {
+   "area": {
+    "iso-3166-1-codes": [
+     "JP"
+    ],
+    "sort-name": "Japan",
+    "name": "Japan",
+    "type": null,
+    "id": "2db42837-c832-3c27-b4a3-08198f75693c",
+    "disambiguation": "",
+    "type-id": null
+   },
+   "date": "2016-09-28"
+  }
+ ],
+ "aliases": []
+}

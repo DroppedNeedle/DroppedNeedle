@@ -18,7 +18,8 @@ use futures_util::future::BoxFuture;
 use super::models::LocalTrackFacts;
 use super::sqlite::SqliteIdentifyStore;
 use crate::library::matching::model::{
-    RecordingRelations, ReleaseRelations, RoleCredit, WorkCredit,
+    ArtistAlias, ArtistName, ArtistNames, RELATIONS_VERSION, RecordingRelations, ReleaseRelations,
+    RoleCredit, WorkCredit,
 };
 use crate::library::matching::model::{VARIOUS_ARTISTS_MBID, credit_text};
 use crate::library::matching::{CreditedArtist, Genre, Release, ReleaseMedium, ReleaseTrack};
@@ -451,7 +452,67 @@ pub fn release_from_wire(wire: MbRelease, old_ids: Vec<String>) -> Result<Releas
             genres
         },
         recording_relations: None,
+        artist_names: None,
     })
+}
+
+/// Includes for the credited artists' own names and aliases, asked for
+/// on their own once a profile writes MusicBrainz or translated names.
+pub const NAME_INCLUDES: [&str; 3] = ["aliases", "artist-credits", "recordings"];
+
+/// The credited artists' own names and aliases a names lookup gave: the
+/// release's credit and each release track's. An artist named twice
+/// keeps the entry that came with its aliases.
+pub fn names_from_wire(wire: &MbRelease, fetched_at_ms: i64) -> ArtistNames {
+    let mut artists: std::collections::BTreeMap<String, ArtistName> =
+        std::collections::BTreeMap::new();
+    let credits = wire.artist_credit.iter().chain(
+        wire.media
+            .iter()
+            .flat_map(|medium| &medium.tracks)
+            .flat_map(|track| track.credit()),
+    );
+    for entry in credits {
+        let artist = &entry.artist;
+        let id = artist.id.to_ascii_lowercase();
+        if artists
+            .get(&id)
+            .is_some_and(|known| known.aliases.is_some() || artist.aliases.is_none())
+        {
+            continue;
+        }
+        let aliases = artist.aliases.as_ref().map(|aliases| {
+            aliases
+                .iter()
+                .filter(|alias| !alias.name.trim().is_empty())
+                .map(|alias| ArtistAlias {
+                    name: alias.name.clone(),
+                    sort_name: alias
+                        .sort_name
+                        .clone()
+                        .filter(|sort| !sort.trim().is_empty()),
+                    locale: alias
+                        .locale
+                        .clone()
+                        .filter(|locale| !locale.trim().is_empty()),
+                    primary: alias.primary.unwrap_or(false),
+                    type_id: alias.type_id.clone(),
+                })
+                .collect()
+        });
+        artists.insert(
+            id,
+            ArtistName {
+                name: artist.name.clone(),
+                sort_name: artist.sort_name.clone().filter(|sort| !sort.is_empty()),
+                aliases,
+            },
+        );
+    }
+    ArtistNames {
+        fetched_at_ms,
+        artists,
+    }
 }
 
 /// Includes for a release's recording and work credits, asked for on
@@ -498,13 +559,16 @@ fn role_credits(relations: &[Relation]) -> Vec<RoleCredit> {
             Some(RoleCredit {
                 role: role.to_owned(),
                 relation_type: relation.rel_type.clone(),
-                name,
                 sort_name: artist
                     .sort_name
                     .clone()
                     .filter(|sort| !sort.trim().is_empty()),
                 artist_id: artist.id.to_ascii_lowercase(),
                 attributes: relation.attributes.clone(),
+                credited: credited
+                    .filter(|credited| *credited != name)
+                    .map(str::to_owned),
+                name,
             })
         })
         .collect()
@@ -558,6 +622,7 @@ pub fn relations_from_wire(wire: &MbRelease, fetched_at_ms: i64) -> ReleaseRelat
     }
     ReleaseRelations {
         fetched_at_ms,
+        version: RELATIONS_VERSION,
         tracks,
     }
 }

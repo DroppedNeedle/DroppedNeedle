@@ -462,7 +462,19 @@ pub fn plan_tags(
     )?;
     if profile.metadata.enabled {
         let custom = super::custom::is_custom(release);
-        let mut canonical = picard::release_tags(release, track);
+        // A custom edition keeps the names as credited: there is no
+        // MusicBrainz release to ask for the artists' own.
+        let naming = if custom {
+            picard::ArtistNaming::credited()
+        } else {
+            picard::ArtistNaming::new(
+                &profile.metadata.artist_credits,
+                release.artist_names.as_ref(),
+            )
+        };
+        // Artist fields whose names were not fetched are left out, and
+        // keep the file's values below, never cleared.
+        let (mut canonical, unresolved) = picard::named_release_tags(release, track, &naming);
         // Credits come from the recording's MusicBrainz relationships;
         // without them (not fetched, or fetched for another recording) a
         // credit field is left alone, never cleared.
@@ -472,7 +484,7 @@ pub fn plan_tags(
             release.track_relations(track)
         };
         if let Some(relations) = relations {
-            canonical.extend(picard::credit_tags(relations));
+            canonical.extend(picard::credit_tags(relations, &naming));
         }
         // AcoustID values come from the file's audio. These fields never
         // clear, so a value not worked out leaves the file's alone.
@@ -494,6 +506,7 @@ pub fn plan_tags(
                 .map(|(_, note)| note.clone()),
         );
         let mut credits_missing = false;
+        let mut names_missing = false;
         let mut preserved: BTreeSet<&str> = profile
             .metadata
             .preserve_fields
@@ -511,6 +524,10 @@ pub fn plan_tags(
                 continue;
             };
             if preserved.contains(field.name()) {
+                continue;
+            }
+            if unresolved.contains(&field) {
+                names_missing |= !matches!(managed.mode, FieldMode::Disabled | FieldMode::Preserve);
                 continue;
             }
             if let Some(asked) = super::enrich::credit_asked(profile, &managed.field) {
@@ -553,12 +570,49 @@ pub fn plan_tags(
                 desired.insert(field.name().to_owned(), values);
             }
         }
-        if credits_missing {
+        if credits_missing && extras.credits == super::enrich::Credits::Ready {
+            // Fetched within the week, yet not for this track's recording
+            // (or a work came without its credits): asking again gives
+            // the same, so the file keeps its credits and is not held.
+            tracing::info!(
+                release = release.id,
+                track = track.id,
+                "MusicBrainz credits do not cover this track's recording; its credits are kept"
+            );
+            warnings.push(
+                "MusicBrainz now lists this track differently; its credits and work are left as \
+                 they are until it is identified again."
+                    .to_owned(),
+            );
+        } else if credits_missing {
             if extras.automatic {
                 return Err(credits_unavailable());
             }
             warnings.push(
                 "MusicBrainz credits could not be read, so the file keeps its credits and work."
+                    .to_owned(),
+            );
+        }
+        if names_missing && extras.names == super::enrich::Credits::Ready {
+            // Fetched just now or within the week, yet without an artist
+            // the stored credits name: MusicBrainz changed the credit
+            // since identification, and asking again gives the same.
+            tracing::info!(
+                release = release.id,
+                "MusicBrainz no longer credits an artist the stored edition names; \
+                 the artist tags are kept"
+            );
+            warnings.push(
+                "MusicBrainz now credits this release differently; its artist tags are left as \
+                 they are until it is identified again."
+                    .to_owned(),
+            );
+        } else if names_missing && extras.names != super::enrich::Credits::NotAsked {
+            if extras.automatic {
+                return Err(names_unavailable());
+            }
+            warnings.push(
+                "MusicBrainz artist names could not be read, so the file keeps its artist tags."
                     .to_owned(),
             );
         }
@@ -719,6 +773,19 @@ fn credits_unavailable() -> ItemReason {
             .to_owned(),
         action: "Automatic management looks again by itself; a preview by hand writes the other \
                  fields and keeps the file's credits."
+            .to_owned(),
+    }
+}
+
+/// An automatic run's file whose artist names could not be read from
+/// MusicBrainz: it is written once they can be.
+fn names_unavailable() -> ItemReason {
+    ItemReason {
+        code: "METADATA_UNAVAILABLE".to_owned(),
+        message: "MusicBrainz artist names for this file could not be read, so it was not written."
+            .to_owned(),
+        action: "Automatic management looks again by itself; a preview by hand writes the other \
+                 fields and keeps the file's artist tags."
             .to_owned(),
     }
 }
@@ -1349,9 +1416,28 @@ mod tests {
         }
         let (mut grafted, _) = classical();
         grafted.graft_relations(&partial);
+        // Asking again would give the same answer, so an automatic run
+        // writes the rest with a warning instead of waiting for ever.
+        let fetched_automatic = AlbumExtras {
+            credits: Credits::Ready,
+            automatic: true,
+            ..AlbumExtras::default()
+        };
         for index in [1, 2] {
             let plan = plan_credits(&pinned, &grafted, index, &ready).expect("planned");
             assert_eq!(value(&plan, "composer"), old("composer"), "track {index}");
+            let plan = plan_credits(&pinned, &grafted, index, &fetched_automatic)
+                .expect("an automatic run is not blocked");
+            assert_eq!(value(&plan, "composer"), old("composer"), "track {index}");
+            assert_eq!(
+                plan.warnings,
+                vec![
+                    "MusicBrainz now lists this track differently; its credits and work are \
+                     left as they are until it is identified again."
+                        .to_owned()
+                ],
+                "track {index}"
+            );
         }
         release.recording_relations = grafted.recording_relations.clone();
         if let Some(stored) = release.recording_relations.as_mut() {
@@ -1376,6 +1462,7 @@ mod tests {
         let track = release.tracks[0].clone();
         release.recording_relations = Some(ReleaseRelations {
             fetched_at_ms: 1,
+            version: 1,
             tracks: [(
                 track.id.clone(),
                 RecordingRelations {
@@ -1485,6 +1572,7 @@ mod tests {
         };
         release.recording_relations = Some(ReleaseRelations {
             fetched_at_ms: 1,
+            version: 1,
             tracks: [(track.id.clone(), entry)].into_iter().collect(),
         });
         let ready = AlbumExtras {
@@ -1550,6 +1638,153 @@ mod tests {
         };
         assert_eq!(name("instrument").as_deref(), Some("Glenn Gould"));
         assert_eq!(name("conductor").as_deref(), Some("H. v. Karajan"));
+    }
+
+    /// MusicBrainz or translated artist names are written only from a
+    /// fetched names part. Not fetched leaves the six artist fields as
+    /// the file has them, even on replace with clear, and an automatic
+    /// run waits; an artist MusicBrainz no longer lists on the release
+    /// keeps them too, with a warning, and never blocks. A profile at the
+    /// defaults writes the credited names and needs no names part.
+    #[test]
+    fn artist_names_need_their_lookup() {
+        use crate::runtime_config::sections::ArtistStandardization;
+        let mut probe: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/musicbrainz/release_names_sakamoto.json"
+        ))
+        .expect("probe parses");
+        probe["release-group"] = serde_json::json!({"id": "22222222-2222-4222-8222-222222222222"});
+        let wire: crate::providers::musicbrainz::MbRelease =
+            serde_json::from_value(probe).expect("probe decodes");
+        let names = crate::library::identify::sources::names_from_wire(&wire, 1);
+        let bare = crate::library::identify::sources::release_from_wire(wire, Vec::new())
+            .expect("release");
+        let mut named = bare.clone();
+        named.graft_names(&names);
+
+        let profile = |standardization: ArtistStandardization| {
+            let mut settings = settings::initial_settings("");
+            for profile in &mut settings.profiles {
+                for field in &mut profile.metadata.fields {
+                    if super::super::enrich::ARTIST_FIELDS.contains(&field.field.as_str()) {
+                        field.mode = FieldMode::Replace;
+                        field.clear_when_canonical_missing = true;
+                    }
+                }
+                profile.metadata.artist_credits.standardization = standardization;
+                profile.genres.enabled = false;
+            }
+            pin(&settings, settings::PICARD_ORGANIZER_PROFILE_ID, None).expect("pinned")
+        };
+        let canonical = profile(ArtistStandardization::Canonical);
+        let doc: TagDocument = serde_json::from_value(serde_json::json!({
+            "managed": {
+                "artist": ["Old"], "artists": ["Old"], "artist_sort": ["Old"],
+                "album_artist": ["Old"], "album_artists": ["Old"],
+                "album_artist_sort": ["Old"], "title": ["Old"],
+            },
+            "custom": {},
+        }))
+        .expect("document");
+        let plan = |pinned: &PinnedProfile, release: &Release, names: Credits, automatic: bool| {
+            let extras = AlbumExtras {
+                names,
+                automatic,
+                ..AlbumExtras::default()
+            };
+            plan_tags(
+                pinned,
+                &CompiledScripts::new(pinned),
+                &FileInput {
+                    release,
+                    track: &release.tracks[0],
+                    doc: &doc,
+                    format: "flac",
+                    id3v23: false,
+                    writable: true,
+                    overrides: &Overrides::default(),
+                    extras: &extras,
+                    track_id: "track",
+                    lyrics: &LyricsAnswer::Off,
+                },
+            )
+        };
+        let value =
+            |plan: &TagPlan, name: &str| plan.desired.get(name).cloned().unwrap_or_default();
+        let owned = |values: &[&str]| values.iter().map(|v| (*v).to_owned()).collect::<Vec<_>>();
+        let artist_fields = |plan: &TagPlan| {
+            super::super::enrich::ARTIST_FIELDS
+                .iter()
+                .map(|name| value(plan, name))
+                .collect::<Vec<_>>()
+        };
+        let kept = vec![owned(&["Old"]); 6];
+
+        // Not fetched: the artist fields stay; the title is still written.
+        let missing = plan(&canonical, &bare, Credits::Unavailable, false).expect("planned");
+        assert_eq!(artist_fields(&missing), kept);
+        assert_eq!(value(&missing, "title"), owned(&["andata"]));
+        assert_eq!(
+            missing.warnings,
+            vec![
+                "MusicBrainz artist names could not be read, so the file keeps its artist tags."
+                    .to_owned()
+            ]
+        );
+        let reason = plan(&canonical, &bare, Credits::Unavailable, true)
+            .err()
+            .expect("an automatic run waits");
+        assert_eq!(reason.code, "METADATA_UNAVAILABLE");
+
+        // Fetched: the MusicBrainz names are written.
+        let written = plan(&canonical, &named, Credits::Ready, true).expect("planned");
+        assert_eq!(value(&written, "artist"), owned(&["坂本龍一"]));
+        assert_eq!(
+            value(&written, "artist_sort"),
+            owned(&["Sakamoto, Ryūichi"])
+        );
+        assert_eq!(
+            value(&written, "album_artist"),
+            owned(&["坂本龍一 + 高谷史郎"])
+        );
+        assert_eq!(
+            value(&written, "album_artists"),
+            owned(&["坂本龍一", "高谷史郎"])
+        );
+        assert!(written.warnings.is_empty(), "{:?}", written.warnings);
+
+        // MusicBrainz no longer lists Takatani: the album artist fields
+        // stay, the track's are written, and an automatic run goes on.
+        let mut moved = named.clone();
+        if let Some(names) = moved.artist_names.as_mut() {
+            names.artists.remove("7493b80f-de18-4f9c-a7bd-08d1ea5adcff");
+        }
+        let changed = plan(&canonical, &moved, Credits::Ready, true).expect("not blocked");
+        assert_eq!(value(&changed, "artist"), owned(&["坂本龍一"]));
+        assert_eq!(value(&changed, "album_artist"), owned(&["Old"]));
+        assert_eq!(
+            changed.warnings,
+            vec![
+                "MusicBrainz now credits this release differently; its artist tags are left as \
+                 they are until it is identified again."
+                    .to_owned()
+            ]
+        );
+
+        // The defaults: credited names, no names part needed.
+        let credited = profile(ArtistStandardization::Credited);
+        let default = plan(&credited, &bare, Credits::NotAsked, true).expect("planned");
+        assert_eq!(value(&default, "artist"), owned(&["Ryuichi Sakamoto"]));
+        assert_eq!(
+            value(&default, "album_artist_sort"),
+            owned(&["Sakamoto, Ryūichi + Takatani, Shiro"])
+        );
+        assert_eq!(
+            default.desired,
+            plan(&credited, &named, Credits::NotAsked, true)
+                .expect("planned")
+                .desired
+        );
     }
 
     #[test]

@@ -194,13 +194,26 @@ pub struct Release {
     /// writes them. `None` until then; identification never fetches them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recording_relations: Option<ReleaseRelations>,
+    /// The credited artists' own MusicBrainz names and aliases, fetched on
+    /// their own when a profile writes MusicBrainz or translated names.
+    /// `None` until then; identification never fetches them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artist_names: Option<ArtistNames>,
 }
+
+/// What [`ReleaseRelations::version`] new lookups write. Stored credits
+/// below it are fetched again; until then they are used as they are.
+/// 1: credits carry the name they are credited as.
+pub const RELATIONS_VERSION: u32 = 1;
 
 /// The credits MusicBrainz gave for a release's recordings, and when.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ReleaseRelations {
     /// Unix milliseconds.
     pub fetched_at_ms: i64,
+    /// What the credits were parsed under; 0 before versions were kept.
+    #[serde(default)]
+    pub version: u32,
     /// By release-track id. A track missing here was not fetched; it is
     /// never read as "no credits".
     pub tracks: std::collections::BTreeMap<String, RecordingRelations>,
@@ -230,6 +243,45 @@ pub struct RoleCredit {
     pub sort_name: Option<String>,
     pub artist_id: String,
     pub attributes: Vec<String>,
+    /// The name the artist is credited as here, when it is not their own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credited: Option<String>,
+}
+
+/// The credited artists' own MusicBrainz names and aliases, and when they
+/// were fetched.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ArtistNames {
+    /// Unix milliseconds.
+    pub fetched_at_ms: i64,
+    /// By lower-case artist id.
+    pub artists: std::collections::BTreeMap<String, ArtistName>,
+}
+
+/// One artist as MusicBrainz names it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ArtistName {
+    pub name: String,
+    pub sort_name: Option<String>,
+    /// `None` when MusicBrainz sent no alias list for the artist.
+    pub aliases: Option<Vec<ArtistAlias>>,
+}
+
+/// One of an artist's aliases.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ArtistAlias {
+    pub name: String,
+    pub sort_name: Option<String>,
+    pub locale: Option<String>,
+    pub primary: bool,
+    pub type_id: Option<String>,
+}
+
+/// The parts of a release fetched on their own for planning.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ReleaseExtras {
+    pub relations: Option<ReleaseRelations>,
+    pub names: Option<ArtistNames>,
 }
 
 /// One performed work.
@@ -290,8 +342,39 @@ impl Release {
             .collect();
         self.recording_relations = Some(ReleaseRelations {
             fetched_at_ms: fetched.fetched_at_ms,
+            version: fetched.version,
             tracks,
         });
+    }
+
+    /// Put fetched artist names on this document, for the artists its
+    /// credits name.
+    pub fn graft_names(&mut self, fetched: &ArtistNames) {
+        let credited: std::collections::BTreeSet<String> = self
+            .artists
+            .iter()
+            .chain(self.tracks.iter().flat_map(|track| &track.artists))
+            .map(|artist| artist.id.to_ascii_lowercase())
+            .collect();
+        self.artist_names = Some(ArtistNames {
+            fetched_at_ms: fetched.fetched_at_ms,
+            artists: fetched
+                .artists
+                .iter()
+                .filter(|(id, _)| credited.contains(*id))
+                .map(|(id, name)| (id.clone(), name.clone()))
+                .collect(),
+        });
+    }
+
+    /// Put whichever fetched parts came on this document.
+    pub fn graft_extras(&mut self, fetched: &ReleaseExtras) {
+        if let Some(relations) = &fetched.relations {
+            self.graft_relations(relations);
+        }
+        if let Some(names) = &fetched.names {
+            self.graft_names(names);
+        }
     }
 
     pub fn original_year(&self) -> Option<i32> {

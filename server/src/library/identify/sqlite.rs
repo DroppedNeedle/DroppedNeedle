@@ -1133,19 +1133,19 @@ impl SqliteIdentifyStore {
 }
 
 impl SqliteIdentifyStore {
-    /// Graft fetched credits onto the stored document for a release, in
-    /// one transaction: the current row is read, grafted and written back
-    /// under every id that shares its payload (merged ids too), keeping
-    /// when the document was fetched and when it expires. Returns the
-    /// grafted document, or `None` when none is stored or the write
-    /// failed.
-    pub fn graft_relations(
+    /// Graft fetched parts (credits, artist names) onto the stored
+    /// document for a release, in one transaction: the current row is
+    /// read, grafted and written back under every id that shares its
+    /// payload (merged ids too), keeping when the document was fetched and
+    /// when it expires. Returns the grafted document, or `None` when none
+    /// is stored or the write failed.
+    pub fn graft_extras(
         &self,
         release_mbid: &str,
-        fetched: &crate::library::matching::model::ReleaseRelations,
+        fetched: &crate::library::matching::model::ReleaseExtras,
     ) -> Option<Release> {
         let entity = release_mbid.trim().to_ascii_lowercase();
-        self.write("graft release credits", |tx| {
+        self.write("graft release extras", |tx| {
             let current: Option<(String, String)> = tx
                 .query_row(
                     "SELECT canonical_payload_json, payload_sha256 \
@@ -1166,7 +1166,7 @@ impl SqliteIdentifyStore {
                     return Ok(None);
                 }
             };
-            release.graft_relations(fetched);
+            release.graft_extras(fetched);
             let payload = match serde_json::to_string(&release) {
                 Ok(payload) => payload,
                 Err(error) => {

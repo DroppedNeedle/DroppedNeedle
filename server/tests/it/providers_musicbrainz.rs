@@ -1551,3 +1551,86 @@ async fn credits_decode_from_the_recorded_answers() {
             .contains_key("c638fd85-2e96-4529-9e4e-61ec2085a16f")
     );
 }
+
+/// The recorded names lookups decode with their aliases (locale,
+/// primary, sort name, type id; a null `primary` is not primary), keyed
+/// by the credited artists; an artist with none has an empty list, and
+/// relationship artists carry no alias list at all. The relations in the
+/// same answer still parse, with the name each artist is credited as.
+#[test]
+fn names_decode_from_the_recorded_answers() {
+    use droppedneedle::library::identify::sources::{names_from_wire, relations_from_wire};
+    use droppedneedle::providers::musicbrainz::MbRelease;
+    let decode = |name: &str| -> MbRelease {
+        serde_json::from_value(relations_probe(name)).expect("probe decodes")
+    };
+
+    let sakamoto = decode("release_names_sakamoto.json");
+    let names = names_from_wire(&sakamoto, 3);
+    assert_eq!(names.fetched_at_ms, 3);
+    let artist = &names.artists["a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"];
+    assert_eq!(artist.name, "坂本龍一");
+    assert_eq!(artist.sort_name.as_deref(), Some("Sakamoto, Ryūichi"));
+    let english = artist
+        .aliases
+        .as_ref()
+        .expect("aliases fetched")
+        .iter()
+        .find(|alias| alias.locale.as_deref() == Some("en"))
+        .expect("an English alias");
+    assert_eq!(english.name, "Ryūichi Sakamoto");
+    assert_eq!(english.sort_name.as_deref(), Some("Sakamoto, Ryūichi"));
+    assert!(english.primary);
+    assert_eq!(
+        english.type_id.as_deref(),
+        Some("894afba6-2816-3c24-8072-eadb66bd04bc")
+    );
+    assert_eq!(
+        names.artists["7493b80f-de18-4f9c-a7bd-08d1ea5adcff"].aliases,
+        Some(Vec::new()),
+        "Takatani has no aliases"
+    );
+
+    let utada = names_from_wire(&decode("release_names_utada.json"), 0);
+    assert_eq!(
+        utada.artists.len(),
+        4,
+        "Utada and the three featured artists"
+    );
+
+    let classical = decode("release_names_classical.json");
+    let names = names_from_wire(&classical, 0);
+    let plain = names.artists["7002bf88-1269-4965-a772-4ba1e7a91eaa"]
+        .aliases
+        .as_ref()
+        .expect("Gould's aliases");
+    assert!(
+        plain
+            .iter()
+            .any(|alias| !alias.primary && alias.locale.is_none()),
+        "a null primary and locale decode"
+    );
+    let recording = classical.media[0].tracks[0]
+        .recording
+        .as_ref()
+        .expect("recording");
+    assert!(
+        recording
+            .relations
+            .iter()
+            .flatten()
+            .filter_map(|relation| relation.artist.as_ref())
+            .all(|artist| artist.aliases.is_none()),
+        "relationship artists carry no aliases"
+    );
+    let relations = relations_from_wire(&classical, 0);
+    assert_eq!(relations.tracks.len(), 7);
+    assert!(
+        relations
+            .tracks
+            .values()
+            .flat_map(|track| &track.credits)
+            .all(|credit| credit.credited.is_none()),
+        "everyone is credited under their own name here"
+    );
+}

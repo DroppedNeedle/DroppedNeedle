@@ -36,6 +36,16 @@ pub struct ArtistRef {
     /// Sort name (`"Beatles, The"` style), when the service sends one.
     #[serde(rename = "sort-name", default)]
     pub sort_name: Option<String>,
+    /// Aliases, under the `aliases` include. Checked on 2026-10-15
+    /// against release lookups from BrainzMash ws/2 with
+    /// `inc=recordings+artist-credits+aliases` (and the relation
+    /// includes; `tests/fixtures/musicbrainz/release_names_*.json`): the
+    /// artists of the release's and each release track's credit carry the
+    /// key, `[]` when the artist has none; recording-level credits and
+    /// relationship artists never carry it. A missing key means not
+    /// fetched.
+    #[serde(default)]
+    pub aliases: Option<Vec<Alias>>,
 }
 
 /// Release-group reference shared by search hits and release lookups.
@@ -307,11 +317,23 @@ pub struct Tag {
     pub count: Option<i64>,
 }
 
-/// One artist alias.
+/// One artist alias. `primary`, `locale` and `type-id` are null on
+/// aliases that have none (BrainzMash ws/2, 2026-10-15).
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct Alias {
     /// Alias text.
     pub name: String,
+    #[serde(rename = "sort-name", default)]
+    pub sort_name: Option<String>,
+    /// `en`, `en_GB`, `zh_Hant_TW`.
+    #[serde(default)]
+    pub locale: Option<String>,
+    /// The primary alias for its locale.
+    #[serde(default)]
+    pub primary: Option<bool>,
+    /// Alias type MBID ("Artist name", "Legal name", ...).
+    #[serde(rename = "type-id", default)]
+    pub type_id: Option<String>,
 }
 
 /// Full release lookup document (identity-readiness surface).

@@ -1,0 +1,4067 @@
+{
+ "artist-credit": [
+  {
+   "name": "Ryuichi Sakamoto",
+   "joinphrase": " + ",
+   "artist": {
+    "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8",
+    "aliases": [
+     {
+      "begin": null,
+      "primary": null,
+      "end": null,
+      "ended": false,
+      "locale": null,
+      "name": "R.S.",
+      "type": "Search hint",
+      "sort-name": "R.S.",
+      "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+     },
+     {
+      "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+      "name": "Riuichi Sakamoto",
+      "type": "Search hint",
+      "sort-name": "Riuichi Sakamoto",
+      "locale": null,
+      "ended": false,
+      "primary": null,
+      "end": null,
+      "begin": null
+     },
+     {
+      "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+      "type": "Search hint",
+      "sort-name": "Ryuchi Sakamoto",
+      "name": "Ryuchi Sakamoto",
+      "locale": null,
+      "ended": false,
+      "primary": null,
+      "end": null,
+      "begin": null
+     },
+     {
+      "locale": null,
+      "sort-name": "Ryuichi Sakamamoto",
+      "type": "Search hint",
+      "name": "Ryuichi Sakamamoto",
+      "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+      "ended": false,
+      "begin": null,
+      "primary": null,
+      "end": null
+     },
+     {
+      "primary": null,
+      "end": null,
+      "begin": null,
+      "ended": false,
+      "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+      "type": "Search hint",
+      "name": "Ryûichi Sakamoto",
+      "sort-name": "Ryûichi Sakamoto",
+      "locale": null
+     },
+     {
+      "locale": "de",
+      "type": "Artist name",
+      "sort-name": "Sakamoto, Ryūichi",
+      "name": "Ryūichi Sakamoto",
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "ended": false,
+      "begin": null,
+      "end": null,
+      "primary": true
+     },
+     {
+      "primary": true,
+      "end": null,
+      "begin": null,
+      "sort-name": "Sakamoto, Ryūichi",
+      "type": "Artist name",
+      "name": "Ryūichi Sakamoto",
+      "locale": "en",
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "ended": false
+     },
+     {
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "locale": "fr",
+      "sort-name": "Sakamoto, Ryūichi",
+      "type": "Artist name",
+      "name": "Ryūichi Sakamoto",
+      "ended": false,
+      "begin": null,
+      "end": null,
+      "primary": true
+     },
+     {
+      "begin": null,
+      "primary": true,
+      "end": null,
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "locale": "nl",
+      "type": "Artist name",
+      "sort-name": "Sakamoto, Ryūichi",
+      "name": "Ryūichi Sakamoto",
+      "ended": false
+     },
+     {
+      "locale": null,
+      "sort-name": "Sakamoto Ryuuichi",
+      "type": "Search hint",
+      "name": "Sakamoto Ryuuichi",
+      "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+      "ended": false,
+      "begin": null,
+      "primary": null,
+      "end": null
+     },
+     {
+      "begin": null,
+      "end": null,
+      "primary": true,
+      "ended": false,
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "locale": "vi",
+      "type": "Artist name",
+      "sort-name": "Sakamoto, Ryūichi",
+      "name": "Sakamoto Ryūichi"
+     },
+     {
+      "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+      "locale": null,
+      "type": "Search hint",
+      "sort-name": "坂本 龍一",
+      "name": "坂本 龍一",
+      "ended": false,
+      "begin": null,
+      "primary": null,
+      "end": null
+     },
+     {
+      "ended": false,
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "name": "坂本龍一",
+      "type": "Artist name",
+      "sort-name": "サカモト リュウイチ",
+      "locale": "ja",
+      "end": null,
+      "primary": true,
+      "begin": null
+     },
+     {
+      "ended": false,
+      "locale": "zh_Hans",
+      "name": "坂本龙一",
+      "type": "Artist name",
+      "sort-name": "坂本龙一",
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "begin": null,
+      "primary": true,
+      "end": null
+     },
+     {
+      "begin": null,
+      "end": null,
+      "primary": false,
+      "locale": "ko",
+      "type": "Artist name",
+      "sort-name": "사카모토 류이치",
+      "name": "사카모토 류이치",
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "ended": false
+     }
+    ],
+    "country": "JP",
+    "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+    "sort-name": "Sakamoto, Ryūichi",
+    "type": "Person",
+    "disambiguation": "Japanese composer, pianist, singer, songwriter",
+    "name": "坂本龍一"
+   }
+  },
+  {
+   "joinphrase": "",
+   "name": "Shiro Takatani",
+   "artist": {
+    "disambiguation": "",
+    "type": "Person",
+    "name": "高谷史郎",
+    "sort-name": "Takatani, Shiro",
+    "country": "JP",
+    "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+    "aliases": [],
+    "id": "7493b80f-de18-4f9c-a7bd-08d1ea5adcff"
+   }
+  }
+ ],
+ "media": [
+  {
+   "id": "26759986-844a-32b1-9e88-af10d8fec557",
+   "position": 1,
+   "tracks": [
+    {
+     "recording": {
+      "id": "15ccf129-1746-4091-9830-09ab32c37365",
+      "length": 279000,
+      "artist-credit": [
+       {
+        "artist": {
+         "country": "JP",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "sort-name": "Sakamoto, Ryūichi",
+         "type": "Person",
+         "disambiguation": "Japanese composer, pianist, singer, songwriter",
+         "name": "坂本龍一",
+         "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"
+        },
+        "joinphrase": "",
+        "name": "Ryuichi Sakamoto"
+       }
+      ],
+      "video": false,
+      "disambiguation": "multichannel",
+      "title": "andata",
+      "aliases": []
+     },
+     "number": "1",
+     "title": "andata",
+     "length": 279000,
+     "artist-credit": [
+      {
+       "joinphrase": "",
+       "name": "Ryuichi Sakamoto",
+       "artist": {
+        "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8",
+        "disambiguation": "Japanese composer, pianist, singer, songwriter",
+        "type": "Person",
+        "sort-name": "Sakamoto, Ryūichi",
+        "name": "坂本龍一",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "JP",
+        "aliases": [
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "R.S.",
+          "name": "R.S.",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false
+         },
+         {
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "sort-name": "Riuichi Sakamoto",
+          "type": "Search hint",
+          "name": "Riuichi Sakamoto",
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "ended": false,
+          "sort-name": "Ryuchi Sakamoto",
+          "type": "Search hint",
+          "name": "Ryuchi Sakamoto",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "Ryuichi Sakamamoto",
+          "name": "Ryuichi Sakamamoto",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "Ryûichi Sakamoto",
+          "name": "Ryûichi Sakamoto",
+          "ended": false
+         },
+         {
+          "begin": null,
+          "primary": true,
+          "end": null,
+          "ended": false,
+          "locale": "de",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "ended": false,
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "name": "Ryūichi Sakamoto",
+          "locale": "en",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "primary": true,
+          "begin": null
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "fr",
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "ended": false,
+          "begin": null,
+          "primary": true,
+          "end": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "nl",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "name": "Ryūichi Sakamoto"
+         },
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "type": "Search hint",
+          "name": "Sakamoto Ryuuichi",
+          "sort-name": "Sakamoto Ryuuichi",
+          "locale": null,
+          "ended": false
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "name": "Sakamoto Ryūichi",
+          "locale": "vi",
+          "ended": false
+         },
+         {
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "sort-name": "坂本 龍一",
+          "type": "Search hint",
+          "name": "坂本 龍一",
+          "locale": null,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "locale": "ja",
+          "type": "Artist name",
+          "sort-name": "サカモト リュウイチ",
+          "name": "坂本龍一",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "begin": null,
+          "primary": true,
+          "end": null
+         },
+         {
+          "ended": false,
+          "locale": "zh_Hans",
+          "sort-name": "坂本龙一",
+          "type": "Artist name",
+          "name": "坂本龙一",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "begin": null,
+          "primary": true,
+          "end": null
+         },
+         {
+          "sort-name": "사카모토 류이치",
+          "type": "Artist name",
+          "name": "사카모토 류이치",
+          "locale": "ko",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "end": null,
+          "primary": false,
+          "begin": null
+         }
+        ]
+       }
+      }
+     ],
+     "position": 1,
+     "id": "7c843139-31c2-4eca-aa12-3b40482aaecd"
+    },
+    {
+     "position": 2,
+     "id": "498b8d30-4109-4c8f-8db0-c9acd84e7a4e",
+     "length": 346000,
+     "artist-credit": [
+      {
+       "artist": {
+        "aliases": [
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "type": "Search hint",
+          "name": "R.S.",
+          "sort-name": "R.S.",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "Riuichi Sakamoto",
+          "name": "Riuichi Sakamoto",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "locale": null,
+          "sort-name": "Ryuchi Sakamoto",
+          "type": "Search hint",
+          "name": "Ryuchi Sakamoto",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "locale": null,
+          "sort-name": "Ryuichi Sakamamoto",
+          "type": "Search hint",
+          "name": "Ryuichi Sakamamoto",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false
+         },
+         {
+          "ended": false,
+          "sort-name": "Ryûichi Sakamoto",
+          "type": "Search hint",
+          "name": "Ryûichi Sakamoto",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "de",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "ended": false,
+          "begin": null,
+          "primary": true,
+          "end": null
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "en",
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "begin": null,
+          "end": null,
+          "primary": true
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "fr",
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "begin": null,
+          "end": null,
+          "primary": true
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "nl",
+          "ended": false,
+          "primary": true,
+          "end": null,
+          "begin": null
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "type": "Search hint",
+          "name": "Sakamoto Ryuuichi",
+          "sort-name": "Sakamoto Ryuuichi",
+          "locale": null,
+          "ended": false,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "name": "Sakamoto Ryūichi",
+          "locale": "vi",
+          "ended": false
+         },
+         {
+          "ended": false,
+          "name": "坂本 龍一",
+          "type": "Search hint",
+          "sort-name": "坂本 龍一",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "ja",
+          "sort-name": "サカモト リュウイチ",
+          "type": "Artist name",
+          "name": "坂本龍一",
+          "begin": null,
+          "end": null,
+          "primary": true
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "ended": false,
+          "locale": "zh_Hans",
+          "sort-name": "坂本龙一",
+          "type": "Artist name",
+          "name": "坂本龙一",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "ko",
+          "sort-name": "사카모토 류이치",
+          "type": "Artist name",
+          "name": "사카모토 류이치",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": false
+         }
+        ],
+        "sort-name": "Sakamoto, Ryūichi",
+        "type": "Person",
+        "disambiguation": "Japanese composer, pianist, singer, songwriter",
+        "name": "坂本龍一",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "JP",
+        "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"
+       },
+       "joinphrase": "",
+       "name": "Ryuichi Sakamoto"
+      }
+     ],
+     "number": "2",
+     "title": "disintegration",
+     "recording": {
+      "id": "f4ccf3fa-dd83-4c8a-a1a6-4b8a1810a5c5",
+      "length": 346000,
+      "video": false,
+      "artist-credit": [
+       {
+        "artist": {
+         "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8",
+         "type": "Person",
+         "sort-name": "Sakamoto, Ryūichi",
+         "disambiguation": "Japanese composer, pianist, singer, songwriter",
+         "name": "坂本龍一",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "JP"
+        },
+        "name": "Ryuichi Sakamoto",
+        "joinphrase": ""
+       }
+      ],
+      "disambiguation": "multichannel",
+      "title": "disintegration",
+      "aliases": []
+     }
+    },
+    {
+     "length": 232000,
+     "artist-credit": [
+      {
+       "artist": {
+        "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8",
+        "aliases": [
+         {
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "sort-name": "R.S.",
+          "type": "Search hint",
+          "name": "R.S.",
+          "locale": null,
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "ended": false,
+          "locale": null,
+          "sort-name": "Riuichi Sakamoto",
+          "type": "Search hint",
+          "name": "Riuichi Sakamoto",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "ended": false,
+          "type": "Search hint",
+          "sort-name": "Ryuchi Sakamoto",
+          "name": "Ryuchi Sakamoto",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "Ryuichi Sakamamoto",
+          "name": "Ryuichi Sakamamoto",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "type": "Search hint",
+          "sort-name": "Ryûichi Sakamoto",
+          "name": "Ryûichi Sakamoto",
+          "locale": null
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "de",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "begin": null,
+          "end": null,
+          "primary": true
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "locale": "en",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false
+         },
+         {
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "fr",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "primary": true,
+          "end": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "locale": "nl",
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "begin": null,
+          "primary": true,
+          "end": null
+         },
+         {
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "Sakamoto Ryuuichi",
+          "name": "Sakamoto Ryuuichi",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "ended": false,
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "name": "Sakamoto Ryūichi",
+          "locale": "vi",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "ended": false,
+          "locale": null,
+          "name": "坂本 龍一",
+          "type": "Search hint",
+          "sort-name": "坂本 龍一",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "ended": false,
+          "locale": "ja",
+          "sort-name": "サカモト リュウイチ",
+          "type": "Artist name",
+          "name": "坂本龍一",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "begin": null,
+          "end": null,
+          "primary": true
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "zh_Hans",
+          "type": "Artist name",
+          "name": "坂本龙一",
+          "sort-name": "坂本龙一",
+          "ended": false,
+          "begin": null,
+          "primary": true,
+          "end": null
+         },
+         {
+          "end": null,
+          "primary": false,
+          "begin": null,
+          "ended": false,
+          "name": "사카모토 류이치",
+          "type": "Artist name",
+          "sort-name": "사카모토 류이치",
+          "locale": "ko",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         }
+        ],
+        "type": "Person",
+        "sort-name": "Sakamoto, Ryūichi",
+        "disambiguation": "Japanese composer, pianist, singer, songwriter",
+        "name": "坂本龍一",
+        "country": "JP",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df"
+       },
+       "joinphrase": "",
+       "name": "Ryuichi Sakamoto"
+      }
+     ],
+     "position": 3,
+     "id": "b4f85c63-ae70-4229-b085-d964373e9efb",
+     "recording": {
+      "title": "solari",
+      "disambiguation": "multichannel",
+      "aliases": [],
+      "id": "307517c2-4e4c-415f-b655-51535011f15c",
+      "length": 232000,
+      "video": false,
+      "artist-credit": [
+       {
+        "artist": {
+         "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8",
+         "country": "JP",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "disambiguation": "Japanese composer, pianist, singer, songwriter",
+         "type": "Person",
+         "sort-name": "Sakamoto, Ryūichi",
+         "name": "坂本龍一"
+        },
+        "joinphrase": "",
+        "name": "Ryuichi Sakamoto"
+       }
+      ]
+     },
+     "number": "3",
+     "title": "solari"
+    },
+    {
+     "artist-credit": [
+      {
+       "artist": {
+        "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8",
+        "aliases": [
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "ended": false,
+          "locale": null,
+          "type": "Search hint",
+          "name": "R.S.",
+          "sort-name": "R.S.",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "ended": false,
+          "sort-name": "Riuichi Sakamoto",
+          "type": "Search hint",
+          "name": "Riuichi Sakamoto",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "name": "Ryuchi Sakamoto",
+          "type": "Search hint",
+          "sort-name": "Ryuchi Sakamoto",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "name": "Ryuichi Sakamamoto",
+          "type": "Search hint",
+          "sort-name": "Ryuichi Sakamamoto"
+         },
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "name": "Ryûichi Sakamoto",
+          "type": "Search hint",
+          "sort-name": "Ryûichi Sakamoto",
+          "locale": null,
+          "ended": false
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "ended": false,
+          "locale": "de",
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "begin": null,
+          "primary": true,
+          "end": null,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "en",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi"
+         },
+         {
+          "ended": false,
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "locale": "fr",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "primary": true,
+          "end": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "locale": "nl",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "begin": null,
+          "end": null,
+          "primary": true
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "sort-name": "Sakamoto Ryuuichi",
+          "type": "Search hint",
+          "name": "Sakamoto Ryuuichi",
+          "ended": false,
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "begin": null,
+          "primary": true,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "vi",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Sakamoto Ryūichi",
+          "ended": false
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "坂本 龍一",
+          "name": "坂本 龍一",
+          "ended": false
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "sort-name": "サカモト リュウイチ",
+          "name": "坂本龍一",
+          "locale": "ja",
+          "ended": false,
+          "primary": true,
+          "end": null,
+          "begin": null
+         },
+         {
+          "primary": true,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "sort-name": "坂本龙一",
+          "type": "Artist name",
+          "name": "坂本龙一",
+          "locale": "zh_Hans"
+         },
+         {
+          "locale": "ko",
+          "type": "Artist name",
+          "sort-name": "사카모토 류이치",
+          "name": "사카모토 류이치",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": false
+         }
+        ],
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "JP",
+        "type": "Person",
+        "disambiguation": "Japanese composer, pianist, singer, songwriter",
+        "sort-name": "Sakamoto, Ryūichi",
+        "name": "坂本龍一"
+       },
+       "joinphrase": "",
+       "name": "Ryuichi Sakamoto"
+      }
+     ],
+     "length": 312000,
+     "id": "34bfa618-c847-4f58-bf42-ae559b778037",
+     "position": 4,
+     "recording": {
+      "aliases": [],
+      "disambiguation": "multichannel",
+      "title": "ZURE",
+      "video": false,
+      "artist-credit": [
+       {
+        "artist": {
+         "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8",
+         "type": "Person",
+         "disambiguation": "Japanese composer, pianist, singer, songwriter",
+         "name": "坂本龍一",
+         "sort-name": "Sakamoto, Ryūichi",
+         "country": "JP",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df"
+        },
+        "joinphrase": "",
+        "name": "Ryuichi Sakamoto"
+       }
+      ],
+      "length": 312000,
+      "id": "aecf69a2-489c-448e-9cab-f77f24f75767"
+     },
+     "title": "ZURE",
+     "number": "4"
+    },
+    {
+     "number": "5",
+     "title": "walker",
+     "recording": {
+      "aliases": [],
+      "title": "walker",
+      "disambiguation": "multichannel",
+      "length": 260000,
+      "video": false,
+      "artist-credit": [
+       {
+        "joinphrase": "",
+        "name": "Ryuichi Sakamoto",
+        "artist": {
+         "sort-name": "Sakamoto, Ryūichi",
+         "type": "Person",
+         "disambiguation": "Japanese composer, pianist, singer, songwriter",
+         "name": "坂本龍一",
+         "country": "JP",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"
+        }
+       }
+      ],
+      "id": "d972df6b-a53e-4b4b-96ad-e48060cf2e65"
+     },
+     "id": "4bbc341b-8076-4280-b1e8-204d66663d58",
+     "position": 5,
+     "length": 260000,
+     "artist-credit": [
+      {
+       "name": "Ryuichi Sakamoto",
+       "joinphrase": "",
+       "artist": {
+        "aliases": [
+         {
+          "locale": null,
+          "sort-name": "R.S.",
+          "type": "Search hint",
+          "name": "R.S.",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "sort-name": "Riuichi Sakamoto",
+          "type": "Search hint",
+          "name": "Riuichi Sakamoto",
+          "locale": null,
+          "ended": false
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "ended": false,
+          "type": "Search hint",
+          "name": "Ryuchi Sakamoto",
+          "sort-name": "Ryuchi Sakamoto",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "locale": null,
+          "sort-name": "Ryuichi Sakamamoto",
+          "type": "Search hint",
+          "name": "Ryuichi Sakamamoto",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "Ryûichi Sakamoto",
+          "name": "Ryûichi Sakamoto"
+         },
+         {
+          "begin": null,
+          "primary": true,
+          "end": null,
+          "ended": false,
+          "locale": "de",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "ended": false,
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "name": "Ryūichi Sakamoto",
+          "locale": "en",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "primary": true,
+          "begin": null
+         },
+         {
+          "primary": true,
+          "end": null,
+          "begin": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "fr",
+          "ended": false
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "locale": "nl",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false
+         },
+         {
+          "sort-name": "Sakamoto Ryuuichi",
+          "type": "Search hint",
+          "name": "Sakamoto Ryuuichi",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "name": "Sakamoto Ryūichi",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "vi",
+          "end": null,
+          "primary": true,
+          "begin": null
+         },
+         {
+          "locale": null,
+          "name": "坂本 龍一",
+          "type": "Search hint",
+          "sort-name": "坂本 龍一",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "type": "Artist name",
+          "name": "坂本龍一",
+          "sort-name": "サカモト リュウイチ",
+          "locale": "ja",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "end": null,
+          "primary": true,
+          "begin": null
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "sort-name": "坂本龙一",
+          "type": "Artist name",
+          "name": "坂本龙一",
+          "locale": "zh_Hans",
+          "ended": false,
+          "primary": true,
+          "end": null,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": false,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "ko",
+          "sort-name": "사카모토 류이치",
+          "type": "Artist name",
+          "name": "사카모토 류이치"
+         }
+        ],
+        "type": "Person",
+        "sort-name": "Sakamoto, Ryūichi",
+        "disambiguation": "Japanese composer, pianist, singer, songwriter",
+        "name": "坂本龍一",
+        "country": "JP",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"
+       }
+      }
+     ]
+    },
+    {
+     "recording": {
+      "length": 221000,
+      "artist-credit": [
+       {
+        "name": "Ryuichi Sakamoto",
+        "joinphrase": "",
+        "artist": {
+         "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "JP",
+         "type": "Person",
+         "name": "坂本龍一",
+         "disambiguation": "Japanese composer, pianist, singer, songwriter",
+         "sort-name": "Sakamoto, Ryūichi"
+        }
+       }
+      ],
+      "video": false,
+      "id": "f43526a8-dec5-4292-8c41-367a93b7d533",
+      "aliases": [],
+      "disambiguation": "multichannel",
+      "title": "stakra"
+     },
+     "number": "6",
+     "title": "stakra",
+     "length": 221000,
+     "artist-credit": [
+      {
+       "name": "Ryuichi Sakamoto",
+       "joinphrase": "",
+       "artist": {
+        "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "JP",
+        "sort-name": "Sakamoto, Ryūichi",
+        "type": "Person",
+        "disambiguation": "Japanese composer, pianist, singer, songwriter",
+        "name": "坂本龍一",
+        "aliases": [
+         {
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "sort-name": "R.S.",
+          "type": "Search hint",
+          "name": "R.S.",
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "ended": false,
+          "locale": null,
+          "sort-name": "Riuichi Sakamoto",
+          "type": "Search hint",
+          "name": "Riuichi Sakamoto",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "name": "Ryuchi Sakamoto",
+          "type": "Search hint",
+          "sort-name": "Ryuchi Sakamoto"
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "type": "Search hint",
+          "sort-name": "Ryuichi Sakamamoto",
+          "name": "Ryuichi Sakamamoto",
+          "locale": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "ended": false,
+          "locale": null,
+          "type": "Search hint",
+          "name": "Ryûichi Sakamoto",
+          "sort-name": "Ryûichi Sakamoto",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "de",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "name": "Ryūichi Sakamoto",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": true
+         },
+         {
+          "primary": true,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "en"
+         },
+         {
+          "primary": true,
+          "end": null,
+          "begin": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "fr",
+          "ended": false
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "nl",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "ended": false
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "type": "Search hint",
+          "name": "Sakamoto Ryuuichi",
+          "sort-name": "Sakamoto Ryuuichi",
+          "ended": false
+         },
+         {
+          "primary": true,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Sakamoto Ryūichi",
+          "locale": "vi",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "locale": null,
+          "sort-name": "坂本 龍一",
+          "type": "Search hint",
+          "name": "坂本 龍一",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "name": "坂本龍一",
+          "sort-name": "サカモト リュウイチ",
+          "locale": "ja",
+          "ended": false,
+          "end": null,
+          "primary": true,
+          "begin": null
+         },
+         {
+          "primary": true,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "name": "坂本龙一",
+          "sort-name": "坂本龙一",
+          "locale": "zh_Hans"
+         },
+         {
+          "begin": null,
+          "primary": false,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "ko",
+          "name": "사카모토 류이치",
+          "type": "Artist name",
+          "sort-name": "사카모토 류이치",
+          "ended": false
+         }
+        ]
+       }
+      }
+     ],
+     "position": 6,
+     "id": "82036f3c-7b04-487b-850c-69e5bbf9b1f9"
+    },
+    {
+     "length": 243000,
+     "artist-credit": [
+      {
+       "joinphrase": "",
+       "name": "Ryuichi Sakamoto",
+       "artist": {
+        "aliases": [
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type": "Search hint",
+          "sort-name": "R.S.",
+          "name": "R.S.",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "Riuichi Sakamoto",
+          "name": "Riuichi Sakamoto",
+          "ended": false
+         },
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type": "Search hint",
+          "name": "Ryuchi Sakamoto",
+          "sort-name": "Ryuchi Sakamoto",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "locale": null,
+          "sort-name": "Ryuichi Sakamamoto",
+          "type": "Search hint",
+          "name": "Ryuichi Sakamamoto",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false
+         },
+         {
+          "ended": false,
+          "type": "Search hint",
+          "sort-name": "Ryûichi Sakamoto",
+          "name": "Ryûichi Sakamoto",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "name": "Ryūichi Sakamoto",
+          "locale": "de",
+          "primary": true,
+          "end": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "locale": "en",
+          "end": null,
+          "primary": true,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "fr",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "begin": null,
+          "end": null,
+          "primary": true
+         },
+         {
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "locale": "nl",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "primary": true,
+          "end": null,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "ended": false,
+          "locale": null,
+          "name": "Sakamoto Ryuuichi",
+          "type": "Search hint",
+          "sort-name": "Sakamoto Ryuuichi",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "locale": "vi",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Sakamoto Ryūichi",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "begin": null,
+          "primary": true,
+          "end": null
+         },
+         {
+          "type": "Search hint",
+          "sort-name": "坂本 龍一",
+          "name": "坂本 龍一",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "ended": false,
+          "sort-name": "サカモト リュウイチ",
+          "type": "Artist name",
+          "name": "坂本龍一",
+          "locale": "ja",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "name": "坂本龙一",
+          "type": "Artist name",
+          "sort-name": "坂本龙一",
+          "locale": "zh_Hans"
+         },
+         {
+          "primary": false,
+          "end": null,
+          "begin": null,
+          "type": "Artist name",
+          "name": "사카모토 류이치",
+          "sort-name": "사카모토 류이치",
+          "locale": "ko",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false
+         }
+        ],
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "JP",
+        "type": "Person",
+        "disambiguation": "Japanese composer, pianist, singer, songwriter",
+        "name": "坂本龍一",
+        "sort-name": "Sakamoto, Ryūichi",
+        "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"
+       }
+      }
+     ],
+     "position": 7,
+     "id": "6390837a-cbb6-40ed-ac23-59bcced243b4",
+     "recording": {
+      "title": "ubi",
+      "disambiguation": "multichannel",
+      "aliases": [],
+      "id": "95e600ea-a7c1-4f22-b1f9-5b338118e4ec",
+      "artist-credit": [
+       {
+        "artist": {
+         "type": "Person",
+         "name": "坂本龍一",
+         "disambiguation": "Japanese composer, pianist, singer, songwriter",
+         "sort-name": "Sakamoto, Ryūichi",
+         "country": "JP",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"
+        },
+        "name": "Ryuichi Sakamoto",
+        "joinphrase": ""
+       }
+      ],
+      "video": false,
+      "length": 243000
+     },
+     "number": "7",
+     "title": "ubi"
+    },
+    {
+     "length": 313000,
+     "artist-credit": [
+      {
+       "artist": {
+        "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8",
+        "country": "JP",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "name": "坂本龍一",
+        "type": "Person",
+        "disambiguation": "Japanese composer, pianist, singer, songwriter",
+        "sort-name": "Sakamoto, Ryūichi",
+        "aliases": [
+         {
+          "locale": null,
+          "type": "Search hint",
+          "name": "R.S.",
+          "sort-name": "R.S.",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "type": "Search hint",
+          "sort-name": "Riuichi Sakamoto",
+          "name": "Riuichi Sakamoto",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "type": "Search hint",
+          "name": "Ryuchi Sakamoto",
+          "sort-name": "Ryuchi Sakamoto",
+          "locale": null,
+          "ended": false,
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "Ryuichi Sakamamoto",
+          "name": "Ryuichi Sakamamoto"
+         },
+         {
+          "ended": false,
+          "sort-name": "Ryûichi Sakamoto",
+          "type": "Search hint",
+          "name": "Ryûichi Sakamoto",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "de",
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi"
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "en",
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": true
+         },
+         {
+          "ended": false,
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "locale": "fr",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "primary": true,
+          "end": null,
+          "begin": null
+         },
+         {
+          "primary": true,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "name": "Ryūichi Sakamoto",
+          "locale": "nl",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "type": "Search hint",
+          "name": "Sakamoto Ryuuichi",
+          "sort-name": "Sakamoto Ryuuichi",
+          "locale": null
+         },
+         {
+          "primary": true,
+          "end": null,
+          "begin": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Sakamoto Ryūichi",
+          "locale": "vi",
+          "ended": false
+         },
+         {
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "坂本 龍一",
+          "name": "坂本 龍一",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "type": "Artist name",
+          "sort-name": "サカモト リュウイチ",
+          "name": "坂本龍一",
+          "locale": "ja",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "primary": true,
+          "end": null,
+          "begin": null
+         },
+         {
+          "primary": true,
+          "end": null,
+          "begin": null,
+          "name": "坂本龙一",
+          "type": "Artist name",
+          "sort-name": "坂本龙一",
+          "locale": "zh_Hans",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false
+         },
+         {
+          "ended": false,
+          "type": "Artist name",
+          "name": "사카모토 류이치",
+          "sort-name": "사카모토 류이치",
+          "locale": "ko",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "primary": false,
+          "end": null,
+          "begin": null
+         }
+        ]
+       },
+       "name": "Ryuichi Sakamoto",
+       "joinphrase": ""
+      }
+     ],
+     "position": 8,
+     "id": "cd9e385e-754a-4392-9cc6-b13f16d640f2",
+     "recording": {
+      "aliases": [],
+      "title": "fullmoon",
+      "disambiguation": "multichannel",
+      "artist-credit": [
+       {
+        "artist": {
+         "country": "JP",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "type": "Person",
+         "sort-name": "Sakamoto, Ryūichi",
+         "disambiguation": "Japanese composer, pianist, singer, songwriter",
+         "name": "坂本龍一",
+         "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"
+        },
+        "joinphrase": "",
+        "name": "Ryuichi Sakamoto"
+       }
+      ],
+      "video": false,
+      "length": 313000,
+      "id": "490739da-4b3e-4007-9b64-622ffa8bb88e"
+     },
+     "number": "8",
+     "title": "fullmoon"
+    },
+    {
+     "number": "9",
+     "title": "async",
+     "recording": {
+      "disambiguation": "multichannel",
+      "title": "async",
+      "aliases": [],
+      "id": "42acff7a-7d75-4ba3-a736-bbd699411cc8",
+      "video": false,
+      "artist-credit": [
+       {
+        "artist": {
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "JP",
+         "type": "Person",
+         "name": "坂本龍一",
+         "disambiguation": "Japanese composer, pianist, singer, songwriter",
+         "sort-name": "Sakamoto, Ryūichi",
+         "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"
+        },
+        "joinphrase": "",
+        "name": "Ryuichi Sakamoto"
+       }
+      ],
+      "length": 165000
+     },
+     "position": 9,
+     "id": "7b2d7e03-6314-4d6b-b1aa-57888a7a66d2",
+     "length": 165000,
+     "artist-credit": [
+      {
+       "joinphrase": "",
+       "name": "Ryuichi Sakamoto",
+       "artist": {
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "JP",
+        "disambiguation": "Japanese composer, pianist, singer, songwriter",
+        "type": "Person",
+        "sort-name": "Sakamoto, Ryūichi",
+        "name": "坂本龍一",
+        "aliases": [
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "ended": false,
+          "type": "Search hint",
+          "name": "R.S.",
+          "sort-name": "R.S.",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "locale": null,
+          "sort-name": "Riuichi Sakamoto",
+          "type": "Search hint",
+          "name": "Riuichi Sakamoto",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "type": "Search hint",
+          "name": "Ryuchi Sakamoto",
+          "sort-name": "Ryuchi Sakamoto",
+          "locale": null,
+          "ended": false,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "sort-name": "Ryuichi Sakamamoto",
+          "type": "Search hint",
+          "name": "Ryuichi Sakamamoto",
+          "ended": false,
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "type": "Search hint",
+          "name": "Ryûichi Sakamoto",
+          "sort-name": "Ryûichi Sakamoto",
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "de",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": true
+         },
+         {
+          "locale": "en",
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "begin": null,
+          "primary": true,
+          "end": null
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "fr",
+          "end": null,
+          "primary": true,
+          "begin": null
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "nl"
+         },
+         {
+          "type": "Search hint",
+          "name": "Sakamoto Ryuuichi",
+          "sort-name": "Sakamoto Ryuuichi",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "ended": false,
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Sakamoto Ryūichi",
+          "locale": "vi",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "ended": false,
+          "name": "坂本 龍一",
+          "type": "Search hint",
+          "sort-name": "坂本 龍一",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "ja",
+          "type": "Artist name",
+          "name": "坂本龍一",
+          "sort-name": "サカモト リュウイチ",
+          "begin": null,
+          "primary": true,
+          "end": null
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "name": "坂本龙一",
+          "sort-name": "坂本龙一",
+          "locale": "zh_Hans",
+          "ended": false
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "ko",
+          "type": "Artist name",
+          "name": "사카모토 류이치",
+          "sort-name": "사카모토 류이치",
+          "begin": null,
+          "primary": false,
+          "end": null
+         }
+        ],
+        "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"
+       }
+      }
+     ]
+    },
+    {
+     "recording": {
+      "aliases": [],
+      "title": "tri",
+      "disambiguation": "multichannel",
+      "length": 209000,
+      "artist-credit": [
+       {
+        "name": "Ryuichi Sakamoto",
+        "joinphrase": "",
+        "artist": {
+         "type": "Person",
+         "disambiguation": "Japanese composer, pianist, singer, songwriter",
+         "name": "坂本龍一",
+         "sort-name": "Sakamoto, Ryūichi",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "JP",
+         "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"
+        }
+       }
+      ],
+      "video": false,
+      "id": "0b1038a9-cb4e-4fa5-b42a-38c2c754a94e"
+     },
+     "number": "10",
+     "title": "tri",
+     "length": 209000,
+     "artist-credit": [
+      {
+       "name": "Ryuichi Sakamoto",
+       "joinphrase": "",
+       "artist": {
+        "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8",
+        "aliases": [
+         {
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "sort-name": "R.S.",
+          "type": "Search hint",
+          "name": "R.S.",
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "type": "Search hint",
+          "name": "Riuichi Sakamoto",
+          "sort-name": "Riuichi Sakamoto",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "type": "Search hint",
+          "sort-name": "Ryuchi Sakamoto",
+          "name": "Ryuchi Sakamoto",
+          "locale": null,
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "name": "Ryuichi Sakamamoto",
+          "type": "Search hint",
+          "sort-name": "Ryuichi Sakamamoto",
+          "locale": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "type": "Search hint",
+          "name": "Ryûichi Sakamoto",
+          "sort-name": "Ryûichi Sakamoto"
+         },
+         {
+          "begin": null,
+          "primary": true,
+          "end": null,
+          "ended": false,
+          "locale": "de",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "en",
+          "end": null,
+          "primary": true,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "primary": true,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "fr",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "ended": false
+         },
+         {
+          "ended": false,
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "nl",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "primary": true,
+          "end": null,
+          "begin": null
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "name": "Sakamoto Ryuuichi",
+          "type": "Search hint",
+          "sort-name": "Sakamoto Ryuuichi",
+          "locale": null,
+          "ended": false
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "ended": false,
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Sakamoto Ryūichi",
+          "locale": "vi",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "type": "Search hint",
+          "sort-name": "坂本 龍一",
+          "name": "坂本 龍一",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "sort-name": "サカモト リュウイチ",
+          "name": "坂本龍一",
+          "locale": "ja",
+          "ended": false,
+          "primary": true,
+          "end": null,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "primary": true,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "zh_Hans",
+          "sort-name": "坂本龙一",
+          "type": "Artist name",
+          "name": "坂本龙一",
+          "ended": false
+         },
+         {
+          "ended": false,
+          "type": "Artist name",
+          "name": "사카모토 류이치",
+          "sort-name": "사카모토 류이치",
+          "locale": "ko",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "primary": false,
+          "begin": null
+         }
+        ],
+        "country": "JP",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "type": "Person",
+        "sort-name": "Sakamoto, Ryūichi",
+        "disambiguation": "Japanese composer, pianist, singer, songwriter",
+        "name": "坂本龍一"
+       }
+      }
+     ],
+     "id": "12e81e92-bae9-4b9f-8015-cc2f24049dff",
+     "position": 10
+    },
+    {
+     "recording": {
+      "length": 264000,
+      "artist-credit": [
+       {
+        "artist": {
+         "sort-name": "Sakamoto, Ryūichi",
+         "type": "Person",
+         "disambiguation": "Japanese composer, pianist, singer, songwriter",
+         "name": "坂本龍一",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "JP",
+         "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"
+        },
+        "joinphrase": "",
+        "name": "Ryuichi Sakamoto"
+       }
+      ],
+      "video": false,
+      "id": "174b795f-a886-47f9-9e8b-4d84ebc200af",
+      "aliases": [],
+      "title": "Life, Life",
+      "disambiguation": "multichannel"
+     },
+     "number": "11",
+     "title": "Life, Life",
+     "length": 264000,
+     "artist-credit": [
+      {
+       "artist": {
+        "aliases": [
+         {
+          "locale": null,
+          "type": "Search hint",
+          "name": "R.S.",
+          "sort-name": "R.S.",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "ended": false,
+          "locale": null,
+          "name": "Riuichi Sakamoto",
+          "type": "Search hint",
+          "sort-name": "Riuichi Sakamoto",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "locale": null,
+          "sort-name": "Ryuchi Sakamoto",
+          "type": "Search hint",
+          "name": "Ryuchi Sakamoto",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "name": "Ryuichi Sakamamoto",
+          "type": "Search hint",
+          "sort-name": "Ryuichi Sakamamoto",
+          "locale": null
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "type": "Search hint",
+          "name": "Ryûichi Sakamoto",
+          "sort-name": "Ryûichi Sakamoto",
+          "locale": null,
+          "ended": false
+         },
+         {
+          "primary": true,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "name": "Ryūichi Sakamoto",
+          "locale": "de"
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "ended": false,
+          "locale": "en",
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "fr",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "name": "Ryūichi Sakamoto",
+          "ended": false
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "ended": false,
+          "locale": "nl",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "name": "Ryūichi Sakamoto",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "name": "Sakamoto Ryuuichi",
+          "type": "Search hint",
+          "sort-name": "Sakamoto Ryuuichi",
+          "ended": false
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "vi",
+          "type": "Artist name",
+          "name": "Sakamoto Ryūichi",
+          "sort-name": "Sakamoto, Ryūichi",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": true
+         },
+         {
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "name": "坂本 龍一",
+          "type": "Search hint",
+          "sort-name": "坂本 龍一",
+          "locale": null,
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "ja",
+          "type": "Artist name",
+          "name": "坂本龍一",
+          "sort-name": "サカモト リュウイチ",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": true
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "ended": false,
+          "locale": "zh_Hans",
+          "name": "坂本龙一",
+          "type": "Artist name",
+          "sort-name": "坂本龙一",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "locale": "ko",
+          "type": "Artist name",
+          "sort-name": "사카모토 류이치",
+          "name": "사카모토 류이치",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": false
+         }
+        ],
+        "disambiguation": "Japanese composer, pianist, singer, songwriter",
+        "type": "Person",
+        "name": "坂本龍一",
+        "sort-name": "Sakamoto, Ryūichi",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "JP",
+        "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"
+       },
+       "joinphrase": "",
+       "name": "Ryuichi Sakamoto"
+      }
+     ],
+     "position": 11,
+     "id": "843b2aa8-4f60-4968-8f8f-d32fafe643f4"
+    },
+    {
+     "artist-credit": [
+      {
+       "name": "Ryuichi Sakamoto",
+       "joinphrase": "",
+       "artist": {
+        "country": "JP",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "disambiguation": "Japanese composer, pianist, singer, songwriter",
+        "type": "Person",
+        "sort-name": "Sakamoto, Ryūichi",
+        "name": "坂本龍一",
+        "aliases": [
+         {
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "type": "Search hint",
+          "sort-name": "R.S.",
+          "name": "R.S.",
+          "locale": null,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "ended": false,
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "Riuichi Sakamoto",
+          "name": "Riuichi Sakamoto",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "Ryuchi Sakamoto",
+          "name": "Ryuchi Sakamoto",
+          "ended": false,
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "sort-name": "Ryuichi Sakamamoto",
+          "type": "Search hint",
+          "name": "Ryuichi Sakamamoto",
+          "locale": null,
+          "ended": false,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "sort-name": "Ryûichi Sakamoto",
+          "type": "Search hint",
+          "name": "Ryûichi Sakamoto",
+          "ended": false
+         },
+         {
+          "ended": false,
+          "locale": "de",
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "begin": null,
+          "end": null,
+          "primary": true
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "locale": "en"
+         },
+         {
+          "begin": null,
+          "primary": true,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "fr",
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "ended": false
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "locale": "nl",
+          "ended": false
+         },
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type": "Search hint",
+          "sort-name": "Sakamoto Ryuuichi",
+          "name": "Sakamoto Ryuuichi",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Sakamoto Ryūichi",
+          "locale": "vi",
+          "end": null,
+          "primary": true,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "type": "Search hint",
+          "sort-name": "坂本 龍一",
+          "name": "坂本 龍一",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "ended": false,
+          "locale": "ja",
+          "type": "Artist name",
+          "name": "坂本龍一",
+          "sort-name": "サカモト リュウイチ",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "zh_Hans",
+          "type": "Artist name",
+          "sort-name": "坂本龙一",
+          "name": "坂本龙一",
+          "begin": null,
+          "primary": true,
+          "end": null
+         },
+         {
+          "type": "Artist name",
+          "sort-name": "사카모토 류이치",
+          "name": "사카모토 류이치",
+          "locale": "ko",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "end": null,
+          "primary": false,
+          "begin": null
+         }
+        ],
+        "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"
+       }
+      }
+     ],
+     "length": 222000,
+     "position": 12,
+     "id": "f0aff424-c9f2-4c82-84ee-50e4893dc9d0",
+     "recording": {
+      "title": "honj",
+      "disambiguation": "multichannel",
+      "aliases": [],
+      "id": "db3a2e92-39e3-4652-98e4-f3c00fe14d71",
+      "artist-credit": [
+       {
+        "artist": {
+         "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "JP",
+         "type": "Person",
+         "name": "坂本龍一",
+         "disambiguation": "Japanese composer, pianist, singer, songwriter",
+         "sort-name": "Sakamoto, Ryūichi"
+        },
+        "name": "Ryuichi Sakamoto",
+        "joinphrase": ""
+       }
+      ],
+      "video": false,
+      "length": 222000
+     },
+     "title": "honj",
+     "number": "12"
+    },
+    {
+     "recording": {
+      "aliases": [],
+      "disambiguation": "multichannel",
+      "title": "ff",
+      "length": 313000,
+      "artist-credit": [
+       {
+        "artist": {
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "JP",
+         "type": "Person",
+         "name": "坂本龍一",
+         "disambiguation": "Japanese composer, pianist, singer, songwriter",
+         "sort-name": "Sakamoto, Ryūichi",
+         "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"
+        },
+        "name": "Ryuichi Sakamoto",
+        "joinphrase": ""
+       }
+      ],
+      "video": false,
+      "id": "99c73779-332c-456b-aee1-809def763c95"
+     },
+     "number": "13",
+     "title": "ff",
+     "length": 313000,
+     "artist-credit": [
+      {
+       "artist": {
+        "disambiguation": "Japanese composer, pianist, singer, songwriter",
+        "type": "Person",
+        "name": "坂本龍一",
+        "sort-name": "Sakamoto, Ryūichi",
+        "country": "JP",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "aliases": [
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "type": "Search hint",
+          "name": "R.S.",
+          "sort-name": "R.S.",
+          "locale": null
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "type": "Search hint",
+          "sort-name": "Riuichi Sakamoto",
+          "name": "Riuichi Sakamoto",
+          "locale": null,
+          "ended": false
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "ended": false,
+          "locale": null,
+          "sort-name": "Ryuchi Sakamoto",
+          "type": "Search hint",
+          "name": "Ryuchi Sakamoto",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "ended": false,
+          "sort-name": "Ryuichi Sakamamoto",
+          "type": "Search hint",
+          "name": "Ryuichi Sakamamoto",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "sort-name": "Ryûichi Sakamoto",
+          "type": "Search hint",
+          "name": "Ryûichi Sakamoto",
+          "locale": null,
+          "ended": false,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "name": "Ryūichi Sakamoto",
+          "locale": "de"
+         },
+         {
+          "ended": false,
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "en",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "primary": true,
+          "begin": null
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "fr",
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "ended": false,
+          "begin": null,
+          "primary": true,
+          "end": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "nl",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto"
+         },
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "sort-name": "Sakamoto Ryuuichi",
+          "type": "Search hint",
+          "name": "Sakamoto Ryuuichi",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false
+         },
+         {
+          "ended": false,
+          "locale": "vi",
+          "name": "Sakamoto Ryūichi",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "begin": null,
+          "primary": true,
+          "end": null
+         },
+         {
+          "ended": false,
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "坂本 龍一",
+          "name": "坂本 龍一",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "ended": false,
+          "type": "Artist name",
+          "sort-name": "サカモト リュウイチ",
+          "name": "坂本龍一",
+          "locale": "ja",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "name": "坂本龙一",
+          "sort-name": "坂本龙一",
+          "locale": "zh_Hans"
+         },
+         {
+          "ended": false,
+          "locale": "ko",
+          "type": "Artist name",
+          "name": "사카모토 류이치",
+          "sort-name": "사카모토 류이치",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "begin": null,
+          "end": null,
+          "primary": false
+         }
+        ],
+        "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"
+       },
+       "name": "Ryuichi Sakamoto",
+       "joinphrase": ""
+      }
+     ],
+     "position": 13,
+     "id": "60d1c9c6-d434-4435-a730-6acf27232ab3"
+    },
+    {
+     "number": "14",
+     "title": "garden",
+     "recording": {
+      "aliases": [],
+      "title": "garden",
+      "disambiguation": "multichannel",
+      "length": 256000,
+      "artist-credit": [
+       {
+        "artist": {
+         "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8",
+         "country": "JP",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "type": "Person",
+         "name": "坂本龍一",
+         "disambiguation": "Japanese composer, pianist, singer, songwriter",
+         "sort-name": "Sakamoto, Ryūichi"
+        },
+        "joinphrase": "",
+        "name": "Ryuichi Sakamoto"
+       }
+      ],
+      "video": false,
+      "id": "77dd5911-ecd2-4a67-9a75-6db439c4fa95"
+     },
+     "id": "af3d4a10-ee36-46f6-b5d8-849ec2a3ba2c",
+     "position": 14,
+     "length": 256000,
+     "artist-credit": [
+      {
+       "artist": {
+        "type": "Person",
+        "disambiguation": "Japanese composer, pianist, singer, songwriter",
+        "sort-name": "Sakamoto, Ryūichi",
+        "name": "坂本龍一",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "JP",
+        "aliases": [
+         {
+          "ended": false,
+          "locale": null,
+          "sort-name": "R.S.",
+          "type": "Search hint",
+          "name": "R.S.",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "ended": false,
+          "locale": null,
+          "name": "Riuichi Sakamoto",
+          "type": "Search hint",
+          "sort-name": "Riuichi Sakamoto",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "type": "Search hint",
+          "name": "Ryuchi Sakamoto",
+          "sort-name": "Ryuchi Sakamoto",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "type": "Search hint",
+          "name": "Ryuichi Sakamamoto",
+          "sort-name": "Ryuichi Sakamamoto",
+          "ended": false,
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "ended": false,
+          "type": "Search hint",
+          "name": "Ryûichi Sakamoto",
+          "sort-name": "Ryûichi Sakamoto",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "de",
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "begin": null,
+          "end": null,
+          "primary": true
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "en",
+          "end": null,
+          "primary": true,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "fr",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "name": "Ryūichi Sakamoto"
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "nl",
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "begin": null,
+          "end": null,
+          "primary": true
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "name": "Sakamoto Ryuuichi",
+          "type": "Search hint",
+          "sort-name": "Sakamoto Ryuuichi",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "type": "Artist name",
+          "name": "Sakamoto Ryūichi",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "vi",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "坂本 龍一",
+          "name": "坂本 龍一",
+          "ended": false
+         },
+         {
+          "primary": true,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "sort-name": "サカモト リュウイチ",
+          "type": "Artist name",
+          "name": "坂本龍一",
+          "locale": "ja",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "name": "坂本龙一",
+          "sort-name": "坂本龙一",
+          "locale": "zh_Hans"
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "sort-name": "사카모토 류이치",
+          "type": "Artist name",
+          "name": "사카모토 류이치",
+          "locale": "ko",
+          "ended": false,
+          "primary": false,
+          "end": null,
+          "begin": null
+         }
+        ],
+        "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"
+       },
+       "name": "Ryuichi Sakamoto",
+       "joinphrase": ""
+      }
+     ]
+    },
+    {
+     "title": "water state 2",
+     "number": "15",
+     "recording": {
+      "aliases": [],
+      "title": "water state 2",
+      "disambiguation": "multichannel",
+      "length": 434000,
+      "artist-credit": [
+       {
+        "name": "Ryuichi Sakamoto",
+        "joinphrase": "",
+        "artist": {
+         "sort-name": "Sakamoto, Ryūichi",
+         "type": "Person",
+         "disambiguation": "Japanese composer, pianist, singer, songwriter",
+         "name": "坂本龍一",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "JP",
+         "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"
+        }
+       }
+      ],
+      "video": false,
+      "id": "1914656c-598b-414c-b4be-eaf7cc3543a0"
+     },
+     "position": 15,
+     "id": "9343ae1e-56b1-49ee-9cff-a9181a522197",
+     "artist-credit": [
+      {
+       "joinphrase": "",
+       "name": "Ryuichi Sakamoto",
+       "artist": {
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "JP",
+        "disambiguation": "Japanese composer, pianist, singer, songwriter",
+        "type": "Person",
+        "name": "坂本龍一",
+        "sort-name": "Sakamoto, Ryūichi",
+        "aliases": [
+         {
+          "ended": false,
+          "type": "Search hint",
+          "sort-name": "R.S.",
+          "name": "R.S.",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "name": "Riuichi Sakamoto",
+          "type": "Search hint",
+          "sort-name": "Riuichi Sakamoto",
+          "locale": null,
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "name": "Ryuchi Sakamoto",
+          "type": "Search hint",
+          "sort-name": "Ryuchi Sakamoto"
+         },
+         {
+          "ended": false,
+          "type": "Search hint",
+          "sort-name": "Ryuichi Sakamamoto",
+          "name": "Ryuichi Sakamamoto",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "type": "Search hint",
+          "name": "Ryûichi Sakamoto",
+          "sort-name": "Ryûichi Sakamoto",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "de"
+         },
+         {
+          "primary": true,
+          "end": null,
+          "begin": null,
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "en",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "fr",
+          "end": null,
+          "primary": true,
+          "begin": null
+         },
+         {
+          "locale": "nl",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "begin": null,
+          "primary": true,
+          "end": null
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "type": "Search hint",
+          "sort-name": "Sakamoto Ryuuichi",
+          "name": "Sakamoto Ryuuichi",
+          "locale": null,
+          "ended": false,
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "primary": true,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "name": "Sakamoto Ryūichi",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "vi"
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "ended": false,
+          "locale": null,
+          "type": "Search hint",
+          "name": "坂本 龍一",
+          "sort-name": "坂本 龍一",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "primary": true,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "name": "坂本龍一",
+          "type": "Artist name",
+          "sort-name": "サカモト リュウイチ",
+          "locale": "ja",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "zh_Hans",
+          "name": "坂本龙一",
+          "type": "Artist name",
+          "sort-name": "坂本龙一",
+          "begin": null,
+          "primary": true,
+          "end": null
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "sort-name": "사카모토 류이치",
+          "type": "Artist name",
+          "name": "사카모토 류이치",
+          "locale": "ko",
+          "primary": false,
+          "end": null,
+          "begin": null
+         }
+        ],
+        "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"
+       }
+      }
+     ],
+     "length": 434000
+    },
+    {
+     "length": 419000,
+     "artist-credit": [
+      {
+       "artist": {
+        "aliases": [
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "R.S.",
+          "name": "R.S.",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "sort-name": "Riuichi Sakamoto",
+          "type": "Search hint",
+          "name": "Riuichi Sakamoto",
+          "locale": null,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "type": "Search hint",
+          "name": "Ryuchi Sakamoto",
+          "sort-name": "Ryuchi Sakamoto",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "sort-name": "Ryuichi Sakamamoto",
+          "type": "Search hint",
+          "name": "Ryuichi Sakamamoto",
+          "locale": null
+         },
+         {
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "type": "Search hint",
+          "name": "Ryûichi Sakamoto",
+          "sort-name": "Ryûichi Sakamoto",
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "name": "Ryūichi Sakamoto",
+          "locale": "de",
+          "ended": false,
+          "primary": true,
+          "end": null,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "locale": "en",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false
+         },
+         {
+          "locale": "fr",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "begin": null,
+          "primary": true,
+          "end": null
+         },
+         {
+          "locale": "nl",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": true
+         },
+         {
+          "ended": false,
+          "locale": null,
+          "type": "Search hint",
+          "name": "Sakamoto Ryuuichi",
+          "sort-name": "Sakamoto Ryuuichi",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "vi",
+          "type": "Artist name",
+          "name": "Sakamoto Ryūichi",
+          "sort-name": "Sakamoto, Ryūichi"
+         },
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "name": "坂本 龍一",
+          "type": "Search hint",
+          "sort-name": "坂本 龍一",
+          "locale": null,
+          "ended": false
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "ja",
+          "type": "Artist name",
+          "sort-name": "サカモト リュウイチ",
+          "name": "坂本龍一",
+          "ended": false,
+          "begin": null,
+          "primary": true,
+          "end": null
+         },
+         {
+          "ended": false,
+          "locale": "zh_Hans",
+          "type": "Artist name",
+          "name": "坂本龙一",
+          "sort-name": "坂本龙一",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "begin": null,
+          "primary": true,
+          "end": null
+         },
+         {
+          "locale": "ko",
+          "sort-name": "사카모토 류이치",
+          "type": "Artist name",
+          "name": "사카모토 류이치",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "begin": null,
+          "primary": false,
+          "end": null
+         }
+        ],
+        "type": "Person",
+        "sort-name": "Sakamoto, Ryūichi",
+        "disambiguation": "Japanese composer, pianist, singer, songwriter",
+        "name": "坂本龍一",
+        "country": "JP",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"
+       },
+       "name": "Ryuichi Sakamoto",
+       "joinphrase": ""
+      }
+     ],
+     "id": "3620b785-41bd-4a30-b7cd-c9378af7228c",
+     "position": 16,
+     "recording": {
+      "artist-credit": [
+       {
+        "name": "Ryuichi Sakamoto",
+        "joinphrase": "",
+        "artist": {
+         "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8",
+         "country": "JP",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "disambiguation": "Japanese composer, pianist, singer, songwriter",
+         "type": "Person",
+         "sort-name": "Sakamoto, Ryūichi",
+         "name": "坂本龍一"
+        }
+       }
+      ],
+      "video": true,
+      "length": 419000,
+      "id": "9956ff19-478a-425a-b4bd-8e9da0baee1c",
+      "aliases": [],
+      "disambiguation": "",
+      "title": "In a Happy Place"
+     },
+     "number": "16",
+     "title": "In a Happy Place"
+    },
+    {
+     "artist-credit": [
+      {
+       "artist": {
+        "aliases": [
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "sort-name": "R.S.",
+          "type": "Search hint",
+          "name": "R.S.",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "name": "Riuichi Sakamoto",
+          "type": "Search hint",
+          "sort-name": "Riuichi Sakamoto",
+          "locale": null
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "ended": false,
+          "sort-name": "Ryuchi Sakamoto",
+          "type": "Search hint",
+          "name": "Ryuchi Sakamoto",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "ended": false,
+          "name": "Ryuichi Sakamamoto",
+          "type": "Search hint",
+          "sort-name": "Ryuichi Sakamamoto",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "type": "Search hint",
+          "sort-name": "Ryûichi Sakamoto",
+          "name": "Ryûichi Sakamoto",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "de"
+         },
+         {
+          "locale": "en",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": true
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "locale": "fr",
+          "sort-name": "Sakamoto, Ryūichi",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "nl",
+          "ended": false,
+          "end": null,
+          "primary": true,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "name": "Sakamoto Ryuuichi",
+          "type": "Search hint",
+          "sort-name": "Sakamoto Ryuuichi",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "primary": true,
+          "end": null,
+          "begin": null,
+          "type": "Artist name",
+          "name": "Sakamoto Ryūichi",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "vi",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "ended": false,
+          "sort-name": "坂本 龍一",
+          "type": "Search hint",
+          "name": "坂本 龍一",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "name": "坂本龍一",
+          "type": "Artist name",
+          "sort-name": "サカモト リュウイチ",
+          "locale": "ja",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "sort-name": "坂本龙一",
+          "type": "Artist name",
+          "name": "坂本龙一",
+          "locale": "zh_Hans",
+          "end": null,
+          "primary": true,
+          "begin": null
+         },
+         {
+          "primary": false,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type": "Artist name",
+          "sort-name": "사카모토 류이치",
+          "name": "사카모토 류이치",
+          "locale": "ko",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         }
+        ],
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "JP",
+        "type": "Person",
+        "sort-name": "Sakamoto, Ryūichi",
+        "disambiguation": "Japanese composer, pianist, singer, songwriter",
+        "name": "坂本龍一",
+        "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8"
+       },
+       "joinphrase": "",
+       "name": "Ryuichi Sakamoto"
+      }
+     ],
+     "length": 263000,
+     "id": "4482235a-bccc-4485-abb9-eec311e60902",
+     "position": 17,
+     "recording": {
+      "length": 263000,
+      "video": true,
+      "artist-credit": [
+       {
+        "name": "Ryuichi Sakamoto",
+        "joinphrase": "",
+        "artist": {
+         "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "JP",
+         "name": "坂本龍一",
+         "type": "Person",
+         "disambiguation": "Japanese composer, pianist, singer, songwriter",
+         "sort-name": "Sakamoto, Ryūichi"
+        }
+       }
+      ],
+      "id": "9b48bc5b-6d2e-4cf0-8e8e-3d1add8fa570",
+      "aliases": [],
+      "title": "Poetry of Banality",
+      "disambiguation": ""
+     },
+     "title": "Poetry of Banality",
+     "number": "17"
+    },
+    {
+     "title": "「処暑に満つ」(Shosho ni mitsu)",
+     "number": "18",
+     "recording": {
+      "id": "9aa37ea1-9325-4b9e-b575-fa9af4d49d23",
+      "length": 302000,
+      "artist-credit": [
+       {
+        "joinphrase": "",
+        "name": "Ryuichi Sakamoto",
+        "artist": {
+         "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8",
+         "name": "坂本龍一",
+         "type": "Person",
+         "disambiguation": "Japanese composer, pianist, singer, songwriter",
+         "sort-name": "Sakamoto, Ryūichi",
+         "country": "JP",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df"
+        }
+       }
+      ],
+      "video": true,
+      "disambiguation": "",
+      "title": "「処暑に満つ」(Shosho ni mitsu)",
+      "aliases": []
+     },
+     "id": "ab3c3448-83e7-4a49-8354-2fffd6375fe3",
+     "position": 18,
+     "artist-credit": [
+      {
+       "artist": {
+        "id": "a7f7df4a-77d8-4f12-8acd-5c60c93f4de8",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "JP",
+        "type": "Person",
+        "name": "坂本龍一",
+        "disambiguation": "Japanese composer, pianist, singer, songwriter",
+        "sort-name": "Sakamoto, Ryūichi",
+        "aliases": [
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "ended": false,
+          "locale": null,
+          "sort-name": "R.S.",
+          "type": "Search hint",
+          "name": "R.S.",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "Riuichi Sakamoto",
+          "name": "Riuichi Sakamoto"
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "locale": null,
+          "sort-name": "Ryuchi Sakamoto",
+          "type": "Search hint",
+          "name": "Ryuchi Sakamoto",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "type": "Search hint",
+          "name": "Ryuichi Sakamamoto",
+          "sort-name": "Ryuichi Sakamamoto"
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "ended": false,
+          "type": "Search hint",
+          "sort-name": "Ryûichi Sakamoto",
+          "name": "Ryûichi Sakamoto",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "ended": false,
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "de",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "primary": true,
+          "end": null,
+          "begin": null
+         },
+         {
+          "primary": true,
+          "end": null,
+          "begin": null,
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi",
+          "name": "Ryūichi Sakamoto",
+          "locale": "en",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "ended": false,
+          "type": "Artist name",
+          "name": "Ryūichi Sakamoto",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "fr",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "nl",
+          "name": "Ryūichi Sakamoto",
+          "type": "Artist name",
+          "sort-name": "Sakamoto, Ryūichi"
+         },
+         {
+          "ended": false,
+          "sort-name": "Sakamoto Ryuuichi",
+          "type": "Search hint",
+          "name": "Sakamoto Ryuuichi",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "type": "Artist name",
+          "name": "Sakamoto Ryūichi",
+          "sort-name": "Sakamoto, Ryūichi",
+          "locale": "vi",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "end": null,
+          "primary": true,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "type": "Search hint",
+          "name": "坂本 龍一",
+          "sort-name": "坂本 龍一",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "sort-name": "サカモト リュウイチ",
+          "type": "Artist name",
+          "name": "坂本龍一",
+          "locale": "ja",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "primary": true,
+          "end": null,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "locale": "zh_Hans",
+          "type": "Artist name",
+          "sort-name": "坂本龙一",
+          "name": "坂本龙一",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false
+         },
+         {
+          "locale": "ko",
+          "name": "사카모토 류이치",
+          "type": "Artist name",
+          "sort-name": "사카모토 류이치",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "begin": null,
+          "primary": false,
+          "end": null
+         }
+        ]
+       },
+       "joinphrase": "",
+       "name": "Ryuichi Sakamoto"
+      }
+     ],
+     "length": 302000
+    }
+   ],
+   "format": "Blu-ray",
+   "track-count": 18,
+   "title": "",
+   "format-id": "c693c05b-3316-3d69-afc2-5e2bc455bffc",
+   "track-offset": 0
+  }
+ ],
+ "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+ "id": "82316878-b6ff-44da-8be3-96c253d36cc7",
+ "cover-art-archive": {
+  "count": 1,
+  "front": true,
+  "darkened": false,
+  "artwork": true,
+  "back": false
+ },
+ "packaging-id": "8f931351-d2e2-310f-afc6-37b89ddba246",
+ "text-representation": {
+  "language": "eng",
+  "script": "Latn"
+ },
+ "barcode": "4988064865505",
+ "quality": "normal",
+ "packaging": "Digipak",
+ "asin": "B079K19CBQ",
+ "aliases": [],
+ "country": "JP",
+ "title": "async surround",
+ "release-events": [
+  {
+   "date": "2018-03-28",
+   "area": {
+    "id": "2db42837-c832-3c27-b4a3-08198f75693c",
+    "type-id": null,
+    "disambiguation": "",
+    "type": null,
+    "name": "Japan",
+    "sort-name": "Japan",
+    "iso-3166-1-codes": [
+     "JP"
+    ]
+   }
+  }
+ ],
+ "status": "Official",
+ "date": "2018-03-28",
+ "disambiguation": ""
+}

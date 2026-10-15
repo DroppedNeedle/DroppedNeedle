@@ -1,0 +1,3783 @@
+{
+ "cover-art-archive": {
+  "darkened": false,
+  "front": true,
+  "count": 1,
+  "back": false,
+  "artwork": true
+ },
+ "text-representation": {
+  "script": "Latn",
+  "language": null
+ },
+ "packaging-id": "119eba76-b343-3e02-a292-f0f00644bb9b",
+ "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+ "media": [
+  {
+   "title": "",
+   "format-id": "907a28d9-b3b2-3ef6-89a8-7b18d91d4794",
+   "track-count": 7,
+   "track-offset": 0,
+   "tracks": [
+    {
+     "id": "ed4f20f0-61cf-439d-9c64-1d9acb043cbb",
+     "position": 1,
+     "length": 979293,
+     "artist-credit": [
+      {
+       "joinphrase": "",
+       "name": "Ludwig van Beethoven",
+       "artist": {
+        "type": "Person",
+        "sort-name": "Beethoven, Ludwig van",
+        "disambiguation": "German composer",
+        "name": "Ludwig van Beethoven",
+        "country": "DE",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "aliases": [
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "en",
+          "sort-name": "Beethoven",
+          "type": "Artist name",
+          "name": "Beethoven",
+          "begin": null,
+          "primary": false,
+          "end": null
+         },
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type-id": null,
+          "name": "Beethoven _ Ludwig Van",
+          "type": null,
+          "sort-name": "Beethoven _ Ludwig Van",
+          "locale": null
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "ended": false,
+          "type-id": null,
+          "type": null,
+          "sort-name": "Beethoven, Ludwig",
+          "name": "Beethoven, Ludwig",
+          "locale": null
+         },
+         {
+          "ended": false,
+          "type": null,
+          "name": "Beethoven, Ludwig Van",
+          "sort-name": "Beethoven, Ludwig Van",
+          "locale": null,
+          "type-id": null,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "type-id": null,
+          "locale": null,
+          "type": null,
+          "name": "Beethoven, Ludwig Van (1770 - 1827)",
+          "sort-name": "Beethoven, Ludwig Van (1770 - 1827)",
+          "ended": false
+         },
+         {
+          "ended": false,
+          "locale": null,
+          "name": "Beethoven, Ludwig Von",
+          "type": null,
+          "sort-name": "Beethoven, Ludwig Von",
+          "type-id": null,
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "ended": false,
+          "type-id": null,
+          "sort-name": "Beethoven, Ludwig van (1770-1827)",
+          "type": null,
+          "name": "Beethoven, Ludwig van (1770-1827)",
+          "locale": null,
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "type-id": null,
+          "type": null,
+          "name": "Beethoven, Ludwig van, 1770-1827",
+          "sort-name": "Beethoven, Ludwig van, 1770-1827",
+          "locale": null,
+          "ended": false,
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "Bethoveen",
+          "name": "Bethoveen",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "ended": false,
+          "locale": null,
+          "type": null,
+          "name": "L v Beethoven",
+          "sort-name": "L v Beethoven",
+          "type-id": null,
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": false,
+          "ended": false,
+          "type-id": null,
+          "locale": "lv",
+          "name": "L. Van Bēthovens",
+          "type": null,
+          "sort-name": "Bēthovens, L. Van"
+         },
+         {
+          "locale": null,
+          "type": null,
+          "sort-name": "Beethoven, L. Von",
+          "name": "L. Von Beethoven",
+          "type-id": null,
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "name": "L. van Beethoven",
+          "type": null,
+          "sort-name": "Beethoven, L. van",
+          "locale": null,
+          "type-id": null,
+          "ended": false,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "type-id": null,
+          "type": null,
+          "name": "L.Van Beethoven",
+          "sort-name": "Beethoven, L.Van",
+          "locale": "en",
+          "ended": false,
+          "end": null,
+          "primary": false,
+          "begin": null
+         },
+         {
+          "locale": "lt",
+          "name": "Liudvigas van Bethovenas",
+          "type": "Artist name",
+          "sort-name": "Bethovenas, Liudvigas van",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": true
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "ended": false,
+          "name": "Ludvig Von Beethoven",
+          "type": null,
+          "sort-name": "Beethoven, Ludvig Von",
+          "locale": null,
+          "type-id": null
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "ended": false,
+          "type-id": null,
+          "name": "Ludvig van Beethoven",
+          "type": null,
+          "sort-name": "Beethoven, Ludvig van",
+          "locale": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "lv",
+          "name": "Ludvigs van Bēthovens",
+          "type": "Artist name",
+          "sort-name": "Bēthovens, Ludvigs van",
+          "ended": false
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "type-id": null,
+          "locale": null,
+          "name": "Ludwid van Beethoven",
+          "type": null,
+          "sort-name": "Beethoven, Ludwid van",
+          "ended": false
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "ended": false,
+          "sort-name": "Beethoven, Ludwig",
+          "type": null,
+          "name": "Ludwig Beethoven",
+          "locale": null,
+          "type-id": null
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "ended": false,
+          "type-id": null,
+          "locale": null,
+          "sort-name": "Beethoven, Ludwig Van (1770-1827)",
+          "type": null,
+          "name": "Ludwig Van Beethoven (1770-1827)"
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "type": null,
+          "name": "Ludwig Von Beethoven",
+          "sort-name": "Beethoven, Ludwig Von",
+          "locale": null,
+          "type-id": null,
+          "ended": false
+         },
+         {
+          "primary": true,
+          "end": null,
+          "begin": null,
+          "type": "Artist name",
+          "name": "Ludwig van Beethoven",
+          "sort-name": "Beethoven, Ludwig van",
+          "locale": "en",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false
+         },
+         {
+          "locale": null,
+          "sort-name": "LvB",
+          "type": "Search hint",
+          "name": "LvB",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "bheetoven",
+          "name": "bheetoven",
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "ended": false,
+          "locale": "ru",
+          "name": "Бетховен",
+          "type": null,
+          "sort-name": "Beethoven",
+          "type-id": null,
+          "begin": null,
+          "end": null,
+          "primary": false
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "ru",
+          "sort-name": "Бетховен, Л.",
+          "type": "Artist name",
+          "name": "Л. Бетховен",
+          "ended": false
+         },
+         {
+          "begin": null,
+          "primary": true,
+          "end": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "ru",
+          "sort-name": "Бетховен, Людвиг ван",
+          "type": "Artist name",
+          "name": "Людвиг ван Бетховен",
+          "ended": false
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "ja",
+          "type": "Artist name",
+          "name": "ベートーヴェン",
+          "sort-name": "ベートーヴェン"
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "ja",
+          "name": "ルートヴィヒ・ヴァン・ベートーヴェン",
+          "type": "Artist name",
+          "sort-name": "ベートーヴェン ルートヴィヒヴァン",
+          "ended": false
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "sort-name": "bèi duō fēn",
+          "type": "Artist name",
+          "name": "貝多芬",
+          "locale": "zh_Hant"
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "ended": false,
+          "locale": "zh_Hant_TW",
+          "sort-name": "貝多芬",
+          "type": "Artist name",
+          "name": "貝多芬",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "ended": false,
+          "locale": "zh_Hant_TW",
+          "name": "路德維希・范・貝多芬",
+          "type": "Artist name",
+          "sort-name": "路德維希・范・貝多芬",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "begin": null,
+          "end": null,
+          "primary": false
+         },
+         {
+          "ended": false,
+          "type-id": null,
+          "locale": "ko",
+          "type": null,
+          "sort-name": "Beethoven",
+          "name": "베토벤",
+          "begin": null,
+          "primary": false,
+          "end": null
+         }
+        ],
+        "id": "1f9df192-a621-4f54-8850-2c5373b7eac9"
+       }
+      }
+     ],
+     "number": "1",
+     "title": "Piano Concerto no. 3 in C minor, op. 37: I. Allegro con brio",
+     "recording": {
+      "id": "33ea7e59-3691-4414-92d3-6bce48d5d9cc",
+      "artist-credit": [
+       {
+        "artist": {
+         "id": "7002bf88-1269-4965-a772-4ba1e7a91eaa",
+         "country": "CA",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "disambiguation": "pianist",
+         "type": "Person",
+         "name": "Glenn Gould",
+         "sort-name": "Gould, Glenn"
+        },
+        "name": "Glenn Gould",
+        "joinphrase": ", "
+       },
+       {
+        "artist": {
+         "sort-name": "Berliner Philharmoniker",
+         "type": "Orchestra",
+         "disambiguation": "",
+         "name": "Berliner Philharmoniker",
+         "country": null,
+         "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+         "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce"
+        },
+        "name": "Berliner Philharmoniker",
+        "joinphrase": ", "
+       },
+       {
+        "joinphrase": "",
+        "name": "Herbert von Karajan",
+        "artist": {
+         "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99",
+         "country": "AT",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "type": "Person",
+         "name": "Herbert von Karajan",
+         "disambiguation": "conductor",
+         "sort-name": "Karajan, Herbert von"
+        }
+       }
+      ],
+      "video": false,
+      "length": 979306,
+      "disambiguation": "",
+      "title": "Piano Concerto no. 3 in C minor, op. 37: I. Allegro con brio",
+      "relations": [
+       {
+        "type-id": "234670ce-5f22-4fd0-921b-ef1662695c5d",
+        "source-credit": "",
+        "direction": "backward",
+        "target-type": "artist",
+        "begin": "1957-05-26",
+        "attributes": [],
+        "target-credit": "",
+        "attribute-values": {},
+        "attribute-ids": {},
+        "type": "conductor",
+        "ended": true,
+        "end": "1957-05-26",
+        "artist": {
+         "type": "Person",
+         "sort-name": "Karajan, Herbert von",
+         "disambiguation": "conductor",
+         "name": "Herbert von Karajan",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "AT",
+         "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99"
+        }
+       },
+       {
+        "target-type": "artist",
+        "begin": "1957-05-26",
+        "attributes": [
+         "piano"
+        ],
+        "direction": "backward",
+        "type-id": "59054b12-01ac-43ee-a618-285fd397e461",
+        "source-credit": "",
+        "artist": {
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "CA",
+         "name": "Glenn Gould",
+         "type": "Person",
+         "disambiguation": "pianist",
+         "sort-name": "Gould, Glenn",
+         "id": "7002bf88-1269-4965-a772-4ba1e7a91eaa"
+        },
+        "end": "1957-05-26",
+        "ended": true,
+        "attribute-credits": {},
+        "attribute-values": {},
+        "target-credit": "",
+        "type": "instrument",
+        "attribute-ids": {
+         "piano": "b3eac5f9-7859-4416-ac39-7154e2e8d348"
+        }
+       },
+       {
+        "direction": "backward",
+        "source-credit": "",
+        "type-id": "3b6616c5-88ba-4341-b4ee-81ce1e6d7ebb",
+        "attributes": [],
+        "target-type": "artist",
+        "begin": "1957-05-26",
+        "ended": true,
+        "attribute-ids": {},
+        "type": "performing orchestra",
+        "target-credit": "",
+        "attribute-values": {},
+        "artist": {
+         "type": "Orchestra",
+         "name": "Berliner Philharmoniker",
+         "disambiguation": "",
+         "sort-name": "Berliner Philharmoniker",
+         "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+         "country": null,
+         "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce"
+        },
+        "end": "1957-05-26"
+       },
+       {
+        "type-id": "a3005666-a872-32c3-ad06-98af558e99b0",
+        "source-credit": "",
+        "direction": "forward",
+        "begin": "1957-05-26",
+        "target-type": "work",
+        "attributes": [
+         "live"
+        ],
+        "attribute-values": {},
+        "target-credit": "",
+        "type": "performance",
+        "attribute-ids": {
+         "live": "70007db6-a8bc-46d7-a770-80e6a0bb551a"
+        },
+        "ended": true,
+        "work": {
+         "language": "zxx",
+         "id": "d6843235-961a-37ab-85a4-a0e7e027f752",
+         "iswcs": [],
+         "attributes": [],
+         "languages": [
+          "zxx"
+         ],
+         "type-id": null,
+         "relations": [
+          {
+           "artist": {
+            "type": "Person",
+            "disambiguation": "German composer",
+            "name": "Ludwig van Beethoven",
+            "sort-name": "Beethoven, Ludwig van",
+            "country": "DE",
+            "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+            "id": "1f9df192-a621-4f54-8850-2c5373b7eac9"
+           },
+           "end": "1800",
+           "ended": true,
+           "attribute-ids": {},
+           "type": "composer",
+           "target-credit": "",
+           "attribute-values": {},
+           "attributes": [],
+           "target-type": "artist",
+           "begin": "1800",
+           "direction": "backward",
+           "source-credit": "",
+           "type-id": "d59d99ea-23d4-4a80-b066-edca32ee158f"
+          },
+          {
+           "direction": "backward",
+           "source-credit": "",
+           "type-id": "d59d99ea-23d4-4a80-b066-edca32ee158f",
+           "attributes": [
+            "additional"
+           ],
+           "target-type": "artist",
+           "begin": "1809",
+           "ended": true,
+           "type": "composer",
+           "attribute-ids": {
+            "additional": "0a5341f8-3b1d-4f99-a0c6-26b7f4e42c7f"
+           },
+           "target-credit": "",
+           "attribute-values": {},
+           "artist": {
+            "country": "DE",
+            "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+            "disambiguation": "German composer",
+            "type": "Person",
+            "sort-name": "Beethoven, Ludwig van",
+            "name": "Ludwig van Beethoven",
+            "id": "1f9df192-a621-4f54-8850-2c5373b7eac9"
+           },
+           "end": "1809"
+          },
+          {
+           "attributes": [],
+           "begin": null,
+           "target-type": "work",
+           "source-credit": "",
+           "type-id": "51975ed8-bbfa-486b-9f28-5947f4370299",
+           "direction": "forward",
+           "end": null,
+           "type": "arrangement",
+           "attribute-ids": {},
+           "target-credit": "",
+           "attribute-values": {},
+           "work": {
+            "title": "Concerto for Piano and Orchestra no. 3 in C minor, op. 37: I. Allegro con brio",
+            "type-id": null,
+            "disambiguation": "for piano solo, Alkan",
+            "type": null,
+            "language": null,
+            "id": "f73e4f68-aae9-4511-a22d-5b35d350d3ec",
+            "iswcs": [],
+            "languages": [],
+            "attributes": []
+           },
+           "ended": false
+          },
+          {
+           "type-id": "51975ed8-bbfa-486b-9f28-5947f4370299",
+           "source-credit": "",
+           "direction": "forward",
+           "target-type": "work",
+           "begin": null,
+           "attributes": [],
+           "target-credit": "",
+           "attribute-values": {},
+           "attribute-ids": {},
+           "type": "arrangement",
+           "ended": false,
+           "work": {
+            "languages": [],
+            "attributes": [],
+            "iswcs": [],
+            "id": "650e96da-057d-4d93-aa18-484d2cff77da",
+            "language": null,
+            "type": null,
+            "disambiguation": "for piano and string quintet, Lachner",
+            "title": "Concerto for Piano and Orchestra no. 3 in C minor, op. 37: I. Allegro con brio",
+            "type-id": null
+           },
+           "end": null
+          },
+          {
+           "work": {
+            "disambiguation": "",
+            "type": null,
+            "title": "Cadenza to the first movement of Beethoven's Piano Concerto no. 3, S. 389a",
+            "type-id": null,
+            "language": null,
+            "languages": [],
+            "attributes": [],
+            "id": "6fe3b8e7-f088-4283-b499-d15944fad53f",
+            "iswcs": []
+           },
+           "ended": false,
+           "attribute-ids": {},
+           "type": "based on",
+           "target-credit": "",
+           "attribute-values": {},
+           "end": null,
+           "direction": "forward",
+           "source-credit": "",
+           "type-id": "6bb1df6b-57f3-434d-8a39-5dc363d2eb78",
+           "attributes": [],
+           "begin": null,
+           "target-type": "work"
+          },
+          {
+           "target-credit": "",
+           "attribute-values": {},
+           "attribute-ids": {},
+           "type": "based on",
+           "ended": false,
+           "work": {
+            "iswcs": [],
+            "id": "96a9cad9-6869-4071-8bc0-bd262d738f38",
+            "languages": [],
+            "attributes": [],
+            "language": null,
+            "title": "Cadenza to the first movement of Beethoven's Piano Concerto no. 3",
+            "type-id": null,
+            "type": null,
+            "disambiguation": "Alkan, as part of solo piano reduction"
+           },
+           "end": null,
+           "type-id": "6bb1df6b-57f3-434d-8a39-5dc363d2eb78",
+           "source-credit": "",
+           "direction": "forward",
+           "begin": null,
+           "target-type": "work",
+           "attributes": []
+          },
+          {
+           "ended": false,
+           "work": {
+            "language": null,
+            "iswcs": [],
+            "id": "68422271-1946-49f7-94cf-2857df4b9e1a",
+            "languages": [],
+            "attributes": [],
+            "title": "Cadenza to the first movement of Beethoven's Piano Concerto no. 3",
+            "type-id": null,
+            "type": null,
+            "disambiguation": "Smetana, completed"
+           },
+           "target-credit": "",
+           "attribute-values": {},
+           "type": "based on",
+           "attribute-ids": {},
+           "end": null,
+           "direction": "forward",
+           "type-id": "6bb1df6b-57f3-434d-8a39-5dc363d2eb78",
+           "source-credit": "",
+           "target-type": "work",
+           "begin": null,
+           "attributes": []
+          },
+          {
+           "direction": "forward",
+           "type-id": "6bb1df6b-57f3-434d-8a39-5dc363d2eb78",
+           "source-credit": "",
+           "begin": null,
+           "target-type": "work",
+           "attributes": [],
+           "ended": false,
+           "work": {
+            "iswcs": [],
+            "id": "7e89d37e-5863-46cf-8f23-8f8c1e6f4da6",
+            "languages": [],
+            "attributes": [],
+            "language": null,
+            "title": "Cadenza to the first movement of Beethoven's Piano Concerto no. 3",
+            "type-id": null,
+            "type": null,
+            "disambiguation": "Clara Schumann"
+           },
+           "target-credit": "",
+           "attribute-values": {},
+           "type": "based on",
+           "attribute-ids": {},
+           "end": null
+          },
+          {
+           "end": null,
+           "attribute-ids": {},
+           "type": "based on",
+           "target-credit": "",
+           "attribute-values": {},
+           "work": {
+            "title": "Cadenza to the 1st movement of Piano Concerto no. 3, op. 37",
+            "type-id": null,
+            "disambiguation": "Schwartz",
+            "type": null,
+            "id": "9387b288-2e3a-44e5-9604-34132998d076",
+            "iswcs": [],
+            "languages": [],
+            "attributes": [],
+            "language": null
+           },
+           "ended": false,
+           "attributes": [],
+           "begin": null,
+           "target-type": "work",
+           "source-credit": "",
+           "type-id": "6bb1df6b-57f3-434d-8a39-5dc363d2eb78",
+           "direction": "forward"
+          },
+          {
+           "direction": "forward",
+           "source-credit": "",
+           "type-id": "6bb1df6b-57f3-434d-8a39-5dc363d2eb78",
+           "attributes": [],
+           "begin": null,
+           "target-type": "work",
+           "work": {
+            "type-id": null,
+            "title": "Cadenza for the first movement of Beethoven’s Piano Concerto no. 3, op. 37",
+            "disambiguation": "Busoni, BV B 2/2",
+            "type": null,
+            "id": "d0705045-f5ee-4b1e-a971-aba288fd63b0",
+            "iswcs": [],
+            "attributes": [],
+            "languages": [],
+            "language": null
+           },
+           "ended": false,
+           "attribute-ids": {},
+           "type": "based on",
+           "attribute-values": {},
+           "target-credit": "",
+           "end": null
+          },
+          {
+           "attribute-ids": {
+            "movement": "1d05bc4b-9884-4c9f-9f69-616f119047f3"
+           },
+           "type": "parts",
+           "attribute-values": {},
+           "target-credit": "",
+           "work": {
+            "language": null,
+            "languages": [],
+            "attributes": [],
+            "iswcs": [],
+            "id": "82506d40-77ad-4aa7-9e3d-392d5cfb13c7",
+            "type": "Concerto",
+            "disambiguation": "",
+            "title": "Concerto for Piano and Orchestra no. 3 in C minor, op. 37",
+            "type-id": "dad81031-607b-3039-bd5b-80c0f4575272"
+           },
+           "ended": false,
+           "end": null,
+           "ordering-key": 1,
+           "source-credit": "",
+           "type-id": "ca8d3642-ce5f-49f8-91f2-125d72524e6a",
+           "direction": "backward",
+           "attributes": [
+            "movement"
+           ],
+           "begin": null,
+           "target-type": "work"
+          }
+         ],
+         "title": "Concerto for Piano and Orchestra no. 3 in C minor, op. 37: I. Allegro con brio",
+         "type": null,
+         "disambiguation": ""
+        },
+        "end": "1957-05-26"
+       }
+      ],
+      "aliases": [
+       {
+        "begin": null,
+        "primary": null,
+        "end": null,
+        "ended": false,
+        "type-id": null,
+        "locale": null,
+        "type": null,
+        "sort-name": "Concerto for Piano and Orchestra no. 3 in C minor op. 37: I. Allegro con brio",
+        "name": "Concerto for Piano and Orchestra no. 3 in C minor op. 37: I. Allegro con brio"
+       },
+       {
+        "primary": null,
+        "end": null,
+        "begin": null,
+        "type-id": null,
+        "sort-name": "Klavierkonzert Nr. 3 c-Moll, op. 37: I. Allegro con brio",
+        "type": null,
+        "name": "Klavierkonzert Nr. 3 c-Moll, op. 37: I. Allegro con brio",
+        "locale": null,
+        "ended": false
+       }
+      ]
+     }
+    },
+    {
+     "position": 2,
+     "id": "c638fd85-2e96-4529-9e4e-61ec2085a16f",
+     "length": 570427,
+     "artist-credit": [
+      {
+       "artist": {
+        "id": "1f9df192-a621-4f54-8850-2c5373b7eac9",
+        "aliases": [
+         {
+          "begin": null,
+          "end": null,
+          "primary": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "en",
+          "type": "Artist name",
+          "sort-name": "Beethoven",
+          "name": "Beethoven",
+          "ended": false
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "locale": null,
+          "type": null,
+          "name": "Beethoven _ Ludwig Van",
+          "sort-name": "Beethoven _ Ludwig Van",
+          "type-id": null,
+          "ended": false
+         },
+         {
+          "type-id": null,
+          "sort-name": "Beethoven, Ludwig",
+          "type": null,
+          "name": "Beethoven, Ludwig",
+          "locale": null,
+          "ended": false,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "locale": null,
+          "type": null,
+          "sort-name": "Beethoven, Ludwig Van",
+          "name": "Beethoven, Ludwig Van",
+          "type-id": null,
+          "ended": false,
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "type-id": null,
+          "locale": null,
+          "sort-name": "Beethoven, Ludwig Van (1770 - 1827)",
+          "type": null,
+          "name": "Beethoven, Ludwig Van (1770 - 1827)",
+          "ended": false
+         },
+         {
+          "ended": false,
+          "type-id": null,
+          "locale": null,
+          "type": null,
+          "name": "Beethoven, Ludwig Von",
+          "sort-name": "Beethoven, Ludwig Von",
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "type-id": null,
+          "type": null,
+          "name": "Beethoven, Ludwig van (1770-1827)",
+          "sort-name": "Beethoven, Ludwig van (1770-1827)",
+          "locale": null,
+          "ended": false
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "locale": null,
+          "type": null,
+          "sort-name": "Beethoven, Ludwig van, 1770-1827",
+          "name": "Beethoven, Ludwig van, 1770-1827",
+          "type-id": null,
+          "ended": false
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "name": "Bethoveen",
+          "type": "Search hint",
+          "sort-name": "Bethoveen",
+          "locale": null,
+          "ended": false,
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "locale": null,
+          "type": null,
+          "sort-name": "L v Beethoven",
+          "name": "L v Beethoven",
+          "type-id": null,
+          "ended": false,
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "end": null,
+          "primary": false,
+          "begin": null,
+          "ended": false,
+          "type-id": null,
+          "type": null,
+          "name": "L. Van Bēthovens",
+          "sort-name": "Bēthovens, L. Van",
+          "locale": "lv"
+         },
+         {
+          "ended": false,
+          "type-id": null,
+          "locale": null,
+          "type": null,
+          "name": "L. Von Beethoven",
+          "sort-name": "Beethoven, L. Von",
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type": null,
+          "sort-name": "Beethoven, L. van",
+          "name": "L. van Beethoven",
+          "locale": null,
+          "type-id": null
+         },
+         {
+          "begin": null,
+          "primary": false,
+          "end": null,
+          "type-id": null,
+          "locale": "en",
+          "sort-name": "Beethoven, L.Van",
+          "type": null,
+          "name": "L.Van Beethoven",
+          "ended": false
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "lt",
+          "type": "Artist name",
+          "name": "Liudvigas van Bethovenas",
+          "sort-name": "Bethovenas, Liudvigas van",
+          "ended": false,
+          "begin": null,
+          "primary": true,
+          "end": null
+         },
+         {
+          "type-id": null,
+          "type": null,
+          "name": "Ludvig Von Beethoven",
+          "sort-name": "Beethoven, Ludvig Von",
+          "locale": null,
+          "ended": false,
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "ended": false,
+          "locale": null,
+          "type": null,
+          "name": "Ludvig van Beethoven",
+          "sort-name": "Beethoven, Ludvig van",
+          "type-id": null
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "name": "Ludvigs van Bēthovens",
+          "sort-name": "Bēthovens, Ludvigs van",
+          "locale": "lv"
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "ended": false,
+          "locale": null,
+          "type": null,
+          "name": "Ludwid van Beethoven",
+          "sort-name": "Beethoven, Ludwid van",
+          "type-id": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "ended": false,
+          "locale": null,
+          "sort-name": "Beethoven, Ludwig",
+          "type": null,
+          "name": "Ludwig Beethoven",
+          "type-id": null
+         },
+         {
+          "type-id": null,
+          "type": null,
+          "name": "Ludwig Van Beethoven (1770-1827)",
+          "sort-name": "Beethoven, Ludwig Van (1770-1827)",
+          "locale": null,
+          "ended": false,
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "type": null,
+          "sort-name": "Beethoven, Ludwig Von",
+          "name": "Ludwig Von Beethoven",
+          "locale": null,
+          "type-id": null,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "primary": true,
+          "end": null,
+          "locale": "en",
+          "name": "Ludwig van Beethoven",
+          "type": "Artist name",
+          "sort-name": "Beethoven, Ludwig van",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "name": "LvB",
+          "type": "Search hint",
+          "sort-name": "LvB",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "type": "Search hint",
+          "name": "bheetoven",
+          "sort-name": "bheetoven"
+         },
+         {
+          "ended": false,
+          "type-id": null,
+          "locale": "ru",
+          "sort-name": "Beethoven",
+          "type": null,
+          "name": "Бетховен",
+          "begin": null,
+          "primary": false,
+          "end": null
+         },
+         {
+          "name": "Л. Бетховен",
+          "type": "Artist name",
+          "sort-name": "Бетховен, Л.",
+          "locale": "ru",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "end": null,
+          "primary": false,
+          "begin": null
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "ended": false,
+          "type": "Artist name",
+          "sort-name": "Бетховен, Людвиг ван",
+          "name": "Людвиг ван Бетховен",
+          "locale": "ru",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "ended": false,
+          "type": "Artist name",
+          "name": "ベートーヴェン",
+          "sort-name": "ベートーヴェン",
+          "locale": "ja",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "primary": true,
+          "end": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "sort-name": "ベートーヴェン ルートヴィヒヴァン",
+          "name": "ルートヴィヒ・ヴァン・ベートーヴェン",
+          "locale": "ja",
+          "primary": false,
+          "end": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "locale": "zh_Hant",
+          "type": "Artist name",
+          "sort-name": "bèi duō fēn",
+          "name": "貝多芬",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "begin": null,
+          "end": null,
+          "primary": true
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "ended": false,
+          "locale": "zh_Hant_TW",
+          "name": "貝多芬",
+          "type": "Artist name",
+          "sort-name": "貝多芬",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "zh_Hant_TW",
+          "type": "Artist name",
+          "sort-name": "路德維希・范・貝多芬",
+          "name": "路德維希・范・貝多芬",
+          "begin": null,
+          "end": null,
+          "primary": false
+         },
+         {
+          "primary": false,
+          "end": null,
+          "begin": null,
+          "type": null,
+          "sort-name": "Beethoven",
+          "name": "베토벤",
+          "locale": "ko",
+          "type-id": null,
+          "ended": false
+         }
+        ],
+        "type": "Person",
+        "disambiguation": "German composer",
+        "name": "Ludwig van Beethoven",
+        "sort-name": "Beethoven, Ludwig van",
+        "country": "DE",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df"
+       },
+       "name": "Ludwig van Beethoven",
+       "joinphrase": ""
+      }
+     ],
+     "number": "2",
+     "title": "Piano Concerto no. 3 in C minor, op. 37: II. Largo",
+     "recording": {
+      "title": "Piano Concerto no. 3 in C minor, op. 37: II. Largo",
+      "relations": [
+       {
+        "begin": "1957-05-26",
+        "target-type": "artist",
+        "attributes": [],
+        "direction": "backward",
+        "type-id": "234670ce-5f22-4fd0-921b-ef1662695c5d",
+        "source-credit": "",
+        "artist": {
+         "disambiguation": "conductor",
+         "type": "Person",
+         "name": "Herbert von Karajan",
+         "sort-name": "Karajan, Herbert von",
+         "country": "AT",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99"
+        },
+        "end": "1957-05-26",
+        "ended": true,
+        "target-credit": "",
+        "attribute-values": {},
+        "attribute-ids": {},
+        "type": "conductor"
+       },
+       {
+        "direction": "backward",
+        "type-id": "59054b12-01ac-43ee-a618-285fd397e461",
+        "source-credit": "",
+        "target-type": "artist",
+        "begin": "1957-05-26",
+        "attributes": [
+         "piano"
+        ],
+        "ended": true,
+        "attribute-credits": {},
+        "target-credit": "",
+        "attribute-values": {},
+        "type": "instrument",
+        "attribute-ids": {
+         "piano": "b3eac5f9-7859-4416-ac39-7154e2e8d348"
+        },
+        "artist": {
+         "id": "7002bf88-1269-4965-a772-4ba1e7a91eaa",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "CA",
+         "disambiguation": "pianist",
+         "type": "Person",
+         "name": "Glenn Gould",
+         "sort-name": "Gould, Glenn"
+        },
+        "end": "1957-05-26"
+       },
+       {
+        "end": "1957-05-26",
+        "artist": {
+         "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+         "country": null,
+         "sort-name": "Berliner Philharmoniker",
+         "type": "Orchestra",
+         "disambiguation": "",
+         "name": "Berliner Philharmoniker",
+         "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce"
+        },
+        "type": "performing orchestra",
+        "attribute-ids": {},
+        "attribute-values": {},
+        "target-credit": "",
+        "ended": true,
+        "attributes": [],
+        "target-type": "artist",
+        "begin": "1957-05-26",
+        "source-credit": "",
+        "type-id": "3b6616c5-88ba-4341-b4ee-81ce1e6d7ebb",
+        "direction": "backward"
+       },
+       {
+        "attribute-ids": {
+         "live": "70007db6-a8bc-46d7-a770-80e6a0bb551a"
+        },
+        "type": "performance",
+        "target-credit": "",
+        "attribute-values": {},
+        "work": {
+         "disambiguation": "",
+         "type": null,
+         "relations": [
+          {
+           "ended": true,
+           "attribute-ids": {},
+           "type": "composer",
+           "attribute-values": {},
+           "target-credit": "",
+           "artist": {
+            "id": "1f9df192-a621-4f54-8850-2c5373b7eac9",
+            "disambiguation": "German composer",
+            "type": "Person",
+            "name": "Ludwig van Beethoven",
+            "sort-name": "Beethoven, Ludwig van",
+            "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+            "country": "DE"
+           },
+           "end": "1803",
+           "direction": "backward",
+           "source-credit": "",
+           "type-id": "d59d99ea-23d4-4a80-b066-edca32ee158f",
+           "attributes": [],
+           "target-type": "artist",
+           "begin": "1800"
+          },
+          {
+           "end": null,
+           "attribute-values": {},
+           "target-credit": "",
+           "attribute-ids": {},
+           "type": "arrangement",
+           "ended": false,
+           "work": {
+            "title": "Concerto for Piano and Orchestra no. 3 in C minor, op. 37: II. Largo",
+            "type-id": null,
+            "disambiguation": "for piano and string quintet, Lachner",
+            "type": null,
+            "language": null,
+            "iswcs": [],
+            "id": "eceedaea-adcb-412e-9cab-af36c0c77efb",
+            "languages": [],
+            "attributes": []
+           },
+           "begin": null,
+           "target-type": "work",
+           "attributes": [],
+           "type-id": "51975ed8-bbfa-486b-9f28-5947f4370299",
+           "source-credit": "",
+           "direction": "forward"
+          },
+          {
+           "end": null,
+           "ordering-key": 2,
+           "attribute-ids": {
+            "movement": "1d05bc4b-9884-4c9f-9f69-616f119047f3"
+           },
+           "type": "parts",
+           "attribute-values": {},
+           "target-credit": "",
+           "work": {
+            "id": "82506d40-77ad-4aa7-9e3d-392d5cfb13c7",
+            "iswcs": [],
+            "attributes": [],
+            "languages": [],
+            "language": null,
+            "type-id": "dad81031-607b-3039-bd5b-80c0f4575272",
+            "title": "Concerto for Piano and Orchestra no. 3 in C minor, op. 37",
+            "type": "Concerto",
+            "disambiguation": ""
+           },
+           "ended": false,
+           "attributes": [
+            "movement"
+           ],
+           "begin": null,
+           "target-type": "work",
+           "source-credit": "",
+           "type-id": "ca8d3642-ce5f-49f8-91f2-125d72524e6a",
+           "direction": "backward"
+          }
+         ],
+         "type-id": null,
+         "title": "Concerto for Piano and Orchestra no. 3 in C minor, op. 37: II. Largo",
+         "language": "zxx",
+         "attributes": [],
+         "languages": [
+          "zxx"
+         ],
+         "iswcs": [],
+         "id": "125f5a1f-9868-35e9-85dc-22944c888b13"
+        },
+        "ended": true,
+        "end": "1957-05-26",
+        "source-credit": "",
+        "type-id": "a3005666-a872-32c3-ad06-98af558e99b0",
+        "direction": "forward",
+        "attributes": [
+         "live"
+        ],
+        "target-type": "work",
+        "begin": "1957-05-26"
+       }
+      ],
+      "disambiguation": "",
+      "aliases": [
+       {
+        "begin": null,
+        "primary": null,
+        "end": null,
+        "ended": false,
+        "type-id": null,
+        "locale": null,
+        "type": null,
+        "sort-name": "Concerto for Piano and Orchestra no. 3 in C minor op. 37: II. Largo",
+        "name": "Concerto for Piano and Orchestra no. 3 in C minor op. 37: II. Largo"
+       },
+       {
+        "ended": false,
+        "locale": null,
+        "sort-name": "Klavierkonzert Nr. 3 c-Moll, op. 37: II. Largo",
+        "type": null,
+        "name": "Klavierkonzert Nr. 3 c-Moll, op. 37: II. Largo",
+        "type-id": null,
+        "begin": null,
+        "end": null,
+        "primary": null
+       }
+      ],
+      "id": "4dc5cfc5-75f0-4fec-9604-ade18169a55c",
+      "video": false,
+      "artist-credit": [
+       {
+        "artist": {
+         "name": "Glenn Gould",
+         "type": "Person",
+         "disambiguation": "pianist",
+         "sort-name": "Gould, Glenn",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "CA",
+         "id": "7002bf88-1269-4965-a772-4ba1e7a91eaa"
+        },
+        "name": "Glenn Gould",
+        "joinphrase": ", "
+       },
+       {
+        "artist": {
+         "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+         "disambiguation": "",
+         "type": "Orchestra",
+         "sort-name": "Berliner Philharmoniker",
+         "name": "Berliner Philharmoniker",
+         "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+         "country": null
+        },
+        "joinphrase": ", ",
+        "name": "Berliner Philharmoniker"
+       },
+       {
+        "artist": {
+         "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99",
+         "country": "AT",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "disambiguation": "conductor",
+         "type": "Person",
+         "sort-name": "Karajan, Herbert von",
+         "name": "Herbert von Karajan"
+        },
+        "name": "Herbert von Karajan",
+        "joinphrase": ""
+       }
+      ],
+      "length": 569360
+     }
+    },
+    {
+     "recording": {
+      "aliases": [],
+      "relations": [
+       {
+        "direction": "backward",
+        "source-credit": "",
+        "type-id": "234670ce-5f22-4fd0-921b-ef1662695c5d",
+        "attributes": [],
+        "begin": "1957-05-26",
+        "target-type": "artist",
+        "ended": true,
+        "type": "conductor",
+        "attribute-ids": {},
+        "attribute-values": {},
+        "target-credit": "",
+        "artist": {
+         "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99",
+         "type": "Person",
+         "disambiguation": "conductor",
+         "name": "Herbert von Karajan",
+         "sort-name": "Karajan, Herbert von",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "AT"
+        },
+        "end": "1957-05-26"
+       },
+       {
+        "direction": "backward",
+        "source-credit": "",
+        "type-id": "59054b12-01ac-43ee-a618-285fd397e461",
+        "attributes": [
+         "piano"
+        ],
+        "begin": "1957-05-26",
+        "target-type": "artist",
+        "attribute-credits": {},
+        "ended": true,
+        "type": "instrument",
+        "attribute-ids": {
+         "piano": "b3eac5f9-7859-4416-ac39-7154e2e8d348"
+        },
+        "target-credit": "",
+        "attribute-values": {},
+        "artist": {
+         "id": "7002bf88-1269-4965-a772-4ba1e7a91eaa",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "CA",
+         "disambiguation": "pianist",
+         "type": "Person",
+         "sort-name": "Gould, Glenn",
+         "name": "Glenn Gould"
+        },
+        "end": "1957-05-26"
+       },
+       {
+        "source-credit": "",
+        "type-id": "3b6616c5-88ba-4341-b4ee-81ce1e6d7ebb",
+        "direction": "backward",
+        "attributes": [],
+        "begin": "1957-05-26",
+        "target-type": "artist",
+        "attribute-ids": {},
+        "type": "performing orchestra",
+        "target-credit": "",
+        "attribute-values": {},
+        "ended": true,
+        "end": "1957-05-26",
+        "artist": {
+         "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+         "country": null,
+         "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+         "type": "Orchestra",
+         "sort-name": "Berliner Philharmoniker",
+         "disambiguation": "",
+         "name": "Berliner Philharmoniker"
+        }
+       },
+       {
+        "end": "1957-05-26",
+        "ended": true,
+        "work": {
+         "type-id": null,
+         "relations": [
+          {
+           "target-type": "artist",
+           "begin": "1800",
+           "attributes": [],
+           "type-id": "d59d99ea-23d4-4a80-b066-edca32ee158f",
+           "source-credit": "",
+           "direction": "backward",
+           "end": "1803",
+           "artist": {
+            "id": "1f9df192-a621-4f54-8850-2c5373b7eac9",
+            "country": "DE",
+            "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+            "type": "Person",
+            "disambiguation": "German composer",
+            "sort-name": "Beethoven, Ludwig van",
+            "name": "Ludwig van Beethoven"
+           },
+           "target-credit": "",
+           "attribute-values": {},
+           "attribute-ids": {},
+           "type": "composer",
+           "ended": true
+          },
+          {
+           "target-credit": "",
+           "attribute-values": {},
+           "attribute-ids": {},
+           "type": "arrangement",
+           "ended": false,
+           "work": {
+            "type": null,
+            "disambiguation": "for piano and string quintet, Lachner",
+            "title": "Concerto for Piano and Orchestra no. 3 in C minor, op. 37: III. Rondo. Allegro",
+            "type-id": null,
+            "languages": [],
+            "attributes": [],
+            "iswcs": [],
+            "id": "14ff1b0a-fb9d-4b32-84d3-a29ab041804d",
+            "language": null
+           },
+           "end": null,
+           "type-id": "51975ed8-bbfa-486b-9f28-5947f4370299",
+           "source-credit": "",
+           "direction": "forward",
+           "begin": null,
+           "target-type": "work",
+           "attributes": []
+          },
+          {
+           "direction": "forward",
+           "source-credit": "",
+           "type-id": "6bb1df6b-57f3-434d-8a39-5dc363d2eb78",
+           "attributes": [],
+           "target-type": "work",
+           "begin": null,
+           "work": {
+            "title": "Rondo",
+            "type-id": null,
+            "disambiguation": "",
+            "type": null,
+            "iswcs": [],
+            "id": "2ff75eae-b0da-3d63-b13b-a8532750042c",
+            "languages": [],
+            "attributes": [],
+            "language": null
+           },
+           "ended": false,
+           "attribute-ids": {},
+           "type": "based on",
+           "attribute-values": {},
+           "target-credit": "",
+           "end": null
+          },
+          {
+           "source-credit": "",
+           "type-id": "6bb1df6b-57f3-434d-8a39-5dc363d2eb78",
+           "direction": "forward",
+           "attributes": [],
+           "target-type": "work",
+           "begin": null,
+           "type": "based on",
+           "attribute-ids": {},
+           "target-credit": "",
+           "attribute-values": {},
+           "work": {
+            "attributes": [],
+            "languages": [],
+            "iswcs": [],
+            "id": "94ef8242-0f11-4b3d-b5fe-56f8bbef2040",
+            "language": null,
+            "disambiguation": "Brahms",
+            "type": null,
+            "type-id": null,
+            "title": "Cadenza for Beethoven's Piano Concerto no. 3 in C minor (op. 37), Anh. 4/7"
+           },
+           "ended": false,
+           "end": null
+          },
+          {
+           "type-id": "ca8d3642-ce5f-49f8-91f2-125d72524e6a",
+           "source-credit": "",
+           "direction": "backward",
+           "target-type": "work",
+           "begin": null,
+           "attributes": [
+            "movement"
+           ],
+           "attribute-values": {},
+           "target-credit": "",
+           "attribute-ids": {
+            "movement": "1d05bc4b-9884-4c9f-9f69-616f119047f3"
+           },
+           "type": "parts",
+           "ended": false,
+           "work": {
+            "type": "Concerto",
+            "disambiguation": "",
+            "type-id": "dad81031-607b-3039-bd5b-80c0f4575272",
+            "title": "Concerto for Piano and Orchestra no. 3 in C minor, op. 37",
+            "language": null,
+            "attributes": [],
+            "languages": [],
+            "id": "82506d40-77ad-4aa7-9e3d-392d5cfb13c7",
+            "iswcs": []
+           },
+           "end": null,
+           "ordering-key": 3
+          }
+         ],
+         "title": "Concerto for Piano and Orchestra no. 3 in C minor, op. 37: III. Rondo. Allegro",
+         "type": null,
+         "disambiguation": "",
+         "id": "0117bb25-80f2-317a-a274-aadff00d53ca",
+         "iswcs": [],
+         "attributes": [],
+         "languages": [
+          "zxx"
+         ],
+         "language": "zxx"
+        },
+        "attribute-values": {},
+        "target-credit": "",
+        "type": "performance",
+        "attribute-ids": {
+         "live": "70007db6-a8bc-46d7-a770-80e6a0bb551a"
+        },
+        "target-type": "work",
+        "begin": "1957-05-26",
+        "attributes": [
+         "live"
+        ],
+        "direction": "forward",
+        "type-id": "a3005666-a872-32c3-ad06-98af558e99b0",
+        "source-credit": ""
+       }
+      ],
+      "title": "Concerto for Piano and Orchestra no. 3 in C minor op. 37: III. Rondo (Allegro)",
+      "disambiguation": "",
+      "length": 613973,
+      "artist-credit": [
+       {
+        "artist": {
+         "id": "7002bf88-1269-4965-a772-4ba1e7a91eaa",
+         "disambiguation": "pianist",
+         "type": "Person",
+         "sort-name": "Gould, Glenn",
+         "name": "Glenn Gould",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "CA"
+        },
+        "joinphrase": ", ",
+        "name": "Glenn Gould"
+       },
+       {
+        "artist": {
+         "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+         "name": "Berliner Philharmoniker",
+         "type": "Orchestra",
+         "disambiguation": "",
+         "sort-name": "Berliner Philharmoniker",
+         "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+         "country": null
+        },
+        "joinphrase": ", ",
+        "name": "Berliner Philharmoniker"
+       },
+       {
+        "joinphrase": "",
+        "name": "Herbert von Karajan",
+        "artist": {
+         "country": "AT",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "name": "Herbert von Karajan",
+         "type": "Person",
+         "disambiguation": "conductor",
+         "sort-name": "Karajan, Herbert von",
+         "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99"
+        }
+       }
+      ],
+      "video": false,
+      "id": "b0cdd16b-765d-48ab-bd87-a066ca9eb923"
+     },
+     "number": "3",
+     "title": "Piano Concerto no. 3 in C minor, op. 37: III. Rondo. Allegro",
+     "length": 608307,
+     "artist-credit": [
+      {
+       "artist": {
+        "aliases": [
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "sort-name": "Beethoven",
+          "type": "Artist name",
+          "name": "Beethoven",
+          "locale": "en",
+          "ended": false,
+          "primary": false,
+          "end": null,
+          "begin": null
+         },
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type-id": null,
+          "sort-name": "Beethoven _ Ludwig Van",
+          "type": null,
+          "name": "Beethoven _ Ludwig Van",
+          "locale": null
+         },
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "type": null,
+          "sort-name": "Beethoven, Ludwig",
+          "name": "Beethoven, Ludwig",
+          "locale": null,
+          "type-id": null,
+          "ended": false
+         },
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "name": "Beethoven, Ludwig Van",
+          "type": null,
+          "sort-name": "Beethoven, Ludwig Van",
+          "locale": null,
+          "type-id": null
+         },
+         {
+          "ended": false,
+          "type-id": null,
+          "sort-name": "Beethoven, Ludwig Van (1770 - 1827)",
+          "type": null,
+          "name": "Beethoven, Ludwig Van (1770 - 1827)",
+          "locale": null,
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "locale": null,
+          "type": null,
+          "sort-name": "Beethoven, Ludwig Von",
+          "name": "Beethoven, Ludwig Von",
+          "type-id": null,
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "locale": null,
+          "sort-name": "Beethoven, Ludwig van (1770-1827)",
+          "type": null,
+          "name": "Beethoven, Ludwig van (1770-1827)",
+          "type-id": null,
+          "ended": false
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "ended": false,
+          "type-id": null,
+          "locale": null,
+          "type": null,
+          "name": "Beethoven, Ludwig van, 1770-1827",
+          "sort-name": "Beethoven, Ludwig van, 1770-1827"
+         },
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type": "Search hint",
+          "sort-name": "Bethoveen",
+          "name": "Bethoveen",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "locale": null,
+          "name": "L v Beethoven",
+          "type": null,
+          "sort-name": "L v Beethoven",
+          "type-id": null,
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "type-id": null,
+          "sort-name": "Bēthovens, L. Van",
+          "type": null,
+          "name": "L. Van Bēthovens",
+          "locale": "lv",
+          "ended": false,
+          "primary": false,
+          "end": null,
+          "begin": null
+         },
+         {
+          "type-id": null,
+          "type": null,
+          "name": "L. Von Beethoven",
+          "sort-name": "Beethoven, L. Von",
+          "locale": null,
+          "ended": false,
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "type-id": null,
+          "locale": null,
+          "name": "L. van Beethoven",
+          "type": null,
+          "sort-name": "Beethoven, L. van",
+          "ended": false,
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": false,
+          "locale": "en",
+          "type": null,
+          "name": "L.Van Beethoven",
+          "sort-name": "Beethoven, L.Van",
+          "type-id": null,
+          "ended": false
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "name": "Liudvigas van Bethovenas",
+          "type": "Artist name",
+          "sort-name": "Bethovenas, Liudvigas van",
+          "locale": "lt",
+          "ended": false
+         },
+         {
+          "ended": false,
+          "locale": null,
+          "name": "Ludvig Von Beethoven",
+          "type": null,
+          "sort-name": "Beethoven, Ludvig Von",
+          "type-id": null,
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "type-id": null,
+          "locale": null,
+          "name": "Ludvig van Beethoven",
+          "type": null,
+          "sort-name": "Beethoven, Ludvig van",
+          "ended": false
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "type": "Artist name",
+          "name": "Ludvigs van Bēthovens",
+          "sort-name": "Bēthovens, Ludvigs van",
+          "locale": "lv",
+          "ended": false,
+          "end": null,
+          "primary": true,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "ended": false,
+          "type-id": null,
+          "locale": null,
+          "sort-name": "Beethoven, Ludwid van",
+          "type": null,
+          "name": "Ludwid van Beethoven"
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "ended": false,
+          "sort-name": "Beethoven, Ludwig",
+          "type": null,
+          "name": "Ludwig Beethoven",
+          "locale": null,
+          "type-id": null
+         },
+         {
+          "sort-name": "Beethoven, Ludwig Van (1770-1827)",
+          "type": null,
+          "name": "Ludwig Van Beethoven (1770-1827)",
+          "locale": null,
+          "type-id": null,
+          "ended": false,
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "type-id": null,
+          "locale": null,
+          "type": null,
+          "sort-name": "Beethoven, Ludwig Von",
+          "name": "Ludwig Von Beethoven",
+          "ended": false,
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "end": null,
+          "primary": true,
+          "begin": null,
+          "type": "Artist name",
+          "sort-name": "Beethoven, Ludwig van",
+          "name": "Ludwig van Beethoven",
+          "locale": "en",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "ended": false,
+          "locale": null,
+          "sort-name": "LvB",
+          "type": "Search hint",
+          "name": "LvB",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "name": "bheetoven",
+          "type": "Search hint",
+          "sort-name": "bheetoven",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "type-id": null,
+          "locale": "ru",
+          "type": null,
+          "sort-name": "Beethoven",
+          "name": "Бетховен",
+          "begin": null,
+          "primary": false,
+          "end": null
+         },
+         {
+          "primary": false,
+          "end": null,
+          "begin": null,
+          "name": "Л. Бетховен",
+          "type": "Artist name",
+          "sort-name": "Бетховен, Л.",
+          "locale": "ru",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false
+         },
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "name": "Людвиг ван Бетховен",
+          "type": "Artist name",
+          "sort-name": "Бетховен, Людвиг ван",
+          "locale": "ru",
+          "ended": false,
+          "primary": true,
+          "end": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "locale": "ja",
+          "name": "ベートーヴェン",
+          "type": "Artist name",
+          "sort-name": "ベートーヴェン",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "begin": null,
+          "primary": true,
+          "end": null
+         },
+         {
+          "locale": "ja",
+          "type": "Artist name",
+          "sort-name": "ベートーヴェン ルートヴィヒヴァン",
+          "name": "ルートヴィヒ・ヴァン・ベートーヴェン",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "begin": null,
+          "primary": false,
+          "end": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": true,
+          "ended": false,
+          "locale": "zh_Hant",
+          "type": "Artist name",
+          "name": "貝多芬",
+          "sort-name": "bèi duō fēn",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc"
+         },
+         {
+          "begin": null,
+          "primary": true,
+          "end": null,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": "zh_Hant_TW",
+          "sort-name": "貝多芬",
+          "type": "Artist name",
+          "name": "貝多芬"
+         },
+         {
+          "primary": false,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "sort-name": "路德維希・范・貝多芬",
+          "type": "Artist name",
+          "name": "路德維希・范・貝多芬",
+          "locale": "zh_Hant_TW"
+         },
+         {
+          "end": null,
+          "primary": false,
+          "begin": null,
+          "ended": false,
+          "type-id": null,
+          "sort-name": "Beethoven",
+          "type": null,
+          "name": "베토벤",
+          "locale": "ko"
+         }
+        ],
+        "disambiguation": "German composer",
+        "type": "Person",
+        "sort-name": "Beethoven, Ludwig van",
+        "name": "Ludwig van Beethoven",
+        "country": "DE",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "id": "1f9df192-a621-4f54-8850-2c5373b7eac9"
+       },
+       "joinphrase": "",
+       "name": "Ludwig van Beethoven"
+      }
+     ],
+     "position": 3,
+     "id": "fc2ed76e-b15f-42ea-9b58-523e9db6229e"
+    },
+    {
+     "recording": {
+      "aliases": [],
+      "relations": [
+       {
+        "attributes": [],
+        "begin": "1957-05-26",
+        "target-type": "artist",
+        "direction": "backward",
+        "source-credit": "",
+        "type-id": "234670ce-5f22-4fd0-921b-ef1662695c5d",
+        "artist": {
+         "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "AT",
+         "type": "Person",
+         "name": "Herbert von Karajan",
+         "disambiguation": "conductor",
+         "sort-name": "Karajan, Herbert von"
+        },
+        "end": "1957-05-26",
+        "ended": true,
+        "type": "conductor",
+        "attribute-ids": {},
+        "target-credit": "",
+        "attribute-values": {}
+       },
+       {
+        "type-id": "3b6616c5-88ba-4341-b4ee-81ce1e6d7ebb",
+        "source-credit": "",
+        "direction": "backward",
+        "begin": "1957-05-26",
+        "target-type": "artist",
+        "attributes": [],
+        "target-credit": "",
+        "attribute-values": {},
+        "attribute-ids": {},
+        "type": "performing orchestra",
+        "ended": true,
+        "end": "1957-05-26",
+        "artist": {
+         "country": null,
+         "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+         "type": "Orchestra",
+         "disambiguation": "",
+         "name": "Berliner Philharmoniker",
+         "sort-name": "Berliner Philharmoniker",
+         "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce"
+        }
+       },
+       {
+        "begin": "1957-05-26",
+        "target-type": "work",
+        "attributes": [
+         "live"
+        ],
+        "direction": "forward",
+        "type-id": "a3005666-a872-32c3-ad06-98af558e99b0",
+        "source-credit": "",
+        "end": "1957-05-26",
+        "ended": true,
+        "work": {
+         "title": "Symphony no. 5 in E-flat major, op. 82: I. Tempo molto moderato - Allegro moderato (ma poco a poco stretto) - Presto - Più presto",
+         "type-id": null,
+         "relations": [
+          {
+           "attributes": [],
+           "target-type": "artist",
+           "begin": "1915",
+           "direction": "backward",
+           "source-credit": "",
+           "type-id": "d59d99ea-23d4-4a80-b066-edca32ee158f",
+           "artist": {
+            "country": "FI",
+            "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+            "type": "Person",
+            "disambiguation": "Finnish composer",
+            "name": "Jean Sibelius",
+            "sort-name": "Sibelius, Jean",
+            "id": "691b0e9d-9e57-41cf-932d-a3d21b068e75"
+           },
+           "end": "1919",
+           "ended": true,
+           "attribute-ids": {},
+           "type": "composer",
+           "attribute-values": {},
+           "target-credit": ""
+          },
+          {
+           "type-id": "51975ed8-bbfa-486b-9f28-5947f4370299",
+           "source-credit": "",
+           "direction": "forward",
+           "begin": null,
+           "target-type": "work",
+           "attributes": [],
+           "attribute-values": {},
+           "target-credit": "",
+           "type": "arrangement",
+           "attribute-ids": {},
+           "ended": false,
+           "work": {
+            "iswcs": [],
+            "id": "c83a6054-077d-4acc-9758-b71a1120ec6a",
+            "languages": [],
+            "attributes": [],
+            "language": null,
+            "title": "Symphony no. 5 in E-flat major, op. 82: I. Tempo molto moderato",
+            "type-id": null,
+            "disambiguation": "transcr. for piano by Ekman",
+            "type": null
+           },
+           "end": null
+          },
+          {
+           "ordering-key": 1,
+           "end": null,
+           "work": {
+            "type": "Symphony",
+            "disambiguation": "",
+            "type-id": "174314aa-0aa4-30cf-96a6-50b281d8d208",
+            "title": "Symphony no. 5 in E-flat major, op. 82",
+            "attributes": [],
+            "languages": [],
+            "iswcs": [],
+            "id": "0e9918ea-a7c4-46d6-912b-eff2f380cc20",
+            "language": null
+           },
+           "ended": false,
+           "attribute-ids": {
+            "movement": "1d05bc4b-9884-4c9f-9f69-616f119047f3"
+           },
+           "type": "parts",
+           "attribute-values": {},
+           "target-credit": "",
+           "attributes": [
+            "movement"
+           ],
+           "target-type": "work",
+           "begin": null,
+           "direction": "backward",
+           "source-credit": "",
+           "type-id": "ca8d3642-ce5f-49f8-91f2-125d72524e6a"
+          }
+         ],
+         "type": null,
+         "disambiguation": "",
+         "id": "675dbbe1-b260-3523-af06-b6d8455cff88",
+         "iswcs": [],
+         "languages": [
+          "zxx"
+         ],
+         "attributes": [],
+         "language": "zxx"
+        },
+        "target-credit": "",
+        "attribute-values": {},
+        "attribute-ids": {
+         "live": "70007db6-a8bc-46d7-a770-80e6a0bb551a"
+        },
+        "type": "performance"
+       }
+      ],
+      "title": "Symphony no. 5 in E-flat major op. 82: I. Tempo molto morderato – Largamente – Allegro moderato",
+      "disambiguation": "",
+      "length": 745480,
+      "artist-credit": [
+       {
+        "joinphrase": ", ",
+        "name": "Berliner Philharmoniker",
+        "artist": {
+         "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+         "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+         "country": null,
+         "disambiguation": "",
+         "type": "Orchestra",
+         "name": "Berliner Philharmoniker",
+         "sort-name": "Berliner Philharmoniker"
+        }
+       },
+       {
+        "artist": {
+         "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99",
+         "country": "AT",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "disambiguation": "conductor",
+         "type": "Person",
+         "name": "Herbert von Karajan",
+         "sort-name": "Karajan, Herbert von"
+        },
+        "name": "Herbert von Karajan",
+        "joinphrase": ""
+       }
+      ],
+      "video": false,
+      "id": "aeba0607-2a02-47e0-a167-21cdf59a8bea"
+     },
+     "number": "4",
+     "title": "Symphony no. 5 in E-flat major, op. 82: I. Tempo molto moderato - Largamente Allegro moderato",
+     "length": 745414,
+     "artist-credit": [
+      {
+       "artist": {
+        "id": "691b0e9d-9e57-41cf-932d-a3d21b068e75",
+        "aliases": [
+         {
+          "locale": null,
+          "type": "Artist name",
+          "sort-name": "J. Sibelius",
+          "name": "J. Sibelius",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "sort-name": "Sibelius, Jean",
+          "type": "Artist name",
+          "name": "Jan Sibelius",
+          "locale": null,
+          "ended": false
+         },
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "sort-name": "Sibelious, Jean",
+          "type": null,
+          "name": "Jean Sibelious",
+          "locale": null,
+          "type-id": null
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "sort-name": "Jean Sibelius (1865-1957)",
+          "type": "Search hint",
+          "name": "Jean Sibelius (1865-1957)",
+          "ended": false
+         },
+         {
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "sort-name": "Jean Sibelus",
+          "type": "Search hint",
+          "name": "Jean Sibelus",
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "ended": false,
+          "locale": null,
+          "name": "Jean Siebelius",
+          "type": "Search hint",
+          "sort-name": "Jean Siebelius",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "type": "Legal name",
+          "name": "Johan Julius Christian Sibelius",
+          "sort-name": "Sibelius, Johan Julius Christian",
+          "locale": null,
+          "ended": false
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": null,
+          "type": "Artist name",
+          "sort-name": "Sibelius",
+          "name": "Sibelius",
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "locale": null,
+          "type": "Search hint",
+          "sort-name": "Sibilus",
+          "name": "Sibilus",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "name": "Siebelius",
+          "type": "Search hint",
+          "sort-name": "Siebelius",
+          "locale": null,
+          "ended": false,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "primary": false,
+          "end": null,
+          "type-id": null,
+          "locale": "ja_JP",
+          "sort-name": "シベリウス",
+          "type": null,
+          "name": "シベリウス",
+          "ended": false
+         },
+         {
+          "type": null,
+          "sort-name": "ジャン・シベリウス",
+          "name": "ジャン・シベリウス",
+          "locale": "ja_JP",
+          "type-id": null,
+          "ended": false,
+          "primary": false,
+          "end": null,
+          "begin": null
+         }
+        ],
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "FI",
+        "type": "Person",
+        "disambiguation": "Finnish composer",
+        "name": "Jean Sibelius",
+        "sort-name": "Sibelius, Jean"
+       },
+       "name": "Jean Sibelius",
+       "joinphrase": ""
+      }
+     ],
+     "id": "5152988f-752f-4487-b9e3-b694cd20ed9e",
+     "position": 4
+    },
+    {
+     "recording": {
+      "disambiguation": "",
+      "title": "Symphony no. 5 in E-flat major op. 82: II. Andante mosso",
+      "relations": [
+       {
+        "end": "1957-05-26",
+        "artist": {
+         "type": "Person",
+         "name": "Herbert von Karajan",
+         "disambiguation": "conductor",
+         "sort-name": "Karajan, Herbert von",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "AT",
+         "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99"
+        },
+        "type": "conductor",
+        "attribute-ids": {},
+        "target-credit": "",
+        "attribute-values": {},
+        "ended": true,
+        "attributes": [],
+        "begin": "1957-05-26",
+        "target-type": "artist",
+        "source-credit": "",
+        "type-id": "234670ce-5f22-4fd0-921b-ef1662695c5d",
+        "direction": "backward"
+       },
+       {
+        "attribute-ids": {},
+        "type": "performing orchestra",
+        "target-credit": "",
+        "attribute-values": {},
+        "ended": true,
+        "end": "1957-05-26",
+        "artist": {
+         "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+         "country": null,
+         "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+         "type": "Orchestra",
+         "sort-name": "Berliner Philharmoniker",
+         "disambiguation": "",
+         "name": "Berliner Philharmoniker"
+        },
+        "source-credit": "",
+        "type-id": "3b6616c5-88ba-4341-b4ee-81ce1e6d7ebb",
+        "direction": "backward",
+        "attributes": [],
+        "begin": "1957-05-26",
+        "target-type": "artist"
+       },
+       {
+        "begin": "1957-05-26",
+        "target-type": "work",
+        "attributes": [
+         "live"
+        ],
+        "type-id": "a3005666-a872-32c3-ad06-98af558e99b0",
+        "source-credit": "",
+        "direction": "forward",
+        "end": "1957-05-26",
+        "target-credit": "",
+        "attribute-values": {},
+        "type": "performance",
+        "attribute-ids": {
+         "live": "70007db6-a8bc-46d7-a770-80e6a0bb551a"
+        },
+        "ended": true,
+        "work": {
+         "title": "Symphony no. 5 in E-flat major, op. 82: II. Andante mosso, quasi allegretto",
+         "relations": [
+          {
+           "artist": {
+            "id": "691b0e9d-9e57-41cf-932d-a3d21b068e75",
+            "country": "FI",
+            "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+            "disambiguation": "Finnish composer",
+            "type": "Person",
+            "name": "Jean Sibelius",
+            "sort-name": "Sibelius, Jean"
+           },
+           "end": "1919",
+           "ended": true,
+           "attribute-values": {},
+           "target-credit": "",
+           "type": "composer",
+           "attribute-ids": {},
+           "target-type": "artist",
+           "begin": "1915",
+           "attributes": [],
+           "direction": "backward",
+           "type-id": "d59d99ea-23d4-4a80-b066-edca32ee158f",
+           "source-credit": ""
+          },
+          {
+           "ordering-key": 2,
+           "end": null,
+           "ended": false,
+           "work": {
+            "language": null,
+            "attributes": [],
+            "languages": [],
+            "iswcs": [],
+            "id": "0e9918ea-a7c4-46d6-912b-eff2f380cc20",
+            "type": "Symphony",
+            "disambiguation": "",
+            "type-id": "174314aa-0aa4-30cf-96a6-50b281d8d208",
+            "title": "Symphony no. 5 in E-flat major, op. 82"
+           },
+           "target-credit": "",
+           "attribute-values": {},
+           "type": "parts",
+           "attribute-ids": {
+            "movement": "1d05bc4b-9884-4c9f-9f69-616f119047f3"
+           },
+           "begin": null,
+           "target-type": "work",
+           "attributes": [
+            "movement"
+           ],
+           "direction": "backward",
+           "type-id": "ca8d3642-ce5f-49f8-91f2-125d72524e6a",
+           "source-credit": ""
+          }
+         ],
+         "type-id": null,
+         "disambiguation": "",
+         "type": null,
+         "language": "zxx",
+         "iswcs": [],
+         "id": "158f45a6-df55-3c54-960e-5e76ada7f4cb",
+         "languages": [
+          "zxx"
+         ],
+         "attributes": []
+        }
+       }
+      ],
+      "aliases": [],
+      "id": "db9b31a7-6f37-4505-917c-f2fdb4782cec",
+      "artist-credit": [
+       {
+        "artist": {
+         "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+         "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+         "country": null,
+         "disambiguation": "",
+         "type": "Orchestra",
+         "sort-name": "Berliner Philharmoniker",
+         "name": "Berliner Philharmoniker"
+        },
+        "joinphrase": ", ",
+        "name": "Berliner Philharmoniker"
+       },
+       {
+        "artist": {
+         "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "AT",
+         "type": "Person",
+         "disambiguation": "conductor",
+         "name": "Herbert von Karajan",
+         "sort-name": "Karajan, Herbert von"
+        },
+        "name": "Herbert von Karajan",
+        "joinphrase": ""
+       }
+      ],
+      "video": false,
+      "length": 465720
+     },
+     "number": "5",
+     "title": "Symphony no. 5 in E-flat major, op. 82: II. Andante mosso, quasi allegretto",
+     "length": 465648,
+     "artist-credit": [
+      {
+       "artist": {
+        "id": "691b0e9d-9e57-41cf-932d-a3d21b068e75",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "FI",
+        "sort-name": "Sibelius, Jean",
+        "type": "Person",
+        "disambiguation": "Finnish composer",
+        "name": "Jean Sibelius",
+        "aliases": [
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "locale": null,
+          "name": "J. Sibelius",
+          "type": "Artist name",
+          "sort-name": "J. Sibelius",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "name": "Jan Sibelius",
+          "type": "Artist name",
+          "sort-name": "Sibelius, Jean",
+          "locale": null
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "ended": false,
+          "locale": null,
+          "sort-name": "Sibelious, Jean",
+          "type": null,
+          "name": "Jean Sibelious",
+          "type-id": null
+         },
+         {
+          "locale": null,
+          "type": "Search hint",
+          "name": "Jean Sibelius (1865-1957)",
+          "sort-name": "Jean Sibelius (1865-1957)",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "sort-name": "Jean Sibelus",
+          "type": "Search hint",
+          "name": "Jean Sibelus",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "ended": false,
+          "locale": null,
+          "sort-name": "Jean Siebelius",
+          "type": "Search hint",
+          "name": "Jean Siebelius",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e"
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "locale": null,
+          "sort-name": "Sibelius, Johan Julius Christian",
+          "type": "Legal name",
+          "name": "Johan Julius Christian Sibelius",
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "ended": false
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": null,
+          "type": "Artist name",
+          "sort-name": "Sibelius",
+          "name": "Sibelius",
+          "ended": false
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "locale": null,
+          "type": "Search hint",
+          "name": "Sibilus",
+          "sort-name": "Sibilus",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false
+         },
+         {
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "type": "Search hint",
+          "name": "Siebelius",
+          "sort-name": "Siebelius",
+          "locale": null,
+          "ended": false,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "type-id": null,
+          "locale": "ja_JP",
+          "sort-name": "シベリウス",
+          "type": null,
+          "name": "シベリウス",
+          "begin": null,
+          "primary": false,
+          "end": null
+         },
+         {
+          "ended": false,
+          "type-id": null,
+          "type": null,
+          "sort-name": "ジャン・シベリウス",
+          "name": "ジャン・シベリウス",
+          "locale": "ja_JP",
+          "primary": false,
+          "end": null,
+          "begin": null
+         }
+        ]
+       },
+       "joinphrase": "",
+       "name": "Jean Sibelius"
+      }
+     ],
+     "id": "e0b9f0ae-7d10-46b6-ac09-2cd5c61d6e55",
+     "position": 5
+    },
+    {
+     "length": 614012,
+     "artist-credit": [
+      {
+       "name": "Jean Sibelius",
+       "joinphrase": "",
+       "artist": {
+        "sort-name": "Sibelius, Jean",
+        "type": "Person",
+        "disambiguation": "Finnish composer",
+        "name": "Jean Sibelius",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "FI",
+        "aliases": [
+         {
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": null,
+          "name": "J. Sibelius",
+          "type": "Artist name",
+          "sort-name": "J. Sibelius",
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "locale": null,
+          "name": "Jan Sibelius",
+          "type": "Artist name",
+          "sort-name": "Sibelius, Jean",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "ended": false,
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "primary": null,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type-id": null,
+          "sort-name": "Sibelious, Jean",
+          "type": null,
+          "name": "Jean Sibelious",
+          "locale": null
+         },
+         {
+          "begin": null,
+          "primary": null,
+          "end": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "sort-name": "Jean Sibelius (1865-1957)",
+          "type": "Search hint",
+          "name": "Jean Sibelius (1865-1957)",
+          "ended": false
+         },
+         {
+          "end": null,
+          "primary": null,
+          "begin": null,
+          "type": "Search hint",
+          "name": "Jean Sibelus",
+          "sort-name": "Jean Sibelus",
+          "locale": null,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false
+         },
+         {
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "sort-name": "Jean Siebelius",
+          "type": "Search hint",
+          "name": "Jean Siebelius",
+          "locale": null,
+          "primary": null,
+          "end": null,
+          "begin": null
+         },
+         {
+          "sort-name": "Sibelius, Johan Julius Christian",
+          "type": "Legal name",
+          "name": "Johan Julius Christian Sibelius",
+          "locale": null,
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "ended": false,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": null,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "locale": null,
+          "type": "Artist name",
+          "sort-name": "Sibelius",
+          "name": "Sibelius",
+          "ended": false
+         },
+         {
+          "locale": null,
+          "sort-name": "Sibilus",
+          "type": "Search hint",
+          "name": "Sibilus",
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "ended": false,
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "locale": null,
+          "type": "Search hint",
+          "name": "Siebelius",
+          "sort-name": "Siebelius",
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "ended": false,
+          "type": null,
+          "name": "シベリウス",
+          "sort-name": "シベリウス",
+          "locale": "ja_JP",
+          "type-id": null,
+          "end": null,
+          "primary": false,
+          "begin": null
+         },
+         {
+          "locale": "ja_JP",
+          "type": null,
+          "name": "ジャン・シベリウス",
+          "sort-name": "ジャン・シベリウス",
+          "type-id": null,
+          "ended": false,
+          "begin": null,
+          "end": null,
+          "primary": false
+         }
+        ],
+        "id": "691b0e9d-9e57-41cf-932d-a3d21b068e75"
+       }
+      }
+     ],
+     "position": 6,
+     "id": "d48bc653-137d-48be-bf31-2f73f10adf0c",
+     "recording": {
+      "aliases": [],
+      "disambiguation": "",
+      "relations": [
+       {
+        "type-id": "234670ce-5f22-4fd0-921b-ef1662695c5d",
+        "source-credit": "",
+        "direction": "backward",
+        "target-type": "artist",
+        "begin": "1957-05-26",
+        "attributes": [],
+        "attribute-values": {},
+        "target-credit": "",
+        "type": "conductor",
+        "attribute-ids": {},
+        "ended": true,
+        "end": "1957-05-26",
+        "artist": {
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "AT",
+         "disambiguation": "conductor",
+         "type": "Person",
+         "name": "Herbert von Karajan",
+         "sort-name": "Karajan, Herbert von",
+         "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99"
+        }
+       },
+       {
+        "end": "1957-05-26",
+        "artist": {
+         "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+         "sort-name": "Berliner Philharmoniker",
+         "type": "Orchestra",
+         "disambiguation": "",
+         "name": "Berliner Philharmoniker",
+         "country": null,
+         "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5"
+        },
+        "attribute-values": {},
+        "target-credit": "",
+        "attribute-ids": {},
+        "type": "performing orchestra",
+        "ended": true,
+        "target-type": "artist",
+        "begin": "1957-05-26",
+        "attributes": [],
+        "type-id": "3b6616c5-88ba-4341-b4ee-81ce1e6d7ebb",
+        "source-credit": "",
+        "direction": "backward"
+       },
+       {
+        "work": {
+         "type": null,
+         "disambiguation": "",
+         "relations": [
+          {
+           "target-type": "artist",
+           "begin": "1915",
+           "attributes": [],
+           "direction": "backward",
+           "type-id": "d59d99ea-23d4-4a80-b066-edca32ee158f",
+           "source-credit": "",
+           "artist": {
+            "id": "691b0e9d-9e57-41cf-932d-a3d21b068e75",
+            "type": "Person",
+            "disambiguation": "Finnish composer",
+            "name": "Jean Sibelius",
+            "sort-name": "Sibelius, Jean",
+            "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+            "country": "FI"
+           },
+           "end": "1919",
+           "ended": true,
+           "target-credit": "",
+           "attribute-values": {},
+           "attribute-ids": {},
+           "type": "composer"
+          },
+          {
+           "ordering-key": 3,
+           "end": null,
+           "ended": false,
+           "work": {
+            "languages": [],
+            "attributes": [],
+            "iswcs": [],
+            "id": "0e9918ea-a7c4-46d6-912b-eff2f380cc20",
+            "language": null,
+            "disambiguation": "",
+            "type": "Symphony",
+            "title": "Symphony no. 5 in E-flat major, op. 82",
+            "type-id": "174314aa-0aa4-30cf-96a6-50b281d8d208"
+           },
+           "attribute-values": {},
+           "target-credit": "",
+           "type": "parts",
+           "attribute-ids": {
+            "movement": "1d05bc4b-9884-4c9f-9f69-616f119047f3"
+           },
+           "begin": null,
+           "target-type": "work",
+           "attributes": [
+            "movement"
+           ],
+           "direction": "backward",
+           "type-id": "ca8d3642-ce5f-49f8-91f2-125d72524e6a",
+           "source-credit": ""
+          }
+         ],
+         "type-id": null,
+         "title": "Symphony no. 5 in E-flat major, op. 82: III. Allegro molto",
+         "language": "zxx",
+         "attributes": [],
+         "languages": [
+          "zxx"
+         ],
+         "id": "4b9c0f1f-05ba-371e-a495-b911b3d8b89f",
+         "iswcs": []
+        },
+        "ended": true,
+        "attribute-ids": {
+         "live": "70007db6-a8bc-46d7-a770-80e6a0bb551a"
+        },
+        "type": "performance",
+        "attribute-values": {},
+        "target-credit": "",
+        "end": "1957-05-26",
+        "direction": "forward",
+        "source-credit": "",
+        "type-id": "a3005666-a872-32c3-ad06-98af558e99b0",
+        "attributes": [
+         "live"
+        ],
+        "begin": "1957-05-26",
+        "target-type": "work"
+       }
+      ],
+      "title": "Symphony no. 5 in E-flat major op. 82: III. Allegro molto",
+      "length": 614066,
+      "artist-credit": [
+       {
+        "name": "Berliner Philharmoniker",
+        "joinphrase": ", ",
+        "artist": {
+         "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+         "country": null,
+         "type": "Orchestra",
+         "disambiguation": "",
+         "sort-name": "Berliner Philharmoniker",
+         "name": "Berliner Philharmoniker",
+         "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce"
+        }
+       },
+       {
+        "artist": {
+         "type": "Person",
+         "sort-name": "Karajan, Herbert von",
+         "disambiguation": "conductor",
+         "name": "Herbert von Karajan",
+         "country": "AT",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99"
+        },
+        "joinphrase": "",
+        "name": "Herbert von Karajan"
+       }
+      ],
+      "video": false,
+      "id": "10ba649f-8cf1-4b6f-b117-86552f5964f4"
+     },
+     "number": "6",
+     "title": "Symphony no. 5 in E-flat major, op. 82: III. Allegro molto - Largamente assai"
+    },
+    {
+     "recording": {
+      "length": 731948,
+      "artist-credit": [
+       {
+        "joinphrase": ", ",
+        "name": "Herbert von Karajan",
+        "artist": {
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "AT",
+         "sort-name": "Karajan, Herbert von",
+         "type": "Person",
+         "disambiguation": "conductor",
+         "name": "Herbert von Karajan",
+         "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99"
+        }
+       },
+       {
+        "joinphrase": " & ",
+        "name": "Glenn Gould",
+        "artist": {
+         "id": "7002bf88-1269-4965-a772-4ba1e7a91eaa",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": "CA",
+         "disambiguation": "pianist",
+         "type": "Person",
+         "sort-name": "Gould, Glenn",
+         "name": "Glenn Gould"
+        }
+       },
+       {
+        "artist": {
+         "id": "93439e7f-ecba-4237-9b7c-3bc1e0217566",
+         "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+         "country": null,
+         "disambiguation": "",
+         "type": "Person",
+         "sort-name": "Sigai, Ingrid El",
+         "name": "Ingrid El Sigai"
+        },
+        "name": "Ingrid El Sigai",
+        "joinphrase": ""
+       }
+      ],
+      "video": false,
+      "id": "81a06ba7-b9f6-447b-ac6a-4cef8d8fa067",
+      "aliases": [],
+      "relations": [],
+      "title": "Glenn Gould und Herbert von Karajan - Protokoll einer \"unmöglichen Partnerschaft\"",
+      "disambiguation": ""
+     },
+     "title": "Glenn Gould und Herbert von Karajan - Protokoll einer \"unmöglichen Partnerschaft\"",
+     "number": "7",
+     "artist-credit": [
+      {
+       "artist": {
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": "AT",
+        "type": "Person",
+        "disambiguation": "conductor",
+        "sort-name": "Karajan, Herbert von",
+        "name": "Herbert von Karajan",
+        "aliases": [
+         {
+          "ended": false,
+          "locale": "de",
+          "sort-name": "Karajan, Herbert von",
+          "type": "Artist name",
+          "name": "Herbert von Karajan",
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "begin": null,
+          "end": null,
+          "primary": true
+         },
+         {
+          "ended": false,
+          "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+          "sort-name": "Karajan, Herbert von",
+          "type": "Artist name",
+          "name": "Herbert von Karajan",
+          "locale": "en",
+          "end": null,
+          "primary": true,
+          "begin": null
+         },
+         {
+          "type-id": null,
+          "name": "Heribert Ritter von Karajan",
+          "type": null,
+          "sort-name": "Heribert Ritter von Karajan",
+          "locale": null,
+          "ended": false,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "ended": false,
+          "type-id": null,
+          "locale": null,
+          "type": null,
+          "name": "Karajan, Herbert von",
+          "sort-name": "Karajan, Herbert von",
+          "begin": null,
+          "end": null,
+          "primary": null
+         },
+         {
+          "primary": true,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type-id": null,
+          "name": "ヘルベルト・フォン・カラヤン",
+          "type": null,
+          "sort-name": "ヘルベルト・フォン・カラヤン",
+          "locale": "ja"
+         }
+        ],
+        "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99"
+       },
+       "joinphrase": ", ",
+       "name": "Herbert von Karajan"
+      },
+      {
+       "name": "Glenn Gould",
+       "joinphrase": " & ",
+       "artist": {
+        "aliases": [
+         {
+          "ended": false,
+          "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+          "type": "Search hint",
+          "name": "1)Glenn Gould",
+          "sort-name": "1)Glenn Gould",
+          "locale": null,
+          "end": null,
+          "primary": null,
+          "begin": null
+         },
+         {
+          "type-id": null,
+          "locale": null,
+          "name": "Glen Gould",
+          "type": null,
+          "sort-name": "Glen Gould",
+          "ended": false,
+          "begin": null,
+          "primary": null,
+          "end": null
+         },
+         {
+          "end": "1939",
+          "primary": false,
+          "begin": null,
+          "type": "Legal name",
+          "sort-name": "Glenn Herbert Gold",
+          "name": "Glenn Herbert Gold",
+          "locale": "en",
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+          "ended": true
+         },
+         {
+          "primary": false,
+          "end": null,
+          "begin": null,
+          "ended": false,
+          "type": "Legal name",
+          "sort-name": "Gould, Glenn Herbert",
+          "name": "Glenn Herbert Gould",
+          "locale": "en",
+          "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf"
+         },
+         {
+          "type-id": null,
+          "name": "Qlenn Quld",
+          "type": null,
+          "sort-name": "Qlenn Quld",
+          "locale": "az",
+          "ended": false,
+          "end": null,
+          "primary": false,
+          "begin": null
+         },
+         {
+          "begin": null,
+          "end": null,
+          "primary": false,
+          "locale": "ja",
+          "type": null,
+          "name": "グレン・グールド",
+          "sort-name": "グレン・グールド",
+          "type-id": null,
+          "ended": false
+         }
+        ],
+        "type": "Person",
+        "disambiguation": "pianist",
+        "name": "Glenn Gould",
+        "sort-name": "Gould, Glenn",
+        "country": "CA",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "id": "7002bf88-1269-4965-a772-4ba1e7a91eaa"
+       }
+      },
+      {
+       "joinphrase": "",
+       "name": "Ingrid El Sigai",
+       "artist": {
+        "aliases": [],
+        "disambiguation": "",
+        "type": "Person",
+        "sort-name": "Sigai, Ingrid El",
+        "name": "Ingrid El Sigai",
+        "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+        "country": null,
+        "id": "93439e7f-ecba-4237-9b7c-3bc1e0217566"
+       }
+      }
+     ],
+     "length": 731948,
+     "id": "c1d6d454-853d-428f-b4d1-8ac6d9b46180",
+     "position": 7
+    }
+   ],
+   "id": "e5abc044-7880-439d-80dc-2f3311efd5f5",
+   "position": 1,
+   "format": "Digital Media"
+  }
+ ],
+ "artist-credit": [
+  {
+   "joinphrase": ", ",
+   "name": "Herbert von Karajan",
+   "artist": {
+    "type": "Person",
+    "name": "Herbert von Karajan",
+    "disambiguation": "conductor",
+    "sort-name": "Karajan, Herbert von",
+    "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+    "country": "AT",
+    "aliases": [
+     {
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "locale": "de",
+      "name": "Herbert von Karajan",
+      "type": "Artist name",
+      "sort-name": "Karajan, Herbert von",
+      "ended": false,
+      "begin": null,
+      "end": null,
+      "primary": true
+     },
+     {
+      "begin": null,
+      "primary": true,
+      "end": null,
+      "ended": false,
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "locale": "en",
+      "type": "Artist name",
+      "name": "Herbert von Karajan",
+      "sort-name": "Karajan, Herbert von"
+     },
+     {
+      "type-id": null,
+      "locale": null,
+      "sort-name": "Heribert Ritter von Karajan",
+      "type": null,
+      "name": "Heribert Ritter von Karajan",
+      "ended": false,
+      "begin": null,
+      "primary": null,
+      "end": null
+     },
+     {
+      "begin": null,
+      "end": null,
+      "primary": null,
+      "type-id": null,
+      "locale": null,
+      "type": null,
+      "name": "Karajan, Herbert von",
+      "sort-name": "Karajan, Herbert von",
+      "ended": false
+     },
+     {
+      "end": null,
+      "primary": true,
+      "begin": null,
+      "type": null,
+      "name": "ヘルベルト・フォン・カラヤン",
+      "sort-name": "ヘルベルト・フォン・カラヤン",
+      "locale": "ja",
+      "type-id": null,
+      "ended": false
+     }
+    ],
+    "id": "d2ced2f1-6b58-47cf-ae87-5943e2ab6d99"
+   }
+  },
+  {
+   "joinphrase": " & ",
+   "name": "Glenn Gould",
+   "artist": {
+    "disambiguation": "pianist",
+    "type": "Person",
+    "name": "Glenn Gould",
+    "sort-name": "Gould, Glenn",
+    "type-id": "b6e035f4-3ce9-331c-97df-83397230b0df",
+    "country": "CA",
+    "aliases": [
+     {
+      "type-id": "1937e404-b981-3cb7-8151-4c86ebfc8d8e",
+      "locale": null,
+      "type": "Search hint",
+      "name": "1)Glenn Gould",
+      "sort-name": "1)Glenn Gould",
+      "ended": false,
+      "begin": null,
+      "end": null,
+      "primary": null
+     },
+     {
+      "end": null,
+      "primary": null,
+      "begin": null,
+      "name": "Glen Gould",
+      "type": null,
+      "sort-name": "Glen Gould",
+      "locale": null,
+      "type-id": null,
+      "ended": false
+     },
+     {
+      "ended": true,
+      "locale": "en",
+      "type": "Legal name",
+      "sort-name": "Glenn Herbert Gold",
+      "name": "Glenn Herbert Gold",
+      "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf",
+      "begin": null,
+      "primary": false,
+      "end": "1939"
+     },
+     {
+      "primary": false,
+      "end": null,
+      "begin": null,
+      "ended": false,
+      "type": "Legal name",
+      "name": "Glenn Herbert Gould",
+      "sort-name": "Gould, Glenn Herbert",
+      "locale": "en",
+      "type-id": "d4dcd0c0-b341-3612-a332-c0ce797b25cf"
+     },
+     {
+      "type-id": null,
+      "locale": "az",
+      "sort-name": "Qlenn Quld",
+      "type": null,
+      "name": "Qlenn Quld",
+      "ended": false,
+      "begin": null,
+      "primary": false,
+      "end": null
+     },
+     {
+      "begin": null,
+      "primary": false,
+      "end": null,
+      "type-id": null,
+      "locale": "ja",
+      "sort-name": "グレン・グールド",
+      "type": null,
+      "name": "グレン・グールド",
+      "ended": false
+     }
+    ],
+    "id": "7002bf88-1269-4965-a772-4ba1e7a91eaa"
+   }
+  },
+  {
+   "name": "Berliner Philharmoniker",
+   "joinphrase": "",
+   "artist": {
+    "id": "dea28aa9-1086-4ffa-8739-0ccc759de1ce",
+    "type": "Orchestra",
+    "disambiguation": "",
+    "sort-name": "Berliner Philharmoniker",
+    "name": "Berliner Philharmoniker",
+    "type-id": "a0b36c92-3eb1-3839-a4f9-4799823f54a5",
+    "country": null,
+    "aliases": [
+     {
+      "primary": null,
+      "end": null,
+      "begin": null,
+      "type-id": null,
+      "type": null,
+      "sort-name": "BPO",
+      "name": "BPO",
+      "locale": null,
+      "ended": false
+     },
+     {
+      "begin": null,
+      "end": null,
+      "primary": true,
+      "ended": false,
+      "locale": "et",
+      "type": null,
+      "sort-name": "Berliini Filharmoonia Orkester",
+      "name": "Berliini Filharmoonia Orkester",
+      "type-id": null
+     },
+     {
+      "ended": false,
+      "type-id": null,
+      "locale": "en",
+      "type": null,
+      "sort-name": "Berlin Philharmonic",
+      "name": "Berlin Philharmonic",
+      "begin": null,
+      "primary": false,
+      "end": null
+     },
+     {
+      "begin": null,
+      "end": null,
+      "primary": true,
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "locale": "en",
+      "sort-name": "Berlin Philharmonic Orchestra",
+      "type": "Artist name",
+      "name": "Berlin Philharmonic Orchestra",
+      "ended": false
+     },
+     {
+      "end": null,
+      "primary": null,
+      "begin": null,
+      "type-id": null,
+      "type": null,
+      "sort-name": "Berlin Philharmoniker",
+      "name": "Berlin Philharmoniker",
+      "locale": null,
+      "ended": false
+     },
+     {
+      "ended": false,
+      "type-id": null,
+      "locale": "de",
+      "type": null,
+      "sort-name": "Berliner Philharmoniker",
+      "name": "Berliner Philharmoniker",
+      "begin": null,
+      "end": null,
+      "primary": true
+     },
+     {
+      "end": null,
+      "primary": false,
+      "begin": null,
+      "sort-name": "Berliner Philharmonisches Orchester",
+      "type": "Artist name",
+      "name": "Berliner Philharmonisches Orchester",
+      "locale": "de",
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "ended": false
+     },
+     {
+      "primary": true,
+      "end": null,
+      "begin": null,
+      "ended": false,
+      "type-id": null,
+      "type": null,
+      "name": "Orchestre philharmonique de Berlin",
+      "sort-name": "Orchestre philharmonique de Berlin",
+      "locale": "fr"
+     },
+     {
+      "type-id": null,
+      "locale": "es",
+      "sort-name": "Orquesta filarmónica de Berlín",
+      "type": null,
+      "name": "Orquesta filarmónica de Berlín",
+      "ended": false,
+      "begin": null,
+      "primary": true,
+      "end": null
+     },
+     {
+      "end": null,
+      "primary": false,
+      "begin": null,
+      "type-id": null,
+      "type": null,
+      "sort-name": "Berlin Philharmonic Orchestra, The",
+      "name": "The Berlin Philharmonic Orchestra",
+      "locale": "en",
+      "ended": false
+     },
+     {
+      "ended": false,
+      "locale": "ja",
+      "type": "Artist name",
+      "name": "ベルリン・フィルハーモニー・ブラスオルケスター",
+      "sort-name": "ベルリン・フィルハーモニー・ブラスオルケスター",
+      "type-id": "894afba6-2816-3c24-8072-eadb66bd04bc",
+      "begin": null,
+      "end": null,
+      "primary": false
+     },
+     {
+      "ended": false,
+      "type": null,
+      "sort-name": "ベルリン・フィルハーモニーかんげんがくだん",
+      "name": "ベルリン・フィルハーモニー管弦楽団",
+      "locale": "ja",
+      "type-id": null,
+      "primary": true,
+      "end": null,
+      "begin": null
+     }
+    ]
+   }
+  }
+ ],
+ "id": "7ce871a0-34b2-40e0-a77e-39b1268f1f61",
+ "aliases": [],
+ "disambiguation": "",
+ "status": "Official",
+ "relations": [],
+ "date": "",
+ "title": "Beethoven: Piano Concerto no. 3 / Sibelius: Symphony no. 5",
+ "release-events": [
+  {
+   "area": {
+    "id": "525d4e18-3d00-31b9-a58b-a146a916de8f",
+    "type-id": null,
+    "disambiguation": "",
+    "type": null,
+    "sort-name": "[Worldwide]",
+    "name": "[Worldwide]",
+    "iso-3166-1-codes": [
+     "XW"
+    ]
+   },
+   "date": ""
+  }
+ ],
+ "country": "XW",
+ "barcode": "888880520562",
+ "asin": null,
+ "packaging": "None",
+ "quality": "normal"
+}

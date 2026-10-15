@@ -64,7 +64,7 @@ fn id3_user_text(path: &Path, description: &str) -> Vec<String> {
         .collect()
 }
 
-fn vorbis_values(path: &Path, key: &str) -> Vec<String> {
+pub(crate) fn vorbis_values(path: &Path, key: &str) -> Vec<String> {
     // Raw pairs, not lofty's view: the generic round-trip drops unknown
     // fields, so only the bytes tell the truth here.
     let bytes = std::fs::read(path).unwrap();
