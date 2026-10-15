@@ -70,6 +70,7 @@ pub mod listenbrainz;
 pub mod lrclib;
 pub mod matrix;
 pub mod musicbrainz;
+pub mod plextv;
 pub mod preview;
 pub mod retry;
 pub mod singleflight;

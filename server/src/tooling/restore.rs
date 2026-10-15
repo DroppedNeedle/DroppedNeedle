@@ -78,7 +78,7 @@ pub fn restore_backup(
     }
     // Held for the run: a server on this directory refuses to start, and a
     // running one makes the restore refuse.
-    let _lock = crate::tooling::datalock::DataLock::exclusive(&target_dir.join("library.db"))
+    let _lock = crate::db::datalock::DataLock::exclusive(&target_dir.join("library.db"))
         .map_err(|error| RestoreError::Refused(format!("{error}; stop the server first")))?;
     let mut checks_passed = preflight(backup_db, allow_downgrade)?;
     let parent = backup_db
@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn unchecked_manifest_refuses() {
-        let dir = crate::tooling::scratch::ScratchDir::new("restore-sidecar").unwrap();
+        let dir = crate::db::scratch::ScratchDir::new("restore-sidecar").unwrap();
         let backup = dir.join("backup.sqlite");
         std::fs::write(&backup, b"not checked").unwrap();
         std::fs::write(dir.join("backup.sqlite.manifest.json"), b"{}").unwrap();

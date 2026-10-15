@@ -13,11 +13,11 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
+use crate::bootstrap::data_dirs::{BootRefusal, DataDirs, check_bootable};
+use crate::db::datalock::{DataLock, DataLockError};
 use crate::runtime_config::crypto::CryptoError;
 use crate::runtime_config::sections::{ContentSecurityPolicyMode, PublicAddress, SecuritySettings};
 use crate::runtime_config::{ConfigError, ConfigStore, Crypto};
-use crate::tooling::datalock::{DataLock, DataLockError};
-use crate::tooling::upgrade::{BootRefusal, DataDirs, check_bootable};
 
 /// Why the settings were not read or changed. Nothing is written in any of
 /// these cases.

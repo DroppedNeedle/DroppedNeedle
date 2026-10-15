@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use crate::runtime_config::{ConfigStore, sections::PublicAddress};
 
-use super::{middleware::WarnOnce, origin::Origin};
+use super::middleware::WarnOnce;
+use crate::runtime_config::origin::Origin;
 
 /// A handle on the saved `public_address` list. Clones share the settings
 /// and the one warning. The default states no address.

@@ -594,7 +594,7 @@ fn swap_into_place(stage: &Path, served: &Path) -> Result<(), WebError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tooling::scratch::ScratchDir;
+    use crate::db::scratch::ScratchDir;
 
     fn build(dir: &Path) -> PathBuf {
         let template = dir.join("template");

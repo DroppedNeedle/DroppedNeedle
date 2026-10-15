@@ -25,8 +25,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 
 use crate::auth::compat_auth::jellyfin::{JellyfinPasswordStore, extract_token};
-use crate::auth::session::middleware::TrustedProxies;
-use crate::client_ip::ClientIp;
+use crate::auth::session::client_ip::ClientIp;
 use crate::compat::jellyfin::QueryTokens;
 use crate::compat::settings::LiveSettings;
 use crate::compat::shared::address::{ListenerConfig, base_address};
@@ -40,6 +39,7 @@ use crate::compat::subsonic::{
     AudioBackend, Request as SubsonicRequest, Settings, Store, Verifier, classify, dispatch_with,
     normalize_endpoint,
 };
+use crate::config::TrustedProxies;
 
 /// Jellyfin route templates (registered casing) for path canonicalization.
 /// Mirrors `jellyfin::router` registration; the wiring test pins at
@@ -259,7 +259,7 @@ fn limit_ip(request: &Request, trusted: &TrustedProxies) -> Option<IpAddr> {
     request
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
-        .map(|info| crate::client_ip::client_ip(info.0, request.headers(), trusted))
+        .map(|info| crate::auth::session::client_ip::client_ip(info.0, request.headers(), trusted))
 }
 
 fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {

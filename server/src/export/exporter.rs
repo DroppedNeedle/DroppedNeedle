@@ -421,7 +421,7 @@ fn open_v2_db(path: &Path) -> Result<Connection, ExportError> {
     }
     let uri = format!(
         "file:{}?immutable=1",
-        crate::export::v2dir::sqlite_uri_path(path)
+        crate::db::factory::sqlite_uri_path(path)
     );
     Connection::open_with_flags(
         uri,

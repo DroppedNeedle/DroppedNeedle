@@ -56,21 +56,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_public_path_is_a_mounted_route() {
-        use utoipa::OpenApi as _;
-        let doc = crate::docs::ApiDoc::openapi();
-        for path in PUBLIC_PATHS {
-            assert!(doc.paths.paths.contains_key(*path), "{path} has no route");
-        }
-        for prefix in PUBLIC_PREFIXES {
-            assert!(
-                doc.paths.paths.keys().any(|path| path.starts_with(prefix)),
-                "{prefix} has no route"
-            );
-        }
-    }
-
-    #[test]
     fn allowlist_is_exact_and_nothing_adjacent() {
         for path in PUBLIC_PATHS {
             assert!(is_public(path), "{path} must be public");

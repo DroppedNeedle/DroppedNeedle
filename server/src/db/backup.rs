@@ -200,7 +200,7 @@ impl BackupService {
         allow_downgrade: bool,
     ) -> Result<RestoredBackup, DbError> {
         // The restore tool's own lock file is the one entry allowed.
-        let lock_name = crate::tooling::datalock::lock_file_name("library.db");
+        let lock_name = crate::db::datalock::lock_file_name("library.db");
         let occupied = target_dir.exists()
             && target_dir
                 .read_dir()?

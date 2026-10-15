@@ -86,7 +86,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn only_paths_inside_the_mount_without_a_link_are_kept() {
-        let scratch = crate::tooling::scratch::ScratchDir::new("confine").expect("scratch");
+        let scratch = crate::db::scratch::ScratchDir::new("confine").expect("scratch");
         let scratch = scratch.path().canonicalize().expect("scratch path");
         let mount = scratch.join("downloads");
         let lookalike = scratch.join("downloads-other");

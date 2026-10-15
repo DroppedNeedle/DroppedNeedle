@@ -4,6 +4,7 @@
 
 use std::collections::BTreeSet;
 
+use droppedneedle::auth::session::allowlist::{PUBLIC_PATHS, PUBLIC_PREFIXES};
 use droppedneedle::docs::ApiDoc;
 use utoipa::OpenApi as _;
 
@@ -91,4 +92,18 @@ fn path_parameters_match_their_templates() {
         wrong.is_empty(),
         "path parameters off their template: {wrong:#?}"
     );
+}
+
+#[test]
+fn every_public_path_is_a_mounted_route() {
+    let doc = ApiDoc::openapi();
+    for path in PUBLIC_PATHS {
+        assert!(doc.paths.paths.contains_key(*path), "{path} has no route");
+    }
+    for prefix in PUBLIC_PREFIXES {
+        assert!(
+            doc.paths.paths.keys().any(|path| path.starts_with(prefix)),
+            "{prefix} has no route"
+        );
+    }
 }

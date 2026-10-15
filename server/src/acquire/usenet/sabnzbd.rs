@@ -1674,7 +1674,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn enumerate_never_follows_symlinks() {
-        let base = crate::tooling::scratch::ScratchDir::new("sab-enum").unwrap();
+        let base = crate::db::scratch::ScratchDir::new("sab-enum").unwrap();
         let mount = base.join("mount");
         let outside = base.join("outside");
         std::fs::create_dir_all(mount.join("release")).unwrap();

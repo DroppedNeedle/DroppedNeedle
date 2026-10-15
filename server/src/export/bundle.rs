@@ -86,7 +86,7 @@ pub fn write_bundle(
     .map_err(bundle_error)?;
     let uri = format!(
         "file:{}?immutable=1&mode=ro",
-        crate::export::v2dir::sqlite_uri_path(v2_db)
+        crate::db::factory::sqlite_uri_path(v2_db)
     );
     conn.execute("ATTACH DATABASE ?1 AS v2", params![uri])
         .map_err(|error| db_error("database", error))?;

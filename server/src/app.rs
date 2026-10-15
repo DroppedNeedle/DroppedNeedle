@@ -192,8 +192,8 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
     // compiles this mount out of release binaries entirely, so no
     // production process can serve tooling however it was configured.
     #[cfg(debug_assertions)]
-    let app = if crate::tooling::covers_debug::tooling_routes_enabled(&state.config) {
-        app.merge(crate::tooling::covers_debug::router(
+    let app = if crate::reads::platform::covers_debug::tooling_routes_enabled(&state.config) {
+        app.merge(crate::reads::platform::covers_debug::router(
             state.reads.platform.covers.clone(),
         ))
     } else {

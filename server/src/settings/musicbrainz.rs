@@ -26,7 +26,7 @@ use crate::runtime_config::ConfigStore;
 use crate::runtime_config::sections::{
     BRAINZMASH_CONCURRENT_SEARCHES, BRAINZMASH_ENDPOINT, BRAINZMASH_RATE_LIMIT, MbSourceMode,
     MusicBrainzSettings, OFFICIAL_MB_API_BASE, OFFICIAL_MB_CONCURRENT_SEARCHES,
-    OFFICIAL_MB_RATE_LIMIT,
+    OFFICIAL_MB_RATE_LIMIT, exact_nonblank,
 };
 
 /// BrainzMash disclosure version. A proposal carrying any other version
@@ -84,22 +84,6 @@ impl PendingProposal {
             && self.generation == binding.generation
             && self.disclosure_version == binding.disclosure_version
     }
-}
-
-fn exact_nonblank(value: &str) -> bool {
-    !value.is_empty() && value == value.trim()
-}
-
-/// Whether the pinned built-in BrainzMash source may serve traffic: the
-/// mode is brainzmash, the endpoint is the approved origin, the
-/// generation is positive, and the source id is exact nonblank. The
-/// interactive binding is optional for the default; these checks fence
-/// caches and transport to the approved origin.
-pub fn is_brainzmash_active_binding_valid(settings: &MusicBrainzSettings) -> bool {
-    settings.source_mode == MbSourceMode::Brainzmash
-        && settings.api_url == BRAINZMASH_ENDPOINT
-        && settings.generation > 0
-        && exact_nonblank(&settings.source_id)
 }
 
 /// The lifecycle service: settled state in config, the pending proposal
@@ -539,7 +523,7 @@ impl MusicBrainzLifecycle {
             }
             MusicBrainzVerifyRequest::Update(update) => {
                 let stored: MusicBrainzSettings = self.store.get().map_err(|e| self.config(e))?;
-                if is_brainzmash_active_binding_valid(&stored) {
+                if stored.brainzmash_binding_valid() {
                     return Err(SettingsError::Conflict {
                         message: "Alternative MusicBrainz tests are disabled while BrainzMash is \
                                   active; save to switch sources."

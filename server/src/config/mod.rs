@@ -9,6 +9,7 @@
 
 pub mod base_path;
 pub mod deployment;
+pub mod trusted_proxies;
 
 use std::{
     net::IpAddr,
@@ -18,9 +19,10 @@ use std::{
 
 use thiserror::Error;
 
-use crate::{auth::session::middleware::TrustedProxies, http_client::HttpSettings};
+use crate::http_client::HttpSettings;
 
 pub use base_path::{BasePathError, normalize_base_path};
+pub use trusted_proxies::TrustedProxies;
 
 /// Default HTTP port, carried over from v2.
 pub const DEFAULT_PORT: u16 = 8688;

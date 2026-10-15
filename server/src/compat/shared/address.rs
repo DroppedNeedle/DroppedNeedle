@@ -7,8 +7,9 @@
 use axum::body::Body;
 use axum::http::Request;
 
-use crate::auth::session::middleware::{TrustedProxies, effective_origin};
+use crate::auth::session::middleware::effective_origin;
 use crate::compat::settings::LiveSettings;
+use crate::config::TrustedProxies;
 
 /// How clients reach this server: the port it listens on, the proxies
 /// whose forwarded headers are believed and the deployment base path.

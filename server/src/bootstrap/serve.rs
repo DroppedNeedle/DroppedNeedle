@@ -19,8 +19,8 @@ use thiserror::Error;
 use tokio::{net::TcpListener, sync::watch, task::JoinHandle};
 
 use crate::{
-    config::BindHost, db::DbRuntime, events::EventHub, jobs::wiring::JobsSetup,
-    tooling::datalock::DataLock,
+    config::BindHost, db::DbRuntime, db::datalock::DataLock, events::EventHub,
+    jobs::wiring::JobsSetup,
 };
 
 /// Listen backlog, the usual server default.

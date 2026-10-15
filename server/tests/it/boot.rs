@@ -166,7 +166,7 @@ async fn boot_refuses_while_the_offline_tool_holds_the_database() {
     let dir = scratch("locked");
     let config = config_in(&dir);
     let db_path = config.library_db_path.clone();
-    let _import = droppedneedle::tooling::datalock::DataLock::exclusive(&db_path).unwrap();
+    let _import = droppedneedle::db::datalock::DataLock::exclusive(&db_path).unwrap();
     let refused = build(config).await;
     assert!(
         matches!(refused, Err(bootstrap::BootError::DataLock(_))),
@@ -193,7 +193,7 @@ async fn boot_refuses_a_v2_data_directory_and_leaves_it_alone() {
     assert!(
         matches!(
             refused,
-            bootstrap::BootError::DataDir(droppedneedle::tooling::upgrade::BootRefusal::V2)
+            bootstrap::BootError::DataDir(droppedneedle::bootstrap::data_dirs::BootRefusal::V2)
         ),
         "{refused:?}"
     );
@@ -733,7 +733,7 @@ async fn the_policy_mode_set_from_the_host_is_served_at_the_next_boot() {
     let dir = scratch("page-policy-host");
     let config = config_in(&dir);
     web_ui_in(&config);
-    let dirs = droppedneedle::tooling::upgrade::DataDirs::from_config(&config);
+    let dirs = droppedneedle::bootstrap::data_dirs::DataDirs::from_config(&config);
     let config_file = config.config_file.clone();
 
     let (router, background) = build(config.clone()).await.unwrap();
@@ -980,7 +980,7 @@ async fn public_address_set_from_the_host_is_honoured_at_the_next_boot() {
     const PAGE: &str = "https://music.test";
     let dir = scratch("public-address-host");
     let config = config_in(&dir);
-    let dirs = droppedneedle::tooling::upgrade::DataDirs::from_config(&config);
+    let dirs = droppedneedle::bootstrap::data_dirs::DataDirs::from_config(&config);
     let config_file = config.config_file.clone();
     let typed = || vec!["HTTPS://Music.Test:443/".to_owned()];
 

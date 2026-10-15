@@ -19,10 +19,9 @@ use std::{
 use super::{
     error::PlaybackError,
     models::{
-        NowPlayingEntry, NowPlayingHeartbeat, NowPlayingSnapshot, PlaybackProgressRequest,
-        PlaybackProgressResponse, PlaybackStartRequest, PlaybackStartResponse, PlaybackStopRequest,
-        PlaybackStopResponse, ScrobbleNowPlayingRequest, ScrobbleResponse, ScrobbleSubmitRequest,
-        ServiceResult,
+        NowPlayingHeartbeat, PlaybackProgressRequest, PlaybackProgressResponse,
+        PlaybackStartRequest, PlaybackStartResponse, PlaybackStopRequest, PlaybackStopResponse,
+        ScrobbleNowPlayingRequest, ScrobbleResponse, ScrobbleSubmitRequest, ServiceResult,
     },
     ports::{
         Clock, DisplayNames, ListeningPrefs, PlayEvents, PlayHistory, PlayRecord, ProviderFailure,
@@ -31,6 +30,7 @@ use super::{
         VISIBILITY_TRACK_HIDDEN,
     },
 };
+use crate::events::{NowPlayingEntry, NowPlayingSnapshot};
 use crate::ids::IdGenerator;
 
 /// Session time-to-live in seconds (v2 `_SESSION_TTL_SECONDS`, 2h).

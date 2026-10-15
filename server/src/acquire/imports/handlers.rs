@@ -14,10 +14,11 @@
 use std::sync::Arc;
 
 use crate::auth::session::extract::Transport;
-use crate::auth::session::middleware::{CurrentSession, TrustedProxies, effective_origin};
+use crate::auth::session::middleware::{CurrentSession, effective_origin};
 use crate::auth::users::UsersDeps;
 use crate::auth::users::roles::{AuthContext, Role};
 use crate::auth::users::stores::StoreError as UserStoreError;
+use crate::config::TrustedProxies;
 use crate::http_client::read_capped;
 use crate::ids::IdGenerator;
 use axum::{

@@ -35,6 +35,16 @@ use serde_json::{Value, json};
 use crate::library::identify::sqlite::retarget_references;
 use crate::library::operations::decisions::{CatalogAction, bump_catalog, record_action};
 
+/// The track a local id names now: the track itself while its file is
+/// indexed, else the track its alias names (a missing track that
+/// continued into another), else the id itself, so a read's own
+/// availability test answers for it as for any id.
+pub const CURRENT_TRACK: &str = "SELECT id FROM ( \
+    SELECT id, 0 AS rank FROM local_tracks WHERE id = ?1 AND availability = 'indexed' \
+    UNION ALL SELECT local_track_id, 1 FROM local_track_aliases WHERE alias = ?1 \
+    UNION ALL SELECT ?1, 2) \
+    ORDER BY rank LIMIT 1";
+
 /// Audit kind and reason of a continuation.
 const KIND: &str = "continue_tracks";
 const REASON: &str = "TRACK_CONTINUED";

@@ -25,12 +25,12 @@ use super::routes::federated::{
 };
 use super::routes::native::NativeAuthState;
 use super::session::middleware::SessionAuth;
-use super::session::middleware::TrustedProxies;
 use super::session::rate_limit::RateLimiter;
 use super::session::stated::StatedAddresses;
 use super::users::lastfm_http::LastFmAuthHttp;
 use super::users::stores::{Clock, HibpPolicy, LastFmKeys, LastFmSwitch, SecurityPolicy};
 use super::users::{UsersDeps, admin_router, public_router, users_router};
+use crate::config::TrustedProxies;
 use crate::http_client::HttpClientFactory;
 use crate::ids::IdGenerator;
 use crate::remotes::connections::{

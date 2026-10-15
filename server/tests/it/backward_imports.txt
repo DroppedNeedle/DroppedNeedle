@@ -3,25 +3,11 @@
 # Each line: <file under server/src> <area reached up to> <crate:: paths>.
 # Keep the counts exact: when an import goes, lower its count in the same
 # change. A new backward import fails the test.
-acquire/db.rs tooling 2
-acquire/downloads/orphans.rs tooling 1
-acquire/landing/confine.rs tooling 1
-acquire/usenet/sabnzbd.rs tooling 1
 acquire/wiring.rs bootstrap 2
-app.rs tooling 2
-auth/federated/plex_http.rs remotes 2
-auth/session/allowlist.rs docs 1
-auth/session/rate_limit.rs client_ip 1
+auth/federated/plex_http.rs remotes 1
 auth/wiring.rs bootstrap 1
 auth/wiring.rs remotes 2
-bootstrap/mod.rs tooling 1
-bootstrap/serve.rs tooling 1
-compat/http.rs client_ip 2
-compat/jellyfin/system.rs client_ip 1
-config/mod.rs auth 1
-db/backup.rs tooling 1
 events/http.rs auth 1
-events/model.rs playback 1
 jobs/discovery_demand.rs reads 1
 jobs/media.rs playback 2
 jobs/media.rs remotes 6
@@ -30,7 +16,6 @@ jobs/wiring.rs auth 1
 jobs/wiring.rs concerts 1
 jobs/wiring.rs reads 2
 library/http/management_tools.rs settings 1
-library/identify/sqlite.rs tooling 1
 library/management/activation.rs settings 5
 library/management/automatic.rs settings 1
 library/management/duplicates.rs settings 1
@@ -39,29 +24,16 @@ library/management/profile.rs settings 4
 library/management/script.rs settings 1
 library/management/service.rs settings 3
 library/management/tag_edit.rs settings 1
-library/publish/place.rs tooling 1
-library/publish/plugin_files.rs tooling 1
 library/repairs/service.rs settings 1
-library/scan/sqlite_store/mod.rs tooling 2
-library/scan/watcher.rs tooling 3
 library/scans.rs settings 1
 library/service.rs settings 1
 library/settings.rs settings 2
 library/wiring.rs bootstrap 1
 library/wiring.rs settings 1
-library/wiring.rs tooling 3
 media.rs bootstrap 1
 plugins/capabilities/events.rs playback 2
 plugins/capabilities/metadata.rs reads 2
 plugins/capabilities/purchase.rs reads 2
-plugins/handlers.rs security_headers 1
 plugins/wiring.rs bootstrap 1
-providers/musicbrainz/mod.rs settings 1
 reads/catalog/upstream.rs bootstrap 1
-reads/library/perf_tests.rs tooling 3
 remotes/adapter.rs reads 6
-runtime_config/sections/access.rs auth 1
-schema/template.rs tooling 1
-stream/local_files.rs reads 1
-stream/local_files.rs tooling 2
-web.rs tooling 1

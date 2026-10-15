@@ -10,10 +10,10 @@
 
 use std::sync::Arc;
 
-use crate::auth::session::origin::Origin;
 use crate::compat::jellyfin::seams::JellyfinSettings;
 use crate::compat::subsonic::Settings;
 use crate::runtime_config::ConfigStore;
+use crate::runtime_config::origin::Origin;
 use crate::runtime_config::sections::{
     AudioFormat, ConnectApps, DownloadAccess, PublicAddress, SecuritySettings,
 };

@@ -26,8 +26,9 @@ use axum::{
 use sha2::Digest as _;
 
 use crate::{
-    auth::session::middleware::{TrustedProxies, arrived_over_https},
+    auth::session::middleware::arrived_over_https,
     compat::shared::path_case::is_compat_path,
+    config::TrustedProxies,
     runtime_config::{
         ConfigStore,
         sections::{ContentSecurityPolicyMode, HSTS_MAX_AGE_LIMIT, SecuritySettings},
@@ -158,23 +159,6 @@ fn shell_policy(script_hashes: &[String], framing: &[String]) -> String {
     policy.push_str("; ");
     policy.push_str(&frame_ancestors(framing));
     policy
-}
-
-/// Who may frame a page the app itself shows in a frame (the plugin panel
-/// page), as the sources of that page's `frame-ancestors`: the app, plus
-/// the addresses an admin allowed to frame the app. The browser checks
-/// every ancestor up to the top, so a dashboard that frames the app has to
-/// be named here too or the inner frame stays empty. Unreadable settings
-/// leave the app alone.
-pub fn framed_page_ancestors(config: &ConfigStore) -> String {
-    let mut sources = vec!["'self'".to_owned()];
-    match config.get::<SecuritySettings>() {
-        Ok(settings) => sources.extend(settings.framing_sources()),
-        Err(error) => {
-            tracing::debug!(%error, "security settings unreadable; framing by the app only")
-        }
-    }
-    sources.join(" ")
 }
 
 /// What the content-security layer needs: the live settings.

@@ -16,7 +16,7 @@ use std::sync::OnceLock;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 
-use crate::tooling::scratch::ScratchDir;
+use crate::db::scratch::ScratchDir;
 
 static TEMPLATE: OnceLock<Result<Vec<u8>, String>> = OnceLock::new();
 

@@ -40,6 +40,7 @@
 //! [`middleware`] module documents.
 
 pub mod allowlist;
+pub mod client_ip;
 pub mod cookies;
 pub mod cors;
 pub mod extract;

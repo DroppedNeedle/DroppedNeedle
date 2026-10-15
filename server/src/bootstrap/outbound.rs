@@ -20,9 +20,9 @@ use crate::{
     plugins::install::GitHubHosts,
     providers::{
         acoustid, audiodb, coverart, discogs, geocoding, github, itunes, lastfm, listenbrainz,
-        lrclib, musicbrainz, preview, skiddle, ticketmaster, wikidata, youtube,
+        lrclib, musicbrainz, plextv::PLEX_TV_BASE, preview, skiddle, ticketmaster, wikidata,
+        youtube,
     },
-    remotes::plex::PLEX_TV_BASE,
 };
 
 /// A provider port the builder fills with its live client unless one is

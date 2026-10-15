@@ -237,7 +237,7 @@ impl CompatSetup {
             LiveSettings::fixed(Settings::default(), JellyfinSettings::default()),
             ListenerConfig {
                 port: crate::config::DEFAULT_PORT,
-                trusted_proxies: crate::auth::session::middleware::TrustedProxies::default(),
+                trusted_proxies: crate::config::TrustedProxies::default(),
                 base_path: String::new(),
             },
         )))

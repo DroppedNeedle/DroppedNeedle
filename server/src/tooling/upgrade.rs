@@ -1,5 +1,4 @@
-//! In-place upgrade of a v2 data directory to v3, and the layout check the
-//! server boots behind.
+//! In-place upgrade of a v2 data directory to v3.
 //!
 //! v2 and v3 keep their data in the same two folders, `config/` and
 //! `cache/`, which are separate mounts in a container. [`run`] turns a v2
@@ -20,8 +19,9 @@
 //! Any failure after step 3 rolls back: what the import created is deleted
 //! and the v2 entries are renamed back. A killed run leaves the marker, and
 //! the next run rolls back before it starts again. The server boots only
-//! on an empty or v3 layout ([`check_bootable`]), so it never migrates over
-//! a v2 database and never serves a half-imported one.
+//! on an empty or v3 layout
+//! ([`check_bootable`](crate::bootstrap::data_dirs::check_bootable)), so it
+//! never migrates over a v2 database and never serves a half-imported one.
 //!
 //! The marker records one fact: whether anything outside the backup may be
 //! deleted. While entries move between the folders and the backup
@@ -44,24 +44,20 @@ use rusqlite::{Connection, OpenFlags};
 use sqlx::SqlitePool;
 use thiserror::Error;
 
-use crate::AppConfig;
+use crate::bootstrap::data_dirs::{
+    BACKUP_DIR_NAME, DataDirs, Layout, MARKER_FILE_NAME, UnknownLayout, detect, wal_bytes, wal_path,
+};
+use crate::db::datalock::{DataLock, DataLockError, lock_path};
 use crate::export::v2dir::{self, V2Dirs};
 use crate::export::{ExportError, ExportRequest, export_v2_to_file};
 use crate::import::{
     ExitCode, ExportFile, ImportReport, ImportRequest, ValidationIssue, check_attachments,
     run_import, validate_export,
 };
-use crate::runtime_config::crypto::{CryptoError, KEY_FILE_NAME};
+use crate::runtime_config::crypto::CryptoError;
 use crate::runtime_config::{Crypto, Secret};
 use crate::schema::SchemaError;
-use crate::tooling::datalock::{DataLock, DataLockError, lock_path};
 
-/// Folder inside `config/` and inside `cache/` that keeps the v2 files.
-pub const BACKUP_DIR_NAME: &str = "v2-backup";
-/// Import report saved in `cache/` by a finished upgrade.
-pub const REPORT_FILE_NAME: &str = "upgrade-report.json";
-/// Marker in `cache/` while an upgrade is under way.
-const MARKER_FILE_NAME: &str = ".upgrade-in-progress";
 /// Work folder in `cache/` for the export file and its bundle.
 const WORK_DIR_NAME: &str = ".upgrade-work";
 const EXPORT_FILE_NAME: &str = "export.json";
@@ -80,96 +76,45 @@ const CARRIED_FILE_DIRS: &[&str] = &[
     "library-management/blobs/objects",
 ];
 
-/// The folders one instance keeps its data in, as the server resolves them.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DataDirs {
-    /// Holds the settings file and the encryption key.
-    pub config_dir: PathBuf,
-    /// The settings file.
-    pub config_file: PathBuf,
-    /// Holds the database and everything cached beside it.
-    pub cache_dir: PathBuf,
-    /// The database file.
-    pub db_path: PathBuf,
-    /// Installed plugins. Only read, for v2's plugin manifests.
-    pub plugins_dir: PathBuf,
+fn work_dir(dirs: &DataDirs) -> PathBuf {
+    dirs.cache_dir.join(WORK_DIR_NAME)
 }
 
-impl DataDirs {
-    /// The folders a server started with `config` would use.
-    #[must_use]
-    pub fn from_config(config: &AppConfig) -> Self {
-        Self {
-            config_dir: config.config_dir(),
-            config_file: config.config_file.clone(),
-            cache_dir: config.cache_dir.clone(),
-            db_path: config.library_db_path.clone(),
-            plugins_dir: config.plugins_dir(),
-        }
+/// The same layout inside the two backup folders.
+fn backup_side(dirs: &DataDirs) -> DataDirs {
+    let config_dir = dirs.config_backup();
+    let cache_dir = dirs.cache_backup();
+    DataDirs {
+        config_file: config_dir.join(dirs.config_file.file_name().unwrap_or_default()),
+        db_path: cache_dir.join(dirs.db_path.file_name().unwrap_or_default()),
+        config_dir,
+        cache_dir,
+        plugins_dir: dirs.plugins_dir.clone(),
     }
+}
 
-    /// Where the v2 config files are kept.
-    #[must_use]
-    pub fn config_backup(&self) -> PathBuf {
-        self.config_dir.join(BACKUP_DIR_NAME)
+/// The two folders the upgrade works in, each with its backup and the
+/// entries it never moves or deletes.
+fn folders(dirs: &DataDirs) -> [Folder; 2] {
+    let marker = OsString::from(MARKER_FILE_NAME);
+    let mut cache_kept = vec![OsString::from(BACKUP_DIR_NAME), tmp_name(&marker), marker];
+    // The lock is held for the whole run and has to stay where the
+    // server looks for it.
+    if let Some(lock) = lock_path(&dirs.db_path).file_name() {
+        cache_kept.push(lock.to_owned());
     }
-
-    /// Where the v2 database and cache files are kept.
-    #[must_use]
-    pub fn cache_backup(&self) -> PathBuf {
-        self.cache_dir.join(BACKUP_DIR_NAME)
-    }
-
-    /// Where a finished upgrade saves its import report.
-    #[must_use]
-    pub fn report_file(&self) -> PathBuf {
-        self.cache_dir.join(REPORT_FILE_NAME)
-    }
-
-    fn marker(&self) -> PathBuf {
-        self.cache_dir.join(MARKER_FILE_NAME)
-    }
-
-    fn work_dir(&self) -> PathBuf {
-        self.cache_dir.join(WORK_DIR_NAME)
-    }
-
-    /// The same layout inside the two backup folders.
-    fn backup_side(&self) -> Self {
-        let config_dir = self.config_backup();
-        let cache_dir = self.cache_backup();
-        Self {
-            config_file: config_dir.join(self.config_file.file_name().unwrap_or_default()),
-            db_path: cache_dir.join(self.db_path.file_name().unwrap_or_default()),
-            config_dir,
-            cache_dir,
-            plugins_dir: self.plugins_dir.clone(),
-        }
-    }
-
-    /// The two folders the upgrade works in, each with its backup and the
-    /// entries it never moves or deletes.
-    fn folders(&self) -> [Folder; 2] {
-        let marker = OsString::from(MARKER_FILE_NAME);
-        let mut cache_kept = vec![OsString::from(BACKUP_DIR_NAME), tmp_name(&marker), marker];
-        // The lock is held for the whole run and has to stay where the
-        // server looks for it.
-        if let Some(lock) = lock_path(&self.db_path).file_name() {
-            cache_kept.push(lock.to_owned());
-        }
-        [
-            Folder {
-                dir: self.config_dir.clone(),
-                backup: self.config_backup(),
-                kept: vec![OsString::from(BACKUP_DIR_NAME)],
-            },
-            Folder {
-                dir: self.cache_dir.clone(),
-                backup: self.cache_backup(),
-                kept: cache_kept,
-            },
-        ]
-    }
+    [
+        Folder {
+            dir: dirs.config_dir.clone(),
+            backup: dirs.config_backup(),
+            kept: vec![OsString::from(BACKUP_DIR_NAME)],
+        },
+        Folder {
+            dir: dirs.cache_dir.clone(),
+            backup: dirs.cache_backup(),
+            kept: cache_kept,
+        },
+    ]
 }
 
 /// One data folder, its backup folder, and the entry names left alone.
@@ -177,185 +122,6 @@ struct Folder {
     dir: PathBuf,
     backup: PathBuf,
     kept: Vec<OsString>,
-}
-
-/// What a pair of data folders holds.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Layout {
-    /// No database and no key file: nothing has run here yet.
-    Empty,
-    /// A v2 instance.
-    V2,
-    /// A v3 instance.
-    V3,
-    /// An upgrade started here and did not finish.
-    Interrupted,
-    /// None of the above. Nothing is safe to assume.
-    Unknown(UnknownLayout),
-}
-
-/// Why a layout could not be told apart.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum UnknownLayout {
-    /// The database file cannot be read as a database.
-    #[error("the database {} cannot be read ({reason})", .path.display())]
-    DatabaseUnreadable {
-        /// The database file.
-        path: PathBuf,
-        /// What reading it reported.
-        reason: String,
-    },
-    /// A v2 database sits beside a v3 key file.
-    #[error("{} is a v2 database, but {} is a v3 key file", .database.display(), .key.display())]
-    V2DatabaseWithV3Key {
-        /// The database file.
-        database: PathBuf,
-        /// The v3 key file.
-        key: PathBuf,
-    },
-    /// A v2 key file with no database to go with it.
-    #[error("{} is a v2 key file, but there is no v2 database at {}", .key.display(), .database.display())]
-    V2KeyWithoutDatabase {
-        /// The v2 key file.
-        key: PathBuf,
-        /// Where the database was expected.
-        database: PathBuf,
-    },
-}
-
-/// Classify the folders. Read-only: nothing is created, locked or changed.
-///
-/// The database decides first. Every v3 migration stamps `user_version`
-/// and v2 never did, so a stamped database is v3 and an unstamped one with
-/// tables is v2. The key files then have to agree: v2 keeps its key in
-/// `config/.env`, v3 in `config/data_enc.key`.
-#[must_use]
-pub fn detect(dirs: &DataDirs) -> Layout {
-    if std::fs::symlink_metadata(dirs.marker()).is_ok() {
-        return Layout::Interrupted;
-    }
-    let v3_key = dirs.config_dir.join(KEY_FILE_NAME);
-    let has_v3_key = std::fs::symlink_metadata(&v3_key).is_ok();
-    match probe_database(&dirs.db_path) {
-        Database::V3 => Layout::V3,
-        Database::V2 if has_v3_key => Layout::Unknown(UnknownLayout::V2DatabaseWithV3Key {
-            database: dirs.db_path.clone(),
-            key: v3_key,
-        }),
-        Database::V2 => Layout::V2,
-        Database::Absent if has_v3_key => Layout::V3,
-        Database::Absent if v2dir::names_data_enc_key(&dirs.config_dir) => {
-            Layout::Unknown(UnknownLayout::V2KeyWithoutDatabase {
-                key: v2dir::key_file_path(&dirs.config_dir),
-                database: dirs.db_path.clone(),
-            })
-        }
-        Database::Absent => Layout::Empty,
-        Database::Unreadable(reason) => Layout::Unknown(UnknownLayout::DatabaseUnreadable {
-            path: dirs.db_path.clone(),
-            reason,
-        }),
-    }
-}
-
-/// Why the server will not start on these folders.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum BootRefusal {
-    /// The folders hold a v2 instance.
-    #[error(
-        "this is a DroppedNeedle v2 data directory. Stop the container and run \
-         `droppedneedle-tool upgrade`, then start it again. See docs/upgrading-from-v2.md"
-    )]
-    V2,
-    /// An upgrade stopped halfway.
-    #[error(
-        "an upgrade from v2 did not finish in this data directory. Run \
-         `droppedneedle-tool upgrade` again to finish it, or \
-         `droppedneedle-tool upgrade --undo --yes` to go back to v2"
-    )]
-    Interrupted,
-    /// The folders hold something that is neither v2 nor v3.
-    #[error(
-        "cannot tell what this data directory holds: {0}. Nothing was changed. See \
-         docs/upgrading-from-v2.md"
-    )]
-    Unknown(UnknownLayout),
-}
-
-/// The server's boot guard: start only on an empty or v3 layout.
-pub fn check_bootable(dirs: &DataDirs) -> Result<(), BootRefusal> {
-    match detect(dirs) {
-        Layout::Empty | Layout::V3 => Ok(()),
-        Layout::V2 => Err(BootRefusal::V2),
-        Layout::Interrupted => Err(BootRefusal::Interrupted),
-        Layout::Unknown(reason) => Err(BootRefusal::Unknown(reason)),
-    }
-}
-
-/// What the database file is.
-enum Database {
-    /// Missing, or a file with no tables yet.
-    Absent,
-    V2,
-    V3,
-    Unreadable(String),
-}
-
-fn probe_database(db_path: &Path) -> Database {
-    match std::fs::symlink_metadata(db_path) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Database::Absent,
-        Err(error) => return Database::Unreadable(error.to_string()),
-        Ok(meta) if !meta.is_file() => {
-            return Database::Unreadable("it is not a regular file".to_owned());
-        }
-        Ok(_) => {}
-    }
-    match read_stamp(db_path) {
-        Ok((stamp, _)) if stamp > 0 => Database::V3,
-        Ok((_, 0)) => Database::Absent,
-        Ok(_) => Database::V2,
-        Err(error) => Database::Unreadable(error.to_string()),
-    }
-}
-
-/// `user_version` and, for an unstamped file, how many tables it holds.
-///
-/// A cleanly closed database is opened immutable, which reads the file
-/// alone and creates nothing beside it. A database with writes still in
-/// its `-wal` file has to be read through that file, so it gets a normal
-/// read-only connection.
-fn read_stamp(db_path: &Path) -> rusqlite::Result<(i64, i64)> {
-    let db = if wal_bytes(db_path) > 0 {
-        Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?
-    } else {
-        Connection::open_with_flags(
-            format!("file:{}?immutable=1", v2dir::sqlite_uri_path(db_path)),
-            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
-        )?
-    };
-    let stamp: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if stamp > 0 {
-        return Ok((stamp, 0));
-    }
-    // sqlx creates its bookkeeping table before the first migration runs,
-    // so on its own that table is still an empty database.
-    let tables = db.query_row(
-        "SELECT count(*) FROM sqlite_master WHERE type = 'table' \
-         AND name NOT LIKE 'sqlite_%' AND name <> '_sqlx_migrations'",
-        [],
-        |row| row.get(0),
-    )?;
-    Ok((stamp, tables))
-}
-
-fn wal_path(db_path: &Path) -> PathBuf {
-    let mut name = db_path.as_os_str().to_owned();
-    name.push("-wal");
-    PathBuf::from(name)
-}
-
-fn wal_bytes(db_path: &Path) -> u64 {
-    std::fs::metadata(wal_path(db_path)).map_or(0, |meta| meta.len())
 }
 
 /// One upgrade run's inputs.
@@ -420,7 +186,8 @@ pub enum Upgraded {
 /// What a finished upgrade did.
 #[derive(Debug)]
 pub struct Summary {
-    /// The import report, also saved as [`REPORT_FILE_NAME`].
+    /// The import report, also saved as
+    /// [`REPORT_FILE_NAME`](crate::bootstrap::data_dirs::REPORT_FILE_NAME).
     pub report: ImportReport,
     /// Follows and approvals of deleted users removed from the v2 database.
     pub orphans_removed: usize,
@@ -806,7 +573,7 @@ fn dir_bytes(dir: &Path) -> u64 {
 /// Rename every v2 entry into its folder's backup.
 fn move_aside(dirs: &DataDirs, fault: Option<Fault>) -> Result<(), UpgradeError> {
     write_marker(dirs, Phase::Moving)?;
-    for (index, folder) in dirs.folders().iter().enumerate() {
+    for (index, folder) in folders(dirs).iter().enumerate() {
         if index > 0 && fault == Some(Fault::DiesWhileMoving) {
             return Err(UpgradeError::InjectedCrash);
         }
@@ -842,8 +609,8 @@ async fn convert(
     progress: &mut dyn FnMut(Step),
 ) -> Result<(ImportReport, usize), UpgradeError> {
     let dirs = &request.dirs;
-    let backup = dirs.backup_side();
-    let work = dirs.work_dir();
+    let backup = backup_side(dirs);
+    let work = work_dir(dirs);
     create_private_dir(&work)?;
     let passphrase = fresh_passphrase()?;
     let export_path = work.join(EXPORT_FILE_NAME);
@@ -958,7 +725,7 @@ fn roll_back(dirs: &DataDirs, fault: Option<Fault>) -> Result<(), UpgradeError> 
     let Some(phase) = read_marker(dirs) else {
         return Ok(());
     };
-    let folders = dirs.folders();
+    let folders = folders(dirs);
     if phase == Phase::Upgrading {
         // What is about to be deleted may be the only other copy.
         require_backup(dirs)?;
@@ -1003,7 +770,7 @@ fn require_backup(dirs: &DataDirs) -> Result<(), UpgradeError> {
     let both = [&config, &cache]
         .into_iter()
         .all(|backup| std::fs::symlink_metadata(backup).is_ok_and(|meta| meta.is_dir()));
-    if both && detect(&dirs.backup_side()) == Layout::V2 {
+    if both && detect(&backup_side(dirs)) == Layout::V2 {
         Ok(())
     } else {
         Err(UpgradeError::NoBackup { config, cache })
@@ -1303,121 +1070,4 @@ async fn probe_write_lock(pool: &SqlitePool) -> Result<(), OfflineImportError> {
         .await
         .map_err(OfflineImportError::Probe)?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::tooling::scratch::ScratchDir;
-
-    fn dirs_in(root: &Path) -> DataDirs {
-        let dirs = DataDirs::from_config(&AppConfig::with_root(0, root));
-        std::fs::create_dir_all(&dirs.config_dir).unwrap();
-        std::fs::create_dir_all(&dirs.cache_dir).unwrap();
-        dirs
-    }
-
-    fn database(dirs: &DataDirs, stamp: i64, tables: &str) {
-        let db = Connection::open(&dirs.db_path).unwrap();
-        db.execute_batch(tables).unwrap();
-        db.pragma_update(None, "user_version", stamp).unwrap();
-    }
-
-    fn v2_key(dirs: &DataDirs) {
-        std::fs::write(dirs.config_dir.join(".env"), "DATA_ENC_KEY=abc\n").unwrap();
-    }
-
-    fn v3_key(dirs: &DataDirs) {
-        std::fs::write(dirs.config_dir.join(KEY_FILE_NAME), "key").unwrap();
-    }
-
-    const V2_TABLES: &str = "CREATE TABLE auth_users (id TEXT PRIMARY KEY);";
-
-    #[test]
-    fn layouts_are_told_apart_by_the_database_stamp_and_the_key_files() {
-        let scratch = ScratchDir::new("upgrade-detect").unwrap();
-        let case = |name: &str| dirs_in(&scratch.join(name));
-
-        assert_eq!(detect(&case("empty")), Layout::Empty);
-
-        let v2 = case("v2");
-        database(&v2, 0, V2_TABLES);
-        v2_key(&v2);
-        assert_eq!(detect(&v2), Layout::V2);
-
-        // A lost key file does not make a v2 database anything else.
-        let keyless = case("v2-keyless");
-        database(&keyless, 0, V2_TABLES);
-        assert_eq!(detect(&keyless), Layout::V2);
-
-        // A v3 server that was stopped while it migrated a v2 database
-        // leaves sqlx's table behind; the data is still v2's.
-        let touched = case("v2-touched");
-        database(
-            &touched,
-            0,
-            "CREATE TABLE auth_users (id TEXT PRIMARY KEY);
-             CREATE TABLE _sqlx_migrations (version BIGINT PRIMARY KEY);",
-        );
-        assert_eq!(detect(&touched), Layout::V2);
-
-        let mixed = case("v2-with-v3-key");
-        database(&mixed, 0, V2_TABLES);
-        v3_key(&mixed);
-        assert!(matches!(
-            detect(&mixed),
-            Layout::Unknown(UnknownLayout::V2DatabaseWithV3Key { .. })
-        ));
-
-        // The stamp wins over a v2 key file left lying around.
-        let v3 = case("v3");
-        database(&v3, 1, V2_TABLES);
-        v2_key(&v3);
-        assert_eq!(detect(&v3), Layout::V3);
-
-        let v3_fresh = case("v3-no-database");
-        v3_key(&v3_fresh);
-        assert_eq!(detect(&v3_fresh), Layout::V3);
-
-        let orphan_key = case("v2-key-only");
-        v2_key(&orphan_key);
-        assert!(matches!(
-            detect(&orphan_key),
-            Layout::Unknown(UnknownLayout::V2KeyWithoutDatabase { .. })
-        ));
-
-        let blank = case("blank-database");
-        database(
-            &blank,
-            0,
-            "CREATE TABLE _sqlx_migrations (version BIGINT PRIMARY KEY);",
-        );
-        assert_eq!(detect(&blank), Layout::Empty);
-
-        let garbage = case("garbage");
-        std::fs::write(&garbage.db_path, "this is not a database, not even close").unwrap();
-        assert!(matches!(
-            detect(&garbage),
-            Layout::Unknown(UnknownLayout::DatabaseUnreadable { .. })
-        ));
-
-        let interrupted = case("interrupted");
-        database(&interrupted, 1, V2_TABLES);
-        std::fs::write(interrupted.marker(), "{}").unwrap();
-        assert_eq!(detect(&interrupted), Layout::Interrupted);
-    }
-
-    #[test]
-    fn a_stamp_still_in_the_wal_file_counts() {
-        let scratch = ScratchDir::new("upgrade-detect-wal").unwrap();
-        let dirs = dirs_in(&scratch);
-        // Held open so nothing is merged into the database file: its
-        // stamp and tables exist in the -wal file only.
-        let writer = Connection::open(&dirs.db_path).unwrap();
-        writer.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
-        writer.execute_batch(V2_TABLES).unwrap();
-        writer.pragma_update(None, "user_version", 1).unwrap();
-        assert!(wal_bytes(&dirs.db_path) > 0);
-        assert_eq!(detect(&dirs), Layout::V3);
-    }
 }

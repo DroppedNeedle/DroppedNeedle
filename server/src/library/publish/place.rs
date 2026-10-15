@@ -613,7 +613,7 @@ fn link_count(path: &Path) -> std::io::Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tooling::scratch::ScratchDir;
+    use crate::db::scratch::ScratchDir;
 
     fn listing(dir: &Path) -> Vec<String> {
         let mut names: Vec<String> = std::fs::read_dir(dir)

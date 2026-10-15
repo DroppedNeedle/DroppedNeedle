@@ -36,6 +36,7 @@ pub use http::{SessionCheck, router, session_check};
 pub use hub::{EventHub, EventSink, Subscription};
 pub use model::{
     ActivityChanged, AutoDownloadEnqueued, CacheSyncProgress, ConcertsNew, DownloadProgress,
-    DownloadsChanged, DropImportUpdated, Event, PersonalMixRefreshed, PlaylistImported,
-    RequestImported, SearchJobUpdated, UserNotice, WantedNotice, new_event_id,
+    DownloadsChanged, DropImportUpdated, Event, NowPlayingEntry, NowPlayingSnapshot,
+    PersonalMixRefreshed, PlaylistImported, RequestImported, SearchJobUpdated, UserNotice,
+    WantedNotice, new_event_id,
 };

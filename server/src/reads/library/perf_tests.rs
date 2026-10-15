@@ -36,13 +36,13 @@ struct Fixture {
     pool: SqlitePool,
     catalog: SqliteCatalog,
     /// Dropped last: removes the scratch database.
-    _dir: crate::tooling::scratch::ScratchDir,
+    _dir: crate::db::scratch::ScratchDir,
 }
 
 async fn seed_small() -> Fixture {
     let seq = PERF_SEQ.fetch_add(1, Ordering::Relaxed);
-    let dir = crate::tooling::scratch::ScratchDir::new(&format!("reads-perf-{seq}"))
-        .expect("scratch dir");
+    let dir =
+        crate::db::scratch::ScratchDir::new(&format!("reads-perf-{seq}")).expect("scratch dir");
     let path = dir.join("app.db");
     crate::schema::template::copy_to(&path).expect("migrated database copies");
     let runtime = open_runtime(&DbConfig::new(&path))
@@ -3542,7 +3542,7 @@ fn replay_rule_and_saved_passes() {
     assert!(serial_holds(12.0, 12.5) && !serial_holds(12.0, 12.51));
     assert_eq!(median(vec![3.0, 1.0, 2.0]), 2.0);
 
-    let dir = crate::tooling::scratch::ScratchDir::new("replay-passes").expect("scratch dir");
+    let dir = crate::db::scratch::ScratchDir::new("replay-passes").expect("scratch dir");
     let file = dir.join("passes.tsv");
     assert!(load_passes(&file).is_empty());
     for pass in 0..3 {

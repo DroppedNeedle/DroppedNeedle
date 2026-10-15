@@ -13,19 +13,16 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
+use crate::bootstrap::data_dirs::{DATA_ENC_KEY_VAR, key_file_path, parse_dotenv};
 use crate::export::error::ExportError;
 use crate::export::fernet::FernetKey;
 
-/// Key-file location inside the v2 config dir.
-const KEY_FILE_NAME: &str = ".env";
 /// v2 config-file name inside the v2 config dir.
 const CONFIG_FILE_NAME: &str = "config.json";
 /// v2 database location inside the v2 cache dir.
 const DB_FILE_NAME: &str = "library.db";
 /// v2 plugins location inside the instance root.
 const PLUGINS_DIR_NAME: &str = "plugins";
-/// v2 key variable name.
-const DATA_ENC_KEY_VAR: &str = "DATA_ENC_KEY";
 
 /// The folders one v2 instance keeps its data in.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,12 +48,6 @@ impl V2Dirs {
     }
 }
 
-/// Expected v2 key-file path, for errors and refusal tests.
-#[must_use]
-pub fn key_file_path(config_dir: &Path) -> PathBuf {
-    config_dir.join(KEY_FILE_NAME)
-}
-
 /// Expected v2 config path.
 #[must_use]
 pub fn config_file_path(config_dir: &Path) -> PathBuf {
@@ -67,52 +58,6 @@ pub fn config_file_path(config_dir: &Path) -> PathBuf {
 #[must_use]
 pub fn resolve_db_path(cache_dir: &Path, override_path: Option<&Path>) -> PathBuf {
     override_path.map_or_else(|| cache_dir.join(DB_FILE_NAME), Path::to_path_buf)
-}
-
-/// Percent-encode the characters a SQLite URI path cannot carry raw.
-#[must_use]
-pub(crate) fn sqlite_uri_path(path: &Path) -> String {
-    let mut out = String::new();
-    for ch in path.to_string_lossy().chars() {
-        match ch {
-            '%' => out.push_str("%25"),
-            '?' => out.push_str("%3f"),
-            '#' => out.push_str("%23"),
-            other => out.push(other),
-        }
-    }
-    out
-}
-
-/// Parse dotenv text into variables. Enough for the v2 key file: blank
-/// lines and `#` comments skipped, an optional `export` prefix tolerated,
-/// and matching single or double quotes stripped from values.
-#[must_use]
-pub fn parse_dotenv(text: &str) -> HashMap<String, String> {
-    let mut vars = HashMap::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let line = line.strip_prefix("export ").unwrap_or(line).trim();
-        let Some((name, value)) = line.split_once('=') else {
-            continue;
-        };
-        let name = name.trim();
-        if name.is_empty() {
-            continue;
-        }
-        let mut value = value.trim().to_owned();
-        if value.len() >= 2
-            && ((value.starts_with('\'') && value.ends_with('\''))
-                || (value.starts_with('"') && value.ends_with('"')))
-        {
-            value = value[1..value.len() - 1].to_owned();
-        }
-        vars.insert(name.to_owned(), value);
-    }
-    vars
 }
 
 /// Load the v2 data key. A missing file refuses with [`ExportError::V2KeyNotFound`];
@@ -140,18 +85,6 @@ pub fn read_data_enc_key(config_dir: &Path) -> Result<FernetKey, ExportError> {
         return Err(ExportError::V2KeyInvalid);
     }
     FernetKey::from_base64(encoded).map_err(|_| ExportError::V2KeyInvalid)
-}
-
-/// True when `config_dir` holds a v2 key file that names a data key. The
-/// key itself is not checked: this only tells a v2 config folder from any
-/// other.
-#[must_use]
-pub fn names_data_enc_key(config_dir: &Path) -> bool {
-    std::fs::read_to_string(key_file_path(config_dir)).is_ok_and(|text| {
-        parse_dotenv(&text)
-            .get(DATA_ENC_KEY_VAR)
-            .is_some_and(|value| !value.trim().is_empty())
-    })
 }
 
 /// Read the v2 config file as a JSON object.
@@ -219,17 +152,6 @@ pub fn plugin_setting_flags(plugins_dir: &Path) -> HashMap<String, HashMap<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn dotenv_parsing_covers_key_file_shapes() {
-        let vars = parse_dotenv(
-            "# v2 key file\nDATA_ENC_KEY='abc123'\nEMPTY=\nexport OTHER=\"x y\"\nnot-a-pair\n",
-        );
-        assert_eq!(vars.get("DATA_ENC_KEY").unwrap(), "abc123");
-        assert_eq!(vars.get("EMPTY").unwrap(), "");
-        assert_eq!(vars.get("OTHER").unwrap(), "x y");
-        assert!(!vars.contains_key("not-a-pair"));
-    }
 
     #[test]
     fn missing_key_file_refuses_without_minting() {

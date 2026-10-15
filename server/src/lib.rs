@@ -18,7 +18,6 @@ pub mod admin;
 pub mod app;
 pub mod auth;
 pub mod bootstrap;
-pub mod client_ip;
 pub mod compat;
 pub mod concerts;
 pub mod config;

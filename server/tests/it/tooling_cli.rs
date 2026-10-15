@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use droppedneedle::bootstrap::data_dirs;
 use droppedneedle::tooling::upgrade;
 
 use crate::common;
@@ -486,7 +487,7 @@ fn import_refuses_while_the_server_holds_the_database() {
     let db = root.join("v3.db");
     let config_dir = root.join("config");
     std::fs::create_dir_all(&config_dir).expect("config dir");
-    let _server = droppedneedle::tooling::datalock::DataLock::shared(&db).expect("server lock");
+    let _server = droppedneedle::db::datalock::DataLock::shared(&db).expect("server lock");
 
     let status = Command::new(tool())
         .args(["import", "--file"])
@@ -593,8 +594,8 @@ fn is_v3(root: &Path) -> bool {
         && !cache.join(".upgrade-in-progress").exists()
 }
 
-fn upgrade_dirs(root: &Path) -> upgrade::DataDirs {
-    upgrade::DataDirs::from_config(&droppedneedle::AppConfig::with_root(0, root))
+fn upgrade_dirs(root: &Path) -> data_dirs::DataDirs {
+    data_dirs::DataDirs::from_config(&droppedneedle::AppConfig::with_root(0, root))
 }
 
 /// The upgrade through the library, for the failure points the tool has
@@ -772,8 +773,7 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
         );
     };
     {
-        let _server =
-            droppedneedle::tooling::datalock::DataLock::shared(&db_path).expect("server lock");
+        let _server = droppedneedle::db::datalock::DataLock::shared(&db_path).expect("server lock");
         refused(&["recovery-code", "alice"], "Stop the server");
         refused(&["recovery-code", "--list-admins"], "Stop the server");
     }
@@ -781,8 +781,7 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
     // even while the server holds the data directory.
     refused(&["recovery-code", "-x"], "unknown flag");
     {
-        let _server =
-            droppedneedle::tooling::datalock::DataLock::shared(&db_path).expect("server lock");
+        let _server = droppedneedle::db::datalock::DataLock::shared(&db_path).expect("server lock");
         let help = tool_in(&root, &["recovery-code", "-h"]);
         assert!(help.status.success(), "stderr: {}", stderr_of(&help));
         assert!(String::from_utf8_lossy(&help.stdout).contains("--list-admins"));
@@ -922,10 +921,9 @@ async fn a_failed_upgrade_leaves_the_v2_directory_as_it_was() {
 
     // A running server holds the data lock: refused.
     {
-        let _server = droppedneedle::tooling::datalock::DataLock::shared(
-            &root.join("cache").join("library.db"),
-        )
-        .expect("server lock");
+        let _server =
+            droppedneedle::db::datalock::DataLock::shared(&root.join("cache").join("library.db"))
+                .expect("server lock");
         let run = tool_in(&root, &["upgrade"]);
         assert!(!run.status.success());
         assert!(
@@ -998,8 +996,8 @@ async fn an_interrupted_upgrade_is_rolled_back_first() {
         "outcome: {killed:?}"
     );
     assert_eq!(
-        upgrade::check_bootable(&dirs),
-        Err(upgrade::BootRefusal::Interrupted)
+        data_dirs::check_bootable(&dirs),
+        Err(data_dirs::BootRefusal::Interrupted)
     );
     let undone = tool_in(&root, &["upgrade", "--undo", "--yes"]);
     assert!(undone.status.success(), "stderr: {}", stderr_of(&undone));
@@ -1016,8 +1014,8 @@ async fn an_interrupted_upgrade_is_rolled_back_first() {
     assert!(root.join("config").join(".env").is_file());
     assert!(!root.join("cache").join("library.db").exists());
     assert_eq!(
-        upgrade::check_bootable(&dirs),
-        Err(upgrade::BootRefusal::Interrupted)
+        data_dirs::check_bootable(&dirs),
+        Err(data_dirs::BootRefusal::Interrupted)
     );
     let undone = tool_in(&root, &["upgrade", "--undo", "--yes"]);
     assert!(undone.status.success(), "stderr: {}", stderr_of(&undone));
@@ -1031,8 +1029,8 @@ async fn an_interrupted_upgrade_is_rolled_back_first() {
         "outcome: {killed:?}"
     );
     assert_eq!(
-        upgrade::check_bootable(&dirs),
-        Err(upgrade::BootRefusal::Interrupted)
+        data_dirs::check_bootable(&dirs),
+        Err(data_dirs::BootRefusal::Interrupted)
     );
     let run = tool_in(&root, &["upgrade"]);
     assert!(run.status.success(), "stderr: {}", stderr_of(&run));
@@ -1042,7 +1040,7 @@ async fn an_interrupted_upgrade_is_rolled_back_first() {
         stderr_of(&run)
     );
     assert!(is_v3(&root));
-    assert_eq!(upgrade::check_bootable(&dirs), Ok(()));
+    assert_eq!(data_dirs::check_bootable(&dirs), Ok(()));
     assert_eq!(backup_trees(&root), original);
 }
 
@@ -1072,10 +1070,9 @@ fn undo_returns_the_v2_files_and_no_backup_keeps_none() {
 
     // A running server holds the data lock: refused.
     {
-        let _server = droppedneedle::tooling::datalock::DataLock::shared(
-            &root.join("cache").join("library.db"),
-        )
-        .expect("server lock");
+        let _server =
+            droppedneedle::db::datalock::DataLock::shared(&root.join("cache").join("library.db"))
+                .expect("server lock");
         let refused = tool_in(&root, &["upgrade", "--undo", "--yes"]);
         assert!(!refused.status.success());
         assert!(

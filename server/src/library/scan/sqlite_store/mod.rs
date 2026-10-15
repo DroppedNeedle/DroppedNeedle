@@ -95,7 +95,7 @@ pub struct SqliteScanStore {
     /// Declared after `inner`, so the connection closes before the
     /// directory goes.
     #[cfg(any(test, feature = "test-support"))]
-    scratch: Option<crate::tooling::scratch::ScratchDir>,
+    scratch: Option<crate::db::scratch::ScratchDir>,
 }
 
 /// Prepared statements the store's connection keeps.
@@ -114,8 +114,8 @@ impl SqliteScanStore {
     /// copy's directory is removed when the store drops.
     #[cfg(any(test, feature = "test-support"))]
     pub fn scratch() -> Result<Self, String> {
-        let dir = crate::tooling::scratch::ScratchDir::new("scan-store")
-            .map_err(|error| error.to_string())?;
+        let dir =
+            crate::db::scratch::ScratchDir::new("scan-store").map_err(|error| error.to_string())?;
         let path = dir.path().join("app.db");
         crate::schema::template::copy_to(&path)?;
         let mut store = Self::open(&path)?;

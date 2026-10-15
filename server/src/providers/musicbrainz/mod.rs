@@ -109,9 +109,7 @@ impl MbSource {
         match settings.source_mode {
             MbSourceMode::Brainzmash => Self::BrainzMash {
                 base_url: brainzmash.to_owned(),
-                binding_valid: crate::settings::musicbrainz::is_brainzmash_active_binding_valid(
-                    settings,
-                ),
+                binding_valid: settings.brainzmash_binding_valid(),
             },
             MbSourceMode::Official => Self::Official {
                 base_url: official.to_owned(),

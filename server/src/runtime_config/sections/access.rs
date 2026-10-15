@@ -4,8 +4,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::{AudioFormat, Section, check_range};
-use crate::auth::session::origin::Origin;
+use crate::runtime_config::ConfigStore;
 use crate::runtime_config::error::ConfigError;
+use crate::runtime_config::origin::Origin;
 
 // --- security_settings ----------------------------------------------------
 
@@ -154,6 +155,23 @@ impl SecuritySettings {
     pub fn download_allowed(&self, role: &str) -> bool {
         self.library_download_access.admits(role)
     }
+}
+
+/// Who may frame a page the app itself shows in a frame (the plugin panel
+/// page), as the sources of that page's `frame-ancestors`: the app, plus
+/// the addresses an admin allowed to frame the app. The browser checks
+/// every ancestor up to the top, so a dashboard that frames the app has to
+/// be named here too or the inner frame stays empty. Unreadable settings
+/// leave the app alone.
+pub fn framed_page_ancestors(config: &ConfigStore) -> String {
+    let mut sources = vec!["'self'".to_owned()];
+    match config.get::<SecuritySettings>() {
+        Ok(settings) => sources.extend(settings.framing_sources()),
+        Err(error) => {
+            tracing::debug!(%error, "security settings unreadable; framing by the app only")
+        }
+    }
+    sources.join(" ")
 }
 
 /// Longest HSTS max-age a save accepts: two years, in seconds. A typo

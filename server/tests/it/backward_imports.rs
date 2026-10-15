@@ -41,7 +41,6 @@ const LAYERS: &[&[&str]] = &[
         "admin",
         "app",
         "bootstrap",
-        "client_ip",
         "docs",
         "handlers",
         "lib",

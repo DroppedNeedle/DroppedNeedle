@@ -6,14 +6,14 @@
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::Request;
-use droppedneedle::auth::session::middleware::TrustedProxies;
-use droppedneedle::auth::session::origin::Origin;
 use droppedneedle::compat::jellyfin::JellyfinSettings;
 use droppedneedle::compat::settings::LiveSettings;
 use droppedneedle::compat::shared::address::{ListenerConfig, base_address};
 use droppedneedle::compat::shared::{auth, ratelimit, redact};
 use droppedneedle::compat::subsonic::picture::{PURPOSE, PictureKind, PictureSigner};
+use droppedneedle::config::TrustedProxies;
 use droppedneedle::runtime_config::Crypto;
+use droppedneedle::runtime_config::origin::Origin;
 
 #[test]
 fn anonymous_paths() {

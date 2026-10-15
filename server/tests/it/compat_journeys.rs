@@ -246,7 +246,7 @@ fn apps() -> Apps {
         subsonic_limits.started.clone(),
         ListenerConfig {
             port: 4533,
-            trusted_proxies: droppedneedle::auth::session::middleware::TrustedProxies::default(),
+            trusted_proxies: droppedneedle::config::TrustedProxies::default(),
             base_path: String::new(),
         },
     );
@@ -269,7 +269,7 @@ fn apps() -> Apps {
         jellyfin_settings(),
         ListenerConfig {
             port: 8096,
-            trusted_proxies: droppedneedle::auth::session::middleware::TrustedProxies::default(),
+            trusted_proxies: droppedneedle::config::TrustedProxies::default(),
             base_path: String::new(),
         },
     );

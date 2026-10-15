@@ -18,8 +18,8 @@ use super::settings::{InstallIds, plex_login_enabled};
 use super::users::PROVIDER_PLEX;
 use crate::auth::users::stores::{BoxFuture, DirectoryError, DirectoryUser, UserDirectory};
 use crate::http_client::{BodyError, read_capped};
+use crate::providers::plextv::Resource;
 use crate::remotes::plex::PlexAdapter;
-use crate::remotes::plex_models::Resource;
 use crate::runtime_config::ConfigStore;
 use crate::runtime_config::secret_sections::PlexConnection;
 

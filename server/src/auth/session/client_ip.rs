@@ -12,7 +12,7 @@ use std::net::{IpAddr, SocketAddr};
 
 use axum::http::HeaderMap;
 
-use crate::auth::session::middleware::TrustedProxies;
+use crate::config::TrustedProxies;
 
 /// A resolved client address, stashed in request extensions by the layer
 /// that resolved it so later handlers key on the same value.

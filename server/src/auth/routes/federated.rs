@@ -25,11 +25,12 @@ use crate::auth::federated::plex::{
 use crate::auth::federated::users::FederatedUserStore;
 use crate::auth::routes::native::PeerAddr;
 use crate::auth::session::cookies;
-use crate::auth::session::middleware::{CurrentSession, TrustedProxies};
+use crate::auth::session::middleware::CurrentSession;
 use crate::auth::session::rate_limit::{LOGIN_CLASS, RateLimiter, rate_limited_response};
 use crate::auth::session::stated::StatedAddresses;
 use crate::auth::session::tokens::{constant_time_eq, hash_token};
 use crate::auth::users::handlers::ValidJson;
+use crate::config::TrustedProxies;
 use crate::ids::IdGenerator;
 use axum::{
     Json, Router,

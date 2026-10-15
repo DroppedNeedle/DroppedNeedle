@@ -7,10 +7,12 @@
 //! - `/wrapped/*` mounts outside the session middleware with only the
 //!   `X-Wrapped-API-Key` gate. Never add these paths to the session
 //!   allowlist: allowlisted means public.
-//! - The v2 covers debug route stays out of this router.
+//! - The v2 covers debug route stays out of this router: [`covers_debug`]
+//!   mounts on its own, on dev-only tooling routes.
 
 pub mod artwork;
 pub mod covers;
+pub mod covers_debug;
 pub mod listenbrainz_wrapped;
 pub mod version;
 pub mod wrapped;

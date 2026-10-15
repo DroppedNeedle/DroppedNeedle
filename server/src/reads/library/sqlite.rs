@@ -32,13 +32,13 @@ use std::collections::HashMap;
 
 use sqlx::{Row as _, SqlitePool};
 
-use super::lookups::CURRENT_TRACK;
 use super::stores::{
     AlbumFilter, AlbumRecord, AlbumSort, ArtistListing, ArtistRecord, ArtistScope, ArtistSort,
     BoxFuture, DecadeRecord, GenreRecord, ManagementHoldRecord, StatsRecord, StoreError,
     TrackFilter, TrackRecord, TrackSort,
 };
 use super::stores::{FavoriteReads, LibraryCatalog};
+use crate::library::corrections::continuation::CURRENT_TRACK;
 
 /// Shared SQLite handle for the library adapters: the reader pool.
 /// `Clone` is cheap; clones share the pool.

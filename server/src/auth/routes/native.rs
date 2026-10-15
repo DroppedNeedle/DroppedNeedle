@@ -9,7 +9,6 @@ use crate::auth::session::extract;
 use crate::auth::session::login::{
     INVALID_CREDENTIALS, LoginContext, LoginError, LoginRequest, LoginService,
 };
-use crate::auth::session::middleware::TrustedProxies;
 use crate::auth::session::rate_limit::{LOGIN_USERNAME_CLASS, RateLimiter, rate_limited_response};
 use crate::auth::session::stated::StatedAddresses;
 use crate::auth::session::store::{SessionKind, SessionRecord, SessionStore, now_unix};
@@ -18,6 +17,7 @@ use crate::auth::users::UsersDeps;
 use crate::auth::users::handlers::ValidJson;
 use crate::auth::users::models::UserResponse;
 use crate::auth::users::{clock_now, services};
+use crate::config::TrustedProxies;
 use crate::ids::IdGenerator;
 use axum::{
     Json, Router,

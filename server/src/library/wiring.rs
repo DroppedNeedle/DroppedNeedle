@@ -44,9 +44,8 @@ use crate::runtime_config::ConfigStore;
 /// Scratch database (a copy of the migrated template) plus config store in a
 /// directory that goes away when the last bundle clone drops.
 #[cfg(any(test, feature = "test-support"))]
-fn scratch_state() -> Result<(Arc<crate::tooling::scratch::ScratchDir>, Arc<ConfigStore>), String> {
-    let dir =
-        crate::tooling::scratch::ScratchDir::new("library").map_err(|error| error.to_string())?;
+fn scratch_state() -> Result<(Arc<crate::db::scratch::ScratchDir>, Arc<ConfigStore>), String> {
+    let dir = crate::db::scratch::ScratchDir::new("library").map_err(|error| error.to_string())?;
     let db_path = dir.path().join("app.db");
     crate::schema::template::copy_to(&db_path)?;
     let crypto = crate::runtime_config::Crypto::from_key_bytes(&[7u8; 32])
@@ -210,7 +209,7 @@ pub struct LibrarySetup {
     pub enrichment: super::management::enrich::EnrichmentSlot,
     /// Scratch state of a test bundle, removed with the last clone.
     #[cfg(any(test, feature = "test-support"))]
-    pub scratch: Option<Arc<crate::tooling::scratch::ScratchDir>>,
+    pub scratch: Option<Arc<crate::db::scratch::ScratchDir>>,
 }
 
 impl LibrarySetup {

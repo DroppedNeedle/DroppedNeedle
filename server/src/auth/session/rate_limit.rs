@@ -35,8 +35,9 @@ use axum::{
     response::Response,
 };
 
-use super::middleware::{CurrentSession, TrustedProxies};
-use crate::client_ip::client_ip;
+use super::middleware::CurrentSession;
+use crate::auth::session::client_ip::client_ip;
+use crate::config::TrustedProxies;
 
 /// Most keys one map tracks before evicting the stalest.
 pub const MAX_ENTRIES: usize = 10_000;

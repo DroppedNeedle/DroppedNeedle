@@ -10,7 +10,6 @@ use axum::extract::ConnectInfo;
 use axum::http::Request;
 use droppedneedle::auth::compat_auth::fakes::FakeCompatPasswords;
 use droppedneedle::auth::compat_auth::jellyfin::server_id;
-use droppedneedle::auth::session::middleware::TrustedProxies;
 use droppedneedle::compat::jellyfin::fake::{
     FakeLibrary, MemoryEngine, MemoryIds, MemorySessions, SessionCall,
 };
@@ -19,6 +18,7 @@ use droppedneedle::compat::jellyfin::seams::{
 };
 use droppedneedle::compat::jellyfin::{JellyfinState, router};
 use droppedneedle::compat::shared::address::ListenerConfig;
+use droppedneedle::config::TrustedProxies;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 

@@ -933,7 +933,7 @@ fn panel_page_policy(config: &ConfigStore) -> String {
         "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; \
          img-src data: blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; \
          base-uri 'none'; form-action 'none'; frame-ancestors {}; sandbox allow-scripts",
-        crate::security_headers::framed_page_ancestors(config)
+        crate::runtime_config::sections::framed_page_ancestors(config)
     )
 }
 

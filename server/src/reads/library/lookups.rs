@@ -14,6 +14,7 @@ use super::sqlite::{
     LibraryDb, TRACK_COLUMNS, TRACK_JOINS, in_placeholders, internal, map_track, unwired_store,
 };
 use super::stores::{AlbumMbids, BoxFuture, LibraryLookups, StatsExtras, StoreError, TrackRecord};
+use crate::library::corrections::continuation::CURRENT_TRACK;
 use crate::reads::catalog::library::LocalCatalog;
 
 /// Most ids bound into one `IN (...)` list.
@@ -55,16 +56,6 @@ const DIRECT_ARTIST: &str = "SELECT id FROM ( \
     UNION ALL SELECT r.id, 2 FROM local_artists a \
      JOIN local_artists r ON r.id = a.retired_into_artist_id \
      WHERE a.id = ?1 AND r.retired_into_artist_id IS NULL) \
-    ORDER BY rank LIMIT 1";
-
-/// The track a local id names now: the track itself while its file is
-/// indexed, else the track its alias names (a missing track that
-/// continued into another), else the id itself, so a read's own
-/// availability test answers for it as for any id.
-pub(crate) const CURRENT_TRACK: &str = "SELECT id FROM ( \
-    SELECT id, 0 AS rank FROM local_tracks WHERE id = ?1 AND availability = 'indexed' \
-    UNION ALL SELECT local_track_id, 1 FROM local_track_aliases WHERE alias = ?1 \
-    UNION ALL SELECT ?1, 2) \
     ORDER BY rank LIMIT 1";
 
 /// Live albums with a streamable track holding one of the release groups.

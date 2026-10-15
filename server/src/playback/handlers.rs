@@ -16,13 +16,14 @@ use serde::de::DeserializeOwned;
 use super::{
     error::PlaybackError,
     models::{
-        NowPlayingDeleteQuery, NowPlayingHeartbeat, NowPlayingSnapshot, PlaybackProgressRequest,
+        NowPlayingDeleteQuery, NowPlayingHeartbeat, PlaybackProgressRequest,
         PlaybackProgressResponse, PlaybackStartRequest, PlaybackStartResponse, PlaybackStopRequest,
         PlaybackStopResponse, ScrobbleNowPlayingRequest, ScrobbleResponse, ScrobbleSubmitRequest,
     },
     services::{self, PlaybackDeps},
 };
 use crate::auth::session::middleware::CurrentSession;
+use crate::events::NowPlayingSnapshot;
 
 /// The authenticated caller. The deny-by-default session middleware stashes
 /// the session; this extractor reads it without a store round-trip (all

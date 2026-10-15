@@ -194,7 +194,26 @@ pub fn is_mb_rate_policy_public_host(url: &str) -> bool {
     MB_RATE_POLICY_PUBLIC_ORIGINS.contains(&normalize_mb_source_label(url).as_str())
 }
 
+/// True for a value with no surrounding whitespace that is not empty.
+#[must_use]
+pub fn exact_nonblank(value: &str) -> bool {
+    !value.is_empty() && value == value.trim()
+}
+
 impl MusicBrainzSettings {
+    /// Whether the pinned built-in BrainzMash source may serve traffic: the
+    /// mode is brainzmash, the endpoint is the approved origin, the
+    /// generation is positive, and the source id is exact nonblank. The
+    /// interactive binding is optional for the default; these checks fence
+    /// caches and transport to the approved origin.
+    #[must_use]
+    pub fn brainzmash_binding_valid(&self) -> bool {
+        self.source_mode == MbSourceMode::Brainzmash
+            && self.api_url == BRAINZMASH_ENDPOINT
+            && self.generation > 0
+            && exact_nonblank(&self.source_id)
+    }
+
     fn canonicalize_urls(&mut self) {
         self.api_url = self.api_url.trim().to_owned();
         match self.source_mode {

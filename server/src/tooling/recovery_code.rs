@@ -20,9 +20,9 @@ use crate::auth::users::services::{
     IssuedRecoveryCode, RecoveryIssueError, RecoveryReach, issue_recovery_code,
 };
 use crate::auth::users::stores::UserStore as _;
+use crate::bootstrap::data_dirs::{BootRefusal, DataDirs, check_bootable};
+use crate::db::datalock::{DataLock, DataLockError};
 use crate::db::{DbConfig, DbRuntime, open_runtime};
-use crate::tooling::datalock::{DataLock, DataLockError};
-use crate::tooling::upgrade::{BootRefusal, DataDirs, check_bootable};
 
 /// Users read per page when listing admins.
 const PAGE: u64 = 200;

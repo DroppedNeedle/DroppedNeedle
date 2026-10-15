@@ -39,12 +39,11 @@ use super::models::{
     HistoryEntry, HistoryPage, HubView, InfoView, LyricsView, MatchView, PlaylistDetail,
     PlaylistSummary, SearchResults, SessionView, SessionsView, SourceName, StatsView, TrackView,
 };
-use super::plex_models::{Container, Envelope, Metadata, Resource};
+use super::plex_models::{Container, Envelope, Metadata};
+use crate::providers::plextv::Resource;
 
 /// Request timeout per upstream call, matching the v2 repository.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
-/// plex.tv account API root.
-pub const PLEX_TV_BASE: &str = "https://plex.tv/api/v2";
 
 /// Query pairs, owned.
 type Params = Vec<(String, String)>;

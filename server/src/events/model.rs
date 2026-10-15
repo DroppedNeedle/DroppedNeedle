@@ -5,10 +5,49 @@
 
 use std::collections::BTreeMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::playback::models::NowPlayingSnapshot;
+/// One live session, already privacy-projected (same JSON as the
+/// `reads::discover` now-playing shape, so clients see no difference).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct NowPlayingEntry {
+    /// Session key (`user_id:device`).
+    pub id: String,
+    /// Display name of the listener.
+    pub user_name: String,
+    /// Track title (empty when redacted).
+    pub track_name: String,
+    /// Artist name (empty when redacted).
+    pub artist_name: String,
+    /// Album title (none when redacted or unknown).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub album_name: Option<String>,
+    /// Cover art URL (empty when redacted).
+    pub cover_url: String,
+    /// Device label.
+    pub device_name: String,
+    /// True when paused.
+    pub is_paused: bool,
+    /// Playback source.
+    pub source: String,
+    /// Position in milliseconds, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress_ms: Option<i64>,
+    /// Track length in milliseconds, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<i64>,
+    /// True when the owner hides the track.
+    #[serde(default)]
+    pub redacted: bool,
+}
+
+/// The live presence snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct NowPlayingSnapshot {
+    /// Projected live sessions.
+    pub sessions: Vec<NowPlayingEntry>,
+}
 
 /// Event names on the wire.
 pub mod names {

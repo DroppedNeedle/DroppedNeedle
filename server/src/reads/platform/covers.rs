@@ -5,7 +5,7 @@
 //! allowed sizes and `original` aliases, ETag + `If-None-Match` handling
 //! (strong, weak, and `*`), the 202 warming answer while art resolves in the
 //! background, and distinct album/artist placeholders. The v2 debug route
-//! is absent here on purpose (it lives in `tooling::covers_debug`).
+//! is absent here on purpose (it lives in `covers_debug`).
 //!
 //! Caching follows Navidrome: the ETag is the content hash the art already
 //! carries (no hashing per request), `immutable` is sent only when the

@@ -296,6 +296,21 @@ fn schema_stamp(path: &Path) -> Result<(i64, i64), DbError> {
     Ok((found, tables))
 }
 
+/// Percent-encode the characters a SQLite URI path cannot carry raw.
+#[must_use]
+pub fn sqlite_uri_path(path: &Path) -> String {
+    let mut out = String::new();
+    for ch in path.to_string_lossy().chars() {
+        match ch {
+            '%' => out.push_str("%25"),
+            '?' => out.push_str("%3f"),
+            '#' => out.push_str("%23"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 impl DbRuntime {
     /// Live database file.
     pub fn path(&self) -> &Path {

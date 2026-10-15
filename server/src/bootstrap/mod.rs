@@ -8,6 +8,7 @@
 //! parses arguments, tunes the allocator, starts the runtime and hands in
 //! the stop signal.
 
+pub mod data_dirs;
 mod outbound;
 mod serve;
 
@@ -19,6 +20,8 @@ use thiserror::Error;
 pub use outbound::{Outbound, Port};
 pub use serve::{Background, ServeError, bind, serve};
 
+use data_dirs::{BootRefusal, DataDirs, check_bootable};
+
 use crate::{
     AppConfig, AppState,
     acquire::AcquireSetup,
@@ -28,7 +31,12 @@ use crate::{
     compat::{
         CompatSetup, settings::LiveSettings, setup::CompatDeps, shared::address::ListenerConfig,
     },
-    db::{BackupService, DbConfig, error::DbError, open_runtime},
+    db::{
+        BackupService, DbConfig,
+        datalock::{DataLock, DataLockError},
+        error::DbError,
+        open_runtime,
+    },
     events::EventHub,
     http_client::{HttpClientError, HttpClientFactory},
     ids::UuidGenerator,
@@ -58,10 +66,6 @@ use crate::{
         section_prefs::{SqliteLinkStatus, SqliteSectionPrefsStore},
         services::SqliteImpactBuckets,
         wiring::SettingsSetup,
-    },
-    tooling::{
-        datalock::{DataLock, DataLockError},
-        upgrade::{BootRefusal, DataDirs, check_bootable},
     },
     web::{WebError, WebUi},
 };

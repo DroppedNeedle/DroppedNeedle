@@ -20,7 +20,7 @@ pub struct AcquireDb {
     pool: SqlitePool,
     lane: WriteLane,
     #[cfg(any(test, feature = "test-support"))]
-    _scratch: Option<Arc<crate::tooling::scratch::ScratchDir>>,
+    _scratch: Option<Arc<crate::db::scratch::ScratchDir>>,
 }
 
 impl AcquireDb {
@@ -79,7 +79,7 @@ impl AcquireDb {
     #[cfg(any(test, feature = "test-support"))]
     pub fn scratch() -> Result<Self, String> {
         let scratch = Arc::new(
-            crate::tooling::scratch::ScratchDir::new("acquire-db")
+            crate::db::scratch::ScratchDir::new("acquire-db")
                 .map_err(|error| format!("scratch dir: {error}"))?,
         );
         let dir = scratch.to_path_buf();

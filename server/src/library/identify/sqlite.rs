@@ -2204,7 +2204,7 @@ mod tests {
     /// neither match and no review changes.
     #[test]
     fn settling_two_different_chosen_matches_is_refused() {
-        let dir = crate::tooling::scratch::ScratchDir::new("settle-match").unwrap();
+        let dir = crate::db::scratch::ScratchDir::new("settle-match").unwrap();
         let path = dir.path().join("app.db");
         crate::schema::template::copy_to(&path).unwrap();
         let mut conn = crate::db::open_connection(&path).unwrap();
