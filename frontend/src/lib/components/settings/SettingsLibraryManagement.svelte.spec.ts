@@ -287,7 +287,6 @@ function baseSettings(): LibraryManagementSettingsResponse {
 				source: 'Track title',
 				mergeable: false,
 				clearable: true,
-				written: true,
 				modes: ['disabled', 'replace', 'fill_missing']
 			},
 			{
@@ -296,8 +295,15 @@ function baseSettings(): LibraryManagementSettingsResponse {
 				source: 'Release labels',
 				mergeable: true,
 				clearable: true,
-				written: true,
 				modes: ['disabled', 'replace', 'fill_missing', 'merge']
+			},
+			{
+				name: 'acoustid_id',
+				label: 'AcoustID',
+				source: "AcoustID lookup of the file's audio",
+				mergeable: false,
+				clearable: false,
+				modes: ['disabled', 'replace', 'fill_missing']
 			},
 			{
 				name: 'genre',
@@ -305,7 +311,6 @@ function baseSettings(): LibraryManagementSettingsResponse {
 				source: 'The Genres section',
 				mergeable: true,
 				clearable: false,
-				written: true,
 				modes: ['disabled', 'replace', 'fill_missing', 'merge']
 			}
 		]
@@ -477,6 +482,9 @@ describe('SettingsLibraryManagement', () => {
 			.element(profileDialog.getByText('No source: kept, cleared, or set by a script'))
 			.not.toBeInTheDocument();
 		await expect.element(profileDialog.getByText('From MusicBrainz: Release labels')).toBeVisible();
+		await expect
+			.element(profileDialog.getByText("AcoustID lookup of the file's audio", { exact: true }))
+			.toBeVisible();
 
 		const genre = profileDialog.getByRole('combobox', { name: 'Mode for Genre' });
 		await expect.element(genre).toHaveValue('replace');

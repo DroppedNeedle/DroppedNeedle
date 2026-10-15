@@ -173,8 +173,7 @@ impl CompiledScripts {
     }
 }
 
-/// The tag field a profile field writes. AcoustID has no values yet, so
-/// its entries leave the file as it is; genre is the Genres section's.
+/// The tag field a profile field writes; genre is the Genres section's.
 fn target(name: &str) -> Option<TagField> {
     use TagField::*;
     Some(match name {
@@ -226,6 +225,8 @@ fn target(name: &str) -> Option<TagField> {
         "comment" => Comment,
         "copyright" => Copyright,
         "encoded_by" => EncodedBy,
+        "acoustid_id" => AcoustIdId,
+        "acoustid_fingerprint" => AcoustIdFingerprint,
         _ => return None,
     })
 }
@@ -473,6 +474,25 @@ pub fn plan_tags(
         if let Some(relations) = relations {
             canonical.extend(picard::credit_tags(relations));
         }
+        // AcoustID values come from the file's audio. These fields never
+        // clear, so a value not worked out leaves the file's alone.
+        if let Some(found) = file_extras {
+            for (field, value) in [
+                (TagField::AcoustIdFingerprint, &found.acoustid_print),
+                (TagField::AcoustIdId, &found.acoustid_id),
+            ] {
+                if let Some(value) = value {
+                    canonical.insert(field.name().to_owned(), vec![value.clone()]);
+                }
+            }
+        }
+        warnings.extend(
+            extras
+                .acoustid_notes
+                .iter()
+                .filter(|(track, _)| track == track_id)
+                .map(|(_, note)| note.clone()),
+        );
         let mut credits_missing = false;
         let mut preserved: BTreeSet<&str> = profile
             .metadata

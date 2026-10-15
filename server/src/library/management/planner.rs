@@ -1157,6 +1157,276 @@ fn measure_replaygain(
     }
 }
 
+/// One file the AcoustID step looks at.
+pub(crate) struct AcoustIdSubject<'a> {
+    pub track_id: &'a str,
+    pub root_id: &'a str,
+    pub relative_path: &'a str,
+    pub overrides: &'a Overrides,
+}
+
+/// How an album's AcoustID lookup went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AcoustIdLookup {
+    /// No file needed one, or no outside sources are attached.
+    NotAsked,
+    /// No key, or AcoustID refused it.
+    NoKey,
+    Answered,
+    /// AcoustID could not be reached for at least one request.
+    Unavailable,
+}
+
+/// Whether the profile writes an AcoustID field into a file that holds
+/// `held`: managed and not preserved, no override for it, and replace or
+/// a file without a value.
+fn acoustid_wanted(
+    profile: &crate::runtime_config::sections::LibraryManagementProfile,
+    overrides: &Overrides,
+    field: TagField,
+    held: bool,
+) -> bool {
+    use crate::runtime_config::sections::FieldMode;
+    let metadata = &profile.metadata;
+    let Some(managed) = metadata
+        .fields
+        .iter()
+        .find(|managed| managed.field == field.name())
+    else {
+        return false;
+    };
+    metadata.enabled
+        && !metadata
+            .preserve_fields
+            .iter()
+            .any(|name| name == field.name())
+        && !overrides.fields.iter().any(|(each, _, _)| *each == field)
+        && match managed.mode {
+            FieldMode::Disabled | FieldMode::Preserve => false,
+            FieldMode::Replace => true,
+            FieldMode::FillMissing | FieldMode::Merge => !held,
+        }
+}
+
+/// The AcoustID id to write for a file of `recording`: among the results
+/// above the batch threshold that list the recording, the best score's
+/// (the first on a tie), when it is a UUID.
+fn acoustid_id_for(
+    results: &[crate::providers::acoustid::BatchResult],
+    recording: &str,
+) -> Option<String> {
+    use crate::providers::acoustid::BATCH_MIN_SCORE;
+    let mut best: Option<&crate::providers::acoustid::BatchResult> = None;
+    for result in results {
+        let names = result
+            .recordings()
+            .iter()
+            .any(|each| each.id.trim().eq_ignore_ascii_case(recording));
+        if names
+            && result.score() > BATCH_MIN_SCORE
+            && best.is_none_or(|best| result.score() > best.score())
+        {
+            best = Some(result);
+        }
+    }
+    let id = uuid::Uuid::try_parse(best?.id.trim()).ok()?;
+    Some(id.hyphenated().to_string())
+}
+
+/// Work out the AcoustID print and id of every file the profile writes
+/// them into, into `extras`. A print comes from the store when one was
+/// kept for the file as it is on disk now, else from its audio, within
+/// the run's analysis budget (`until`). Ids come from one AcoustID lookup
+/// per album, in requests of at most twenty prints; a print of zero
+/// seconds is never looked up (AcoustID answers it with nothing, which
+/// would read as "no match"). With `ids_only` only the files that would
+/// get an id are looked at, and no print is put in `extras`.
+pub(crate) fn acoustid_values(
+    setup: &LibrarySetup,
+    sandbox: &Sandbox,
+    profile: &crate::runtime_config::sections::LibraryManagementProfile,
+    subjects: &[AcoustIdSubject<'_>],
+    until: std::time::Instant,
+    ids_only: bool,
+    extras: &mut super::enrich::AlbumExtras,
+) -> AcoustIdLookup {
+    use super::enrich::{AcoustIdAnswer, AcoustIdPrint};
+    use crate::providers::acoustid::MAX_BATCH;
+
+    let port = setup.enrichment.get();
+    // Without a key no id is looked up, so a file that wants only an id
+    // is not decoded.
+    let mut keyed: Option<bool> = None;
+    let mut outcome = AcoustIdLookup::NotAsked;
+    let mut out_of_time: Option<&str> = None;
+    // The file whose plan says why ids were left out.
+    let mut first_wanting_id: Option<&str> = None;
+    // (track, stat revision, print, recording)
+    let mut lookups: Vec<(&str, String, AcoustIdPrint, String)> = Vec::new();
+    for subject in subjects {
+        let Ok(path) = sandbox.resolve_no_symlink(subject.root_id, subject.relative_path) else {
+            continue;
+        };
+        if !tags::format_for_path(&path).is_ok_and(tags::save::writable) {
+            continue;
+        }
+        let Ok(doc) = crate::library::publish::staging::document_from_file(&path) else {
+            continue;
+        };
+        let held = |field: TagField| {
+            doc.managed
+                .get(field.name())
+                .is_some_and(|values| !values.is_empty())
+        };
+        let want_print = !ids_only
+            && acoustid_wanted(
+                profile,
+                subject.overrides,
+                TagField::AcoustIdFingerprint,
+                held(TagField::AcoustIdFingerprint),
+            );
+        let recording = setup
+            .identify_store
+            .track_identity(subject.track_id)
+            .and_then(|mapping| mapping.recording_mbid)
+            .filter(|recording| !recording.trim().is_empty());
+        let mut want_id = port.is_some()
+            && recording.is_some()
+            && acoustid_wanted(
+                profile,
+                subject.overrides,
+                TagField::AcoustIdId,
+                held(TagField::AcoustIdId),
+            );
+        if want_id {
+            first_wanting_id.get_or_insert(subject.track_id);
+            let has_key = *keyed.get_or_insert_with(|| {
+                port.is_some_and(|port| {
+                    super::enrich::wait(Box::pin(async {
+                        Ok::<_, String>(port.acoustid_lookup(&[]).await)
+                    })) != Some(AcoustIdAnswer::NoKey)
+                })
+            });
+            if !has_key {
+                outcome = AcoustIdLookup::NoKey;
+                want_id = false;
+            }
+        }
+        if !want_print && !want_id {
+            continue;
+        }
+        let Ok(meta) = path.symlink_metadata() else {
+            continue;
+        };
+        let revision = crate::library::scan::exact_stat_revision(
+            meta.len(),
+            crate::library::scan::mtime_ns_from_metadata(&meta),
+        );
+        let print = match setup
+            .identify_store
+            .fingerprint(subject.track_id, &revision)
+        {
+            Some((print, duration_seconds)) => AcoustIdPrint {
+                print,
+                duration_seconds,
+            },
+            None if std::time::Instant::now() >= until => {
+                out_of_time.get_or_insert(subject.track_id);
+                continue;
+            }
+            None => match tags::generate_fingerprint(&path) {
+                Ok(found) if !found.fingerprint.is_empty() => AcoustIdPrint {
+                    print: found.fingerprint,
+                    duration_seconds: found.duration_seconds,
+                },
+                Ok(_) => continue,
+                Err(error) => {
+                    tracing::info!(%error, track = subject.track_id, "AcoustID print failed");
+                    continue;
+                }
+            },
+        };
+        if want_print {
+            extras
+                .files
+                .entry(subject.track_id.to_owned())
+                .or_default()
+                .acoustid_print = Some(print.print.clone());
+        }
+        if want_id
+            && print.duration_seconds > 0
+            && let Some(recording) = recording
+        {
+            lookups.push((subject.track_id, revision, print, recording));
+        }
+    }
+    if let Some(track) = out_of_time {
+        extras.acoustid_notes.push((
+            track.to_owned(),
+            "AcoustID values were not worked out: this run's time for analysing audio ran out, \
+             so the next run does them."
+                .to_owned(),
+        ));
+    }
+    if let Some(port) = port {
+        for chunk in lookups.chunks(MAX_BATCH) {
+            let prints: Vec<AcoustIdPrint> =
+                chunk.iter().map(|(_, _, print, _)| print.clone()).collect();
+            let answer = super::enrich::wait(Box::pin(async {
+                Ok::<_, String>(port.acoustid_lookup(&prints).await)
+            }))
+            .unwrap_or(AcoustIdAnswer::Unavailable);
+            let results = match answer {
+                AcoustIdAnswer::Answered(results) => results,
+                AcoustIdAnswer::NoKey => {
+                    outcome = AcoustIdLookup::NoKey;
+                    break;
+                }
+                AcoustIdAnswer::Unavailable => {
+                    outcome = AcoustIdLookup::Unavailable;
+                    break;
+                }
+            };
+            outcome = AcoustIdLookup::Answered;
+            for ((track, revision, print, recording), results) in chunk.iter().zip(&results) {
+                let matched = results.iter().any(|result| {
+                    result.score() > crate::providers::acoustid::BATCH_MIN_SCORE
+                        && !result.recordings().is_empty()
+                });
+                setup.identify_store.save_fingerprint(
+                    track,
+                    revision,
+                    &print.print,
+                    print.duration_seconds,
+                    matched,
+                );
+                if let Some(id) = acoustid_id_for(results, recording) {
+                    extras
+                        .files
+                        .entry((*track).to_owned())
+                        .or_default()
+                        .acoustid_id = Some(id);
+                }
+            }
+        }
+    }
+    let note = match outcome {
+        AcoustIdLookup::NoKey => {
+            Some("AcoustID IDs need an AcoustID key in Settings > Library; the files keep theirs.")
+        }
+        AcoustIdLookup::Unavailable => {
+            Some("AcoustID could not be reached; the files keep their AcoustID IDs.")
+        }
+        _ => None,
+    };
+    if let (Some(note), Some(track)) = (note, first_wanting_id) {
+        extras
+            .acoustid_notes
+            .push((track.to_owned(), note.to_owned()));
+    }
+    outcome
+}
+
 /// Most sidecar files one album may carry, and most directory entries
 /// looked at to find them (as in v2).
 const MAX_SIDECARS: usize = 1_000;
@@ -1494,7 +1764,8 @@ pub fn plan_album(
     extras.cover_owner = tracks.first().map(|track| track.id.clone());
     // A selection of single files is not the whole album.
     measure_replaygain(ctx, tracks, scope.track_ids.is_none(), &mut extras);
-    for (item, track) in items.iter_mut().zip(tracks) {
+    let mut saved = Vec::with_capacity(tracks.len());
+    for track in tracks {
         let mut overrides = ctx
             .setup
             .identify_store
@@ -1502,6 +1773,28 @@ pub fn plan_album(
         if let Some(edit) = ctx.tag_edit {
             overrides = with_tag_edit(overrides, edit, &track.id);
         }
+        saved.push(overrides);
+    }
+    let subjects: Vec<AcoustIdSubject<'_>> = tracks
+        .iter()
+        .zip(&saved)
+        .map(|(track, overrides)| AcoustIdSubject {
+            track_id: &track.id,
+            root_id: &track.root_id,
+            relative_path: &track.relative_path,
+            overrides,
+        })
+        .collect();
+    acoustid_values(
+        ctx.setup,
+        ctx.sandbox,
+        &ctx.pinned.profile,
+        &subjects,
+        ctx.analysis_until,
+        false,
+        &mut extras,
+    );
+    for ((item, track), overrides) in items.iter_mut().zip(tracks).zip(&saved) {
         if let Err(reason) = plan_file(
             ctx,
             item,
@@ -1510,7 +1803,7 @@ pub fn plan_album(
             &release_mbid,
             &release_group_mbid,
             album_identity_revision,
-            &overrides,
+            overrides,
             &extras,
         ) {
             item.block(reason);
@@ -1601,6 +1894,20 @@ pub fn plan_one(
                 false,
             );
             measure_replaygain(ctx, std::slice::from_ref(track), false, &mut extras);
+            acoustid_values(
+                ctx.setup,
+                ctx.sandbox,
+                &ctx.pinned.profile,
+                &[AcoustIdSubject {
+                    track_id: &track.id,
+                    root_id: &track.root_id,
+                    relative_path: &track.relative_path,
+                    overrides: &overrides,
+                }],
+                ctx.analysis_until,
+                false,
+                &mut extras,
+            );
             if let Err(reason) = plan_file(
                 ctx,
                 &mut item,

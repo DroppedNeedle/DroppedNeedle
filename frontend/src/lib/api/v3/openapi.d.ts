@@ -16764,11 +16764,6 @@ export interface components {
              *     or replace with clear removes it.
              */
             source?: string | null;
-            /**
-             * @description Whether a profile writes the field yet; when not, the file keeps
-             *     its value.
-             */
-            written: boolean;
         };
         /** @description Save settings with the dry runs that confirm them. */
         ManagementActivationConfirmBody: {

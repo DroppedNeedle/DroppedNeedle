@@ -609,6 +609,120 @@ async fn acoustid_batch_posts_twenty_per_request() {
     assert_eq!(fake.hit_count(), 2);
 }
 
+fn acoustid_fixture(name: &str) -> Vec<u8> {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/acoustid")
+        .join(name);
+    std::fs::read(path).expect("fixture reads")
+}
+
+fn one_query(print: &str) -> [acoustid::BatchQuery<'_>; 1] {
+    [acoustid::BatchQuery {
+        fingerprint: print,
+        duration_secs: 218,
+    }]
+}
+
+/// The recorded batch answer decodes with AcoustID's own track id and
+/// score, and identification reads the same recording and releases.
+#[tokio::test]
+async fn acoustid_recorded_batch_answer_decodes() {
+    let recorded = ScriptedResponse {
+        status: 200,
+        headers: vec![("content-type".to_owned(), "application/json".to_owned())],
+        body: acoustid_fixture("batch_lookup.json"),
+    };
+    let fake = Fake::start(always(recorded)).await;
+    let client = acoustid_client(&fake.base_url, CountingPacer::new(), RecSink::new());
+
+    let outcome = client
+        .lookup_batch_request("key", &one_query("print"))
+        .await;
+
+    let acoustid::BatchOutcome::Answered(entries) = outcome else {
+        panic!("expected an answer, got {outcome:?}");
+    };
+    assert_eq!(entries.len(), 1);
+    let (index, results) = &entries[0];
+    assert_eq!(*index, 0);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].id, "a2558b28-8f9d-44ca-b97b-f800ff935a1b");
+    assert_eq!(results[0].score(), 0.8158072);
+    let recordings = results[0].recordings();
+    assert_eq!(recordings.len(), 1);
+    assert_eq!(recordings[0].id, "fe000616-c72c-43d4-8cba-a4083e99636b");
+    assert_eq!(recordings[0].releases.as_deref().map(<[_]>::len), Some(43));
+
+    let found = client.lookup_batch("key", &one_query("print")).await;
+    assert_eq!(
+        found[&0].recording_ids,
+        vec!["fe000616-c72c-43d4-8cba-a4083e99636b"]
+    );
+    assert_eq!(found[&0].release_ids.len(), 43);
+}
+
+/// A bad key reads as rejected, an outage or a 429 as unavailable (the
+/// 429 with its `Retry-After`), and a result without its id fails the
+/// request's decode.
+#[tokio::test]
+async fn acoustid_batch_tells_rejected_from_unavailable() {
+    let bad_key = ScriptedResponse {
+        status: 400,
+        headers: vec![("content-type".to_owned(), "application/json".to_owned())],
+        body: acoustid_fixture("invalid_key.json"),
+    };
+    let fake = Fake::start(always(bad_key)).await;
+    let client = acoustid_client(&fake.base_url, CountingPacer::new(), RecSink::new());
+    assert!(matches!(
+        client
+            .lookup_batch_request("bad", &one_query("print"))
+            .await,
+        acoustid::BatchOutcome::Rejected { .. }
+    ));
+
+    let fake = Fake::start(always(ScriptedResponse::empty(503))).await;
+    let client = acoustid_client(&fake.base_url, CountingPacer::new(), RecSink::new());
+    match client
+        .lookup_batch_request("key", &one_query("print"))
+        .await
+    {
+        acoustid::BatchOutcome::Unavailable {
+            retry_after_secs, ..
+        } => assert_eq!(retry_after_secs, None),
+        other => panic!("expected unavailable, got {other:?}"),
+    }
+
+    let fake = Fake::start(always(
+        ScriptedResponse::empty(429).with_header("retry-after", "30"),
+    ))
+    .await;
+    let client = acoustid_client(&fake.base_url, CountingPacer::new(), RecSink::new());
+    match client
+        .lookup_batch_request("key", &one_query("print"))
+        .await
+    {
+        acoustid::BatchOutcome::Unavailable {
+            retry_after_secs, ..
+        } => assert_eq!(retry_after_secs, Some(30.0)),
+        other => panic!("expected unavailable, got {other:?}"),
+    }
+
+    let no_id = serde_json::json!({
+        "status": "ok",
+        "fingerprints": [{"index": 0, "results": [
+            {"score": 0.9, "recordings": [{"id": "fe000616-c72c-43d4-8cba-a4083e99636b"}]}
+        ]}]
+    });
+    let fake = Fake::start(always(ScriptedResponse::json(200, &no_id))).await;
+    let client = acoustid_client(&fake.base_url, CountingPacer::new(), RecSink::new());
+    assert!(matches!(
+        client
+            .lookup_batch_request("key", &one_query("print"))
+            .await,
+        acoustid::BatchOutcome::Unavailable { .. }
+    ));
+}
+
 #[tokio::test]
 async fn acoustid_empty_and_low_score_results_are_missing() {
     for body in [

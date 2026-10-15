@@ -54,9 +54,6 @@ pub struct ManagedFieldSpec {
     /// Whether replace can clear the file's value when the source has
     /// none.
     pub clearable: bool,
-    /// Whether a profile writes the field yet. AcoustID waits for its
-    /// values and leaves the file's value alone.
-    pub written: bool,
 }
 
 const fn field(
@@ -71,20 +68,23 @@ const fn field(
         source,
         mergeable,
         clearable: true,
-        written: true,
     }
 }
 
-/// A field whose value comes later (AcoustID): until then the profile
-/// leaves the file's value alone, and clear is not offered.
-const fn waiting(name: &'static str, label: &'static str, mergeable: bool) -> ManagedFieldSpec {
+/// A field worked out from the file's audio (AcoustID). A value that
+/// could not be worked out says nothing about the file, so clear and
+/// merge are not offered.
+const fn from_audio(
+    name: &'static str,
+    label: &'static str,
+    source: &'static str,
+) -> ManagedFieldSpec {
     ManagedFieldSpec {
         name,
         label,
-        source: None,
-        mergeable,
+        source: Some(source),
+        mergeable: false,
         clearable: false,
-        written: false,
     }
 }
 
@@ -274,8 +274,16 @@ pub const MANAGED_FIELDS: &[ManagedFieldSpec] = &[
     field("comment", "Comment", None, false),
     field("copyright", "Copyright", None, false),
     field("encoded_by", "Encoded by", None, false),
-    waiting("acoustid_id", "AcoustID", false),
-    waiting("acoustid_fingerprint", "AcoustID fingerprint", false),
+    from_audio(
+        "acoustid_id",
+        "AcoustID",
+        "AcoustID lookup of the file's audio",
+    ),
+    from_audio(
+        "acoustid_fingerprint",
+        "AcoustID fingerprint",
+        "The file's audio (Chromaprint)",
+    ),
 ];
 
 /// The managed field by its profile name.

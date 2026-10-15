@@ -134,9 +134,6 @@ pub struct ManagedFieldInfo {
     pub mergeable: bool,
     /// Whether replace offers to clear the value when the source has none.
     pub clearable: bool,
-    /// Whether a profile writes the field yet; when not, the file keeps
-    /// its value.
-    pub written: bool,
     /// The modes the field offers.
     pub modes: Vec<FieldMode>,
 }

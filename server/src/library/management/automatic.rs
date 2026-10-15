@@ -156,6 +156,11 @@ pub fn skip_reason(code: &str) -> ItemReason {
             "MusicBrainz credits for this album could not be read, so it waits.",
             "Nothing to do: it is looked at again by itself, at least every six hours.",
         ),
+        "ACOUSTID_UNAVAILABLE" => reason(
+            code,
+            "AcoustID could not be reached for this album's AcoustID IDs, so it waits.",
+            "Nothing to do: it is looked at again by itself, at least every six hours.",
+        ),
         "UNCONFIRMED_MATCH" => reasons::unconfirmed_match(),
         "IDENTITY_NOT_ACCEPTED" => reasons::identity_not_accepted(),
         "TRACK_NOT_MAPPED" => reasons::track_not_mapped(),
@@ -462,10 +467,11 @@ impl Management {
                 tracing::info!(album_id, code, "automatic management skipped an album");
                 Some((PARKED, 0, code))
             }
-            // MusicBrainz coming back is something the worker sees by
-            // itself, so that wait never parks.
+            // MusicBrainz or AcoustID coming back is something the worker
+            // sees by itself, so those waits never park.
             Verdict::Wait(code)
-                if attempts + 1 >= MAX_ATTEMPTS && code != "METADATA_UNAVAILABLE" =>
+                if attempts + 1 >= MAX_ATTEMPTS
+                    && !matches!(code, "METADATA_UNAVAILABLE" | "ACOUSTID_UNAVAILABLE") =>
             {
                 tracing::info!(
                     album_id,
@@ -714,6 +720,37 @@ impl Management {
             ) == super::enrich::Credits::Unavailable
         {
             return Ok(Verdict::Wait("METADATA_UNAVAILABLE"));
+        }
+        // AcoustID ids the same way: an album whose ids cannot be looked
+        // up now waits, rather than being written without them and never
+        // planned again. No key, or a key AcoustID refuses, goes ahead.
+        if let Some(sandbox) = sandbox.as_ref() {
+            let saved = files
+                .iter()
+                .map(|file| self.read(|conn| Ok(planner::overrides(conn, album_id, &file.id)?)))
+                .collect::<Result<Vec<_>, ManagementError>>()?;
+            let subjects: Vec<planner::AcoustIdSubject<'_>> = files
+                .iter()
+                .zip(&saved)
+                .map(|(file, overrides)| planner::AcoustIdSubject {
+                    track_id: &file.id,
+                    root_id: &file.root_id,
+                    relative_path: &file.relative_path,
+                    overrides,
+                })
+                .collect();
+            let lookup = planner::acoustid_values(
+                &self.setup,
+                sandbox,
+                &pinned.profile,
+                &subjects,
+                std::time::Instant::now() + planner::RUN_ANALYSIS_BUDGET,
+                true,
+                &mut super::enrich::AlbumExtras::default(),
+            );
+            if lookup == planner::AcoustIdLookup::Unavailable {
+                return Ok(Verdict::Wait("ACOUSTID_UNAVAILABLE"));
+            }
         }
         let key_material = format!(
             "{album_id}\u{0}{}\u{0}{}\u{0}{}\u{0}{}\u{0}{}\u{0}{}",

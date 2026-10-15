@@ -609,12 +609,7 @@ fn find_profile<'a>(
 /// The field table the profile editor shows: every managed field, then
 /// the genre row, which edits the Genres section.
 fn managed_field_catalog() -> Vec<ManagedFieldInfo> {
-    let row = |name: &str,
-               label: &str,
-               source: Option<&str>,
-               mergeable: bool,
-               clearable: bool,
-               written: bool| {
+    let row = |name: &str, label: &str, source: Option<&str>, mergeable: bool, clearable: bool| {
         let mut modes = vec![
             FieldMode::Disabled,
             FieldMode::Replace,
@@ -629,7 +624,6 @@ fn managed_field_catalog() -> Vec<ManagedFieldInfo> {
             source: source.map(str::to_owned),
             mergeable,
             clearable,
-            written,
             modes,
         }
     };
@@ -642,7 +636,6 @@ fn managed_field_catalog() -> Vec<ManagedFieldInfo> {
                 field.source,
                 field.mergeable,
                 field.clearable,
-                field.written,
             )
         })
         .chain([row(
@@ -651,7 +644,6 @@ fn managed_field_catalog() -> Vec<ManagedFieldInfo> {
             Some("The Genres section"),
             true,
             false,
-            true,
         )])
         .collect()
 }

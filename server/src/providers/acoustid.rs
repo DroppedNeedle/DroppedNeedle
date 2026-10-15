@@ -20,6 +20,8 @@
 
 use std::time::Duration;
 
+use serde::Deserialize;
+
 use super::{DegradationSink, Pacer};
 use crate::http_client::read_capped;
 
@@ -191,8 +193,8 @@ impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
     /// several duplicate MusicBrainz recordings (single and album
     /// versions), so keeping only the best would read as "unsupported"
     /// for the others (Lidarr keeps them all the same way). A request
-    /// that fails records a degradation and contributes nothing; the
-    /// other requests still count. An empty key never touches the wire.
+    /// that fails contributes nothing; the other requests still count.
+    /// An empty key never touches the wire.
     pub async fn lookup_batch(
         &self,
         api_key: &str,
@@ -204,70 +206,111 @@ impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
         }
         for (chunk_index, chunk) in queries.chunks(MAX_BATCH).enumerate() {
             let offset = chunk_index * MAX_BATCH;
-            let mut form: Vec<(String, String)> = vec![
-                ("client".to_owned(), api_key.to_owned()),
-                ("batch".to_owned(), "1".to_owned()),
-                ("meta".to_owned(), BATCH_META.to_owned()),
-            ];
-            for (index, query) in chunk.iter().enumerate() {
-                form.push((format!("duration.{index}"), query.duration_secs.to_string()));
-                form.push((format!("fingerprint.{index}"), query.fingerprint.to_owned()));
-            }
-            self.pacer.acquire().await;
-            let url = format!("{base}{LOOKUP_PATH}", base = self.base_url);
-            let response = match self
-                .http
-                .post(url)
-                .form(&form)
-                .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-                .send()
-                .await
-            {
-                Ok(response) => response,
-                Err(error) => {
-                    self.sink.record(
-                        SOURCE,
-                        format!("AcoustID batch lookup failed during transport: {error}"),
-                    );
-                    continue;
-                }
-            };
-            let status = response.status().as_u16();
-            if status != 200 {
-                self.sink
-                    .record(SOURCE, format!("AcoustID batch lookup answered {status}"));
+            let BatchOutcome::Answered(entries) = self.lookup_batch_request(api_key, chunk).await
+            else {
                 continue;
-            }
-            let body = match read_capped(response, MAX_BODY_BYTES).await {
-                Ok(body) => body,
-                Err(error) => {
-                    let kind = error.kind();
-                    self.sink
-                        .record(SOURCE, format!("AcoustID batch body unreadable: {kind}"));
-                    continue;
-                }
             };
-            let payload = match serde_json::from_slice::<serde_json::Value>(&body) {
-                Ok(payload) => payload,
-                Err(_) => {
-                    self.sink
-                        .record_quiet(SOURCE, "malformed AcoustID batch response".to_owned());
-                    continue;
-                }
-            };
-            if payload.get("status").and_then(serde_json::Value::as_str) != Some("ok") {
-                self.sink
-                    .record(SOURCE, "AcoustID batch lookup did not succeed".to_owned());
-                continue;
-            }
-            self.sink.succeeded(SOURCE);
-            for (index, matched) in parse_batch(&payload) {
+            for (index, results) in entries {
                 if index < chunk.len() {
-                    found.insert(offset + index, matched);
+                    found.insert(offset + index, fold_batch(&results));
                 }
             }
         }
         found
+    }
+
+    /// One batch request of at most [`MAX_BATCH`] prints (any past that
+    /// are left out). Every failure is recorded on the sink. An empty key
+    /// is rejected without touching the wire.
+    pub async fn lookup_batch_request(
+        &self,
+        api_key: &str,
+        queries: &[BatchQuery<'_>],
+    ) -> BatchOutcome {
+        if api_key.is_empty() {
+            return BatchOutcome::Rejected {
+                message: "no AcoustID key".to_owned(),
+            };
+        }
+        let queries = &queries[..queries.len().min(MAX_BATCH)];
+        let mut form: Vec<(String, String)> = vec![
+            ("client".to_owned(), api_key.to_owned()),
+            ("batch".to_owned(), "1".to_owned()),
+            ("meta".to_owned(), BATCH_META.to_owned()),
+        ];
+        for (index, query) in queries.iter().enumerate() {
+            form.push((format!("duration.{index}"), query.duration_secs.to_string()));
+            form.push((format!("fingerprint.{index}"), query.fingerprint.to_owned()));
+        }
+        self.pacer.acquire().await;
+        let url = format!("{base}{LOOKUP_PATH}", base = self.base_url);
+        let response = match self
+            .http
+            .post(url)
+            .form(&form)
+            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                return self.batch_down(
+                    None,
+                    format!("AcoustID batch lookup failed during transport: {error}"),
+                );
+            }
+        };
+        let status = response.status().as_u16();
+        if status == 429 {
+            let retry_after = retry_after_secs(response.headers().get("retry-after"));
+            return self.batch_down(
+                Some(retry_after),
+                "AcoustID batch lookup answered 429".into(),
+            );
+        }
+        if (400..500).contains(&status) {
+            let message = format!("AcoustID batch lookup answered {status}");
+            self.sink.record(SOURCE, message.clone());
+            return BatchOutcome::Rejected { message };
+        }
+        if status != 200 {
+            return self.batch_down(None, format!("AcoustID batch lookup answered {status}"));
+        }
+        let body = match read_capped(response, MAX_BODY_BYTES).await {
+            Ok(body) => body,
+            Err(error) => {
+                let kind = error.kind();
+                return self.batch_down(None, format!("AcoustID batch body unreadable: {kind}"));
+            }
+        };
+        let Ok(answer) = serde_json::from_slice::<BatchAnswer>(&body) else {
+            let message = "malformed AcoustID batch response".to_owned();
+            self.sink.record_quiet(SOURCE, message.clone());
+            return BatchOutcome::Unavailable {
+                retry_after_secs: None,
+                message,
+            };
+        };
+        if answer.status != "ok" {
+            return self.batch_down(None, "AcoustID batch lookup did not succeed".to_owned());
+        }
+        self.sink.succeeded(SOURCE);
+        BatchOutcome::Answered(
+            answer
+                .fingerprints
+                .into_iter()
+                .filter_map(|entry| Some((entry.index.value()?, entry.results.unwrap_or_default())))
+                .collect(),
+        )
+    }
+
+    /// Record a batch request AcoustID could not answer.
+    fn batch_down(&self, retry_after_secs: Option<f64>, message: String) -> BatchOutcome {
+        self.sink.record(SOURCE, message.clone());
+        BatchOutcome::Unavailable {
+            retry_after_secs,
+            message,
+        }
     }
 
     /// Fold a lookup payload into an outcome, following v2 `_parse_response`
@@ -433,68 +476,119 @@ pub struct BatchMatch {
     pub release_ids: Vec<String>,
 }
 
-/// Read `fingerprints[].{index, results}`; unknown shapes are skipped.
-fn parse_batch(payload: &serde_json::Value) -> Vec<(usize, BatchMatch)> {
-    let Some(fingerprints) = payload
-        .get("fingerprints")
-        .and_then(serde_json::Value::as_array)
-    else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for entry in fingerprints {
-        let Some(index) = entry.get("index").and_then(index_of) else {
-            continue;
-        };
-        let mut matched = BatchMatch::default();
-        let results = entry
-            .get("results")
-            .and_then(serde_json::Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        for result in results {
-            let score = result
-                .get("score")
-                .and_then(serde_json::Value::as_f64)
-                .unwrap_or(0.0);
-            if score <= BATCH_MIN_SCORE {
-                continue;
-            }
-            let recordings = result
-                .get("recordings")
-                .and_then(serde_json::Value::as_array)
-                .map(Vec::as_slice)
-                .unwrap_or_default();
-            for recording in recordings {
-                push_id(&mut matched.recording_ids, recording.get("id"));
-                for release in recording
-                    .get("releases")
-                    .and_then(serde_json::Value::as_array)
-                    .map(Vec::as_slice)
-                    .unwrap_or_default()
-                {
-                    push_id(&mut matched.release_ids, release.get("id"));
-                }
+/// One batch request's outcome.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BatchOutcome {
+    /// AcoustID answered: each query index of the request with its
+    /// results, in AcoustID's order.
+    Answered(Vec<(usize, Vec<BatchResult>)>),
+    /// A 4xx other than 429, such as a bad key: asking again gets the
+    /// same answer.
+    Rejected { message: String },
+    /// Transport failure, 429 (with its `Retry-After`), 5xx, or a body
+    /// that did not decode.
+    Unavailable {
+        retry_after_secs: Option<f64>,
+        message: String,
+    },
+}
+
+// The batch answer's shape, verified 2026-10-15 against a live
+// `/v2/lookup` (format=json, batch=1, meta="recordingids releaseids"),
+// recorded in `tests/fixtures/acoustid/`: `{"status": "ok",
+// "fingerprints": [{"index": 0, "results": [{"id", "score",
+// "recordings": [{"id", "releases": [{"id"}]}]}]}]}`. A bad key answers
+// HTTP 400 with `{"status": "error", "error": {"code": 4, "message"}}`.
+
+/// A batch answer.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BatchAnswer {
+    pub status: String,
+    #[serde(default)]
+    pub fingerprints: Vec<BatchEntry>,
+}
+
+/// The results for one query of a batch.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BatchEntry {
+    pub index: BatchIndex,
+    #[serde(default)]
+    pub results: Option<Vec<BatchResult>>,
+}
+
+/// The query index, which AcoustID echoes as a number or a numeric
+/// string (seen in v2's answers; the 2026-10-15 probe had a number).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum BatchIndex {
+    Number(u64),
+    Text(String),
+}
+
+impl BatchIndex {
+    fn value(&self) -> Option<usize> {
+        match self {
+            BatchIndex::Number(number) => usize::try_from(*number).ok(),
+            BatchIndex::Text(text) => text.trim().parse().ok(),
+        }
+    }
+}
+
+/// One AcoustID track that matched a print.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct BatchResult {
+    /// AcoustID's own id for the track.
+    pub id: String,
+    #[serde(default)]
+    pub score: Option<f64>,
+    #[serde(default)]
+    pub recordings: Option<Vec<BatchRecording>>,
+}
+
+impl BatchResult {
+    /// The score, 0 when AcoustID gave none.
+    pub fn score(&self) -> f64 {
+        self.score.unwrap_or(0.0)
+    }
+
+    /// The MusicBrainz recordings AcoustID links to the track.
+    pub fn recordings(&self) -> &[BatchRecording] {
+        self.recordings.as_deref().unwrap_or_default()
+    }
+}
+
+/// A MusicBrainz recording linked to an AcoustID track.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct BatchRecording {
+    pub id: String,
+    #[serde(default)]
+    pub releases: Option<Vec<BatchRelease>>,
+}
+
+/// A MusicBrainz release a recording appears on.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct BatchRelease {
+    pub id: String,
+}
+
+/// Every recording and release of the results above [`BATCH_MIN_SCORE`].
+fn fold_batch(results: &[BatchResult]) -> BatchMatch {
+    let mut matched = BatchMatch::default();
+    for result in results
+        .iter()
+        .filter(|result| result.score() > BATCH_MIN_SCORE)
+    {
+        for recording in result.recordings() {
+            push_id(&mut matched.recording_ids, &recording.id);
+            for release in recording.releases.as_deref().unwrap_or_default() {
+                push_id(&mut matched.release_ids, &release.id);
             }
         }
-        out.push((index, matched));
     }
-    out
+    matched
 }
 
-/// AcoustID echoes the index as a number or a numeric string.
-fn index_of(value: &serde_json::Value) -> Option<usize> {
-    match value {
-        serde_json::Value::Number(number) => number.as_u64().map(|index| index as usize),
-        serde_json::Value::String(text) => text.trim().parse().ok(),
-        _ => None,
-    }
-}
-
-fn push_id(ids: &mut Vec<String>, value: Option<&serde_json::Value>) {
-    let Some(id) = value.and_then(serde_json::Value::as_str) else {
-        return;
-    };
+fn push_id(ids: &mut Vec<String>, id: &str) {
     let id = id.trim().to_ascii_lowercase();
     if !id.is_empty() && !ids.contains(&id) {
         ids.push(id);

@@ -203,8 +203,9 @@
 
 	function sourceNote(field: ManagedFieldInfo): string {
 		if (field.name === 'genre') return 'Set by the Genres section';
+		// AcoustID values come from the file's audio, not MusicBrainz.
+		if (field.name.startsWith('acoustid_') && field.source) return field.source;
 		if (field.source) return `From MusicBrainz: ${field.source}`;
-		if (!field.written) return 'Not written yet: the file keeps its value';
 		return 'No source: kept, cleared, or set by a script';
 	}
 

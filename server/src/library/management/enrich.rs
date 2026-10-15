@@ -74,6 +74,28 @@ pub trait EnrichmentPort: Send + Sync {
         release_mbid: &'a str,
         background: bool,
     ) -> BoxFuture<'a, Result<ReleaseRelations, String>>;
+    /// Look up to [`MAX_BATCH`](crate::providers::acoustid::MAX_BATCH)
+    /// AcoustID prints in one request. An empty list asks only whether a
+    /// key is set: `NoKey`, or an empty answer.
+    fn acoustid_lookup<'a>(&'a self, prints: &'a [AcoustIdPrint]) -> BoxFuture<'a, AcoustIdAnswer>;
+}
+
+/// An AcoustID print of a file's audio, with its length.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AcoustIdPrint {
+    pub print: String,
+    pub duration_seconds: u32,
+}
+
+/// What AcoustID said about a list of prints.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AcoustIdAnswer {
+    /// No key in Settings, or AcoustID refused the one there.
+    NoKey,
+    /// AcoustID could not be reached, or its answer was unreadable.
+    Unavailable,
+    /// The results for each print, in the order asked.
+    Answered(Vec<Vec<crate::providers::acoustid::BatchResult>>),
 }
 
 /// Whether a plan has the recording and work credits it asks for.
@@ -223,12 +245,20 @@ pub struct AlbumExtras {
     /// An automatic run: a file whose credits are missing is blocked
     /// rather than planned with a warning.
     pub automatic: bool,
+    /// Why AcoustID values were left out, by the library track whose
+    /// plan says so (one of each per album).
+    pub acoustid_notes: Vec<(String, String)>,
 }
 
 /// What planning gathered for one file.
 #[derive(Debug, Clone, Default)]
 pub struct FileExtras {
     pub replaygain: Option<ReplayGainValues>,
+    /// The AcoustID print of the file's audio, when the profile writes it.
+    pub acoustid_print: Option<String>,
+    /// The AcoustID id of the file's audio, when the profile writes it and
+    /// AcoustID links it to the file's recording.
+    pub acoustid_id: Option<String>,
 }
 
 /// Measured ReplayGain tag values.
@@ -428,12 +458,33 @@ pub fn normalize_lrc(text: &str) -> String {
 }
 
 /// The production port: the catalog's ListenBrainz and Last.fm clients,
-/// LRCLIB, and the shared artwork cache.
+/// LRCLIB, the shared artwork cache, and AcoustID on identification's
+/// rate limit.
 pub struct LiveEnrichment {
     pub upstream: crate::reads::catalog::upstream::Upstream,
     pub http: reqwest::Client,
     pub artwork: Option<crate::reads::platform::artwork::ArtworkService>,
     pub lrclib: LrclibGate,
+    pub acoustid: crate::providers::acoustid::AcoustIdClient<
+        crate::providers::adapters::CorePacer,
+        crate::providers::adapters::HealthSink,
+    >,
+    /// Where the AcoustID key is read, per lookup.
+    pub config: Arc<crate::runtime_config::ConfigStore>,
+}
+
+impl LiveEnrichment {
+    /// The AcoustID key from the settings; blank when none is set.
+    fn acoustid_key(&self) -> String {
+        use crate::runtime_config::secret_sections::TypedLibrary;
+        match self.config.get_raw::<TypedLibrary>() {
+            Ok(settings) => settings.acoustid_api_key.expose().trim().to_owned(),
+            Err(error) => {
+                tracing::warn!(%error, "cannot read the AcoustID key; AcoustID IDs wait");
+                String::new()
+            }
+        }
+    }
 }
 
 /// LRCLIB's local pacing and answer cache (the provider notes leave both
@@ -688,6 +739,45 @@ impl EnrichmentPort for LiveEnrichment {
             Ok(relations_from_wire(&lookup.entity, 0))
         })
     }
+
+    fn acoustid_lookup<'a>(&'a self, prints: &'a [AcoustIdPrint]) -> BoxFuture<'a, AcoustIdAnswer> {
+        use crate::providers::acoustid::{BatchOutcome, BatchQuery};
+        Box::pin(async move {
+            let key = self.acoustid_key();
+            if key.is_empty() {
+                return AcoustIdAnswer::NoKey;
+            }
+            if prints.is_empty() {
+                return AcoustIdAnswer::Answered(Vec::new());
+            }
+            let queries: Vec<BatchQuery<'_>> = prints
+                .iter()
+                .map(|print| BatchQuery {
+                    fingerprint: &print.print,
+                    duration_secs: u64::from(print.duration_seconds),
+                })
+                .collect();
+            match self.acoustid.lookup_batch_request(&key, &queries).await {
+                BatchOutcome::Answered(entries) => {
+                    let mut out = vec![Vec::new(); prints.len()];
+                    for (index, results) in entries {
+                        if let Some(slot) = out.get_mut(index) {
+                            *slot = results;
+                        }
+                    }
+                    AcoustIdAnswer::Answered(out)
+                }
+                BatchOutcome::Rejected { message } => {
+                    tracing::warn!(message, "AcoustID refused the lookup; AcoustID IDs wait");
+                    AcoustIdAnswer::NoKey
+                }
+                BatchOutcome::Unavailable { message, .. } => {
+                    tracing::info!(message, "AcoustID lookup deferred");
+                    AcoustIdAnswer::Unavailable
+                }
+            }
+        })
+    }
 }
 
 /// v2's accuracy gate on an exact LRCLIB answer: the same recording
@@ -727,6 +817,19 @@ pub struct ScriptedEnrichment {
     pub relations: std::sync::Mutex<Option<ReleaseRelations>>,
     /// Credit lookups asked for, and whether each was background.
     pub relation_calls: std::sync::Mutex<Vec<bool>>,
+    /// What AcoustID answers for every print; `None` while no key is set.
+    pub acoustid: std::sync::Mutex<Option<ScriptedAcoustId>>,
+    /// The prints AcoustID was asked about, one list per request.
+    pub acoustid_calls: std::sync::Mutex<Vec<Vec<AcoustIdPrint>>>,
+}
+
+/// A scripted AcoustID.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Debug, Clone)]
+pub enum ScriptedAcoustId {
+    /// These results for every print.
+    Answers(Vec<crate::providers::acoustid::BatchResult>),
+    Unavailable,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -781,6 +884,26 @@ impl EnrichmentPort for ScriptedEnrichment {
             .ok()
             .and_then(|relations| relations.clone())
             .ok_or_else(|| "MusicBrainz is down".to_owned());
+        Box::pin(async move { answer })
+    }
+
+    fn acoustid_lookup<'a>(&'a self, prints: &'a [AcoustIdPrint]) -> BoxFuture<'a, AcoustIdAnswer> {
+        let script = self.acoustid.lock().ok().and_then(|script| script.clone());
+        if !prints.is_empty()
+            && let Ok(mut calls) = self.acoustid_calls.lock()
+        {
+            calls.push(prints.to_vec());
+        }
+        let answer = match script {
+            None => AcoustIdAnswer::NoKey,
+            Some(ScriptedAcoustId::Unavailable) if !prints.is_empty() => {
+                AcoustIdAnswer::Unavailable
+            }
+            Some(ScriptedAcoustId::Unavailable) => AcoustIdAnswer::Answered(Vec::new()),
+            Some(ScriptedAcoustId::Answers(results)) => {
+                AcoustIdAnswer::Answered(vec![results; prints.len()])
+            }
+        };
         Box::pin(async move { answer })
     }
 }

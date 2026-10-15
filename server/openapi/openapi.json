@@ -38661,7 +38661,6 @@
           "label",
           "mergeable",
           "clearable",
-          "written",
           "modes"
         ],
         "properties": {
@@ -38694,10 +38693,6 @@
               "null"
             ],
             "description": "What MusicBrainz fact the value comes from. `None`: nothing gives\none, so the file keeps its value unless a tagging script sets it,\nor replace with clear removes it."
-          },
-          "written": {
-            "type": "boolean",
-            "description": "Whether a profile writes the field yet; when not, the file keeps\nits value."
           }
         }
       },

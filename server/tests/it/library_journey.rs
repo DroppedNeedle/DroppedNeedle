@@ -12332,3 +12332,442 @@ async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
     droppedneedle::library::repairs::tick(&library, &restarted, "worker").await;
     assert!(queued().is_empty());
 }
+
+/// The file's AcoustID values as its own tag frames hold them, read with
+/// the test's byte readers: `kind` is "Id" or "Fingerprint".
+fn raw_acoustid(path: &Path, kind: &str) -> Vec<String> {
+    use crate::library_tags::{id3_txxx_values, mp4_freeform, vorbis_key_values};
+    let name = format!("Acoustid {kind}");
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("flac") => vorbis_key_values(path, &format!("ACOUSTID_{}", kind.to_uppercase())),
+        Some("mp3") => id3_txxx_values(path, &name),
+        Some("m4a") => mp4_freeform(path, &name),
+        other => panic!("no reader for {other:?}"),
+    }
+}
+
+impl ManagedLibrary {
+    /// Take both AcoustID tags off the tracks' files from outside the app.
+    async fn strip_acoustid(&self, tracks: &[String]) {
+        use droppedneedle::library::tags::{TagEdit, TagField, save_tags};
+        for track in tracks {
+            save_tags(
+                &self.path(track),
+                &[
+                    TagEdit::verbatim(TagField::AcoustIdId, Vec::new()),
+                    TagEdit::verbatim(TagField::AcoustIdFingerprint, Vec::new()),
+                ],
+            )
+            .expect("AcoustID tags taken off");
+        }
+        rescan(&self.library).await;
+    }
+}
+
+/// The Picard profile fills the AcoustID print from the file's own audio
+/// in every writable format: FLAC, MP3 (ID3v2.4 and v2.3) and M4A. The
+/// fixtures are shorter than a second, so no id is looked up.
+#[tokio::test]
+async fn acoustid_prints_are_written_from_the_audio() {
+    use droppedneedle::library::management::models::SelectionKind;
+    use droppedneedle::library::tags::generate_fingerprint;
+
+    let managed = ManagedLibrary::start("lib-acoustid-print", |_| {}).await;
+    let v23 = clean_v23_mp3(&managed.scratch.to_path_buf().join("v23.mp3"));
+    let (album, tracks) = managed
+        .add_album_from(
+            "prints",
+            &[
+                "management_full.flac",
+                "management_full.mp3",
+                v23.as_str(),
+                "management_full.m4a",
+            ],
+            |_| {},
+        )
+        .await;
+    managed.strip_acoustid(&tracks).await;
+    let expected: Vec<String> = tracks
+        .iter()
+        .map(|track| {
+            let path = managed.path(track);
+            assert!(raw_acoustid(&path, "Fingerprint").is_empty());
+            generate_fingerprint(&path).expect("printed").fingerprint
+        })
+        .collect();
+
+    let (handle, _) = managed
+        .preview(SelectionKind::Albums, &[&album], "prints")
+        .await;
+    let applied = management_apply(&managed.library, &handle).await;
+    assert_eq!(applied.job.state.as_str(), "succeeded");
+
+    for (track, print) in tracks.iter().zip(&expected) {
+        let path = managed.path(track);
+        assert_eq!(
+            raw_acoustid(&path, "Fingerprint"),
+            vec![print.clone()],
+            "{}",
+            path.display()
+        );
+        assert!(raw_acoustid(&path, "Id").is_empty(), "{}", path.display());
+    }
+}
+
+/// A print kept as identification keeps one: for the file as it is on
+/// disk now, with a real length (the fixtures are shorter than a second,
+/// and a print of zero seconds is never looked up).
+const SEEDED_PRINT: &str = "AQADtEqyPIuWIMwP_Qjl5HA949FhVUdwB4cO40c8";
+
+impl ManagedLibrary {
+    fn seed_print(&self, track: &str, revision: Option<&str>) {
+        use droppedneedle::library::scan::revision::{exact_stat_revision, mtime_ns_from_metadata};
+        let meta = std::fs::symlink_metadata(self.path(track)).expect("file stat");
+        let on_disk = exact_stat_revision(meta.len(), mtime_ns_from_metadata(&meta));
+        self.library.identify_store.save_fingerprint(
+            track,
+            revision.unwrap_or(&on_disk),
+            SEEDED_PRINT,
+            218,
+            true,
+        );
+    }
+
+    fn recording(&self, track: &str) -> String {
+        self.library
+            .identify_store
+            .track_identity(track)
+            .and_then(|mapping| mapping.recording_mbid)
+            .expect("track mapped to a recording")
+    }
+}
+
+/// An AcoustID result naming these recordings.
+fn acoustid_result(
+    id: &str,
+    score: f64,
+    recordings: &[&str],
+) -> droppedneedle::providers::acoustid::BatchResult {
+    use droppedneedle::providers::acoustid::{BatchRecording, BatchResult};
+    BatchResult {
+        id: id.to_owned(),
+        score: Some(score),
+        recordings: Some(
+            recordings
+                .iter()
+                .map(|recording| BatchRecording {
+                    id: (*recording).to_owned(),
+                    releases: None,
+                })
+                .collect(),
+        ),
+    }
+}
+
+/// The value a planned file's AcoustID field gets, if it changes.
+fn planned_acoustid(
+    item: &droppedneedle::library::management::models::PlannedItem,
+    field: &str,
+) -> Option<Value> {
+    item.diff
+        .field_mutations
+        .iter()
+        .find(|mutation| mutation.name == field)
+        .map(|mutation| mutation.after.clone())
+}
+
+const ID_A: &str = "a2558b28-8f9d-44ca-b97b-f800ff935a1b";
+const ID_B: &str = "1d2a3b4c-0000-4000-8000-000000000002";
+
+/// With replace, the AcoustID id written is the best-scoring result that
+/// names the file's own recording; a result naming another recording
+/// writes none; no key and an outage write none and say so, and keep
+/// the id the file has. A kept print for another revision of the file
+/// is not used.
+#[tokio::test]
+async fn acoustid_ids_come_from_a_lookup_naming_the_files_recording() {
+    use droppedneedle::library::management::enrich::{ScriptedAcoustId, ScriptedEnrichment};
+    use droppedneedle::library::management::models::SelectionKind;
+    use droppedneedle::runtime_config::sections::FieldMode;
+
+    let managed = ManagedLibrary::start("lib-acoustid-id", |profile| {
+        for field in &mut profile.metadata.fields {
+            if field.field == "acoustid_id" {
+                field.mode = FieldMode::Replace;
+            }
+        }
+    })
+    .await;
+    let scripted = Arc::new(ScriptedEnrichment::default());
+    assert!(managed.library.enrichment.set(scripted.clone()).is_ok());
+    let (album, tracks) = managed
+        .add_album_from("ids", &["management_full.flac"], |_| {})
+        .await;
+    managed.strip_acoustid(&tracks).await;
+    managed.seed_print(&tracks[0], None);
+    let recording = managed.recording(&tracks[0]);
+    let script = |answer: Option<ScriptedAcoustId>| {
+        *scripted.acoustid.lock().expect("script") = answer;
+    };
+    let mut previews = 0;
+    let mut plan = || {
+        previews += 1;
+        let key = format!("ids-{previews}");
+        let managed = &managed;
+        let album = album.clone();
+        async move {
+            let (handle, items) = managed
+                .preview(SelectionKind::Albums, &[&album], &key)
+                .await;
+            (handle, items.into_iter().next().expect("one file"))
+        }
+    };
+    let warned = |item: &droppedneedle::library::management::models::PlannedItem, start: &str| {
+        item.facts
+            .warnings
+            .iter()
+            .any(|warning| warning.starts_with(start))
+    };
+
+    script(Some(ScriptedAcoustId::Answers(vec![
+        acoustid_result(ID_B, 0.6, &[&recording]),
+        acoustid_result(ID_A, 0.9, &[&recording.to_uppercase()]),
+    ])));
+    let (_, item) = plan().await;
+    assert_eq!(planned_acoustid(&item, "acoustid_id"), Some(json!(ID_A)));
+    assert_eq!(
+        planned_acoustid(&item, "acoustid_fingerprint"),
+        Some(json!(SEEDED_PRINT))
+    );
+    let asked = scripted.acoustid_calls.lock().expect("calls").clone();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0][0].print, SEEDED_PRINT);
+    assert_eq!(asked[0][0].duration_seconds, 218);
+
+    script(Some(ScriptedAcoustId::Answers(vec![acoustid_result(
+        ID_A,
+        0.9,
+        &["another-recording"],
+    )])));
+    let (_, item) = plan().await;
+    assert_eq!(planned_acoustid(&item, "acoustid_id"), None);
+
+    script(None);
+    let (_, item) = plan().await;
+    assert_eq!(planned_acoustid(&item, "acoustid_id"), None);
+    assert!(
+        warned(&item, "AcoustID IDs need an AcoustID key"),
+        "{:?}",
+        item.facts
+    );
+
+    script(Some(ScriptedAcoustId::Unavailable));
+    let (_, item) = plan().await;
+    assert_eq!(planned_acoustid(&item, "acoustid_id"), None);
+    assert!(
+        warned(&item, "AcoustID could not be reached"),
+        "{:?}",
+        item.facts
+    );
+
+    script(Some(ScriptedAcoustId::Answers(vec![acoustid_result(
+        ID_A,
+        0.9,
+        &[&recording],
+    )])));
+    let (handle, _) = plan().await;
+    let applied = management_apply(&managed.library, &handle).await;
+    assert_eq!(applied.job.state.as_str(), "succeeded");
+    let file = managed.path(&tracks[0]);
+    assert_eq!(raw_acoustid(&file, "Id"), vec![ID_A.to_owned()]);
+    assert_eq!(
+        raw_acoustid(&file, "Fingerprint"),
+        vec![SEEDED_PRINT.to_owned()]
+    );
+
+    // Replace while AcoustID is down keeps the file's id.
+    managed.seed_print(&tracks[0], None);
+    script(Some(ScriptedAcoustId::Unavailable));
+    let (_, item) = plan().await;
+    assert_eq!(planned_acoustid(&item, "acoustid_id"), None);
+
+    // A print kept for another revision of the file is not used: the
+    // file's own audio is printed, and at under a second never looked up.
+    managed.seed_print(&tracks[0], Some("1:1"));
+    script(Some(ScriptedAcoustId::Answers(vec![acoustid_result(
+        ID_B,
+        0.9,
+        &[&recording],
+    )])));
+    let calls = scripted.acoustid_calls.lock().expect("calls").len();
+    let (_, item) = plan().await;
+    assert_eq!(planned_acoustid(&item, "acoustid_id"), None);
+    assert_eq!(scripted.acoustid_calls.lock().expect("calls").len(), calls);
+}
+
+/// While AcoustID is down an automatic look writes nothing and the album
+/// waits, never parked; once AcoustID answers, the id lands by itself.
+#[tokio::test]
+async fn automatic_acoustid_waits_while_acoustid_is_down() {
+    use droppedneedle::library::management::enrich::{ScriptedAcoustId, ScriptedEnrichment};
+
+    let managed = ManagedLibrary::start("lib-acoustid-auto", |_| {}).await;
+    let scripted = Arc::new(ScriptedEnrichment::default());
+    assert!(managed.library.enrichment.set(scripted.clone()).is_ok());
+    *scripted.acoustid.lock().expect("script") = Some(ScriptedAcoustId::Unavailable);
+    let (album, tracks) = managed
+        .add_album_from("first", &["management_full.flac"], |_| {})
+        .await;
+    managed.strip_acoustid(&tracks).await;
+    managed.seed_print(&tracks[0], None);
+    *scripted.relations.lock().expect("script") =
+        Some(managed.scripted_credits(&tracks, |_| concerto_credits()));
+    managed.activate().await;
+    let file = managed.path(&tracks[0]);
+    let before = file_sha256(&file);
+
+    managed.look(&album).await;
+    assert_eq!(
+        file_sha256(&file),
+        before,
+        "nothing written while it is down"
+    );
+    let reason = |managed: &ManagedLibrary| -> (String, i64, f64) {
+        managed
+            .db()
+            .query_row(
+                "SELECT last_reason_code, attempts, not_before \
+                 FROM library_management_automatic_queue WHERE local_album_id = ?1",
+                [&album],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("the album waits")
+    };
+    assert_eq!(reason(&managed).0, "ACOUSTID_UNAVAILABLE");
+    managed
+        .db()
+        .execute(
+            "UPDATE library_management_automatic_queue SET attempts = 7, not_before = 0 \
+             WHERE local_album_id = ?1",
+            [&album],
+        )
+        .expect("many tries");
+    managed.worker_looks().await;
+    let (code, attempts, not_before) = reason(&managed);
+    assert_eq!((code.as_str(), attempts), ("ACOUSTID_UNAVAILABLE", 8));
+    assert!(not_before < 1.0e12, "not parked: {not_before}");
+
+    let recording = managed.recording(&tracks[0]);
+    *scripted.acoustid.lock().expect("script") =
+        Some(ScriptedAcoustId::Answers(vec![acoustid_result(
+            ID_A,
+            0.9,
+            &[&recording],
+        )]));
+    droppedneedle::library::management::automatic::wake(
+        &managed.db(),
+        Some("ACOUSTID_UNAVAILABLE"),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_secs_f64(),
+    )
+    .expect("woken");
+    managed.worker_looks().await;
+    let file = managed.path(&tracks[0]);
+    assert_eq!(raw_acoustid(&file, "Id"), vec![ID_A.to_owned()]);
+}
+
+/// Without a key (or with one AcoustID refuses) an automatic look does
+/// not wait: the album is written with its print and no id.
+#[tokio::test]
+async fn automatic_acoustid_without_a_key_goes_ahead() {
+    use droppedneedle::library::management::enrich::ScriptedEnrichment;
+    use rusqlite::OptionalExtension as _;
+
+    let managed = ManagedLibrary::start("lib-acoustid-nokey", |_| {}).await;
+    let scripted = Arc::new(ScriptedEnrichment::default());
+    assert!(managed.library.enrichment.set(scripted.clone()).is_ok());
+    let (album, tracks) = managed
+        .add_album_from("nokey", &["management_full.flac"], |_| {})
+        .await;
+    managed.strip_acoustid(&tracks).await;
+    managed.seed_print(&tracks[0], None);
+    *scripted.relations.lock().expect("script") =
+        Some(managed.scripted_credits(&tracks, |_| concerto_credits()));
+    managed.activate().await;
+
+    managed.look(&album).await;
+    let file = managed.path(&tracks[0]);
+    assert_eq!(
+        raw_acoustid(&file, "Fingerprint"),
+        vec![SEEDED_PRINT.to_owned()]
+    );
+    assert!(raw_acoustid(&file, "Id").is_empty());
+    let waiting: Option<String> = managed
+        .db()
+        .query_row(
+            "SELECT last_reason_code FROM library_management_automatic_queue \
+             WHERE local_album_id = ?1",
+            [&album],
+            |row| row.get(0),
+        )
+        .optional()
+        .expect("queue read");
+    assert_eq!(waiting, None);
+}
+
+/// Fill missing leaves a file that holds both AcoustID values alone, and
+/// looks up only the file beside it that holds neither.
+#[tokio::test]
+async fn fill_missing_acoustid_looks_up_only_the_file_without_values() {
+    use droppedneedle::library::management::enrich::{ScriptedAcoustId, ScriptedEnrichment};
+    use droppedneedle::library::management::models::SelectionKind;
+
+    let managed = ManagedLibrary::start("lib-acoustid-fill", |_| {}).await;
+    let scripted = Arc::new(ScriptedEnrichment::default());
+    assert!(managed.library.enrichment.set(scripted.clone()).is_ok());
+    let (album, tracks) = managed
+        .add_album_from(
+            "fill",
+            &["management_full.flac", "management_full.flac"],
+            |_| {},
+        )
+        .await;
+    managed.strip_acoustid(&tracks[1..]).await;
+    let held = managed.path(&tracks[0]);
+    assert!(!raw_acoustid(&held, "Id").is_empty());
+    assert!(!raw_acoustid(&held, "Fingerprint").is_empty());
+    managed.seed_print(&tracks[1], None);
+    let recording = managed.recording(&tracks[1]);
+    *scripted.acoustid.lock().expect("script") =
+        Some(ScriptedAcoustId::Answers(vec![acoustid_result(
+            ID_A,
+            0.9,
+            &[&recording],
+        )]));
+
+    let (_, items) = managed
+        .preview(SelectionKind::Albums, &[&album], "fill")
+        .await;
+    let item = |track: &str| {
+        items
+            .iter()
+            .find(|item| item.track_id.as_deref() == Some(track))
+            .expect("planned")
+    };
+    for field in ["acoustid_id", "acoustid_fingerprint"] {
+        assert_eq!(planned_acoustid(item(&tracks[0]), field), None, "{field}");
+    }
+    assert_eq!(
+        planned_acoustid(item(&tracks[1]), "acoustid_id"),
+        Some(json!(ID_A))
+    );
+    let asked = scripted.acoustid_calls.lock().expect("calls").clone();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(
+        asked[0].len(),
+        1,
+        "only the file without values is looked up"
+    );
+}
