@@ -101,6 +101,7 @@ export const LibraryV3Api = {
 		v3('/api/v3/library/unconfirmed', { query: { state, limit, offset } }),
 	managePreview: () => v3('/api/v3/library/manage/preview'),
 	manageApply: () => v3('/api/v3/library/manage/apply'),
+	manageUndo: () => v3('/api/v3/library/manage/undo'),
 	albumCopies: (albumId: string) =>
 		v3('/api/v3/library/albums/{id}/copies', { path: { id: albumId } }),
 	albumTracks: (albumId: string, params: LibraryV3PageParams) =>

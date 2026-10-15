@@ -292,17 +292,22 @@ export function invalidateAlbumEdition(userId: EditionUserId, localId: string): 
 	invalidateEditionScope({ userId, localId });
 }
 
-/**
- * Write the chosen edition's tags into the files it placed: a sealed retag
- * preview, applied at once (the person already asked for it).
- */
-export function retagAfterChoice() {
+// Writing the chosen edition's tags into the files it placed, in a folder
+// the app does not write by itself: a sealed retag preview the person
+// reads, then its apply, then, if they want, the undo of that write. The
+// write shows in Library Management's history.
+export type TagWritePreview = components['schemas']['ManagePreviewResponse'];
+export type TagWrite = components['schemas']['ManageApplyResponse'];
+
+export function previewEditionTags() {
 	return createMutation(() => ({
-		mutationFn: async ({
+		mutationFn: ({
 			localId,
+			rgMbid,
 			files
-		}: EditionTarget & { files: EditionChoice['retag_files'] }) => {
-			const preview = await api.global.v3.POST(LibraryV3Api.managePreview(), {
+		}: EditionTarget & { files: EditionChoice['retag_files'] }): Promise<TagWritePreview> => {
+			assertLocalAlbumId(localId, rgMbid);
+			return api.global.v3.POST(LibraryV3Api.managePreview(), {
 				album_id: localId,
 				kind: 'retag',
 				items: files.map((file) => ({
@@ -311,11 +316,24 @@ export function retagAfterChoice() {
 					managed_updates: {}
 				}))
 			});
-			return api.global.v3.POST(LibraryV3Api.manageApply(), {
-				preview_token: preview.preview_token
-			});
 		},
 		onSuccess: (_d, variables) => invalidateEditionScope(variables)
+	}));
+}
+
+export function writeEditionTags() {
+	return createMutation(() => ({
+		mutationFn: ({ previewToken }: EditionTarget & { previewToken: string }): Promise<TagWrite> =>
+			api.global.v3.POST(LibraryV3Api.manageApply(), { preview_token: previewToken }),
+		onSuccess: (_d, variables) => invalidateHeldEditionScope(variables)
+	}));
+}
+
+export function undoTagWrite() {
+	return createMutation(() => ({
+		mutationFn: ({ bundleId }: EditionTarget & { bundleId: string }) =>
+			api.global.v3.POST(LibraryV3Api.manageUndo(), { bundle_id: bundleId }),
+		onSuccess: (_d, variables) => invalidateHeldEditionScope(variables)
 	}));
 }
 

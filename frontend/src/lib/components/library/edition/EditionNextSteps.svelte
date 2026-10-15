@@ -1,18 +1,21 @@
 <!--
 	What happens after "Use this edition", live: the files being placed on
 	it, then its tags and names, written by the app in a folder it manages
-	by itself and left for the person in any other, and the download of
-	its missing tracks.
+	by itself and previewed, then written, by the person in any other, and
+	the download of its missing tracks.
 -->
 <script lang="ts">
 	import { CircleCheck, Undo2 } from 'lucide-svelte';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
+	import { authStore } from '$lib/stores/authStore.svelte';
+	import { withBasePath } from '$lib/utils/basePath';
 	import type {
 		EditionChoice,
 		EditionPlan,
 		EditionStatus
 	} from '$lib/queries/albums/EditionQueries.svelte';
 	import EditionTracks, { type TracksOutcome } from './EditionTracks.svelte';
+	import TagWritePreview from './TagWritePreview.svelte';
 	import {
 		filesPlacedSentence,
 		placingSentence,
@@ -31,9 +34,8 @@
 		held: boolean;
 		error: string | null;
 		onundo: () => Promise<void>;
-		/** Writes the edition's tags now, in a folder the app does not write by itself. */
-		onwritetags?: () => Promise<void>;
-		tagsWritten?: boolean;
+		/** The album copy, for writing its tags in a folder the app does not write by itself. */
+		album: { userId: string | null | undefined; localId: string; rgMbid?: string };
 		/** The release group the edition's tracks are fetched under. */
 		group: string;
 		/** The edition's gaps as planned when it was chosen. */
@@ -51,8 +53,7 @@
 		held,
 		error,
 		onundo,
-		onwritetags,
-		tagsWritten = false,
+		album,
 		group,
 		gaps,
 		sourceReady,
@@ -96,7 +97,7 @@
 		<dd class="flex items-start gap-2">
 			{#if placing}<span class="loading loading-spinner loading-xs mt-0.5" aria-hidden="true"
 				></span>{/if}
-			<span>{files}</span>
+			<span id="edition-files-sentence">{files}</span>
 		</dd>
 		<dt class="font-semibold text-base-content/60">Tags</dt>
 		<dd class="flex items-start gap-2">
@@ -104,16 +105,26 @@
 					class="loading loading-spinner loading-xs mt-0.5"
 					aria-hidden="true"
 				></span>{/if}
-			<span class="flex flex-col items-start gap-2">
-				<span>{tagsWritten ? "The files now carry this edition's tags." : tagsSentence(tags)}</span>
-				{#if tags === 'manual' && onwritetags && !tagsWritten && choice.retag_files.length}
-					<AsyncButton
-						class="btn btn-outline btn-sm"
-						disabled={Boolean(placing)}
-						onclick={onwritetags}>Write this edition's tags</AsyncButton
-					>
-				{/if}
-			</span>
+			{#if tags === 'manual' && choice.retag_files.length}
+				<!-- A new choice starts its own preview. -->
+				{#key choice}
+					<TagWritePreview
+						{album}
+						files={choice.retag_files}
+						placing={Boolean(placing)}
+						placingSentenceId="edition-files-sentence"
+					/>
+				{/key}
+			{:else if tags === 'written'}
+				<span
+					>Tags and file names are written. You can undo that from {#if authStore.isAdmin}<a
+							class="link"
+							href={withBasePath('/library/management/history')}>History</a
+						>{:else}History{/if}.</span
+				>
+			{:else}
+				<span>{tagsSentence(tags)}</span>
+			{/if}
 		</dd>
 		{#if group && (tracks || missing > 0 || versions > 0)}
 			<dt class="font-semibold text-base-content/60">Tracks</dt>

@@ -85,7 +85,9 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	handBackAlbumEdition: () => mutation(),
 	undoAlbumEdition: () => mutation(),
 	acquireEdition: () => mutation((...args: unknown[]) => h.acquire(...args)),
-	retagAfterChoice: () => mutation(),
+	previewEditionTags: () => mutation(),
+	writeEditionTags: () => mutation(),
+	undoTagWrite: () => mutation(),
 	removeEditionExtras: () => mutation(),
 	restoreEditionExtras: () => mutation()
 }));

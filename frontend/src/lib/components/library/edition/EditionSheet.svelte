@@ -7,7 +7,6 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
 	import { ChevronLeft } from 'lucide-svelte';
-	import { ApiError } from '$lib/api/client';
 	import Modal from '$lib/ui/Modal.svelte';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
@@ -27,7 +26,6 @@
 		handBackAlbumEdition,
 		removeEditionExtras,
 		restoreEditionExtras,
-		retagAfterChoice,
 		undoAlbumEdition,
 		type EditionChoice
 	} from '$lib/queries/albums/EditionQueries.svelte';
@@ -44,6 +42,7 @@
 		count,
 		editionFactsLine,
 		editionName,
+		failureSentence,
 		fitLine,
 		fitsNoFile,
 		planFit,
@@ -91,7 +90,6 @@
 	// Without a download source the download is held until one is saved.
 	let getMissing = $state(true);
 	let replaceVersions = $state(true);
-	let tagsWritten = $state(false);
 	// "Any acquisition source is set up": slskd, Usenet or a plugin.
 	const sourceReady = $derived($integrationStore.download_client);
 
@@ -121,7 +119,6 @@
 		actionError = null;
 		lastRemoval = null;
 		tracks = null;
-		tagsWritten = false;
 	}
 
 	const copy = $derived(copies.find((item) => item.id === copyId) ?? copies[0]);
@@ -177,7 +174,6 @@
 	const removeExtras = removeEditionExtras();
 	const restoreExtras = restoreEditionExtras();
 	const acquire = acquireEdition();
-	const retag = retagAfterChoice();
 
 	// A new copy starts over on its own edition.
 	$effect(() => {
@@ -373,14 +369,6 @@
 				: 'use'
 	);
 
-	function failure(error: unknown, fallback: string): string {
-		if (error instanceof ApiError) {
-			const action = (error.details as { action?: unknown } | null)?.action;
-			return typeof action === 'string' && action ? `${error.message} ${action}` : error.message;
-		}
-		return error instanceof Error ? error.message : fallback;
-	}
-
 	function select(release: string): void {
 		selected = release;
 		actionError = null;
@@ -415,14 +403,13 @@
 			});
 			chosen = { name, release, choice, gaps };
 			tracks = null;
-			tagsWritten = false;
 			if (groupMbid && choice.release_group_mbid !== groupMbid) {
 				movedTo = choice.release_group_mbid;
 			}
 			view = 'next';
 			step = 'detail';
 		} catch (error) {
-			actionError = failure(error, "This edition couldn't be chosen.");
+			actionError = failureSentence(error, "This edition couldn't be chosen.");
 			return;
 		}
 		if (fetchTracks) void acquireTracks(replace);
@@ -433,7 +420,7 @@
 		try {
 			await confirm.mutateAsync({ userId: userId(), localId: copyId, rgMbid: group || undefined });
 		} catch (error) {
-			actionError = failure(error, "This edition couldn't be kept.");
+			actionError = failureSentence(error, "This edition couldn't be kept.");
 		}
 	}
 
@@ -444,7 +431,7 @@
 			view = 'handedBack';
 			step = 'detail';
 		} catch (error) {
-			actionError = failure(error, "DroppedNeedle couldn't look again.");
+			actionError = failureSentence(error, "DroppedNeedle couldn't look again.");
 			step = 'detail';
 		}
 	}
@@ -458,7 +445,7 @@
 			view = 'compare';
 			initialisedFor = '';
 		} catch (error) {
-			actionError = failure(error, "The change couldn't be undone.");
+			actionError = failureSentence(error, "The change couldn't be undone.");
 			step = 'detail';
 		}
 	}
@@ -469,7 +456,7 @@
 			const answer = await removeExtras.mutateAsync({ localId: copyId, trackIds });
 			lastRemoval = { actionId: answer.action_id, count: answer.removed_track_ids.length };
 		} catch (error) {
-			actionError = failure(error, "The files couldn't be moved.");
+			actionError = failureSentence(error, "The files couldn't be moved.");
 		}
 	}
 
@@ -486,7 +473,7 @@
 				actionError = 'Some files could not be put back; they are still in the recycle bin.';
 			}
 		} catch (error) {
-			actionError = failure(error, "The files couldn't be put back.");
+			actionError = failureSentence(error, "The files couldn't be put back.");
 		}
 	}
 
@@ -516,25 +503,9 @@
 				pending: false,
 				message: null,
 				taskId: null,
-				error: failure(error, "The missing tracks couldn't be requested."),
+				error: failureSentence(error, "The missing tracks couldn't be requested."),
 				replaceVersions: replace
 			};
-		}
-	}
-
-	async function writeTags(): Promise<void> {
-		if (!chosen) return;
-		actionError = null;
-		try {
-			await retag.mutateAsync({
-				userId: userId(),
-				localId: copyId,
-				rgMbid: group || undefined,
-				files: chosen.choice.retag_files
-			});
-			tagsWritten = true;
-		} catch (error) {
-			actionError = failure(error, "The tags couldn't be written.");
 		}
 	}
 
@@ -608,7 +579,7 @@
 					{/if}
 					{#if searchQuery.isError}
 						<p class="text-sm text-base-content/60" role="alert">
-							{failure(searchQuery.error, "MusicBrainz couldn't be searched.")}
+							{failureSentence(searchQuery.error, "MusicBrainz couldn't be searched.")}
 						</p>
 					{:else if searchArgs && searchQuery.data && searchQuery.data.items.length === 0}
 						<p class="text-sm text-base-content/60">MusicBrainz found no releases for that.</p>
@@ -650,8 +621,7 @@
 						held={Boolean(hold)}
 						error={actionError}
 						onundo={undoChange}
-						onwritetags={writeTags}
-						{tagsWritten}
+						album={{ userId: userId(), localId: copyId, rgMbid: group || undefined }}
 						group={tracksGroup}
 						gaps={chosen.gaps}
 						{sourceReady}

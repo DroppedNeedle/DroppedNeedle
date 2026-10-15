@@ -1,10 +1,12 @@
 // Every sentence the edition plate and the edition sheet show, with their
 // plural forms. Numbers are only ever counts of the person's own files and
 // tracks.
+import { ApiError } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 
 type EditionStatus = components['schemas']['EditionStatusView'];
 type EditionPlan = components['schemas']['EditionPlanView'];
+type TagChange = components['schemas']['ManageTagChange'];
 
 /** The facts an edition is named and described by, from any source. */
 export interface EditionFactsLike {
@@ -257,17 +259,54 @@ export function filesPlacedSentence(kept: number, notKept: number): string {
 
 export type TagsMode = 'held' | 'writing' | 'written' | 'manual';
 
-export function tagsSentence(mode: TagsMode): string {
+/** The Tags row, except 'written', whose "History" is a link. */
+export function tagsSentence(mode: Exclude<TagsMode, 'written'>): string {
 	switch (mode) {
 		case 'held':
 			return 'This album is left unmanaged, so its files keep their tags until you choose "Manage it again".';
 		case 'writing':
 			return "Writing this edition's tags and file names...";
-		case 'written':
-			return 'Tags and file names are written. You can undo that from History.';
 		case 'manual':
 			return 'Your files still carry their old tags. Apps like Subsonic and Jellyfin read the tags, so they show the new edition once you write them.';
 	}
+}
+
+const TAG_LABELS: Record<string, string> = {
+	album: 'Album',
+	album_artist: 'Album artist',
+	title: 'Title',
+	artist: 'Artist',
+	track_number: 'Track',
+	disc_number: 'Disc',
+	date: 'Date',
+	label: 'Label',
+	catalog_number: 'Catalog number',
+	barcode: 'Barcode',
+	musicbrainz_ids: 'MusicBrainz IDs'
+};
+
+/** One line of a retag preview: "Album: Night Shift -> Night Shift (Remaster)". */
+export function tagChangeLine(change: TagChange): string {
+	const label = TAG_LABELS[change.field] ?? change.field.replaceAll('_', ' ');
+	if (change.field === 'musicbrainz_ids') return `${label}: ${change.to ?? 'removed'}`;
+	return `${label}: ${change.from ?? 'none'} -> ${change.to ?? 'removed'}`;
+}
+
+export function alreadyTaggedSentence(n: number): string {
+	return n === 1 ? '1 file already carries these tags.' : `${n} files already carry these tags.`;
+}
+
+export function writeTagsLabel(n: number): string {
+	return `Write tags to ${count(n, 'file', 'files')}`;
+}
+
+/** A refusal as the server put it, with its suggested action. */
+export function failureSentence(error: unknown, fallback: string): string {
+	if (error instanceof ApiError) {
+		const action = (error.details as { action?: unknown } | null)?.action;
+		return typeof action === 'string' && action ? `${error.message} ${action}` : error.message;
+	}
+	return error instanceof Error ? error.message : fallback;
 }
 
 export function extrasButton(n: number): string {
