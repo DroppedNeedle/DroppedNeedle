@@ -1,7 +1,7 @@
-//! Joining an album retagged across two scans. The files left the old row
-//! in an earlier scan and sit on a new row now; the old row is merged into
-//! the new one, which keeps its id, name and work. The old id stays as an
-//! alias. No file is touched.
+//! Joining an album retagged outside the app to the row its files sit on
+//! now: across two scans, or to the album that replaced it on the same
+//! edition. The old row is merged into the new one, which keeps its id,
+//! name and work. The old id stays as an alias. No file is touched.
 
 use rusqlite::{Connection, Transaction, params};
 
@@ -15,8 +15,28 @@ use crate::library::management::{automatic, takeover};
 use crate::library::operations::decisions::{CatalogAction, bump_catalog, record_action};
 use crate::library::scan::sqlite_store::retag_pairs::RetagPairReason;
 
-/// Reason code of the audit action a merge records.
-const MERGED: &str = "RETAG_JOINED_ACROSS_SCANS";
+/// Why two rows are joined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum JoinCause {
+    /// The files left the old row in an earlier scan and sit on the new
+    /// one, or a person joined a pair. The new row is offered for
+    /// identification.
+    AcrossScans,
+    /// The new row's files replaced the old row's on the same edition
+    /// ([`join_replaced`](super::release_join::join_replaced)). The new row
+    /// was identified for these files already and is not offered again.
+    SameRelease,
+}
+
+impl JoinCause {
+    /// Reason code of the audit action the merge records.
+    fn reason(self) -> &'static str {
+        match self {
+            Self::AcrossScans => "RETAG_JOINED_ACROSS_SCANS",
+            Self::SameRelease => "RETAG_JOINED_SAME_RELEASE",
+        }
+    }
+}
 
 /// What became of a merge.
 #[derive(Debug)]
@@ -59,17 +79,19 @@ pub(crate) enum MergeOutcome {
 ///   unmanaged ([`automatic::stamp_retag_followed`]): the old edition must
 ///   not be written over a retag done by hand. A match a person chose on
 ///   the new row, equal or not, was chosen for the retagged files;
-/// - an audit action, the catalog revision, and the offer for
-///   identification where the files are managed automatically.
+/// - an audit action with the reason `cause` gives, the catalog revision,
+///   and, for a join across scans, the offer for identification where the
+///   files are managed automatically.
 ///
 /// `actor` is the person who asked, recorded on the audit action; `None`
-/// is the scan.
+/// is the app.
 pub(crate) fn merge_retagged(
     tx: &Transaction<'_>,
     old: &str,
     new: &str,
     actor: Option<&str>,
     now: f64,
+    cause: JoinCause,
 ) -> rusqlite::Result<MergeOutcome> {
     let refused = |reason| {
         Ok(MergeOutcome::Refused {
@@ -140,11 +162,14 @@ pub(crate) fn merge_retagged(
                     "stamped_unmanaged": stamped,
                     "filesystem_writes": 0,
                 }),
-                reason: MERGED,
+                reason: cause.reason(),
             },
             now,
         )?;
         bump_catalog(tx)?;
+        if cause == JoinCause::SameRelease {
+            return Ok(MergeOutcome::Merged { offered: false });
+        }
         let automatic: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM local_tracks WHERE local_album_id = ?1 \
              AND availability = 'indexed' AND applied_policy = 'automatic')",

@@ -30,6 +30,7 @@ use super::models::{
 use super::queue::PRIORITY_NEW_OR_CHANGED;
 use super::stores::{Approval, RELEASE_FRESH_SECS, StoreError};
 use crate::library::corrections::continuation::{Scope, continue_tracks};
+use crate::library::corrections::release_join::join_replaced;
 use crate::library::matching::Release;
 use crate::library::operations::choice::RemapOrigin;
 
@@ -828,6 +829,7 @@ fn seal_automatic_tx(
     if seal.release_mbid.is_some() {
         keep_automatic_undo(tx, album, prior.as_ref(), &prior_tracks, now)?;
     }
+    join_replaced(tx, Scope::Album(album), now)?;
     continue_tracks(tx, Scope::Album(album), now)?;
     Ok(true)
 }
@@ -2081,11 +2083,9 @@ impl SqliteIdentifyStore {
             )
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
             bump_identification_stream(&tx)?;
-            continue_tracks(
-                &tx,
-                Scope::Album(&approval.album.local_album_id),
-                crate::library::clock::now_unix(),
-            )?;
+            let now = crate::library::clock::now_unix();
+            join_replaced(&tx, Scope::Album(&approval.album.local_album_id), now)?;
+            continue_tracks(&tx, Scope::Album(&approval.album.local_album_id), now)?;
             tx.commit()?;
             Ok(true)
         })();

@@ -27,7 +27,10 @@ use std::collections::BTreeMap;
 use super::retag_pairs::{self, RetagPairReason, RetagPairState};
 use super::*;
 use crate::library::corrections::continuation::{Scope, continue_tracks};
-use crate::library::corrections::retag_merge::{MergeOutcome, album_has_record, merge_retagged};
+use crate::library::corrections::release_join::join_replaced;
+use crate::library::corrections::retag_merge::{
+    JoinCause, MergeOutcome, album_has_record, merge_retagged,
+};
 use crate::library::identify::sqlite::{
     chosen_matches_differ, match_chosen, offer_album, release_chosen, retarget_references,
     settle_followed_match,
@@ -983,7 +986,7 @@ fn write_item(
 /// holds nothing. When the rows left behind are half the album or more,
 /// the follow also waits until each of them has been gone a day
 /// ([`LONG_GONE_SECONDS`]).
-fn holds(track: &str, run: &str) -> String {
+pub(crate) fn holds(track: &str, run: &str) -> String {
     format!(
         "({track}.availability = 'indexed' OR ({track}.availability = 'missing' \
          AND {track}.missing_since >= (SELECT started_at FROM library_scan_runs \
@@ -1099,7 +1102,7 @@ fn follow_regrouped(
         .query_row(params![run_id, album_id, target], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })?;
-    if waits_for_the_rest(tx, album_id, moved, stayed, now)? {
+    if waits_for_the_rest(tx, album_id, moved, stayed, &[], now)? {
         return Ok(None);
     }
     if chosen_matches_differ(tx, target, album_id)? {
@@ -1243,22 +1246,31 @@ fn holds_only_its_retag(
 /// rest of it: when no more of its tracks `moved` than `stayed` on it,
 /// every row that stayed must be excluded or have been missing a day
 /// ([`LONG_GONE_SECONDS`]; a missing row with no time counts as long gone).
-fn waits_for_the_rest(
+/// The rows in `moved_ids` moved but still sit on the album, and are not
+/// read.
+pub(crate) fn waits_for_the_rest(
     tx: &Connection,
     album_id: &str,
     moved: i64,
     stayed: i64,
+    moved_ids: &[String],
     now: f64,
 ) -> rusqlite::Result<bool> {
     if moved > stayed {
         return Ok(false);
     }
+    let moved_ids = serde_json::to_string(moved_ids)
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
     tx.prepare_cached(
         "SELECT EXISTS(SELECT 1 FROM local_tracks WHERE local_album_id = ?1 \
+         AND id NOT IN (SELECT value FROM json_each(?3)) \
          AND availability != 'excluded' AND NOT (availability = 'missing' \
          AND (missing_since IS NULL OR missing_since <= ?2)))",
     )?
-    .query_row(params![album_id, now - LONG_GONE_SECONDS], |row| row.get(0))
+    .query_row(
+        params![album_id, now - LONG_GONE_SECONDS, moved_ids],
+        |row| row.get(0),
+    )
 }
 
 /// Whether a statement failed because a row elsewhere still names the row
@@ -1280,10 +1292,10 @@ fn foreign_key_refused(error: &rusqlite::Error) -> bool {
 
 /// An album's old row and the new row its retagged files sit on, when the
 /// two are not joined.
-struct RetagPair<'a> {
-    old: &'a str,
-    new: &'a str,
-    now: f64,
+pub(crate) struct RetagPair<'a> {
+    pub(crate) old: &'a str,
+    pub(crate) new: &'a str,
+    pub(crate) now: f64,
 }
 
 impl RetagPair<'_> {
@@ -1291,7 +1303,7 @@ impl RetagPair<'_> {
     /// log, once: a pair already on record is neither written nor logged
     /// again. Runs in the window's transaction, outside the follow's
     /// savepoint, so it lands with the rows it describes.
-    fn leave_apart(
+    pub(crate) fn leave_apart(
         &self,
         tx: &Connection,
         reason: RetagPairReason,
@@ -1420,9 +1432,13 @@ fn released_by(tx: &Connection, run_id: &str, album_id: &str) -> rusqlite::Resul
 /// 2. the half of an album retagged in a first sitting takes the old
 ///    album's "leave unmanaged", its taken-over mark and the stamp
 ///    ([`carry_to_first_half`]);
-/// 3. the tracks that left an album are kept on record past the run
+/// 3. albums whose files were replaced by another album's on the same
+///    edition are joined to it ([`join_replaced`]);
+/// 4. the tracks that left an album are kept on record past the run
 ///    ([`keep_departures`]);
-/// 4. the albums the run held back are offered ([`offer_held_back`]).
+/// 5. missing tracks continue into the tracks that took their place
+///    ([`continue_tracks`]);
+/// 6. the albums the run held back are offered ([`offer_held_back`]).
 pub(super) fn settle_ended_run(
     tx: &rusqlite::Transaction<'_>,
     run_id: &str,
@@ -1430,6 +1446,7 @@ pub(super) fn settle_ended_run(
 ) -> rusqlite::Result<()> {
     let mut enqueued = join_across_scans(tx, run_id, now)?;
     carry_to_first_half(tx, run_id, now)?;
+    join_replaced(tx, Scope::Library, now)?;
     keep_departures(tx, run_id, now)?;
     continue_tracks(tx, Scope::Library, now)?;
     enqueued += offer_held_back(tx, run_id, now)?;
@@ -1628,7 +1645,7 @@ fn join_across_scans(
                 let stayed: i64 = tx
                     .prepare_cached("SELECT COUNT(*) FROM local_tracks WHERE local_album_id = ?1")?
                     .query_row(params![album_id], |row| row.get(0))?;
-                if waits_for_the_rest(tx, album_id, tracks.len() as i64, stayed, now)? {
+                if waits_for_the_rest(tx, album_id, tracks.len() as i64, stayed, &[], now)? {
                     continue;
                 }
                 (piece.clone(), true)
@@ -1669,7 +1686,7 @@ fn join_across_scans(
 
 /// Whether the pair may be decided: it is not on record, or it is still
 /// open and waiting to be tried again.
-fn tried(tx: &Connection, old: &str, new: &str) -> rusqlite::Result<bool> {
+pub(crate) fn tried(tx: &Connection, old: &str, new: &str) -> rusqlite::Result<bool> {
     Ok(match retag_pairs::recorded(tx, old, new)? {
         None => true,
         Some((reason, state)) => state == RetagPairState::Open && reason.tried_again(),
@@ -1698,7 +1715,7 @@ fn join_one(
     if dismissed || !tried(tx, old, new)? {
         return Ok(false);
     }
-    match merge_retagged(tx, old, new, None, now)? {
+    match merge_retagged(tx, old, new, None, now, JoinCause::AcrossScans)? {
         MergeOutcome::Merged { offered: queued } => {
             *offered += i64::from(queued);
             Ok(true)

@@ -24,6 +24,7 @@ use super::models::{EditionChoice, OperationError, PlacedFile, ReidentificationC
 use super::reasons;
 use super::store::PROVIDER;
 use crate::library::corrections::continuation::{Scope, continue_replaced, continue_tracks};
+use crate::library::corrections::release_join::join_replaced;
 use crate::library::identify::models::{EvidenceClass, PriorAlbumIdentity, PriorTrackIdentity};
 use crate::library::identify::sqlite::{album_identity_row, track_identity_rows};
 
@@ -429,6 +430,7 @@ pub fn apply_choice(
     // A new edition means new tags and paths: automatic management looks
     // at the album again with the edition just chosen.
     crate::library::management::automatic::queue(tx, album_id, now)?;
+    join_replaced(tx, Scope::Album(album_id), now)?;
     continue_tracks(tx, Scope::Album(album_id), now)?;
     Ok(EditionChoice {
         local_album_id: album_id.to_owned(),
@@ -1525,6 +1527,7 @@ pub fn place_files(
         )?;
         crate::library::management::automatic::queue(tx, album_id, now)?;
     }
+    join_replaced(tx, Scope::Album(album_id), now)?;
     continue_tracks(tx, Scope::Album(album_id), now)?;
     tracing::info!(
         album = album_id,

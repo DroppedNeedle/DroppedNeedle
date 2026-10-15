@@ -311,47 +311,81 @@ fn pass(
 
 /// The `(old, new)` pairs the rule proves on one album.
 fn pairs_on(conn: &Connection, album: &str) -> rusqlite::Result<Vec<(String, String)>> {
-    let release: Option<String> = conn
-        .query_row(
-            "SELECT lower(trim(e.release_mbid)) FROM local_album_external_identities e \
-             WHERE e.local_album_id = ?1 AND e.provider = 'musicbrainz' \
-             AND trim(COALESCE(e.release_mbid, '')) <> '' \
-             AND NOT EXISTS (SELECT 1 FROM library_album_match_state s \
-               WHERE s.local_album_id = e.local_album_id) \
-             AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
-               WHERE c.local_album_id = e.local_album_id)",
-            params![album],
-            |row| row.get(0),
-        )
-        .optional()?;
-    let Some(release) = release else {
+    let Some(release) = accepted_release(conn, album)? else {
         return Ok(Vec::new());
     };
-    // Every mapped row of the album that is not an alias, by release track.
+    Ok(pairs_among(conn, &[album], &release)?
+        .into_iter()
+        .map(|pair| (pair.old, pair.new))
+        .collect())
+}
+
+/// The release an album is matched to, lowercased, when the match is an
+/// accepted exact one: it names a release, and the album has no match
+/// state (no best guess, no unplaced or failed choice) and no custom
+/// edition. Any decision source counts.
+pub(crate) fn accepted_release(conn: &Connection, album: &str) -> rusqlite::Result<Option<String>> {
+    conn.prepare_cached(
+        "SELECT lower(trim(e.release_mbid)) FROM local_album_external_identities e \
+         WHERE e.local_album_id = ?1 AND e.provider = 'musicbrainz' \
+         AND trim(COALESCE(e.release_mbid, '')) <> '' \
+         AND NOT EXISTS (SELECT 1 FROM library_album_match_state s \
+           WHERE s.local_album_id = e.local_album_id) \
+         AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
+           WHERE c.local_album_id = e.local_album_id)",
+    )?
+    .query_row(params![album], |row| row.get(0))
+    .optional()
+}
+
+/// A missing row and the indexed row the rule pairs it with, with the
+/// album rows each sits on.
+pub(crate) struct Pair {
+    pub(crate) old: String,
+    pub(crate) old_album: String,
+    pub(crate) new: String,
+    pub(crate) new_album: String,
+}
+
+/// The pairs the rule proves over the mapped rows of `albums` taken
+/// together, each album matched to `release` (lowercased): per release
+/// track, unless a row on it names another release, every missing row
+/// pairs with the one indexed row, when there is exactly one. Aliases and
+/// excluded rows are neither side.
+pub(crate) fn pairs_among(
+    conn: &Connection,
+    albums: &[&str],
+    release: &str,
+) -> rusqlite::Result<Vec<Pair>> {
     struct Row {
         id: String,
+        album: String,
         indexed: bool,
         missing: bool,
         release: Option<String>,
     }
+    let albums = serde_json::to_string(albums)
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
     let mut by_track: BTreeMap<String, Vec<Row>> = BTreeMap::new();
     let mut statement = conn.prepare_cached(
-        "SELECT t.id, t.availability, lower(trim(i.release_track_mbid)), \
+        "SELECT t.id, t.local_album_id, t.availability, lower(trim(i.release_track_mbid)), \
          lower(NULLIF(trim(i.release_mbid), '')) FROM local_tracks t \
          JOIN local_track_external_identities i \
            ON i.local_track_id = t.id AND i.provider = 'musicbrainz' \
-         WHERE t.local_album_id = ?1 AND trim(COALESCE(i.release_track_mbid, '')) <> '' \
+         WHERE t.local_album_id IN (SELECT value FROM json_each(?1)) \
+         AND trim(COALESCE(i.release_track_mbid, '')) <> '' \
          AND NOT EXISTS (SELECT 1 FROM local_track_aliases x WHERE x.alias = t.id)",
     )?;
-    let rows = statement.query_map(params![album], |row| {
-        let availability: String = row.get(1)?;
+    let rows = statement.query_map(params![albums], |row| {
+        let availability: String = row.get(2)?;
         Ok((
-            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
             Row {
                 id: row.get(0)?,
+                album: row.get(1)?,
                 indexed: availability == "indexed",
                 missing: availability == "missing",
-                release: row.get(3)?,
+                release: row.get(4)?,
             },
         ))
     })?;
@@ -375,11 +409,12 @@ fn pairs_on(conn: &Connection, album: &str) -> rusqlite::Result<Vec<(String, Str
         let [new] = indexed.as_slice() else {
             continue;
         };
-        pairs.extend(
-            rows.iter()
-                .filter(|row| row.missing)
-                .map(|row| (row.id.clone(), new.id.clone())),
-        );
+        pairs.extend(rows.iter().filter(|row| row.missing).map(|row| Pair {
+            old: row.id.clone(),
+            old_album: row.album.clone(),
+            new: new.id.clone(),
+            new_album: new.album.clone(),
+        }));
     }
     Ok(pairs)
 }

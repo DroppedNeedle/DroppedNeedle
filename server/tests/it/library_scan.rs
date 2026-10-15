@@ -3801,3 +3801,662 @@ async fn an_edition_choice_moves_nothing_onto_a_file_it_leaves_out() {
     assert_eq!(rig.stars_and_aliases(&old), (1, 0));
     assert_eq!(rig.stars_and_aliases(&extra).0, 0);
 }
+
+// ---------------------------------------------------------------------------
+// An album joined to the album whose files replaced it on its edition.
+// ---------------------------------------------------------------------------
+
+/// An album of `count` files matched by a person to [`REL_R`], file `n`
+/// mapped to the release track `rt-n` and the first starred. Returns the
+/// rig, the album and its rows.
+async fn mapped_album(name: &str, count: usize) -> (RegroupRig, String, Vec<String>) {
+    let (rig, album, rows) = continuation_album(name, count).await;
+    for (n, row) in rows.iter().enumerate() {
+        rig.run(&map_track(row, Some(REL_R), Some(&format!("rt-{n}"))));
+    }
+    rig.run(&star(&rows[0]));
+    (rig, album, rows)
+}
+
+/// The album matched by the app to `release`, as identification seals it.
+fn on_release(album: &str, release: &str) -> String {
+    format!(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_at) \
+         VALUES ('{album}', 'musicbrainz', 'rg-r', '{release}', 'automatic', 0);"
+    )
+}
+
+/// A best guess of [`REL_R`] on the album.
+fn best_guess(album: &str) -> String {
+    format!(
+        "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+         release_mbid, updated_at) VALUES ('{album}', 'unconfirmed', 'EDITION_UNCERTAIN', \
+         '{REL_R}', 0);"
+    )
+}
+
+impl RegroupRig {
+    /// Retag the files `a/tNNN.flac` numbered `numbers` to the album
+    /// `album` and rename them into `folder` in one go, and scan. Returns
+    /// the new rows.
+    async fn replace(&mut self, numbers: &[usize], folder: &str, album: &str) -> Vec<String> {
+        let files: Vec<String> = numbers
+            .iter()
+            .map(|n| format!("{folder}/t{n:03}.flac"))
+            .collect();
+        self.tag(&files, album);
+        for n in numbers {
+            std::fs::remove_file(self.root.join(format!("a/t{n:03}.flac"))).expect("removed");
+        }
+        self.scan().await;
+        self.rows_at(&files)
+    }
+
+    fn rows_at(&self, files: &[String]) -> Vec<String> {
+        files
+            .iter()
+            .map(|file| {
+                self.coordinator
+                    .store()
+                    .track_at("music", file)
+                    .expect("indexed")
+            })
+            .collect()
+    }
+
+    /// Match the album to `release` with the rows given as `(row, n)`
+    /// mapped to `rt-n`, as identification would.
+    fn match_rows(&self, album: &str, release: &str, rows: &[(&str, usize)]) {
+        self.run(&on_release(album, release));
+        for (row, n) in rows {
+            self.run(&map_track(row, Some(release), Some(&format!("rt-{n}"))));
+        }
+    }
+
+    /// The scan runs on record, oldest first.
+    fn runs(&self) -> Vec<String> {
+        let total = self.count("SELECT COUNT(*) FROM library_scan_runs");
+        (0..total)
+            .map(|n| {
+                self.text(&format!(
+                    "SELECT id FROM library_scan_runs ORDER BY started_at LIMIT 1 OFFSET {n}"
+                ))
+                .expect("run")
+            })
+            .collect()
+    }
+
+    /// Scan only `folder`, as a scan of one folder does.
+    async fn scan_folder(&self, folder: &str) {
+        let mut scope = ScanScope::root("music", &self.root.to_string_lossy(), "rev-1");
+        scope.relative_path = folder.to_owned();
+        let mut request = request(&self.root);
+        request.scopes = vec![scope];
+        self.coordinator.request_run(&request).expect("requested");
+        let paths = HashMap::from([("music".to_owned(), self.root.clone())]);
+        let run = self.coordinator.run_once(&paths).await.expect("scan runs");
+        assert_eq!(run.state, ScanState::Completed);
+    }
+
+    fn open_pairs(&self) -> i64 {
+        self.count("SELECT COUNT(*) FROM library_retag_pairs WHERE state = 'open'")
+    }
+
+    /// The old album is merged into the new one and the starred old row's
+    /// history is on the new row on its release track.
+    fn assert_joined(&self, old: &str, new: &str, starred: (&str, &str), case: &str) {
+        assert_eq!(self.retired_into(old).as_deref(), Some(new), "{case}");
+        assert_eq!(self.stars_and_aliases(starred.0).0, 0, "{case}");
+        assert_eq!(self.stars_and_aliases(starred.1).0, 1, "{case}");
+        assert_eq!(self.open_pairs(), 0, "{case}");
+        assert_eq!(
+            self.count(&format!(
+                "SELECT COUNT(*) FROM library_catalog_actions WHERE action_kind = 'merge_album' \
+                 AND reason_code = 'RETAG_JOINED_SAME_RELEASE' AND local_album_id = '{new}'"
+            )),
+            1,
+            "{case}"
+        );
+    }
+
+    /// Nothing joined, nothing recorded, the star where it was.
+    fn assert_apart(&self, old: &str, starred: &str, case: &str) {
+        assert_eq!(self.retired_into(old), None, "{case}");
+        assert_eq!(self.open_pairs(), 0, "{case}");
+        assert_eq!(self.stars_and_aliases(starred).0, 1, "{case}");
+    }
+}
+
+/// How one brief departs from the plain story: an album of two files
+/// matched to [`REL_R`], mapped and its first file starred; both files
+/// retagged to a new name and renamed into `b/` in one scan; the new album
+/// then matched to [`REL_R`] with its rows mapped like the old ones; one
+/// more scan.
+#[derive(Clone, Copy, Default)]
+struct Story {
+    /// The second file stays where it was.
+    keep_one: bool,
+    /// The new album's release, when it is not [`REL_R`].
+    new_release: Option<&'static str>,
+    guess_on_old: bool,
+    guess_on_new: bool,
+    old_names_no_release: bool,
+    custom_on_old: bool,
+    /// The old rows' mappings name another release.
+    old_rows_elsewhere: bool,
+    /// A pair naming the old album that a person dismissed.
+    dismissed: bool,
+    /// A person removed the old rows in the app.
+    removed_in_app: bool,
+    /// The old rows went missing between two scans.
+    missing_between_scans: bool,
+    no_missing_since: bool,
+    /// The scan that read the new files stopped before it marked the old
+    /// rows missing, so the next one marks them.
+    interrupted: bool,
+}
+
+/// The story told: the rig, the old album, the new one, the starred old
+/// row and the new row on its release track.
+async fn tell(name: &str, story: Story) -> (RegroupRig, String, String, String, String) {
+    let (mut rig, old, old_rows) = mapped_album(name, 2).await;
+    if story.old_rows_elsewhere {
+        for (n, row) in old_rows.iter().enumerate() {
+            rig.run(&map_track(row, Some("rel-other"), Some(&format!("rt-{n}"))));
+        }
+    }
+    if story.guess_on_old {
+        rig.run(&best_guess(&old));
+    }
+    if story.old_names_no_release {
+        rig.run(&format!(
+            "UPDATE local_album_external_identities SET release_mbid = NULL \
+             WHERE local_album_id = '{old}';"
+        ));
+    }
+    if story.custom_on_old {
+        rig.run(&format!(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'); \
+             INSERT INTO library_custom_edition_manifests (id, local_album_id, version, \
+             release_group_mbid, album_title, album_artist_name, source_album_revision, \
+             input_revision, content_hash, sealed_by_user_id, sealed_at) VALUES ('m1', \
+             '{old}', 1, 'rg-r', 'T', 'A', 1, 'in', 'hash', 'curator', 0); \
+             INSERT INTO library_custom_edition_active (local_album_id, manifest_id, \
+             activated_at) VALUES ('{old}', 'm1', 0);"
+        ));
+    }
+    let numbers: &[usize] = if story.keep_one { &[0] } else { &[0, 1] };
+    let after = rig.after.clone();
+    let new_rows = rig.replace(numbers, "b", &after).await;
+    let new = rig.album_of("b/t000.flac");
+    assert_ne!(new, old, "{name}: a new album row");
+    let runs = rig.runs();
+    if story.interrupted {
+        rig.run(&format!(
+            "UPDATE local_tracks SET availability = 'indexed', missing_since = NULL \
+             WHERE local_album_id = '{old}'; \
+             UPDATE library_scan_runs SET state = 'cancelled' WHERE id = '{}';",
+            runs[1]
+        ));
+    }
+    let rows: Vec<(&str, usize)> = new_rows.iter().map(String::as_str).zip(0..).collect();
+    rig.match_rows(&new, story.new_release.unwrap_or(REL_R), &rows);
+    if story.guess_on_new {
+        rig.run(&best_guess(&new));
+    }
+    if story.dismissed {
+        rig.run(&format!(
+            "INSERT INTO library_retag_pairs (old_album_id, new_album_id, reason, state, \
+             recorded_at, updated_at) VALUES ('{old}', '{new}', 'tracks_elsewhere', \
+             'dismissed', 0, 0);"
+        ));
+    }
+    for row in old_rows.iter().filter(|_| story.removed_in_app) {
+        rig.run(&format!(
+            "INSERT INTO library_catalog_actions (id, action_kind, local_album_id, \
+             local_track_id, before_json, after_json, reason_code, created_at) \
+             VALUES ('removed-{row}', 'remove_track', '{old}', '{row}', '{{}}', '{{}}', \
+             'FILE_RECYCLED', 0);"
+        ));
+    }
+    if story.missing_between_scans {
+        rig.run(&format!(
+            "UPDATE local_tracks SET missing_since = \
+             ((SELECT terminal_at FROM library_scan_runs WHERE id = '{}') \
+             + (SELECT started_at FROM library_scan_runs WHERE id = '{}')) / 2 \
+             WHERE local_album_id = '{old}' AND availability = 'missing';",
+            runs[0], runs[1]
+        ));
+    }
+    if story.no_missing_since {
+        rig.run(&format!(
+            "UPDATE local_tracks SET missing_since = NULL WHERE local_album_id = '{old}';"
+        ));
+    }
+    rig.scan().await;
+    if story.interrupted {
+        // The new files were there before the scan that marked the old
+        // ones missing: the join waits one more scan.
+        assert_eq!(rig.retired_into(&old), None, "{name}: waits a scan");
+        rig.scan().await;
+    }
+    (rig, old, new, old_rows[0].clone(), new_rows[0].clone())
+}
+
+/// An album retagged to a new name and renamed in one scan, whose new
+/// album is matched to its edition afterwards, is joined at the end of the
+/// next scan with no file changed: the old album retired into the new one
+/// and the star on the new track. So is one whose scan stopped after it
+/// read the new files and before it marked the old ones missing: the next
+/// scan marks them and joins.
+#[tokio::test]
+async fn an_album_replaced_on_its_edition_is_joined_at_the_run_end() {
+    let (rig, old, new, o, n) = tell("join-run-end", Story::default()).await;
+    rig.assert_joined(&old, &new, (&o, &n), "plain");
+    assert_eq!(rig.continuations(), 1);
+
+    let interrupted = Story {
+        interrupted: true,
+        ..Story::default()
+    };
+    let (rig, old, new, o, n) = tell("join-run-end-interrupted", interrupted).await;
+    rig.assert_joined(&old, &new, (&o, &n), "interrupted");
+}
+
+/// Without proof that the new album's files replaced the old album's,
+/// nothing is joined or recorded and the star stays on the old track. The
+/// plain story, each condition lifted, joins.
+#[tokio::test]
+async fn an_album_is_not_joined_without_proof_it_was_replaced() {
+    let (rig, old, new, o, n) = tell("join-refused-twin", Story::default()).await;
+    rig.assert_joined(&old, &new, (&o, &n), "the plain story");
+
+    let refusals = [
+        (
+            "the old album holds a present file",
+            Story {
+                keep_one: true,
+                ..Story::default()
+            },
+        ),
+        (
+            "the new album on another release",
+            Story {
+                new_release: Some("rel-other"),
+                ..Story::default()
+            },
+        ),
+        (
+            "a best guess on the old album",
+            Story {
+                guess_on_old: true,
+                ..Story::default()
+            },
+        ),
+        (
+            "a best guess on the new album",
+            Story {
+                guess_on_new: true,
+                ..Story::default()
+            },
+        ),
+        (
+            "the old album's match naming no release",
+            Story {
+                old_names_no_release: true,
+                ..Story::default()
+            },
+        ),
+        (
+            "a custom edition on the old album",
+            Story {
+                custom_on_old: true,
+                ..Story::default()
+            },
+        ),
+        (
+            "the old rows' mappings naming another release",
+            Story {
+                old_rows_elsewhere: true,
+                ..Story::default()
+            },
+        ),
+        (
+            "a dismissed pair naming the old album",
+            Story {
+                dismissed: true,
+                ..Story::default()
+            },
+        ),
+        (
+            "removed by a person in the app",
+            Story {
+                removed_in_app: true,
+                missing_between_scans: true,
+                ..Story::default()
+            },
+        ),
+        (
+            "removed by a person while a scan ran",
+            Story {
+                removed_in_app: true,
+                ..Story::default()
+            },
+        ),
+        (
+            "missing with no time",
+            Story {
+                no_missing_since: true,
+                ..Story::default()
+            },
+        ),
+    ];
+    for (index, (case, story)) in refusals.into_iter().enumerate() {
+        let (rig, old, _, o, _) = tell(&format!("join-refused-{index}"), story).await;
+        rig.assert_apart(&old, &o, case);
+    }
+
+    // Two copies a finished scan saw side by side, the old one deleted
+    // since. Joined when that scan did not finish, or did not walk the
+    // folder to the end; not when the history before the new copy is gone.
+    for (index, (case, lift, joined)) in [
+        ("two copies seen side by side", "", false),
+        (
+            "the scan that saw both stopped",
+            "UPDATE library_scan_runs SET state = 'cancelled' WHERE id = '{run}';",
+            true,
+        ),
+        (
+            "the scan that saw both did not walk the folder",
+            "UPDATE library_scan_run_scopes SET discovery_state = 'pending' \
+             WHERE run_id = '{run}';",
+            true,
+        ),
+        (
+            "history pruned back past the new copy",
+            "DELETE FROM library_scan_runs WHERE id IN ('{run}', '{first}');",
+            false,
+        ),
+        (
+            "history pruned to the scan that saw both",
+            "DELETE FROM library_scan_runs WHERE id = '{run}';",
+            true,
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (mut rig, old, old_rows) = mapped_album(&format!("join-copies-{index}"), 2).await;
+        let copies = vec!["b/t000.flac".to_owned(), "b/t001.flac".to_owned()];
+        let after = rig.after.clone();
+        rig.tag(&copies, &after);
+        rig.scan().await;
+        let runs = rig.runs();
+        rig.lose(&["a/t000.flac".to_owned(), "a/t001.flac".to_owned()])
+            .await;
+        rig.run(&lift.replace("{run}", &runs[1]).replace("{first}", &runs[0]));
+        let new = rig.album_of("b/t000.flac");
+        let new_rows = rig.rows_at(&copies);
+        rig.match_rows(&new, REL_R, &[(&new_rows[0], 0), (&new_rows[1], 1)]);
+        rig.scan().await;
+        if joined {
+            rig.assert_joined(&old, &new, (&old_rows[0], &new_rows[0]), case);
+        } else {
+            rig.assert_apart(&old, &old_rows[0], case);
+        }
+    }
+
+    // Two copies seen side by side, a track added to the one kept and the
+    // other deleted in one go: the track seen in both copies stops the
+    // join, though the others were replaced.
+    for (index, (case, lift, joined)) in [
+        ("a copy completed and the other deleted", false, false),
+        ("the scan that saw both stopped", true, true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (mut rig, old, old_rows) = mapped_album(&format!("join-veto-{index}"), 3).await;
+        let after = rig.after.clone();
+        rig.tag(&["b/t000.flac".to_owned()], &after);
+        rig.scan().await;
+        let runs = rig.runs();
+        std::fs::remove_file(rig.root.join("a/t000.flac")).expect("removed");
+        let new_rows = rig.replace(&[1, 2], "b", &after).await;
+        if lift {
+            rig.run(&format!(
+                "UPDATE library_scan_runs SET state = 'cancelled' WHERE id = '{}';",
+                runs[1]
+            ));
+        }
+        let new = rig.album_of("b/t000.flac");
+        let first = rig.rows_at(&["b/t000.flac".to_owned()]);
+        rig.match_rows(
+            &new,
+            REL_R,
+            &[(&first[0], 0), (&new_rows[0], 1), (&new_rows[1], 2)],
+        );
+        rig.scan().await;
+        if joined {
+            rig.assert_joined(&old, &new, (&old_rows[0], &first[0]), case);
+        } else {
+            rig.assert_apart(&old, &old_rows[0], case);
+        }
+    }
+
+    // The old album deleted and seen gone by a finished scan, then the
+    // same edition added: a deletion and a new arrival, not a retag.
+    for (index, (case, lift, joined)) in [
+        ("deleted, then the edition added", false, false),
+        ("the scan that saw it gone stopped", true, true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (mut rig, old, old_rows) = mapped_album(&format!("join-late-{index}"), 2).await;
+        // Another album stays, so the deletion is not taken for a share
+        // that went away.
+        rig.tag(&["z/t000.flac".to_owned()], "join-late bystander");
+        rig.scan().await;
+        rig.lose(&["a/t000.flac".to_owned(), "a/t001.flac".to_owned()])
+            .await;
+        let lost = rig.runs().pop().expect("the scan that saw it gone");
+        let files = vec!["b/t000.flac".to_owned(), "b/t001.flac".to_owned()];
+        let after = rig.after.clone();
+        rig.tag(&files, &after);
+        rig.scan().await;
+        if lift {
+            rig.run(&format!(
+                "UPDATE library_scan_runs SET state = 'cancelled' WHERE id = '{lost}';"
+            ));
+        }
+        let new = rig.album_of("b/t000.flac");
+        let new_rows = rig.rows_at(&files);
+        rig.match_rows(&new, REL_R, &[(&new_rows[0], 0), (&new_rows[1], 1)]);
+        rig.scan().await;
+        if joined {
+            rig.assert_joined(&old, &new, (&old_rows[0], &new_rows[0]), case);
+        } else {
+            rig.assert_apart(&old, &old_rows[0], case);
+        }
+    }
+
+    // A copy of the edition added and scanned on its own, then the old
+    // album's share drops out: the join waits a scan, and the share back
+    // in time keeps the two albums apart.
+    let case = "a share that drops out after a copy arrived";
+    let (mut rig, old, old_rows) = mapped_album("join-share", 2).await;
+    let files = vec!["b/t000.flac".to_owned(), "b/t001.flac".to_owned()];
+    let after = rig.after.clone();
+    rig.tag(&files, &after);
+    rig.scan_folder("b").await;
+    let new = rig.album_of("b/t000.flac");
+    let new_rows = rig.rows_at(&files);
+    rig.match_rows(&new, REL_R, &[(&new_rows[0], 0), (&new_rows[1], 1)]);
+    let away = rig.scratch.join("away");
+    std::fs::rename(rig.root.join("a"), &away).expect("share gone");
+    rig.scan().await;
+    rig.assert_apart(&old, &old_rows[0], case);
+    std::fs::rename(&away, rig.root.join("a")).expect("share back");
+    rig.scan().await;
+    rig.assert_apart(&old, &old_rows[0], case);
+    assert_eq!(rig.album_of("a/t000.flac"), old, "{case}");
+}
+
+/// A join waits as a follow waits. A track of the old album deleted in the
+/// same go holds it for a scan; when no more tracks were replaced than
+/// stayed, the rest must have been gone a day, the replaced rows aside.
+#[tokio::test]
+async fn a_join_waits_for_the_rest_of_the_old_album() {
+    use droppedneedle::library::identify::models::{AutomaticSeal, DecisionSource, TrackIdentity};
+
+    let (mut rig, old, old_rows) = mapped_album("join-wait-held", 3).await;
+    rig.run(&format!(
+        "DELETE FROM local_track_external_identities WHERE local_track_id = '{}';",
+        old_rows[2]
+    ));
+    std::fs::remove_file(rig.root.join("a/t002.flac")).expect("removed");
+    let after = rig.after.clone();
+    let new_rows = rig.replace(&[0, 1], "b", &after).await;
+    let new = rig.album_of("b/t000.flac");
+    let identify = SqliteIdentifyStore::open(&rig.db()).expect("identify store opens");
+    assert!(
+        identify.seal_automatic(&AutomaticSeal {
+            local_album_id: new.clone(),
+            release_group_mbid: "rg-r".to_owned(),
+            release_mbid: Some(REL_R.to_owned()),
+            tracks: new_rows
+                .iter()
+                .enumerate()
+                .map(|(n, row)| TrackIdentity {
+                    local_track_id: row.clone(),
+                    provider: "musicbrainz".to_owned(),
+                    recording_mbid: Some("rec-x".to_owned()),
+                    release_track_mbid: Some(format!("rt-{n}")),
+                    decision_source: DecisionSource::Automatic,
+                    row_revision: 1,
+                })
+                .collect(),
+            flag: None,
+        })
+    );
+    rig.assert_apart(&old, &old_rows[0], "a track gone in the latest scan");
+    rig.scan().await;
+    rig.assert_joined(&old, &new, (&old_rows[0], &new_rows[0]), "a scan later");
+
+    let (mut rig, old, old_rows) = mapped_album("join-wait-day", 4).await;
+    for n in 1..4 {
+        std::fs::remove_file(rig.root.join(format!("a/t{n:03}.flac"))).expect("removed");
+    }
+    let after = rig.after.clone();
+    let new_rows = rig.replace(&[0], "b", &after).await;
+    let new = rig.album_of("b/t000.flac");
+    rig.match_rows(&new, REL_R, &[(&new_rows[0], 0)]);
+    rig.scan().await;
+    rig.assert_apart(&old, &old_rows[0], "three gone under a day");
+    rig.run(&format!(
+        "UPDATE local_tracks SET missing_since = missing_since - 86400 \
+         WHERE local_album_id = '{old}' AND id <> '{}';",
+        old_rows[0]
+    ));
+    rig.scan().await;
+    rig.assert_joined(
+        &old,
+        &new,
+        (&old_rows[0], &new_rows[0]),
+        "the rest a day gone",
+    );
+}
+
+/// An album whose tracks were replaced on two new albums is never merged
+/// by the app: each pair is recorded once for a person, who merges one.
+#[tokio::test]
+async fn an_album_replaced_on_two_albums_is_left_to_a_person() {
+    use droppedneedle::library::corrections::Corrections;
+    use droppedneedle::library::corrections::models::PairJoinRequest;
+    use droppedneedle::runtime_config::{ConfigStore, Crypto};
+
+    let (mut rig, old, old_rows) = mapped_album("join-split", 2).await;
+    rig.tag(&["b/t000.flac".to_owned()], "join-split one");
+    rig.tag(&["c/t001.flac".to_owned()], "join-split two");
+    for n in 0..2 {
+        std::fs::remove_file(rig.root.join(format!("a/t{n:03}.flac"))).expect("removed");
+    }
+    rig.scan().await;
+    let (one, two) = (rig.album_of("b/t000.flac"), rig.album_of("c/t001.flac"));
+    let rows = rig.rows_at(&["b/t000.flac".to_owned(), "c/t001.flac".to_owned()]);
+    rig.match_rows(&one, REL_R, &[(&rows[0], 0)]);
+    rig.match_rows(&two, REL_R, &[(&rows[1], 1)]);
+    rig.scan().await;
+    assert_eq!(rig.retired_into(&old), None);
+    let pair = |new: &str| {
+        (
+            old.clone(),
+            new.to_owned(),
+            "tracks_elsewhere".to_owned(),
+            "open".to_owned(),
+        )
+    };
+    let mut expected = vec![pair(&one), pair(&two)];
+    expected.sort();
+    let pairs = || {
+        let mut pairs = retag_pairs(&rig);
+        pairs.sort();
+        pairs
+    };
+    assert_eq!(pairs(), expected);
+    let recorded_at = rig.count("SELECT SUM(updated_at) FROM library_retag_pairs");
+    rig.scan().await;
+    assert_eq!(pairs(), expected, "recorded once");
+    assert_eq!(
+        rig.count("SELECT SUM(updated_at) FROM library_retag_pairs"),
+        recorded_at
+    );
+    assert_eq!(rig.stars_and_aliases(&old_rows[0]).0, 1);
+
+    rig.run(PERSON);
+    let config = Arc::new(
+        ConfigStore::open(
+            &rig.scratch.join("config.json"),
+            Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
+        )
+        .expect("config opens"),
+    );
+    let library = LibrarySetup::for_tests_at(
+        droppedneedle::auth::wiring::AuthSetup::for_tests()
+            .expect("test auth builds")
+            .users,
+        Arc::new(droppedneedle::ids::UuidGenerator),
+        &rig.db(),
+        config,
+    )
+    .expect("bundle builds");
+    let corrections = Corrections::new(&library);
+    let listed = corrections.retag_pairs().expect("pairs listed");
+    assert_eq!(listed.total, 2);
+    let revision = |album: &str| {
+        listed
+            .pairs
+            .iter()
+            .flat_map(|pair| [&pair.old_album, &pair.new_album])
+            .find(|side| side.id == album)
+            .expect("listed")
+            .identity_revision
+    };
+    corrections
+        .join_retag_pair(&PairJoinRequest {
+            old_album_id: old.clone(),
+            new_album_id: one.clone(),
+            keep_edition_of: None,
+            expected_identity_revisions: BTreeMap::from([
+                (old.clone(), revision(&old)),
+                (one.clone(), revision(&one)),
+            ]),
+            actor: "u1".to_owned(),
+        })
+        .expect("joined");
+    assert_eq!(rig.retired_into(&old), Some(one));
+    assert_eq!(corrections.retag_pairs().expect("pairs listed").total, 0);
+}

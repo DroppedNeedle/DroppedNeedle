@@ -26,7 +26,7 @@ use super::models::{
     RetagPairList,
 };
 use super::reasons;
-use super::retag_merge::{MergeOutcome, merge_retagged};
+use super::retag_merge::{JoinCause, MergeOutcome, merge_retagged};
 use crate::library::identify::sqlite::chosen_matches_differ;
 use crate::library::operations::reasons::Reason;
 use crate::library::scan::sqlite_store::retag_pairs::{RetagPairReason, RetagPairState};
@@ -206,7 +206,14 @@ pub(super) fn join(
         (false, None) => {}
     }
 
-    match merge_retagged(tx, old, &new, Some(&request.actor), now)? {
+    match merge_retagged(
+        tx,
+        old,
+        &new,
+        Some(&request.actor),
+        now,
+        JoinCause::AcrossScans,
+    )? {
         MergeOutcome::Merged { .. } => {}
         MergeOutcome::Refused {
             reason: RetagPairReason::LiveWork,
