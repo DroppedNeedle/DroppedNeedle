@@ -92,7 +92,7 @@ pub struct AdminSetup {
     pub checkpoint: Option<CheckpointService>,
     /// Precache trigger over the shared jobs registry. `None` on unwired
     /// test states.
-    pub precache: Option<crate::jobs::wiring::PrecacheTrigger>,
+    pub precache: Option<crate::bootstrap::jobs::PrecacheTrigger>,
     /// Cover and artist image cache, for its stats and clears. `None` on
     /// states without one.
     pub covers: Option<crate::reads::platform::artwork::cache::ArtworkCache>,
@@ -143,7 +143,7 @@ impl AdminSetup {
 
     /// Attach the precache trigger.
     #[must_use]
-    pub fn with_precache(mut self, precache: crate::jobs::wiring::PrecacheTrigger) -> Self {
+    pub fn with_precache(mut self, precache: crate::bootstrap::jobs::PrecacheTrigger) -> Self {
         self.precache = Some(precache);
         self
     }

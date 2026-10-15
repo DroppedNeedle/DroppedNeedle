@@ -2,7 +2,8 @@
 //!
 //! Deny-by-default middleware over `/api/v3/*`, cookie plus Bearer tokens
 //! over the same opaque sessions, the cookie-mutation origin check, and the
-//! rate-limit class table. Role extractors, session/device management
+//! rate-limit class table, plus the live event stream, which rechecks its
+//! session while open. Role extractors, session/device management
 //! routes, OIDC/Jellyfin/Plex handshakes, and compat auth live in the
 //! other auth modules.
 //!
@@ -43,6 +44,7 @@ pub mod allowlist;
 pub mod client_ip;
 pub mod cookies;
 pub mod cors;
+pub mod event_stream;
 pub mod extract;
 pub mod login;
 pub mod middleware;

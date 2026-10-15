@@ -18,7 +18,10 @@
 //! `user_connections`); `folders` holds the Navidrome folder preferences;
 //! `adapter` holds the unified surface plus the import sink;
 //! `jellyfin`/`navidrome`/`plex` hold the source clients; `analytics`
-//! summarizes listening history; and `reader` serves the stream gateway.
+//! summarizes listening history; `reader` serves the stream gateway;
+//! `presence_feed` feeds the jobs presence loop from the live registry and
+//! the upstream sessions; and `playlist_sync` is the admin route that forces
+//! one Navidrome playlist sync.
 //! The loopback mock servers the tests run against live in the testkit
 //! crate.
 //! `MediaSetup` mounts [`remotes_router`](handlers::remotes_router)
@@ -35,7 +38,9 @@ pub mod jellyfin_models;
 pub mod models;
 pub mod navidrome;
 pub mod navidrome_models;
+pub mod playlist_sync;
 pub mod plex;
 pub mod plex_models;
+pub mod presence_feed;
 pub mod reader;
 pub mod service;

@@ -41,7 +41,7 @@
 //! awaited after axum serves).
 //!
 //! The 4s presence poll loop (v2 `run_now_playing_presence_loop`) lives in
-//! `jobs::presence`; `jobs::media` feeds it this registry and the
+//! `jobs::presence`; `remotes::presence_feed` feeds it this registry and the
 //! Jellyfin/Navidrome/Plex session pollers. Scrobble forwarding to Last.fm
 //! and ListenBrainz drains through `forwarding`. Not built yet: the SSE
 //! fan-out that would consume the registry's generation.

@@ -245,6 +245,59 @@ impl fmt::Debug for DurableRegistryStore {
     }
 }
 
+/// Registry rows behind one concrete type: durable in production, memory
+/// in test states. The enum keeps the jobs setup non-generic so `AppState`
+/// holds one field type.
+#[derive(Clone, Debug)]
+pub enum StoreKind {
+    /// In-memory rows for states without a database.
+    Memory(MemoryRegistryStore),
+    /// Durable rows over the writer lane.
+    Durable(DurableRegistryStore),
+}
+
+impl RegistryStore for StoreKind {
+    fn register_job(
+        &self,
+        name: &str,
+        kind: JobKind,
+        channel: Option<WakeupChannel>,
+    ) -> BoxFuture<'_, ()> {
+        match self {
+            Self::Memory(store) => store.register_job(name, kind, channel),
+            Self::Durable(store) => store.register_job(name, kind, channel),
+        }
+    }
+
+    fn set_job_state(&self, name: &str, state: JobState) -> BoxFuture<'_, ()> {
+        match self {
+            Self::Memory(store) => store.set_job_state(name, state),
+            Self::Durable(store) => store.set_job_state(name, state),
+        }
+    }
+
+    fn heartbeat(&self, name: &str) -> BoxFuture<'_, ()> {
+        match self {
+            Self::Memory(store) => store.heartbeat(name),
+            Self::Durable(store) => store.heartbeat(name),
+        }
+    }
+
+    fn get_job(&self, name: &str) -> BoxFuture<'_, Option<JobRecord>> {
+        match self {
+            Self::Memory(store) => store.get_job(name),
+            Self::Durable(store) => store.get_job(name),
+        }
+    }
+
+    fn list_jobs(&self) -> BoxFuture<'_, Vec<JobRecord>> {
+        match self {
+            Self::Memory(store) => store.list_jobs(),
+            Self::Durable(store) => store.list_jobs(),
+        }
+    }
+}
+
 /// How a loop finished. `Failed` carries the cause for the registry row and
 /// the log; the domain tables hold anything longer.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -62,7 +62,7 @@ pub fn hooked_state() -> AppState {
         cache,
         providers.clone(),
     );
-    let jobs = droppedneedle::jobs::wiring::JobsSetup::for_tests(auth.users.clone());
+    let jobs = droppedneedle::bootstrap::jobs::JobsSetup::for_tests(auth.users.clone());
     let plugins = droppedneedle::plugins::wiring::PluginsSetup::for_tests(
         auth.users.clone(),
         ids.clone(),
@@ -113,7 +113,7 @@ pub fn hooked_state_with_compat(subsonic: bool, jellyfin: bool) -> AppState {
         cache,
         providers.clone(),
     );
-    let jobs = droppedneedle::jobs::wiring::JobsSetup::for_tests(auth.users.clone());
+    let jobs = droppedneedle::bootstrap::jobs::JobsSetup::for_tests(auth.users.clone());
     let plugins = droppedneedle::plugins::wiring::PluginsSetup::for_tests(
         auth.users.clone(),
         ids.clone(),
@@ -163,7 +163,7 @@ pub fn prod_like_state() -> AppState {
         cache,
         providers.clone(),
     );
-    let jobs = droppedneedle::jobs::wiring::JobsSetup::for_tests(auth.users.clone());
+    let jobs = droppedneedle::bootstrap::jobs::JobsSetup::for_tests(auth.users.clone());
     let plugins = droppedneedle::plugins::wiring::PluginsSetup::for_tests(
         auth.users.clone(),
         ids.clone(),

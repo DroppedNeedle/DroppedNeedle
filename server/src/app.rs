@@ -134,9 +134,11 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
                 .merge(state.settings.me_router())
                 .merge(state.jobs.settings_router())
                 .merge(state.concerts.gated_router())
-                .merge(crate::events::router(
+                .merge(crate::auth::session::event_stream::router(
                     state.events.clone(),
-                    crate::events::session_check(state.auth.session_auth.store.clone()),
+                    crate::auth::session::event_stream::session_check(
+                        state.auth.session_auth.store.clone(),
+                    ),
                 )),
         )
         .merge(state.reads.search_router())

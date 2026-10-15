@@ -36,15 +36,6 @@ impl DemandTick for NoDemand {
     }
 }
 
-/// The discover content's warm pass.
-pub struct ContentDemand(pub Arc<dyn crate::reads::discover::ports::DiscoverContent>);
-
-impl DemandTick for ContentDemand {
-    fn tick(&self) -> BoxFuture<'_, ()> {
-        self.0.run_due_tick()
-    }
-}
-
 /// The cadence, with a little spread.
 pub fn default_schedule() -> Schedule {
     Schedule::new(INTERVAL)

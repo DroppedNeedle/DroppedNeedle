@@ -1,6 +1,6 @@
 //! Jobs bundle: one registry plus the loops it owns.
 //!
-//! [`JobsSetup`] is the one `AppState` field jobs adds. It owns the single
+//! [`JobsSetup`] is the one `AppState` field the jobs loops add. It owns the single
 //! [`JobRegistry`] every jobs loop registers on: the five always-on boot
 //! loops, the events kick one-shot, precache runs, and the plugin tick
 //! loops (via the plugins bundle, which shares this registry rather than
@@ -8,13 +8,14 @@
 //! (`sync_ticks`), no duplicate loop mechanics.
 //!
 //! Production binds [`DurableRegistryStore`] (liveness rows survive
-//! restarts); test states bind [`MemoryRegistryStore`] behind the same
-//! [`StoreKind`] seam so the setup type stays concrete. Loop backends are
-//! real where they exist (checkpoint passes, the now-playing feed and its
-//! upstream session pollers, the Navidrome playlist export, events
-//! settings reads, the concerts sweep, the personal mix) and no-ops where
-//! their services do not exist yet; each interim adapter says what is
-//! missing.
+//! restarts); test states bind
+//! [`MemoryRegistryStore`](crate::jobs::registry::MemoryRegistryStore)
+//! behind the same [`StoreKind`] seam so the setup type stays concrete.
+//! Loop backends are real where they exist (checkpoint passes, the
+//! now-playing feed and its upstream session pollers, the Navidrome playlist
+//! export, events settings reads, the concerts sweep, the personal mix) and
+//! no-ops where their services do not exist yet; each interim adapter says
+//! what is missing.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,19 +30,17 @@ use crate::jobs::checkpoint::{self, CheckpointRunner};
 use crate::jobs::discovery_demand::{self, DemandTick, NoDemand};
 use crate::jobs::events_kick::{self, EventsKick, FnKick, KickOutcome};
 use crate::jobs::events_watcher::{self, PollTimeSource, SystemWatchClock};
-use crate::jobs::media::{MediaJobs, RegistryFeed, RemoteSessionPollers};
 use crate::jobs::personal_mix::{self, PersonalMixer};
 use crate::jobs::playlist_export::M3uPlaylistExporter;
-use crate::jobs::playlist_sync::{
-    self, PlaylistSyncConfig, PlaylistSyncSettings, PlaylistSyncState, SyncRoles,
-};
+use crate::jobs::playlist_sync::{self, PlaylistSyncConfig, PlaylistSyncSettings};
 use crate::jobs::precache::{self, PrecacheLimits, PrecacheWork};
 use crate::jobs::precache_phases::{LibraryPrecache, PrecacheSources};
 use crate::jobs::presence;
 use crate::jobs::registry::{
-    AlreadyRunning, BoxFuture, DurableRegistryStore, JobKind, JobRegistry, MemoryRegistryStore,
-    RegistryStore, WakeupChannel,
+    AlreadyRunning, BoxFuture, DurableRegistryStore, JobRegistry, StoreKind,
 };
+use crate::remotes::playlist_sync::{self as playlist_route, PlaylistSyncState, SyncRoles};
+use crate::remotes::presence_feed::{MediaJobs, RegistryFeed, RemoteSessionPollers};
 use crate::runtime_config::ConfigStore;
 use crate::runtime_config::secret_sections::{
     AdvancedSettings, EventsSettings, NavidromeConnection,
@@ -50,63 +49,6 @@ use crate::runtime_config::secret_sections::{
 /// Grace per job at shutdown. Loops select on their stop signal next to
 /// every sleep, so this only binds a cycle that is mid-flight.
 pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
-
-/// Registry rows behind one concrete type: durable in production, memory
-/// in test states. The enum keeps [`JobsSetup`] non-generic so `AppState`
-/// holds one field type.
-#[derive(Clone, Debug)]
-pub enum StoreKind {
-    /// In-memory rows for states without a database.
-    Memory(MemoryRegistryStore),
-    /// Durable rows over the writer lane.
-    Durable(DurableRegistryStore),
-}
-
-impl RegistryStore for StoreKind {
-    fn register_job(
-        &self,
-        name: &str,
-        kind: JobKind,
-        channel: Option<WakeupChannel>,
-    ) -> BoxFuture<'_, ()> {
-        match self {
-            Self::Memory(store) => store.register_job(name, kind, channel),
-            Self::Durable(store) => store.register_job(name, kind, channel),
-        }
-    }
-
-    fn set_job_state(
-        &self,
-        name: &str,
-        state: crate::jobs::registry::JobState,
-    ) -> BoxFuture<'_, ()> {
-        match self {
-            Self::Memory(store) => store.set_job_state(name, state),
-            Self::Durable(store) => store.set_job_state(name, state),
-        }
-    }
-
-    fn heartbeat(&self, name: &str) -> BoxFuture<'_, ()> {
-        match self {
-            Self::Memory(store) => store.heartbeat(name),
-            Self::Durable(store) => store.heartbeat(name),
-        }
-    }
-
-    fn get_job(&self, name: &str) -> BoxFuture<'_, Option<crate::db::durable::JobRecord>> {
-        match self {
-            Self::Memory(store) => store.get_job(name),
-            Self::Durable(store) => store.get_job(name),
-        }
-    }
-
-    fn list_jobs(&self) -> BoxFuture<'_, Vec<crate::db::durable::JobRecord>> {
-        match self {
-            Self::Memory(store) => store.list_jobs(),
-            Self::Durable(store) => store.list_jobs(),
-        }
-    }
-}
 
 /// Checkpoint passes: the real service in production, skipped cycles on
 /// states without one (test states never spawn boot loops anyway).
@@ -459,7 +401,9 @@ impl JobsSetup {
     pub fn for_tests(users: UsersDeps) -> Self {
         let media = MediaJobs::for_tests();
         Self {
-            registry: JobRegistry::new(StoreKind::Memory(MemoryRegistryStore::new())),
+            registry: JobRegistry::new(StoreKind::Memory(
+                crate::jobs::registry::MemoryRegistryStore::new(),
+            )),
             checkpoint: CheckpointInput { service: None },
             playlist: PlaylistSyncState {
                 settings: NavidromeSyncSettings { store: None },
@@ -501,7 +445,7 @@ impl JobsSetup {
     /// /settings/navidrome/playlist-sync` (the v2 path). Mounts inside the
     /// session gate with the other `/api/v3` routes.
     pub fn settings_router(&self) -> Router {
-        Router::new().nest("/settings", playlist_sync::router(self.playlist.clone()))
+        Router::new().nest("/settings", playlist_route::router(self.playlist.clone()))
     }
 
     /// The settings-save kick: one immediate events sweep through the

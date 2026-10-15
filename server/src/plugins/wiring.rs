@@ -23,7 +23,7 @@ use crate::db::WriteLane;
 use crate::ids::IdGenerator;
 use crate::jobs::plugin_ticks::SqliteTickStore;
 use crate::jobs::registry::JobRegistry;
-use crate::jobs::wiring::StoreKind;
+use crate::jobs::registry::StoreKind;
 use crate::providers::cache::{ProviderCache, invalidate_source};
 use crate::runtime_config::{ConfigStore, Crypto};
 

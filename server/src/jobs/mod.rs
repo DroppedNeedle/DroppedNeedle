@@ -29,18 +29,16 @@
 //! - [`precache::JOB_NAME`]: supervised precache runs.
 //! - `plugin-tick:{name}`: one loop per scheduler plugin.
 //!
-//! Wiring: [`wiring::JobsSetup`] is the one `AppState` field this module
-//! adds. It owns the shared registry, nests the playlist-sync route for the
-//! settings tree ([`wiring::JobsSetup::settings_router`]), and spawns the
-//! boot loops ([`wiring::JobsSetup::spawn_loops`]); the plugins bundle
-//! shares the registry for its tick loops rather than running its own.
+//! Wiring: `bootstrap::jobs::JobsSetup` is the one `AppState` field these
+//! loops add. It owns the shared registry, nests the playlist-sync route for
+//! the settings tree, and spawns the boot loops; the plugins bundle shares
+//! the registry for its tick loops rather than running its own.
 
 pub mod cache_sync;
 pub mod checkpoint;
 pub mod discovery_demand;
 pub mod events_kick;
 pub mod events_watcher;
-pub mod media;
 pub mod personal_mix;
 pub mod playlist_export;
 pub mod playlist_sync;
@@ -50,7 +48,6 @@ pub mod precache_phases;
 pub mod presence;
 pub mod registry;
 pub mod schedule;
-pub mod wiring;
 
 pub use registry::{
     AlreadyRunning, JobCtx, JobExit, JobKind, JobRegistry, JobState, RegistryStore,

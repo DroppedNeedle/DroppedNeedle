@@ -1,6 +1,7 @@
 //! Media-backed inputs for the jobs loops: the now-playing feed over the
 //! live presence registry and the Jellyfin/Navidrome/Plex session pollers.
-//! The Navidrome playlist exporter lives in [`super::playlist_export`].
+//! The Navidrome playlist exporter lives in
+//! [`crate::jobs::playlist_export`].
 //!
 //! The pollers read sessions through the admin's shared accounts (v2 polled
 //! with the configured server credentials), so a source counts as enabled
@@ -9,17 +10,17 @@
 
 use std::sync::Arc;
 
-use super::playlist_export::M3uPlaylistExporter;
-use super::presence::{PresenceSession, PresenceSources, PresenceStore, SourceStatus};
-use super::registry::BoxFuture;
+use super::adapter::RemoteHandle;
+use super::connections::{ConnectionResolver, ResolvedConnection};
+use super::jellyfin::JellyfinAdapter;
+use super::models::{SessionView, SourceName};
+use super::navidrome::NavidromeAdapter;
+use super::plex::PlexAdapter;
+use crate::jobs::playlist_export::M3uPlaylistExporter;
+use crate::jobs::presence::{PresenceSession, PresenceSources, PresenceStore, SourceStatus};
+use crate::jobs::registry::BoxFuture;
 use crate::playback::ports::{Clock, SystemClock};
 use crate::playback::services::{ExternalSession, PresenceRegistry};
-use crate::remotes::adapter::RemoteHandle;
-use crate::remotes::connections::{ConnectionResolver, ResolvedConnection};
-use crate::remotes::jellyfin::JellyfinAdapter;
-use crate::remotes::models::{SessionView, SourceName};
-use crate::remotes::navidrome::NavidromeAdapter;
-use crate::remotes::plex::PlexAdapter;
 
 /// What the media bundle hands the jobs bundle.
 #[derive(Clone)]

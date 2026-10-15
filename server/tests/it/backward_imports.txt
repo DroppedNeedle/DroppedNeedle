@@ -7,14 +7,6 @@ acquire/wiring.rs bootstrap 2
 auth/federated/plex_http.rs remotes 1
 auth/wiring.rs bootstrap 1
 auth/wiring.rs remotes 2
-events/http.rs auth 1
-jobs/discovery_demand.rs reads 1
-jobs/media.rs playback 2
-jobs/media.rs remotes 6
-jobs/playlist_sync.rs auth 2
-jobs/wiring.rs auth 1
-jobs/wiring.rs concerts 1
-jobs/wiring.rs reads 2
 library/management/enrich.rs reads 2
 library/wiring.rs bootstrap 1
 media.rs bootstrap 1

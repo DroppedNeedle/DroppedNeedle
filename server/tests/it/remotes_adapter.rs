@@ -1084,8 +1084,8 @@ async fn routes_manage_folder_preferences() {
 /// out of it.
 #[tokio::test]
 async fn presence_poll_merges_a_remote_session() {
-    use droppedneedle::jobs::media::MediaJobs;
     use droppedneedle::playback::services::PresenceRegistry;
+    use droppedneedle::remotes::presence_feed::MediaJobs;
 
     let plex = serve_plex().await.expect("mock serves");
     let resolver = Arc::new(ConnectionResolver::new(

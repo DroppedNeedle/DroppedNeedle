@@ -263,7 +263,7 @@ impl E2e {
             .parent()
             .map(|parent| parent.join("backups"))
             .unwrap_or_else(std::env::temp_dir);
-        let jobs = droppedneedle::jobs::wiring::JobsSetup::for_tests(auth.users.clone());
+        let jobs = droppedneedle::bootstrap::jobs::JobsSetup::for_tests(auth.users.clone());
         // Concerts over the scratch database; the sources point at the
         // discard port so no row can reach a real provider.
         let concerts = droppedneedle::concerts::ConcertsSetup::new(

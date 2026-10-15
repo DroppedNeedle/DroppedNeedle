@@ -1,5 +1,5 @@
-//! Live events: the in-process hub, the `GET /api/v3/events/stream` route
-//! and the library revision poller.
+//! Live events: the in-process hub and the library revision poller. The
+//! `GET /api/v3/events/stream` route lives in `auth::session::event_stream`.
 //!
 //! Producers publish typed [`Event`]s into one [`EventHub`]; each signed-in
 //! tab holds one Server-Sent Events stream that receives the events meant
@@ -27,12 +27,10 @@
 //! [`crate::AppState::with_events`] attaches the hub to all of them.
 
 pub mod downloads;
-pub mod http;
 pub mod hub;
 pub mod model;
 pub mod revisions;
 
-pub use http::{SessionCheck, router, session_check};
 pub use hub::{EventHub, EventSink, Subscription};
 pub use model::{
     ActivityChanged, AutoDownloadEnqueued, CacheSyncProgress, ConcertsNew, DownloadProgress,

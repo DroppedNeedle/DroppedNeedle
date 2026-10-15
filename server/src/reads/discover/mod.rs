@@ -12,6 +12,7 @@
 //! now-playing route is served by `playback`.
 
 pub mod adapters;
+pub mod demand;
 pub mod error;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fakes;

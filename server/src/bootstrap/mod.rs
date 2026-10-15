@@ -9,6 +9,7 @@
 //! the stop signal.
 
 pub mod data_dirs;
+pub mod jobs;
 mod outbound;
 mod serve;
 
@@ -21,6 +22,7 @@ pub use outbound::{Outbound, Port};
 pub use serve::{Background, ServeError, bind, serve};
 
 use data_dirs::{BootRefusal, DataDirs, check_bootable};
+use jobs::JobsSetup;
 
 use crate::{
     AppConfig, AppState,
@@ -40,7 +42,6 @@ use crate::{
     events::EventHub,
     http_client::{HttpClientError, HttpClientFactory},
     ids::UuidGenerator,
-    jobs::{media::MediaJobs, wiring::JobsSetup},
     library::wiring::LibrarySetup,
     media::MediaSetup,
     plugins::{scrobble::SqliteListenBrainzLinkStore, wiring::PluginsSetup},
@@ -56,6 +57,7 @@ use crate::{
         enrichment::live::production_enrichment,
     },
     remotes::adapter::PlaylistImportSink,
+    remotes::presence_feed::MediaJobs,
     runtime_config::{
         ConfigStore, Crypto, crypto::CryptoError, quota::QUOTA_FILE_NAME,
         secret_sections::ListenBrainzConnection, sections::LyricsSettings,
@@ -496,7 +498,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     )
     .with_mixer(mix_hooks.clone())
     .with_precache_sources_from(&reads, &config_store)
-    .with_discovery_demand(Arc::new(crate::jobs::discovery_demand::ContentDemand(
+    .with_discovery_demand(Arc::new(crate::reads::discover::demand::ContentDemand(
         reads.discover.content.clone(),
     )));
     // Library Management plans genres, lyrics and covers through the same

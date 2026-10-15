@@ -28,13 +28,13 @@ use axum::{
 use futures_util::future::BoxFuture;
 use tokio::time::Instant;
 
-use super::hub::{EventHub, Subscription};
-use crate::auth::session::{
+use super::{
     extract::extract,
     middleware::CurrentSession,
     store::{SessionStore, now_unix},
     tokens::hash_token,
 };
+use crate::events::{EventHub, Subscription};
 
 /// Reconnect delay the stream asks browsers for (v2 `_MUX_RETRY_MS`).
 pub const RETRY: Duration = Duration::from_secs(5);

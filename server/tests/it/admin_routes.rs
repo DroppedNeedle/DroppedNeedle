@@ -32,7 +32,7 @@ struct Rig {
     user_id: String,
     cache: Arc<droppedneedle::providers::InMemoryProviderCache>,
     quota: Arc<droppedneedle::acquire::requests::quota::QuotaLedger>,
-    jobs: droppedneedle::jobs::wiring::JobsSetup,
+    jobs: droppedneedle::bootstrap::jobs::JobsSetup,
     _scratch: crate::common::ScratchDir,
 }
 
@@ -58,7 +58,7 @@ impl Rig {
         );
         let cache = Arc::new(droppedneedle::providers::InMemoryProviderCache::new());
         let providers = Arc::new(droppedneedle::providers::Providers::new(cache.clone()));
-        let mut jobs = droppedneedle::jobs::wiring::JobsSetup::for_tests(rig.deps.clone());
+        let mut jobs = droppedneedle::bootstrap::jobs::JobsSetup::for_tests(rig.deps.clone());
         if let Some(sources) = precache {
             jobs = jobs.with_precache_sources(sources);
         }

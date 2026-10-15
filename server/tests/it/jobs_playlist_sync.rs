@@ -17,10 +17,10 @@ use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::users::roles::{Role, SessionKind};
 use droppedneedle::jobs::playlist_sync::{
     self, PlaylistExporter, PlaylistSyncConfig, PlaylistSyncResult, PlaylistSyncSettings,
-    PlaylistSyncState, SyncRoles,
 };
 use droppedneedle::jobs::registry::{BoxFuture, JobRegistry, MemoryRegistryStore};
 use droppedneedle::jobs::schedule::Schedule;
+use droppedneedle::remotes::playlist_sync::{self as playlist_route, PlaylistSyncState, SyncRoles};
 use tower::ServiceExt as _;
 
 type TestRegistry = JobRegistry<MemoryRegistryStore>;
@@ -172,14 +172,14 @@ async fn read_json(response: axum::response::Response) -> serde_json::Value {
 async fn route_reads_settings_fresh_each_call() {
     let settings = FakeSettings::enabled();
     let exporter = FakeExporter::answering(FakeExporter::ok());
-    let app = playlist_sync::router(route_state(settings.clone(), exporter.clone()));
+    let app = playlist_route::router(route_state(settings.clone(), exporter.clone()));
 
     let response = app.oneshot(post_sync()).await.expect("router answers");
     assert_eq!(read_json(response).await["success"], true);
 
     // Flip sync off between calls: the next call sees it at once.
     *settings.config.lock().unwrap() = None;
-    let app = playlist_sync::router(route_state(settings, exporter.clone()));
+    let app = playlist_route::router(route_state(settings, exporter.clone()));
     let response = app.oneshot(post_sync()).await.expect("router answers");
     assert_eq!(read_json(response).await["success"], false);
     assert_eq!(exporter.calls.load(Ordering::SeqCst), 1);
@@ -189,7 +189,7 @@ async fn route_reads_settings_fresh_each_call() {
 async fn route_refuses_everyone_but_admins() {
     let settings = FakeSettings::enabled();
     let exporter = FakeExporter::answering(FakeExporter::ok());
-    let app = playlist_sync::router(route_state(settings, exporter.clone()));
+    let app = playlist_route::router(route_state(settings, exporter.clone()));
 
     // No session at all: 401 with the Bearer challenge.
     let response = app
@@ -207,7 +207,7 @@ async fn route_refuses_everyone_but_admins() {
 
     // A signed-in non-admin: 403, and the exporter never runs.
     let settings = FakeSettings::enabled();
-    let app = playlist_sync::router(route_state(settings, exporter.clone()));
+    let app = playlist_route::router(route_state(settings, exporter.clone()));
     let response = app
         .oneshot(post_sync_as(Some("user-molly")))
         .await
@@ -218,7 +218,7 @@ async fn route_refuses_everyone_but_admins() {
 
     // A session whose account is gone: 401, like logged-out.
     let settings = FakeSettings::enabled();
-    let app = playlist_sync::router(route_state(settings, exporter.clone()));
+    let app = playlist_route::router(route_state(settings, exporter.clone()));
     let response = app
         .oneshot(post_sync_as(Some("user-ghost")))
         .await
