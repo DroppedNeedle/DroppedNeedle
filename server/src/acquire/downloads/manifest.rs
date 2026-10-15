@@ -188,6 +188,20 @@ pub struct DownloadManifest {
     /// are taken from it. Empty fetches the whole album.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub album_wanted: Vec<TrackPosition>,
+    /// For an album download on `release_mbid`: the library copy it was
+    /// fetched for. The files join that copy instead of being filed by
+    /// their tags. Kept, like `album_wanted`, only while `release_mbid` is
+    /// the release being searched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planned_album: Option<PlannedAlbum>,
+}
+
+/// The library copy an album download was fetched for, and its release as
+/// the copy's identity row named it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlannedAlbum {
+    pub album_id: String,
+    pub release_mbid: String,
 }
 
 fn default_origin() -> String {

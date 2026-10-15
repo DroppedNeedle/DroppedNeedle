@@ -971,6 +971,7 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
             origin: ImportOrigin::Download,
             staging: None,
             release,
+            join: None,
             files: vec![ImportFile {
                 path: file,
                 track: 0,
@@ -1053,4 +1054,1249 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
         worker.run_once(0).await;
         assert_eq!(folder.is_dir(), kept, "publish {state}");
     }
+}
+
+// Files fetched for a library copy: "Get missing tracks" and upgrades.
+
+const TITLES: [&str; 2] = ["Mysterons", "Sour Times"];
+const FIXTURES: [&str; 2] = ["flac_full_01.flac", "flac_full_02.flac"];
+
+/// A MusicBrainz id of one scenario: kind 1 is a release group, 2 a
+/// release, 3 a recording and 4 a release track.
+fn mb(scenario: u16, kind: u16, index: u16) -> String {
+    format!("6d0b7a1e-{scenario:04x}-4{kind:03x}-8000-{index:012x}")
+}
+
+/// Edition `number` of scenario `scenario`'s album, in release group
+/// `group`; `discs` lists the tracks (indexes into [`TITLES`]) per disc.
+/// Recordings are shared by every edition of the scenario.
+fn edition(
+    scenario: u16,
+    group: u16,
+    number: u16,
+    discs: &[&[usize]],
+    lengths: &[Option<u64>],
+) -> Release {
+    let mut tracks = Vec::new();
+    for (disc, indexes) in discs.iter().enumerate() {
+        for (at, &index) in indexes.iter().enumerate() {
+            tracks.push(ReleaseTrack {
+                isrcs: Vec::new(),
+                genres: Vec::new(),
+                id: mb(scenario, 4, number * 16 + index as u16),
+                recording_id: mb(scenario, 3, index as u16),
+                title: TITLES[index].to_owned(),
+                artists: Vec::new(),
+                disc: disc as u32 + 1,
+                position: at as u32 + 1,
+                absolute_position: tracks.len() as u32 + 1,
+                length_ms: lengths[index],
+            });
+        }
+    }
+    Release {
+        id: mb(scenario, 2, number),
+        release_group_id: mb(scenario, 1, group),
+        title: format!("Dummy {scenario}"),
+        artists: vec![CreditedArtist {
+            id: "8f6bd1e4-fbe1-4f50-aa9b-94c450ec0f11".to_owned(),
+            name: "Portishead".to_owned(),
+            sort_name: Some("Portishead".to_owned()),
+            join: String::new(),
+        }],
+        status: Some("Official".to_owned()),
+        media: discs
+            .iter()
+            .enumerate()
+            .map(|(disc, indexes)| ReleaseMedium {
+                position: disc as u32 + 1,
+                format: Some("CD".to_owned()),
+                title: None,
+                track_count: indexes.len() as u32,
+            })
+            .collect(),
+        tracks,
+        ..Release::default()
+    }
+}
+
+/// The editions of one scenario: OLD (the copy's tags, one disc), NEW
+/// (two discs, "Sour Times" alone on disc 2), NEW2 (another edition) and
+/// OTHER (a release of another album).
+struct Editions {
+    group: String,
+    old: Release,
+    new: Release,
+    new2: Release,
+    other: Release,
+}
+
+fn editions(scenario: u16, lengths: &[Option<u64>]) -> Editions {
+    Editions {
+        group: mb(scenario, 1, 0),
+        old: edition(scenario, 0, 1, &[&[0, 1]], lengths),
+        new: edition(scenario, 0, 2, &[&[0], &[1]], lengths),
+        new2: edition(scenario, 0, 3, &[&[0, 1]], lengths),
+        other: edition(scenario, 1, 9, &[&[0, 1]], lengths),
+    }
+}
+
+fn fixture_lengths() -> Vec<Option<u64>> {
+    FIXTURES
+        .iter()
+        .map(|name| length_ms(&fixture(name)))
+        .collect()
+}
+
+/// Acquisition's view of the same releases, for the album target rewrite.
+struct Lookup(Vec<Release>);
+
+impl droppedneedle::acquire::target::lookup::AlbumLookup for Lookup {
+    fn recording_releases<'a>(
+        &'a self,
+        _recording_mbid: &'a str,
+    ) -> BoxFuture<
+        'a,
+        Result<
+            Option<Vec<droppedneedle::acquire::target::lookup::ReleaseCandidate>>,
+            droppedneedle::acquire::target::lookup::LookupError,
+        >,
+    > {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn release<'a>(
+        &'a self,
+        release_mbid: &'a str,
+    ) -> BoxFuture<
+        'a,
+        Result<
+            Option<droppedneedle::acquire::target::lookup::AlbumRelease>,
+            droppedneedle::acquire::target::lookup::LookupError,
+        >,
+    > {
+        use droppedneedle::acquire::target::lookup::{AlbumRelease, AlbumTrack};
+        let found = self
+            .0
+            .iter()
+            .find(|release| release.answers_to(release_mbid))
+            .map(|release| AlbumRelease {
+                id: release.id.clone(),
+                title: release.title.clone(),
+                release_group_mbid: release.release_group_id.clone(),
+                artist: "Portishead".to_owned(),
+                various_artists: false,
+                year: None,
+                tracks: release
+                    .tracks
+                    .iter()
+                    .map(|track| AlbumTrack {
+                        disc: track.disc,
+                        position: track.position,
+                        title: track.title.clone(),
+                        duration_seconds: track.length_ms.map(|ms| ms as f64 / 1000.0),
+                        recording_mbid: track.recording_id.clone(),
+                        release_track_mbid: track.id.clone(),
+                    })
+                    .collect(),
+            });
+        Box::pin(async move { Ok(found) })
+    }
+}
+
+/// The real worker, landing, publisher and catalog over one scratch
+/// database, with scripted MusicBrainz.
+struct JoinRig {
+    acquire: droppedneedle::acquire::AcquireSetup,
+    library: LibrarySetup,
+    targets: Arc<droppedneedle::acquire::target::Targets>,
+    music: PathBuf,
+    downloads: PathBuf,
+}
+
+async fn join_rig(releases: Vec<Release>) -> JoinRig {
+    let (acquire, dir) = bare_acquire().await;
+    let auth = droppedneedle::auth::wiring::AuthSetup::for_tests().expect("test auth");
+    let config = Arc::new(
+        ConfigStore::open(
+            &dir.join("config.json"),
+            Crypto::from_key_bytes(&[7u8; 32]).expect("key"),
+        )
+        .expect("config"),
+    );
+    let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
+    let library = LibrarySetup::for_tests_at(auth.users.clone(), ids, acquire.db.path(), config)
+        .expect("library bundle");
+    let music = dir.join("music");
+    std::fs::create_dir_all(&music).expect("music root");
+    library
+        .add_root(
+            Some("music".to_owned()),
+            music.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    let targets = Arc::new(droppedneedle::acquire::target::Targets::new(
+        acquire.journal.clone(),
+        acquire.staging_root.clone(),
+    ));
+    assert!(
+        targets
+            .lookup_slot()
+            .set(Arc::new(Lookup(releases.clone())))
+            .is_ok()
+    );
+    let pool = acquire.db.pool().clone();
+    let acquire = acquire.with_library(Arc::new(LibraryLanding::new(
+        library.clone(),
+        Arc::new(Releases(releases)),
+        pool,
+    )));
+    JoinRig {
+        acquire,
+        library,
+        targets,
+        music,
+        downloads: dir.join("downloads"),
+    }
+}
+
+impl JoinRig {
+    fn sql(&self, sql: &str) {
+        self.library
+            .scan_store
+            .execute_batch_for_tests(sql)
+            .expect("test sql runs");
+    }
+
+    async fn scan(&self) {
+        use droppedneedle::library::scan::{ScanKind, ScanRequest, ScanTrigger};
+        let registry = self.library.live_registry();
+        self.library
+            .coordinator
+            .request_run(&ScanRequest {
+                kind: ScanKind::Incremental,
+                trigger: ScanTrigger::Manual,
+                scopes: registry.scheduled_root_scopes(),
+                requested_by_user_id: None,
+                policy_revision: registry.policy_revision().to_owned(),
+            })
+            .expect("scan requested");
+        self.library.scan_startup_recovery().await;
+        for _ in 0..100 {
+            self.library.supervisor_tick().await;
+            if self.library.coordinator.current().is_empty() {
+                break;
+            }
+        }
+        assert!(self.library.coordinator.current().is_empty());
+    }
+
+    /// Plant one file of a copy, tagged as track `index` of `release`.
+    fn plant(&self, rel: &str, index: usize, release: &Release) -> PathBuf {
+        self.plant_from(rel, FIXTURES[index], index, release)
+    }
+
+    fn plant_from(&self, rel: &str, from: &str, index: usize, release: &Release) -> PathBuf {
+        let path = self.music.join(rel);
+        std::fs::create_dir_all(path.parent().expect("folder")).expect("copy folder");
+        std::fs::copy(fixture(from), &path).expect("copy fixture");
+        let track = release
+            .tracks
+            .iter()
+            .find(|track| track.title == TITLES[index])
+            .expect("track on release");
+        let tag = |field, value: &str| TagEdit::new(field, vec![value.to_owned()]);
+        save_tags(
+            &path,
+            &[
+                tag(TagField::Title, TITLES[index]),
+                tag(TagField::Artist, "Portishead"),
+                tag(TagField::AlbumArtist, "Portishead"),
+                tag(TagField::Album, &release.title),
+                tag(TagField::TrackNumber, &track.position.to_string()),
+                tag(TagField::DiscNumber, &track.disc.to_string()),
+                tag(TagField::MusicBrainzReleaseId, &release.id),
+                tag(
+                    TagField::MusicBrainzReleaseGroupId,
+                    &release.release_group_id,
+                ),
+                tag(TagField::MusicBrainzRecordingId, &track.recording_id),
+                tag(TagField::MusicBrainzReleaseTrackId, &track.id),
+            ],
+        )
+        .expect("copy tagged");
+        path
+    }
+
+    fn track_at(&self, rel: &str) -> String {
+        self.library
+            .scan_store
+            .track_at("music", rel)
+            .expect("track indexed")
+    }
+
+    fn album_of(&self, track: &str) -> String {
+        self.library
+            .scan_store
+            .album_for_track(track)
+            .expect("track has an album")
+    }
+
+    /// The album's MusicBrainz match: `source` names `release`, chosen by
+    /// u-ada at time 5, on its third revision. No match state.
+    fn set_edition(&self, album: &str, group: &str, release: &str, source: &str) {
+        self.sql(&format!(
+            "DELETE FROM local_album_external_identities WHERE local_album_id = '{album}'; \
+             DELETE FROM library_album_match_state WHERE local_album_id = '{album}'; \
+             INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
+             selected_at, row_revision) VALUES ('{album}', 'musicbrainz', '{group}', \
+             '{release}', '{source}', 'u-ada', 5, 3);"
+        ));
+    }
+
+    /// Track `track` placed on `release`'s track `index` by `source`.
+    fn place(&self, track: &str, release: &Release, index: usize, source: &str) {
+        let on = release
+            .tracks
+            .iter()
+            .find(|on| on.title == TITLES[index])
+            .expect("track on release");
+        self.sql(&format!(
+            "DELETE FROM local_track_external_identities WHERE local_track_id = '{track}'; \
+             INSERT INTO local_track_external_identities (local_track_id, provider, \
+             recording_mbid, release_mbid, release_track_mbid, medium_position, \
+             release_track_position, decision_source, selected_at) VALUES ('{track}', \
+             'musicbrainz', '{}', '{}', '{}', {}, {}, '{source}', 5);",
+            on.recording_id, release.id, on.id, on.disc, on.position
+        ));
+    }
+
+    /// A play and a star on `track` by u-ada.
+    fn listen(&self, track: &str) {
+        self.sql(&format!(
+            "INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+             track_name, artist_name, played_at) SELECT 'play-{track}', 'u-ada', id, \
+             local_album_id, title, 'Portishead', '2026-01-01T00:00:00Z' FROM local_tracks \
+             WHERE id = '{track}'; \
+             INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+             VALUES ('u-ada', 'track', '{track}', 0);"
+        ));
+    }
+
+    /// A queued album download of `group` on `release`, fetched for
+    /// `planned` (album id, release) when given, asking for `wanted`. Its
+    /// manifest has no tracklist, so the album target rewrite runs.
+    #[allow(clippy::too_many_arguments)]
+    async fn ask(
+        &self,
+        task_id: &str,
+        group: &str,
+        title: &str,
+        origin: &str,
+        release: Option<&str>,
+        planned: Option<(&str, &str)>,
+        wanted: &[(u32, u32)],
+    ) {
+        let task = NewTask {
+            album_title: title.to_owned(),
+            origin: origin.to_owned(),
+            ..new_task(task_id, group)
+        };
+        let details = droppedneedle::acquire::downloads::store::TaskDetails {
+            release_mbid: release.map(str::to_owned),
+            ..Default::default()
+        };
+        let id = task_id.to_owned();
+        self.acquire
+            .journal
+            .run("test.seed", move |store| {
+                store.insert_task(&task, 1.0)?;
+                store.set_task_details(&id, &details, 1.0)
+            })
+            .await
+            .expect("task");
+        if let Some((album_id, planned_release)) = planned {
+            let manifest = serde_json::json!({
+                "task_id": task_id,
+                "release_group_mbid": group,
+                "artist_name": "Portishead",
+                "album_title": title,
+                "origin": origin,
+                "release_mbid": release,
+                "album_wanted": wanted
+                    .iter()
+                    .map(|(disc, track)| serde_json::json!({"disc": disc, "track": track}))
+                    .collect::<Vec<_>>(),
+                "planned_album": {"album_id": album_id, "release_mbid": planned_release},
+            });
+            let path = droppedneedle::acquire::downloads::ManifestCodec::path(
+                &self.acquire.staging_root,
+                task_id,
+            );
+            std::fs::create_dir_all(path.parent().expect("task folder")).expect("task folder");
+            std::fs::write(&path, manifest.to_string()).expect("manifest written");
+            let row = self.task(task_id).await;
+            self.targets.target(&row).await.expect("album target");
+        }
+    }
+
+    async fn task(&self, task_id: &str) -> droppedneedle::acquire::downloads::store::TaskRow {
+        self.acquire
+            .journal
+            .read_task(task_id)
+            .await
+            .expect("task read")
+            .expect("task exists")
+    }
+
+    fn manifest(&self, task_id: &str) -> serde_json::Value {
+        let path = droppedneedle::acquire::downloads::ManifestCodec::path(
+            &self.acquire.staging_root,
+            task_id,
+        );
+        serde_json::from_slice(&std::fs::read(path).expect("manifest")).expect("manifest json")
+    }
+
+    /// The finished download of scenario `release`'s "Sour Times" (disc 2,
+    /// track 1, as on NEW), or of `index` laid out on `release`.
+    fn landed(&self, task_id: &str, release: &Release, index: usize, ext_fixture: &str) -> PathBuf {
+        let track = release
+            .tracks
+            .iter()
+            .find(|track| track.title == TITLES[index])
+            .expect("track on release");
+        let dir = self.downloads.join(task_id);
+        std::fs::create_dir_all(&dir).expect("download dir");
+        let extension = Path::new(ext_fixture)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .expect("extension");
+        let path = dir.join(format!(
+            "{:02} - {}.{extension}",
+            track.position, TITLES[index]
+        ));
+        std::fs::copy(fixture(ext_fixture), &path).expect("copy fixture");
+        let mut edits = vec![
+            TagEdit::new(TagField::Title, vec![TITLES[index].to_owned()]),
+            TagEdit::new(TagField::Artist, vec!["Portishead".to_owned()]),
+            TagEdit::new(TagField::AlbumArtist, vec!["Portishead".to_owned()]),
+            TagEdit::new(TagField::Album, vec![release.title.clone()]),
+            TagEdit::new(TagField::TrackNumber, vec![track.position.to_string()]),
+            TagEdit::new(TagField::DiscNumber, vec![track.disc.to_string()]),
+        ];
+        for field in [
+            TagField::MusicBrainzRecordingId,
+            TagField::MusicBrainzReleaseTrackId,
+            TagField::MusicBrainzReleaseId,
+            TagField::MusicBrainzReleaseGroupId,
+        ] {
+            edits.push(TagEdit::new(field, Vec::new()));
+        }
+        save_tags(&path, &edits).expect("download tagged");
+        path
+    }
+
+    fn worker(&self, paths: Vec<PathBuf>, retry: bool) -> Arc<DownloadWorker> {
+        let retry = droppedneedle::acquire::downloads::watchdog::RetryPolicy {
+            enabled: retry,
+            base_interval_minutes: 0.0,
+            ..Default::default()
+        };
+        Arc::new(
+            DownloadWorker::fixed(
+                self.acquire.journal.clone(),
+                vec![Source::Fixed(Arc::new(FixedSource::new(
+                    self.downloads.clone(),
+                    paths,
+                )))],
+                WorkerConfig {
+                    staging_root: self.acquire.staging_root.clone(),
+                    retry,
+                    ..WorkerConfig::default()
+                },
+            )
+            .with_landing(self.acquire.landing.clone()),
+        )
+    }
+
+    /// Run the worker until the landing of what it finds settles.
+    async fn land(&self, paths: Vec<PathBuf>) {
+        let worker = self.worker(paths, false);
+        worker.run_once(1).await;
+        worker.wait_for_landings().await;
+    }
+
+    async fn scalar<T>(&self, sql: &str) -> T
+    where
+        T: Send + Unpin + for<'r> sqlx::Decode<'r, sqlx::Sqlite> + sqlx::Type<sqlx::Sqlite>,
+    {
+        sqlx::query_scalar(sql)
+            .fetch_one(self.acquire.db.pool())
+            .await
+            .expect("query runs")
+    }
+
+    async fn album_count(&self) -> i64 {
+        self.scalar("SELECT COUNT(*) FROM local_albums WHERE retired_into_album_id IS NULL")
+            .await
+    }
+
+    /// The track at `rel`: id, album, membership (source, locked) and
+    /// availability.
+    async fn row_at(&self, rel: &str) -> (String, String, String, i64, String) {
+        sqlx::query_as(
+            "SELECT id, local_album_id, membership_source, membership_locked, availability \
+             FROM local_tracks WHERE root_id = 'music' AND relative_path = ?1",
+        )
+        .bind(rel)
+        .fetch_one(self.acquire.db.pool())
+        .await
+        .expect("a track at the path")
+    }
+
+    /// A track's MusicBrainz identity: recording, release, release
+    /// track, disc, position and source.
+    async fn identity(&self, track: &str) -> Option<TrackIdentityRow> {
+        sqlx::query_as(
+            "SELECT recording_mbid, release_mbid, release_track_mbid, medium_position, \
+             release_track_position, decision_source FROM local_track_external_identities \
+             WHERE local_track_id = ?1",
+        )
+        .bind(track)
+        .fetch_optional(self.acquire.db.pool())
+        .await
+        .expect("identity read")
+    }
+
+    /// The album's identity row: release, source, chooser, time, revision.
+    async fn album_identity(
+        &self,
+        album: &str,
+    ) -> (Option<String>, String, Option<String>, f64, i64) {
+        sqlx::query_as(
+            "SELECT release_mbid, decision_source, selected_by_user_id, selected_at, \
+             row_revision FROM local_album_external_identities WHERE local_album_id = ?1",
+        )
+        .bind(album)
+        .fetch_one(self.acquire.db.pool())
+        .await
+        .expect("album identity")
+    }
+
+    /// Where u-ada's play and star of `track` point: (play track, play
+    /// album, starred).
+    async fn history(&self, track: &str) -> (String, String, bool) {
+        sqlx::query_as(
+            "SELECT p.local_track_id, p.local_album_id, EXISTS(SELECT 1 FROM \
+             library_user_favorites f WHERE f.item_kind = 'track' AND f.item_id = ?2) \
+             FROM library_play_history p WHERE p.id = ?1",
+        )
+        .bind(format!("play-{track}"))
+        .bind(track)
+        .fetch_one(self.acquire.db.pool())
+        .await
+        .expect("history")
+    }
+}
+
+type TrackIdentityRow = (
+    String,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+    Option<i64>,
+    String,
+);
+
+/// The placement `release`'s track `index` gives, as a person's.
+fn placed_on(release: &Release, index: usize) -> TrackIdentityRow {
+    let on = release
+        .tracks
+        .iter()
+        .find(|on| on.title == TITLES[index])
+        .expect("track on release");
+    (
+        on.recording_id.clone(),
+        Some(release.id.clone()),
+        Some(on.id.clone()),
+        Some(i64::from(on.disc)),
+        Some(i64::from(on.position)),
+        "manual".to_owned(),
+    )
+}
+
+/// The names the import gives "Mysterons" and "Sour Times" on NEW.
+const MYSTERONS: &str = "0101 Mysterons.flac";
+const SOUR_TIMES: &str = "0201 Sour Times.flac";
+
+/// A file of scenario `scenario`'s copy, in a folder of its own. Copy 4
+/// sits where the naming template puts its album.
+fn copy_rel(scenario: u16, name: &str) -> String {
+    if scenario == 4 {
+        format!("Portishead/Dummy 4/{name}")
+    } else {
+        format!("Copy {scenario}/{name}")
+    }
+}
+
+// "Get missing tracks" on a copy whose files carry another edition's
+// release id: the fetched track joins that copy, beside its files, and is
+// placed on the edition a person chose. An old row at its path keeps its
+// id, plays and star when it is that copy's own; never otherwise. Each
+// scenario is one copy, all in one library.
+#[tokio::test]
+async fn a_fetched_track_joins_the_copy_it_was_fetched_for() {
+    let lengths = fixture_lengths();
+    let scenarios: Vec<Editions> = (1..=9).map(|s| editions(s, &lengths)).collect();
+    let releases: Vec<Release> = scenarios
+        .iter()
+        .flat_map(|e| {
+            [
+                e.old.clone(),
+                e.new.clone(),
+                e.new2.clone(),
+                e.other.clone(),
+            ]
+        })
+        .collect();
+    let rig = join_rig(releases).await;
+    let ed = |s: u16| &scenarios[usize::from(s) - 1];
+
+    // Every copy holds "Mysterons"; copies 2 to 5 also had "Sour Times",
+    // whose file is gone. Copy 8 is merged into copy 9 later.
+    let copies = [1, 2, 3, 4, 5, 7, 8, 9];
+    for s in copies {
+        rig.plant(&copy_rel(s, MYSTERONS), 0, &ed(s).old);
+    }
+    for s in 2..=5 {
+        rig.plant(&copy_rel(s, SOUR_TIMES), 1, &ed(s).old);
+    }
+    rig.scan().await;
+    let x: Vec<Option<String>> = (1..=9)
+        .map(|s| {
+            (2..=5)
+                .contains(&s)
+                .then(|| rig.track_at(&copy_rel(s, SOUR_TIMES)))
+        })
+        .collect();
+    for s in 2..=5 {
+        std::fs::remove_file(rig.music.join(copy_rel(s, SOUR_TIMES))).expect("file gone");
+    }
+    rig.scan().await;
+    let albums: Vec<String> = (1..=9)
+        .map(|s| {
+            if copies.contains(&s) {
+                rig.album_of(&rig.track_at(&copy_rel(s, MYSTERONS)))
+            } else {
+                String::new()
+            }
+        })
+        .collect();
+    let album = |s: u16| albums[usize::from(s) - 1].as_str();
+    let x_of = |s: u16| x[usize::from(s) - 1].clone().expect("an old row");
+    for s in copies {
+        rig.set_edition(album(s), &ed(s).group, &ed(s).new.id, "manual");
+        rig.place(
+            &rig.track_at(&copy_rel(s, MYSTERONS)),
+            &ed(s).new,
+            0,
+            "manual",
+        );
+    }
+    for s in 2..=5 {
+        rig.place(&x_of(s), &ed(s).new, 1, "manual");
+        rig.listen(&x_of(s));
+    }
+    rig.sql(&format!(
+        "UPDATE local_tracks SET availability = 'excluded', manual_excluded = 1 \
+         WHERE id = '{}'",
+        x_of(5)
+    ));
+    let before = rig.album_count().await;
+    let rig = &rig;
+    let ask = |s: u16, task: &'static str| {
+        let e = ed(s);
+        let copy = album(s);
+        async move {
+            rig.ask(
+                task,
+                &e.group,
+                &e.new.title,
+                "user",
+                Some(&e.new.id),
+                Some((copy, &e.new.id)),
+                &[(2, 1)],
+            )
+            .await;
+        }
+    };
+
+    // 1. No row for the track. The first attempt fails; its automatic
+    // retry fetches for the same copy.
+    ask(1, "t-join-1").await;
+    rig.sql(
+        "UPDATE download_tasks SET status = 'failed', completed_at = 1, updated_at = 1 \
+         WHERE id = 't-join-1'",
+    );
+    let identity_before = rig.album_identity(album(1)).await;
+    let retrying = rig.worker(
+        vec![rig.landed("t-join-1", &ed(1).new, 1, FIXTURES[1])],
+        true,
+    );
+    retrying.run_once(1).await;
+    retrying.run_once(2).await;
+    retrying.wait_for_landings().await;
+    let fetched = copy_rel(1, SOUR_TIMES);
+    let (track, on, source, locked, availability) = rig.row_at(&fetched).await;
+    assert_eq!(
+        (on.as_str(), source.as_str(), locked, availability.as_str()),
+        (album(1), "manual", 1, "indexed"),
+        "the retry's file joins the copy, beside its files, locked"
+    );
+    assert_eq!(rig.album_count().await, before, "no new album");
+    assert_eq!(
+        rig.identity(&track).await,
+        Some(placed_on(&ed(1).new, 1)),
+        "placed on the chosen edition's disc 2"
+    );
+    assert_eq!(
+        rig.album_identity(album(1)).await,
+        identity_before,
+        "the copy's match is left as it was"
+    );
+
+    // 2. The copy's own old row at the path: the file takes its id, and
+    // its play and star stay where they were.
+    ask(2, "t-join-2").await;
+    rig.land(vec![rig.landed("t-join-2", &ed(2).new, 1, FIXTURES[1])])
+        .await;
+    let (track, on, _, locked, availability) = rig.row_at(&copy_rel(2, SOUR_TIMES)).await;
+    assert_eq!(
+        (track.as_str(), on.as_str(), locked, availability.as_str()),
+        (x_of(2).as_str(), album(2), 1, "indexed")
+    );
+    assert_eq!(rig.identity(&track).await, Some(placed_on(&ed(2).new, 1)));
+    assert_eq!(
+        rig.history(&x_of(2)).await,
+        (x_of(2), album(2).to_owned(), true)
+    );
+
+    // 3. The copy's edition changed to another edition of the album after
+    // the ask: the file still joins it under the old row's id, unplaced.
+    ask(3, "t-join-3").await;
+    rig.set_edition(album(3), &ed(3).group, &ed(3).new2.id, "manual");
+    let identity_before = rig.album_identity(album(3)).await;
+    rig.land(vec![rig.landed("t-join-3", &ed(3).new, 1, FIXTURES[1])])
+        .await;
+    let (track, on, _, locked, availability) = rig.row_at(&copy_rel(3, SOUR_TIMES)).await;
+    assert_eq!(
+        (track.as_str(), on.as_str(), locked, availability.as_str()),
+        (x_of(3).as_str(), album(3), 1, "indexed")
+    );
+    assert_eq!(rig.identity(&track).await, None, "its old place is gone");
+    assert_eq!(
+        rig.history(&x_of(3)).await,
+        (x_of(3), album(3).to_owned(), true)
+    );
+    assert_eq!(rig.album_identity(album(3)).await, identity_before);
+
+    // 3b. The copy now names another album: the file is filed by its
+    // tags under a new id, and the old row keeps everything, off the path.
+    ask(4, "t-join-4").await;
+    rig.set_edition(album(4), &mb(4, 1, 1), &ed(4).other.id, "manual");
+    let (missing_since, old_identity): (f64, Option<String>) = sqlx::query_as(
+        "SELECT t.missing_since, i.release_track_mbid FROM local_tracks t \
+         LEFT JOIN local_track_external_identities i ON i.local_track_id = t.id WHERE t.id = ?1",
+    )
+    .bind(x_of(4))
+    .fetch_one(rig.acquire.db.pool())
+    .await
+    .expect("old row");
+    rig.land(vec![rig.landed("t-join-4", &ed(4).new, 1, FIXTURES[1])])
+        .await;
+    let (filed, filed_on, _, _, _) = rig.row_at(&copy_rel(4, SOUR_TIMES)).await;
+    assert_ne!(filed, x_of(4), "a new id");
+    assert_ne!(filed_on, album(4), "filed by its tags");
+    let kept: (String, String, f64, Option<String>, String) = sqlx::query_as(
+        "SELECT t.local_album_id, t.availability, t.missing_since, i.release_track_mbid, \
+         t.relative_path FROM local_tracks t LEFT JOIN local_track_external_identities i \
+         ON i.local_track_id = t.id WHERE t.id = ?1",
+    )
+    .bind(x_of(4))
+    .fetch_one(rig.acquire.db.pool())
+    .await
+    .expect("old row");
+    assert_eq!(
+        (kept.0.as_str(), kept.1.as_str(), kept.2, kept.3),
+        (album(4), "missing", missing_since, old_identity)
+    );
+    assert_ne!(kept.4, copy_rel(4, SOUR_TIMES), "off the path");
+    assert_eq!(
+        rig.history(&x_of(4)).await,
+        (x_of(4), album(4).to_owned(), true)
+    );
+    let on_copy: i64 = rig
+        .scalar(&format!(
+            "SELECT COUNT(*) FROM local_tracks WHERE local_album_id = '{}'",
+            album(4)
+        ))
+        .await;
+    assert_eq!(on_copy, 2, "nothing joins the copy");
+
+    // An excluded row at the path is never brought back: the file joins
+    // under a new id, placed, and the row keeps its id, off the path.
+    ask(5, "t-join-5").await;
+    rig.land(vec![rig.landed("t-join-5", &ed(5).new, 1, FIXTURES[1])])
+        .await;
+    let (track, on, _, _, availability) = rig.row_at(&copy_rel(5, SOUR_TIMES)).await;
+    assert_ne!(track, x_of(5));
+    assert_eq!((on.as_str(), availability.as_str()), (album(5), "indexed"));
+    assert_eq!(rig.identity(&track).await, Some(placed_on(&ed(5).new, 1)));
+    let excluded: (String, String) =
+        sqlx::query_as("SELECT availability, relative_path FROM local_tracks WHERE id = ?1")
+            .bind(x_of(5))
+            .fetch_one(rig.acquire.db.pool())
+            .await
+            .expect("excluded row");
+    assert_eq!(excluded.0, "excluded");
+    assert_ne!(excluded.1, copy_rel(5, SOUR_TIMES));
+
+    // A custom edition sealed after the ask: the file joins, unplaced.
+    ask(7, "t-join-7").await;
+    rig.sql(&format!(
+        "INSERT INTO library_custom_edition_manifests (id, local_album_id, version, \
+         release_group_mbid, album_title, album_artist_name, source_album_revision, \
+         input_revision, content_hash, sealed_by_user_id, sealed_at) \
+         VALUES ('custom-7', '{0}', 1, '{1}', 'T', 'A', 1, 'i', 'h', 'u-ada', 0); \
+         INSERT INTO library_custom_edition_active (local_album_id, manifest_id, \
+         activated_at) VALUES ('{0}', 'custom-7', 0);",
+        album(7),
+        ed(7).group
+    ));
+    rig.land(vec![rig.landed("t-join-7", &ed(7).new, 1, FIXTURES[1])])
+        .await;
+    let (track, on, _, locked, _) = rig.row_at(&copy_rel(7, SOUR_TIMES)).await;
+    assert_eq!((on.as_str(), locked), (album(7), 1));
+    assert_eq!(rig.identity(&track).await, None);
+
+    // The copy merged into another after the ask: the file follows it and
+    // is placed there when it names the same edition.
+    ask(8, "t-join-8").await;
+    rig.sql(&format!(
+        "UPDATE local_tracks SET local_album_id = '{1}' WHERE local_album_id = '{0}'; \
+         UPDATE local_albums SET retired_into_album_id = '{1}' WHERE id = '{0}'; \
+         UPDATE local_album_external_identities SET release_group_mbid = '{2}', \
+         release_mbid = '{3}' WHERE local_album_id = '{1}';",
+        album(8),
+        album(9),
+        ed(8).group,
+        ed(8).new.id
+    ));
+    rig.land(vec![rig.landed("t-join-8", &ed(8).new, 1, FIXTURES[1])])
+        .await;
+    // Its files now sit in two folders: the file goes where the template
+    // puts it.
+    let (track, on, _, _, _) = rig
+        .row_at(&format!("Portishead/Dummy 8/{SOUR_TIMES}"))
+        .await;
+    assert_eq!(on, album(9), "on the album its copy joined");
+    assert_eq!(rig.identity(&track).await, Some(placed_on(&ed(8).new, 1)));
+
+    // A later scan files nothing elsewhere.
+    rig.scan().await;
+    for (s, rel) in [(1, copy_rel(1, SOUR_TIMES)), (2, copy_rel(2, SOUR_TIMES))] {
+        let (track, on, _, _, availability) = rig.row_at(&rel).await;
+        assert_eq!((on.as_str(), availability.as_str()), (album(s), "indexed"));
+        assert_eq!(rig.identity(&track).await, Some(placed_on(&ed(s).new, 1)));
+    }
+}
+
+// An automatic edition: the fetched track joins the copy and the import's
+// own seal places it on that edition, without confirming the match.
+#[tokio::test]
+async fn a_fetched_track_joins_a_copy_matched_automatically() {
+    let lengths = fixture_lengths();
+    let e = editions(1, &lengths);
+    let rig = join_rig(vec![e.old.clone(), e.new.clone()]).await;
+    rig.plant(&copy_rel(1, MYSTERONS), 0, &e.old);
+    rig.scan().await;
+    let album = rig.album_of(&rig.track_at(&copy_rel(1, MYSTERONS)));
+    rig.set_edition(&album, &e.group, &e.new.id, "automatic");
+    let before = rig.album_count().await;
+    rig.ask(
+        "t-auto",
+        &e.group,
+        &e.new.title,
+        "user",
+        Some(&e.new.id),
+        Some((&album, &e.new.id)),
+        &[(2, 1)],
+    )
+    .await;
+    rig.land(vec![rig.landed("t-auto", &e.new, 1, FIXTURES[1])])
+        .await;
+    let (track, on, _, locked, _) = rig.row_at(&copy_rel(1, SOUR_TIMES)).await;
+    assert_eq!((on.as_str(), locked), (album.as_str(), 1));
+    assert_eq!(rig.album_count().await, before);
+    let identity = rig.identity(&track).await.expect("sealed");
+    assert_eq!(
+        (identity.2.as_deref(), identity.5.as_str()),
+        (
+            Some(placed_on(&e.new, 1).2.as_deref().unwrap_or_default()),
+            "automatic"
+        )
+    );
+    assert_eq!(
+        rig.album_identity(&album).await.4,
+        3,
+        "the match is not resealed"
+    );
+}
+
+// An upgrade lands in the album its old copy was on, on the edition a
+// person chose, even when the copy's files carry another edition's tags;
+// the old copy's play follows. With two copies of the album, "Get missing
+// tracks" on one matches that copy's edition and leaves the other alone,
+// even when the other holds the recording.
+#[tokio::test]
+async fn upgrades_and_second_copies_keep_to_their_album() {
+    let lengths = fixture_lengths();
+    let e = editions(1, &lengths);
+    let two = editions(2, &lengths);
+    // Copy B of album 2 is on Q, an edition of its own.
+    let q = edition(2, 0, 5, &[&[0, 1]], &lengths);
+    let rig = join_rig(vec![
+        e.old.clone(),
+        e.new.clone(),
+        two.old.clone(),
+        two.new.clone(),
+        q.clone(),
+    ])
+    .await;
+
+    // Upgrade: "Mysterons" is an mp3 on NEW's track 1, with a play.
+    let mp3 = copy_rel(1, "0101 Mysterons.mp3");
+    rig.plant_from(&mp3, "mp3_full_01.mp3", 0, &e.old);
+    rig.plant(&copy_rel(1, SOUR_TIMES), 1, &e.old);
+    // Copy B (older) of album 2, then copy A.
+    rig.plant(&copy_rel(20, MYSTERONS), 0, &two.old);
+    rig.plant(&copy_rel(20, SOUR_TIMES), 1, &two.old);
+    rig.scan().await;
+    rig.plant(&copy_rel(21, MYSTERONS), 0, &two.old);
+    rig.scan().await;
+    let old = rig.track_at(&mp3);
+    let album = rig.album_of(&old);
+    rig.set_edition(&album, &e.group, &e.new.id, "manual");
+    rig.place(&old, &e.new, 0, "manual");
+    rig.place(&rig.track_at(&copy_rel(1, SOUR_TIMES)), &e.new, 1, "manual");
+    rig.listen(&old);
+    let copy_b = rig.album_of(&rig.track_at(&copy_rel(20, MYSTERONS)));
+    let copy_a = rig.album_of(&rig.track_at(&copy_rel(21, MYSTERONS)));
+    assert_ne!(copy_a, copy_b, "two copies");
+    rig.set_edition(&copy_b, &two.group, &q.id, "manual");
+    rig.set_edition(&copy_a, &two.group, &two.new.id, "manual");
+    rig.sql(&format!(
+        "UPDATE local_albums SET created_at = 1 WHERE id = '{copy_b}'; \
+         UPDATE local_albums SET created_at = 2 WHERE id = '{copy_a}';"
+    ));
+    let before = rig.album_count().await;
+
+    rig.ask(
+        "t-upgrade",
+        &e.group,
+        &e.new.title,
+        "upgrade",
+        None,
+        None,
+        &[],
+    )
+    .await;
+    rig.land(vec![rig.landed(
+        "t-upgrade",
+        &e.new,
+        0,
+        "flac_full_01.flac",
+    )])
+    .await;
+    let (flac, on, _, locked, _) = rig.row_at(&copy_rel(1, MYSTERONS)).await;
+    assert_ne!(flac, old);
+    assert_eq!((on.as_str(), locked), (album.as_str(), 1));
+    assert_eq!(rig.album_count().await, before);
+    assert_eq!(rig.identity(&flac).await, Some(placed_on(&e.new, 0)));
+    assert!(
+        !rig.music.join(&mp3).exists(),
+        "the mp3 is in the recycle bin"
+    );
+    assert_eq!(
+        rig.history(&old).await.0,
+        flac,
+        "the play follows the new file"
+    );
+    let alias: String = rig
+        .scalar(&format!(
+            "SELECT local_track_id FROM local_track_aliases WHERE alias = '{old}'"
+        ))
+        .await;
+    assert_eq!(alias, flac, "the mp3's id opens the flac");
+
+    // Two copies: "Get missing tracks" on copy A.
+    let b_before: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, relative_path FROM local_tracks WHERE local_album_id = ?1 ORDER BY id",
+    )
+    .bind(&copy_b)
+    .fetch_all(rig.acquire.db.pool())
+    .await
+    .expect("copy B");
+    rig.ask(
+        "t-copy-a",
+        &two.group,
+        &two.new.title,
+        "user",
+        Some(&two.new.id),
+        Some((&copy_a, &two.new.id)),
+        &[(2, 1)],
+    )
+    .await;
+    rig.land(vec![rig.landed("t-copy-a", &two.new, 1, FIXTURES[1])])
+        .await;
+    let (track, on, _, _, _) = rig.row_at(&copy_rel(21, SOUR_TIMES)).await;
+    assert_eq!(on, copy_a);
+    assert_eq!(rig.identity(&track).await, Some(placed_on(&two.new, 1)));
+    let b_after: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, relative_path FROM local_tracks WHERE local_album_id = ?1 ORDER BY id",
+    )
+    .bind(&copy_b)
+    .fetch_all(rig.acquire.db.pool())
+    .await
+    .expect("copy B");
+    assert_eq!(b_after, b_before, "copy B is untouched");
+}
+
+// A joined import stopped before its catalog commit is finished by
+// recovery exactly as it would have been: joined and placed. Until then
+// the same download landing again is refused and leaves the record that
+// recovery reads alone; the staging folder goes once the journal settles.
+#[tokio::test]
+async fn a_joined_import_recovers_joined() {
+    let lengths = fixture_lengths();
+    let e = editions(1, &lengths);
+    let x_case = editions(2, &lengths);
+    let rig = join_rig(vec![
+        e.old.clone(),
+        e.new.clone(),
+        x_case.old.clone(),
+        x_case.new.clone(),
+    ])
+    .await;
+    rig.plant(&copy_rel(1, MYSTERONS), 0, &e.old);
+    rig.plant(&copy_rel(2, MYSTERONS), 0, &x_case.old);
+    rig.plant(&copy_rel(2, SOUR_TIMES), 1, &x_case.old);
+    rig.scan().await;
+    let x = rig.track_at(&copy_rel(2, SOUR_TIMES));
+    std::fs::remove_file(rig.music.join(copy_rel(2, SOUR_TIMES))).expect("file gone");
+    rig.scan().await;
+    let album = rig.album_of(&rig.track_at(&copy_rel(1, MYSTERONS)));
+    let album_x = rig.album_of(&rig.track_at(&copy_rel(2, MYSTERONS)));
+    rig.set_edition(&album, &e.group, &e.new.id, "manual");
+    rig.set_edition(&album_x, &x_case.group, &x_case.new.id, "manual");
+    rig.sql(&format!(
+        "UPDATE local_tracks SET availability = 'excluded', manual_excluded = 1 WHERE id = '{x}'"
+    ));
+    let staging = rig.music.join(".droppedneedle-management-import");
+
+    for (task, s, eds, copy) in [
+        ("t-crash", 1u16, &e, &album),
+        ("t-crash-x", 2, &x_case, &album_x),
+    ] {
+        rig.ask(
+            task,
+            &eds.group,
+            &eds.new.title,
+            "user",
+            Some(&eds.new.id),
+            Some((copy, &eds.new.id)),
+            &[(2, 1)],
+        )
+        .await;
+        rig.library.arm_publish_crash(Some(
+            droppedneedle::library::publish::CrashPoint::BeforeCatalogCommit,
+        ));
+        let landed = rig.landed(task, &eds.new, 1, FIXTURES[1]);
+        let row = rig.task(task).await;
+        let manifest = droppedneedle::acquire::downloads::ManifestCodec
+            .decode(&serde_json::to_vec(&rig.manifest(task)).expect("bytes"))
+            .expect("manifest");
+        let landing = |paths: Vec<PathBuf>| Landed {
+            files: paths
+                .into_iter()
+                .map(|path| Reported { path, size: None })
+                .collect(),
+            mounts: vec![rig.downloads.clone()],
+        };
+        rig.acquire
+            .landing
+            .land(
+                &row,
+                None,
+                Some(&manifest),
+                landing(vec![landed.clone()]),
+                false,
+            )
+            .await;
+        rig.library.arm_publish_crash(None);
+        let folder = staging.join(task);
+        let record = std::fs::read(folder.join("provenance.json")).expect("record kept");
+
+        // The same download lands again before recovery.
+        let again = rig.landed(task, &eds.new, 1, FIXTURES[1]);
+        let report = rig
+            .acquire
+            .landing
+            .land(&row, None, Some(&manifest), landing(vec![again]), false)
+            .await;
+        assert!(
+            matches!(report.result, LandingResult::Rejected(_)),
+            "{:?}",
+            report.result
+        );
+        assert_eq!(
+            std::fs::read(folder.join("provenance.json")).expect("record kept"),
+            record,
+            "the record recovery reads is unchanged"
+        );
+
+        rig.library.publish_tick().expect("recovery runs");
+        let (track, on, _, locked, availability) = rig.row_at(&copy_rel(s, SOUR_TIMES)).await;
+        assert_eq!(
+            (on.as_str(), locked, availability.as_str()),
+            (copy.as_str(), 1, "indexed")
+        );
+        assert_eq!(rig.identity(&track).await, Some(placed_on(&eds.new, 1)));
+        if s == 2 {
+            assert_ne!(track, x, "the excluded row is not brought back");
+            let gone: String = rig
+                .scalar(&format!(
+                    "SELECT relative_path FROM local_tracks WHERE id = '{x}'"
+                ))
+                .await;
+            assert_ne!(gone, copy_rel(2, SOUR_TIMES));
+        }
+    }
+    rig.library.run_recovery().await;
+    assert!(!staging.exists(), "staging removed once settled");
+}
+
+// The release track a file is fetched for is already held by another
+// file of the copy: the new file joins the copy unplaced, and the holder
+// keeps its place.
+#[tokio::test]
+async fn a_held_release_track_is_not_given_away() {
+    use droppedneedle::acquire::landing::ports::{
+        ImportFile, ImportOrigin, ImportRequest, LandingLibrary,
+    };
+    let lengths = fixture_lengths();
+    let e = editions(1, &lengths);
+    let rig = join_rig(vec![e.old.clone(), e.new.clone()]).await;
+    rig.plant(&copy_rel(1, MYSTERONS), 0, &e.old);
+    rig.plant(&copy_rel(1, "bonus.flac"), 1, &e.old);
+    rig.scan().await;
+    let holder = rig.track_at(&copy_rel(1, "bonus.flac"));
+    let album = rig.album_of(&holder);
+    rig.set_edition(&album, &e.group, &e.new.id, "manual");
+    rig.place(&holder, &e.new, 1, "manual");
+    let port = LibraryLanding::new(
+        rig.library.clone(),
+        Arc::new(Releases(vec![e.new.clone()])),
+        rig.acquire.db.pool().clone(),
+    );
+    let file = rig.landed("t-held", &e.new, 1, FIXTURES[1]);
+    port.import(ImportRequest {
+        task_id: "t-held".to_owned(),
+        origin: ImportOrigin::Download,
+        staging: None,
+        release: e.new.clone(),
+        join: Some(droppedneedle::library::import::ImportJoin {
+            album_id: album.clone(),
+            release_mbid: e.new.id.clone(),
+        }),
+        files: vec![ImportFile {
+            path: file,
+            track: 1,
+        }],
+        extras: Vec::new(),
+    })
+    .await
+    .expect("import publishes");
+    let (track, on, _, locked, _) = rig.row_at(&copy_rel(1, SOUR_TIMES)).await;
+    assert_eq!((on.as_str(), locked), (album.as_str(), 1));
+    assert_eq!(rig.identity(&track).await, None);
+    assert_eq!(rig.identity(&holder).await, Some(placed_on(&e.new, 1)));
+}
+
+// The album target rewrite, which fills in an edition's tracklist before
+// the search, keeps the copy a download was fetched for while the
+// manifest's release is the one being searched, and drops it otherwise.
+#[tokio::test]
+async fn the_album_target_keeps_the_planned_copy_only_for_its_release() {
+    let lengths = fixture_lengths();
+    let e = editions(1, &lengths);
+    let rig = join_rig(vec![e.new.clone(), e.new2.clone()]).await;
+    rig.ask(
+        "t-same",
+        &e.group,
+        &e.new.title,
+        "user",
+        Some(&e.new.id),
+        Some(("al-1", &e.new.id)),
+        &[(2, 1)],
+    )
+    .await;
+    let manifest = rig.manifest("t-same");
+    assert_eq!(
+        manifest["expected_tracks"].as_array().map(Vec::len),
+        Some(2),
+        "the rewrite ran"
+    );
+    assert_eq!(
+        manifest["planned_album"],
+        serde_json::json!({"album_id": "al-1", "release_mbid": e.new.id})
+    );
+
+    // The task now searches another edition than the manifest names.
+    rig.ask(
+        "t-other",
+        &e.group,
+        &e.new.title,
+        "user",
+        Some(&e.new.id),
+        Some(("al-1", &e.new.id)),
+        &[(2, 1)],
+    )
+    .await;
+    let details = droppedneedle::acquire::downloads::store::TaskDetails {
+        release_mbid: Some(e.new2.id.clone()),
+        ..Default::default()
+    };
+    rig.acquire
+        .journal
+        .run("test.details", move |store| {
+            store.set_task_details("t-other", &details, 2.0)
+        })
+        .await
+        .expect("details");
+    let manifest = rig.manifest("t-other");
+    let path = droppedneedle::acquire::downloads::ManifestCodec::path(
+        &rig.acquire.staging_root,
+        "t-other",
+    );
+    let mut stale = manifest.clone();
+    stale["expected_tracks"] = serde_json::json!([]);
+    std::fs::write(&path, stale.to_string()).expect("manifest written");
+    let row = rig.task("t-other").await;
+    rig.targets.target(&row).await.expect("album target");
+    let manifest = rig.manifest("t-other");
+    assert_eq!(manifest["release_mbid"], serde_json::json!(e.new2.id));
+    assert!(manifest.get("planned_album").is_none(), "{manifest}");
 }

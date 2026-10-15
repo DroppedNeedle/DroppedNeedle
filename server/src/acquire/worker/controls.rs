@@ -134,6 +134,7 @@ impl DownloadWorker {
             ));
         };
         let source = task.clone();
+        let next = row.clone();
         let now = now_unix_f64();
         let outcome = self
             .journal
@@ -144,7 +145,7 @@ impl DownloadWorker {
                     return Ok(if existing.status.is_terminal() {
                         None
                     } else {
-                        Some(existing.id)
+                        Some((existing.id, false))
                     });
                 }
                 if source.download_type == "album" && !source.release_group_mbid.is_empty() {
@@ -152,15 +153,19 @@ impl DownloadWorker {
                 }
                 store.spawn_successor(&source, &row, now)?;
                 store.relink_request(&source.id, &row.id)?;
-                Ok(Some(row.id))
+                Ok(Some((row.id, true)))
             })
             .await
             .map_err(RetryError::Journal)?;
-        let Some(successor) = outcome else {
+        let Some((successor, spawned)) = outcome else {
             return Err(RetryError::Conflict(
                 "This download was already retried. Retry the newer attempt instead.",
             ));
         };
+        if spawned {
+            let staging_root = self.current_config().staging_root;
+            super::write_successor_manifest(&staging_root, &task.id, &next).await;
+        }
         tracing::info!(task_id = %task.id, %successor, "download retried by hand");
         self.wake();
         Ok(successor)

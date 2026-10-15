@@ -169,6 +169,50 @@ pub async fn run_startup_recovery(
     Ok(report)
 }
 
+/// A retry's manifest skeleton, from its source's manifest: the release
+/// it fetches, the tracks it asks for and the library copy it is for, so
+/// the retry fetches and files the same as the first attempt. Nothing
+/// when the source has no manifest. Best effort, like the dispatch
+/// skeleton.
+async fn write_successor_manifest(staging_root: &Path, source_id: &str, successor: &NewTask) {
+    let Some(from) = read_manifest(staging_root, source_id).await else {
+        return;
+    };
+    let task_id = successor.id.clone();
+    let manifest = DownloadManifest {
+        task_id: successor.id.clone(),
+        release_group_mbid: from.release_group_mbid,
+        artist_name: from.artist_name,
+        album_title: from.album_title,
+        naming_template: String::new(),
+        target_files: Vec::new(),
+        source_username: None,
+        handle: None,
+        expected_tracks: Vec::new(),
+        release_mbid: from.release_mbid,
+        artist_mbid: None,
+        year: None,
+        is_track: from.is_track,
+        hold_on_wrong_track: false,
+        origin: successor.origin.clone(),
+        requested_by_user_id: None,
+        attempt_id: None,
+        track_album: None,
+        album_wanted: from.album_wanted,
+        planned_album: from.planned_album,
+    };
+    let root = staging_root.to_path_buf();
+    match tokio::task::spawn_blocking(move || ManifestCodec.write(&root, &manifest)).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => {
+            tracing::warn!(%task_id, %error, "retry manifest write failed");
+        }
+        Err(error) => {
+            tracing::warn!(%task_id, %error, "retry manifest write did not run");
+        }
+    }
+}
+
 /// A task's manifest, when present and readable.
 async fn read_manifest(staging_root: &Path, task_id: &str) -> Option<DownloadManifest> {
     let path = ManifestCodec::checked_path(staging_root, task_id)?;
@@ -1028,6 +1072,7 @@ impl DownloadWorker {
                 attempt_id: None,
                 track_album: None,
                 album_wanted: Vec::new(),
+                planned_album: None,
             });
         manifest.handle = Some(super::downloads::manifest::TaskHandle {
             source: handle.source.clone(),
@@ -1409,6 +1454,7 @@ impl DownloadWorker {
                 continue;
             };
             let successor = row.id.clone();
+            let next = row.clone();
             let source = task.clone();
             let spawned = self
                 .step("downloads.retry", move |store| {
@@ -1426,6 +1472,7 @@ impl DownloadWorker {
                 })
                 .await;
             if spawned == Some(true) {
+                write_successor_manifest(&pass.config.staging_root, &task.id, &next).await;
                 tracing::info!(
                     task_id = %task.id,
                     successor = %successor,

@@ -211,6 +211,15 @@ impl Targets {
                         Some(manifest) => manifest,
                         None => self.manifest_or_new(task).await,
                     };
+                    // The copy fetched for belongs to the release being
+                    // searched (the one MusicBrainz redirected it to too).
+                    let kept = manifest.release_mbid.as_deref().is_some_and(|held| {
+                        held.eq_ignore_ascii_case(release_mbid)
+                            || held.eq_ignore_ascii_case(&found.id)
+                    });
+                    if !kept {
+                        manifest.planned_album = None;
+                    }
                     manifest.release_mbid = Some(found.id.clone());
                     manifest.expected_tracks = tracklist.clone();
                     self.write_manifest(manifest).await;
@@ -471,6 +480,7 @@ impl Targets {
                 attempt_id: None,
                 track_album: None,
                 album_wanted: Vec::new(),
+                planned_album: None,
             },
         }
     }

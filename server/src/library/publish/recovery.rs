@@ -721,12 +721,18 @@ fn resume_precommit<C: Catalog>(
                         .source
                         .as_ref()
                         .and_then(|(root, rel)| sandbox.resolve_no_symlink(root, rel).ok())
-                        .map(|staged| crate::library::import::recovered_provenance(&staged))
+                        .map(|staged| {
+                            crate::library::import::recovered_provenance(
+                                &staged, bundle_id, track_id,
+                            )
+                        })
                         .unwrap_or_default();
                     super::planner::Adoption::recovered(
                         provenance.task_id,
                         provenance.source_path,
                         provenance.ingest_source,
+                        provenance.join,
+                        provenance.track,
                     )
                 }),
                 replaces: journal.replaces.as_ref().and_then(|replaced| {

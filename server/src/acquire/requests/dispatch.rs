@@ -65,6 +65,9 @@ pub struct DispatchRequest {
     /// are fetched, from the best whole-album source. Empty fetches the
     /// whole album.
     pub wanted: Vec<(u32, u32)>,
+    /// For an album on `release_mbid`: the library copy it is fetched
+    /// for, which the files then join.
+    pub planned_album: Option<crate::acquire::downloads::manifest::PlannedAlbum>,
     /// Caller-supplied idempotency key. A repeat dispatch with the same
     /// key answers the original task instead of minting a duplicate;
     /// `None` always mints fresh.

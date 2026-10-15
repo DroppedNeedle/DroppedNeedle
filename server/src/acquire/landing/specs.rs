@@ -131,6 +131,19 @@ pub struct Target {
     /// asked for. An owned track among them is replaced when the new file
     /// is strictly better, as an upgrade would.
     pub album_wanted: Vec<(u32, u32)>,
+    /// The library copy the download was fetched for: its release is the
+    /// one matched, the library's holdings are read from that copy only,
+    /// and the files join it.
+    pub planned_album: Option<crate::acquire::downloads::manifest::PlannedAlbum>,
+}
+
+impl Target {
+    /// The library copy the download was fetched for, by album id.
+    pub fn planned_album_id(&self) -> Option<&str> {
+        self.planned_album
+            .as_ref()
+            .map(|planned| planned.album_id.as_str())
+    }
 }
 
 /// The quality policy a landing is judged against.

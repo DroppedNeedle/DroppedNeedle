@@ -30,30 +30,37 @@ pub(crate) const OWNED_TRACKS_FROM: &str = "FROM local_tracks t \
      WHERE t.availability = 'indexed' \
        AND (lower(ai.release_group_mbid) = ?1 OR lower(t.embedded_release_group_mbid) = ?1)";
 
+/// [`OWNED_TRACKS_FROM`] kept to one library album when `?2` names one,
+/// followed to the album it was merged into.
+const IN_ALBUM: &str = " AND (?2 IS NULL OR b.id = (SELECT COALESCE(retired_into_album_id, id) \
+     FROM local_albums WHERE id = ?2))";
+
 /// Indexed tracks of one release group: release track and recording
 /// (sealed identity first, then the file's own tags) and quality facts.
 fn group_tracks_sql() -> String {
     format!(
         "SELECT lower(COALESCE(ti.release_track_mbid, t.embedded_release_track_mbid, '')), \
          lower(COALESCE(ti.recording_mbid, t.embedded_recording_mbid, '')), \
-         t.file_format, t.bit_rate, t.bit_depth {OWNED_TRACKS_FROM}"
+         t.file_format, t.bit_rate, t.bit_depth {OWNED_TRACKS_FROM}{IN_ALBUM}"
     )
 }
 
 type GroupTrack = (String, String, String, Option<i64>, Option<i64>);
 
 /// Every indexed copy in a group, with the album it sits in, that album's
-/// release (sealed identity first, then the file's own tags), the copy's
-/// release track and recording, and its quality facts.
+/// release (sealed identity first, then the file's own tags) and the
+/// release its identity names, the copy's release track and recording,
+/// and its quality facts.
 fn group_copies_sql() -> String {
     format!(
         "SELECT t.id AS track_id, b.id AS album_id, \
          lower(COALESCE(ai.release_mbid, t.embedded_release_mbid, '')) AS release_mbid, \
+         COALESCE(ai.release_mbid, '') AS album_release_mbid, \
          lower(COALESCE(ti.release_track_mbid, t.embedded_release_track_mbid, '')) \
            AS release_track_mbid, \
          lower(COALESCE(ti.recording_mbid, t.embedded_recording_mbid, '')) AS recording_mbid, \
          t.file_format AS format, t.bit_rate AS bitrate, t.bit_depth AS depth \
-         {OWNED_TRACKS_FROM}"
+         {OWNED_TRACKS_FROM}{IN_ALBUM}"
     )
 }
 
@@ -63,6 +70,8 @@ pub struct GroupCopy {
     pub track_id: String,
     pub album_id: String,
     pub release_mbid: String,
+    /// The release the album's identity names; empty when it has none.
+    pub album_release_mbid: String,
     pub release_track_mbid: String,
     pub recording_mbid: String,
     pub format: String,
@@ -137,9 +146,10 @@ impl LibraryLanding {
         }
     }
 
-    async fn group_tracks(&self, release_group_mbid: &str) -> Vec<GroupTrack> {
+    async fn group_tracks(&self, release_group_mbid: &str, album: Option<&str>) -> Vec<GroupTrack> {
         match sqlx::query_as::<_, GroupTrack>(&group_tracks_sql())
             .bind(release_group_mbid.to_ascii_lowercase())
+            .bind(album)
             .fetch_all(&self.pool)
             .await
         {
@@ -177,10 +187,15 @@ impl LandingLibrary for LibraryLanding {
         })
     }
 
-    fn owned<'a>(&'a self, release_group_mbid: &'a str) -> BoxFuture<'a, OwnedTracks> {
+    fn owned<'a>(
+        &'a self,
+        release_group_mbid: &'a str,
+        album: Option<&'a str>,
+    ) -> BoxFuture<'a, OwnedTracks> {
         Box::pin(async move {
             let mut owned = OwnedTracks::default();
-            for (release_track, recording, ..) in self.group_tracks(release_group_mbid).await {
+            for (release_track, recording, ..) in self.group_tracks(release_group_mbid, album).await
+            {
                 if !release_track.is_empty() {
                     owned.release_tracks.insert(release_track);
                 }
@@ -192,9 +207,13 @@ impl LandingLibrary for LibraryLanding {
         })
     }
 
-    fn held_tier<'a>(&'a self, release_group_mbid: &'a str) -> BoxFuture<'a, Option<String>> {
+    fn held_tier<'a>(
+        &'a self,
+        release_group_mbid: &'a str,
+        album: Option<&'a str>,
+    ) -> BoxFuture<'a, Option<String>> {
         Box::pin(async move {
-            let rows = self.group_tracks(release_group_mbid).await;
+            let rows = self.group_tracks(release_group_mbid, album).await;
             let tiers: HashSet<&'static str> = rows
                 .iter()
                 .map(|(_, _, format, bitrate, depth)| tier_of(format, *bitrate, *depth))
@@ -206,6 +225,7 @@ impl LandingLibrary for LibraryLanding {
     fn owned_copies<'a>(
         &'a self,
         release_group_mbid: &'a str,
+        album: Option<&'a str>,
         release_mbid: &'a str,
         release_track_mbid: &'a str,
         recording_mbid: &'a str,
@@ -213,6 +233,7 @@ impl LandingLibrary for LibraryLanding {
         Box::pin(async move {
             let rows: Vec<GroupCopy> = match sqlx::query_as(&group_copies_sql())
                 .bind(release_group_mbid.to_ascii_lowercase())
+                .bind(album)
                 .fetch_all(&self.pool)
                 .await
             {
@@ -228,6 +249,8 @@ impl LandingLibrary for LibraryLanding {
                 .filter(|row| seen.insert(row.track_id.clone()))
                 .map(|row| OwnedCopy {
                     track_id: row.track_id.clone(),
+                    album_id: row.album_id.clone(),
+                    release_mbid: row.album_release_mbid.clone(),
                     tier: tier_of(&row.format, row.bitrate, row.depth),
                 })
                 .collect()
@@ -365,11 +388,13 @@ impl LandingLibrary for LibraryLanding {
                     })
                     .collect(),
             };
-            let done = tokio::task::spawn_blocking(move || library.import_download(&import))
-                .await
-                .map_err(|error| {
-                    ImportFailure::LocalFault(format!("import did not run: {error}"))
-                })?;
+            let join = request.join;
+            let done =
+                tokio::task::spawn_blocking(move || library.import_download_joined(&import, join))
+                    .await
+                    .map_err(|error| {
+                        ImportFailure::LocalFault(format!("import did not run: {error}"))
+                    })?;
             match done {
                 Ok(album) => Ok(ImportReceipt {
                     bundle_id: album.bundle_id,

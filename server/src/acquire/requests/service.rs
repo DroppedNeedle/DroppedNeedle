@@ -2332,6 +2332,7 @@ fn stored_dispatch(
         origin,
         release_mbid: record.release_mbid.clone(),
         wanted: Vec::new(),
+        planned_album: None,
         // Owner + key + origin + generation: repeating the same decision
         // (double approval, crash before the task link lands) answers the
         // original task; any intervening write bumps the generation and

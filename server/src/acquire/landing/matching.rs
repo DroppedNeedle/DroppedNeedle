@@ -185,7 +185,9 @@ pub async fn find(
     let owned = if target.release_group_mbid.is_empty() {
         OwnedTracks::default()
     } else {
-        library.owned(&target.release_group_mbid).await
+        library
+            .owned(&target.release_group_mbid, target.planned_album_id())
+            .await
     };
     let releases = match recall(library, target, &local).await {
         Ok(releases) => releases,

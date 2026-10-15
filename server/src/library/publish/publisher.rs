@@ -14,14 +14,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, Transaction};
 
 use super::journal::{FileJournal, JournalKind, JournalReplacement, JournalState, JournalStore};
 use super::paths::Sandbox;
 use super::place::Original;
 use super::planner::{
-    CapabilityGate, CollisionGate, DiskPreflight, PlanBundle, PlanKind, SealError, SealRecheck,
-    SealedPreview, SpaceProbe,
+    AlbumJoin, CapabilityGate, CollisionGate, DiskPreflight, JoinedTrack, PlanBundle, PlanKind,
+    SealError, SealRecheck, SealedPreview, SpaceProbe,
 };
 use super::snapshots::{BlobStore, SnapshotStore, sha256_hex};
 use super::tags_seam::TagDocument;
@@ -96,8 +96,14 @@ pub trait Catalog {
     ) -> Result<Option<(String, String, String, String)>, PublishError>;
     /// Commit one bundle: CAS on the expected revision, move every track
     /// row (and its album's root) to its published location, bump the
-    /// catalog once. Track and album ids stay as they are.
-    fn commit_bundle(&self, conn: &Connection, commit: &BundleCommit) -> Result<(), PublishError>;
+    /// catalog once. Track and album ids stay as they are. Files an
+    /// import fetched for a library album join it, and are placed on its
+    /// edition in the same transaction.
+    fn commit_bundle(
+        &self,
+        tx: &Transaction<'_>,
+        commit: &BundleCommit,
+    ) -> Result<(), PublishError>;
     /// Mark a track missing so streaming and search stay accurate when
     /// committed bytes cannot be recovered.
     fn mark_missing(&self, conn: &Connection, track_id: &str) -> Result<(), PublishError>;
@@ -161,7 +167,12 @@ impl Catalog for SqliteCatalog {
         .map_err(PublishError::from)
     }
 
-    fn commit_bundle(&self, conn: &Connection, commit: &BundleCommit) -> Result<(), PublishError> {
+    fn commit_bundle(
+        &self,
+        tx: &Transaction<'_>,
+        commit: &BundleCommit,
+    ) -> Result<(), PublishError> {
+        let conn: &Connection = tx;
         let changed = conn.execute(
             "UPDATE library_catalog_revision SET value = value + 1
              WHERE singleton = 1 AND value = ?1",
@@ -196,12 +207,24 @@ impl Catalog for SqliteCatalog {
                 )?
             });
         }
+        // Joined files to place, by album, with the release they join.
+        let mut placing: BTreeMap<String, (String, Vec<(String, JoinedTrack)>)> = BTreeMap::new();
         for (track, written) in commit.tracks.iter().zip(&written) {
             if let Some((replaced, recycle_to)) = &track.replaces {
                 retire_replaced(conn, track, replaced, recycle_to, now)?;
             }
             if let Some(adoption) = &track.adopt {
-                adopt_track(conn, track, adoption)?;
+                let joined = adopt_track(conn, track, adoption)?;
+                if let (Some(joined), Some(join), Some(on)) =
+                    (joined, &adoption.join, &adoption.track)
+                    && joined.placed
+                {
+                    placing
+                        .entry(joined.album_id)
+                        .or_insert_with(|| (join.release_mbid.clone(), Vec::new()))
+                        .1
+                        .push((track.track_id.clone(), on.clone()));
+                }
             } else {
                 give_up_destination(conn, track)?;
                 move_track(conn, track)?;
@@ -226,6 +249,9 @@ impl Catalog for SqliteCatalog {
                     written
                 ],
             )?;
+        }
+        for (album, (release, files)) in &placing {
+            crate::library::operations::choice::place_imported(tx, album, release, files, now)?;
         }
         Ok(())
     }
@@ -373,16 +399,108 @@ fn move_track(conn: &Connection, track: &TrackCommit) -> Result<(), PublishError
     Ok(())
 }
 
+/// The album files fetched for a library copy go to: the copy, followed
+/// to the album it was merged into, while it still names the join's
+/// release (`placed`) or another release of its group. `None` when the
+/// album is gone, has no MusicBrainz identity or names another group: the
+/// files are then filed by their tags.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct JoinedAlbum {
+    pub album_id: String,
+    pub placed: bool,
+}
+
+pub(crate) fn joined_album(
+    conn: &Connection,
+    join: &AlbumJoin,
+) -> rusqlite::Result<Option<JoinedAlbum>> {
+    let found: Option<(String, Option<String>, Option<String>)> = conn
+        .query_row(
+            "SELECT b.id, i.release_mbid, i.release_group_mbid FROM local_albums b \
+             LEFT JOIN local_album_external_identities i \
+             ON i.local_album_id = b.id AND i.provider = 'musicbrainz' \
+             WHERE b.id = (SELECT COALESCE(retired_into_album_id, id) FROM local_albums \
+             WHERE id = ?1)",
+            rusqlite::params![join.album_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    let Some((album_id, release, group)) = found else {
+        return Ok(None);
+    };
+    let names = |held: &Option<String>, wanted: &str| {
+        !wanted.trim().is_empty()
+            && held
+                .as_deref()
+                .is_some_and(|held| held.trim().eq_ignore_ascii_case(wanted.trim()))
+    };
+    Ok(if names(&release, &join.release_mbid) {
+        Some(JoinedAlbum {
+            album_id,
+            placed: true,
+        })
+    } else if names(&group, &join.release_group_mbid) {
+        Some(JoinedAlbum {
+            album_id,
+            placed: false,
+        })
+    } else {
+        None
+    })
+}
+
 /// Add a file the bundle brought into the library: index the published
 /// file from its own tags and header, exactly as a scan would, at the
-/// track id the plan pinned.
+/// track id the plan pinned. A file fetched for a library album joins it
+/// (see [`joined_album`]) and is locked there, as the album tools' move
+/// locks a track, so a later scan does not refile it by its tags. With a
+/// join, a row at the destination that the plan did not adopt gives up
+/// its path first ([`give_up_destination`]); a row it did adopt must
+/// still be on the joined album, and loses the track identity of the file
+/// it held. Answers where the file joined.
 fn adopt_track(
     conn: &Connection,
     track: &TrackCommit,
     adoption: &super::planner::Adoption,
-) -> Result<(), PublishError> {
+) -> Result<Option<JoinedAlbum>, PublishError> {
     use crate::library::scan::seams::ScannedTags;
+    use crate::library::scan::sqlite_store::Adopted;
     use crate::library::scan::store::CommitIndexedItem;
+
+    let joined = match &adoption.join {
+        Some(join) => joined_album(conn, join)?,
+        None => None,
+    };
+    if adoption.join.is_some() {
+        let at_path: Option<(String, String)> = conn
+            .query_row(
+                "SELECT id, local_album_id FROM local_tracks \
+                 WHERE root_id = ?1 AND relative_path = ?2",
+                rusqlite::params![track.root_id, track.rel_path],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        match at_path {
+            Some((id, album)) if id == track.track_id => {
+                if joined
+                    .as_ref()
+                    .is_none_or(|joined| joined.album_id != album)
+                {
+                    return Err(PublishError::Catalog(format!(
+                        "track {id} is no longer on the album it was fetched for"
+                    )));
+                }
+                // It described the file this one replaced.
+                conn.execute(
+                    "DELETE FROM local_track_external_identities \
+                     WHERE local_track_id = ?1 AND provider = 'musicbrainz'",
+                    rusqlite::params![id],
+                )?;
+            }
+            Some(_) => give_up_destination(conn, track)?,
+            None => {}
+        }
+    }
 
     let path = Path::new(&track.file_path);
     let meta = std::fs::symlink_metadata(path).map_err(PublishError::from)?;
@@ -402,12 +520,26 @@ fn adopt_track(
         policy_revision: adoption.policy_revision.clone(),
         verdict_counter: "new_count",
     };
-    let adopted = crate::library::scan::sqlite_store::adopt_file(conn, &item)?;
+    let adopted = crate::library::scan::sqlite_store::adopt_file(
+        conn,
+        &item,
+        &Adopted {
+            track_id: &track.track_id,
+            album_id: joined.as_ref().map(|joined| joined.album_id.as_str()),
+        },
+    )?;
     if adopted != track.track_id {
         return Err(PublishError::Catalog(format!(
             "imported file took track {adopted}, not the planned {}",
             track.track_id
         )));
+    }
+    if joined.is_some() {
+        conn.execute(
+            "UPDATE local_tracks SET membership_source = 'manual', membership_locked = 1, \
+             row_revision = row_revision + 1 WHERE id = ?1",
+            rusqlite::params![adopted],
+        )?;
     }
     // Provenance, as v2 recorded it: how the file came in, and which
     // download (if any) brought it.
@@ -421,7 +553,7 @@ fn adopt_track(
             adoption.ingest_source
         ],
     )?;
-    Ok(())
+    Ok(joined)
 }
 
 /// Crash-injection point between durable steps. Each variant names the

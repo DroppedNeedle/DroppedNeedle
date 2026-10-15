@@ -503,12 +503,22 @@ fn write_album(
     Ok(())
 }
 
+/// How an import adds its file: the track id its plan pinned, and the
+/// album it joins, if any.
+pub(crate) struct Adopted<'a> {
+    pub track_id: &'a str,
+    /// The album the file was fetched for. The file joins it as it is:
+    /// the album row keeps its own names and key.
+    pub album_id: Option<&'a str>,
+}
+
 /// Write one file's catalog rows. Returns the track id, its album id, and
 /// the album it left, if it changed albums.
 fn write_item(
     tx: &Connection,
     run_id: Option<&str>,
     item: &CommitIndexedItem,
+    adopted: Option<&Adopted<'_>>,
 ) -> rusqlite::Result<(String, String, Option<String>)> {
     let tag = &item.tags.tag;
     let header = &item.tags.header;
@@ -669,8 +679,10 @@ fn write_item(
     let legacy = membership
         .as_ref()
         .is_some_and(|(source, _)| source == "legacy_import");
-    let album_id = match (&previous, locked) {
-        (Some((_, album)), true) => album.clone(),
+    let joined = adopted.and_then(|adopted| adopted.album_id);
+    let album_id = match (&previous, locked, joined) {
+        (_, _, Some(joined)) => joined.to_owned(),
+        (Some((_, album)), true, None) => album.clone(),
         _ => resolve_album(
             tx,
             &names,
@@ -683,7 +695,7 @@ fn write_item(
             legacy,
         )?,
     };
-    if !locked {
+    if !locked && joined.is_none() {
         write_album(
             tx,
             &album_id,
@@ -701,10 +713,12 @@ fn write_item(
         )?;
     }
 
-    // A new path takes a stable id unless a moved track already holds it.
-    let track_id = match &previous {
-        Some((id, _)) => id.clone(),
-        None => {
+    // A new path takes a stable id unless a moved track already holds it;
+    // an import takes the id its plan pinned.
+    let track_id = match (&previous, adopted) {
+        (Some((id, _)), _) => id.clone(),
+        (None, Some(adopted)) => adopted.track_id.to_owned(),
+        (None, None) => {
             let stable = stable_id(&format!("track:{}:{}", item.root_id, item.relative_path));
             let taken: bool = tx
                 .prepare_cached("SELECT EXISTS(SELECT 1 FROM local_tracks WHERE id = ?1)")?
@@ -2092,7 +2106,7 @@ fn write_window(
     for item in &window.items {
         let written = if isolate {
             tx.execute("SAVEPOINT item", [])?;
-            match write_item(tx, Some(&window.run_id), item) {
+            match write_item(tx, Some(&window.run_id), item, None) {
                 Ok(written) => {
                     tx.execute("RELEASE item", [])?;
                     Ok(written)
@@ -2104,7 +2118,7 @@ fn write_window(
                 }
             }
         } else {
-            write_item(tx, Some(&window.run_id), item)
+            write_item(tx, Some(&window.run_id), item, None)
         };
         match written {
             Ok((track_id, album_id, moved_from)) => {
@@ -2353,13 +2367,15 @@ pub(crate) fn automatic_album_for(
 }
 
 /// The track id a file imported to `(root, relative path)` will get: the
-/// row already at that path (a track whose file went missing), else the
-/// stable id a scan would give a new path. `None` when that stable id is
-/// taken by another path, which only a hash collision can do.
+/// row already at that path (a track whose file went missing) when
+/// `reuse` allows it, else the stable id a scan would give a new path.
+/// `None` when that stable id is taken by another row: the row at the
+/// path when it is not reused, otherwise only a hash collision.
 pub(crate) fn adoptable_track_id(
     conn: &Connection,
     root_id: &str,
     relative_path: &str,
+    reuse: bool,
 ) -> rusqlite::Result<Option<String>> {
     let existing: Option<String> = conn
         .query_row(
@@ -2368,7 +2384,7 @@ pub(crate) fn adoptable_track_id(
             |row| row.get(0),
         )
         .optional()?;
-    if existing.is_some() {
+    if reuse && existing.is_some() {
         return Ok(existing);
     }
     let stable = stable_id(&format!("track:{root_id}:{relative_path}"));
@@ -2382,7 +2398,14 @@ pub(crate) fn adoptable_track_id(
 
 /// Index one file an import just published, inside the publisher's
 /// catalog transaction: the same rows a scan writes for a new file, so
-/// the next scan finds nothing to change. Returns the track id.
-pub(crate) fn adopt_file(tx: &Connection, item: &CommitIndexedItem) -> rusqlite::Result<String> {
-    write_item(tx, None, item).map(|(track_id, _, _)| track_id)
+/// the next scan finds nothing to change. A new row takes the id the plan
+/// pinned; a row still at the path keeps its own, which the caller
+/// checks. A file with a joined album goes there, not where its tags
+/// point. Returns the track id.
+pub(crate) fn adopt_file(
+    tx: &Connection,
+    item: &CommitIndexedItem,
+    adopted: &Adopted<'_>,
+) -> rusqlite::Result<String> {
+    write_item(tx, None, item, Some(adopted)).map(|(track_id, _, _)| track_id)
 }

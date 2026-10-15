@@ -650,6 +650,7 @@ impl DropImports {
             let copies = library
                 .owned_copies(
                     &release.release_group_id,
+                    None,
                     &release.id,
                     &release_track.id,
                     &release_track.recording_id,
@@ -769,6 +770,7 @@ impl DropImports {
                 origin: ImportOrigin::Drop,
                 staging: None,
                 release: release.clone(),
+                join: None,
                 files: import
                     .iter()
                     .map(|(file, track)| ImportFile {

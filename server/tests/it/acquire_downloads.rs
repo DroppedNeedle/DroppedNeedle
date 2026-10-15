@@ -80,6 +80,7 @@ fn manifest(task_id: &str) -> DownloadManifest {
         attempt_id: Some("a1".to_string()),
         track_album: None,
         album_wanted: Vec::new(),
+        planned_album: None,
     }
 }
 

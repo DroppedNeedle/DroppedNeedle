@@ -196,7 +196,7 @@ pub async fn assigned(
     if summary.best().is_none() {
         return review(reasons::ALBUM_NOT_FOUND);
     }
-    summary.owned = library.owned(&group).await;
+    summary.owned = library.owned(&group, None).await;
     Outcome::Matched(Box::new(summary))
 }
 
@@ -271,7 +271,7 @@ async fn chosen_edition(
         }
         summary = again;
     }
-    summary.owned = library.owned(&group).await;
+    summary.owned = library.owned(&group, None).await;
     Outcome::Matched(Box::new(summary))
 }
 

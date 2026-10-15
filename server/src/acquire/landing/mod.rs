@@ -53,6 +53,7 @@ use super::dispatch::Journal;
 use super::downloads::landing_rows::{HeldFile, ImportDecisionRow};
 use super::downloads::manifest::DownloadManifest;
 use super::downloads::store::{TaskDetails, TaskRow};
+use crate::library::import::ImportJoin;
 
 /// The library port, set once the library bundle exists.
 pub type LibrarySlot = Arc<OnceLock<Arc<dyn LandingLibrary>>>;
@@ -278,8 +279,11 @@ impl LandingService {
         target.wait_for_files = patient;
         // The album's chosen edition (manual identity, pin, best fit) is
         // the only acceptable release: matching, the missing positions and
-        // the pinned-edition check all use it.
-        if let Some(library) = &library
+        // the pinned-edition check all use it. A download fetched for one
+        // copy is matched against that copy's release instead.
+        if let Some(planned) = &target.planned_album {
+            target.release_mbid = Some(planned.release_mbid.trim().to_ascii_lowercase());
+        } else if let Some(library) = &library
             && !target.release_group_mbid.is_empty()
             && let Some(pin) = library.chosen_edition(&target.release_group_mbid).await
         {
@@ -322,7 +326,9 @@ impl LandingService {
             && let Some(library) = &library
             && !target.release_group_mbid.is_empty()
         {
-            policy.held_tier = library.held_tier(&target.release_group_mbid).await;
+            policy.held_tier = library
+                .held_tier(&target.release_group_mbid, target.planned_album_id())
+                .await;
         }
         let (checks, early) = check_files(&target, &landing, &policy);
         let acted = match (early, &library) {
@@ -478,6 +484,8 @@ impl LandingService {
         // worse leaves the library alone and the file is dropped.
         let upgrade = target.origin == "upgrade";
         let mut replaces: HashMap<usize, Vec<String>> = HashMap::new();
+        // The albums the replaced copies sit on, with their release.
+        let mut replaced_on: Vec<(String, String)> = Vec::new();
         if upgrade || !target.album_wanted.is_empty() {
             for file in &plan.owned {
                 let Some(track) = found.scored.pair_for(*file).map(|pair| pair.track) else {
@@ -496,6 +504,7 @@ impl LandingService {
                 let copies = library
                     .owned_copies(
                         &found.release.release_group_id,
+                        target.planned_album_id(),
                         &found.release.id,
                         &release_track.id,
                         &release_track.recording_id,
@@ -503,6 +512,12 @@ impl LandingService {
                     .await;
                 let tier = landing.audio[*file].tier();
                 if !copies.is_empty() && copies.iter().all(|copy| quality::beats(tier, copy.tier)) {
+                    for copy in &copies {
+                        let on = (copy.album_id.clone(), copy.release_mbid.clone());
+                        if !replaced_on.contains(&on) {
+                            replaced_on.push(on);
+                        }
+                    }
                     replaces.insert(
                         *file,
                         copies.into_iter().map(|copy| copy.track_id).collect(),
@@ -511,6 +526,19 @@ impl LandingService {
                 }
             }
         }
+        // The files join the copy they were fetched for, else the one album
+        // every replaced copy sat on.
+        let join = match (&target.planned_album, replaced_on.as_slice()) {
+            (Some(planned), _) => Some(ImportJoin {
+                album_id: planned.album_id.clone(),
+                release_mbid: planned.release_mbid.clone(),
+            }),
+            (None, [(album_id, release_mbid)]) if !release_mbid.is_empty() => Some(ImportJoin {
+                album_id: album_id.clone(),
+                release_mbid: release_mbid.clone(),
+            }),
+            _ => None,
+        };
         let heard_check = self
             .fingerprint_check(landing, found, &mut plan, &mut held, library)
             .await;
@@ -550,6 +578,7 @@ impl LandingService {
                 origin: self::ports::ImportOrigin::Download,
                 extras: Vec::new(),
                 release: found.release.clone(),
+                join: join.clone(),
                 files: plan
                     .import
                     .iter()
@@ -1069,6 +1098,23 @@ pub fn target_for(
                     .collect()
             })
             .unwrap_or_default(),
+        // Only while the manifest's release is the one asked for.
+        planned_album: manifest.and_then(|manifest| {
+            let planned = manifest.planned_album.clone()?;
+            let asked = details
+                .release_mbid
+                .as_deref()
+                .or(manifest.release_mbid.as_deref())?
+                .trim();
+            let same = [
+                Some(planned.release_mbid.as_str()),
+                manifest.release_mbid.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .any(|held| held.trim().eq_ignore_ascii_case(asked));
+            same.then_some(planned)
+        }),
     }
 }
 

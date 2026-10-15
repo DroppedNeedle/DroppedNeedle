@@ -11,6 +11,7 @@
 //! is still working. Existing files are never retagged.
 
 use super::RequestsService;
+use crate::acquire::downloads::manifest::PlannedAlbum;
 use crate::acquire::edition::local_names;
 use crate::acquire::flows::stores::UpgradeWorklist;
 use crate::acquire::requests::auth::Principal;
@@ -33,6 +34,7 @@ const DISK_SAFETY_BYTES: u64 = 256 * 1024 * 1024;
 /// What the edition still needs, from the library's plan.
 #[derive(Debug, Default)]
 struct Gap {
+    album_id: String,
     release_mbid: String,
     artist_name: String,
     title: String,
@@ -66,6 +68,7 @@ fn gap_of(plan: &EditionPlan, below: &[String]) -> Gap {
         })
         .collect();
     Gap {
+        album_id: plan.local_album_id.clone(),
         release_mbid: plan.release_mbid.clone(),
         artist_name: plan.artist_name.clone(),
         title: plan.title.clone(),
@@ -144,8 +147,18 @@ impl RequestsService {
             }
             self.check_disk(gap.estimate_bytes).await?;
         }
-        let release_mbid = match &gap {
-            Some(gap) => Some(gap.release_mbid.clone()),
+        // The copy the tracks are fetched for, which they then join: the
+        // plan's, else the copy asked for or the group's, with the release
+        // its identity names.
+        let planned_album = match &gap {
+            Some(gap) => Some(PlannedAlbum {
+                album_id: gap.album_id.clone(),
+                release_mbid: gap.release_mbid.clone(),
+            }),
+            None => self.planned_copy(album_id, &mbid).await?,
+        };
+        let release_mbid = match &planned_album {
+            Some(planned) => Some(planned.release_mbid.clone()),
             None => self.chosen_release(&mbid).await,
         };
         let wanted = gap
@@ -161,6 +174,7 @@ impl RequestsService {
             origin: DispatchOrigin::Edition,
             release_mbid,
             wanted,
+            planned_album,
             // No stable per-decision key exists (marks clear on terminal,
             // so a key would pin re-acquires to the old task); the busy
             // check above owns double-submit dedup.
@@ -222,6 +236,35 @@ impl RequestsService {
         .fetch_optional(self.library.pool())
         .await
         .map_err(|error| RequestsError::internal(&error))
+    }
+
+    /// The library copy a fetch with no plan is for: the copy asked for
+    /// (followed to the album it was merged into), else the group's copy
+    /// with an edition, a person's first, then the oldest. `None` when that
+    /// copy's identity names no release.
+    async fn planned_copy(
+        &self,
+        album_id: Option<&str>,
+        release_group_mbid: &str,
+    ) -> Result<Option<PlannedAlbum>, RequestsError> {
+        let found: Option<(String, String)> = sqlx::query_as(
+            "SELECT e.local_album_id, e.release_mbid FROM local_album_external_identities e \
+             JOIN local_albums b ON b.id = e.local_album_id \
+             WHERE b.retired_into_album_id IS NULL AND e.provider = 'musicbrainz' \
+               AND lower(e.release_group_mbid) = ?1 AND trim(e.release_mbid) <> '' \
+               AND (?2 IS NULL OR e.local_album_id = (SELECT COALESCE(retired_into_album_id, id) \
+                 FROM local_albums WHERE id = ?2)) \
+             ORDER BY e.decision_source <> 'manual', b.created_at LIMIT 1",
+        )
+        .bind(release_group_mbid.to_ascii_lowercase())
+        .bind(album_id)
+        .fetch_optional(self.library.pool())
+        .await
+        .map_err(|error| RequestsError::internal(&error))?;
+        Ok(found.map(|(album_id, release_mbid)| PlannedAlbum {
+            album_id,
+            release_mbid,
+        }))
     }
 
     /// The library's plan for the album's chosen edition. `None` when it

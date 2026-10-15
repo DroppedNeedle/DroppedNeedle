@@ -135,6 +135,7 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
             origin: DispatchOrigin::User,
             release_mbid: None,
             wanted: Vec::new(),
+            planned_album: None,
             idempotency_key: None,
         },
     )

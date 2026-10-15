@@ -32,6 +32,7 @@ use axum::{
     http::{Method, Request, StatusCode},
 };
 use droppedneedle::acquire::db::AcquireDb;
+use droppedneedle::acquire::downloads::manifest::PlannedAlbum;
 use droppedneedle::acquire::requests::{
     self, RequestsState,
     dispatch::{DispatchTaskState, RetrySchedule, ScriptedDispatch},
@@ -879,9 +880,80 @@ async fn edition_acquire_asks_once_for_missing_and_below_cutoff_tracks() {
     assert_eq!(calls.len(), 1, "one download for the album");
     assert_eq!(calls[0].release_mbid.as_deref(), Some("rel-1"));
     assert_eq!(calls[0].wanted, vec![(1, 2), (1, 3)]);
+    assert_eq!(
+        calls[0].planned_album,
+        Some(PlannedAlbum {
+            album_id: "al1".into(),
+            release_mbid: "rel-1".into()
+        }),
+        "the files join the copy the plan was for"
+    );
 
     let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["status"], "already_in_progress");
     assert!(dispatch.take_calls().is_empty(), "never two at once");
+}
+
+/// The library's plan, unavailable (MusicBrainz down).
+struct NoPlan;
+
+impl droppedneedle::library::operations::port::EditionPlans for NoPlan {
+    fn group_plan<'a>(
+        &'a self,
+        _album_id: Option<&'a str>,
+        _release_group_mbid: &'a str,
+    ) -> droppedneedle::library::operations::port::BoxFuture<
+        'a,
+        Result<
+            Option<droppedneedle::library::operations::plan::EditionPlan>,
+            droppedneedle::library::operations::models::OperationError,
+        >,
+    > {
+        Box::pin(async {
+            Err(
+                droppedneedle::library::operations::models::OperationError::Unavailable(
+                    "MusicBrainz is down".into(),
+                ),
+            )
+        })
+    }
+}
+
+// With no plan, "Get missing tracks" fetches the whole album for the copy
+// asked about, on the release its identity names.
+#[tokio::test]
+async fn edition_acquire_without_a_plan_fetches_for_the_named_copy() {
+    let (state, db, dispatch) = setup().await;
+    let seed = format!(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at)
+           VALUES ('ar1', 'A', 'a', 'person', 0, 0);
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+           album_artist_id, grouping_source, created_at, updated_at)
+           VALUES ('al1', 'r1', 'g', 'T', 't', 'ar1', 'automatic', 0, 0);
+         UPDATE local_albums SET album_artist_name = 'A' WHERE id = 'al1';
+         INSERT INTO local_album_external_identities (local_album_id, provider,
+           release_group_mbid, release_mbid, decision_source, selected_at)
+           VALUES ('al1', 'musicbrainz', '{MBID_A}', 'rel-x', 'automatic', 0);"
+    );
+    db.write("test.seed_library", move |tx| {
+        tx.execute_batch(&seed)?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert!(state.edition_plans.set(Arc::new(NoPlan)).is_ok());
+    let uri = format!("/albums/{MBID_A}/edition/acquire?album_id=al1");
+    let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let calls = dispatch.take_calls();
+    assert_eq!(calls.len(), 1, "{body}");
+    assert_eq!(calls[0].release_mbid.as_deref(), Some("rel-x"));
+    assert_eq!(
+        calls[0].planned_album,
+        Some(PlannedAlbum {
+            album_id: "al1".into(),
+            release_mbid: "rel-x".into()
+        })
+    );
 }

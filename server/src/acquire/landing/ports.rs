@@ -38,6 +38,10 @@ pub use crate::library::import::ImportOrigin;
 #[derive(Debug, Clone)]
 pub struct OwnedCopy {
     pub track_id: String,
+    /// The album it sits in, and the release that album's identity names
+    /// (empty when it names none).
+    pub album_id: String,
+    pub release_mbid: String,
     /// Quality tier of the file (see [`super::quality::tier_for`]).
     pub tier: &'static str,
 }
@@ -56,6 +60,8 @@ pub struct ImportRequest {
     pub staging: Option<String>,
     /// The matched release; files are tagged from it.
     pub release: Release,
+    /// The library album the files were fetched for, which they join.
+    pub join: Option<crate::library::import::ImportJoin>,
     pub files: Vec<ImportFile>,
     /// Files filed with the album that are none of its tracks; their
     /// request indexes follow `files`.
@@ -116,19 +122,32 @@ pub trait LandingLibrary: Send + Sync {
     /// the request carried.
     fn chosen_edition<'a>(&'a self, release_group_mbid: &'a str) -> BoxFuture<'a, Option<String>>;
 
-    /// Tracks the library already holds for a release group.
-    fn owned<'a>(&'a self, release_group_mbid: &'a str) -> BoxFuture<'a, OwnedTracks>;
+    /// Tracks the library already holds for a release group; with
+    /// `album`, only in that library album (followed to the album it was
+    /// merged into).
+    fn owned<'a>(
+        &'a self,
+        release_group_mbid: &'a str,
+        album: Option<&'a str>,
+    ) -> BoxFuture<'a, OwnedTracks>;
 
-    /// The worst tier the library holds for a release group, for the
-    /// upgrade floor. `None` when it holds nothing.
-    fn held_tier<'a>(&'a self, release_group_mbid: &'a str) -> BoxFuture<'a, Option<String>>;
+    /// The worst tier the library holds for a release group (with
+    /// `album`, in that album only), for the upgrade floor. `None` when it
+    /// holds nothing.
+    fn held_tier<'a>(
+        &'a self,
+        release_group_mbid: &'a str,
+        album: Option<&'a str>,
+    ) -> BoxFuture<'a, Option<String>>;
 
     /// The copies an upgrade of one release track would replace: in the
-    /// local album of `release_mbid` only, matched by release track, else
-    /// by recording when no copy of the release track exists.
+    /// local album of `release_mbid` only (with `album`, in that album
+    /// only), matched by release track, else by recording when no copy of
+    /// the release track exists.
     fn owned_copies<'a>(
         &'a self,
         release_group_mbid: &'a str,
+        album: Option<&'a str>,
         release_mbid: &'a str,
         release_track_mbid: &'a str,
         recording_mbid: &'a str,

@@ -19,7 +19,7 @@ use futures_util::future::BoxFuture;
 use sqlx::Row;
 
 use super::db::AcquireDb;
-use super::downloads::manifest::{DownloadManifest, ManifestCodec, TrackPosition};
+use super::downloads::manifest::{DownloadManifest, ManifestCodec, PlannedAlbum, TrackPosition};
 use super::downloads::state::TaskStatus;
 use super::downloads::store::{
     CLEANUP_DEBT_SQL, DownloadStore, NewTask, QUARANTINE_SET_SQL, REIMPORTABLE_SQL, RETRYABLE_SQL,
@@ -249,11 +249,13 @@ impl UnifiedDispatch {
         origin: &str,
         release_mbid: Option<&str>,
         wanted: &[(u32, u32)],
+        planned_album: Option<PlannedAlbum>,
         idempotency_key: Option<&str>,
     ) -> Result<String, String> {
-        // Wanted positions are positions on the caller's release; they
-        // mean nothing on an edition picked here.
-        let wanted: Vec<TrackPosition> = if release_mbid.is_some() && !is_track {
+        // Wanted positions and the copy fetched for belong to the caller's
+        // release; they mean nothing on an edition picked here.
+        let on_release = release_mbid.is_some() && !is_track;
+        let wanted: Vec<TrackPosition> = if on_release {
             wanted
                 .iter()
                 .map(|&(disc, track)| TrackPosition { disc, track })
@@ -261,6 +263,7 @@ impl UnifiedDispatch {
         } else {
             Vec::new()
         };
+        let planned_album = planned_album.filter(|_| on_release);
         let task_id = self.mint_task_id();
         let now = now_unix_f64();
         // An album ask without a release fetches the edition the library
@@ -328,6 +331,7 @@ impl UnifiedDispatch {
                     origin,
                     release_mbid,
                     wanted,
+                    planned_album,
                 )
                 .await;
                 Ok(task_id)
@@ -351,6 +355,7 @@ impl UnifiedDispatch {
         origin: &str,
         release_mbid: Option<&str>,
         album_wanted: Vec<TrackPosition>,
+        planned_album: Option<PlannedAlbum>,
     ) {
         let manifest = DownloadManifest {
             task_id: task_id.to_owned(),
@@ -372,6 +377,7 @@ impl UnifiedDispatch {
             attempt_id: None,
             track_album: None,
             album_wanted,
+            planned_album,
         };
         let staging_root = self.staging_root.clone();
         let task_id = task_id.to_owned();
@@ -461,6 +467,7 @@ impl requests::DownloadDispatch for UnifiedDispatch {
                 origin,
                 request.release_mbid.as_deref(),
                 &request.wanted,
+                request.planned_album.clone(),
                 request.idempotency_key.as_deref(),
             )
             .await
@@ -632,6 +639,7 @@ impl flows::DownloadDispatch for UnifiedDispatch {
                 origin,
                 None,
                 &[],
+                None,
                 request.idempotency_key.as_deref(),
             )
             .await
@@ -707,6 +715,7 @@ impl flows::DownloadDispatch for UnifiedDispatch {
                 "upgrade",
                 None,
                 &[],
+                None,
                 request.idempotency_key.as_deref(),
             )
             .await

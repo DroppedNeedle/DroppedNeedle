@@ -401,6 +401,7 @@ impl HeldImports {
             let copies = library
                 .owned_copies(
                     &release.release_group_id,
+                    None,
                     &release.id,
                     &release_track.id,
                     &release_track.recording_id,
@@ -446,6 +447,7 @@ impl HeldImports {
             origin: crate::acquire::landing::ports::ImportOrigin::Download,
             extras: Vec::new(),
             release: release.clone(),
+            join: None,
             files: vec![ImportFile {
                 path: source.clone(),
                 track,
@@ -625,7 +627,7 @@ impl HeldImports {
             }
         }
         if task.download_type != "track" {
-            let owned = library.owned(&release.release_group_id).await;
+            let owned = library.owned(&release.release_group_id, None).await;
             let whole = release.tracks.iter().all(|track| {
                 owned
                     .release_tracks

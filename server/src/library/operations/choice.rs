@@ -1535,3 +1535,92 @@ pub fn place_files(
     );
     Ok((placed.len(), extra.len()))
 }
+
+/// Place files an import just brought onto the album's edition, in the
+/// import's catalog transaction, from the import's own match: each file is
+/// upserted as a `manual` placement on its release track, as
+/// [`place_files`] writes one, naming the release as the album's identity
+/// row spells it. Only when the album's match is a person's (chosen by
+/// hand or carried from v2), names `release_mbid`, and no custom edition is
+/// active; otherwise nothing is placed. A release track another indexed
+/// file of the album already holds (naming the release or none) is never
+/// given away: that file stays on the album, unplaced. When a file was
+/// placed, a match state left by an earlier failed placement
+/// (`CHOSEN_EDITION_*`) goes. Missing tracks then continue into the new
+/// ones ([`continue_tracks`]), last in the transaction. No audit row is
+/// written. Returns the number of files placed and left unplaced.
+pub(crate) fn place_imported(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    release_mbid: &str,
+    files: &[(String, crate::library::publish::planner::JoinedTrack)],
+    now: f64,
+) -> rusqlite::Result<(usize, usize)> {
+    let release: Option<String> = tx
+        .query_row(
+            "SELECT release_mbid FROM local_album_external_identities \
+             WHERE local_album_id = ?1 AND provider = ?2 \
+             AND decision_source IN ('manual', 'legacy_import') \
+             AND lower(release_mbid) = lower(?3) \
+             AND NOT EXISTS (SELECT 1 FROM library_custom_edition_active c \
+             WHERE c.local_album_id = ?1)",
+            params![album_id, PROVIDER, release_mbid],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(release) = release else {
+        return Ok((0, 0));
+    };
+    let (mut placed, mut left) = (0usize, 0usize);
+    for (track_id, track) in files {
+        let held: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM local_tracks t \
+             JOIN local_track_external_identities i \
+             ON i.local_track_id = t.id AND i.provider = ?2 \
+             WHERE t.local_album_id = ?1 AND t.availability = 'indexed' AND t.id <> ?3 \
+             AND lower(i.release_track_mbid) = lower(?4) \
+             AND (i.release_mbid IS NULL OR lower(i.release_mbid) = lower(?5)))",
+            params![
+                album_id,
+                PROVIDER,
+                track_id,
+                track.release_track_mbid,
+                release
+            ],
+            |row| row.get(0),
+        )?;
+        if held {
+            left += 1;
+            continue;
+        }
+        upsert_track_identity(
+            tx,
+            &TrackRow {
+                local_track_id: track_id,
+                recording_mbid: &track.recording_mbid,
+                release_mbid: Some(&release),
+                release_track_mbid: Some(&track.release_track_mbid),
+                medium_position: Some(track.disc),
+                release_track_position: Some(track.position),
+                decision_source: "manual",
+            },
+            now,
+        )?;
+        placed += 1;
+    }
+    if placed > 0 {
+        tx.execute(
+            "DELETE FROM library_album_match_state WHERE local_album_id = ?1 \
+             AND reason_code LIKE 'CHOSEN\\_EDITION\\_%' ESCAPE '\\'",
+            params![album_id],
+        )?;
+    }
+    continue_tracks(tx, Scope::Album(album_id), now)?;
+    tracing::info!(
+        album = album_id,
+        placed,
+        left,
+        "imported files were placed on the album's edition"
+    );
+    Ok((placed, left))
+}

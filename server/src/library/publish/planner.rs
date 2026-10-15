@@ -202,6 +202,40 @@ pub struct Adoption {
     /// existed read as downloads.
     #[serde(default = "Adoption::download_source")]
     pub ingest_source: String,
+    /// The library album the file was fetched for. With one, the file
+    /// joins that album instead of being filed by its tags, and a row at
+    /// its destination that the plan did not adopt gives up its path.
+    #[serde(default)]
+    pub join: Option<AlbumJoin>,
+    /// The release track the file is on the join's release, when the
+    /// import's release is that release: what places it on the album's
+    /// edition.
+    #[serde(default)]
+    pub track: Option<JoinedTrack>,
+}
+
+/// The album files fetched for a library copy join. The commit follows
+/// it to the album it was merged into, and the files join it while it
+/// names `release_mbid` (placed on its edition) or another release of
+/// `release_group_mbid` (not placed). Otherwise they are filed by their
+/// tags.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AlbumJoin {
+    pub album_id: String,
+    /// The album's release as its identity row named it when the fetch
+    /// was planned.
+    pub release_mbid: String,
+    /// The release group of the release the files were matched to.
+    pub release_group_mbid: String,
+}
+
+/// Where an imported file sits on its release.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct JoinedTrack {
+    pub recording_mbid: String,
+    pub release_track_mbid: String,
+    pub disc: u32,
+    pub position: u32,
 }
 
 impl Adoption {
@@ -212,6 +246,8 @@ impl Adoption {
         download_task_id: Option<String>,
         source_path: Option<String>,
         ingest_source: String,
+        join: Option<AlbumJoin>,
+        track: Option<JoinedTrack>,
     ) -> Self {
         Self {
             policy: crate::library::scan::models::EffectivePolicy::Automatic,
@@ -219,6 +255,8 @@ impl Adoption {
             download_task_id,
             source_path,
             ingest_source,
+            join,
+            track,
         }
     }
 
