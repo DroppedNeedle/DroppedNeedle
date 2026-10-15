@@ -12,7 +12,9 @@ use droppedneedle::acquire::downloads::state::TaskStatus;
 use droppedneedle::acquire::downloads::store::NewTask;
 use droppedneedle::acquire::landing::library::LibraryLanding;
 use droppedneedle::acquire::landing::specs::{Disposition, Rejection};
-use droppedneedle::acquire::landing::{Landed, LandingResult, OUTSIDE_DOWNLOADS, Reported};
+use droppedneedle::acquire::landing::{
+    Landed, LandingReport, LandingResult, OUTSIDE_DOWNLOADS, Reported,
+};
 use droppedneedle::acquire::wiring::settled_hook;
 use droppedneedle::acquire::worker::{DownloadWorker, FixedSource, Source, WorkerConfig};
 use droppedneedle::ids::{IdGenerator, UuidGenerator};
@@ -1399,6 +1401,24 @@ impl JoinRig {
         planned: Option<(&str, &str)>,
         wanted: &[(u32, u32)],
     ) {
+        self.ask_replacing(task_id, group, title, origin, release, planned, wanted, &[])
+            .await;
+    }
+
+    /// [`Self::ask`], with the planned copy's `replace` list: (release
+    /// track, track) pairs.
+    #[allow(clippy::too_many_arguments)]
+    async fn ask_replacing(
+        &self,
+        task_id: &str,
+        group: &str,
+        title: &str,
+        origin: &str,
+        release: Option<&str>,
+        planned: Option<(&str, &str)>,
+        wanted: &[(u32, u32)],
+        replace: &[(&str, &str)],
+    ) {
         let task = NewTask {
             album_title: title.to_owned(),
             origin: origin.to_owned(),
@@ -1429,7 +1449,17 @@ impl JoinRig {
                     .iter()
                     .map(|(disc, track)| serde_json::json!({"disc": disc, "track": track}))
                     .collect::<Vec<_>>(),
-                "planned_album": {"album_id": album_id, "release_mbid": planned_release},
+                "planned_album": {
+                    "album_id": album_id,
+                    "release_mbid": planned_release,
+                    "replace": replace
+                        .iter()
+                        .map(|(on, track)| serde_json::json!({
+                            "release_track_mbid": on,
+                            "local_track_id": track,
+                        }))
+                        .collect::<Vec<_>>(),
+                },
             });
             let path = droppedneedle::acquire::downloads::ManifestCodec::path(
                 &self.acquire.staging_root,
@@ -2220,6 +2250,7 @@ async fn a_held_release_track_is_not_given_away() {
         join: Some(droppedneedle::library::import::ImportJoin {
             album_id: album.clone(),
             release_mbid: e.new.id.clone(),
+            replaced: Vec::new(),
         }),
         files: vec![ImportFile {
             path: file,
@@ -2235,6 +2266,335 @@ async fn a_held_release_track_is_not_given_away() {
     assert_eq!(rig.identity(&holder).await, Some(placed_on(&e.new, 1)));
 }
 
+/// One copy of scenario `s` on OLD's files whose edition a person set to
+/// NEW, with a rig of its own. The copy's track `1 - index` is placed on
+/// NEW; its track `index` sits at `o_name`, on no track of NEW: another
+/// version of NEW's track, row O, with u-ada's play, star and playlist
+/// entry and a title override. With `other_recording`, NEW's track is
+/// another recording than O's.
+struct VersionCase {
+    rig: JoinRig,
+    e: Editions,
+    index: usize,
+    album: String,
+    old: String,
+    o_name: String,
+}
+
+impl VersionCase {
+    async fn new(s: u16, index: usize, other_recording: bool, o_name: &str) -> Self {
+        let mut e = editions(s, &fixture_lengths());
+        if other_recording {
+            for track in e.new.tracks.iter_mut().filter(|t| t.title == TITLES[index]) {
+                track.recording_id = mb(s, 3, 7);
+            }
+        }
+        let rig = join_rig(vec![e.old.clone(), e.new.clone(), e.new2.clone()]).await;
+        let kept = 1 - index;
+        let kept_rel = copy_rel(s, [MYSTERONS, SOUR_TIMES][kept]);
+        rig.plant(&kept_rel, kept, &e.old);
+        rig.plant(&copy_rel(s, o_name), index, &e.old);
+        rig.scan().await;
+        let old = rig.track_at(&copy_rel(s, o_name));
+        let album = rig.album_of(&old);
+        rig.set_edition(&album, &e.group, &e.new.id, "manual");
+        rig.place(&rig.track_at(&kept_rel), &e.new, kept, "manual");
+        rig.listen(&old);
+        rig.sql(&format!(
+            "INSERT INTO playlists (id, name, created_at, updated_at) \
+             VALUES ('list', 'L', '', ''); \
+             INSERT INTO playlist_tracks (id, playlist_id, position, track_name, artist_name, \
+             album_name, source_type, created_at, library_file_id) \
+             VALUES ('entry', 'list', 0, 'T', 'A', 'B', 'local', '', '{old}'); \
+             INSERT INTO library_management_overrides (id, subject_kind, local_track_id, \
+             field_name, value_json, mode, subject_revision, created_at, updated_at) \
+             VALUES ('title', 'track', '{old}', 'title', '\"Radio Edit\"', 'replace', 1, 0, 0);"
+        ));
+        Self {
+            rig,
+            e,
+            index,
+            album,
+            old,
+            o_name: o_name.to_owned(),
+        }
+    }
+
+    /// "Get missing tracks" for NEW's track, replacing O.
+    async fn ask(&self, task_id: &str) {
+        let track = self
+            .e
+            .new
+            .tracks
+            .iter()
+            .find(|track| track.title == TITLES[self.index])
+            .expect("track on NEW");
+        self.rig
+            .ask_replacing(
+                task_id,
+                &self.e.group,
+                &self.e.new.title,
+                "user",
+                Some(&self.e.new.id),
+                Some((&self.album, &self.e.new.id)),
+                &[(track.disc, track.position)],
+                &[(&track.id, &self.old)],
+            )
+            .await;
+    }
+
+    /// The download of NEW's "Sour Times".
+    fn sour(&self, task_id: &str) -> PathBuf {
+        self.rig.landed(task_id, &self.e.new, 1, FIXTURES[1])
+    }
+
+    /// Land `file` for the task through the landing alone.
+    async fn land_directly(&self, task_id: &str, file: PathBuf) -> LandingReport {
+        let row = self.rig.task(task_id).await;
+        let manifest = droppedneedle::acquire::downloads::ManifestCodec
+            .decode(&serde_json::to_vec(&self.rig.manifest(task_id)).expect("bytes"))
+            .expect("manifest");
+        self.rig
+            .acquire
+            .landing
+            .land(
+                &row,
+                None,
+                Some(&manifest),
+                Landed {
+                    files: vec![Reported::path(file)],
+                    mounts: vec![self.rig.downloads.clone()],
+                },
+                false,
+            )
+            .await
+    }
+}
+
+impl JoinRig {
+    async fn availability(&self, track: &str) -> String {
+        self.scalar(&format!(
+            "SELECT availability FROM local_tracks WHERE id = '{track}'"
+        ))
+        .await
+    }
+
+    /// Where O's play, star, playlist entry and title override are:
+    /// (play's track, starred track, entry's track, override's track).
+    async fn version_history(&self, old: &str) -> (String, String, String, String) {
+        sqlx::query_as(
+            "SELECT (SELECT local_track_id FROM library_play_history WHERE id = 'play-' || ?1), \
+             (SELECT item_id FROM library_user_favorites WHERE item_kind = 'track' \
+               AND user_id = 'u-ada'), \
+             (SELECT library_file_id FROM playlist_tracks WHERE id = 'entry'), \
+             (SELECT local_track_id FROM library_management_overrides WHERE id = 'title')",
+        )
+        .bind(old)
+        .fetch_one(self.acquire.db.pool())
+        .await
+        .expect("history")
+    }
+
+    /// The track O's id opens, when it is an alias.
+    async fn alias_of(&self, old: &str) -> Option<String> {
+        sqlx::query_scalar("SELECT local_track_id FROM local_track_aliases WHERE alias = ?1")
+            .bind(old)
+            .fetch_optional(self.acquire.db.pool())
+            .await
+            .expect("alias read")
+    }
+
+    /// Whether O's field overrides follow its alias (1) or stay (0).
+    async fn overrides_follow(&self, old: &str) -> i64 {
+        self.scalar(&format!(
+            "SELECT moves_overrides FROM local_track_aliases WHERE alias = '{old}'"
+        ))
+        .await
+    }
+
+    async fn held_reasons(&self, task_id: &str) -> Vec<String> {
+        sqlx::query_scalar("SELECT reason FROM held_imports WHERE source_task_id = ?1")
+            .bind(task_id)
+            .fetch_all(self.acquire.db.pool())
+            .await
+            .expect("held read")
+    }
+
+    /// Whether a file named `name` sits in the root's recycle bin.
+    fn in_recycle_bin(&self, name: &str) -> bool {
+        fn find(dir: &Path, name: &str) -> bool {
+            std::fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .any(|entry| {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        find(&path, name)
+                    } else {
+                        path.file_name().is_some_and(|file| file == name)
+                    }
+                })
+        }
+        find(&self.music.join(".recycle"), name)
+    }
+}
+
+// "Replace tracks you have in another version": the edition's version of
+// a track lands in the copy, on its edition track; the person's version
+// goes to the recycle bin and its play, star and playlist entry follow the
+// new file, while its field overrides stay on it.
+async fn version_replaced(s: u16, other_recording: bool) {
+    let v = VersionCase::new(s, 1, other_recording, "02 Sour Times.flac").await;
+    let rig = &v.rig;
+    let before = rig.album_count().await;
+    v.ask("t-version").await;
+    rig.land(vec![v.sour("t-version")]).await;
+    let (new, on, _, locked, availability) = rig.row_at(&copy_rel(s, SOUR_TIMES)).await;
+    assert_eq!(
+        (on.as_str(), locked, availability.as_str()),
+        (v.album.as_str(), 1, "indexed"),
+        "the edition's version is in the copy"
+    );
+    assert_ne!(new, v.old);
+    assert_eq!(rig.identity(&new).await, Some(placed_on(&v.e.new, 1)));
+    assert!(!rig.music.join(copy_rel(s, &v.o_name)).exists());
+    assert!(rig.in_recycle_bin(&v.o_name), "O's file is recycled");
+    assert_eq!(rig.availability(&v.old).await, "missing");
+    assert_eq!(
+        rig.version_history(&v.old).await,
+        (new.clone(), new.clone(), new.clone(), v.old.clone()),
+        "the history moves, the override stays on O"
+    );
+    assert_eq!(rig.alias_of(&v.old).await, Some(new.clone()));
+    assert_eq!(rig.overrides_follow(&v.old).await, 0);
+    assert!(rig.held_reasons("t-version").await.is_empty());
+    assert_eq!(rig.album_count().await, before, "no album rows change");
+    let file = rig.music.join(copy_rel(s, SOUR_TIMES));
+    let format = droppedneedle::library::tags::format_for_path(&file).expect("format");
+    let (tag, _) =
+        droppedneedle::library::tags::read::read_scan_metadata(&file, format).expect("tags");
+    assert_eq!(tag.title, "Sour Times", "not retagged with O's override");
+}
+
+// Another recording than NEW's.
+#[tokio::test]
+async fn a_version_of_another_recording_is_replaced() {
+    version_replaced(11, true).await;
+}
+
+// The same recording as NEW's: replaced all the same, never kept as owned.
+#[tokio::test]
+async fn a_version_of_the_same_recording_is_replaced() {
+    version_replaced(12, false).await;
+}
+
+// The edition's version came in worse than the person's: it is held, O is
+// left exactly as it was, and the landing settles on our side, so no
+// other source is asked and this one is not blamed.
+#[tokio::test]
+async fn a_worse_version_is_held_and_yours_stays() {
+    let v = VersionCase::new(13, 0, false, "01 Mysterons.flac").await;
+    let rig = &v.rig;
+    let o_path = rig.music.join(copy_rel(13, &v.o_name));
+    let o_bytes = std::fs::read(&o_path).expect("O's file");
+    v.ask("t-version").await;
+    let landed = rig.landed("t-version", &v.e.new, 0, "mp3_full_01.mp3");
+    let report = v.land_directly("t-version", landed).await;
+    assert!(
+        matches!(&report.result, LandingResult::Held { code, .. } if code == "version_lower_quality"),
+        "{:?}",
+        report.result
+    );
+    assert!(report.local_only, "the source is not blamed");
+    assert_eq!(std::fs::read(&o_path).expect("O's file"), o_bytes);
+    let (track, _, _, _, availability) = rig.row_at(&copy_rel(13, &v.o_name)).await;
+    assert_eq!(
+        (track.as_str(), availability.as_str()),
+        (v.old.as_str(), "indexed")
+    );
+    assert_eq!(rig.alias_of(&v.old).await, None);
+}
+
+// The edition's version goes to O's own path. It takes an id of its own,
+// so O keeps its override, and O's id opens the new track.
+#[tokio::test]
+async fn a_version_at_its_own_path_keeps_its_override() {
+    let v = VersionCase::new(14, 1, true, SOUR_TIMES).await;
+    let rig = &v.rig;
+    v.ask("t-version").await;
+    rig.land(vec![v.sour("t-version")]).await;
+    let (new, on, _, _, availability) = rig.row_at(&copy_rel(14, SOUR_TIMES)).await;
+    assert_eq!(
+        (on.as_str(), availability.as_str()),
+        (v.album.as_str(), "indexed")
+    );
+    assert_ne!(new, v.old);
+    assert_eq!(
+        rig.version_history(&v.old).await,
+        (new.clone(), new.clone(), new.clone(), v.old.clone())
+    );
+    assert_eq!(rig.alias_of(&v.old).await, Some(new.clone()));
+    assert_eq!(rig.overrides_follow(&v.old).await, 0);
+}
+
+// Stopped before the catalog commit and recovered as boot does: the new
+// file is placed and the history is on it.
+#[tokio::test]
+async fn a_version_replacement_recovers_after_a_crash() {
+    let v = VersionCase::new(15, 1, true, "02 Sour Times.flac").await;
+    let rig = &v.rig;
+    v.ask("t-version").await;
+    rig.library.arm_publish_crash(Some(
+        droppedneedle::library::publish::CrashPoint::BeforeCatalogCommit,
+    ));
+    v.land_directly("t-version", v.sour("t-version")).await;
+    rig.library.arm_publish_crash(None);
+    rig.library.publish_tick().expect("recovery runs");
+    let (new, on, _, _, _) = rig.row_at(&copy_rel(15, SOUR_TIMES)).await;
+    assert_eq!(on, v.album);
+    assert_eq!(rig.identity(&new).await, Some(placed_on(&v.e.new, 1)));
+    assert_eq!(
+        rig.version_history(&v.old).await,
+        (new.clone(), new.clone(), new.clone(), v.old.clone())
+    );
+    assert_eq!(rig.alias_of(&v.old).await, Some(new));
+}
+
+// After the ask the copy moved to another edition, or the app stepped
+// back from it: nothing is recycled and O keeps its file and history.
+#[tokio::test]
+async fn a_stale_version_plan_replaces_nothing() {
+    for (s, takeover) in [(16u16, false), (17, true)] {
+        let v = VersionCase::new(s, 1, true, "02 Sour Times.flac").await;
+        let rig = &v.rig;
+        v.ask("t-version").await;
+        if takeover {
+            rig.sql(&format!(
+                "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+                 VALUES ('{}', 'files_changed', 1);",
+                v.album
+            ));
+        } else {
+            rig.set_edition(&v.album, &v.e.group, &v.e.new2.id, "manual");
+        }
+        rig.land(vec![v.sour("t-version")]).await;
+        assert!(rig.music.join(copy_rel(s, &v.o_name)).exists(), "{s}");
+        let (track, _, _, _, availability) = rig.row_at(&copy_rel(s, &v.o_name)).await;
+        assert_eq!(
+            (track.as_str(), availability.as_str()),
+            (v.old.as_str(), "indexed")
+        );
+        let o = v.old.clone();
+        assert_eq!(
+            rig.version_history(&v.old).await,
+            (o.clone(), o.clone(), o.clone(), o),
+            "{s}"
+        );
+        assert_eq!(rig.alias_of(&v.old).await, None);
+    }
+}
+
 // The album target rewrite, which fills in an edition's tracklist before
 // the search, keeps the copy a download was fetched for while the
 // manifest's release is the one being searched, and drops it otherwise.
@@ -2243,7 +2603,8 @@ async fn the_album_target_keeps_the_planned_copy_only_for_its_release() {
     let lengths = fixture_lengths();
     let e = editions(1, &lengths);
     let rig = join_rig(vec![e.new.clone(), e.new2.clone()]).await;
-    rig.ask(
+    let sour = &e.new.tracks[1].id;
+    rig.ask_replacing(
         "t-same",
         &e.group,
         &e.new.title,
@@ -2251,6 +2612,7 @@ async fn the_album_target_keeps_the_planned_copy_only_for_its_release() {
         Some(&e.new.id),
         Some(("al-1", &e.new.id)),
         &[(2, 1)],
+        &[(sour, "tr-1")],
     )
     .await;
     let manifest = rig.manifest("t-same");
@@ -2261,11 +2623,15 @@ async fn the_album_target_keeps_the_planned_copy_only_for_its_release() {
     );
     assert_eq!(
         manifest["planned_album"],
-        serde_json::json!({"album_id": "al-1", "release_mbid": e.new.id})
+        serde_json::json!({
+            "album_id": "al-1",
+            "release_mbid": e.new.id,
+            "replace": [{"release_track_mbid": sour, "local_track_id": "tr-1"}],
+        })
     );
 
     // The task now searches another edition than the manifest names.
-    rig.ask(
+    rig.ask_replacing(
         "t-other",
         &e.group,
         &e.new.title,
@@ -2273,6 +2639,7 @@ async fn the_album_target_keeps_the_planned_copy_only_for_its_release() {
         Some(&e.new.id),
         Some(("al-1", &e.new.id)),
         &[(2, 1)],
+        &[(sour, "tr-1")],
     )
     .await;
     let details = droppedneedle::acquire::downloads::store::TaskDetails {

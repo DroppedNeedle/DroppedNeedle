@@ -136,6 +136,11 @@ it('keeps acquire invalidation scoped to the authenticated download queue', asyn
 	await acquire.mutationFn({ mbid: 'release-group' });
 
 	expect(h.v3.POST).toHaveBeenCalledWith('/api/v3/albums/release-group/edition/acquire');
+
+	await acquire.mutationFn({ mbid: 'release-group', copyId: 'copy-1', replaceVersions: true });
+	expect(h.v3.POST).toHaveBeenLastCalledWith(
+		'/api/v3/albums/release-group/edition/acquire?album_id=copy-1&replace_versions=true'
+	);
 });
 
 it('reads one copy edition by local id and scopes the key by user', () => {

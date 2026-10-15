@@ -656,8 +656,10 @@ export interface paths {
         put?: never;
         /**
          * Fill the selected edition's missing tracks and upgrade its below-cutoff
-         *     owned tracks, in one download. `POST /api/v3/albums/{album_id}/edition/acquire`.
-         *     Curator only. Never retags existing files.
+         *     owned tracks, in one download; with `replace_versions`, also fetch this
+         *     edition's version of each track the copy holds in another version.
+         *     `POST /api/v3/albums/{album_id}/edition/acquire`. Curator only. Never
+         *     retags existing files.
          */
         post: operations["acquire_edition_handler"];
         delete?: never;
@@ -13498,7 +13500,8 @@ export interface components {
             release_mbid?: string | null;
             /**
              * Format: int32
-             * @description Missing tracks asked for.
+             * @description Missing tracks asked for: edition tracks no file holds and no file
+             *     is another version of.
              */
             requested?: number | null;
             /** @description `started`, `already_in_progress`, or `already_complete`. */
@@ -13517,6 +13520,13 @@ export interface components {
              *     the same download; each is replaced only by a strictly better file.
              */
             upgrades?: number | null;
+            /**
+             * Format: int32
+             * @description Tracks a file of the copy is another version of, asked for in this
+             *     edition's version with `replace_versions`; each replaces that file
+             *     when it is as good or better.
+             */
+            versions?: number | null;
         };
         /** @description One candidate the matcher scored, as the edition picker shows it. */
         EditionCandidateView: {
@@ -24720,14 +24730,23 @@ export interface operations {
     };
     acquire_edition_handler: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query?: {
                 /**
                  * @description Local album id of the copy the edition picker planned; the chosen
                  *     copy of the release group when absent.
                  */
-                album_id: string | null;
+                album_id?: string;
+                /**
+                 * @description Also fetch this edition's version of each track a file of the copy
+                 *     is another version of, and replace that file with it (the default).
+                 *     With `false` those files stay and their tracks are not fetched.
+                 */
+                replace_versions?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Release-group MBID */
+                album_id: string;
             };
             cookie?: never;
         };

@@ -5,14 +5,20 @@
 //! below-cutoff track. Here the library's edition plan names the positions,
 //! and one album download on the chosen release asks for exactly those:
 //! the missing tracks, plus the owned tracks below the cutoff, which the
-//! landing replaces only with a strictly better file. The best whole-album
-//! source is searched for, the way a person would by hand. Only one such
-//! download runs per album, and none while another download of the album
-//! is still working. Existing files are never retagged.
+//! landing replaces only with a strictly better file. A track a file of
+//! the copy is another version of (the same title and artist, not this
+//! edition's recording or length) is asked for only with
+//! `replace_versions`, and never on a copy the app leaves alone: the
+//! manifest names that file, and the landing replaces it when the new one
+//! is as good or better. Without it the file stays and its track is not
+//! asked for. The best whole-album source is searched for, the way a
+//! person would by hand. Only one such download runs per album, and none
+//! while another download of the album is still working. Existing files
+//! are never retagged.
 
 use super::RequestsService;
-use crate::acquire::downloads::manifest::PlannedAlbum;
-use crate::acquire::edition::local_names;
+use crate::acquire::downloads::manifest::{PlannedAlbum, ReplaceVersion};
+use crate::acquire::edition::{copy_is_held, local_names};
 use crate::acquire::flows::stores::UpgradeWorklist;
 use crate::acquire::requests::auth::Principal;
 use crate::acquire::requests::dispatch::{
@@ -22,7 +28,7 @@ use crate::acquire::requests::error::RequestsError;
 use crate::acquire::requests::ledger::{EditionMark, now_epoch, validate_mbid};
 use crate::acquire::requests::models::EditionAcquireResponse;
 use crate::library::operations::models::OperationError;
-use crate::library::operations::plan::{EditionPlan, PlanTrack};
+use crate::library::operations::plan::{EditionPlan, FileFate, PlanTrack};
 
 /// Bytes a track takes in staging, at least (v2's acquisition floor).
 const TRACK_FLOOR_BYTES: u64 = 8 * 1024 * 1024;
@@ -41,6 +47,13 @@ struct Gap {
     total_tracks: u32,
     missing: Vec<(u32, u32)>,
     upgrades: Vec<(u32, u32)>,
+    /// Tracks asked for in this edition's version, with the file each
+    /// replaces.
+    versions: Vec<((u32, u32), ReplaceVersion)>,
+    /// Tracks a file of the copy is another version of, asked for or not.
+    other_versions: usize,
+    /// The copy's files are left as they are (see [`copy_is_held`]).
+    held: bool,
     estimate_bytes: u64,
 }
 
@@ -53,10 +66,28 @@ fn track_bytes(track: &PlanTrack) -> u64 {
     (seconds * BYTES_PER_SECOND).max(TRACK_FLOOR_BYTES)
 }
 
-/// The positions to ask for: the missing tracks, then the owned tracks
-/// whose files sit below the cutoff (`below` names those files).
-fn gap_of(plan: &EditionPlan, below: &[String]) -> Gap {
-    let missing: Vec<&PlanTrack> = plan.missing().collect();
+/// The positions to ask for: the missing tracks, the owned tracks whose
+/// files sit below the cutoff (`below` names those files) and, with
+/// `replace` on a copy that is not `held`, the tracks a file is another
+/// version of. A track a file is another version of is never missing.
+fn gap_of(plan: &EditionPlan, below: &[String], replace: bool, held: bool) -> Gap {
+    let spot = |track: &PlanTrack| Some((track.disc, track.position));
+    let others: Vec<(&PlanTrack, &str)> = plan
+        .files
+        .iter()
+        .filter(|file| file.fate == FileFate::OtherVersion)
+        .filter_map(|file| {
+            let track = plan
+                .missing()
+                .find(|track| spot(track) == file.edition_track)?;
+            Some((track, file.local_track_id.as_str()))
+        })
+        .collect();
+    let missing: Vec<&PlanTrack> = plan
+        .missing()
+        .filter(|track| !others.iter().any(|(other, _)| spot(other) == spot(track)))
+        .collect();
+    let versions: &[(&PlanTrack, &str)] = if replace && !held { &others } else { &[] };
     let upgrades: Vec<&PlanTrack> = plan
         .tracks
         .iter()
@@ -76,22 +107,64 @@ fn gap_of(plan: &EditionPlan, below: &[String]) -> Gap {
         estimate_bytes: missing
             .iter()
             .chain(&upgrades)
+            .chain(versions.iter().map(|(track, _)| track))
             .map(|track| track_bytes(track))
             .sum(),
         missing: missing.iter().map(|t| (t.disc, t.position)).collect(),
         upgrades: upgrades.iter().map(|t| (t.disc, t.position)).collect(),
+        versions: versions
+            .iter()
+            .map(|(track, file)| {
+                (
+                    (track.disc, track.position),
+                    ReplaceVersion {
+                        release_track_mbid: track.release_track_mbid.clone(),
+                        local_track_id: (*file).to_owned(),
+                    },
+                )
+            })
+            .collect(),
+        other_versions: others.len(),
+        held,
+    }
+}
+
+/// "the 1 missing track", "the 3 missing tracks".
+fn missing_words(n: u32) -> String {
+    if n == 1 {
+        "the 1 missing track".to_owned()
+    } else {
+        format!("the {n} missing tracks")
+    }
+}
+
+/// What a started download says it fetches.
+fn started_message(requested: Option<u32>, versions: u32) -> String {
+    let tracks = if versions == 1 { "track" } else { "tracks" };
+    match (requested, versions) {
+        (Some(0), 0) => "Looking for better copies of this edition's tracks.".to_owned(),
+        (Some(0), v) => format!("Downloading this edition's version of {v} of your {tracks}."),
+        (Some(n), 0) => format!("Downloading {} of this edition.", missing_words(n)),
+        (Some(n), v) => format!(
+            "Downloading {} of this edition and {v} in this edition's version.",
+            missing_words(n)
+        ),
+        (None, _) => "Downloading this edition.".to_owned(),
     }
 }
 
 impl RequestsService {
     /// Fill the chosen edition's missing tracks and upgrade its owned
     /// tracks below the cutoff (curator only, as in v2). `album_id` names
-    /// the library copy the edition picker planned, when it did.
+    /// the library copy the edition picker planned, when it did. With
+    /// `replace_versions`, also fetch this edition's version of each track
+    /// a file of the copy is another version of, to replace that file.
     pub async fn acquire_edition(
         &self,
         principal: &Principal,
         release_group: &str,
         album_id: Option<&str>,
+        replace_versions: bool,
     ) -> Result<EditionAcquireResponse, RequestsError> {
         principal.require_curator()?;
         let mbid = validate_mbid(release_group)?;
@@ -109,7 +182,7 @@ impl RequestsService {
         self.quota
             .check_storage_admission(&principal.user_id, principal.role, DispatchOrigin::Edition)
             .await?;
-        let gap = self.gap(album_id, &mbid).await?;
+        let gap = self.gap(album_id, &mbid, replace_versions).await?;
         let (artist_name, title) = match &gap {
             Some(gap) if !gap.artist_name.trim().is_empty() && !gap.title.trim().is_empty() => {
                 (gap.artist_name.clone(), gap.title.clone())
@@ -127,13 +200,30 @@ impl RequestsService {
             total_tracks: gap.as_ref().map(|gap| gap.total_tracks),
             requested: gap.as_ref().map(|gap| count(gap.missing.len())),
             upgrades: gap.as_ref().map(|gap| count(gap.upgrades.len())),
+            versions: gap.as_ref().map(|gap| count(gap.versions.len())),
             ..EditionAcquireResponse::default()
         };
+        // A held copy keeps its own versions, and says so.
+        let kept_note = if gap
+            .as_ref()
+            .is_some_and(|gap| replace_versions && gap.held && gap.other_versions > 0)
+        {
+            " Your own versions stay, because this album's files are left as they are."
+        } else {
+            ""
+        };
         if let Some(gap) = &gap {
-            if gap.missing.is_empty() && gap.upgrades.is_empty() {
+            if gap.missing.is_empty() && gap.upgrades.is_empty() && gap.versions.is_empty() {
                 response.status = "already_complete".to_owned();
-                response.message =
-                    "Every track of this edition is already in your library.".to_owned();
+                response.message = if gap.other_versions > 0 {
+                    format!(
+                        "Every track of this edition is in your library, {} of them in another \
+                         version.{kept_note}",
+                        gap.other_versions
+                    )
+                } else {
+                    "Every track of this edition is already in your library.".to_owned()
+                };
                 return Ok(response);
             }
             self.check_disk(gap.estimate_bytes).await?;
@@ -145,6 +235,11 @@ impl RequestsService {
             Some(gap) => Some(PlannedAlbum {
                 album_id: gap.album_id.clone(),
                 release_mbid: gap.release_mbid.clone(),
+                replace: gap
+                    .versions
+                    .iter()
+                    .map(|(_, version)| version.clone())
+                    .collect(),
             }),
             None => self.planned_copy(album_id, &mbid).await?,
         };
@@ -154,7 +249,14 @@ impl RequestsService {
         };
         let wanted = gap
             .as_ref()
-            .map(|gap| gap.missing.iter().chain(&gap.upgrades).copied().collect())
+            .map(|gap| {
+                gap.missing
+                    .iter()
+                    .chain(&gap.upgrades)
+                    .chain(gap.versions.iter().map(|(at, _)| at))
+                    .copied()
+                    .collect()
+            })
             .unwrap_or_default();
         // With no source set up the queued download waits for the worker,
         // which starts it once a source is saved.
@@ -202,18 +304,11 @@ impl RequestsService {
                      itself once Soulseek, Usenet or a plugin source is saved."
                         .to_owned()
                 } else {
-                    match (response.requested, response.upgrades) {
-                        (Some(1), _) => {
-                            "Downloading the 1 missing track of this edition.".to_owned()
-                        }
-                        (Some(0), Some(_)) => {
-                            "Looking for better copies of this edition's tracks.".to_owned()
-                        }
-                        (Some(n), _) => {
-                            format!("Downloading the {n} missing tracks of this edition.")
-                        }
-                        (None, _) => "Downloading this edition.".to_owned(),
-                    }
+                    let versions = response.versions.unwrap_or_default();
+                    format!(
+                        "{}{kept_note}",
+                        started_message(response.requested, versions)
+                    )
                 };
                 response.task_id = Some(task_id);
                 Ok(response)
@@ -271,6 +366,7 @@ impl RequestsService {
         Ok(found.map(|(album_id, release_mbid)| PlannedAlbum {
             album_id,
             release_mbid,
+            replace: Vec::new(),
         }))
     }
 
@@ -282,6 +378,7 @@ impl RequestsService {
         &self,
         album_id: Option<&str>,
         release_group_mbid: &str,
+        replace_versions: bool,
     ) -> Result<Option<Gap>, RequestsError> {
         let Some(plans) = self.edition_plans.get() else {
             return Ok(None);
@@ -308,7 +405,15 @@ impl RequestsService {
                 });
             }
         };
-        Ok(Some(gap_of(&plan, &self.below_cutoff(&plan).await)))
+        let held = copy_is_held(self.library.pool(), &plan.local_album_id)
+            .await
+            .map_err(|error| RequestsError::internal(&error))?;
+        Ok(Some(gap_of(
+            &plan,
+            &self.below_cutoff(&plan).await,
+            replace_versions,
+            held,
+        )))
     }
 
     /// The plan's kept files below the upgrade cutoff; none while upgrades
@@ -420,7 +525,7 @@ mod tests {
                 })
                 .collect(),
         };
-        let gap = gap_of(&plan, &["f3".to_owned()]);
+        let gap = gap_of(&plan, &["f3".to_owned()], false, false);
         assert_eq!(gap.missing, vec![(1, 2)]);
         assert_eq!(gap.upgrades, vec![(1, 3)]);
         assert_eq!(gap.total_tracks, 3);

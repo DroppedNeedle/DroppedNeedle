@@ -202,6 +202,19 @@ pub struct DownloadManifest {
 pub struct PlannedAlbum {
     pub album_id: String,
     pub release_mbid: String,
+    /// The copy's files that are another version of a release track, to be
+    /// replaced by this edition's version ("Replace tracks you have in
+    /// another version"). Kept and dropped with the planned album; a
+    /// manifest without it replaces nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub replace: Vec<ReplaceVersion>,
+}
+
+/// One file of the copy and the release track whose version replaces it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplaceVersion {
+    pub release_track_mbid: String,
+    pub local_track_id: String,
 }
 
 fn default_origin() -> String {

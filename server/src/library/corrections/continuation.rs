@@ -20,6 +20,12 @@
 //! Nothing else is weighed: not names, recordings, lengths, paths or ages.
 //! No track row and no file is deleted, moved or read. The move has no
 //! undo, but its audit row keeps every row it moved or deleted.
+//!
+//! A track a person had replaced by an edition's version of it (another
+//! recording, see [`continue_replaced`]) continues into its replacement
+//! without that proof, as the import that replaced it names the pair. Its
+//! field overrides described its own recording, so they stay on it; the
+//! rest moves.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -60,8 +66,8 @@ const CANDIDATE_ALBUMS: &str = "SELECT DISTINCT o.local_album_id FROM local_trac
 
 /// Aliases whose own row is not indexed and that still hold something a
 /// person made: one statement per table. A track override that the
-/// target already has for its field stays on the old row and does not
-/// count.
+/// target already has for its field, or on an alias whose overrides stay
+/// (a replaced version), stays on the old row and does not count.
 const HOLDING_ALIASES: &str = "WITH dead AS (SELECT x.alias FROM local_track_aliases x \
       JOIN local_tracks t ON t.id = x.alias WHERE t.availability <> 'indexed') \
     SELECT local_track_id FROM library_play_history WHERE local_track_id IN dead \
@@ -73,7 +79,7 @@ const HOLDING_ALIASES: &str = "WITH dead AS (SELECT x.alias FROM local_track_ali
     UNION SELECT o.local_track_id FROM library_management_overrides o \
       JOIN local_track_aliases x ON x.alias = o.local_track_id \
       WHERE o.subject_kind = 'track' AND o.local_track_id IN dead \
-      AND NOT EXISTS (SELECT 1 FROM library_management_overrides w \
+      AND x.moves_overrides = 1 AND NOT EXISTS (SELECT 1 FROM library_management_overrides w \
         WHERE w.subject_kind = 'track' AND w.local_track_id = x.local_track_id \
         AND w.field_name = o.field_name)";
 
@@ -88,9 +94,33 @@ pub(crate) fn continue_tracks(
     scope: Scope<'_>,
     now: f64,
 ) -> rusqlite::Result<()> {
+    run(tx, scope, &[], now)
+}
+
+/// [`continue_tracks`] on one album, after an import whose files replaced
+/// tracks of it as other versions: each `(old, new)` pair continues
+/// without the proof, its field overrides staying on the old row. Only
+/// when the two rows differ, both are on `album`, the old one is missing
+/// and not an alias yet, and the new one is indexed; otherwise nothing is
+/// written for that pair.
+pub(crate) fn continue_replaced(
+    tx: &Transaction<'_>,
+    album: &str,
+    replaced: &[(String, String)],
+    now: f64,
+) -> rusqlite::Result<()> {
+    run(tx, Scope::Album(album), replaced, now)
+}
+
+fn run(
+    tx: &Transaction<'_>,
+    scope: Scope<'_>,
+    replaced: &[(String, String)],
+    now: f64,
+) -> rusqlite::Result<()> {
     tx.execute_batch("SAVEPOINT continue_tracks")?;
     let mut at = Context::default();
-    match pass(tx, scope, now, &mut at) {
+    match pass(tx, scope, replaced, now, &mut at) {
         Ok(()) => tx.execute_batch("RELEASE continue_tracks"),
         Err(error) => {
             tx.execute_batch("ROLLBACK TO continue_tracks; RELEASE continue_tracks")?;
@@ -125,6 +155,7 @@ struct AlbumLog {
 fn pass(
     tx: &Transaction<'_>,
     scope: Scope<'_>,
+    given: &[(String, String)],
     now: f64,
     at: &mut Context,
 ) -> rusqlite::Result<()> {
@@ -139,27 +170,57 @@ fn pass(
         Scope::Album(album) => Some(album),
         Scope::Library => None,
     };
+    let mut new_pairs: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut replaced: BTreeSet<String> = BTreeSet::new();
+    let created_ms = (now * 1000.0) as i64;
+    // The alias, and every alias naming the old row moved on to the new
+    // one: no alias ever names an alias. A replaced version's overrides
+    // stay, and so do those of the rows that continued into it.
+    let alias = |old: &str, new: &str, moves_overrides: bool| -> rusqlite::Result<()> {
+        tx.execute(
+            "INSERT INTO local_track_aliases (alias, local_track_id, created_at, \
+             moves_overrides) VALUES (?1, ?2, ?3, ?4)",
+            params![old, new, created_ms, moves_overrides],
+        )?;
+        tx.execute(
+            "UPDATE local_track_aliases SET local_track_id = ?2, \
+             moves_overrides = moves_overrides AND ?3 WHERE local_track_id = ?1",
+            params![old, new, moves_overrides],
+        )?;
+        Ok(())
+    };
+    if let Some(album) = only {
+        for (old, new) in given {
+            at.album = Some(album.to_owned());
+            at.old = Some(old.clone());
+            at.new = Some(new.clone());
+            let fits: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM local_tracks o JOIN local_tracks n \
+                 ON n.id = ?2 AND n.local_album_id = o.local_album_id \
+                 AND n.availability = 'indexed' \
+                 WHERE o.id = ?1 AND o.local_album_id = ?3 AND o.availability = 'missing' \
+                 AND NOT EXISTS (SELECT 1 FROM local_track_aliases x WHERE x.alias = o.id))",
+                params![old, new, album],
+                |row| row.get(0),
+            )?;
+            if old == new || !fits {
+                continue;
+            }
+            alias(old, new, false)?;
+            replaced.insert(old.clone());
+            new_pairs.insert((old.clone(), new.clone()));
+        }
+    }
     let albums: Vec<String> = tx
         .prepare_cached(CANDIDATE_ALBUMS)?
         .query_map(params![only], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
-    let mut new_pairs: BTreeSet<(String, String)> = BTreeSet::new();
-    let created_ms = (now * 1000.0) as i64;
     for album in albums {
         at.album = Some(album.clone());
         for (old, new) in pairs_on(tx, &album)? {
             at.old = Some(old.clone());
             at.new = Some(new.clone());
-            tx.execute(
-                "INSERT INTO local_track_aliases (alias, local_track_id, created_at) \
-                 VALUES (?1, ?2, ?3)",
-                params![old, new, created_ms],
-            )?;
-            // No alias ever names an alias.
-            tx.execute(
-                "UPDATE local_track_aliases SET local_track_id = ?2 WHERE local_track_id = ?1",
-                params![old, new],
-            )?;
+            alias(&old, &new, true)?;
             new_pairs.insert((old, new));
         }
     }
@@ -168,21 +229,29 @@ fn pass(
         .prepare_cached(HOLDING_ALIASES)?
         .query_map([], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
+    let pair_json = |old: &str, new: &str, is_new: bool| {
+        let mut pair = json!({ "old_track_id": old, "new_track_id": new, "new_pair": is_new });
+        if replaced.contains(old)
+            && let Some(fields) = pair.as_object_mut()
+        {
+            fields.insert("replaced".to_owned(), Value::Bool(true));
+        }
+        pair
+    };
     let mut logs: BTreeMap<String, AlbumLog> = BTreeMap::new();
     for (old, new) in &new_pairs {
         if !holding.contains(old) {
             let album = album_of(tx, old)?;
             let log = logs.entry(album).or_default();
             log.new_pairs += 1;
-            log.pairs
-                .push(json!({ "old_track_id": old, "new_track_id": new, "new_pair": true }));
+            log.pairs.push(pair_json(old, new, true));
         }
     }
     for old in &holding {
-        let new: String = tx.query_row(
-            "SELECT local_track_id FROM local_track_aliases WHERE alias = ?1",
+        let (new, moves_overrides): (String, bool) = tx.query_row(
+            "SELECT local_track_id, moves_overrides FROM local_track_aliases WHERE alias = ?1",
             params![old],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
         at.old = Some(old.clone());
         at.new = Some(new.clone());
@@ -193,8 +262,8 @@ fn pass(
         if is_new {
             log.new_pairs += 1;
         }
-        let entry = sweep(tx, old, &new, now, &mut log.moved)?;
-        let mut pair = json!({ "old_track_id": old, "new_track_id": new, "new_pair": is_new });
+        let entry = sweep(tx, old, &new, moves_overrides, now, &mut log.moved)?;
+        let mut pair = pair_json(old, &new, is_new);
         if let (Some(target), Value::Object(fields)) = (pair.as_object_mut(), entry) {
             target.extend(fields);
         }
@@ -323,13 +392,14 @@ fn album_of(conn: &Connection, track: &str) -> rusqlite::Result<String> {
     )
 }
 
-/// Move what people made from `old` to `new`, counting into `moved`.
-/// Returns, for the audit row, every row moved and, verbatim, every row
-/// deleted.
+/// Move what people made from `old` to `new`, counting into `moved`; its
+/// track field overrides only with `moves_overrides`. Returns, for the
+/// audit row, every row moved and, verbatim, every row deleted.
 fn sweep(
     tx: &Transaction<'_>,
     old: &str,
     new: &str,
+    moves_overrides: bool,
     now: f64,
     moved: &mut BTreeMap<&'static str, usize>,
 ) -> rusqlite::Result<Value> {
@@ -465,8 +535,8 @@ fn sweep(
 
     // The new row's own override for a field wins; the old one stays on
     // the old row.
-    let overrides: Vec<(String, f64, i64)> = tx
-        .prepare(
+    let overrides: Vec<(String, f64, i64)> = if moves_overrides {
+        tx.prepare(
             "SELECT o.id, o.updated_at, o.row_revision FROM library_management_overrides o \
              WHERE o.subject_kind = 'track' AND o.local_track_id = ?1 \
              AND NOT EXISTS (SELECT 1 FROM library_management_overrides w \
@@ -476,7 +546,10 @@ fn sweep(
         .query_map(params![old, new], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?
-        .collect::<rusqlite::Result<_>>()?;
+        .collect::<rusqlite::Result<_>>()?
+    } else {
+        Vec::new()
+    };
     for (id, _, _) in &overrides {
         tx.execute(
             "UPDATE library_management_overrides SET local_track_id = ?2, updated_at = ?3, \

@@ -71,6 +71,10 @@ pub const UPGRADE_BLOCKED: &str = "upgrade_blocked";
 /// could not be put back either: the old copy is in the recycle bin.
 pub const UPGRADE_RESTORE_FAILED: &str = "upgrade_restore_failed";
 
+/// Hold code for this edition's version of a track that came in lower
+/// quality than the person's own version, which stays.
+pub const VERSION_LOWER_QUALITY: &str = "version_lower_quality";
+
 /// Rejection code for a download whose client named a path outside its
 /// downloads folder, or one reached through a link.
 pub const OUTSIDE_DOWNLOADS: &str = "outside_downloads_folder";
@@ -164,8 +168,25 @@ pub struct LandingReport {
 pub fn is_local_hold(code: &str) -> bool {
     matches!(
         code,
-        "target_occupied" | UPGRADE_PENDING | UPGRADE_BLOCKED | UPGRADE_RESTORE_FAILED
+        "target_occupied"
+            | UPGRADE_PENDING
+            | UPGRADE_BLOCKED
+            | UPGRADE_RESTORE_FAILED
+            | VERSION_LOWER_QUALITY
     )
+}
+
+/// What "Replace tracks you have in another version" made of a landing.
+#[derive(Default)]
+struct Versions {
+    /// Release tracks (by index) handled here, never by the upgrade loop.
+    handled: HashSet<usize>,
+    /// Handled tracks whose file was dropped: they count as owned.
+    dropped: HashSet<usize>,
+    /// Files whose old version goes to the recycle bin first, with it.
+    recycle: Vec<(usize, String)>,
+    /// `(release track, old track)` for every file imported to replace one.
+    replaced: Vec<(String, String)>,
 }
 
 /// The landing service the worker calls.
@@ -479,11 +500,17 @@ impl LandingService {
                     .to_owned(),
             });
         }
+        let mut replaces: HashMap<usize, Vec<String>> = HashMap::new();
+        let versions = self
+            .replace_versions(target, found, landing, &mut plan, &mut held, library)
+            .await;
+        for (file, old) in &versions.recycle {
+            replaces.insert(*file, vec![old.clone()]);
+        }
         // An upgrade replaces the library's copy of a track only when the
         // new file is strictly better (v2 replace-on-import). Equal or
         // worse leaves the library alone and the file is dropped.
         let upgrade = target.origin == "upgrade";
-        let mut replaces: HashMap<usize, Vec<String>> = HashMap::new();
         // The albums the replaced copies sit on, with their release.
         let mut replaced_on: Vec<(String, String)> = Vec::new();
         if upgrade || !target.album_wanted.is_empty() {
@@ -491,6 +518,9 @@ impl LandingService {
                 let Some(track) = found.scored.pair_for(*file).map(|pair| pair.track) else {
                     continue;
                 };
+                if versions.handled.contains(&track) {
+                    continue;
+                }
                 let release_track = &found.release.tracks[track];
                 // "Get missing tracks" upgrades only the owned tracks it
                 // asked for (those below the cutoff).
@@ -532,10 +562,12 @@ impl LandingService {
             (Some(planned), _) => Some(ImportJoin {
                 album_id: planned.album_id.clone(),
                 release_mbid: planned.release_mbid.clone(),
+                replaced: versions.replaced.clone(),
             }),
             (None, [(album_id, release_mbid)]) if !release_mbid.is_empty() => Some(ImportJoin {
                 album_id: album_id.clone(),
                 release_mbid: release_mbid.clone(),
+                replaced: Vec::new(),
             }),
             _ => None,
         };
@@ -697,7 +729,11 @@ impl LandingService {
                 .tracks
                 .iter()
                 .enumerate()
-                .filter(|(index, track)| !covered.contains(index) && !matched.owns(track))
+                .filter(|(index, track)| {
+                    !covered.contains(index)
+                        && !matched.owns(track)
+                        && !versions.dropped.contains(index)
+                })
                 .map(|(index, _)| index)
                 .collect()
         };
@@ -757,6 +793,93 @@ impl LandingService {
             local_only,
             imported_sources,
         }
+    }
+
+    /// "Replace tracks you have in another version": each landed file on a
+    /// release track the planned copy holds in another version (the
+    /// manifest's `replace` list) replaces that version, whether the plan
+    /// put it under `import` or `owned`. Only while the matched release is
+    /// the planned one and the copy still names it. The old track must be
+    /// on the copy, on no track of the release, its album not held, and
+    /// not an alias: an indexed one goes to the recycle bin when the new
+    /// file is as good or better, and a missing one (its file already
+    /// gone) is simply replaced. A worse file is held and the old one
+    /// stays. Otherwise nothing is replaced and the file is dropped as an
+    /// owned one is.
+    async fn replace_versions<'a>(
+        &self,
+        target: &Target,
+        found: &FoundRelease,
+        landing: &'a Landing,
+        plan: &mut FilePlan,
+        held: &mut Vec<Held<'a>>,
+        library: &Arc<dyn LandingLibrary>,
+    ) -> Versions {
+        let mut versions = Versions::default();
+        let Some(planned) = target.planned_album.as_ref().filter(|planned| {
+            !planned.replace.is_empty() && found.release.answers_to(&planned.release_mbid)
+        }) else {
+            return versions;
+        };
+        for version in &planned.replace {
+            let Some(track) = found
+                .release
+                .tracks
+                .iter()
+                .position(|track| track.id.eq_ignore_ascii_case(&version.release_track_mbid))
+            else {
+                continue;
+            };
+            let file = match plan.import.iter().position(|(_, on)| *on == track) {
+                Some(at) => plan.import.remove(at).0,
+                None => match plan.owned.iter().position(|file| {
+                    found.scored.pair_for(*file).map(|pair| pair.track) == Some(track)
+                }) {
+                    Some(at) => plan.owned.remove(at),
+                    None => continue,
+                },
+            };
+            versions.handled.insert(track);
+            let old = library
+                .version_row(&version.local_track_id, planned, &found.release)
+                .await
+                .filter(|row| {
+                    row.on_planned
+                        && !row.alias
+                        && !row.on_release
+                        && !row.held
+                        && matches!(row.availability.as_str(), "indexed" | "missing")
+                });
+            let Some(old) = old else {
+                plan.owned.push(file);
+                versions.dropped.insert(track);
+                continue;
+            };
+            if quality::beats(old.tier, landing.audio[file].tier()) {
+                held.push(Held {
+                    file: &landing.audio[file],
+                    track: Some(track),
+                    code: VERSION_LOWER_QUALITY,
+                    detail: format!(
+                        "the new file is {}, your version is {}",
+                        landing.audio[file].tier(),
+                        old.tier
+                    ),
+                });
+                continue;
+            }
+            if old.availability == "indexed" {
+                versions
+                    .recycle
+                    .push((file, version.local_track_id.clone()));
+            }
+            versions.replaced.push((
+                found.release.tracks[track].id.clone(),
+                version.local_track_id.clone(),
+            ));
+            plan.import.push((file, track));
+        }
+        versions
     }
 
     /// AcoustID check on the files about to import (v2

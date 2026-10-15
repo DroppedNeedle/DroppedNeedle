@@ -32,7 +32,7 @@ use axum::{
     http::{Method, Request, StatusCode},
 };
 use droppedneedle::acquire::db::AcquireDb;
-use droppedneedle::acquire::downloads::manifest::PlannedAlbum;
+use droppedneedle::acquire::downloads::manifest::{PlannedAlbum, ReplaceVersion};
 use droppedneedle::acquire::requests::{
     self, RequestsState,
     dispatch::{DispatchTaskState, RetrySchedule, ScriptedDispatch},
@@ -777,8 +777,12 @@ async fn recovery_finishes_cancels_and_dispatches() {
     assert!(row.task_id.is_some(), "the new task is linked");
 }
 
-/// The library's plan for one album, scripted.
-struct PlannedEdition;
+/// The library's plan for one album, scripted: track 1 kept, track 2
+/// missing (held by "t2" when `complete`), track 3 kept and track 4 held
+/// only by "t4v", another version of it.
+struct PlannedEdition {
+    complete: bool,
+}
 
 impl droppedneedle::library::operations::port::EditionPlans for PlannedEdition {
     fn group_plan<'a>(
@@ -813,6 +817,14 @@ impl droppedneedle::library::operations::port::EditionPlans for PlannedEdition {
             fate: FileFate::Keep,
             edition_track: None,
         };
+        let two = self.complete.then_some("t2");
+        let mut files = vec![kept("t1"), kept("t3")];
+        files.extend(two.map(kept));
+        files.push(PlanFile {
+            fate: FileFate::OtherVersion,
+            edition_track: Some((1, 4)),
+            ..kept("t4v")
+        });
         Box::pin(async move {
             Ok(Some(EditionPlan {
                 local_album_id: "al1".into(),
@@ -823,8 +835,13 @@ impl droppedneedle::library::operations::port::EditionPlans for PlannedEdition {
                 is_current: true,
                 same_album: true,
                 edition: EditionFacts::default(),
-                tracks: vec![track(1, Some("t1")), track(2, None), track(3, Some("t3"))],
-                files: vec![kept("t1"), kept("t3")],
+                tracks: vec![
+                    track(1, Some("t1")),
+                    track(2, two),
+                    track(3, Some("t3")),
+                    track(4, None),
+                ],
+                files,
             }))
         })
     }
@@ -855,14 +872,17 @@ async fn seed_edition_album(db: &AcquireDb) {
     .unwrap();
 }
 
-// "Get missing tracks" sends one album download on the chosen edition for
-// the missing track plus the owned track below the cutoff, and refuses a
-// second while it runs.
-#[tokio::test]
-async fn edition_acquire_asks_once_for_missing_and_below_cutoff_tracks() {
+/// A state whose library plans album "al1" (see [`PlannedEdition`]), with
+/// upgrades below lossless on.
+async fn edition_setup() -> (RequestsState, AcquireDb, Arc<ScriptedDispatch>) {
     let (state, db, dispatch) = setup().await;
     seed_edition_album(&db).await;
-    assert!(state.edition_plans.set(Arc::new(PlannedEdition)).is_ok());
+    assert!(
+        state
+            .edition_plans
+            .set(Arc::new(PlannedEdition { complete: false }))
+            .is_ok()
+    );
     assert!(
         state
             .upgrade_policy
@@ -875,23 +895,36 @@ async fn edition_acquire_asks_once_for_missing_and_below_cutoff_tracks() {
             }))
             .is_ok()
     );
-    let uri = format!("/albums/{MBID_A}/edition/acquire?album_id=al1");
+    (state, db, dispatch)
+}
+
+// "Get missing tracks" sends one album download on the chosen edition for
+// the missing track plus the owned track below the cutoff, and refuses a
+// second while it runs. A track the copy holds in another version is
+// asked for with "replace_versions" (on by default), naming the file it
+// replaces, and never on a copy the app leaves alone.
+#[tokio::test]
+async fn edition_acquire_asks_once_for_missing_and_below_cutoff_tracks() {
+    let (state, _db, dispatch) = edition_setup().await;
+    let asked = format!("/albums/{MBID_A}/edition/acquire?album_id=al1");
+    let uri = format!("{asked}&replace_versions=false");
     let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["status"], "started");
     assert_eq!(
-        (&body["requested"], &body["upgrades"]),
-        (&json!(1), &json!(1))
+        (&body["requested"], &body["upgrades"], &body["versions"]),
+        (&json!(1), &json!(1), &json!(0))
     );
     let calls = dispatch.take_calls();
     assert_eq!(calls.len(), 1, "one download for the album");
     assert_eq!(calls[0].release_mbid.as_deref(), Some("rel-1"));
-    assert_eq!(calls[0].wanted, vec![(1, 2), (1, 3)]);
+    assert_eq!(calls[0].wanted, vec![(1, 2), (1, 3)], "your version stays");
     assert_eq!(
         calls[0].planned_album,
         Some(PlannedAlbum {
             album_id: "al1".into(),
-            release_mbid: "rel-1".into()
+            release_mbid: "rel-1".into(),
+            replace: Vec::new(),
         }),
         "the files join the copy the plan was for"
     );
@@ -900,6 +933,75 @@ async fn edition_acquire_asks_once_for_missing_and_below_cutoff_tracks() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["status"], "already_in_progress");
     assert!(dispatch.take_calls().is_empty(), "never two at once");
+
+    // "replace_versions" is on when not given.
+    let replacing = asked;
+    let (state, _db, dispatch) = edition_setup().await;
+    let (status, body) = call(&state, Method::POST, &replacing, Some(ADMIN), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        (&body["requested"], &body["upgrades"], &body["versions"]),
+        (&json!(1), &json!(1), &json!(1))
+    );
+    assert_eq!(
+        body["message"],
+        "Downloading the 1 missing track of this edition and 1 in this edition's version."
+    );
+    let calls = dispatch.take_calls();
+    assert_eq!(calls[0].wanted, vec![(1, 2), (1, 3), (1, 4)]);
+    assert_eq!(
+        calls[0]
+            .planned_album
+            .as_ref()
+            .map(|planned| planned.replace.clone()),
+        Some(vec![ReplaceVersion {
+            release_track_mbid: "rt-4".into(),
+            local_track_id: "t4v".into(),
+        }])
+    );
+
+    // A person's "leave unmanaged" keeps their version.
+    let (state, db, dispatch) = edition_setup().await;
+    db.write("test.exclude", |tx| {
+        tx.execute_batch(
+            "INSERT INTO library_management_exclusions (local_album_id, reason, \
+             excluded_by_user_id, excluded_at) VALUES ('al1', 'mine', 'u-root', 0);",
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    let (status, body) = call(&state, Method::POST, &replacing, Some(ADMIN), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["versions"], json!(0));
+    assert!(
+        body["message"]
+            .as_str()
+            .is_some_and(|message| message.ends_with(
+                "Your own versions stay, because this \
+                 album's files are left as they are."
+            )),
+        "{body}"
+    );
+    assert_eq!(dispatch.take_calls()[0].wanted, vec![(1, 2), (1, 3)]);
+
+    // Only a version left, not asked for (upgrades off).
+    let (state, db, dispatch) = setup().await;
+    seed_edition_album(&db).await;
+    assert!(
+        state
+            .edition_plans
+            .set(Arc::new(PlannedEdition { complete: true }))
+            .is_ok()
+    );
+    let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "already_complete", "{body}");
+    assert_eq!(
+        body["message"],
+        "Every track of this edition is in your library, 1 of them in another version."
+    );
+    assert!(dispatch.take_calls().is_empty());
 }
 
 /// The library's plan, unavailable (MusicBrainz down).
@@ -960,7 +1062,8 @@ async fn edition_acquire_without_a_plan_fetches_for_the_named_copy() {
         calls[0].planned_album,
         Some(PlannedAlbum {
             album_id: "al1".into(),
-            release_mbid: "rel-x".into()
+            release_mbid: "rel-x".into(),
+            replace: Vec::new(),
         })
     );
 }
@@ -972,7 +1075,12 @@ async fn edition_acquire_without_a_plan_fetches_for_the_named_copy() {
 async fn edition_acquire_is_held_while_no_source_is_ready() {
     let (state, db, dispatch) = setup().await;
     seed_edition_album(&db).await;
-    assert!(state.edition_plans.set(Arc::new(PlannedEdition)).is_ok());
+    assert!(
+        state
+            .edition_plans
+            .set(Arc::new(PlannedEdition { complete: false }))
+            .is_ok()
+    );
     let staging = crate::common::ScratchDir::new("edition-held");
     assert!(
         state

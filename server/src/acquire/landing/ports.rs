@@ -46,6 +46,27 @@ pub struct OwnedCopy {
     pub tier: &'static str,
 }
 
+/// A library track a landed file may replace as another version of a
+/// release track, as the catalog has it now.
+#[derive(Debug, Clone)]
+pub struct VersionRow {
+    /// It is on the planned copy (followed to the album it was merged
+    /// into), and that copy still names the planned release.
+    pub on_planned: bool,
+    /// `indexed`, `missing` or `excluded`.
+    pub availability: String,
+    /// Already an alias of another track.
+    pub alias: bool,
+    /// Mapped to a track of the release being landed.
+    pub on_release: bool,
+    /// The app leaves its album's files as they are
+    /// ([`crate::acquire::edition::copy_is_held`]).
+    pub held: bool,
+    /// Quality tier from the format, bit rate and depth on its row, which
+    /// stay after its file is gone.
+    pub tier: &'static str,
+}
+
 /// Files moved into the recycle bin, as (where it was, where it is now).
 pub use crate::library::mutations::Recycled;
 
@@ -152,6 +173,16 @@ pub trait LandingLibrary: Send + Sync {
         release_track_mbid: &'a str,
         recording_mbid: &'a str,
     ) -> BoxFuture<'a, Vec<OwnedCopy>>;
+
+    /// The library track `track_id` as a file landed for `planned` on
+    /// `release` would replace it ("Replace tracks you have in another
+    /// version"). `None` when it is gone or cannot be read.
+    fn version_row<'a>(
+        &'a self,
+        track_id: &'a str,
+        planned: &'a crate::acquire::downloads::manifest::PlannedAlbum,
+        release: &'a Release,
+    ) -> BoxFuture<'a, Option<VersionRow>>;
 
     /// Move library tracks' files into the recycle bin and take them out
     /// of the catalog, all or nothing. `actor` is the user the change is

@@ -182,8 +182,10 @@ pub async fn clear_history_handler(
 }
 
 /// Fill the selected edition's missing tracks and upgrade its below-cutoff
-/// owned tracks, in one download. `POST /api/v3/albums/{album_id}/edition/acquire`.
-/// Curator only. Never retags existing files.
+/// owned tracks, in one download; with `replace_versions`, also fetch this
+/// edition's version of each track the copy holds in another version.
+/// `POST /api/v3/albums/{album_id}/edition/acquire`. Curator only. Never
+/// retags existing files.
 #[utoipa::path(
     post,
     path = "/api/v3/albums/{album_id}/edition/acquire",
@@ -200,7 +202,12 @@ pub async fn acquire_edition_handler(
     ValidQuery(query): ValidQuery<EditionAcquireQuery>,
 ) -> Result<impl IntoResponse, HttpError> {
     let response = RequestsService::new(&state)
-        .acquire_edition(&principal, &album_id, query.album_id.as_deref())
+        .acquire_edition(
+            &principal,
+            &album_id,
+            query.album_id.as_deref(),
+            query.replace_versions.unwrap_or(true),
+        )
         .await?;
     Ok(Json(response))
 }

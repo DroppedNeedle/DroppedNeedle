@@ -29,13 +29,15 @@
 //! placed). Otherwise they are filed by their tags. A joined file goes into
 //! the copy's own folder when its files sit in one, and is locked to the
 //! album as the album tools lock a moved track. A row at its destination
-//! keeps its id for the new file only when it is on that album and not
-//! excluded; any other row there gives up its path and keeps its id and
-//! history. The commit applies the same rule again, and on an album whose
-//! match is a person's it places each file on its release track
-//! ([`crate::library::operations::choice::place_imported`]). The join and
-//! each file's place ride in the provenance record, so a commit resumed
-//! after a crash joins and places them the same way.
+//! keeps its id for the new file only when it is on that album, not
+//! excluded and not a track the file replaces as another version; any
+//! other row there gives up its path and keeps its id and history. The
+//! commit applies the same rule again, and on an album whose match is a
+//! person's it places each file on its release track
+//! ([`crate::library::operations::choice::place_imported`]); what people
+//! made on a replaced track moves to the file that replaced it. The join
+//! and each file's place ride in the provenance record, so a commit
+//! resumed after a crash joins and places them the same way.
 //!
 //! An import is not an edit of library files, so it records no undo
 //! snapshot and no first-management baseline: the files' first library
@@ -124,10 +126,15 @@ pub struct DownloadImport {
 
 /// The library album a download was fetched for, and its release as that
 /// album's identity row named it when the fetch was planned.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ImportJoin {
     pub album_id: String,
     pub release_mbid: String,
+    /// `(release track, track)`: the album's track each file on that
+    /// release track replaces, another version of it. That track never
+    /// lends the file its id, and what people made on it moves to the
+    /// file in the catalog commit.
+    pub replaced: Vec<(String, String)>,
 }
 
 /// Where the files went.
@@ -292,6 +299,10 @@ impl LibrarySetup {
                 "an earlier import of this download is waiting for recovery".to_owned(),
             ));
         }
+        let replaced = join
+            .as_ref()
+            .map(|join| join.replaced.clone())
+            .unwrap_or_default();
         let join = join.map(|join| AlbumJoin {
             album_id: join.album_id,
             release_mbid: join.release_mbid,
@@ -340,6 +351,7 @@ impl LibrarySetup {
                         &placement.dest_rel,
                         join.is_some(),
                         joined.as_ref(),
+                        &replaced,
                     )
                     .map_err(|error| fault(error.to_string()))?
                 {
@@ -376,6 +388,10 @@ impl LibrarySetup {
                     release_track_mbid: track.id.clone(),
                     disc: track.disc.max(1),
                     position: track.position,
+                    replaced: replaced
+                        .iter()
+                        .find(|(on, _)| on.eq_ignore_ascii_case(&track.id))
+                        .map(|(_, old)| old.clone()),
                 })
         };
         let dest_policy = |dest_rel: &str| super::publish::planner::Adoption {
@@ -528,8 +544,10 @@ impl LibrarySetup {
     /// taken only when it is on the joined album and not excluded; any
     /// other row there keeps its id and gives up the path in the commit,
     /// unless the catalog still lists its file, which holds this one as an
-    /// occupied destination. The file then takes the stable id, or a new
-    /// one when that is taken.
+    /// occupied destination. A row the file replaces as another version
+    /// (`replaced`) is never taken: it keeps what describes its own
+    /// recording. The file then takes the stable id, or a new one when
+    /// that is taken.
     fn planned_track_id(
         &self,
         conn: &rusqlite::Connection,
@@ -537,6 +555,7 @@ impl LibrarySetup {
         dest_rel: &str,
         join: bool,
         joined: Option<&JoinedAlbum>,
+        replaced: &[(String, String)],
     ) -> rusqlite::Result<Result<String, String>> {
         use rusqlite::OptionalExtension as _;
         if !join {
@@ -554,7 +573,10 @@ impl LibrarySetup {
             )
             .optional()?;
         if let Some((id, album, availability)) = at_path {
-            if availability != "excluded" && joined.is_some_and(|joined| joined.album_id == album) {
+            if availability != "excluded"
+                && joined.is_some_and(|joined| joined.album_id == album)
+                && !replaced.iter().any(|(_, old)| *old == id)
+            {
                 return Ok(Ok(id));
             }
             if availability == "indexed" {

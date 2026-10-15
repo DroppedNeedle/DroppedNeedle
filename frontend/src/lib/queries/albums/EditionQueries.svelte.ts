@@ -107,8 +107,15 @@ export function clearEditionPin() {
 
 export function acquireEdition() {
 	return createMutation(() => ({
-		mutationFn: ({ mbid, copyId }: { mbid: string; copyId?: string }) =>
-			api.global.v3.POST(CATALOG_ENDPOINTS.acquireEdition(mbid, copyId)),
+		mutationFn: ({
+			mbid,
+			copyId,
+			replaceVersions
+		}: {
+			mbid: string;
+			copyId?: string;
+			replaceVersions?: boolean;
+		}) => api.global.v3.POST(CATALOG_ENDPOINTS.acquireEdition(mbid, copyId, replaceVersions)),
 		// the acquire fans out into download tasks - surface them in the queue now,
 		// not on the next poll
 		onSuccess: () =>

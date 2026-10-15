@@ -139,13 +139,18 @@ pub const CATALOG: &[Reason] = &[
     ),
     reason(
         "upgrade_blocked",
-        "A better file arrived, but your current copy could not be moved to the recycle bin, so it was kept.",
+        "A file to replace your current copy arrived, but your copy could not be moved to the recycle bin, so it was kept.",
         "Check that the recycle bin folder exists and can be written, then import the held file.",
     ),
     reason(
         "upgrade_restore_failed",
-        "A better file could not be placed, and your old copy could not be put back either. The old copy is in the recycle bin.",
+        "A file meant to replace your copy could not be placed, and your old copy could not be put back either. The old copy is in the recycle bin.",
         "Move the old file back from the recycle bin, or import the held file to replace it.",
+    ),
+    reason(
+        "version_lower_quality",
+        "This edition's version turned up only in lower quality than yours, so your version stays.",
+        "Nothing to do. Discard the held file once you have heard it.",
     ),
     reason(
         "no_tracks",

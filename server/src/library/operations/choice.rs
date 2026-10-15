@@ -23,7 +23,7 @@ use super::decisions::{
 use super::models::{EditionChoice, OperationError, PlacedFile, ReidentificationCandidate};
 use super::reasons;
 use super::store::PROVIDER;
-use crate::library::corrections::continuation::{Scope, continue_tracks};
+use crate::library::corrections::continuation::{Scope, continue_replaced, continue_tracks};
 use crate::library::identify::models::{EvidenceClass, PriorAlbumIdentity, PriorTrackIdentity};
 use crate::library::identify::sqlite::{album_identity_row, track_identity_rows};
 
@@ -1547,8 +1547,11 @@ pub fn place_files(
 /// given away: that file stays on the album, unplaced. When a file was
 /// placed, a match state left by an earlier failed placement
 /// (`CHOSEN_EDITION_*`) goes. Missing tracks then continue into the new
-/// ones ([`continue_tracks`]), last in the transaction. No audit row is
-/// written. Returns the number of files placed and left unplaced.
+/// ones ([`continue_tracks`]), last in the transaction. A file that
+/// replaced a track of the album as another version takes what people
+/// made on it ([`continue_replaced`]), whatever the album's match source,
+/// unless another file holds its release track. No audit row is written.
+/// Returns the number of files placed and left unplaced.
 pub(crate) fn place_imported(
     tx: &Transaction<'_>,
     album_id: &str,
@@ -1556,7 +1559,7 @@ pub(crate) fn place_imported(
     files: &[(String, crate::library::publish::planner::JoinedTrack)],
     now: f64,
 ) -> rusqlite::Result<(usize, usize)> {
-    let release: Option<String> = tx
+    let chosen: Option<String> = tx
         .query_row(
             "SELECT release_mbid FROM local_album_external_identities \
              WHERE local_album_id = ?1 AND provider = ?2 \
@@ -1568,9 +1571,12 @@ pub(crate) fn place_imported(
             |row| row.get(0),
         )
         .optional()?;
-    let Some(release) = release else {
+    let replacing = files.iter().any(|(_, track)| track.replaced.is_some());
+    if chosen.is_none() && !replacing {
         return Ok((0, 0));
-    };
+    }
+    let release = chosen.clone().unwrap_or_else(|| release_mbid.to_owned());
+    let mut replaced = Vec::new();
     let (mut placed, mut left) = (0usize, 0usize);
     for (track_id, track) in files {
         let held: bool = tx.query_row(
@@ -1591,6 +1597,12 @@ pub(crate) fn place_imported(
         )?;
         if held {
             left += 1;
+            continue;
+        }
+        if let Some(old) = &track.replaced {
+            replaced.push((old.clone(), track_id.clone()));
+        }
+        if chosen.is_none() {
             continue;
         }
         upsert_track_identity(
@@ -1615,7 +1627,10 @@ pub(crate) fn place_imported(
             params![album_id],
         )?;
     }
-    continue_tracks(tx, Scope::Album(album_id), now)?;
+    if chosen.is_none() && replaced.is_empty() {
+        return Ok((0, left));
+    }
+    continue_replaced(tx, album_id, &replaced, now)?;
     tracing::info!(
         album = album_id,
         placed,

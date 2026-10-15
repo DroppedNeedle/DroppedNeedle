@@ -83,6 +83,22 @@ fn pick(identity: Option<&str>, source: &str) -> Option<ChosenEdition> {
     })
 }
 
+/// Whether the app leaves a library album's files as they are: a person
+/// chose "leave unmanaged", the app stepped back after outside edits, or a
+/// scan followed the album across a retag. None of its files is replaced
+/// by another version. Read by "Get missing tracks" and by the landing.
+pub async fn copy_is_held(pool: &SqlitePool, album_id: &str) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM library_management_exclusions WHERE local_album_id = ?1) \
+         OR EXISTS(SELECT 1 FROM library_album_takeovers WHERE local_album_id = ?1) \
+         OR EXISTS(SELECT 1 FROM library_management_automatic_queue \
+           WHERE local_album_id = ?1 AND retag_followed_at IS NOT NULL)",
+    )
+    .bind(album_id)
+    .fetch_one(pool)
+    .await
+}
+
 /// Whether the library holds a copy of one release group.
 pub async fn library_holds(
     pool: &SqlitePool,

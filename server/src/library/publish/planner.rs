@@ -236,6 +236,10 @@ pub struct JoinedTrack {
     pub release_track_mbid: String,
     pub disc: u32,
     pub position: u32,
+    /// The track of the album the file replaces as another version of its
+    /// release track: what people made on it moves to the new file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaced: Option<String>,
 }
 
 impl Adoption {

@@ -11,7 +11,9 @@ use sqlx::SqlitePool;
 
 use super::ports::{
     ImportFailure, ImportReceipt, ImportRequest, LandingLibrary, OwnedCopy, OwnedTracks, Recycled,
+    VersionRow,
 };
+use crate::acquire::downloads::manifest::PlannedAlbum;
 use crate::library::identify::sources::{EditionQuery, ReleaseHit, ReleaseSource, SourceError};
 use crate::library::import::{DownloadImport, ImportError, ImportSource};
 use crate::library::management::service::Management;
@@ -254,6 +256,76 @@ impl LandingLibrary for LibraryLanding {
                     tier: tier_of(&row.format, row.bitrate, row.depth),
                 })
                 .collect()
+        })
+    }
+
+    fn version_row<'a>(
+        &'a self,
+        track_id: &'a str,
+        planned: &'a PlannedAlbum,
+        release: &'a Release,
+    ) -> BoxFuture<'a, Option<VersionRow>> {
+        Box::pin(async move {
+            let release_tracks = serde_json::to_string(
+                &release
+                    .tracks
+                    .iter()
+                    .map(|track| track.id.to_ascii_lowercase())
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap_or_default();
+            type Row = (
+                String,
+                String,
+                Option<i64>,
+                Option<i64>,
+                bool,
+                bool,
+                bool,
+                String,
+            );
+            let row: Option<Row> = match sqlx::query_as(
+                "SELECT t.availability, t.file_format, t.bit_rate, t.bit_depth, \
+                 t.local_album_id = (SELECT COALESCE(retired_into_album_id, id) \
+                   FROM local_albums WHERE id = ?2) \
+                 AND EXISTS (SELECT 1 FROM local_album_external_identities e \
+                   WHERE e.local_album_id = t.local_album_id AND e.provider = 'musicbrainz' \
+                   AND lower(trim(e.release_mbid)) = lower(trim(?3))), \
+                 EXISTS (SELECT 1 FROM local_track_aliases x WHERE x.alias = t.id), \
+                 EXISTS (SELECT 1 FROM local_track_external_identities i, json_each(?4) j \
+                   WHERE i.local_track_id = t.id AND i.provider = 'musicbrainz' \
+                   AND lower(i.release_track_mbid) = j.value), \
+                 t.local_album_id FROM local_tracks t WHERE t.id = ?1",
+            )
+            .bind(track_id)
+            .bind(&planned.album_id)
+            .bind(&planned.release_mbid)
+            .bind(release_tracks)
+            .fetch_optional(&self.pool)
+            .await
+            {
+                Ok(row) => row,
+                Err(error) => {
+                    tracing::warn!(%error, track_id, "track to replace unreadable; nothing is replaced");
+                    return None;
+                }
+            };
+            let (availability, format, bitrate, depth, on_planned, alias, on_release, album) = row?;
+            let held = match crate::acquire::edition::copy_is_held(&self.pool, &album).await {
+                Ok(held) => held,
+                Err(error) => {
+                    tracing::warn!(%error, album, "album hold unreadable; nothing is replaced");
+                    return None;
+                }
+            };
+            Some(VersionRow {
+                on_planned,
+                availability,
+                alias,
+                on_release,
+                held,
+                tier: tier_of(&format, bitrate, depth),
+            })
         })
     }
 

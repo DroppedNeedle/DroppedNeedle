@@ -545,21 +545,32 @@ pub struct EditionAcquireResponse {
     /// read and the whole album was asked for).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_tracks: Option<u32>,
-    /// Missing tracks asked for.
+    /// Missing tracks asked for: edition tracks no file holds and no file
+    /// is another version of.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requested: Option<u32>,
     /// Owned tracks of the edition below the quality cutoff, asked for in
     /// the same download; each is replaced only by a strictly better file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upgrades: Option<u32>,
+    /// Tracks a file of the copy is another version of, asked for in this
+    /// edition's version with `replace_versions`; each replaces that file
+    /// when it is as good or better.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub versions: Option<u32>,
 }
 
 /// Which library copy "get missing tracks" works on.
 #[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct EditionAcquireQuery {
     /// Local album id of the copy the edition picker planned; the chosen
     /// copy of the release group when absent.
     pub album_id: Option<String>,
+    /// Also fetch this edition's version of each track a file of the copy
+    /// is another version of, and replace that file with it (the default).
+    /// With `false` those files stay and their tracks are not fetched.
+    pub replace_versions: Option<bool>,
 }
 
 /// Status-sync outcome.

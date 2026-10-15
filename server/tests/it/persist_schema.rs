@@ -1233,6 +1233,63 @@ async fn edition_undo_keeps_its_rows_and_gains_the_hold() {
     );
 }
 
+/// Migration 0049 marks whether a track alias takes the old row's field
+/// overrides along. Every alias made before it continued a track into the
+/// same track, so it keeps doing so.
+#[tokio::test]
+async fn track_aliases_keep_moving_overrides() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 49)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+         ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         album_title, album_title_folded, file_format, ingest_source, imported_at, \
+         membership_source) VALUES \
+         ('old', 'al1', 'r1', '/m/1.flac', '1.flac', 'h1', 1, 0, 's', 'T', 't', 'T', 't', \
+         'flac', 'scan', 0, 'automatic'), \
+         ('new', 'al1', 'r1', '/m/2.flac', '2.flac', 'h2', 1, 0, 's', 'T', 't', 'T', 't', \
+         'flac', 'scan', 0, 'automatic'); \
+         INSERT INTO local_track_aliases (alias, local_track_id, created_at) \
+         VALUES ('old', 'new', 7);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let rows: Vec<(String, String, i64, i64)> = sqlx::query_as(
+        "SELECT alias, local_track_id, created_at, moves_overrides FROM local_track_aliases",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows, vec![("old".to_owned(), "new".to_owned(), 7, 1)]);
+    let refused = sqlx::query("UPDATE local_track_aliases SET moves_overrides = 2")
+        .execute(&pool)
+        .await;
+    assert!(refused.is_err(), "only 0 or 1");
+}
+
 /// The causes a takeover may carry in the database are exactly the ones
 /// the code names, in both directions.
 #[tokio::test]
