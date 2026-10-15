@@ -14,7 +14,7 @@ use crate::runtime_config::sections::{
     LibraryManagement, LibraryManagementProfile, LibraryManagementRootAssignment,
     MultiDiscNamingMode, NamingScript, OrganizationManagementSettings,
 };
-use crate::settings::error::SettingsError;
+use crate::runtime_config::settings_error::SettingsError;
 
 /// Pin a profile for one root: overlay the assignment overrides onto a
 /// detached copy of the assigned profile (the default profile when none
@@ -279,7 +279,7 @@ pub fn validate_root_assignments(
     settings: &LibraryManagement,
     library: &TypedLibrary,
 ) -> Result<String, SettingsError> {
-    let resolved = crate::settings::library_policy::resolve(library)?;
+    let resolved = crate::library::policy::resolve(library)?;
     if !settings.recycle_bin_path.trim().is_empty() {
         let recycle = std::path::PathBuf::from(settings.recycle_bin_path.trim());
         for root in &resolved.settings.library_roots {

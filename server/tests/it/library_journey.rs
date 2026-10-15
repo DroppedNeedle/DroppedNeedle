@@ -3888,7 +3888,7 @@ async fn activate_automatic_folder(app: &TestApp, headers: &[(&str, &str)], cust
         }
         None => assignments.push(json!({
             "root_id": "music",
-            "profile_id": droppedneedle::settings::management::PICARD_ORGANIZER_PROFILE_ID,
+            "profile_id": droppedneedle::library::management::settings::PICARD_ORGANIZER_PROFILE_ID,
             "enabled": true,
             "automatic_scan_discovered": true,
             "automatic_custom_editions": custom_editions,
@@ -4616,10 +4616,10 @@ async fn management_run(
 async fn library_management_preview_apply_undo() {
     use droppedneedle::library::management::models::{ItemFilter, Selection, SelectionKind};
     use droppedneedle::library::management::service::{ApplyRequest, Management, PreviewRequest};
+    use droppedneedle::library::management::settings as lm;
     use droppedneedle::library::tags::save::{TagEdit, save_tags};
     use droppedneedle::library::tags::{TagField, read_fields};
     use droppedneedle::runtime_config::sections::NamingScript;
-    use droppedneedle::settings::management as lm;
 
     let (_scratch, library, music) = bare_library("lib-management-jobs");
     let first = plant(
@@ -5280,9 +5280,9 @@ async fn library_management_tools_journey() {
     use droppedneedle::library::management::models::{Selection, SelectionKind, TagEditMode};
     use droppedneedle::library::management::restore::{PurgeRequest, RestoreRequest};
     use droppedneedle::library::management::service::Management;
+    use droppedneedle::library::management::settings as lm;
     use droppedneedle::library::management::tag_edit::TagEditRequest;
     use droppedneedle::library::tags::{TagField, read_fields};
-    use droppedneedle::settings::management as lm;
 
     let (scratch, library, music) = bare_library("lib-management-tools");
     let file = plant(&music, "incoming/tool track.flac", "management_full.flac");
@@ -6015,8 +6015,8 @@ async fn library_management_tools_journey() {
 async fn library_management_custom_edition_journey() {
     use droppedneedle::library::management::models::{Selection, SelectionKind};
     use droppedneedle::library::management::service::{Management, PreviewRequest};
+    use droppedneedle::library::management::settings as lm;
     use droppedneedle::library::tags::{TagField, read_fields};
-    use droppedneedle::settings::management as lm;
 
     let (scratch, library, music) = bare_library("lib-management-custom");
     let file = plant(&music, "custom/sealed track.flac", "management_full.flac");
@@ -6161,10 +6161,10 @@ async fn library_management_artwork_journey() {
     use droppedneedle::library::management::enrich::{Cover, ScriptedEnrichment};
     use droppedneedle::library::management::models::{Selection, SelectionKind};
     use droppedneedle::library::management::service::{Management, PreviewRequest};
+    use droppedneedle::library::management::settings as lm;
     use droppedneedle::library::tags::save::read_document;
     use droppedneedle::library::tags::{TagEdit, TagField};
     use droppedneedle::runtime_config::sections::LibraryManagement;
-    use droppedneedle::settings::management as lm;
 
     let (scratch, library, music) = bare_library("lib-management-artwork");
     let file = plant(&music, "art/cover track.m4a", "management_full.m4a");
@@ -6432,7 +6432,7 @@ impl ManagedLibrary {
         tag: &str,
         configure: impl Fn(&mut droppedneedle::runtime_config::sections::LibraryManagementProfile),
     ) -> Self {
-        use droppedneedle::settings::management as lm;
+        use droppedneedle::library::management::settings as lm;
         let (scratch, library, music) = bare_library(tag);
         std::fs::create_dir_all(&music).expect("music folder");
         add_music_root(&library, &music).await;
@@ -6477,7 +6477,7 @@ impl ManagedLibrary {
     }
 
     fn settings_revision(&self) -> String {
-        droppedneedle::settings::management::settings_revision(
+        droppedneedle::library::management::settings::settings_revision(
             &self
                 .library
                 .config
@@ -6658,7 +6658,8 @@ impl ManagedLibrary {
                 .push(LibraryManagementRootAssignment {
                     root_id: "music".to_owned(),
                     profile_id: Some(
-                        droppedneedle::settings::management::PICARD_ORGANIZER_PROFILE_ID.to_owned(),
+                        droppedneedle::library::management::settings::PICARD_ORGANIZER_PROFILE_ID
+                            .to_owned(),
                     ),
                     enabled: true,
                     automatic_scan_discovered: true,
@@ -6848,8 +6849,9 @@ impl ManagedLibrary {
                         ids: ids.iter().map(|id| (*id).to_owned()).collect(),
                         catalog_filter: None,
                     },
-                    profile_id: droppedneedle::settings::management::PICARD_ORGANIZER_PROFILE_ID
-                        .to_owned(),
+                    profile_id:
+                        droppedneedle::library::management::settings::PICARD_ORGANIZER_PROFILE_ID
+                            .to_owned(),
                     expected_settings_revision: self.settings_revision(),
                     expected_policy_revision: self
                         .library
@@ -8583,8 +8585,9 @@ impl ManagedLibrary {
                     ids: ids.iter().map(|id| (*id).to_owned()).collect(),
                     catalog_filter: None,
                 },
-                profile_id: droppedneedle::settings::management::PICARD_ORGANIZER_PROFILE_ID
-                    .to_owned(),
+                profile_id:
+                    droppedneedle::library::management::settings::PICARD_ORGANIZER_PROFILE_ID
+                        .to_owned(),
                 expected_settings_revision: self.settings_revision(),
                 expected_policy_revision: self.library.live_registry().policy_revision().to_owned(),
                 idempotency_key: Some(key.to_owned()),
@@ -9729,7 +9732,7 @@ async fn manage_preview_waits_while_the_chosen_edition_is_placed() {
 async fn management_preview_blocks_an_album_whose_edition_is_being_placed() {
     use droppedneedle::library::management::models::{ItemFilter, Selection, SelectionKind};
     use droppedneedle::library::management::service::PreviewRequest;
-    use droppedneedle::settings::management as lm;
+    use droppedneedle::library::management::settings as lm;
 
     let managed = ManagedLibrary::start("lib-remap-management", |_| {}).await;
     let (waiting, _) = managed.add_album("waiting", 2).await;

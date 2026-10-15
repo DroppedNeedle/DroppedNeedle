@@ -20,6 +20,7 @@ pub mod quota;
 pub mod secret;
 pub mod secret_sections;
 pub mod sections;
+pub mod settings_error;
 pub mod store;
 
 pub use crypto::Crypto;

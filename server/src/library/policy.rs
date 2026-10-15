@@ -24,8 +24,7 @@ use std::path::{Component, Path, PathBuf};
 use futures_util::future::BoxFuture;
 use sha2::{Digest, Sha256};
 
-use super::error::SettingsError;
-use super::models::{
+use crate::library::settings_models::{
     LibraryPathMappingItem, LibraryPathMappingReport, LibraryPolicyApplyPreviewResponse,
     LibraryPolicyImpactResponse, LibraryPolicyTreeNode, LibraryPolicyTreeResponse,
     LibraryRestorableRoot, LibrarySettingsResponse, PathMappingError, PathMappingSource,
@@ -35,6 +34,7 @@ use crate::runtime_config::Masked;
 use crate::runtime_config::secret_sections::{
     IdentificationPolicy, LibraryPathRule, LibraryRoot, TypedLibrary,
 };
+use crate::runtime_config::settings_error::SettingsError;
 
 /// Canonical JSON: sorted keys, compact separators, ASCII-escaped
 /// strings, byte-identical to Python's

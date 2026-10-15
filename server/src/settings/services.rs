@@ -16,20 +16,19 @@
 use std::sync::Arc;
 
 use super::effects::{SaveEffects, SavedSection};
-use super::error::SettingsError;
-use super::library_policy;
 use super::models::{
     AdvancedSettingsForm, DownloadPolicyView, FrontendCacheTTLs, IndexerSavedResponse,
     IndexerTestResponse, JellyfinUserInfo, JellyfinVerifyResponse, LibraryScanScheduleResponse,
-    LibrarySettingsResponse, LibrarySettingsSaveRequest, PlexLibrarySectionInfo,
-    PlexVerifyResponse, PolicyImpactResponse, PolicySummaryResponse, ProwlarrTestResponse,
-    SabnzbdTestResponse, SourcePriorityOrder, TestConnectionResponse, UsenetSearchBackend,
-    VerifyConnectionResponse,
+    LibrarySettingsSaveRequest, PlexLibrarySectionInfo, PlexVerifyResponse, PolicyImpactResponse,
+    PolicySummaryResponse, ProwlarrTestResponse, SabnzbdTestResponse, SourcePriorityOrder,
+    TestConnectionResponse, UsenetSearchBackend, VerifyConnectionResponse,
 };
 use super::quality;
 use super::verify::{VerifyProbes, check_hibp_file, require_service_url};
 use crate::bootstrap::Outbound;
 use crate::ids::IdGenerator;
+use crate::library::policy as library_policy;
+use crate::library::settings_models::LibrarySettingsResponse;
 use crate::runtime_config::secret_sections::{
     AdvancedSettings, DownloadClients, EventsSettings, IdentificationPolicy, JellyfinConnection,
     LibraryRoot, ListenBrainzConnection, NavidromeConnection, NewznabIndexer, OidcConnection,
@@ -40,6 +39,7 @@ use crate::runtime_config::sections::{
     DownloadPolicy, LibraryScanSchedule, PlainSection, SecuritySettings, SourcePriority,
     UsenetBackendSetting, derive_default_order, validate_quality_recipe,
 };
+use crate::runtime_config::settings_error::SettingsError;
 use crate::runtime_config::{
     ConfigError, ConfigStore, Masked, SecretSection, Section, UpdateError,
 };

@@ -1083,12 +1083,12 @@ const V2_MANAGED_FIELDS: &[&str] = &[
 /// match in any case and cover nothing else, and the section reads.
 #[tokio::test]
 async fn v2_management_fields_carry_over_as_they_were() {
-    use droppedneedle::runtime_config::ConfigStore;
-    use droppedneedle::runtime_config::sections::FieldMode;
-    use droppedneedle::settings::management::service::LibraryManagementService;
-    use droppedneedle::settings::management::{
+    use droppedneedle::library::management::settings::service::LibraryManagementService;
+    use droppedneedle::library::management::settings::{
         PICARD_ORGANIZER_PROFILE_ID, StructuralCompiler, initial_settings,
     };
+    use droppedneedle::runtime_config::ConfigStore;
+    use droppedneedle::runtime_config::sections::FieldMode;
     use std::sync::Arc;
 
     let mut management = serde_json::to_value(initial_settings("")).unwrap();

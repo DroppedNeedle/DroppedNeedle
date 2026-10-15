@@ -97,7 +97,7 @@ impl LibrarySetup {
             .get_masked::<TypedLibrary>()
             .map_err(|error| ServiceError::internal(&error))?
             .into_inner();
-        let resolved = crate::settings::library_policy::resolve(&settings)
+        let resolved = crate::library::policy::resolve(&settings)
             .map_err(|error| ServiceError::internal(&format!("{error:?}")))?;
         let stale = || ServiceError::Conflict {
             message: "The library policy changed. Refresh this page and try again.".to_owned(),

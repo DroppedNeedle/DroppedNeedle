@@ -199,7 +199,7 @@ pub struct LibrarySetup {
     /// private one is used then.
     pub management_settings: std::sync::Arc<
         std::sync::OnceLock<
-            std::sync::Arc<crate::settings::management::service::LibraryManagementService>,
+            std::sync::Arc<crate::library::management::settings::service::LibraryManagementService>,
         >,
     >,
     /// Genres, lyrics and covers Library Management plans with, attached

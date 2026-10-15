@@ -14,7 +14,6 @@
 use std::sync::Mutex;
 
 use super::effects::{SaveEffects, SavedSection};
-use super::error::SettingsError;
 use super::models::{
     BrainzmashPendingProposal, MusicBrainzBindingRequest, MusicBrainzSettingsUpdate,
     MusicBrainzSettingsView, MusicBrainzVerifyRequest,
@@ -28,6 +27,7 @@ use crate::runtime_config::sections::{
     MusicBrainzSettings, OFFICIAL_MB_API_BASE, OFFICIAL_MB_CONCURRENT_SEARCHES,
     OFFICIAL_MB_RATE_LIMIT, exact_nonblank,
 };
+use crate::runtime_config::settings_error::SettingsError;
 
 /// BrainzMash disclosure version. A proposal carrying any other version
 /// is outdated and cannot proceed.

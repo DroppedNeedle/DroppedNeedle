@@ -525,7 +525,7 @@ impl Repairs {
             .find(|assignment| assignment.root_id == root_id)
         {
             Some(assignment) => {
-                crate::settings::management::pin_profile(&settings, assignment).ok()
+                crate::library::management::settings::pin_profile(&settings, assignment).ok()
             }
             None => settings
                 .profiles

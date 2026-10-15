@@ -143,7 +143,9 @@ impl Management {
             &request.expected_settings_revision,
             &request.expected_policy_revision,
         )?;
-        if source.settings_revision != crate::settings::management::settings_revision(&stored) {
+        if source.settings_revision
+            != crate::library::management::settings::settings_revision(&stored)
+        {
             return Err(stale(
                 "Library Management settings changed since that preview. Make a new preview first.",
             ));

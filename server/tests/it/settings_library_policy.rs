@@ -10,7 +10,7 @@ use std::sync::Arc;
 use droppedneedle::auth::users::memory::TestRig;
 use droppedneedle::db::{Lane, OpError};
 use droppedneedle::runtime_config::secret_sections::IdentificationPolicy;
-use droppedneedle::settings::error::SettingsError;
+use droppedneedle::runtime_config::settings_error::SettingsError;
 use droppedneedle::settings::library_catalog::SqliteLibraryPolicyCatalog;
 use droppedneedle::settings::models::{
     LibraryPolicyApplyRequest, LibraryRestoreRootsRequest, LibrarySettingsSaveRequest,

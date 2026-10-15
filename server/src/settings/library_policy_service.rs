@@ -14,17 +14,19 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use super::error::SettingsError;
-use super::library_policy::{self, LibraryPolicyCatalog, ResolvedLibraryPolicy};
 use super::models::{
-    LibraryPathMappingReport, LibraryPolicyApplyPreviewResponse, LibraryPolicyApplyRequest,
-    LibraryPolicyImpactRequest, LibraryPolicyImpactResponse, LibraryPolicyTreeResponse,
-    LibraryRestorableRootsResponse, LibraryRestoreRootsRequest, LibrarySettingsResponse,
-    LibrarySettingsSaveRequest,
+    LibraryPolicyApplyRequest, LibraryPolicyImpactRequest, LibraryRestorableRootsResponse,
+    LibraryRestoreRootsRequest, LibrarySettingsSaveRequest,
 };
 use super::services::SettingsService;
+use crate::library::policy::{self as library_policy, LibraryPolicyCatalog, ResolvedLibraryPolicy};
+use crate::library::settings_models::{
+    LibraryPathMappingReport, LibraryPolicyApplyPreviewResponse, LibraryPolicyImpactResponse,
+    LibraryPolicyTreeResponse, LibrarySettingsResponse,
+};
 use crate::runtime_config::Masked;
 use crate::runtime_config::secret_sections::TypedLibrary;
+use crate::runtime_config::settings_error::SettingsError;
 
 /// Library policy reads, previews, and the guarded saves.
 pub struct LibraryPolicyService {

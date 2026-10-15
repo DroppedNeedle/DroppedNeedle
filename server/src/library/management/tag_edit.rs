@@ -308,7 +308,7 @@ impl Management {
             root_id: subject.root_id,
             profile_id: pinned.profile.id.clone(),
             profile_name: pinned.profile.name.clone(),
-            settings_revision: crate::settings::management::settings_revision(&stored),
+            settings_revision: crate::library::management::settings::settings_revision(&stored),
             policy_revision: self.setup.live_registry().policy_revision().to_owned(),
             track_revision: subject.track_revision,
             album_revision: subject.album_revision,

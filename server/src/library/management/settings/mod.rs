@@ -14,7 +14,7 @@
 //! shape, known variables/targets, append gates); the full expression
 //! compiler is library-engine follow-up work behind the same port.
 
-use super::error::SettingsError;
+use crate::runtime_config::settings_error::SettingsError;
 
 mod activation;
 mod bundle;

@@ -21,12 +21,12 @@ use super::service::{JobSpec, Management};
 use super::{planner, profile, store, takeover};
 use crate::library::clock::now_unix;
 use crate::library::identify::models::AlbumIdentity;
+use crate::library::management::settings::{activation_is_current, migration_carry_applies};
 use crate::library::operations::status;
 use crate::library::publish::Sandbox;
 use crate::library::publish::snapshots::sha256_hex;
 use crate::library::scan::sqlite_store::holds_new_files;
 use crate::runtime_config::sections::{LibraryManagement, LibraryManagementRootAssignment};
-use crate::settings::management::{activation_is_current, migration_carry_applies};
 
 /// How long the catalog must be still before automatic management looks
 /// at an album (v2's settle window).

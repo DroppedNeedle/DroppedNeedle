@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 
 use super::presets::{MANAGED_FIELDS, SCRIPT_APPENDABLE_SPELLINGS, SCRIPT_FIELD_SPELLINGS};
-use crate::settings::error::SettingsError;
+use crate::runtime_config::settings_error::SettingsError;
 
 /// Naming variable universe (managed fields plus path-only variables).
 pub fn naming_variables() -> BTreeSet<&'static str> {

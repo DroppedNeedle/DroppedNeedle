@@ -17,7 +17,7 @@ use crate::runtime_config::sections::{
     LibraryManagementRootOverrides, ManagedField, MultiDiscNamingMode,
     OrganizationManagementSettings,
 };
-use crate::settings::error::SettingsError;
+use crate::runtime_config::settings_error::SettingsError;
 
 /// Carry the activation pins and migration history forward on save:
 ///
@@ -125,7 +125,7 @@ pub fn migration_carry(
 
 /// Canonical overrides JSON for pin-carry comparison.
 fn canonical_overrides(overrides: &LibraryManagementRootOverrides) -> String {
-    crate::settings::library_policy::canonical_json(
+    crate::library::policy::canonical_json(
         &serde_json::to_value(overrides).unwrap_or(serde_json::Value::Null),
     )
 }

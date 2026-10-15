@@ -8,12 +8,12 @@ use crate::common;
 use std::path::PathBuf;
 
 use common::FixedIdGenerator;
-use droppedneedle::runtime_config::sections::{
-    LibraryManagement, LibraryManagementProfile, NamingScript, TaggingScript,
-};
-use droppedneedle::settings::management::{
+use droppedneedle::library::management::settings::{
     StructuralCompiler, export_profile_bundle, materialize_profile_bundle, parse_profile_bundle,
     preview_materialized_profile, profile_aspects, profile_import_warnings, resolve_import_names,
+};
+use droppedneedle::runtime_config::sections::{
+    LibraryManagement, LibraryManagementProfile, NamingScript, TaggingScript,
 };
 
 fn fixture(name: &str) -> String {
@@ -248,9 +248,11 @@ fn materialize_refuses_legacy_settings() {
 /// read succeeds.
 #[test]
 fn stored_unknown_field_is_dropped_on_read() {
+    use droppedneedle::library::management::settings::service::LibraryManagementService;
+    use droppedneedle::library::management::settings::{
+        PICARD_ORGANIZER_PROFILE_ID, initial_settings,
+    };
     use droppedneedle::runtime_config::{ConfigStore, Crypto};
-    use droppedneedle::settings::management::service::LibraryManagementService;
-    use droppedneedle::settings::management::{PICARD_ORGANIZER_PROFILE_ID, initial_settings};
     use std::sync::Arc;
 
     let mut management = serde_json::to_value(initial_settings("")).expect("serializes");
@@ -455,15 +457,15 @@ mod fields {
     use droppedneedle::library::management::enrich::{AlbumExtras, LyricsAnswer};
     use droppedneedle::library::management::planner::Overrides;
     use droppedneedle::library::management::profile::{self, CompiledScripts, FileInput};
+    use droppedneedle::library::management::settings::{
+        self as lm, PICARD_ORGANIZER_PROFILE_ID, StructuralCompiler,
+    };
     use droppedneedle::library::matching::model::ReleaseMedium;
     use droppedneedle::library::matching::{CreditedArtist, Release, ReleaseTrack};
     use droppedneedle::library::publish::TagDocument;
     use droppedneedle::library::tags::{TagField, picard};
     use droppedneedle::runtime_config::sections::{
         FieldMode, LibraryManagement, LibraryManagementRootAssignment, ManagedField, TaggingScript,
-    };
-    use droppedneedle::settings::management::{
-        self as lm, PICARD_ORGANIZER_PROFILE_ID, StructuralCompiler,
     };
 
     /// The Picard preset's fields as stored at version 4: alias spellings

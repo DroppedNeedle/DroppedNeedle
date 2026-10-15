@@ -15,11 +15,11 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 use sqlx::{Row as _, SqlitePool};
 
-use super::error::SettingsError;
 use super::models::{SectionPrefItem, SectionPrefsResponse, SectionPrefsUpdate};
 use crate::auth::users::stores::{LastFmStore, StoreError};
 use crate::db::{Lane, WriteLane};
 use crate::ids::IdGenerator;
+use crate::runtime_config::settings_error::SettingsError;
 
 /// Visible pages.
 pub const PAGES: &[&str] = &["home", "discover", "sidebar"];

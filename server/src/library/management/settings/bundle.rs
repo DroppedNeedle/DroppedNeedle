@@ -26,7 +26,7 @@ use crate::runtime_config::sections::{
     Mp3ApePolicy, NamingScript, RawAacTagPolicy, ReplayGainMode, SourceCleanupMode, TaggingScript,
     WavTagPolicy,
 };
-use crate::settings::error::SettingsError;
+use crate::runtime_config::settings_error::SettingsError;
 
 /// Bundle document format tag.
 pub const PROFILE_BUNDLE_FORMAT: &str = "droppedneedle-library-profile";

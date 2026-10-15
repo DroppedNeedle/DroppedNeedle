@@ -13,13 +13,13 @@ use super::scan::roots::{LibraryRoot, PolicyRule, RootRegistry, fingerprint_root
 use super::scan::scheduler::{InclusionRule, ScheduleSettings};
 use super::scan::watcher::WatcherSettings;
 use super::service::ServiceError;
+use crate::library::policy::{self as library_policy, clean_absolute};
 use crate::runtime_config::secret_sections::{
     IdentificationPolicy, LibraryRoot as StoredRoot, TypedLibrary,
 };
 use crate::runtime_config::sections::{FilesystemWatcher, LibraryScanSchedule, ScanFrequency};
+use crate::runtime_config::settings_error::SettingsError;
 use crate::runtime_config::{ConfigStore, UpdateError};
-use crate::settings::error::SettingsError;
-use crate::settings::library_policy::{self, clean_absolute};
 
 /// Timezone daily schedules resolve against. The scheduler has no tz
 /// database, so daily times read as UTC.

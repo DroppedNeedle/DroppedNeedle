@@ -1200,7 +1200,7 @@ mod tests {
 
     #[test]
     fn picard_template_renders_and_cleans() {
-        let source = crate::settings::management::PICARD_MULTI_DISC_NAMING_SOURCE;
+        let source = crate::library::management::settings::PICARD_MULTI_DISC_NAMING_SOURCE;
         let variables = vars(&[
             ("albumartist", Value::Text("AC/DC".into())),
             ("album", Value::Text("Back in Black".into())),

@@ -344,7 +344,7 @@ async fn library_round_trip_cas_and_paths() {
         .expect_err("stale fails");
     assert!(matches!(
         error,
-        droppedneedle::settings::error::SettingsError::StaleRevision { .. }
+        droppedneedle::runtime_config::settings_error::SettingsError::StaleRevision { .. }
     ));
 
     let dir = ScratchDir::new("settings-library");
@@ -418,7 +418,7 @@ async fn concurrent_library_saves_cannot_both_pass_the_revision_check() {
         .filter(|result| {
             matches!(
                 result,
-                Err(droppedneedle::settings::error::SettingsError::StaleRevision { .. })
+                Err(droppedneedle::runtime_config::settings_error::SettingsError::StaleRevision { .. })
             )
         })
         .count();

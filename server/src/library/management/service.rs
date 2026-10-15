@@ -121,7 +121,7 @@ impl Management {
             .config
             .get::<LibraryManagement>()
             .map_err(|error| ManagementError::Store(error.to_string()))?;
-        crate::settings::management::complete_fields(&mut settings);
+        crate::library::management::settings::complete_fields(&mut settings);
         Ok(settings)
     }
 
@@ -153,7 +153,7 @@ impl Management {
         expected_settings: &str,
         expected_policy: &str,
     ) -> Result<(), ManagementError> {
-        if crate::settings::management::settings_revision(stored) != expected_settings {
+        if crate::library::management::settings::settings_revision(stored) != expected_settings {
             return Err(stale(
                 "Library Management settings changed since this page loaded. Reload the page and make the preview again.",
             ));
@@ -308,7 +308,7 @@ impl Management {
         let mut found = Vec::new();
         match self.settings() {
             Ok(stored) => {
-                if crate::settings::management::settings_revision(&stored)
+                if crate::library::management::settings::settings_revision(&stored)
                     != snapshot.settings_revision
                 {
                     found.push(

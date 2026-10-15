@@ -34,15 +34,15 @@ use super::presets::{MANAGED_FIELDS, PresetDiff, initial_settings, migrate_prese
 use super::revision::settings_revision;
 use super::script::ScriptCompiler;
 use crate::ids::IdGenerator;
-use crate::runtime_config::ConfigStore;
-use crate::runtime_config::secret_sections::TypedLibrary;
-use crate::runtime_config::sections::{FieldMode, LibraryManagement, LibraryManagementProfile};
-use crate::settings::error::SettingsError;
-use crate::settings::models::{
+use crate::library::settings_models::{
     LibraryManagementProfileExportResponse, LibraryManagementProfileImportPreviewResponse,
     LibraryManagementProfileImportResponse, LibraryManagementProfileMutationResponse,
     LibraryManagementSettingsResponse, ManagedFieldInfo,
 };
+use crate::runtime_config::ConfigStore;
+use crate::runtime_config::secret_sections::TypedLibrary;
+use crate::runtime_config::sections::{FieldMode, LibraryManagement, LibraryManagementProfile};
+use crate::runtime_config::settings_error::SettingsError;
 
 /// What a confirmed dry run pins on its library folder.
 #[derive(Debug, Clone)]

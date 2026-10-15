@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::models::{FieldMutation, ManagementError, PinnedProfile, Revisions};
 use super::reasons::{self, ItemReason};
 use super::script::{self, Statement, Value, Variables};
+use crate::library::management::settings;
 use crate::library::matching::model::{Release, ReleaseTrack};
 use crate::library::publish::TagDocument;
 use crate::library::tags::{TagEdit, TagField, picard, save};
@@ -14,7 +15,6 @@ use crate::runtime_config::sections::{
     FieldMode, LibraryManagement, LibraryManagementProfile, LibraryManagementRootAssignment,
     LibraryManagementRootOverrides, TaggingScript,
 };
-use crate::settings::management as settings;
 
 /// Freeze the profile a manual preview runs with: the stored profile with
 /// the request's overrides on top, and the scripts it names.
@@ -102,8 +102,8 @@ pub fn pin_assignment(
     stored: &LibraryManagement,
     assignment: &LibraryManagementRootAssignment,
 ) -> Result<PinnedProfile, ManagementError> {
-    let invalid = |error: crate::settings::error::SettingsError| match error {
-        crate::settings::error::SettingsError::InvalidInput { message } => {
+    let invalid = |error: crate::runtime_config::settings_error::SettingsError| match error {
+        crate::runtime_config::settings_error::SettingsError::InvalidInput { message } => {
             ManagementError::Invalid(format!(
                 "{message} Edit the profile in Settings > Library Management."
             ))
@@ -148,7 +148,7 @@ pub fn revisions(stored: &LibraryManagement, pinned: &PinnedProfile, policy: &st
             pinned.multi_disc_naming_script.as_ref(),
         ),
         policy: policy.to_owned(),
-        overrides: crate::settings::library_policy::stable_hash(&overrides),
+        overrides: crate::library::policy::stable_hash(&overrides),
     }
 }
 

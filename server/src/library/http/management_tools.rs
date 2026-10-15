@@ -33,9 +33,9 @@ use crate::library::management::restore::{
 use crate::library::management::service::Management;
 use crate::library::management::tag_edit::{EditorContext, TagEditRequest};
 use crate::library::publish::PlacementMode;
+use crate::library::settings_models::LibraryManagementSettingsResponse;
 use crate::library::wiring::LibrarySetup;
 use crate::runtime_config::sections::LibraryManagement;
-use crate::settings::models::LibraryManagementSettingsResponse;
 
 /// The routes, relative for nesting under `/api/v3`.
 pub fn router() -> Router<LibrarySetup> {

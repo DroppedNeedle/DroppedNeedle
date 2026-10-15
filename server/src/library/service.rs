@@ -59,7 +59,7 @@ impl LibrarySetup {
         path: String,
         policy: EffectivePolicy,
     ) -> Result<(LibraryRoot, String), ServiceError> {
-        let dir = crate::settings::library_policy::clean_absolute(&path).ok_or_else(|| {
+        let dir = crate::library::policy::clean_absolute(&path).ok_or_else(|| {
             ServiceError::InvalidInput {
                 message: "Root path must be absolute".to_owned(),
             }

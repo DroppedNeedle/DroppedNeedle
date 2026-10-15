@@ -18,8 +18,8 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 
-use super::error::SettingsError;
 use crate::http_client::read_capped;
+use crate::runtime_config::settings_error::SettingsError;
 
 /// Per-probe HTTP budget, matching the v2 repositories.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);

@@ -10,30 +10,31 @@ use axum::{
     extract::{Extension, Path, State},
 };
 
-use super::error::{SettingsError, ValidJson, ValidQuery};
-use super::management::{ActivationHealth, ChangeImpact, PresetDiff};
 use super::models::{
     AdvancedSettingsForm, DownloadPolicyView, FrontendCacheTTLs, IndexerReorderRequest,
     IndexerSavedResponse, IndexerTestResponse, JellyfinVerifyResponse,
     LibraryManagementProfileCopyRequest, LibraryManagementProfileCreateRequest,
     LibraryManagementProfileDeleteRequest, LibraryManagementProfileExportRequest,
-    LibraryManagementProfileExportResponse, LibraryManagementProfileImportPreviewRequest,
-    LibraryManagementProfileImportPreviewResponse, LibraryManagementProfileImportRequest,
-    LibraryManagementProfileImportResponse, LibraryManagementProfileMutationResponse,
+    LibraryManagementProfileImportPreviewRequest, LibraryManagementProfileImportRequest,
     LibraryManagementProfileUpdateRequest, LibraryManagementSaveRequest,
-    LibraryManagementSettingsImpactRequest, LibraryManagementSettingsResponse,
-    LibraryPathMappingReport, LibraryPathQuery, LibraryPathRequest,
-    LibraryPolicyApplyPreviewResponse, LibraryPolicyApplyRequest, LibraryPolicyImpactRequest,
-    LibraryPolicyImpactResponse, LibraryPolicyTreeResponse, LibraryRestorableRootsResponse,
-    LibraryRestoreRootsRequest, LibraryScanScheduleResponse, LibrarySettingsResponse,
-    LibrarySettingsSaveRequest, MusicBrainzBindingRequest, MusicBrainzSettingsUpdate,
-    MusicBrainzSettingsView, MusicBrainzVerifyRequest, OperationResult, PlexLibrarySectionInfo,
-    PlexVerifyResponse, PolicyImpactResponse, PolicySummaryResponse, ProwlarrTestResponse,
-    SabnzbdTestResponse, SectionPrefsResponse, SectionPrefsUpdate, SourcePriorityOrder,
-    TestConnectionResponse, UsenetSearchBackend, VerifyConnectionResponse,
+    LibraryManagementSettingsImpactRequest, LibraryPathQuery, LibraryPathRequest,
+    LibraryPolicyApplyRequest, LibraryPolicyImpactRequest, LibraryRestorableRootsResponse,
+    LibraryRestoreRootsRequest, LibraryScanScheduleResponse, LibrarySettingsSaveRequest,
+    MusicBrainzBindingRequest, MusicBrainzSettingsUpdate, MusicBrainzSettingsView,
+    MusicBrainzVerifyRequest, OperationResult, PlexLibrarySectionInfo, PlexVerifyResponse,
+    PolicyImpactResponse, PolicySummaryResponse, ProwlarrTestResponse, SabnzbdTestResponse,
+    SectionPrefsResponse, SectionPrefsUpdate, SourcePriorityOrder, TestConnectionResponse,
+    UsenetSearchBackend, VerifyConnectionResponse,
 };
 use super::wiring::{AdminUser, SettingsSetup};
 use crate::auth::session::middleware::CurrentSession;
+use crate::library::management::settings::{ActivationHealth, ChangeImpact, PresetDiff};
+use crate::library::settings_models::{
+    LibraryManagementProfileExportResponse, LibraryManagementProfileImportPreviewResponse,
+    LibraryManagementProfileImportResponse, LibraryManagementProfileMutationResponse,
+    LibraryManagementSettingsResponse, LibraryPathMappingReport, LibraryPolicyApplyPreviewResponse,
+    LibraryPolicyImpactResponse, LibraryPolicyTreeResponse, LibrarySettingsResponse,
+};
 use crate::runtime_config::Masked;
 use crate::runtime_config::secret_sections::{
     EventsSettings, JellyfinConnection, LastFmSettings, ListenBrainzConnection,
@@ -45,6 +46,7 @@ use crate::runtime_config::sections::{
     LibraryManagementProfile, LibraryScanSchedule, PrimaryMusicSource, PublicAddress,
     ScrobbleSettings, SecuritySettings, UserPreferences, WantedWatcher,
 };
+use crate::runtime_config::settings_error::{SettingsError, ValidJson, ValidQuery};
 
 type JsonResult<T> = Result<Json<T>, SettingsError>;
 
