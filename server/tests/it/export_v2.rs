@@ -9,7 +9,7 @@ use droppedneedle::export::{
     ExportError, ExportRequest, HashScheme, Opener, SealError, export_v2, export_v2_to_file,
     fernet::FernetKey, parse_export, unseal,
 };
-use droppedneedle::runtime_config::Secret;
+use droppedneedle_kernel::runtime_config::Secret;
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 

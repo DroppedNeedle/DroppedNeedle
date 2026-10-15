@@ -1,6 +1,6 @@
 //! Backup UX: list, run, pre-restore reports, pre-upgrade safety nets.
 //!
-//! The mechanism lives in [`crate::db::backup`]; this module is the admin
+//! The mechanism lives in [`droppedneedle_kernel::db::backup`]; this module is the admin
 //! face over it. Rotation stays at five (`BACKUP_KEEP`): verification
 //! always precedes rotation, so a failed run leaves the previous five
 //! untouched.
@@ -23,7 +23,7 @@ use super::{
     error::AdminError,
     models::{BackupListResponse, BackupRunResponse, BackupView, RestoreCheck, RestoreReport},
 };
-use crate::db::{
+use droppedneedle_kernel::db::{
     BACKUP_KEEP, BackupManifest, BackupReport, BackupService, backup::MANIFEST_SUFFIX,
 };
 
@@ -79,7 +79,7 @@ pub fn list_backups(backup_dir: &Path) -> Result<BackupListResponse, AdminError>
 
 /// Run one backup now and report what it produced.
 pub async fn run_backup(service: &BackupService) -> Result<BackupRunResponse, AdminError> {
-    let cancel = crate::db::writer::CancelFlag::never();
+    let cancel = droppedneedle_kernel::db::writer::CancelFlag::never();
     let report = service
         .backup(None, &cancel)
         .await
@@ -101,9 +101,9 @@ pub async fn run_backup(service: &BackupService) -> Result<BackupRunResponse, Ad
 pub async fn ensure_pre_upgrade_backup(
     db_path: &Path,
     backup_dir: &Path,
-) -> Result<Option<BackupReport>, crate::db::error::DbError> {
+) -> Result<Option<BackupReport>, droppedneedle_kernel::db::error::DbError> {
     let found = read_user_version(db_path)?;
-    let expected = crate::schema::latest_version();
+    let expected = droppedneedle_kernel::schema::latest_version();
     if found >= expected {
         return Ok(None);
     }
@@ -117,7 +117,7 @@ pub async fn ensure_pre_upgrade_backup(
         "schema upgrade pending; taking a pre-upgrade backup"
     );
     let service = BackupService::new(db_path, backup_dir);
-    let cancel = crate::db::writer::CancelFlag::never();
+    let cancel = droppedneedle_kernel::db::writer::CancelFlag::never();
     let report = service.backup(None, &cancel).await?;
     tracing::info!(
         backup = report.path.display().to_string(),
@@ -187,8 +187,8 @@ pub fn restore_report(backup_dir: &Path, name: &str) -> Result<RestoreReport, Ad
                 )
             },
         });
-        let sha_ok =
-            crate::db::backup::file_sha256(&path).is_ok_and(|(sha256, _)| sha256 == found.sha256);
+        let sha_ok = droppedneedle_kernel::db::backup::file_sha256(&path)
+            .is_ok_and(|(sha256, _)| sha256 == found.sha256);
         checks.push(RestoreCheck {
             name: "manifest-sha256".to_owned(),
             passed: sha_ok,
@@ -213,7 +213,7 @@ pub fn restore_report(backup_dir: &Path, name: &str) -> Result<RestoreReport, Ad
 
     let version_ok = match read_user_version(&path) {
         Ok(found) => {
-            let expected = crate::schema::latest_version();
+            let expected = droppedneedle_kernel::schema::latest_version();
             let current = found <= expected;
             checks.push(RestoreCheck {
                 name: "schema-version".to_owned(),
@@ -313,7 +313,7 @@ fn integrity_clean(path: &Path) -> bool {
 
 /// Whether a database file holds any user tables yet. Opens read-only; a
 /// file that cannot be read counts as non-empty, so the safety net stays.
-fn has_user_tables(path: &Path) -> Result<bool, crate::db::error::DbError> {
+fn has_user_tables(path: &Path) -> Result<bool, droppedneedle_kernel::db::error::DbError> {
     let connection = match Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
         Ok(connection) => connection,
         // Unreadable after a successful stamp read is bizarre; take the
@@ -329,7 +329,7 @@ fn has_user_tables(path: &Path) -> Result<bool, crate::db::error::DbError> {
 }
 
 /// `user_version` stamped in a database file.
-fn read_user_version(path: &Path) -> Result<i64, crate::db::error::DbError> {
+fn read_user_version(path: &Path) -> Result<i64, droppedneedle_kernel::db::error::DbError> {
     let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let found: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     Ok(found)

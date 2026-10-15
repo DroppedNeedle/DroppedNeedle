@@ -21,7 +21,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use sqlx::SqlitePool;
 
 use crate::auth::users::{roles::Role, stores::UserStore};
-use crate::db::{WriteLane, writer::Lane};
 use crate::providers::musicbrainz::is_valid_mbid;
 use crate::reads::catalog::library::LocalCatalog;
 use crate::reads::discover::models::{
@@ -29,6 +28,7 @@ use crate::reads::discover::models::{
     DiscoveryBatchRemoveResult, DiscoveryBatchSummary,
 };
 use crate::reads::discover::ports::{BatchFailure, BatchStore, BoxFuture, ProviderFailure};
+use droppedneedle_kernel::db::{WriteLane, writer::Lane};
 
 /// Outcome of an album the batch filed a request for.
 pub const OUTCOME_REQUESTED: &str = "requested";

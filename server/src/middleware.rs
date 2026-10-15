@@ -22,15 +22,15 @@ use futures_util::FutureExt as _;
 use std::panic::AssertUnwindSafe;
 use tracing::Instrument as _;
 
-use crate::{
+use crate::state::AppState;
+use droppedneedle_kernel::{
     error::ApiError,
     ids::{REQUEST_ID_HEADER, RequestId},
-    state::AppState,
 };
 
 /// Whether a path belongs to the compat shims (case-insensitive).
 /// Compat 5xx responses keep their protocol-shaped bodies: rewriting
-/// them into the native [`ApiError`](crate::error::ApiError) envelope
+/// them into the native [`ApiError`](droppedneedle_kernel::error::ApiError) envelope
 /// would break Subsonic/Jellyfin clients parsing their own shape.
 fn is_compat_path(path: &str) -> bool {
     let folded = path.to_lowercase();

@@ -18,11 +18,11 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params, params_from_iter};
 
-use crate::db::fold::fold_text;
 use crate::library::corrections::membership::retire;
 use crate::library::identify::sqlite::offer_album;
 use crate::library::operations::decisions::{CatalogAction, bump_catalog, record_action};
 use crate::library::scan::sqlite_store::awaits_retag;
+use droppedneedle_kernel::db::fold::fold_text;
 
 const PROVIDER: &str = "musicbrainz";
 

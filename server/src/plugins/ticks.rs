@@ -12,19 +12,19 @@
 //! requests, which is what makes plugin state survive restarts and
 //! reinstalls.
 //!
-//! [`jobs_tick_host`]: crate::jobs::plugin_ticks::TickHost
-//! [`jobs_tick_store`]: crate::jobs::plugin_ticks::TickStore
-//! [`sync_ticks`]: crate::jobs::plugin_ticks::sync_ticks
+//! [`jobs_tick_host`]: droppedneedle_kernel::jobs::plugin_ticks::TickHost
+//! [`jobs_tick_store`]: droppedneedle_kernel::jobs::plugin_ticks::TickStore
+//! [`sync_ticks`]: droppedneedle_kernel::jobs::plugin_ticks::sync_ticks
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::jobs::plugin_ticks::{
+use droppedneedle_kernel::jobs::plugin_ticks::{
     MemoryTickStore, SqliteTickStore, TickHost as JobsTickHost, TickPlugin as JobsTickPlugin,
     TickSpec, TickStore as JobsTickStore, TickStoreError, TickSyncState, clamp_interval_minutes,
     sync_ticks,
 };
-use crate::jobs::registry::{JobRegistry, RegistryStore};
+use droppedneedle_kernel::jobs::registry::{JobRegistry, RegistryStore};
 
 use super::host::{PluginHost, PluginStateStore};
 use super::protocol::methods;
@@ -70,7 +70,8 @@ impl JobsTickStore for TickStoreKind {
         &self,
         plugin: &str,
         key: &str,
-    ) -> crate::jobs::registry::BoxFuture<'_, Result<Option<Vec<u8>>, TickStoreError>> {
+    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'_, Result<Option<Vec<u8>>, TickStoreError>>
+    {
         match self {
             Self::Memory(store) => store.read(plugin, key),
             Self::Sqlite(store) => store.read(plugin, key),
@@ -82,7 +83,7 @@ impl JobsTickStore for TickStoreKind {
         plugin: &str,
         key: &str,
         bytes: Vec<u8>,
-    ) -> crate::jobs::registry::BoxFuture<'_, Result<(), TickStoreError>> {
+    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'_, Result<(), TickStoreError>> {
         match self {
             Self::Memory(store) => store.write(plugin, key, bytes),
             Self::Sqlite(store) => store.write(plugin, key, bytes),
@@ -159,7 +160,7 @@ impl JobsTickPlugin for PluginTick {
         &self.name
     }
 
-    fn on_tick(&self) -> crate::jobs::registry::BoxFuture<'_, Result<(), String>> {
+    fn on_tick(&self) -> droppedneedle_kernel::jobs::registry::BoxFuture<'_, Result<(), String>> {
         let host = Arc::clone(&self.host);
         let name = self.name.clone();
         let budget = self.budget;

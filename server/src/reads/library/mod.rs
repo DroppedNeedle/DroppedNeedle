@@ -31,11 +31,11 @@ pub mod tags;
 use std::sync::Arc;
 
 use crate::auth::users::UsersDeps;
-use crate::ids::IdGenerator;
 use axum::{
     Router,
     routing::{get, post},
 };
+use droppedneedle_kernel::ids::IdGenerator;
 
 use stores::{
     FavoriteReads, LibraryCatalog, LibraryLookups, LyricsPort, TrackTagReader, UpgradePolicySource,

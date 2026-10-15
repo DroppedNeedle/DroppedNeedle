@@ -74,17 +74,17 @@ use crate::auth::session::middleware::CurrentSession;
 use crate::auth::users::UsersDeps;
 use crate::auth::users::roles::Role as AuthRole;
 use crate::auth::users::stores::StoreError;
-use crate::config::AppConfig;
-use crate::db::{DurableWorkWakeups, JobState, WriteLane};
-use crate::events::{EventSink, PlaylistImported, UserNotice, new_event_id};
-use crate::ids::IdGenerator;
 use crate::reads::collections::state::CollectionsState;
-use crate::runtime_config::ConfigStore;
-use crate::runtime_config::secret_sections::{
+use droppedneedle_kernel::config::AppConfig;
+use droppedneedle_kernel::db::{DurableWorkWakeups, JobState, WriteLane};
+use droppedneedle_kernel::events::{EventSink, PlaylistImported, UserNotice, new_event_id};
+use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::secret_sections::{
     AdvancedSettings, DownloadClients, LidarrImportConnection, NewznabIndexer as ConfigIndexer,
     ProwlarrConnection, SecretSection, SlskdConnection, TypedLibrary,
 };
-use crate::runtime_config::sections::{
+use droppedneedle_kernel::runtime_config::sections::{
     DownloadPolicy, Section, SourcePriority, UsenetBackendSetting, UserPreferences, WantedWatcher,
 };
 
@@ -594,7 +594,7 @@ impl AcquireSetup {
         db: AcquireDb,
         config: &AppConfig,
         users: UsersDeps,
-        http: &crate::http_client::HttpClientFactory,
+        http: &droppedneedle_kernel::http_client::HttpClientFactory,
         ids: Arc<dyn IdGenerator>,
         config_store: Arc<ConfigStore>,
         collections: &mut CollectionsState,
@@ -846,7 +846,7 @@ impl AcquireSetup {
 
     /// Send flow notices and import completions to `hub`.
     /// [`crate::AppState::with_events`] calls this.
-    pub fn attach_events(&self, hub: &crate::events::EventHub) {
+    pub fn attach_events(&self, hub: &droppedneedle_kernel::events::EventHub) {
         self.events.attach(hub);
     }
 
@@ -911,8 +911,8 @@ impl AcquireSetup {
             .parent()
             .map(|dir| dir.join("staging"))
             .ok_or_else(|| "scratch database has no directory".to_owned())?;
-        let factory =
-            crate::http_client::HttpClientFactory::new().map_err(|error| error.to_string())?;
+        let factory = droppedneedle_kernel::http_client::HttpClientFactory::new()
+            .map_err(|error| error.to_string())?;
         let http = factory.shared().clone();
         let clients = Arc::new(LiveClients::new(
             http.clone(),

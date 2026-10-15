@@ -6,7 +6,7 @@
 //! [`ManualClock`](super::seams::ManualClock) and never sleep), plus a
 //! `spawn_*` constructor (single-flight registry, log-and-continue passes,
 //! shutdown through the sleeper) that registers the loop as
-//! [`JobKind::Ephemeral`](crate::db::JobKind) and returns a handle the
+//! [`JobKind::Ephemeral`](droppedneedle_kernel::db::JobKind) and returns a handle the
 //! caller awaits at shutdown.
 //!
 //! Cadences match v2's task schedule; each constant cites its source.
@@ -18,7 +18,7 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
+use droppedneedle_kernel::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
 
 use super::seams::{
     CandidateSearch, Clock, DispatchKind, DispatchRequest, DownloadDispatch, FlowEvent,
@@ -33,9 +33,9 @@ use crate::acquire::requests::ledger::{RequestRecord, WATCH_WATCHING, WantedWatc
 use crate::acquire::requests::models::RequestKind;
 use crate::acquire::requests::sqlite::{RequestStore, WantedStore};
 use crate::acquire::search_jobs::store::JobStore;
-use crate::events::{AutoDownloadEnqueued, UserNotice, WantedNotice};
 use crate::reads::catalog::mapping::{should_include_release, type_set};
-use crate::runtime_config::sections::UserPreferences;
+use droppedneedle_kernel::events::{AutoDownloadEnqueued, UserNotice, WantedNotice};
+use droppedneedle_kernel::runtime_config::sections::UserPreferences;
 
 /// Wanted-watcher sweep cadence in seconds (v2 `_WANTED_WATCHER_INTERVAL`).
 pub const WANTED_INTERVAL: Duration = Duration::from_secs(900);

@@ -30,11 +30,11 @@ use crate::library::settings_models::{
     LibraryRestorableRoot, LibrarySettingsResponse, PathMappingError, PathMappingSource,
     PolicyNodeKind,
 };
-use crate::runtime_config::Masked;
-use crate::runtime_config::secret_sections::{
+use droppedneedle_kernel::runtime_config::Masked;
+use droppedneedle_kernel::runtime_config::secret_sections::{
     IdentificationPolicy, LibraryPathRule, LibraryRoot, TypedLibrary,
 };
-use crate::runtime_config::settings_error::SettingsError;
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// Canonical JSON: sorted keys, compact separators, ASCII-escaped
 /// strings, byte-identical to Python's

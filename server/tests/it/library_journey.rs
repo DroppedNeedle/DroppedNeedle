@@ -19,14 +19,14 @@ use crate::common::library::ScriptedIdentify;
 use crate::common::{ScratchDir, TestApp, closed_outbound};
 use axum::http::StatusCode;
 use droppedneedle::bootstrap::Port;
-use droppedneedle::ids::{IdGenerator, UuidGenerator};
 use droppedneedle::library::contrib::ContribProviders;
 use droppedneedle::library::identify::models::{LocalAlbumFacts, RecallResult};
 use droppedneedle::library::identify::sqlite::SqliteIdentifyStore;
 use droppedneedle::library::matching::{CreditedArtist, Release, ReleaseTrack};
 use droppedneedle::library::scan::SqliteScanStore;
 use droppedneedle::library::wiring::{LibrarySetup, TestContribProviders};
-use droppedneedle::runtime_config::{ConfigStore, Crypto};
+use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
+use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -1542,8 +1542,8 @@ fn bare_library(tag: &str) -> (ScratchDir, LibrarySetup, PathBuf) {
     let scratch = ScratchDir::new(tag);
     let dir = scratch.to_path_buf();
     let connection =
-        droppedneedle::db::open_connection(&dir.join("app.db")).expect("scratch db opens");
-    droppedneedle::schema::apply_migrations_blocking(&connection).expect("migrations apply");
+        droppedneedle_kernel::db::open_connection(&dir.join("app.db")).expect("scratch db opens");
+    droppedneedle_kernel::schema::apply_migrations_blocking(&connection).expect("migrations apply");
     drop(connection);
     let library = open_library(&dir);
     (scratch, library, dir.join("music"))
@@ -2577,7 +2577,7 @@ type TrackRow = (
 );
 
 fn track_row(db: &Path, track_id: &str) -> TrackRow {
-    let conn = droppedneedle::db::open_connection(db).expect("db opens");
+    let conn = droppedneedle_kernel::db::open_connection(db).expect("db opens");
     conn.query_row(
         "SELECT recording_mbid, release_mbid, release_track_mbid, medium_position, \
          release_track_position, decision_source FROM local_track_external_identities \
@@ -2657,8 +2657,8 @@ async fn library_journey_undo_edition_then_reidentify() {
         "automatic".to_owned(),
     );
     {
-        let conn =
-            droppedneedle::db::open_connection(&app.config.library_db_path).expect("db opens");
+        let conn = droppedneedle_kernel::db::open_connection(&app.config.library_db_path)
+            .expect("db opens");
         for (track, row) in [(&manual_track, &manual_row), (&auto_track, &prior_auto_row)] {
             conn.execute(
                 "INSERT INTO local_track_external_identities (local_track_id, provider, \
@@ -2853,8 +2853,8 @@ async fn artist_duplicate_groups_list_open_and_dismiss() {
     let auth = app.login_admin().await;
     let headers = [("authorization", auth.as_str())];
     {
-        let conn =
-            droppedneedle::db::open_connection(&app.config.library_db_path).expect("db opens");
+        let conn = droppedneedle_kernel::db::open_connection(&app.config.library_db_path)
+            .expect("db opens");
         for n in ["1", "2"] {
             conn.execute_batch(&format!(
                 "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
@@ -2937,14 +2937,15 @@ async fn removal_recycles_files_and_rescan_targets_the_album() {
         .scan_store
         .track_at("music", "Band/LP/01.flac")
         .expect("track indexed");
-    let album: String = droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db"))
-        .expect("db opens")
-        .query_row(
-            "SELECT local_album_id FROM local_tracks WHERE id = ?1",
-            [&track],
-            |row| row.get(0),
-        )
-        .expect("album id");
+    let album: String =
+        droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
+            .expect("db opens")
+            .query_row(
+                "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+                [&track],
+                |row| row.get(0),
+            )
+            .expect("album id");
     library
         .scan_store
         .execute_batch_for_tests(
@@ -3008,14 +3009,15 @@ async fn put_back_refuses_an_occupied_path() {
         .scan_store
         .track_at("music", "Band/LP/01.flac")
         .expect("track indexed");
-    let album: String = droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db"))
-        .expect("db opens")
-        .query_row(
-            "SELECT local_album_id FROM local_tracks WHERE id = ?1",
-            [&track],
-            |row| row.get(0),
-        )
-        .expect("album id");
+    let album: String =
+        droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
+            .expect("db opens")
+            .query_row(
+                "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+                [&track],
+                |row| row.get(0),
+            )
+            .expect("album id");
     library
         .scan_store
         .execute_batch_for_tests(
@@ -4619,7 +4621,7 @@ async fn library_management_preview_apply_undo() {
     use droppedneedle::library::management::settings as lm;
     use droppedneedle::library::tags::save::{TagEdit, save_tags};
     use droppedneedle::library::tags::{TagField, read_fields};
-    use droppedneedle::runtime_config::sections::NamingScript;
+    use droppedneedle_kernel::runtime_config::sections::NamingScript;
 
     let (_scratch, library, music) = bare_library("lib-management-jobs");
     let first = plant(
@@ -5099,7 +5101,7 @@ async fn library_journey_identity_repair_and_preparation() {
     // without an exact edition gets the one edition that clearly fits,
     // as an unconfirmed automatic match with its undo.
     {
-        use droppedneedle::runtime_config::sections::LibraryManagementProfile;
+        use droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile;
         let page = "/api/v3/settings/library-management";
         let (status, saved) = app.call("GET", page, &headers, None).await;
         assert_eq!(status, StatusCode::OK, "{saved}");
@@ -5131,8 +5133,8 @@ async fn library_journey_identity_repair_and_preparation() {
             )
             .await;
         assert_eq!(status, StatusCode::OK, "{body}");
-        let conn =
-            droppedneedle::db::open_connection(&app.config.library_db_path).expect("db opens");
+        let conn = droppedneedle_kernel::db::open_connection(&app.config.library_db_path)
+            .expect("db opens");
         conn.execute(
             "DELETE FROM local_track_external_identities WHERE local_track_id IN \
              (SELECT id FROM local_tracks WHERE local_album_id = ?1)",
@@ -5181,7 +5183,7 @@ async fn library_journey_identity_repair_and_preparation() {
     // A confident acceptance is applied as confirmed: no flag remains.
     let match_state = || -> Option<String> {
         use rusqlite::OptionalExtension as _;
-        droppedneedle::db::open_connection(&app.config.library_db_path)
+        droppedneedle_kernel::db::open_connection(&app.config.library_db_path)
             .expect("db opens")
             .query_row(
                 "SELECT state || ':' || reason_code FROM library_album_match_state \
@@ -5335,12 +5337,12 @@ async fn library_management_tools_journey() {
         lm::settings_revision(
             &library
                 .config
-                .get::<droppedneedle::runtime_config::sections::LibraryManagement>()
+                .get::<droppedneedle_kernel::runtime_config::sections::LibraryManagement>()
                 .expect("settings read"),
         )
     };
     let overrides = |_: &LibrarySetup| -> i64 {
-        droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db"))
+        droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
             .expect("db opens")
             .query_row(
                 "SELECT COUNT(*) FROM library_management_overrides",
@@ -5355,9 +5357,10 @@ async fn library_management_tools_journey() {
     {
         use droppedneedle::library::management::enrich::{Cover, LyricsFound, ScriptedEnrichment};
         use droppedneedle::library::tags::save::read_document;
-        use droppedneedle::runtime_config::sections::{LibraryManagement, ReplayGainMode};
+        use droppedneedle_kernel::runtime_config::sections::{LibraryManagement, ReplayGainMode};
         let db = || {
-            droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db")).expect("db")
+            droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
+                .expect("db")
         };
         let cover = {
             let mut bytes = Vec::new();
@@ -5660,7 +5663,7 @@ async fn library_management_tools_journey() {
     // A confirmed dry run turns automatic management on for the folder.
     let mut proposed = library
         .config
-        .get::<droppedneedle::runtime_config::sections::LibraryManagement>()
+        .get::<droppedneedle_kernel::runtime_config::sections::LibraryManagement>()
         .expect("settings read");
     let assignment = proposed
         .root_assignments
@@ -5672,7 +5675,7 @@ async fn library_management_tools_journey() {
             assignment.automatic_scan_discovered = true;
         }
         None => proposed.root_assignments.push(
-            droppedneedle::runtime_config::sections::LibraryManagementRootAssignment {
+            droppedneedle_kernel::runtime_config::sections::LibraryManagementRootAssignment {
                 root_id: "music".to_owned(),
                 profile_id: Some(lm::PICARD_ORGANIZER_PROFILE_ID.to_owned()),
                 enabled: true,
@@ -5759,8 +5762,10 @@ async fn library_management_tools_journey() {
     assert_eq!(again.len(), history.len());
 
     // A new match revision (a new edition) is managed again.
-    let db =
-        || droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db")).expect("db");
+    let db = || {
+        droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
+            .expect("db")
+    };
     db().execute(
         "UPDATE local_album_external_identities SET row_revision = row_revision + 1 \
          WHERE local_album_id = ?1",
@@ -6055,8 +6060,10 @@ async fn library_management_custom_edition_journey() {
     .expect("settings normalized");
     // Seal the album as a custom edition: its release is let go, and the
     // manifest records the files as they are.
-    let db =
-        || droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db")).expect("db");
+    let db = || {
+        droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
+            .expect("db")
+    };
     let release_id_before =
         read_fields(&file).expect("tags")[&TagField::MusicBrainzReleaseId].clone();
     db().execute_batch(&format!(
@@ -6081,7 +6088,7 @@ async fn library_management_custom_edition_journey() {
     let revision = lm::settings_revision(
         &library
             .config
-            .get::<droppedneedle::runtime_config::sections::LibraryManagement>()
+            .get::<droppedneedle_kernel::runtime_config::sections::LibraryManagement>()
             .expect("settings read"),
     );
     let preview = |key: &str| PreviewRequest {
@@ -6164,7 +6171,7 @@ async fn library_management_artwork_journey() {
     use droppedneedle::library::management::settings as lm;
     use droppedneedle::library::tags::save::read_document;
     use droppedneedle::library::tags::{TagEdit, TagField};
-    use droppedneedle::runtime_config::sections::LibraryManagement;
+    use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
 
     let (scratch, library, music) = bare_library("lib-management-artwork");
     let file = plant(&music, "art/cover track.m4a", "management_full.m4a");
@@ -6246,8 +6253,10 @@ async fn library_management_artwork_journey() {
             }))
             .is_ok()
     );
-    let db =
-        || droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db")).expect("db");
+    let db = || {
+        droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
+            .expect("db")
+    };
     let management = Management::new(&library);
     let preview = |key: &str| PreviewRequest {
         selection: Selection {
@@ -6430,7 +6439,9 @@ impl ManagedLibrary {
     /// profile before anything pins it.
     async fn start(
         tag: &str,
-        configure: impl Fn(&mut droppedneedle::runtime_config::sections::LibraryManagementProfile),
+        configure: impl Fn(
+            &mut droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
+        ),
     ) -> Self {
         use droppedneedle::library::management::settings as lm;
         let (scratch, library, music) = bare_library(tag);
@@ -6468,7 +6479,7 @@ impl ManagedLibrary {
     }
 
     fn db(&self) -> rusqlite::Connection {
-        droppedneedle::db::open_connection(&self.scratch.to_path_buf().join("app.db"))
+        droppedneedle_kernel::db::open_connection(&self.scratch.to_path_buf().join("app.db"))
             .expect("db opens")
     }
 
@@ -6481,7 +6492,7 @@ impl ManagedLibrary {
             &self
                 .library
                 .config
-                .get::<droppedneedle::runtime_config::sections::LibraryManagement>()
+                .get::<droppedneedle_kernel::runtime_config::sections::LibraryManagement>()
                 .expect("settings read"),
         )
     }
@@ -6626,13 +6637,13 @@ impl ManagedLibrary {
     async fn dry_run(
         &self,
         key: &str,
-        change: impl Fn(&mut droppedneedle::runtime_config::sections::LibraryManagement),
+        change: impl Fn(&mut droppedneedle_kernel::runtime_config::sections::LibraryManagement),
     ) -> (
         droppedneedle::library::management::models::PreviewHandle,
-        droppedneedle::runtime_config::sections::LibraryManagement,
+        droppedneedle_kernel::runtime_config::sections::LibraryManagement,
     ) {
         use droppedneedle::library::management::activation::ActivationRequest;
-        use droppedneedle::runtime_config::sections::{
+        use droppedneedle_kernel::runtime_config::sections::{
             LibraryManagement, LibraryManagementRootAssignment,
         };
         let management = self.management();
@@ -7327,7 +7338,7 @@ async fn the_picard_profile_writes_its_fields_in_every_format() {
     use droppedneedle::library::management::models::SelectionKind;
     use droppedneedle::library::tags::TagField;
     use droppedneedle::library::tags::save::{TagEdit, save_tags};
-    use droppedneedle::runtime_config::sections::{FieldMode, LibraryManagement};
+    use droppedneedle_kernel::runtime_config::sections::{FieldMode, LibraryManagement};
 
     let managed = ManagedLibrary::start("lib-fields-formats", |profile| {
         for field in &mut profile.metadata.fields {
@@ -7990,7 +8001,8 @@ async fn handing_every_album_back_takes_one_step_each() {
         plant(&music, &format!("{folder}/01.flac"), "management_full.flac");
     }
     add_music_root(&library, &music).await;
-    let db = droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db")).expect("db");
+    let db = droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
+        .expect("db");
     db.execute_batch(
         "INSERT INTO auth_users (id, display_name, role, created_at) \
          VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z'); \
@@ -8183,7 +8195,8 @@ async fn a_hand_back_that_cannot_read_the_files_keeps_the_mark() {
     let (scratch, library, music) = bare_library("lib-takeover-hand-back-fails");
     let file = plant(&music, "a/01.flac", "management_full.flac");
     add_music_root(&library, &music).await;
-    let db = droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db")).expect("db");
+    let db = droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
+        .expect("db");
     db.execute_batch(
         "INSERT INTO auth_users (id, display_name, role, created_at) \
          VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z'); \
@@ -8551,7 +8564,7 @@ impl ManagedLibrary {
 
     /// Change the folder's rules for when it manages albums by itself.
     fn set_automatic(&self, scan_discovered: bool, acquisitions: bool) {
-        use droppedneedle::runtime_config::sections::LibraryManagement;
+        use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
         let mut settings = self
             .library
             .config
@@ -9434,7 +9447,8 @@ async fn library_journey_review_exclude_restore_dismiss() {
         .track_at("music", "album-v/01.flac")
         .expect("track indexed");
     let album = rig.scan_store.album_for_track(&track).expect("album");
-    let conn = droppedneedle::db::open_connection(&app.config.library_db_path).expect("db opens");
+    let conn =
+        droppedneedle_kernel::db::open_connection(&app.config.library_db_path).expect("db opens");
     conn.execute(
         "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
          candidates_json, state, created_ms, updated_ms) \
@@ -10112,7 +10126,7 @@ async fn a_file_that_joins_while_musicbrainz_is_asked_is_placed_next() {
     let (late, target) = (b3.clone(), album.clone());
     rig.identify.recall_from(move |facts| {
         if !joined.swap(true, Ordering::SeqCst) {
-            droppedneedle::db::open_connection(&db_path)
+            droppedneedle_kernel::db::open_connection(&db_path)
                 .expect("db opens")
                 .execute(
                     "UPDATE local_tracks SET local_album_id = ?1 WHERE id = ?2",
@@ -10176,7 +10190,8 @@ async fn chosen_album_at_rest(tag: &str) -> (ScratchDir, LibrarySetup, String, V
 }
 
 fn scratch_db(scratch: &ScratchDir) -> rusqlite::Connection {
-    droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db")).expect("db opens")
+    droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
+        .expect("db opens")
 }
 
 /// Queue the album's files for `REL_1` with `origin`.
@@ -12999,7 +13014,7 @@ fn grafted_credits_keep_the_stored_edition() {
         ..Release::default()
     };
     store.save_release(&release);
-    let db = droppedneedle::db::open_connection(&_scratch.to_path_buf().join("app.db"))
+    let db = droppedneedle_kernel::db::open_connection(&_scratch.to_path_buf().join("app.db"))
         .expect("db opens");
     let times = || -> Vec<(String, f64, Option<f64>)> {
         let mut statement = db
@@ -13345,7 +13360,7 @@ async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
     assert_eq!(library.identify_tick().await, 4);
 
     // What the older matcher and people left behind.
-    let db = droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db"))
+    let db = droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
         .expect("db opens");
     let on_r2 = |album: &str, r2: &Release, source: &str| {
         db.execute(
@@ -13640,7 +13655,7 @@ const ID_B: &str = "1d2a3b4c-0000-4000-8000-000000000002";
 async fn acoustid_ids_come_from_a_lookup_naming_the_files_recording() {
     use droppedneedle::library::management::enrich::{ScriptedAcoustId, ScriptedEnrichment};
     use droppedneedle::library::management::models::SelectionKind;
-    use droppedneedle::runtime_config::sections::FieldMode;
+    use droppedneedle_kernel::runtime_config::sections::FieldMode;
 
     let managed = ManagedLibrary::start("lib-acoustid-id", |profile| {
         for field in &mut profile.metadata.fields {
@@ -14371,9 +14386,11 @@ fn sakamoto_edition(release: &mut Release) {
 
 /// The Picard profile translating artist names to English, with every
 /// artist field on replace.
-fn translating(profile: &mut droppedneedle::runtime_config::sections::LibraryManagementProfile) {
+fn translating(
+    profile: &mut droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
+) {
     use droppedneedle::library::management::enrich::ARTIST_FIELDS;
-    use droppedneedle::runtime_config::sections::FieldMode;
+    use droppedneedle_kernel::runtime_config::sections::FieldMode;
     profile.metadata.artist_credits.translate_names = true;
     profile.metadata.artist_credits.preferred_locales = vec!["en".to_owned()];
     for field in &mut profile.metadata.fields {

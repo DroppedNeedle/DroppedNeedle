@@ -23,7 +23,7 @@ use crate::acquire::search_jobs::search_sources;
 use crate::acquire::search_jobs::store::{
     COMPLETED, JobPayload, JobStore, MATCHED, NewJob, ReviewOutcome,
 };
-use crate::events::{SearchJobUpdated, UserNotice, new_event_id};
+use droppedneedle_kernel::events::{SearchJobUpdated, UserNotice, new_event_id};
 
 /// Looks running at once.
 pub(super) const MAX_CONCURRENT_REVIEWS: usize = 2;

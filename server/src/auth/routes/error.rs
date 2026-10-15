@@ -1,23 +1,23 @@
 //! HTTP errors for the auth routes.
 //!
-//! Every failure renders through the shared envelope in [`crate::error`].
+//! Every failure renders through the shared envelope in [`droppedneedle_kernel::error`].
 //! Codes and fixed messages match the users routes; the one intended
 //! difference is the upstream outage status: federated IdP outages are 503
 //! here (the federated contract and v2 both say 503), while the users routes
 //! use 502 for their Last.fm calls.
 
 use crate::auth::users::error::UsersError;
-use crate::error::{
-    CONFLICT, FIXED_INTERNAL_MESSAGE, FIXED_TOO_LARGE_MESSAGE, FIXED_UPSTREAM_MESSAGE, FORBIDDEN,
-    INTERNAL_ERROR, INVALID_INPUT, NOT_FOUND, NOT_FOUND_MESSAGE, PAYLOAD_TOO_LARGE, UNAUTHORIZED,
-    UPSTREAM_ERROR, envelope_response, fault_response, unauthorized_response,
-};
-use crate::ids::IdGenerator;
 use axum::{
     extract::{FromRequest, Query, Request},
     http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
+use droppedneedle_kernel::error::{
+    CONFLICT, FIXED_INTERNAL_MESSAGE, FIXED_TOO_LARGE_MESSAGE, FIXED_UPSTREAM_MESSAGE, FORBIDDEN,
+    INTERNAL_ERROR, INVALID_INPUT, NOT_FOUND, NOT_FOUND_MESSAGE, PAYLOAD_TOO_LARGE, UNAUTHORIZED,
+    UPSTREAM_ERROR, envelope_response, fault_response, unauthorized_response,
+};
+use droppedneedle_kernel::ids::IdGenerator;
 use serde::de::DeserializeOwned;
 
 /// Every failure these routes can return.

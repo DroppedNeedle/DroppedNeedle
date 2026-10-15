@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OpenFlags};
 use thiserror::Error;
 
-use crate::AppConfig;
-use crate::db::factory::sqlite_uri_path;
-use crate::runtime_config::crypto::KEY_FILE_NAME;
+use droppedneedle_kernel::config::AppConfig;
+use droppedneedle_kernel::db::factory::sqlite_uri_path;
+use droppedneedle_kernel::runtime_config::crypto::KEY_FILE_NAME;
 
 /// Folder inside `config/` and inside `cache/` that keeps the v2 files.
 pub const BACKUP_DIR_NAME: &str = "v2-backup";
@@ -315,7 +315,7 @@ pub fn names_data_enc_key(config_dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::scratch::ScratchDir;
+    use droppedneedle_kernel::db::scratch::ScratchDir;
 
     fn dirs_in(root: &Path) -> DataDirs {
         let dirs = DataDirs::from_config(&AppConfig::with_root(0, root));

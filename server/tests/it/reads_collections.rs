@@ -9,8 +9,8 @@ use std::sync::Arc;
 use droppedneedle::acquire::db::AcquireDb;
 use droppedneedle::acquire::requests::sqlite::FollowApprovalStore;
 use droppedneedle::acquire::settings::{ApprovalSeedBridge, RequestsPendingSource};
-use droppedneedle::db::{DbConfig, DbRuntime, open_runtime};
 use droppedneedle::reads::collections::{self, CollectionsState, db::CollectionsDb};
+use droppedneedle_kernel::db::{DbConfig, DbRuntime, open_runtime};
 
 use axum::{
     Router,
@@ -50,7 +50,7 @@ impl Rig {
         runtime
             .lane()
             .write(
-                droppedneedle::db::Lane::Foreground,
+                droppedneedle_kernel::db::Lane::Foreground,
                 "seed users",
                 move |tx| {
                     for (id, name, role) in rows {
@@ -99,10 +99,14 @@ impl Rig {
     async fn exec(&self, sql: &'static str) {
         self.runtime
             .lane()
-            .write(droppedneedle::db::Lane::Foreground, "fixture", move |tx| {
-                tx.execute_batch(sql)?;
-                Ok(())
-            })
+            .write(
+                droppedneedle_kernel::db::Lane::Foreground,
+                "fixture",
+                move |tx| {
+                    tx.execute_batch(sql)?;
+                    Ok(())
+                },
+            )
             .await
             .unwrap();
     }
@@ -640,7 +644,7 @@ async fn store_faults_render_fixed_500_envelopes() {
 /// tables, and applying it again changes nothing.
 #[tokio::test]
 async fn migration_0010_upgrades_in_place() {
-    use droppedneedle::schema::{MIGRATOR, apply_migrations};
+    use droppedneedle_kernel::schema::{MIGRATOR, apply_migrations};
 
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)

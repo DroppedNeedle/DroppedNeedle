@@ -84,7 +84,8 @@ mod tests {
 
     #[test]
     fn adds_new_files_and_never_overwrites() {
-        let dir = crate::db::scratch::ScratchDir::new("plugin-files").expect("scratch dir");
+        let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("plugin-files")
+            .expect("scratch dir");
         let sandbox = Sandbox::new(vec![Root {
             id: "r1".to_owned(),
             dir: dir.path().to_path_buf(),

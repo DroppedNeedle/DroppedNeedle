@@ -16,7 +16,6 @@ use std::time::Duration;
 use droppedneedle::acquire::drop_import::Viewer;
 use droppedneedle::acquire::drop_import::store::JobRecord;
 use droppedneedle::acquire::landing::library::LibraryLanding;
-use droppedneedle::ids::{IdGenerator, UuidGenerator};
 use droppedneedle::library::identify::sources::{
     Edition, EditionPage, EditionQuery, ReleaseHit, ReleaseSource, SourceError,
 };
@@ -25,7 +24,8 @@ use droppedneedle::library::scan::EffectivePolicy;
 use droppedneedle::library::tags::TagField;
 use droppedneedle::library::tags::save::{TagEdit, save_tags};
 use droppedneedle::library::wiring::LibrarySetup;
-use droppedneedle::runtime_config::{ConfigStore, Crypto};
+use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
+use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use futures_util::future::BoxFuture;
 
 const GROUP: &str = "7d0b7a1e-0000-4000-8000-000000000001";

@@ -27,7 +27,7 @@ use std::time::Duration;
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::http_client::{BodyError, read_capped};
+use droppedneedle_kernel::http_client::{BodyError, read_capped};
 
 /// Cover Art Archive root.
 pub const COVER_ART_ARCHIVE_BASE: &str = "https://coverartarchive.org";
@@ -924,7 +924,7 @@ mod tests {
     /// failures.
     #[tokio::test]
     async fn a_body_over_the_transport_cap_is_never_buffered_whole() {
-        let factory = crate::http_client::HttpClientFactory::new().unwrap();
+        let factory = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
         let transport = ReqwestCaaTransport::new(factory.no_redirect().clone());
 
         let declared = serve_once("HTTP/1.1 200 OK\r\ncontent-length: 20971521\r\n\r\n", 0).await;

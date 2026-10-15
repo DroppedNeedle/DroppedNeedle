@@ -20,10 +20,10 @@ use axum::{
 
 use crate::auth::session::middleware::CurrentSession;
 use crate::auth::users::roles::Role;
-use crate::jobs::playlist_sync::{
+use droppedneedle_kernel::jobs::playlist_sync::{
     DISABLED_MESSAGE, PlaylistExporter, PlaylistSyncResult, PlaylistSyncSettings,
 };
-use crate::jobs::registry::BoxFuture;
+use droppedneedle_kernel::jobs::registry::BoxFuture;
 
 /// Role lookups for the route gate. The users store owns the rows; this
 /// seam keeps the route independent of that store. Async-native on
@@ -90,8 +90,8 @@ impl IntoResponse for SyncError {
             ),
             Self::Forbidden => (StatusCode::FORBIDDEN, "FORBIDDEN", "Admin role required"),
         };
-        let body = crate::error::ErrorEnvelope {
-            error: crate::error::ErrorBody {
+        let body = droppedneedle_kernel::error::ErrorEnvelope {
+            error: droppedneedle_kernel::error::ErrorBody {
                 code: code.to_owned(),
                 message: message.to_owned(),
                 details: None,

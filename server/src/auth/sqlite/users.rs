@@ -14,7 +14,7 @@ use crate::auth::times::{parse_iso, to_iso};
 use crate::auth::users::models::{LocalCredential as UsersLocalCredential, UserRecord};
 use crate::auth::users::roles::Role;
 use crate::auth::users::stores::{BoxFuture, RoleChange, StoreError, UserDeletion, UserStore};
-use crate::db::{Lane, map_sqlx_busy};
+use droppedneedle_kernel::db::{Lane, map_sqlx_busy};
 
 /// Account and credential rows over `auth_users` plus the `local` rows of
 /// `auth_providers`.
@@ -246,7 +246,7 @@ impl UserStore for SqliteUserStore {
                 username.to_owned(),
                 username_display.to_owned(),
             );
-            let outcome: Result<bool, crate::db::DbError> = lane
+            let outcome: Result<bool, droppedneedle_kernel::db::DbError> = lane
                 .write(Lane::Foreground, "auth.users.rename", move |tx| {
                     tx.execute(
                         "UPDATE auth_users SET username = ?, username_display = ? WHERE id = ?",
@@ -281,7 +281,7 @@ impl UserStore for SqliteUserStore {
                 return Err(internal("auth user store is not wired"));
             };
             let (id, email) = (id.to_owned(), email.map(str::to_owned));
-            let outcome: Result<bool, crate::db::DbError> = lane
+            let outcome: Result<bool, droppedneedle_kernel::db::DbError> = lane
                 .write(Lane::Foreground, "auth.users.email", move |tx| {
                     tx.execute(
                         "UPDATE auth_users SET email = ? WHERE id = ?",
@@ -668,7 +668,7 @@ impl UserStore for SqliteUserStore {
             let Some((_, lane)) = self.db.live() else {
                 return Err(internal("auth user store is not wired"));
             };
-            let outcome: Result<(), crate::db::DbError> = lane
+            let outcome: Result<(), droppedneedle_kernel::db::DbError> = lane
                 .write(Lane::Foreground, "auth.users.bind", move |tx| {
                     tx.execute(
                         "INSERT INTO auth_providers (id, user_id, provider, provider_uid, \
@@ -715,7 +715,9 @@ const RESTRICTING_HISTORY: &[(&str, &str, &str)] = &[
 ];
 
 /// Map a write outcome: constraint conflicts become `Conflict`.
-fn conflict_or_internal(outcome: Result<(), crate::db::DbError>) -> Result<(), StoreError> {
+fn conflict_or_internal(
+    outcome: Result<(), droppedneedle_kernel::db::DbError>,
+) -> Result<(), StoreError> {
     match outcome {
         Ok(()) => Ok(()),
         Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
@@ -727,7 +729,7 @@ fn conflict_or_internal(outcome: Result<(), crate::db::DbError>) -> Result<(), S
 fn insert_user_row(
     tx: &rusqlite::Transaction,
     user: &UserRecord,
-) -> Result<(), crate::db::OpError> {
+) -> Result<(), droppedneedle_kernel::db::OpError> {
     tx.execute(
         "INSERT INTO auth_users (id, display_name, email, avatar_url, role, \
          created_at, last_login_at, username, username_display) \
@@ -752,7 +754,7 @@ fn insert_user_row(
 fn insert_local_row(
     tx: &rusqlite::Transaction,
     credential: &UsersLocalCredential,
-) -> Result<(), crate::db::OpError> {
+) -> Result<(), droppedneedle_kernel::db::OpError> {
     let username: Option<String> = tx
         .query_row(
             "SELECT username FROM auth_users WHERE id = ?",
@@ -763,7 +765,7 @@ fn insert_local_row(
         .map_err(op_error)?
         .flatten();
     let Some(username) = username else {
-        return Err(crate::db::OpError::Abort(
+        return Err(droppedneedle_kernel::db::OpError::Abort(
             "cannot set a local password without a username".to_owned(),
         ));
     };
@@ -790,7 +792,7 @@ fn swap_local_hash(
     expected_hash: &str,
     scheme: &str,
     new_hash: &str,
-) -> Result<bool, crate::db::OpError> {
+) -> Result<bool, droppedneedle_kernel::db::OpError> {
     let current: Option<Option<String>> = tx
         .query_row(
             "SELECT provider_data FROM auth_providers WHERE user_id = ? AND provider = 'local'",
@@ -817,7 +819,10 @@ fn swap_local_hash(
 }
 
 /// Current role of one user, or `None` when the row is gone.
-fn role_of(tx: &rusqlite::Transaction, id: &str) -> Result<Option<Role>, crate::db::OpError> {
+fn role_of(
+    tx: &rusqlite::Transaction,
+    id: &str,
+) -> Result<Option<Role>, droppedneedle_kernel::db::OpError> {
     let raw: Option<String> = tx
         .query_row(
             "SELECT role FROM auth_users WHERE id = ?",
@@ -830,7 +835,7 @@ fn role_of(tx: &rusqlite::Transaction, id: &str) -> Result<Option<Role>, crate::
 }
 
 /// Admin accounts right now, read inside the caller's transaction.
-fn admin_count(tx: &rusqlite::Transaction) -> Result<i64, crate::db::OpError> {
+fn admin_count(tx: &rusqlite::Transaction) -> Result<i64, droppedneedle_kernel::db::OpError> {
     tx.query_row(
         "SELECT COUNT(*) FROM auth_users WHERE role = ?",
         rusqlite::params![Role::Admin.as_str()],
@@ -871,7 +876,7 @@ impl CredentialLookup for SqliteCredentialLookup {
         .fetch_optional(pool)
         .await
         .map_err(|error| match map_sqlx_busy("auth.login.lookup", error) {
-            crate::db::DbError::Busy { .. } => LoginError::Busy,
+            droppedneedle_kernel::db::DbError::Busy { .. } => LoginError::Busy,
             error => {
                 tracing::error!(%error, "login lookup failed");
                 LoginError::Unavailable

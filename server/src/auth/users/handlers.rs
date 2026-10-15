@@ -31,7 +31,7 @@ use super::models::{
 };
 use super::roles::{CurrentAdmin, CurrentUser, Role};
 use super::services;
-use crate::error::{
+use droppedneedle_kernel::error::{
     CONFLICT, FIXED_INTERNAL_MESSAGE, FIXED_TOO_LARGE_MESSAGE, FIXED_UPSTREAM_MESSAGE, FORBIDDEN,
     INTERNAL_ERROR, INVALID_INPUT, NOT_FOUND, NOT_FOUND_MESSAGE, PAYLOAD_TOO_LARGE, UPSTREAM_ERROR,
     envelope_response, fault_response, unauthorized_response,

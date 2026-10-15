@@ -12,8 +12,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use droppedneedle::{
-    AppConfig, AppState, config::DEFAULT_PORT, http_client::HttpClientFactory, ids::IdGenerator,
+use droppedneedle::AppState;
+use droppedneedle_kernel::{
+    config::AppConfig, config::DEFAULT_PORT, http_client::HttpClientFactory, ids::IdGenerator,
 };
 
 /// Fixed id used across tests. A valid UUID so id-format assertions hold.
@@ -145,7 +146,7 @@ pub fn hooked_state_with_compat(subsonic: bool, jellyfin: bool) -> AppState {
 /// Production-like state: real UUID generator, hooks off.
 pub fn prod_like_state() -> AppState {
     let auth = test_auth();
-    let ids = Arc::new(droppedneedle::ids::UuidGenerator);
+    let ids = Arc::new(droppedneedle_kernel::ids::UuidGenerator);
     let mut reads = test_reads(&auth, ids.clone());
     let acquire = test_acquire(&auth, ids.clone(), &mut reads);
     let library = test_library(&auth, ids.clone());
@@ -288,7 +289,7 @@ impl Drop for ScratchDir {
 /// Write a private copy of the migrated database to `path`, which must not
 /// exist yet. The migrations run once per test binary, not once per test.
 pub fn migrated_db(path: &Path) {
-    droppedneedle::schema::template::copy_to(path).expect("migrated database copies");
+    droppedneedle_kernel::schema::template::copy_to(path).expect("migrated database copies");
 }
 
 /// A one-connection pool on a private migrated database. Hold the guard:
@@ -306,9 +307,9 @@ pub async fn migrated_pool(tag: &str) -> (sqlx::SqlitePool, ScratchDir) {
 }
 
 /// The production runtime on a fresh migrated database at `path`.
-pub async fn scratch_runtime(path: &Path) -> droppedneedle::db::DbRuntime {
+pub async fn scratch_runtime(path: &Path) -> droppedneedle_kernel::db::DbRuntime {
     migrated_db(path);
-    droppedneedle::db::open_runtime(&droppedneedle::db::DbConfig::new(path))
+    droppedneedle_kernel::db::open_runtime(&droppedneedle_kernel::db::DbConfig::new(path))
         .await
         .expect("scratch runtime opens")
 }
@@ -318,9 +319,9 @@ pub async fn scratch_runtime(path: &Path) -> droppedneedle::db::DbRuntime {
 /// no instance Last.fm key.
 /// Nothing dials out unless a test asks for a cover or a chart.
 pub fn reads_inputs(
-    config: Arc<droppedneedle::runtime_config::ConfigStore>,
+    config: Arc<droppedneedle_kernel::runtime_config::ConfigStore>,
     dir: &Path,
-    lane: droppedneedle::db::WriteLane,
+    lane: droppedneedle_kernel::db::WriteLane,
 ) -> droppedneedle::reads::ReadsInputs {
     let http = test_http();
     droppedneedle::reads::ReadsInputs {
@@ -333,7 +334,7 @@ pub fn reads_inputs(
         providers: Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
         listenbrainz_links: Arc::new(
             droppedneedle::plugins::scrobble::MemoryListenBrainzLinkStore::new(Arc::new(
-                droppedneedle::runtime_config::Crypto::from_key_bytes(&[7u8; 32])
+                droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32])
                     .expect("test key"),
             )),
         ),
@@ -393,11 +394,12 @@ pub fn outbound_at(origin: &str) -> droppedneedle::bootstrap::Outbound {
 }
 
 /// A settings store in `dir` with a fixed test key.
-pub fn config_store(dir: &Path) -> Arc<droppedneedle::runtime_config::ConfigStore> {
+pub fn config_store(dir: &Path) -> Arc<droppedneedle_kernel::runtime_config::ConfigStore> {
     Arc::new(
-        droppedneedle::runtime_config::ConfigStore::open(
+        droppedneedle_kernel::runtime_config::ConfigStore::open(
             &dir.join("config.json"),
-            droppedneedle::runtime_config::Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
+            droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32])
+                .expect("test key"),
         )
         .expect("config store opens"),
     )

@@ -15,8 +15,6 @@ use droppedneedle::auth::session::extract::Transport;
 use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::session::store::SessionKind;
 use droppedneedle::auth::users::memory::with_test_principal;
-use droppedneedle::db::DbRuntime;
-use droppedneedle::ids::UuidGenerator;
 use droppedneedle::providers::Providers;
 use droppedneedle::reads::discover::adapters::queue::sources::{
     AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmFacts, MusicSource,
@@ -30,6 +28,8 @@ use droppedneedle::reads::discover::fakes::{
 };
 use droppedneedle::reads::discover::ports::{BoxFuture, SystemClock};
 use droppedneedle::reads::discover::services::ReadsDeps;
+use droppedneedle_kernel::db::DbRuntime;
+use droppedneedle_kernel::ids::UuidGenerator;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 

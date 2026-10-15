@@ -21,8 +21,8 @@ use crate::auth::users::services::{
 };
 use crate::auth::users::stores::UserStore as _;
 use crate::bootstrap::data_dirs::{BootRefusal, DataDirs, check_bootable};
-use crate::db::datalock::{DataLock, DataLockError};
-use crate::db::{DbConfig, DbRuntime, open_runtime};
+use droppedneedle_kernel::db::datalock::{DataLock, DataLockError};
+use droppedneedle_kernel::db::{DbConfig, DbRuntime, open_runtime};
 
 /// Users read per page when listing admins.
 const PAGE: u64 = 200;

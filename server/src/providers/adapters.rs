@@ -36,7 +36,7 @@ use super::{
     health::ServiceHealth,
     limiter::Pacer,
 };
-use crate::http_client::HttpClientFactory;
+use droppedneedle_kernel::http_client::HttpClientFactory;
 
 /// Largest catalog answer read. Wikidata entities carry every language
 /// and Archive.org item metadata lists every file, so either can pass
@@ -190,13 +190,16 @@ impl ReqwestGet {
             .get(reqwest::header::RETRY_AFTER)
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
-        let body = match crate::http_client::read_capped(response, MAX_CATALOG_BODY_BYTES).await {
-            Ok(body) => body,
-            Err(error) => {
-                tracing::warn!(kind = error.kind(), "catalog answer unreadable");
-                return None;
-            }
-        };
+        let body =
+            match droppedneedle_kernel::http_client::read_capped(response, MAX_CATALOG_BODY_BYTES)
+                .await
+            {
+                Ok(body) => body,
+                Err(error) => {
+                    tracing::warn!(kind = error.kind(), "catalog answer unreadable");
+                    return None;
+                }
+            };
         Some((status, body, retry_after))
     }
 }

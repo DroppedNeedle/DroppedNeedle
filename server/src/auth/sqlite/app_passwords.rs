@@ -6,7 +6,7 @@ use super::{AuthDb, internal, is_write_conflict, op_error, store_error};
 use crate::auth::times::{parse_iso, to_iso};
 use crate::auth::users::models::AppPasswordRecord;
 use crate::auth::users::stores::{AppPasswordStore, BoxFuture, StoreError};
-use crate::db::{Lane, map_sqlx_busy};
+use droppedneedle_kernel::db::{Lane, map_sqlx_busy};
 
 /// App-password rows over `connect_app_passwords`.
 ///

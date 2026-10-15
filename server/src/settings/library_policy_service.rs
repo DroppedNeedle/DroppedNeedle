@@ -24,9 +24,9 @@ use crate::library::settings_models::{
     LibraryPathMappingReport, LibraryPolicyApplyPreviewResponse, LibraryPolicyImpactResponse,
     LibraryPolicyTreeResponse, LibrarySettingsResponse,
 };
-use crate::runtime_config::Masked;
-use crate::runtime_config::secret_sections::TypedLibrary;
-use crate::runtime_config::settings_error::SettingsError;
+use droppedneedle_kernel::runtime_config::Masked;
+use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// Library policy reads, previews, and the guarded saves.
 pub struct LibraryPolicyService {

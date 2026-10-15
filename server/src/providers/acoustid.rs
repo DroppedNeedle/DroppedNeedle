@@ -23,7 +23,7 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use super::{DegradationSink, Pacer};
-use crate::http_client::read_capped;
+use droppedneedle_kernel::http_client::read_capped;
 
 /// Default AcoustID host. Tests point the client at a scripted fake instead.
 pub const DEFAULT_BASE_URL: &str = "https://api.acoustid.org";

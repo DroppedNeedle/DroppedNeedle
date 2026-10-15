@@ -100,7 +100,7 @@ fn backend_error(fault: StreamFault) -> BackendError {
         }
         StreamFault::Internal { cause } => {
             tracing::error!(%cause, "compat audio backend failed");
-            BackendError::failed(crate::error::FIXED_INTERNAL_MESSAGE)
+            BackendError::failed(droppedneedle_kernel::error::FIXED_INTERNAL_MESSAGE)
         }
     }
 }
@@ -435,6 +435,9 @@ mod tests {
         let error = backend_error(StreamFault::Internal {
             cause: "open /srv/music/secret.flac: permission denied".to_owned(),
         });
-        assert_eq!(error.to_string(), crate::error::FIXED_INTERNAL_MESSAGE);
+        assert_eq!(
+            error.to_string(),
+            droppedneedle_kernel::error::FIXED_INTERNAL_MESSAGE
+        );
     }
 }

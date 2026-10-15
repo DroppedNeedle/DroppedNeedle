@@ -25,7 +25,9 @@ use crate::library::operations::store as ops;
 use crate::library::publish::publisher::Catalog as _;
 use crate::library::publish::{JournalStore, SqliteCatalog, snapshots::sha256_hex};
 use crate::library::wiring::LibrarySetup;
-use crate::runtime_config::sections::{LibraryManagement, LibraryManagementRootOverrides};
+use droppedneedle_kernel::runtime_config::sections::{
+    LibraryManagement, LibraryManagementRootOverrides,
+};
 
 /// Largest page of planned files or results.
 pub const PAGE_MAX: i64 = 200;

@@ -28,7 +28,7 @@ use super::scan::coordinator::ScanRequestError;
 use super::scan::models::{ScanKind, ScanRequest, ScanRequestResult, ScanScope, ScanTrigger};
 use super::scan::roots::RootRegistry;
 use super::wiring::LibrarySetup;
-use crate::runtime_config::sections::DownloadPolicy;
+use droppedneedle_kernel::runtime_config::sections::DownloadPolicy;
 
 /// Most hops followed through merged (retired) albums.
 const MAX_RETIRED_HOPS: usize = 8;

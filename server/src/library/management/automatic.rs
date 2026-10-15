@@ -26,7 +26,9 @@ use crate::library::operations::status;
 use crate::library::publish::Sandbox;
 use crate::library::publish::snapshots::sha256_hex;
 use crate::library::scan::sqlite_store::holds_new_files;
-use crate::runtime_config::sections::{LibraryManagement, LibraryManagementRootAssignment};
+use droppedneedle_kernel::runtime_config::sections::{
+    LibraryManagement, LibraryManagementRootAssignment,
+};
 
 /// How long the catalog must be still before automatic management looks
 /// at an album (v2's settle window).
@@ -323,7 +325,7 @@ fn album_files(conn: &Connection, album_id: &str) -> rusqlite::Result<Vec<AlbumF
 /// How the album came in, when its folder manages albums that came in
 /// that way without asking. `None` when it does not.
 fn automatic_origin(
-    assignment: &crate::runtime_config::sections::LibraryManagementRootAssignment,
+    assignment: &droppedneedle_kernel::runtime_config::sections::LibraryManagementRootAssignment,
     files: &[AlbumFile],
 ) -> Option<Origin> {
     let origin = if files.iter().any(|file| file.ingest_source == "download") {

@@ -18,8 +18,8 @@ use super::sources::Sources;
 use super::store::{ConcertsStore, StoreError};
 use super::{ActiveSources, now_unix, today};
 use crate::providers::error::ProviderError;
-use crate::runtime_config::ConfigStore;
-use crate::runtime_config::secret_sections::EventsSweepScope;
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::secret_sections::EventsSweepScope;
 
 /// Cities kept per user, from v2.
 pub const MAX_CITIES: usize = 50;

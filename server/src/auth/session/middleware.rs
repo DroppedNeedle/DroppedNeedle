@@ -73,8 +73,8 @@ use super::{
     store::{SessionKind, SessionStore, SessionStoreError, now_unix},
     tokens::hash_token,
 };
-use crate::config::TrustedProxies;
-use crate::runtime_config::origin::Origin;
+use droppedneedle_kernel::config::TrustedProxies;
+use droppedneedle_kernel::runtime_config::origin::Origin;
 
 /// Authenticated session stashed in request extensions by the middleware.
 #[derive(Debug, Clone)]
@@ -194,14 +194,17 @@ where
         Err(error) => {
             let error_id = request
                 .extensions()
-                .get::<crate::ids::RequestId>()
+                .get::<droppedneedle_kernel::ids::RequestId>()
                 .map(|id| id.0.clone())
                 .unwrap_or_default();
             if matches!(error, SessionStoreError::Busy) {
-                return crate::error::busy_response("auth.session.lookup", &error_id);
+                return droppedneedle_kernel::error::busy_response(
+                    "auth.session.lookup",
+                    &error_id,
+                );
             }
             tracing::error!(%error, error_id, "session store lookup failed");
-            return crate::error::ApiError::internal_response(&error_id);
+            return droppedneedle_kernel::error::ApiError::internal_response(&error_id);
         }
     };
     let Some(record) = record else {

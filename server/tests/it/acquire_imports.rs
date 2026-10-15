@@ -51,7 +51,7 @@ const FIXED_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 #[derive(Debug, Clone)]
 struct FixedIdGenerator;
 
-impl droppedneedle::ids::IdGenerator for FixedIdGenerator {
+impl droppedneedle_kernel::ids::IdGenerator for FixedIdGenerator {
     fn new_id(&self) -> String {
         FIXED_ID.to_owned()
     }
@@ -62,7 +62,7 @@ fn http_client() -> reqwest::Client {
 }
 
 fn no_redirect_client() -> reqwest::Client {
-    droppedneedle::http_client::HttpClientFactory::new()
+    droppedneedle_kernel::http_client::HttpClientFactory::new()
         .expect("http factory builds")
         .no_redirect()
         .clone()
@@ -1177,7 +1177,8 @@ async fn spotify_sqlite_stores_persist_and_expire() {
     );
 
     let crypto = Arc::new(
-        droppedneedle::runtime_config::crypto::Crypto::from_key_bytes(&[7; 32]).expect("key"),
+        droppedneedle_kernel::runtime_config::crypto::Crypto::from_key_bytes(&[7; 32])
+            .expect("key"),
     );
     let links = SqliteSpotifyLinks::new(db.clone(), crypto);
     let link = SpotifyConnection {

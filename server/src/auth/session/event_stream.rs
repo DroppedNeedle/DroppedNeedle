@@ -34,7 +34,7 @@ use super::{
     store::{SessionStore, now_unix},
     tokens::hash_token,
 };
-use crate::events::{EventHub, Subscription};
+use droppedneedle_kernel::events::{EventHub, Subscription};
 
 /// Reconnect delay the stream asks browsers for (v2 `_MUX_RETRY_MS`).
 pub const RETRY: Duration = Duration::from_secs(5);
@@ -118,9 +118,9 @@ pub async fn stream(
     headers: HeaderMap,
 ) -> Response {
     let Some(axum::Extension(session)) = session else {
-        return crate::error::envelope_response(
+        return droppedneedle_kernel::error::envelope_response(
             StatusCode::UNAUTHORIZED,
-            crate::error::UNAUTHORIZED,
+            droppedneedle_kernel::error::UNAUTHORIZED,
             "Not authenticated",
             None,
         );

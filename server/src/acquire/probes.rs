@@ -21,7 +21,7 @@ use super::slskd::{ReqwestSlskdHttp, SlskdRepository};
 use super::usenet::newznab::NewznabIndexer;
 use super::usenet::prowlarr::ProwlarrIndexer;
 use super::usenet::sabnzbd::SabnzbdQueue;
-use crate::runtime_config::secret_sections::{
+use droppedneedle_kernel::runtime_config::secret_sections::{
     DownloadClients, LidarrImportConnection, NewznabIndexer as ConfigIndexer, ProwlarrConnection,
     SlskdConnection,
 };

@@ -18,7 +18,7 @@ use super::oidc::{
 };
 use super::oidc_models::{DiscoveryWire, Jwk, JwksWire, TokenWire};
 use super::transport::check_provider_url;
-use crate::http_client::{BodyError, read_capped};
+use droppedneedle_kernel::http_client::{BodyError, read_capped};
 
 /// Discovery fetch timeout (v2 parity).
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -303,7 +303,7 @@ impl OidcIdp for OidcHttp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::http_client::HttpClientFactory;
+    use droppedneedle_kernel::http_client::HttpClientFactory;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
     /// Answer one request with `head` and then `body_bytes` of filler.

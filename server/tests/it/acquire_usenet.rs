@@ -1520,7 +1520,7 @@ async fn usenet_enqueue_reattaches_to_existing_job() {
     use droppedneedle::acquire::downloads::sources::{DownloadSource, SourceError};
     use droppedneedle::acquire::downloads::store::NewTask;
     use droppedneedle::acquire::sources::SabnzbdSource;
-    use droppedneedle::runtime_config::sections::UsenetBackendSetting;
+    use droppedneedle_kernel::runtime_config::sections::UsenetBackendSetting;
     use std::sync::Arc;
     use usenet::prowlarr::ProwlarrIndexer;
 

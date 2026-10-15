@@ -7,9 +7,11 @@
 use std::sync::Arc;
 
 use super::oidc::OidcConfig;
-use crate::runtime_config::ConfigStore;
-use crate::runtime_config::secret_sections::{JellyfinConnection, OidcConnection, PlexConnection};
-use crate::runtime_config::sections::InternalState;
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::secret_sections::{
+    JellyfinConnection, OidcConnection, PlexConnection,
+};
+use droppedneedle_kernel::runtime_config::sections::InternalState;
 
 /// Which sign-in methods the login page offers (v2 `AuthProvidersResponse`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

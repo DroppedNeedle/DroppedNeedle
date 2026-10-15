@@ -12,7 +12,7 @@ use std::sync::Arc;
 use rusqlite::Transaction;
 use sqlx::SqlitePool;
 
-use crate::db::{DbError, DbRuntime, Lane, OpError, WriteLane};
+use droppedneedle_kernel::db::{DbError, DbRuntime, Lane, OpError, WriteLane};
 
 /// Reader pool plus writer lane over the application database.
 #[derive(Clone, Debug)]
@@ -20,7 +20,7 @@ pub struct AcquireDb {
     pool: SqlitePool,
     lane: WriteLane,
     #[cfg(any(test, feature = "test-support"))]
-    _scratch: Option<Arc<crate::db::scratch::ScratchDir>>,
+    _scratch: Option<Arc<droppedneedle_kernel::db::scratch::ScratchDir>>,
 }
 
 impl AcquireDb {
@@ -79,12 +79,12 @@ impl AcquireDb {
     #[cfg(any(test, feature = "test-support"))]
     pub fn scratch() -> Result<Self, String> {
         let scratch = Arc::new(
-            crate::db::scratch::ScratchDir::new("acquire-db")
+            droppedneedle_kernel::db::scratch::ScratchDir::new("acquire-db")
                 .map_err(|error| format!("scratch dir: {error}"))?,
         );
         let dir = scratch.to_path_buf();
         let path = dir.join("app.db");
-        crate::schema::template::copy_to(&path)?;
+        droppedneedle_kernel::schema::template::copy_to(&path)?;
         let options = sqlx::sqlite::SqliteConnectOptions::new()
             .filename(&path)
             .busy_timeout(std::time::Duration::from_secs(5))

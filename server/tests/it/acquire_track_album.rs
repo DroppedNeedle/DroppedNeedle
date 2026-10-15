@@ -24,7 +24,7 @@ use droppedneedle::acquire::target::lookup::{
     AlbumRelease, AlbumTrack, FixedAlbums, ReleaseCandidate,
 };
 use droppedneedle::acquire::worker::{DownloadWorker, Source, WorkerConfig};
-use droppedneedle::ids::UuidGenerator;
+use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use serde_json::{Value, json};
 

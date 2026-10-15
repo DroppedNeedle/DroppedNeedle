@@ -38,7 +38,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use super::{DegradationSink, Pacer};
-use crate::http_client::read_capped;
+use droppedneedle_kernel::http_client::read_capped;
 
 pub mod playlists;
 pub mod stats;

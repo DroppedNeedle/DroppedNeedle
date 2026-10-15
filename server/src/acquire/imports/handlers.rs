@@ -18,9 +18,6 @@ use crate::auth::session::middleware::{CurrentSession, effective_origin};
 use crate::auth::users::UsersDeps;
 use crate::auth::users::roles::{AuthContext, Role};
 use crate::auth::users::stores::StoreError as UserStoreError;
-use crate::config::TrustedProxies;
-use crate::http_client::read_capped;
-use crate::ids::IdGenerator;
 use axum::{
     Json,
     extract::{FromRequestParts, Path, Request, State},
@@ -28,6 +25,9 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     routing::{delete, get, post},
 };
+use droppedneedle_kernel::config::TrustedProxies;
+use droppedneedle_kernel::http_client::read_capped;
+use droppedneedle_kernel::ids::IdGenerator;
 use serde::Deserialize;
 use utoipa::IntoParams;
 
@@ -257,7 +257,10 @@ async fn auth_context(
 
 /// Map a Lidarr service failure to the wire. Upstream detail reaches the
 /// log only; callers get a fixed user-safe summary.
-fn lidarr_failed(error: ServiceError, ids: &dyn crate::ids::IdGenerator) -> ImportsError {
+fn lidarr_failed(
+    error: ServiceError,
+    ids: &dyn droppedneedle_kernel::ids::IdGenerator,
+) -> ImportsError {
     match error {
         ServiceError::Approvals(cause) => {
             ImportsError::internal(&format_args!("approval batch failed: {cause}"), ids)

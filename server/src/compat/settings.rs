@@ -12,9 +12,9 @@ use std::sync::Arc;
 
 use crate::compat::jellyfin::seams::JellyfinSettings;
 use crate::compat::subsonic::Settings;
-use crate::runtime_config::ConfigStore;
-use crate::runtime_config::origin::Origin;
-use crate::runtime_config::sections::{
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::origin::Origin;
+use droppedneedle_kernel::runtime_config::sections::{
     AudioFormat, ConnectApps, DownloadAccess, PublicAddress, SecuritySettings,
 };
 
@@ -190,7 +190,7 @@ impl SettingsSource for ConfigSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime_config::Crypto;
+    use droppedneedle_kernel::runtime_config::Crypto;
 
     /// What both protocols read as the download setting from a config file
     /// holding `config`.

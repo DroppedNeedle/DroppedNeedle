@@ -383,7 +383,8 @@ mod tests {
 
     #[test]
     fn prune_only_touches_our_entries() {
-        let scratch = crate::db::scratch::ScratchDir::new("recycle-prune").expect("scratch");
+        let scratch =
+            droppedneedle_kernel::db::scratch::ScratchDir::new("recycle-prune").expect("scratch");
         let root = scratch.to_path_buf().join(".recycle");
         for name in [
             "20200101T000000-0a1b2c3d",

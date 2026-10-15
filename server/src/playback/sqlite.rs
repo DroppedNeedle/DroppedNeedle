@@ -2,7 +2,7 @@
 //!
 //! The reporting traits are synchronous, so these stores use one rusqlite
 //! handle on the runtime database instead of the async pool. The handle is
-//! opened through [`crate::db::open_connection`], so it carries the same
+//! opened through [`droppedneedle_kernel::db::open_connection`], so it carries the same
 //! pragmas as every other connection. Catalog reads hit `local_tracks`,
 //! plays land in `library_play_history`, prefs read
 //! `user_listening_prefs`, and display names resolve from `auth_users`.
@@ -19,8 +19,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::auth::times::to_iso;
-use crate::ids::IdGenerator;
 use crate::library::repairs::plays::{Matched, PlayKeys, match_play};
+use droppedneedle_kernel::ids::IdGenerator;
 
 use super::ports::{
     DisplayNames, ListeningPrefs, PlayHistory, PlayRecord, ProviderFailure, ScrobbleLinks,
@@ -36,8 +36,8 @@ pub struct PlaybackDb {
 impl PlaybackDb {
     /// Open the runtime database for playback reads and writes.
     pub fn open(path: &Path, ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
-        let conn =
-            crate::db::open_connection(path).map_err(|error| format!("playback db: {error}"))?;
+        let conn = droppedneedle_kernel::db::open_connection(path)
+            .map_err(|error| format!("playback db: {error}"))?;
         Ok(Self {
             conn: Mutex::new(conn),
             ids,
@@ -175,7 +175,8 @@ impl PlaybackDb {
             match result {
                 Ok(_) => break Ok(()),
                 Err(error)
-                    if crate::db::rusqlite_is_busy(&error) && attempt < PLAY_WRITE_ATTEMPTS =>
+                    if droppedneedle_kernel::db::rusqlite_is_busy(&error)
+                        && attempt < PLAY_WRITE_ATTEMPTS =>
                 {
                     tracing::warn!(attempt, %error, "play history busy; retrying");
                     attempt += 1;

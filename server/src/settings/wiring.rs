@@ -29,18 +29,18 @@ use crate::auth::{
     users::{UsersDeps, roles::Role},
 };
 use crate::bootstrap::Outbound;
-use crate::ids::IdGenerator;
 use crate::library::management::settings::StructuralCompiler;
 use crate::library::management::settings::service::LibraryManagementService;
 use crate::library::policy::LibraryPolicyCatalog;
-use crate::runtime_config::ConfigStore;
-use crate::runtime_config::settings_error::SettingsError;
 use crate::settings::effects::SaveEffects;
 use crate::settings::library_policy_service::LibraryPolicyService;
 use crate::settings::musicbrainz::MusicBrainzLifecycle;
 use crate::settings::section_prefs::{LinkStatus, SectionPrefsStore};
 use crate::settings::services::{PolicyImpactBuckets, SettingsService};
 use crate::settings::verify::{LiveProbes, VerifyProbes};
+use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// Section-prefs backends: the toggle store plus per-user link state.
 pub struct SectionPrefsDeps {
@@ -179,12 +179,12 @@ impl SettingsSetup {
     ) -> Result<Self, String> {
         use std::sync::atomic::{AtomicU64, Ordering};
 
-        use crate::jobs::events_kick::NoopKick;
         use crate::providers::InMemoryProviderCache;
         use crate::providers::cache::ProviderCache;
-        use crate::runtime_config::Crypto;
         use crate::settings::effects::LiveSaveEffects;
         use crate::settings::section_prefs::{MemorySectionPrefsStore, StaticLinkStatus};
+        use droppedneedle_kernel::jobs::events_kick::NoopKick;
+        use droppedneedle_kernel::runtime_config::Crypto;
 
         /// Scratch-dir sequence so parallel test states never share a store.
         static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);

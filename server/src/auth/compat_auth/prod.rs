@@ -17,7 +17,7 @@ use crate::auth::session::tokens;
 use crate::auth::users::models::UserRecord;
 use crate::auth::users::stores::StoreError;
 use crate::auth::users::{UsersDeps, clock_now};
-use crate::runtime_config::Crypto;
+use droppedneedle_kernel::runtime_config::Crypto;
 
 /// Minimum gap between `last_used_at` writes for one secret.
 const TOUCH_THROTTLE: Duration = Duration::from_secs(5 * 60);

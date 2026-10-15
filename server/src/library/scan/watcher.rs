@@ -404,7 +404,8 @@ mod tests {
 
     #[test]
     fn snapshot_records_nested_files_recursively() {
-        let scratch = crate::db::scratch::ScratchDir::new("scan-snap").expect("scratch");
+        let scratch =
+            droppedneedle_kernel::db::scratch::ScratchDir::new("scan-snap").expect("scratch");
         let root = scratch.to_path_buf();
         std::fs::create_dir_all(root.join("sub")).expect("mkdir");
         std::fs::write(root.join("sub").join("a.flac"), b"data").expect("write");
@@ -419,7 +420,8 @@ mod tests {
     #[tokio::test]
     async fn poll_batches_mutation_into_due() {
         let (_live, quiet) = watch::channel(false);
-        let scratch = crate::db::scratch::ScratchDir::new("scan-watch").expect("scratch");
+        let scratch =
+            droppedneedle_kernel::db::scratch::ScratchDir::new("scan-watch").expect("scratch");
         let root = scratch.to_path_buf();
         std::fs::create_dir_all(&root).expect("mkdir");
         std::fs::write(root.join("a.flac"), b"data").expect("write");
@@ -471,7 +473,8 @@ mod tests {
     #[tokio::test]
     async fn staging_temps_do_not_trip_the_watcher() {
         let (_live, quiet) = watch::channel(false);
-        let scratch = crate::db::scratch::ScratchDir::new("scan-watch-sidecar").expect("scratch");
+        let scratch = droppedneedle_kernel::db::scratch::ScratchDir::new("scan-watch-sidecar")
+            .expect("scratch");
         let root = scratch.to_path_buf();
         std::fs::create_dir_all(&root).expect("mkdir");
         std::fs::write(root.join("a.flac"), b"data").expect("write");

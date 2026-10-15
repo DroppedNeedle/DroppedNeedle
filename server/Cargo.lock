@@ -575,6 +575,7 @@ dependencies = [
  "cbc",
  "chacha20poly1305",
  "droppedneedle",
+ "droppedneedle-kernel",
  "droppedneedle-testkit",
  "flate2",
  "futures-util",
@@ -611,6 +612,34 @@ dependencies = [
  "utoipa",
  "uuid",
  "zip",
+]
+
+[[package]]
+name = "droppedneedle-kernel"
+version = "3.0.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "caseless",
+ "chacha20poly1305",
+ "futures-util",
+ "getrandom 0.3.4",
+ "hmac",
+ "libc",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror",
+ "time",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "unicode-normalization",
+ "utoipa",
+ "uuid",
 ]
 
 [[package]]

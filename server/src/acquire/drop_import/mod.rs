@@ -43,7 +43,9 @@ use crate::acquire::landing::{LibrarySlot, canonical_dirs};
 use crate::acquire::landing::{quality, specs};
 use crate::acquire::requests::models::RequestKind;
 use crate::acquire::requests::sqlite::{RequestStore, WantedStore};
-use crate::events::{DropImportUpdated, EventSink, RequestImported, UserNotice, new_event_id};
+use droppedneedle_kernel::events::{
+    DropImportUpdated, EventSink, RequestImported, UserNotice, new_event_id,
+};
 
 /// Most files one upload may carry (v2 `_MAX_FILES_PER_DROP`).
 pub const MAX_FILES_PER_DROP: usize = 25;

@@ -20,13 +20,13 @@ use serde_json::Value;
 
 use super::envelope::{ENVELOPE_NONCE_LEN, ENVELOPE_SALT_LEN, SEALED_KEY, is_sealed};
 use crate::auth::times::parse_iso;
-use crate::config::deployment::DROPPED_ENV_VARS;
 use crate::export::envelope::{
     BUNDLE_ROLE, EXPORT_FORMAT, FORMAT_VERSION, MIN_FORMAT_VERSION, OPTIONAL_KEYS,
     RESERVED_SECTIONS, required_keys,
 };
 use crate::export::seal::{KDF_ALGO, M_COST_KIB, P_COST, SCHEME, T_COST};
-use crate::runtime_config::DROPPED_SECTION_KEYS;
+use droppedneedle_kernel::config::deployment::DROPPED_ENV_VARS;
+use droppedneedle_kernel::runtime_config::DROPPED_SECTION_KEYS;
 
 /// Vestigial v2 `Settings` fields that must never cross the cutover.
 const VESTIGIAL_FIELDS: &[&str] = &[

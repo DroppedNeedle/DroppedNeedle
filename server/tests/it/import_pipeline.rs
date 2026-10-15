@@ -1087,8 +1087,8 @@ async fn v2_management_fields_carry_over_as_they_were() {
     use droppedneedle::library::management::settings::{
         PICARD_ORGANIZER_PROFILE_ID, StructuralCompiler, initial_settings,
     };
-    use droppedneedle::runtime_config::ConfigStore;
-    use droppedneedle::runtime_config::sections::FieldMode;
+    use droppedneedle_kernel::runtime_config::ConfigStore;
+    use droppedneedle_kernel::runtime_config::sections::FieldMode;
     use std::sync::Arc;
 
     let mut management = serde_json::to_value(initial_settings("")).unwrap();

@@ -5,7 +5,7 @@
 //! default order derivation, the v2 recipe legacy projection, and the
 //! user-facing summary sentence. No I/O: the caller supplies the policy.
 
-use crate::runtime_config::sections::{QualityRecipeEntry, derive_default_order};
+use droppedneedle_kernel::runtime_config::sections::{QualityRecipeEntry, derive_default_order};
 use serde::{Deserialize, Serialize};
 
 /// Canonical five tiers, best first.

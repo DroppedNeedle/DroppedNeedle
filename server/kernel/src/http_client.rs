@@ -169,7 +169,7 @@ fn append_causes(error: &(dyn std::error::Error + 'static), text: &mut String) {
 }
 
 /// Why a response body could not be read.
-pub(crate) enum BodyError {
+pub enum BodyError {
     /// The body is larger than the cap it was read under.
     TooLarge,
     /// The connection broke part-way. Never holds the request URL.
@@ -179,7 +179,7 @@ pub(crate) enum BodyError {
 impl BodyError {
     /// A short fixed description, for errors that must not carry
     /// transport text.
-    pub(crate) fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> &'static str {
         match self {
             Self::TooLarge => "answer too large",
             Self::Transport(_) => "body read failed",
@@ -189,7 +189,7 @@ impl BodyError {
 
 /// Read a body, giving up as soon as it passes `cap` bytes, whether or
 /// not the server declared its length.
-pub(crate) async fn read_capped(
+pub async fn read_capped(
     mut response: reqwest::Response,
     cap: usize,
 ) -> Result<Vec<u8>, BodyError> {

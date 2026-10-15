@@ -28,13 +28,13 @@ pub struct LiveEnrichment {
         crate::providers::adapters::HealthSink,
     >,
     /// Where the AcoustID key is read, per lookup.
-    pub config: Arc<crate::runtime_config::ConfigStore>,
+    pub config: Arc<droppedneedle_kernel::runtime_config::ConfigStore>,
 }
 
 impl LiveEnrichment {
     /// The AcoustID key from the settings; blank when none is set.
     fn acoustid_key(&self) -> String {
-        use crate::runtime_config::secret_sections::TypedLibrary;
+        use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
         match self.config.get_raw::<TypedLibrary>() {
             Ok(settings) => settings.acoustid_api_key.expose().trim().to_owned(),
             Err(error) => {

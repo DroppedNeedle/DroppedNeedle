@@ -116,7 +116,7 @@ fn rig_with(routes: HashMap<String, RawResponse>, down: bool) -> Rig {
     let dir = ScratchDir::new("lib-matching");
     let path = dir.join("app.db");
     migrated_db(&path);
-    let db = droppedneedle::db::open_connection(&path).expect("side connection opens");
+    let db = droppedneedle_kernel::db::open_connection(&path).expect("side connection opens");
     let store = Arc::new(SqliteIdentifyStore::open(&path).expect("store opens"));
     let service = IdentifyService::new(IdentifyDeps {
         identities: store.clone(),

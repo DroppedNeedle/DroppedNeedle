@@ -12,7 +12,7 @@ use axum::{
 };
 use serde_json::json;
 
-use crate::{
+use droppedneedle_kernel::{
     error::{ErrorBody, ErrorEnvelope},
     ids::IdGenerator,
 };
@@ -154,7 +154,7 @@ impl PluginError {
             ),
             Self::NotFound => (
                 NOT_FOUND.to_owned(),
-                crate::error::NOT_FOUND_MESSAGE.to_owned(),
+                droppedneedle_kernel::error::NOT_FOUND_MESSAGE.to_owned(),
                 None,
             ),
             Self::InvalidInput { message } => (INVALID_INPUT.to_owned(), message.clone(), None),
@@ -177,7 +177,7 @@ impl PluginError {
                 match fault {
                     SourceFault::Refused => UPSTREAM_REFUSED,
                     SourceFault::RateLimited { .. } => UPSTREAM_RATE_LIMITED,
-                    SourceFault::Unreachable => crate::error::UPSTREAM_ERROR,
+                    SourceFault::Unreachable => droppedneedle_kernel::error::UPSTREAM_ERROR,
                 }
                 .to_owned(),
                 message.clone(),
@@ -194,8 +194,8 @@ impl PluginError {
                 None,
             ),
             Self::Internal { error_id } => (
-                crate::error::INTERNAL_ERROR.to_owned(),
-                crate::error::FIXED_INTERNAL_MESSAGE.to_owned(),
+                droppedneedle_kernel::error::INTERNAL_ERROR.to_owned(),
+                droppedneedle_kernel::error::FIXED_INTERNAL_MESSAGE.to_owned(),
                 Some(json!({ "error_id": error_id })),
             ),
         };

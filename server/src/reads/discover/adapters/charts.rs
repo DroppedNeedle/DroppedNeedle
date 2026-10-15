@@ -456,9 +456,9 @@ mod tests {
 
     use super::*;
     use crate::auth::users::memory::TestRig;
-    use crate::http_client::HttpClientFactory;
     use crate::plugins::scrobble::MemoryListenBrainzLinkStore;
     use crate::providers::Providers;
+    use droppedneedle_kernel::http_client::HttpClientFactory;
 
     /// Last.fm charts read the instance key on every call: no key answers
     /// "not configured", a key saved later serves the chart with it.

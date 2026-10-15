@@ -10,7 +10,7 @@ use axum::{
 use serde::de::DeserializeOwned;
 
 use super::error::{QUOTA_EXCEEDED, RequestsError, STORAGE_FULL};
-use crate::error::{
+use droppedneedle_kernel::error::{
     ApiError, CONFLICT, FORBIDDEN, INVALID_INPUT, NOT_FOUND, NOT_FOUND_MESSAGE, busy_response,
     envelope_response, unauthorized_response,
 };

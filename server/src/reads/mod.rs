@@ -27,13 +27,11 @@ use std::sync::Arc;
 
 use axum::{Router, extract::Request, middleware::Next, response::Response};
 
-use crate::{
-    auth::{
-        session::middleware::CurrentSession,
-        users::{UsersDeps, stores::StoreError},
-    },
-    ids::IdGenerator,
+use crate::auth::{
+    session::middleware::CurrentSession,
+    users::{UsersDeps, stores::StoreError},
 };
+use droppedneedle_kernel::ids::IdGenerator;
 
 /// Everything `create_app` needs to mount the reads routes, built once.
 #[derive(Clone)]
@@ -282,10 +280,10 @@ impl ReadsSetup {
 /// settings change applies at once. A section that fails to read is
 /// logged and treated as upgrades off.
 fn upgrade_policy_source(
-    config: Arc<crate::runtime_config::ConfigStore>,
+    config: Arc<droppedneedle_kernel::runtime_config::ConfigStore>,
 ) -> library::stores::UpgradePolicySource {
-    Arc::new(
-        move || match config.get::<crate::runtime_config::sections::DownloadPolicy>() {
+    Arc::new(move || {
+        match config.get::<droppedneedle_kernel::runtime_config::sections::DownloadPolicy>() {
             Ok(policy) => library::stores::UpgradePolicy {
                 quality_cutoff: Some(policy.quality_cutoff),
                 upgrade_allowed: policy.upgrade_allowed,
@@ -294,8 +292,8 @@ fn upgrade_policy_source(
                 tracing::warn!(%error, "download policy unreadable; album status shows no upgrades");
                 library::stores::UpgradePolicy::default()
             }
-        },
-    )
+        }
+    })
 }
 
 /// YouTube links with no database yet, searching through discover's
@@ -338,9 +336,9 @@ fn test_discover_deps(ids: Arc<dyn IdGenerator>) -> discover::ReadsDeps {
 pub struct ReadsInputs {
     /// Runtime settings, read per request (wrapped key, local-art
     /// preference, YouTube and integration settings).
-    pub config: Arc<crate::runtime_config::ConfigStore>,
+    pub config: Arc<droppedneedle_kernel::runtime_config::ConfigStore>,
     /// The writer lane (discover queue ignores and saved decks).
-    pub lane: crate::db::WriteLane,
+    pub lane: droppedneedle_kernel::db::WriteLane,
     /// Root of the cover cache (`<cache_dir>/covers`).
     pub covers_dir: std::path::PathBuf,
     /// Size bound of the cover cache in bytes.
@@ -393,7 +391,9 @@ fn platform_state(
 
     let config = inputs.config.clone();
     let prefer_local: platform::artwork::PreferLocal = Arc::new(move || {
-        match config.get::<crate::runtime_config::secret_sections::AdvancedSettings>() {
+        match config
+            .get::<droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings>()
+        {
             Ok(settings) => settings.prefer_local_cover_art,
             Err(error) => {
                 tracing::warn!(%error, "cannot read advanced settings; preferring local art");

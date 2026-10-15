@@ -11,15 +11,15 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use droppedneedle::ids::{IdGenerator, UuidGenerator};
 use droppedneedle::library::identify::models::DecisionSource;
 use droppedneedle::library::tags::save::{TagEdit, save_tags};
 use droppedneedle::library::tags::{TagField, read_fields};
 use droppedneedle::library::wiring::LibrarySetup;
-use droppedneedle::runtime_config::{ConfigStore, Crypto, Secret};
 use droppedneedle::tooling::fixture::{
     MUSIC_ROOT_ID, V2_ALBUM_ID, V2_TRACK_ID, V2_TRACK_REL, build_v2_fixture, delete_orphan_rows,
 };
+use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
+use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, Secret};
 use rusqlite::params;
 use sha2::{Digest as _, Sha256};
 
@@ -264,7 +264,7 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
         .connect(&format!("sqlite:{}?mode=rwc", db_path.display()))
         .await
         .expect("pool opens");
-    droppedneedle::schema::apply_migrations(&pool)
+    droppedneedle_kernel::schema::apply_migrations(&pool)
         .await
         .expect("schema migrates");
     let report = droppedneedle::r#import::run_import(droppedneedle::r#import::ImportRequest {

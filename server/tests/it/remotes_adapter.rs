@@ -14,7 +14,7 @@ use droppedneedle::auth::session::extract::Transport;
 use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::users::memory::TestRig;
 use droppedneedle::auth::users::roles::{Role, SessionKind};
-use droppedneedle::runtime_config::crypto::Crypto;
+use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_testkit::remotes::{
     JELLYFIN_KEY, MATCH_MBID, NAVIDROME_USER, PLEX_TOKEN, serve_jellyfin, serve_navidrome,
     serve_plex,
@@ -43,7 +43,7 @@ const FIXED_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 #[derive(Debug, Clone)]
 struct FixedIdGenerator;
 
-impl droppedneedle::ids::IdGenerator for FixedIdGenerator {
+impl droppedneedle_kernel::ids::IdGenerator for FixedIdGenerator {
     fn new_id(&self) -> String {
         FIXED_ID.to_owned()
     }
@@ -603,7 +603,7 @@ async fn upstream_forbidden_maps_to_auth_on_every_source() {
 /// rest.
 #[tokio::test]
 async fn linked_connections_survive_a_restart() {
-    use droppedneedle::db::{DbConfig, open_runtime};
+    use droppedneedle_kernel::db::{DbConfig, open_runtime};
     use remotes::folders::{FolderStore as _, SqliteFolderStore};
 
     let dir = crate::common::ScratchDir::new("remotes-durable");
@@ -624,7 +624,7 @@ async fn linked_connections_survive_a_restart() {
         let runtime = crate::common::scratch_runtime(&db).await;
         runtime
             .lane()
-            .write(droppedneedle::db::Lane::Foreground, "seed", |tx| {
+            .write(droppedneedle_kernel::db::Lane::Foreground, "seed", |tx| {
                 tx.execute(
                     "INSERT INTO auth_users (id, username, display_name, role, created_at) \
                      VALUES ('user-ada', 'ada', 'Ada', 'user', '2026-01-01T00:00:00Z')",
@@ -1103,7 +1103,7 @@ async fn presence_poll_merges_a_remote_session() {
         http: http_client(),
         pool: None,
     };
-    droppedneedle::jobs::presence::run_once(&media.feed(), &media.pollers())
+    droppedneedle_kernel::jobs::presence::run_once(&media.feed(), &media.pollers())
         .await
         .expect("cycle polls");
     let feed = registry.snapshot();

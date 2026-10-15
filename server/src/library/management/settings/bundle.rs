@@ -20,13 +20,13 @@ use uuid::Uuid;
 use super::invalid;
 use super::normalize::normalize;
 use super::script::ScriptCompiler;
-use crate::ids::IdGenerator;
-use crate::runtime_config::sections::{
+use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::runtime_config::sections::{
     ArtistStandardization, ArtworkProvider, FieldMode, LibraryManagement, LibraryManagementProfile,
     Mp3ApePolicy, NamingScript, RawAacTagPolicy, ReplayGainMode, SourceCleanupMode, TaggingScript,
     WavTagPolicy,
 };
-use crate::runtime_config::settings_error::SettingsError;
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// Bundle document format tag.
 pub const PROFILE_BUNDLE_FORMAT: &str = "droppedneedle-library-profile";

@@ -33,8 +33,8 @@ use crate::providers::musicbrainz::{
     ArtistCreditName, Criticality, MbRelease, MbTransport, MusicBrainzClient, ReleaseSearchHit,
     build_release_match_query, hit_score,
 };
-use crate::runtime_config::ConfigStore;
-use crate::runtime_config::secret_sections::TypedLibrary;
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 
 /// The provider could not answer; the job waits and retries.
 #[derive(Debug, Clone, PartialEq, Eq)]

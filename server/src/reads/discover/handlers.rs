@@ -260,7 +260,7 @@ pub async fn record_activity(
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
         (status = 404, description = "Unknown seed album or playlist"),
-        (status = 502, description = "A music provider failed", body = crate::error::ErrorEnvelope),
+        (status = 502, description = "A music provider failed", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn discover_radio(
@@ -284,7 +284,7 @@ pub async fn discover_radio(
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
         (status = 404, description = "Unknown seed album or playlist"),
-        (status = 502, description = "A music provider failed", body = crate::error::ErrorEnvelope),
+        (status = 502, description = "A music provider failed", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn radio_plan(
@@ -308,7 +308,7 @@ pub async fn radio_plan(
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
         (status = 404, description = "Unknown seed album or playlist"),
-        (status = 502, description = "A music provider failed", body = crate::error::ErrorEnvelope),
+        (status = 502, description = "A music provider failed", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn playlist_suggestions(
@@ -335,7 +335,7 @@ pub async fn playlist_suggestions(
         (status = 200, description = "Queue deck", body = DiscoverQueueResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
-        (status = 500, description = "The library check failed", body = crate::error::ErrorEnvelope),
+        (status = 500, description = "The library check failed", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn get_queue(
@@ -420,7 +420,7 @@ pub async fn enrich_queue_item(
         (status = 200, description = "Card preview", body = DiscoverQueuePreview),
         (status = 400, description = "Bad release-group id"),
         (status = 401, description = "Not authenticated"),
-        (status = 502, description = "MusicBrainz or YouTube failed", body = crate::error::ErrorEnvelope),
+        (status = 502, description = "MusicBrainz or YouTube failed", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn preview_queue_item(
@@ -444,7 +444,7 @@ pub async fn preview_queue_item(
         (status = 204, description = "Release ignored"),
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
-        (status = 500, description = "The ignore could not be saved", body = crate::error::ErrorEnvelope),
+        (status = 500, description = "The ignore could not be saved", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn ignore_queue_item(
@@ -465,7 +465,7 @@ pub async fn ignore_queue_item(
     responses(
         (status = 200, description = "Ignore ledger", body = IgnoredReleasesResponse),
         (status = 401, description = "Not authenticated"),
-        (status = 500, description = "The ledger could not be read", body = crate::error::ErrorEnvelope),
+        (status = 500, description = "The ledger could not be read", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn ignored_releases(
@@ -487,7 +487,7 @@ pub async fn ignored_releases(
         (status = 200, description = "Library membership", body = QueueValidateResponse),
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
-        (status = 500, description = "The library check failed", body = crate::error::ErrorEnvelope),
+        (status = 500, description = "The library check failed", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn validate_queue(
@@ -513,8 +513,8 @@ pub async fn validate_queue(
         (status = 200, description = "Resolved video", body = YouTubeSearchResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
-        (status = 429, description = "YouTube search quota used up for today (RATE_LIMITED)", body = crate::error::ErrorEnvelope),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
+        (status = 429, description = "YouTube search quota used up for today (RATE_LIMITED)", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn youtube_search(
@@ -540,8 +540,8 @@ pub async fn youtube_search(
         (status = 200, description = "Resolved video", body = YouTubeSearchResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
-        (status = 429, description = "YouTube search quota used up for today (RATE_LIMITED)", body = crate::error::ErrorEnvelope),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
+        (status = 429, description = "YouTube search quota used up for today (RATE_LIMITED)", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn youtube_track_search(
@@ -608,7 +608,7 @@ pub async fn youtube_cache_check(
         (status = 200, description = "Track preview", body = TrackPreviewResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn track_preview(
@@ -635,7 +635,7 @@ pub async fn track_preview(
         (status = 200, description = "Album samples", body = AlbumPreviewResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn album_preview(
@@ -664,9 +664,9 @@ pub async fn album_preview(
         (status = 202, description = "Batch created", body = DiscoveryBatchDetail),
         (status = 400, description = "Empty or oversized batch, or every album is already owned or requested"),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Storage full (STORAGE_FULL)", body = crate::error::ErrorEnvelope),
-        (status = 429, description = "Request quota spent (QUOTA_EXCEEDED)", body = crate::error::ErrorEnvelope),
-        (status = 503, description = "Acquisition is not running (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
+        (status = 403, description = "Storage full (STORAGE_FULL)", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 429, description = "Request quota spent (QUOTA_EXCEEDED)", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 503, description = "Acquisition is not running (NOT_AVAILABLE)", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn create_batch(
@@ -687,7 +687,7 @@ pub async fn create_batch(
     responses(
         (status = 200, description = "Batch list", body = DiscoveryBatchListResponse),
         (status = 401, description = "Not authenticated"),
-        (status = 500, description = "The batch store failed", body = crate::error::ErrorEnvelope),
+        (status = 500, description = "The batch store failed", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn list_batches(
@@ -787,7 +787,7 @@ pub async fn get_home(
     responses(
         (status = 200, description = "Integration availability", body = IntegrationStatus),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn integration_status(
@@ -849,7 +849,7 @@ pub async fn genre_detail(
         (status = 200, description = "Trending artists page", body = TrendingArtistsPage),
         (status = 400, description = "Bad range or source"),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn trending_artists(
@@ -883,7 +883,7 @@ pub async fn trending_artists(
         (status = 200, description = "Popular albums page", body = PopularAlbumsPage),
         (status = 400, description = "Bad range or source"),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn popular_albums(
@@ -917,7 +917,7 @@ pub async fn popular_albums(
         (status = 200, description = "Your-top albums page", body = PopularAlbumsPage),
         (status = 400, description = "Bad range or source"),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn your_top_albums(

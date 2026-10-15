@@ -32,12 +32,12 @@ use super::session::stated::StatedAddresses;
 use super::users::lastfm_http::LastFmAuthHttp;
 use super::users::stores::{Clock, HibpPolicy, LastFmKeys, LastFmSwitch, SecurityPolicy};
 use super::users::{UsersDeps, admin_router, public_router, users_router};
-use crate::config::TrustedProxies;
-use crate::http_client::HttpClientFactory;
-use crate::ids::IdGenerator;
-use crate::runtime_config::secret_sections::LastFmSettings;
-use crate::runtime_config::sections::SecuritySettings;
-use crate::runtime_config::{ConfigStore, Crypto};
+use droppedneedle_kernel::config::TrustedProxies;
+use droppedneedle_kernel::http_client::HttpClientFactory;
+use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings;
+use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
+use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 
 /// One stored exchange code: owning user, sealed token, expiry.
 type StoredExchange = (String, String, SystemTime);
@@ -429,8 +429,8 @@ impl AuthSetup {
         };
         use super::users::hibp::{HibpScreen, PwnedPasswordsHttp};
         use super::users::stores::SystemClock;
-        use crate::ids::UuidGenerator;
         use crate::providers::{lastfm, plextv::PLEX_TV_BASE};
+        use droppedneedle_kernel::ids::UuidGenerator;
 
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let tag = COUNTER.fetch_add(1, Ordering::Relaxed);

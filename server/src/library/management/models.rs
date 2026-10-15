@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::reasons::ItemReason;
 use crate::library::operations::models::OperationJob;
 use crate::library::publish::planner::PlanItem;
-use crate::runtime_config::sections::{
+use droppedneedle_kernel::runtime_config::sections::{
     LibraryManagementProfile, LibraryManagementRootOverrides, NamingScript, TaggingScript,
 };
 

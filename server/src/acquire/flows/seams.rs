@@ -505,7 +505,7 @@ pub enum FlowEvent {
         /// Who to tell.
         user_id: String,
         /// What happened.
-        notice: crate::events::UserNotice,
+        notice: droppedneedle_kernel::events::UserNotice,
     },
     /// A request reached the library.
     RequestFulfilled {

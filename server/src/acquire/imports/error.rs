@@ -5,16 +5,16 @@
 //! the `Bearer` challenge, 4xx messages are user-safe, and 5xx bodies stay
 //! fixed with only an error id while the cause goes to the structured log.
 
-use crate::error::{
-    ApiError, CONFLICT, FORBIDDEN, INVALID_INPUT, NOT_FOUND, NOT_FOUND_MESSAGE, busy_response,
-    envelope_response, unauthorized_response,
-};
-use crate::ids::IdGenerator;
 use axum::{
     extract::{FromRequest, Query, Request},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use droppedneedle_kernel::error::{
+    ApiError, CONFLICT, FORBIDDEN, INVALID_INPUT, NOT_FOUND, NOT_FOUND_MESSAGE, busy_response,
+    envelope_response, unauthorized_response,
+};
+use droppedneedle_kernel::ids::IdGenerator;
 use serde::de::DeserializeOwned;
 
 /// No connection or settings stored for this import (Lidarr/Spotify).

@@ -21,7 +21,8 @@ use std::{
 use axum::{
     Extension, Router, body::Body, http::Request, middleware, response::Response, routing::get,
 };
-use droppedneedle::{
+use droppedneedle::{middleware::request_scope, state::AppState};
+use droppedneedle_kernel::{
     db::{
         BACKGROUND_QUEUE_CAPACITY, BACKUP_KEEP, Budget, CancelFlag, CheckpointMode, Db, DbConfig,
         DbError, DbRuntime, FOREGROUND_QUEUE_CAPACITY, LONG_READERS, Lane, LaneLimits, OpError,
@@ -31,9 +32,7 @@ use droppedneedle::{
     error::{FIXED_INTERNAL_MESSAGE, INTERNAL_ERROR, busy_response},
     ids::{REQUEST_ID_HEADER, RequestId},
     jobs::{JobRegistry, checkpoint, registry::DurableRegistryStore},
-    middleware::request_scope,
     schema::latest_version,
-    state::AppState,
 };
 use tower::ServiceExt as _;
 
@@ -300,7 +299,7 @@ async fn boot_refuses_version_mismatch() {
     drop(connection);
 
     match open_runtime(&DbConfig::new(&db)).await {
-        Err(DbError::Schema(droppedneedle::schema::SchemaError::VersionMismatch {
+        Err(DbError::Schema(droppedneedle_kernel::schema::SchemaError::VersionMismatch {
             found,
             expected,
         })) => assert_eq!((found, expected), (999, latest_version())),
@@ -1580,7 +1579,7 @@ async fn chunked_write_commits_and_cancels() {
         .await
         .unwrap();
 
-    let cancel = droppedneedle::db::CancelFlag::never();
+    let cancel = droppedneedle_kernel::db::CancelFlag::never();
     let committed = runtime
         .lane()
         .write_chunked(
@@ -1604,7 +1603,7 @@ async fn chunked_write_commits_and_cancels() {
         .unwrap();
     assert_eq!(count, 1200);
 
-    let stop = droppedneedle::db::CancelFlag::never();
+    let stop = droppedneedle_kernel::db::CancelFlag::never();
     stop.cancel();
     match runtime
         .lane()
@@ -2054,7 +2053,7 @@ async fn fold_sql_function_matches_v2_casefold() {
         .lane()
         .write(Lane::Foreground, "brief-fold", |tx| {
             tx.query_row("SELECT fold('Straße à  Athènes')", [], |row| row.get(0))
-                .map_err(droppedneedle::db::OpError::from)
+                .map_err(droppedneedle_kernel::db::OpError::from)
         })
         .await
         .unwrap();
@@ -2063,7 +2062,7 @@ async fn fold_sql_function_matches_v2_casefold() {
         .lane()
         .write(Lane::Foreground, "brief-fold-null", |tx| {
             tx.query_row("SELECT fold(NULL)", [], |row| row.get(0))
-                .map_err(droppedneedle::db::OpError::from)
+                .map_err(droppedneedle_kernel::db::OpError::from)
         })
         .await
         .unwrap();
@@ -2081,7 +2080,8 @@ async fn a_play_outlasting_the_busy_timeout_is_still_recorded() {
 
     let (runtime, dir) = open_scratch("play-busy").await;
     let db_path = dir.join("library.db");
-    let history = PlaybackDb::open(&db_path, Arc::new(droppedneedle::ids::UuidGenerator)).unwrap();
+    let history =
+        PlaybackDb::open(&db_path, Arc::new(droppedneedle_kernel::ids::UuidGenerator)).unwrap();
     let (held_tx, held_rx) = std::sync::mpsc::channel();
     let holder_path = db_path.clone();
     let holder = std::thread::spawn(move || {

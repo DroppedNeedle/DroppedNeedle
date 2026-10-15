@@ -34,15 +34,17 @@ impl ConcertsEvents for NoEventStream {
     fn concerts_new(&self, _user_id: &str, _event: &ConcertsNew) {}
 }
 
-impl ConcertsEvents for crate::events::EventHub {
+impl ConcertsEvents for droppedneedle_kernel::events::EventHub {
     fn concerts_new(&self, user_id: &str, event: &ConcertsNew) {
         self.notify(
             user_id,
-            crate::events::UserNotice::ConcertsNew(crate::events::ConcertsNew {
-                artist_mbid: event.artist_mbid.clone(),
-                artist_name: event.artist_name.clone(),
-                new_events: event.new_events,
-            }),
+            droppedneedle_kernel::events::UserNotice::ConcertsNew(
+                droppedneedle_kernel::events::ConcertsNew {
+                    artist_mbid: event.artist_mbid.clone(),
+                    artist_name: event.artist_name.clone(),
+                    new_events: event.new_events,
+                },
+            ),
         );
     }
 }

@@ -11,8 +11,8 @@
 use rusqlite::{OptionalExtension as _, Transaction, params};
 use sqlx::Row as _;
 
-use crate::db::OpError;
 use crate::reads::collections::db::{CollectionsDb, StoreError};
+use droppedneedle_kernel::db::OpError;
 
 use super::models::{YouTubeLink, YouTubeTrackLink};
 

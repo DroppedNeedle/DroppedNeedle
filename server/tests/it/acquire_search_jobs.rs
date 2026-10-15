@@ -24,7 +24,7 @@ use droppedneedle::acquire::sources::SlskdSource;
 use droppedneedle::acquire::target::Targets;
 use droppedneedle::acquire::target::lookup::{AlbumRelease, AlbumTrack, FixedAlbums};
 use droppedneedle::acquire::worker::{DownloadWorker, Source, WorkerConfig};
-use droppedneedle::events::{EventHub, EventSink};
+use droppedneedle_kernel::events::{EventHub, EventSink};
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use serde_json::{Value, json};
 

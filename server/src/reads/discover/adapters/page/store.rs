@@ -14,7 +14,7 @@
 
 use sqlx::SqlitePool;
 
-use crate::db::{WriteLane, writer::Lane};
+use droppedneedle_kernel::db::{WriteLane, writer::Lane};
 
 /// Activity older than this is forgotten.
 pub const ACTIVITY_WINDOW_SECS: f64 = 86_400.0;

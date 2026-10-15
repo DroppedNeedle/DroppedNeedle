@@ -72,12 +72,12 @@ pub trait FolderStore: Send + Sync {
 #[derive(Clone)]
 pub struct SqliteFolderStore {
     pool: sqlx::SqlitePool,
-    lane: crate::db::WriteLane,
+    lane: droppedneedle_kernel::db::WriteLane,
 }
 
 impl SqliteFolderStore {
     /// Bind the store to a migrated database.
-    pub fn new(pool: sqlx::SqlitePool, lane: crate::db::WriteLane) -> Self {
+    pub fn new(pool: sqlx::SqlitePool, lane: droppedneedle_kernel::db::WriteLane) -> Self {
         Self { pool, lane }
     }
 }
@@ -92,7 +92,9 @@ impl FolderStore for SqliteFolderStore {
             .bind(user_id)
             .fetch_optional(&self.pool)
             .await
-            .map_err(|error| crate::db::map_sqlx_busy("remotes.folders.get", error).to_string())?;
+            .map_err(|error| {
+                droppedneedle_kernel::db::map_sqlx_busy("remotes.folders.get", error).to_string()
+            })?;
             let Some((mode, selected, server_identity)) = row else {
                 return Ok(FolderPreference::default());
             };
@@ -117,7 +119,7 @@ impl FolderStore for SqliteFolderStore {
                 .map_err(|error| error.to_string())?;
             self.lane
                 .write(
-                    crate::db::Lane::Foreground,
+                    droppedneedle_kernel::db::Lane::Foreground,
                     "remotes.folders.set",
                     move |tx| {
                         let now = std::time::SystemTime::now()

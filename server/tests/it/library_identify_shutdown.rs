@@ -22,9 +22,6 @@ use crate::common::ScratchDir;
 use droppedneedle::auth::prod::ProdAuth;
 use droppedneedle::auth::users::stores::SystemClock;
 use droppedneedle::auth::wiring::AuthSetup;
-use droppedneedle::db::DbRuntime;
-use droppedneedle::http_client::HttpClientFactory;
-use droppedneedle::ids::{IdGenerator, UuidGenerator};
 use droppedneedle::library::identify::models::{
     IdentifyKind, JobState, LocalAlbumFacts, RecallResult,
 };
@@ -32,7 +29,10 @@ use droppedneedle::library::identify::providers::{IdentifyProviders, RecallOutco
 use droppedneedle::library::wiring::LibrarySetup;
 use droppedneedle::providers::musicbrainz::Criticality;
 use droppedneedle::remotes::plex::ConfiguredPlexServer;
-use droppedneedle::runtime_config::{ConfigStore, Crypto};
+use droppedneedle_kernel::db::DbRuntime;
+use droppedneedle_kernel::http_client::HttpClientFactory;
+use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
+use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use tokio::sync::{oneshot, watch};
 
 /// Empty recall, no side effects: every attempt lands NoCandidate.

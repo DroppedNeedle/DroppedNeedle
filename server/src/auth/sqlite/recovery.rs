@@ -6,7 +6,7 @@ use super::{AuthDb, internal, op_error, store_error};
 use crate::auth::times::{parse_iso, to_iso};
 use crate::auth::users::models::RecoveryCode;
 use crate::auth::users::stores::{BoxFuture, RecoveryStore, StoreError};
-use crate::db::{Lane, map_sqlx_busy};
+use droppedneedle_kernel::db::{Lane, map_sqlx_busy};
 
 /// Single-active-code recovery rows over `auth_password_recovery_codes`.
 #[derive(Clone, Debug)]

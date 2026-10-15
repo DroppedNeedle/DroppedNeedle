@@ -11,9 +11,9 @@ use droppedneedle::compat::settings::LiveSettings;
 use droppedneedle::compat::shared::address::{ListenerConfig, base_address};
 use droppedneedle::compat::shared::{auth, ratelimit, redact};
 use droppedneedle::compat::subsonic::picture::{PURPOSE, PictureKind, PictureSigner};
-use droppedneedle::config::TrustedProxies;
-use droppedneedle::runtime_config::Crypto;
-use droppedneedle::runtime_config::origin::Origin;
+use droppedneedle_kernel::config::TrustedProxies;
+use droppedneedle_kernel::runtime_config::Crypto;
+use droppedneedle_kernel::runtime_config::origin::Origin;
 
 #[test]
 fn anonymous_paths() {

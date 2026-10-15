@@ -19,7 +19,7 @@ use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
 
 use super::matching::{Confidence, EventRow, StoredConcert, SweepArtist, TmBasis};
 use super::models::{ConcertStatus, EventCity, EventSource};
-use crate::db::{DbError, Lane, WriteLane, map_sqlx_busy};
+use droppedneedle_kernel::db::{DbError, Lane, WriteLane, map_sqlx_busy};
 
 /// A store failure. The text goes to the log only.
 #[derive(Debug, thiserror::Error)]

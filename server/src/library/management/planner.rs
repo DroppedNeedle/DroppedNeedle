@@ -87,7 +87,7 @@ pub(crate) fn remap_gate(
 pub(crate) fn manage_unconfirmed(setup: &LibrarySetup) -> bool {
     setup
         .config
-        .get::<crate::runtime_config::sections::EditionPreferences>()
+        .get::<droppedneedle_kernel::runtime_config::sections::EditionPreferences>()
         .map(|prefs| prefs.manage_unconfirmed)
         .unwrap_or_else(|error| {
             tracing::warn!(%error, "edition preferences unreadable; unconfirmed albums wait");
@@ -1063,7 +1063,7 @@ fn measure_replaygain(
     extras: &mut super::enrich::AlbumExtras,
 ) {
     use crate::library::tags::loudness::{self, Unanalysed};
-    use crate::runtime_config::sections::ReplayGainMode;
+    use droppedneedle_kernel::runtime_config::sections::ReplayGainMode;
 
     let settings = &ctx.pinned.profile.enrichment.replaygain;
     if !settings.enabled || settings.mode == ReplayGainMode::Preserve || tracks.is_empty() {
@@ -1191,12 +1191,12 @@ pub(crate) enum AcoustIdLookup {
 /// `held`: managed and not preserved, no override for it, and replace or
 /// a file without a value.
 fn acoustid_wanted(
-    profile: &crate::runtime_config::sections::LibraryManagementProfile,
+    profile: &droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
     overrides: &Overrides,
     field: TagField,
     held: bool,
 ) -> bool {
-    use crate::runtime_config::sections::FieldMode;
+    use droppedneedle_kernel::runtime_config::sections::FieldMode;
     let metadata = &profile.metadata;
     let Some(managed) = metadata
         .fields
@@ -1254,7 +1254,7 @@ fn acoustid_id_for(
 pub(crate) fn acoustid_values(
     setup: &LibrarySetup,
     sandbox: &Sandbox,
-    profile: &crate::runtime_config::sections::LibraryManagementProfile,
+    profile: &droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
     subjects: &[AcoustIdSubject<'_>],
     until: std::time::Instant,
     ids_only: bool,

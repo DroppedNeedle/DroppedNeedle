@@ -35,18 +35,18 @@ use crate::library::settings_models::{
     LibraryManagementSettingsResponse, LibraryPathMappingReport, LibraryPolicyApplyPreviewResponse,
     LibraryPolicyImpactResponse, LibraryPolicyTreeResponse, LibrarySettingsResponse,
 };
-use crate::runtime_config::Masked;
-use crate::runtime_config::secret_sections::{
+use droppedneedle_kernel::runtime_config::Masked;
+use droppedneedle_kernel::runtime_config::secret_sections::{
     EventsSettings, JellyfinConnection, LastFmSettings, ListenBrainzConnection,
     NavidromeConnection, NewznabIndexer, OidcConnection, PlexConnection, ProwlarrConnection,
     SabnzbdConnection, SlskdConnection, WrappedSettings, YouTubeConnection,
 };
-use crate::runtime_config::sections::{
+use droppedneedle_kernel::runtime_config::sections::{
     ConnectApps, DownloadPolicy, EditionPreferences, FilesystemWatcher, GetIt, HomeSettings,
     LibraryManagementProfile, LibraryScanSchedule, PrimaryMusicSource, PublicAddress,
     ScrobbleSettings, SecuritySettings, UserPreferences, WantedWatcher,
 };
-use crate::runtime_config::settings_error::{SettingsError, ValidJson, ValidQuery};
+use droppedneedle_kernel::runtime_config::settings_error::{SettingsError, ValidJson, ValidQuery};
 
 type JsonResult<T> = Result<Json<T>, SettingsError>;
 

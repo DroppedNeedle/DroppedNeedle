@@ -33,16 +33,18 @@ use super::normalize::{is_field_name, migration_carry, normalize, validate_prese
 use super::presets::{MANAGED_FIELDS, PresetDiff, initial_settings, migrate_presets, preset_diff};
 use super::revision::settings_revision;
 use super::script::ScriptCompiler;
-use crate::ids::IdGenerator;
 use crate::library::settings_models::{
     LibraryManagementProfileExportResponse, LibraryManagementProfileImportPreviewResponse,
     LibraryManagementProfileImportResponse, LibraryManagementProfileMutationResponse,
     LibraryManagementSettingsResponse, ManagedFieldInfo,
 };
-use crate::runtime_config::ConfigStore;
-use crate::runtime_config::secret_sections::TypedLibrary;
-use crate::runtime_config::sections::{FieldMode, LibraryManagement, LibraryManagementProfile};
-use crate::runtime_config::settings_error::SettingsError;
+use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
+use droppedneedle_kernel::runtime_config::sections::{
+    FieldMode, LibraryManagement, LibraryManagementProfile,
+};
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// What a confirmed dry run pins on its library folder.
 #[derive(Debug, Clone)]
@@ -86,7 +88,7 @@ impl LibraryManagementService {
         }
     }
 
-    fn config(&self, error: crate::runtime_config::ConfigError) -> SettingsError {
+    fn config(&self, error: droppedneedle_kernel::runtime_config::ConfigError) -> SettingsError {
         SettingsError::from_config(error, self.ids.as_ref())
     }
 
@@ -104,7 +106,7 @@ impl LibraryManagementService {
     fn library(&self) -> Result<TypedLibrary, SettingsError> {
         self.store
             .get_masked::<TypedLibrary>()
-            .map(crate::runtime_config::Masked::into_inner)
+            .map(droppedneedle_kernel::runtime_config::Masked::into_inner)
             .map_err(|error| self.config(error))
     }
 

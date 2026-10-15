@@ -8,7 +8,7 @@ use utoipa::ToSchema;
 
 use super::activation::{pin_naming_scripts, pin_profile};
 use super::revision::{naming_policy_revision, settings_revision};
-use crate::runtime_config::sections::{
+use droppedneedle_kernel::runtime_config::sections::{
     LibraryManagement, LibraryManagementProfile, LibraryManagementRootAssignment, NamingScript,
     TaggingScript,
 };

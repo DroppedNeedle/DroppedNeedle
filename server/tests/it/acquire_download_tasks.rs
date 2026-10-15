@@ -22,7 +22,7 @@ use droppedneedle::acquire::requests::dispatch::{
     DispatchOrigin, DispatchOutcome, DispatchRequest, DownloadDispatch as _,
 };
 use droppedneedle::acquire::worker::{DownloadWorker, WorkerConfig};
-use droppedneedle::ids::UuidGenerator;
+use droppedneedle_kernel::ids::UuidGenerator;
 use serde_json::Value;
 use tower::ServiceExt as _;
 

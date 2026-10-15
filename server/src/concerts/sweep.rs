@@ -30,12 +30,12 @@ use super::models::EventSource;
 use super::sources::Sources;
 use super::store::{ConcertsStore, StoreError};
 use super::{ActiveSources, now_unix, today};
-use crate::jobs::events_watcher::{EventsWatcher, SweepEnd};
-use crate::jobs::registry::BoxFuture;
-use crate::jobs::schedule::sleep_or_stop;
 use crate::providers::error::ProviderError;
-use crate::runtime_config::ConfigStore;
-use crate::runtime_config::secret_sections::EventsSweepScope;
+use droppedneedle_kernel::jobs::events_watcher::{EventsWatcher, SweepEnd};
+use droppedneedle_kernel::jobs::registry::BoxFuture;
+use droppedneedle_kernel::jobs::schedule::sleep_or_stop;
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::secret_sections::EventsSweepScope;
 
 /// Source resolutions older than this are looked up again, from v2.
 pub const RESOLUTION_TTL_SECS: f64 = 7.0 * 86_400.0;

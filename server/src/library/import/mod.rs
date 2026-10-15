@@ -62,8 +62,8 @@ use super::publish::snapshots::sha256_hex;
 use super::publish::{HIDDEN_PREFIX, PublishError};
 use super::scan::models::EffectivePolicy;
 use super::wiring::LibrarySetup;
-use crate::runtime_config::secret_sections::TypedLibrary;
-use crate::runtime_config::sections::DEFAULT_NAMING_TEMPLATE;
+use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
+use droppedneedle_kernel::runtime_config::sections::DEFAULT_NAMING_TEMPLATE;
 
 /// Revisions the seal pins while profiles and naming have no store (the
 /// same constants manual management uses).

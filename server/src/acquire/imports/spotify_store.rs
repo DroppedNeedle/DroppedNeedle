@@ -24,7 +24,7 @@ use crate::acquire::db::AcquireDb;
 use crate::auth::times::{parse_iso, to_iso};
 use crate::reads::collections::store::PlaylistStore;
 use crate::reads::collections::store::playlists::{CoverImage, NewEntry, Written};
-use crate::runtime_config::crypto::Crypto;
+use droppedneedle_kernel::runtime_config::crypto::Crypto;
 
 /// The `user_connections.service` tag for Spotify links (v2's).
 const SERVICE: &str = "spotify";

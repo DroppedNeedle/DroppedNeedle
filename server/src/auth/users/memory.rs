@@ -37,7 +37,7 @@ use super::stores::{
     LastFmSwitch, LoadedAvatar, RecoveryStore, RoleChange, SecurityPolicy, SessionManager,
     StoreError, UserDeletion, UserDirectory, UserStore,
 };
-use crate::{ids::IdGenerator, runtime_config::crypto::Crypto};
+use droppedneedle_kernel::{ids::IdGenerator, runtime_config::crypto::Crypto};
 
 // ---------------------------------------------------------------------------
 // Stores
@@ -1283,7 +1283,7 @@ pub struct TestRig {
 impl TestRig {
     /// Build a rig: memory stores, test hasher, HIBP off, Last.fm on,
     /// fixed test crypto key. Fails only when the test key is rejected.
-    pub fn new() -> Result<Self, crate::runtime_config::crypto::CryptoError> {
+    pub fn new() -> Result<Self, droppedneedle_kernel::runtime_config::crypto::CryptoError> {
         let clock = Arc::new(ManualClock::new(TEST_NOW));
         let users = Arc::new(MemoryUserStore::new());
         let sessions = Arc::new(MemorySessionManager::new(

@@ -28,22 +28,23 @@ use droppedneedle::auth::session::cookies::COOKIE_NAME;
 use droppedneedle::auth::users::UsersDeps;
 use droppedneedle::auth::users::stores::SystemClock;
 use droppedneedle::auth::wiring::{AuthSetup, Upstreams};
-use droppedneedle::config::DEFAULT_PORT;
-use droppedneedle::db::{DbConfig, DbRuntime, open_runtime};
 use droppedneedle::docs::ApiDoc;
-use droppedneedle::http_client::HttpClientFactory;
-use droppedneedle::ids::{IdGenerator, UuidGenerator};
 use droppedneedle::providers::{InMemoryProviderCache, Providers};
 use droppedneedle::reads::catalog::{
     Catalog,
     library::LocalCatalog,
     upstream::{CatalogSettings, Upstream},
 };
-use droppedneedle::runtime_config::sections::SecuritySettings;
-use droppedneedle::runtime_config::{
+use droppedneedle::{AppState, create_app, reads::ReadsSetup};
+use droppedneedle_kernel::config::AppConfig;
+use droppedneedle_kernel::config::DEFAULT_PORT;
+use droppedneedle_kernel::db::{DbConfig, DbRuntime, open_runtime};
+use droppedneedle_kernel::http_client::HttpClientFactory;
+use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
+use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
+use droppedneedle_kernel::runtime_config::{
     ConfigStore, Crypto, Secret, secret_sections::WrappedSettings,
 };
-use droppedneedle::{AppConfig, AppState, create_app, reads::ReadsSetup};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 use utoipa::OpenApi as _;
@@ -300,7 +301,7 @@ impl E2e {
             self.runtime.pool().clone(),
             self.runtime.lane().clone(),
         ))
-        .with_backups(droppedneedle::db::BackupService::new(
+        .with_backups(droppedneedle_kernel::db::BackupService::new(
             &self.db_path,
             &backup_dir,
         ))
@@ -3367,10 +3368,14 @@ async fn login_store_failure_is_a_500_not_bad_credentials() {
         .lane()
         // A rename re-parses the whole schema, which outruns the request
         // budget on a busy host; the job budget fits it.
-        .write(droppedneedle::db::Lane::Background, "test.break", |tx| {
-            tx.execute_batch("ALTER TABLE auth_providers RENAME TO auth_providers_gone")?;
-            Ok(())
-        })
+        .write(
+            droppedneedle_kernel::db::Lane::Background,
+            "test.break",
+            |tx| {
+                tx.execute_batch("ALTER TABLE auth_providers RENAME TO auth_providers_gone")?;
+                Ok(())
+            },
+        )
         .await
         .expect("table renames");
     let (status, body, _) =
@@ -3391,7 +3396,7 @@ async fn sign_in_waits_out_a_full_read_pool_as_busy_not_a_fault() {
     // Every reader checked out: the stand-in for a host too busy to hand
     // one over before the checkout limit.
     let mut held = Vec::new();
-    for _ in 0..droppedneedle::db::MAX_READERS {
+    for _ in 0..droppedneedle_kernel::db::MAX_READERS {
         held.push(e2e.pool().acquire().await.expect("reader checks out"));
     }
     let headers = [("authorization", auth.as_str())];

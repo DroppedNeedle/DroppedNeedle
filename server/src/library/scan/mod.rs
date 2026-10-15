@@ -3,7 +3,7 @@
 //! Owns the library root registry, the filesystem walk, scan runs, the
 //! rolling scheduler, the filesystem watcher and worker supervision. The
 //! library-revision poller behind `activity.changed` lives in
-//! `crate::events`. Ported from v2's native library services
+//! `droppedneedle_kernel::events`. Ported from v2's native library services
 //! (inventory scanner, scan coordinator, scheduler, supervisor, filesystem
 //! watcher and coordinator, indexer, reconciler, file revision, scan
 //! events) plus the scan half of its library store and work

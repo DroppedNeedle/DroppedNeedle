@@ -1,16 +1,15 @@
 [workspace]
 resolver = "2"
-members = [".", "testkit"]
+members = [".", "kernel", "testkit"]
 
-[package]
-name = "droppedneedle"
+[workspace.package]
 version = "3.0.0"
 edition = "2024"
 rust-version = "1.89"
-description = "DroppedNeedle v3 backend"
 license = "AGPL-3.0-or-later"
 
-[dependencies]
+[workspace.dependencies]
+droppedneedle-kernel = { path = "kernel", version = "3.0.0" }
 argon2 = { version = "0.5", features = ["alloc"] }
 axum = { version = "0.8", features = ["json", "query", "http1", "matched-path", "multipart"] }
 base64 = "0.22"
@@ -61,9 +60,63 @@ quick-xml = { version = "0.42", default-features = false }
 # env-filter (regex-automata, regex-syntax).
 regex = "1.13.1"
 
+[package]
+name = "droppedneedle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "DroppedNeedle v3 backend"
+license.workspace = true
+
+[dependencies]
+droppedneedle-kernel.workspace = true
+argon2.workspace = true
+axum.workspace = true
+base64.workspace = true
+bcrypt.workspace = true
+caseless.workspace = true
+chacha20poly1305.workspace = true
+flate2.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
+libc.workspace = true
+lofty.workspace = true
+md5.workspace = true
+reqwest.workspace = true
+ring.workspace = true
+sha1.workspace = true
+rubato.workspace = true
+rusqlite.workspace = true
+rusty-chromaprint.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+socket2.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+symphonia.workspace = true
+symphonia-adapter-libopus.workspace = true
+thiserror.workspace = true
+unicode-normalization.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+utoipa.workspace = true
+uuid.workspace = true
+zip.workspace = true
+aes.workspace = true
+cbc.workspace = true
+hmac.workspace = true
+toml.workspace = true
+time.workspace = true
+image.workspace = true
+quick-xml.workspace = true
+regex.workspace = true
+
 [features]
 # Fakes, mocks, memory stores and test constructors for the test suite.
-test-support = []
+test-support = ["droppedneedle-kernel/test-support"]
 
 [dev-dependencies]
 droppedneedle = { path = ".", features = ["test-support"] }

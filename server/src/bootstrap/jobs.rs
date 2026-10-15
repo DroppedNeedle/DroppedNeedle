@@ -9,7 +9,7 @@
 //!
 //! Production binds [`DurableRegistryStore`] (liveness rows survive
 //! restarts); test states bind
-//! [`MemoryRegistryStore`](crate::jobs::registry::MemoryRegistryStore)
+//! [`MemoryRegistryStore`](droppedneedle_kernel::jobs::registry::MemoryRegistryStore)
 //! behind the same [`StoreKind`] seam so the setup type stays concrete.
 //! Loop backends are real where they exist (checkpoint passes, the
 //! now-playing feed and its upstream session pollers, the Navidrome playlist
@@ -24,25 +24,25 @@ use axum::Router;
 
 use crate::auth::users::{UsersDeps, roles::Role};
 use crate::concerts::ConcertsSweep;
-use crate::db::{CheckpointService, DurableWorkWakeups, WriteLane};
-use crate::jobs::cache_sync::CacheSyncStatus;
-use crate::jobs::checkpoint::{self, CheckpointRunner};
-use crate::jobs::discovery_demand::{self, DemandTick, NoDemand};
-use crate::jobs::events_kick::{self, EventsKick, FnKick, KickOutcome};
-use crate::jobs::events_watcher::{self, PollTimeSource, SystemWatchClock};
-use crate::jobs::personal_mix::{self, PersonalMixer};
-use crate::jobs::playlist_export::M3uPlaylistExporter;
-use crate::jobs::playlist_sync::{self, PlaylistSyncConfig, PlaylistSyncSettings};
-use crate::jobs::precache::{self, PrecacheLimits, PrecacheWork};
-use crate::jobs::precache_phases::{LibraryPrecache, PrecacheSources};
-use crate::jobs::presence;
-use crate::jobs::registry::{
-    AlreadyRunning, BoxFuture, DurableRegistryStore, JobRegistry, StoreKind,
-};
 use crate::remotes::playlist_sync::{self as playlist_route, PlaylistSyncState, SyncRoles};
 use crate::remotes::presence_feed::{MediaJobs, RegistryFeed, RemoteSessionPollers};
-use crate::runtime_config::ConfigStore;
-use crate::runtime_config::secret_sections::{
+use droppedneedle_kernel::db::{CheckpointService, DurableWorkWakeups, WriteLane};
+use droppedneedle_kernel::jobs::cache_sync::CacheSyncStatus;
+use droppedneedle_kernel::jobs::checkpoint::{self, CheckpointRunner};
+use droppedneedle_kernel::jobs::discovery_demand::{self, DemandTick, NoDemand};
+use droppedneedle_kernel::jobs::events_kick::{self, EventsKick, FnKick, KickOutcome};
+use droppedneedle_kernel::jobs::events_watcher::{self, PollTimeSource, SystemWatchClock};
+use droppedneedle_kernel::jobs::personal_mix::{self, PersonalMixer};
+use droppedneedle_kernel::jobs::playlist_export::M3uPlaylistExporter;
+use droppedneedle_kernel::jobs::playlist_sync::{self, PlaylistSyncConfig, PlaylistSyncSettings};
+use droppedneedle_kernel::jobs::precache::{self, PrecacheLimits, PrecacheWork};
+use droppedneedle_kernel::jobs::precache_phases::{LibraryPrecache, PrecacheSources};
+use droppedneedle_kernel::jobs::presence;
+use droppedneedle_kernel::jobs::registry::{
+    AlreadyRunning, BoxFuture, DurableRegistryStore, JobRegistry, StoreKind,
+};
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::secret_sections::{
     AdvancedSettings, EventsSettings, NavidromeConnection,
 };
 
@@ -402,7 +402,7 @@ impl JobsSetup {
         let media = MediaJobs::for_tests();
         Self {
             registry: JobRegistry::new(StoreKind::Memory(
-                crate::jobs::registry::MemoryRegistryStore::new(),
+                droppedneedle_kernel::jobs::registry::MemoryRegistryStore::new(),
             )),
             checkpoint: CheckpointInput { service: None },
             playlist: PlaylistSyncState {
@@ -467,7 +467,7 @@ impl JobsSetup {
         })
     }
 
-    /// Spawn the always-on loops ([`crate::jobs::BOOT_JOBS`]) on the shared
+    /// Spawn the always-on loops ([`droppedneedle_kernel::jobs::BOOT_JOBS`]) on the shared
     /// registry. Boot is the only spawner, so a name collision fails the
     /// boot loudly instead of running half the loops.
     pub async fn spawn_loops(&self) -> Result<(), String> {

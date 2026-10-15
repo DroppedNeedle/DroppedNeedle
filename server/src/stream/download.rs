@@ -47,9 +47,9 @@ use super::routes::{ChunkStream, DirectSpan, content_type_for_extension, file_ra
 use crate::auth::session::middleware::CurrentSession;
 use crate::auth::users::UsersDeps;
 use crate::auth::users::roles::Role;
-use crate::error::{ErrorBody, ErrorEnvelope};
-use crate::ids::IdGenerator;
-use crate::runtime_config::sections::SecuritySettings;
+use droppedneedle_kernel::error::{ErrorBody, ErrorEnvelope};
+use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 
 use crate::library::scan::roots::RootRegistry;
 
@@ -96,7 +96,9 @@ impl DownloadState {
 }
 
 /// The security section from a config store, read per call.
-pub fn access_from_config(config: Arc<crate::runtime_config::ConfigStore>) -> AccessSource {
+pub fn access_from_config(
+    config: Arc<droppedneedle_kernel::runtime_config::ConfigStore>,
+) -> AccessSource {
     Arc::new(move || {
         config
             .get::<SecuritySettings>()
@@ -161,19 +163,19 @@ impl IntoResponse for DownloadError {
         let (status, code, message, details) = match self {
             Self::Unauthorized => (
                 StatusCode::UNAUTHORIZED,
-                crate::error::UNAUTHORIZED,
+                droppedneedle_kernel::error::UNAUTHORIZED,
                 "Authentication required".to_owned(),
                 None,
             ),
             Self::Forbidden(message) => (
                 StatusCode::FORBIDDEN,
-                crate::error::FORBIDDEN,
+                droppedneedle_kernel::error::FORBIDDEN,
                 message.to_owned(),
                 None,
             ),
             Self::NotFound(message) => (
                 StatusCode::NOT_FOUND,
-                crate::error::NOT_FOUND,
+                droppedneedle_kernel::error::NOT_FOUND,
                 message.to_owned(),
                 None,
             ),
@@ -185,8 +187,8 @@ impl IntoResponse for DownloadError {
             ),
             Self::Internal { error_id } => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                crate::error::INTERNAL_ERROR,
-                crate::error::FIXED_INTERNAL_MESSAGE.to_owned(),
+                droppedneedle_kernel::error::INTERNAL_ERROR,
+                droppedneedle_kernel::error::FIXED_INTERNAL_MESSAGE.to_owned(),
                 Some(json!({ "error_id": error_id })),
             ),
         };

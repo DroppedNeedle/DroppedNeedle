@@ -139,7 +139,7 @@ impl HeldBundles {
     pub fn committed(&self, bundle_id: &str) -> Result<bool, PublishError> {
         use super::publish::JournalState;
         use super::publish::publisher::Catalog as _;
-        let conn = crate::db::open_connection(&self.db_path)
+        let conn = droppedneedle_kernel::db::open_connection(&self.db_path)
             .map_err(|error| PublishError::Store(error.to_string()))?;
         let journals = JournalStore::new(&conn).bundle(bundle_id)?;
         if journals.iter().any(|journal| {
@@ -175,7 +175,7 @@ impl HeldBundles {
     /// Blocking.
     pub fn unsettled(&self, bundle_id: &str) -> Result<bool, PublishError> {
         use super::publish::JournalState;
-        let conn = crate::db::open_connection(&self.db_path)
+        let conn = droppedneedle_kernel::db::open_connection(&self.db_path)
             .map_err(|error| PublishError::Store(error.to_string()))?;
         let journals = JournalStore::new(&conn).bundle(bundle_id)?;
         Ok(journals.iter().any(|journal| {
@@ -189,7 +189,7 @@ impl HeldBundles {
 
     /// Bundle ids with unsettled journals. Blocking.
     pub fn list(&self) -> Result<Vec<String>, PublishError> {
-        let conn = crate::db::open_connection(&self.db_path)
+        let conn = droppedneedle_kernel::db::open_connection(&self.db_path)
             .map_err(|error| PublishError::Store(error.to_string()))?;
         JournalStore::new(&conn).active_bundles()
     }
@@ -218,7 +218,7 @@ impl LeftoverFiles {
         registry: &RootRegistry,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Option<LeftoverReport>, PublishError> {
-        let conn = crate::db::open_connection(&self.db_path)
+        let conn = droppedneedle_kernel::db::open_connection(&self.db_path)
             .map_err(|error| PublishError::Store(error.to_string()))?;
         let found = super::publish::recovery::find_leftovers(
             &conn,
@@ -1243,7 +1243,7 @@ impl LibrarySetup {
     /// How long undo keeps before-states, read from the settings per call.
     fn undo_retention_days(&self) -> i64 {
         self.config
-            .get::<crate::runtime_config::sections::LibraryManagement>()
+            .get::<droppedneedle_kernel::runtime_config::sections::LibraryManagement>()
             .map(|settings| settings.undo_retention_days)
             .unwrap_or_else(|error| {
                 tracing::warn!(%error, "management settings unreadable; default undo retention");

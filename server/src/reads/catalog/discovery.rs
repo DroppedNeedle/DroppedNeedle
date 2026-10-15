@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::providers::musicbrainz::Criticality;
 use crate::providers::{IntegrationStatus, RequestPriority, lastfm, listenbrainz, record_current};
-use crate::runtime_config::sections::MusicSource;
+use droppedneedle_kernel::runtime_config::sections::MusicSource;
 
 use super::artist::ReleaseGroupList;
 use super::artist::checked_mbid;

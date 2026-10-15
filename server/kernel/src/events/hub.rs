@@ -208,7 +208,7 @@ impl Subscription {
 
 /// A producer's handle on the hub, attached after the producer is built.
 /// Bundles are wired before the application state exists, so they hold
-/// one of these; [`crate::AppState::with_events`] points them all at the
+/// one of these; the server's `AppState::with_events` points them all at the
 /// state's hub. Until then, events are dropped. Clones share the slot.
 #[derive(Clone, Default)]
 pub struct EventSink {

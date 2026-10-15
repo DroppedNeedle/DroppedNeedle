@@ -117,7 +117,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// Case-folded substring match, mirroring the SQL LIKE on folded columns.
 #[cfg(any(test, feature = "test-support"))]
 fn matches(haystack: &str, q: &str) -> bool {
-    crate::db::fold_text(haystack).contains(&crate::db::fold_text(q))
+    droppedneedle_kernel::db::fold_text(haystack).contains(&droppedneedle_kernel::db::fold_text(q))
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -199,10 +199,10 @@ fn track_matches(record: &TrackRecord, filter: &TrackFilter) -> bool {
         return false;
     }
     if let Some(genre) = filter.genre.as_deref()
-        && record
-            .genre
-            .as_deref()
-            .is_none_or(|tag| crate::db::fold_text(tag) != crate::db::fold_text(genre.trim()))
+        && record.genre.as_deref().is_none_or(|tag| {
+            droppedneedle_kernel::db::fold_text(tag)
+                != droppedneedle_kernel::db::fold_text(genre.trim())
+        })
     {
         return false;
     }
@@ -505,7 +505,7 @@ impl LibraryCatalog for MemoryCatalog {
         offset: u64,
     ) -> BoxFuture<'a, Result<(Vec<TrackRecord>, u64), StoreError>> {
         Box::pin(async move {
-            let folded = crate::db::fold_text(genre_folded.trim());
+            let folded = droppedneedle_kernel::db::fold_text(genre_folded.trim());
             let records = lock(&self.genre_tracks)
                 .get(&folded)
                 .cloned()

@@ -241,7 +241,8 @@ impl SqliteIdentifyStore {
     /// Open against the migrated application database through the
     /// database factory.
     pub fn open(path: &Path) -> Result<Self, String> {
-        let conn = crate::db::open_connection(path).map_err(|error| error.to_string())?;
+        let conn =
+            droppedneedle_kernel::db::open_connection(path).map_err(|error| error.to_string())?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -2204,10 +2205,10 @@ mod tests {
     /// neither match and no review changes.
     #[test]
     fn settling_two_different_chosen_matches_is_refused() {
-        let dir = crate::db::scratch::ScratchDir::new("settle-match").unwrap();
+        let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("settle-match").unwrap();
         let path = dir.path().join("app.db");
-        crate::schema::template::copy_to(&path).unwrap();
-        let mut conn = crate::db::open_connection(&path).unwrap();
+        droppedneedle_kernel::schema::template::copy_to(&path).unwrap();
+        let mut conn = droppedneedle_kernel::db::open_connection(&path).unwrap();
         conn.execute_batch(
             "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
              album_artist_id, grouping_source, created_at, updated_at) VALUES \

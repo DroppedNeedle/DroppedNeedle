@@ -14,12 +14,14 @@ use super::scan::scheduler::{InclusionRule, ScheduleSettings};
 use super::scan::watcher::WatcherSettings;
 use super::service::ServiceError;
 use crate::library::policy::{self as library_policy, clean_absolute};
-use crate::runtime_config::secret_sections::{
+use droppedneedle_kernel::runtime_config::secret_sections::{
     IdentificationPolicy, LibraryRoot as StoredRoot, TypedLibrary,
 };
-use crate::runtime_config::sections::{FilesystemWatcher, LibraryScanSchedule, ScanFrequency};
-use crate::runtime_config::settings_error::SettingsError;
-use crate::runtime_config::{ConfigStore, UpdateError};
+use droppedneedle_kernel::runtime_config::sections::{
+    FilesystemWatcher, LibraryScanSchedule, ScanFrequency,
+};
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
+use droppedneedle_kernel::runtime_config::{ConfigStore, UpdateError};
 
 /// Timezone daily schedules resolve against. The scheduler has no tz
 /// database, so daily times read as UTC.

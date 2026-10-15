@@ -52,9 +52,9 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 
 use super::users::stores::Clock;
-use crate::db::WriteLane;
-use crate::ids::IdGenerator;
-use crate::runtime_config::crypto::Crypto;
+use droppedneedle_kernel::db::WriteLane;
+use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::runtime_config::crypto::Crypto;
 
 pub use super::avatars::FileAvatarStore;
 pub use super::passwords::{

@@ -20,7 +20,7 @@ use super::models::LIDARR_API_KEY_MASK;
 use super::models::{
     LidarrArtistCandidate, LidarrArtistListResponse, LidarrConnectionSettings, LidarrImportResponse,
 };
-use crate::http_client::{BodyError, read_capped, transport_error};
+use droppedneedle_kernel::http_client::{BodyError, read_capped, transport_error};
 
 /// Largest Lidarr answer read. `/artist` is one unpaged list of every
 /// artist with its overview and images, so a large library runs to tens

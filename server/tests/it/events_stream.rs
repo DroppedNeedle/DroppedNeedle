@@ -9,7 +9,7 @@ use axum::Router;
 use axum::body::{Body, BodyDataStream};
 use axum::http::{Request, StatusCode};
 use droppedneedle::create_app;
-use droppedneedle::events::{PlaylistImported, UserNotice};
+use droppedneedle_kernel::events::{PlaylistImported, UserNotice};
 use futures_util::StreamExt as _;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;

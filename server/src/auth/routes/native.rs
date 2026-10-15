@@ -17,8 +17,6 @@ use crate::auth::users::UsersDeps;
 use crate::auth::users::handlers::ValidJson;
 use crate::auth::users::models::UserResponse;
 use crate::auth::users::{clock_now, services};
-use crate::config::TrustedProxies;
-use crate::ids::IdGenerator;
 use axum::{
     Json, Router,
     extract::{ConnectInfo, FromRequestParts, State},
@@ -26,6 +24,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use droppedneedle_kernel::config::TrustedProxies;
+use droppedneedle_kernel::ids::IdGenerator;
 
 use super::error::AuthRouteError;
 use super::login_handoff;
@@ -436,7 +436,7 @@ fn id_gen<S, V, C>(state: &NativeAuthState<S, V, C>) -> &dyn IdGenerator {
 /// call site.
 fn store_failure(
     error: &crate::auth::users::stores::StoreError,
-    ids: &dyn crate::ids::IdGenerator,
+    ids: &dyn droppedneedle_kernel::ids::IdGenerator,
 ) -> crate::auth::users::error::UsersError {
     match error {
         crate::auth::users::stores::StoreError::Conflict => {

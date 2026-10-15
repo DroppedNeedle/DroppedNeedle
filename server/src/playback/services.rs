@@ -30,8 +30,8 @@ use super::{
         VISIBILITY_TRACK_HIDDEN,
     },
 };
-use crate::events::{NowPlayingEntry, NowPlayingSnapshot};
-use crate::ids::IdGenerator;
+use droppedneedle_kernel::events::{NowPlayingEntry, NowPlayingSnapshot};
+use droppedneedle_kernel::ids::IdGenerator;
 
 /// Session time-to-live in seconds (v2 `_SESSION_TTL_SECONDS`, 2h).
 pub const SESSION_TTL_SECS: i64 = 2 * 60 * 60;
@@ -420,7 +420,7 @@ pub struct PresenceRegistry {
     entries: Arc<Mutex<HashMap<String, PresenceEntry>>>,
     visibility: Arc<Mutex<HashMap<String, String>>>,
     generation: Arc<AtomicU64>,
-    events: crate::events::EventSink,
+    events: droppedneedle_kernel::events::EventSink,
 }
 
 impl PresenceRegistry {
@@ -430,12 +430,12 @@ impl PresenceRegistry {
             entries: Arc::new(Mutex::new(HashMap::new())),
             visibility: Arc::new(Mutex::new(HashMap::new())),
             generation: Arc::new(AtomicU64::new(0)),
-            events: crate::events::EventSink::default(),
+            events: droppedneedle_kernel::events::EventSink::default(),
         }
     }
 
     /// Broadcast snapshots to `hub` (this registry and every clone).
-    pub fn attach_events(&self, hub: &crate::events::EventHub) {
+    pub fn attach_events(&self, hub: &droppedneedle_kernel::events::EventHub) {
         self.events.attach(hub);
     }
 
@@ -463,9 +463,9 @@ impl PresenceRegistry {
             .collect();
         drop(visibility);
         self.events
-            .publish(crate::events::Event::NowPlaying(NowPlayingSnapshot {
-                sessions,
-            }));
+            .publish(droppedneedle_kernel::events::Event::NowPlaying(
+                NowPlayingSnapshot { sessions },
+            ));
     }
 
     /// Upsert a session. `load_visibility` resolves the owner's setting on

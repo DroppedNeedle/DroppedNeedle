@@ -24,8 +24,8 @@ use serde::de::DeserializeOwned;
 
 use crate::auth::session::middleware::CurrentSession;
 use crate::auth::users::roles::Role;
-use crate::ids::IdGenerator;
-use crate::runtime_config::ConfigStore;
+use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::runtime_config::ConfigStore;
 
 use super::capabilities::routes::ROUTE_BODY_MAX_BYTES;
 use super::error::{PluginError, SourceFault};
@@ -933,7 +933,7 @@ fn panel_page_policy(config: &ConfigStore) -> String {
         "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; \
          img-src data: blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; \
          base-uri 'none'; form-action 'none'; frame-ancestors {}; sandbox allow-scripts",
-        crate::runtime_config::sections::framed_page_ancestors(config)
+        droppedneedle_kernel::runtime_config::sections::framed_page_ancestors(config)
     )
 }
 

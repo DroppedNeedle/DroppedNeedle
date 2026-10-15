@@ -73,7 +73,7 @@ pub struct CorrectionHttpError(CorrectionError);
 
 impl IntoResponse for CorrectionHttpError {
     fn into_response(self) -> Response {
-        use crate::error::envelope_response;
+        use droppedneedle_kernel::error::envelope_response;
         let (status, reason) = match self.0 {
             CorrectionError::NotFound(reason) => (StatusCode::NOT_FOUND, reason),
             CorrectionError::Invalid(reason) => (StatusCode::BAD_REQUEST, reason),

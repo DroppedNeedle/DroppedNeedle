@@ -30,7 +30,7 @@ use super::stream::cover_bucket;
 use super::value::Rendered;
 use super::{Outcome, Settings};
 use crate::auth::session::tokens::constant_time_eq;
-use crate::runtime_config::Crypto;
+use droppedneedle_kernel::runtime_config::Crypto;
 
 /// The route, as registered.
 pub const PATH: &str = "/subsonic/img";

@@ -599,9 +599,9 @@ fn create_split_album(
         params![
             id,
             title,
-            crate::db::fold_text(&title),
+            droppedneedle_kernel::db::fold_text(&title),
             artist,
-            crate::db::fold_text(&artist),
+            droppedneedle_kernel::db::fold_text(&artist),
             now,
             source.id,
         ],

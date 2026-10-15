@@ -31,7 +31,7 @@
 use std::time::Duration;
 
 use super::{DegradationSink, Pacer};
-use crate::http_client::read_capped;
+use droppedneedle_kernel::http_client::read_capped;
 
 /// Default API host (v2 `LASTFM_API_URL`).
 pub const DEFAULT_BASE_URL: &str = "https://ws.audioscrobbler.com/2.0/";

@@ -172,7 +172,7 @@ impl<T: MbTransport, S: DegradationSink> AlbumLookup for MusicBrainzAlbums<T, S>
 /// the configured MusicBrainz source read per request, failures counted
 /// toward system health.
 pub fn live_albums(
-    http: &crate::http_client::HttpClientFactory,
+    http: &droppedneedle_kernel::http_client::HttpClientFactory,
     providers: std::sync::Arc<crate::providers::Providers>,
     source: crate::providers::musicbrainz::SourceFn,
 ) -> MusicBrainzAlbums<

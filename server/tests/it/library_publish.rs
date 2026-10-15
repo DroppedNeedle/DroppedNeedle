@@ -53,7 +53,7 @@ const CATALOG_TRACKS: [(&str, &str); 4] = [
 /// The catalog revision a fresh fixture database starts at (migrations
 /// may move it), so bundles plan against the real value.
 fn db_catalog_revision(fix: &Fixture) -> u64 {
-    let conn = droppedneedle::db::open_connection(&fix.db_path).unwrap();
+    let conn = droppedneedle_kernel::db::open_connection(&fix.db_path).unwrap();
     let value: i64 = conn
         .query_row(
             "SELECT value FROM library_catalog_revision WHERE singleton = 1",
@@ -72,7 +72,7 @@ fn start_revision() -> u64 {
 fn scratch_db(dir: &std::path::Path) -> PathBuf {
     let db_path = dir.join("app.db");
     crate::common::migrated_db(&db_path);
-    let conn = droppedneedle::db::open_connection(&db_path).unwrap();
+    let conn = droppedneedle_kernel::db::open_connection(&db_path).unwrap();
     conn.execute_batch(
         "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
          album_artist_id, grouping_source, created_at, updated_at) VALUES ('album', 'music', \
@@ -872,7 +872,7 @@ fn journal_connections_sync_every_commit() {
         .query_row("PRAGMA synchronous", [], |row| row.get(0))
         .unwrap();
     assert_eq!(synchronous, 2);
-    let mut unsynced = droppedneedle::db::open_connection(&fix.db_path).unwrap();
+    let mut unsynced = droppedneedle_kernel::db::open_connection(&fix.db_path).unwrap();
     assert!(reconcile(&mut unsynced, &fix.sandbox, &SqliteCatalog).is_err());
 }
 
@@ -1384,7 +1384,7 @@ fn recovery_finishes_an_unwind_that_stopped_between_rows() {
     let db_path = fix.db_path.clone();
     publisher.set_before_place(Some(Box::new(move |dest| {
         if dest == second_dest {
-            let conn = droppedneedle::db::open_connection(&db_path).unwrap();
+            let conn = droppedneedle_kernel::db::open_connection(&db_path).unwrap();
             conn.execute(
                 "UPDATE library_catalog_revision SET value = value + 1 WHERE singleton = 1",
                 [],

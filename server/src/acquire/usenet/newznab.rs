@@ -19,7 +19,7 @@ use thiserror::Error;
 
 use super::xml::{self, Element};
 use super::{MAX_INDEXER_BODY_BYTES, read_indexer_body};
-use crate::http_client::{BodyError, transport_error};
+use droppedneedle_kernel::http_client::{BodyError, transport_error};
 
 // ---------------------------------------------------------------------------
 // Boundary types (v2 `repositories/protocols/indexer.py` + `download_identity.py`).

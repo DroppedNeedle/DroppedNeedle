@@ -37,9 +37,9 @@ use crate::{
         session::middleware::CurrentSession,
         users::{UsersDeps, models::UserRecord, roles::Role},
     },
-    db::{BackupService, CheckpointService, DurableWorkWakeups, WriteLane},
     providers::{InMemoryProviderCache, Providers},
 };
+use droppedneedle_kernel::db::{BackupService, CheckpointService, DurableWorkWakeups, WriteLane};
 
 pub use error::AdminError;
 pub use handlers::AdminHttpError;

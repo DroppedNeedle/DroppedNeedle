@@ -7,7 +7,7 @@
 
 use thiserror::Error;
 
-use crate::http_client::{BodyError, read_capped};
+use droppedneedle_kernel::http_client::{BodyError, read_capped};
 
 /// Largest MusicBrainz answer read. A box-set release with every
 /// medium, track and credit comes back whole and can pass 4 MiB.

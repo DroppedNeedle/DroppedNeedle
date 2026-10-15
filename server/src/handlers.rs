@@ -5,7 +5,8 @@ use axum::{Json, extract::State};
 use serde::Serialize;
 use utoipa::{OpenApi as _, ToSchema};
 
-use crate::{admin::CheckpointView, db::CheckpointService, docs::ApiDoc, error::ApiError};
+use crate::{admin::CheckpointView, docs::ApiDoc};
+use droppedneedle_kernel::{db::CheckpointService, error::ApiError};
 
 /// Health payload. `status` plus the running message keep the v2 shape;
 /// `checkpoint` adds the latest checkpoint pass (`None` until the
@@ -36,8 +37,8 @@ pub async fn health(State(checkpoint): State<Option<CheckpointService>>) -> Json
             .and_then(CheckpointService::try_latest)
             .map(|pass| CheckpointView {
                 mode: match pass.mode {
-                    crate::db::CheckpointMode::Passive => "passive".to_owned(),
-                    crate::db::CheckpointMode::Truncate => "truncate".to_owned(),
+                    droppedneedle_kernel::db::CheckpointMode::Passive => "passive".to_owned(),
+                    droppedneedle_kernel::db::CheckpointMode::Truncate => "truncate".to_owned(),
                 },
                 busy: pass.busy,
                 active_bytes: pass.active_bytes,
@@ -75,7 +76,7 @@ pub mod test_hooks {
     use axum::{Extension, Json, http::StatusCode, response::IntoResponse};
 
     use super::HealthResponse;
-    use crate::{error::ApiError, ids::RequestId};
+    use droppedneedle_kernel::{error::ApiError, ids::RequestId};
 
     /// Marker substrings that must never reach a response body. They look
     /// real on purpose: a filesystem path, an internal host, a secret token.

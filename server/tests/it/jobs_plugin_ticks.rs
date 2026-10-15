@@ -11,12 +11,12 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use droppedneedle::db::{DbConfig, open_runtime};
-use droppedneedle::jobs::plugin_ticks::{
+use droppedneedle_kernel::db::{DbConfig, open_runtime};
+use droppedneedle_kernel::jobs::plugin_ticks::{
     MemoryTickStore, SqliteTickStore, TickHost, TickPlugin, TickSpec, TickStore, TickStoreError,
     sync_ticks,
 };
-use droppedneedle::jobs::registry::{BoxFuture, JobRegistry, MemoryRegistryStore};
+use droppedneedle_kernel::jobs::registry::{BoxFuture, JobRegistry, MemoryRegistryStore};
 
 type TestRegistry = JobRegistry<MemoryRegistryStore>;
 
@@ -158,7 +158,7 @@ async fn tick_exception_logs_and_continues() {
     let mut plugin = FakePlugin::new("tick-toy");
     plugin.fail_first = 1;
     let host = FakeHost::with(plugin.clone());
-    let sync = droppedneedle::jobs::plugin_ticks::TickSyncState::new();
+    let sync = droppedneedle_kernel::jobs::plugin_ticks::TickSyncState::new();
     sync_ticks(
         &registry,
         &host,
@@ -183,7 +183,7 @@ async fn tick_hung_tick_cancelled_at_interval() {
     let mut plugin = FakePlugin::new("tick-toy");
     plugin.hang = true;
     let host = FakeHost::with(plugin.clone());
-    let sync = droppedneedle::jobs::plugin_ticks::TickSyncState::new();
+    let sync = droppedneedle_kernel::jobs::plugin_ticks::TickSyncState::new();
     sync_ticks(
         &registry,
         &host,
@@ -207,7 +207,7 @@ async fn tick_no_overlap() {
     let mut plugin = FakePlugin::new("tick-toy");
     plugin.slow = Some(Duration::from_millis(300));
     let host = FakeHost::with(plugin.clone());
-    let sync = droppedneedle::jobs::plugin_ticks::TickSyncState::new();
+    let sync = droppedneedle_kernel::jobs::plugin_ticks::TickSyncState::new();
     sync_ticks(
         &registry,
         &host,

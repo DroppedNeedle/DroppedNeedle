@@ -3,7 +3,7 @@
 //! tokens keep working.
 
 use crate::library::policy::stable_hash;
-use crate::runtime_config::sections::{
+use droppedneedle_kernel::runtime_config::sections::{
     LibraryManagement, LibraryManagementProfile, NamingScript, TaggingScript,
 };
 

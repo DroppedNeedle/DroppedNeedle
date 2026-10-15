@@ -12,7 +12,7 @@
 
 use std::cmp::Reverse;
 
-use crate::runtime_config::sections::{
+use droppedneedle_kernel::runtime_config::sections::{
     EditionDatePreference, EditionPreferences, EditionVersionPreference,
 };
 

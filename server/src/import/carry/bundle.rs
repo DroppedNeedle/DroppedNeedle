@@ -105,7 +105,7 @@ pub(crate) async fn locate(
 pub(crate) async fn attach(conn: &mut SqliteConnection, path: &Path) -> Result<(), sqlx::Error> {
     let uri = format!(
         "file:{}?mode=ro&immutable=1",
-        crate::db::factory::sqlite_uri_path(path)
+        droppedneedle_kernel::db::factory::sqlite_uri_path(path)
     );
     sqlx::query("ATTACH DATABASE ?1 AS bundle")
         .bind(uri)

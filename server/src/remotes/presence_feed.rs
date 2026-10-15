@@ -1,7 +1,7 @@
 //! Media-backed inputs for the jobs loops: the now-playing feed over the
 //! live presence registry and the Jellyfin/Navidrome/Plex session pollers.
 //! The Navidrome playlist exporter lives in
-//! [`crate::jobs::playlist_export`].
+//! [`droppedneedle_kernel::jobs::playlist_export`].
 //!
 //! The pollers read sessions through the admin's shared accounts (v2 polled
 //! with the configured server credentials), so a source counts as enabled
@@ -16,11 +16,13 @@ use super::jellyfin::JellyfinAdapter;
 use super::models::{SessionView, SourceName};
 use super::navidrome::NavidromeAdapter;
 use super::plex::PlexAdapter;
-use crate::jobs::playlist_export::M3uPlaylistExporter;
-use crate::jobs::presence::{PresenceSession, PresenceSources, PresenceStore, SourceStatus};
-use crate::jobs::registry::BoxFuture;
 use crate::playback::ports::{Clock, SystemClock};
 use crate::playback::services::{ExternalSession, PresenceRegistry};
+use droppedneedle_kernel::jobs::playlist_export::M3uPlaylistExporter;
+use droppedneedle_kernel::jobs::presence::{
+    PresenceSession, PresenceSources, PresenceStore, SourceStatus,
+};
+use droppedneedle_kernel::jobs::registry::BoxFuture;
 
 /// What the media bundle hands the jobs bundle.
 #[derive(Clone)]

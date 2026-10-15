@@ -9,12 +9,12 @@ use super::impact::active_automatic;
 use super::invalid;
 use super::presets::sidecar_default_history;
 use super::revision::{naming_policy_revision, profile_revision};
-use crate::runtime_config::secret_sections::{LibraryRoot, TypedLibrary};
-use crate::runtime_config::sections::{
+use droppedneedle_kernel::runtime_config::secret_sections::{LibraryRoot, TypedLibrary};
+use droppedneedle_kernel::runtime_config::sections::{
     LibraryManagement, LibraryManagementProfile, LibraryManagementRootAssignment,
     MultiDiscNamingMode, NamingScript, OrganizationManagementSettings,
 };
-use crate::runtime_config::settings_error::SettingsError;
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// Pin a profile for one root: overlay the assignment overrides onto a
 /// detached copy of the assigned profile (the default profile when none

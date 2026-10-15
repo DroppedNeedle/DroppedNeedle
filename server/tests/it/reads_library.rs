@@ -35,7 +35,7 @@ const FIXED_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 #[derive(Debug, Clone)]
 struct FixedIdGenerator;
 
-impl droppedneedle::ids::IdGenerator for FixedIdGenerator {
+impl droppedneedle_kernel::ids::IdGenerator for FixedIdGenerator {
     fn new_id(&self) -> String {
         FIXED_ID.to_owned()
     }
@@ -519,7 +519,7 @@ async fn every_route_hides_store_faults() {
 
 struct SqliteFixture {
     #[allow(dead_code)]
-    runtime: droppedneedle::db::DbRuntime,
+    runtime: droppedneedle_kernel::db::DbRuntime,
     catalog: SqliteCatalog,
     favorites: SqliteFavorites,
     /// Declared last so the database closes before the directory goes.
@@ -587,11 +587,11 @@ async fn sqlite_fixture() -> SqliteFixture {
     runtime
         .lane()
         .write(
-            droppedneedle::db::Lane::Foreground,
+            droppedneedle_kernel::db::Lane::Foreground,
             "library seed",
             move |tx| {
                 tx.execute_batch(&seed)
-                    .map_err(droppedneedle::db::OpError::from)?;
+                    .map_err(droppedneedle_kernel::db::OpError::from)?;
                 Ok(())
             },
         )

@@ -18,7 +18,9 @@ use std::sync::OnceLock;
 use unicode_normalization::UnicodeNormalization as _;
 
 use crate::library::matching::Release;
-use crate::runtime_config::sections::{GenreManagementSettings, GenreMode, GenreSource};
+use droppedneedle_kernel::runtime_config::sections::{
+    GenreManagementSettings, GenreMode, GenreSource,
+};
 
 /// The MusicBrainz genre vocabulary v2 shipped: canonical spellings and
 /// aliases (the parent map rides along unused, as v2 wrote no ancestors).

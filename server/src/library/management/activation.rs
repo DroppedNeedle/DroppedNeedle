@@ -19,8 +19,8 @@ use crate::library::management::settings::service::{
 use crate::library::management::settings::{StructuralCompiler, settings_revision};
 use crate::library::publish::snapshots::sha256_hex;
 use crate::library::settings_models::LibraryManagementSettingsResponse;
-use crate::runtime_config::sections::LibraryManagement;
-use crate::runtime_config::settings_error::SettingsError;
+use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// How a dry run ends once it has proved the settings that were saved.
 const ACTIVATION_CONFIRMED: &str = "ACTIVATION_CONFIRMED";
@@ -65,7 +65,7 @@ impl Management {
         let library = self
             .setup
             .config
-            .get_masked::<crate::runtime_config::secret_sections::TypedLibrary>()
+            .get_masked::<droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary>()
             .map_err(|error| ManagementError::Store(error.to_string()))?
             .into_inner();
         Ok(crate::library::policy::revision(&library))

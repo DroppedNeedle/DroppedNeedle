@@ -14,7 +14,7 @@ use super::error::SubsonicError;
 use super::media::client_info::{CodecLimitation, DirectPlayProfile};
 use super::store::{ClientInfo, StreamDetailsData, TranscodeDecisionData};
 use super::views::ViewTrack;
-use crate::runtime_config::Crypto;
+use droppedneedle_kernel::runtime_config::Crypto;
 
 /// How long sealed parameters stay valid.
 const TOKEN_TTL_SECONDS: i64 = 5 * 60;

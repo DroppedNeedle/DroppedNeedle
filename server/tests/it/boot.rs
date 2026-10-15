@@ -10,8 +10,9 @@ use std::{
 };
 
 use axum::{body::Body, routing::get};
-use droppedneedle::{
-    AppConfig, bootstrap,
+use droppedneedle::bootstrap;
+use droppedneedle_kernel::{
+    config::AppConfig,
     db::{DbConfig, open_runtime},
     runtime_config::{
         ConfigStore, Crypto,
@@ -127,7 +128,7 @@ async fn database_one_version_behind_is_backed_up_before_migrating() {
     let dir = scratch("upgrade");
     let db_path = dir.join("cache").join("library.db");
     std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
-    let all = &droppedneedle::schema::MIGRATOR;
+    let all = &droppedneedle_kernel::schema::MIGRATOR;
     let keep = all.migrations.len() - 1;
     // Migration numbers can skip, so the stamp one behind is the version of
     // the last migration kept, not latest minus one.
@@ -166,7 +167,7 @@ async fn boot_refuses_while_the_offline_tool_holds_the_database() {
     let dir = scratch("locked");
     let config = config_in(&dir);
     let db_path = config.library_db_path.clone();
-    let _import = droppedneedle::db::datalock::DataLock::exclusive(&db_path).unwrap();
+    let _import = droppedneedle_kernel::db::datalock::DataLock::exclusive(&db_path).unwrap();
     let refused = build(config).await;
     assert!(
         matches!(refused, Err(bootstrap::BootError::DataLock(_))),
@@ -727,8 +728,8 @@ async fn the_page_policy_follows_the_saved_mode_and_framing_list() {
 /// mode from the host, with the server stopped.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_policy_mode_set_from_the_host_is_served_at_the_next_boot() {
-    use droppedneedle::runtime_config::sections::ContentSecurityPolicyMode as Mode;
     use droppedneedle::tooling::host_settings::{HostSettingsError, set_content_security_policy};
+    use droppedneedle_kernel::runtime_config::sections::ContentSecurityPolicyMode as Mode;
 
     let dir = scratch("page-policy-host");
     let config = config_in(&dir);

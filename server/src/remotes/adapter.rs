@@ -19,7 +19,7 @@ use super::models::{
 };
 use super::navidrome::NavidromeAdapter;
 use super::plex::PlexAdapter;
-use crate::http_client::{BodyError, read_capped};
+use droppedneedle_kernel::http_client::{BodyError, read_capped};
 
 /// Boxed future for object-safe async ports. Hand-boxed because `async fn`
 /// is not `dyn`-compatible; mirrors the other store traits.

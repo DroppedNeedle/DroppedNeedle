@@ -10,7 +10,7 @@ use super::service::Management;
 use super::store::{self, ManagedMark, Snapshot};
 use super::takeover;
 use crate::library::clock::now_unix;
-use crate::runtime_config::secret_sections::JellyfinConnection;
+use droppedneedle_kernel::runtime_config::secret_sections::JellyfinConnection;
 
 impl Management {
     /// Bookkeeping for one album the job just wrote. The files are

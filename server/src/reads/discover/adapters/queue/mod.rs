@@ -35,7 +35,7 @@ use crate::reads::discover::models::{
 use crate::reads::discover::ports::{
     BoxFuture, ProviderFailure, QueueDeck, QueueStore, QueueTrigger, YouTubeSource,
 };
-use crate::runtime_config::secret_sections::AdvancedSettings;
+use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 
 use build::{BuildContext, build_deck};
 use sources::QueueSources;

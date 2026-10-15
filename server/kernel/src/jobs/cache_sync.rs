@@ -47,7 +47,7 @@ impl std::fmt::Debug for CacheSyncStatus {
 }
 
 impl CacheSyncStatus {
-    /// The sink frames go out on; [`crate::AppState::with_events`] attaches
+    /// The sink frames go out on; the server's `AppState::with_events` attaches
     /// it to the hub.
     pub fn sink(&self) -> &EventSink {
         &self.inner.sink

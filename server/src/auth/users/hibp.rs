@@ -13,7 +13,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::stores::{BoxFuture, HibpPolicy, PasswordScreen};
-use crate::http_client::read_capped;
+use droppedneedle_kernel::http_client::read_capped;
 
 /// Number of SHA-1 hex chars sent to the range API (k-anonymity prefix).
 pub const RANGE_PREFIX_LEN: usize = 5;

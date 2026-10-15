@@ -337,7 +337,7 @@ fn etag_matches(if_none_match: Option<&str>, etag: &str) -> bool {
     candidates.contains(&weak.as_str())
 }
 
-/// Shared error envelope, byte-identical in shape to `crate::error`.
+/// Shared error envelope, byte-identical in shape to `droppedneedle_kernel::error`.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 struct CoversErrorBody {
     code: String,
@@ -345,7 +345,7 @@ struct CoversErrorBody {
     details: Option<serde_json::Value>,
 }
 
-/// Shared error envelope, byte-identical in shape to `crate::error`.
+/// Shared error envelope, byte-identical in shape to `droppedneedle_kernel::error`.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 struct CoversErrorEnvelope {
     error: CoversErrorBody,

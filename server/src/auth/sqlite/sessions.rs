@@ -19,8 +19,8 @@ use crate::auth::times::{parse_iso, to_iso};
 use crate::auth::users::models::{ManagedSession, SessionOwner};
 use crate::auth::users::services::COMPANION_LABEL_PREFIX;
 use crate::auth::users::stores::{BoxFuture, Clock, SessionManager, StoreError};
-use crate::db::{Lane, map_sqlx_busy};
-use crate::ids::IdGenerator;
+use droppedneedle_kernel::db::{Lane, map_sqlx_busy};
+use droppedneedle_kernel::ids::IdGenerator;
 
 /// How stale `last_seen_at` must be before a lookup rewrites it (5 minutes).
 const LAST_SEEN_TOUCH_SECS: i64 = 5 * 60;
@@ -80,7 +80,7 @@ impl SessionStore for SqliteSessionStore {
         // the requeue below. Almost always an empty vec (legacy logins only).
         let retry = pending.clone();
         let record_issued_at = record.issued_at;
-        let outcome: Result<Vec<PendingRehash>, crate::db::DbError> = lane
+        let outcome: Result<Vec<PendingRehash>, droppedneedle_kernel::db::DbError> = lane
             .write(Lane::Foreground, "auth.session.insert", move |tx| {
                 tx.execute(
                     "INSERT INTO auth_tokens (id, user_id, token_hash, issued_at, expires_at, \
@@ -111,7 +111,7 @@ impl SessionStore for SqliteSessionStore {
             }
             // A write past its budget was rolled back whole: nothing of the
             // sign-in was kept, so the client may simply try again.
-            Err(crate::db::DbError::TxTimeout { .. }) => {
+            Err(droppedneedle_kernel::db::DbError::TxTimeout { .. }) => {
                 self.rehash.requeue(retry);
                 return Err(SessionStoreError::Busy);
             }
@@ -221,8 +221,11 @@ impl SessionStore for SqliteSessionStore {
 
 /// Session-port failure from a lane or pool error: busy stays busy, and
 /// anything else is logged here, since the port's error carries no cause.
-fn session_store_error(operation: &str, error: crate::db::DbError) -> SessionStoreError {
-    if matches!(error, crate::db::DbError::Busy { .. }) {
+fn session_store_error(
+    operation: &str,
+    error: droppedneedle_kernel::db::DbError,
+) -> SessionStoreError {
+    if matches!(error, droppedneedle_kernel::db::DbError::Busy { .. }) {
         return SessionStoreError::Busy;
     }
     tracing::error!(operation, %error, "session store failed");
@@ -235,7 +238,10 @@ const TOKEN_SWEEP_BATCH: i64 = 500;
 
 /// Delete revoked and expired token rows (no request can use them again),
 /// in the login's own transaction.
-fn sweep_dead_tokens(tx: &rusqlite::Transaction, now_unix: i64) -> Result<(), crate::db::OpError> {
+fn sweep_dead_tokens(
+    tx: &rusqlite::Transaction,
+    now_unix: i64,
+) -> Result<(), droppedneedle_kernel::db::OpError> {
     tx.execute(
         "DELETE FROM auth_tokens WHERE id IN (SELECT id FROM auth_tokens \
          WHERE revoked = 1 OR expires_at <= ? LIMIT ?)",
@@ -254,7 +260,7 @@ fn apply_pending_rehash(
     tx: &rusqlite::Transaction,
     user_id: &str,
     pending: Vec<PendingRehash>,
-) -> Result<Vec<PendingRehash>, crate::db::OpError> {
+) -> Result<Vec<PendingRehash>, droppedneedle_kernel::db::OpError> {
     if pending.is_empty() {
         return Ok(pending);
     }
@@ -446,7 +452,7 @@ impl SessionManager for SqliteSessionManager {
                 token_hash.clone(),
                 agent.clone(),
             );
-            let outcome: Result<(), crate::db::DbError> = lane
+            let outcome: Result<(), droppedneedle_kernel::db::DbError> = lane
                 .write(Lane::Foreground, "auth.sessions.replace", move |tx| {
                     tx.execute(
                         "INSERT INTO auth_tokens (id, user_id, token_hash, issued_at, expires_at, \

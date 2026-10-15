@@ -26,7 +26,7 @@ pub mod sabnzbd;
 pub mod sabnzbd_models;
 pub mod xml;
 
-use crate::http_client::{BodyError, read_capped};
+use droppedneedle_kernel::http_client::{BodyError, read_capped};
 
 /// The most an indexer response may weigh before it is refused. A search
 /// page is at most a few megabytes even from an indexer that allows 1000

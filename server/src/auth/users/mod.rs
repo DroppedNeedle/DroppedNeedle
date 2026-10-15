@@ -47,7 +47,7 @@ pub use error::UsersError;
 pub use handlers::UsersHttpError;
 pub use roles::{AuthContext, CurrentAdmin, CurrentCurator, CurrentUser, Role, SessionKind};
 
-use crate::{ids::IdGenerator, runtime_config::crypto::Crypto};
+use droppedneedle_kernel::{ids::IdGenerator, runtime_config::crypto::Crypto};
 use stores::{
     AppPasswordStore, AvatarStore, Clock, FalliblePasswordHasher, LastFmAuthClient, LastFmStore,
     LastFmSwitch, PasswordScreen, RecoveryStore, SecurityPolicy, SessionManager, UserDirectory,

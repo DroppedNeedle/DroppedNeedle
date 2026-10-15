@@ -7,7 +7,7 @@
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 
-use droppedneedle::schema::{MIGRATOR, apply_migrations, latest_version};
+use droppedneedle_kernel::schema::{MIGRATOR, apply_migrations, latest_version};
 
 async fn scratch_pool() -> SqlitePool {
     SqlitePoolOptions::new()
@@ -122,14 +122,14 @@ async fn upgrade_from_0001_keeps_data() {
 async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() {
     use std::sync::Arc;
 
-    use droppedneedle::ids::{IdGenerator, UuidGenerator};
     use droppedneedle::library::identify::models::RecallResult;
     use droppedneedle::library::matching::{Release, ReleaseTrack};
     use droppedneedle::library::wiring::LibrarySetup;
-    use droppedneedle::runtime_config::{ConfigStore, Crypto, Secret};
     use droppedneedle::tooling::fixture::{
         MUSIC_ROOT_ID, V2_ALBUM_ID, build_v2_fixture, delete_orphan_rows,
     };
+    use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
+    use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, Secret};
 
     const PASSPHRASE: &str = "operator-passphrase";
     const PINNED: &str = "rel-blue-jp";
@@ -239,7 +239,7 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
     );
     pool.close().await;
 
-    let db = droppedneedle::db::open_connection(&db_path).expect("v3 db opens");
+    let db = droppedneedle_kernel::db::open_connection(&db_path).expect("v3 db opens");
     let chosen = || -> (String, Option<String>, Option<String>, f64) {
         db.query_row(
             "SELECT decision_source, release_mbid, selected_by_user_id, selected_at \

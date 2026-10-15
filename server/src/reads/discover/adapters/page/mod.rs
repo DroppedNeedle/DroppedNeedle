@@ -34,8 +34,8 @@ use crate::reads::discover::models::{
     DiscoverActivityResponse, DiscoverResponse, IntegrationStatus,
 };
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure, QueueStore, QueueTrigger};
-use crate::runtime_config::{ConfigStore, secret_sections::AdvancedSettings};
 use build::{Builder, PageSettings};
+use droppedneedle_kernel::runtime_config::{ConfigStore, secret_sections::AdvancedSettings};
 use library::LibraryReads;
 use memo::BuildMemo;
 use sources::PageSources;

@@ -76,7 +76,7 @@ fn subsonic_settings() -> SubsonicSettings {
         transcode_default_format: "mp3".to_owned(),
         transcode_max_bitrate_kbps: 320,
         ffmpeg_available: true,
-        download_access: droppedneedle::runtime_config::sections::DownloadAccess::Everyone,
+        download_access: droppedneedle_kernel::runtime_config::sections::DownloadAccess::Everyone,
     }
 }
 
@@ -89,7 +89,7 @@ fn jellyfin_settings() -> JellyfinSettings {
         transcode_max_bitrate_kbps: 320,
         transcode_default_format: "mp3".to_owned(),
         ffmpeg_available: true,
-        download_access: droppedneedle::runtime_config::sections::DownloadAccess::Everyone,
+        download_access: droppedneedle_kernel::runtime_config::sections::DownloadAccess::Everyone,
     }
 }
 
@@ -246,7 +246,7 @@ fn apps() -> Apps {
         subsonic_limits.started.clone(),
         ListenerConfig {
             port: 4533,
-            trusted_proxies: droppedneedle::config::TrustedProxies::default(),
+            trusted_proxies: droppedneedle_kernel::config::TrustedProxies::default(),
             base_path: String::new(),
         },
     );
@@ -269,7 +269,7 @@ fn apps() -> Apps {
         jellyfin_settings(),
         ListenerConfig {
             port: 8096,
-            trusted_proxies: droppedneedle::config::TrustedProxies::default(),
+            trusted_proxies: droppedneedle_kernel::config::TrustedProxies::default(),
             base_path: String::new(),
         },
     );

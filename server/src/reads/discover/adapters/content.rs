@@ -18,7 +18,7 @@ use crate::reads::discover::{
     models::{DiscoverActivityResponse, DiscoverResponse, HomeResponse, IntegrationStatus},
     ports::{BoxFuture, DiscoverContent, ProviderFailure},
 };
-use crate::runtime_config::{
+use droppedneedle_kernel::runtime_config::{
     ConfigStore,
     secret_sections::{
         DownloadClients, JellyfinConnection, LastFmSettings, ListenBrainzConnection,
@@ -26,7 +26,10 @@ use crate::runtime_config::{
     },
 };
 
-fn read<T: Default>(name: &str, value: Result<T, crate::runtime_config::ConfigError>) -> T {
+fn read<T: Default>(
+    name: &str,
+    value: Result<T, droppedneedle_kernel::runtime_config::ConfigError>,
+) -> T {
     value.unwrap_or_else(|error| {
         tracing::warn!(%error, section = name, "cannot read settings; treating as off");
         T::default()

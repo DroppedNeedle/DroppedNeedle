@@ -39,7 +39,7 @@ use crate::compat::subsonic::{
     AudioBackend, Request as SubsonicRequest, Settings, Store, Verifier, classify, dispatch_with,
     normalize_endpoint,
 };
-use crate::config::TrustedProxies;
+use droppedneedle_kernel::config::TrustedProxies;
 
 /// Jellyfin route templates (registered casing) for path canonicalization.
 /// Mirrors `jellyfin::router` registration; the wiring test pins at

@@ -125,7 +125,7 @@ pub async fn translate_principal(
             .into_response();
         }
         Err(crate::auth::users::stores::StoreError::Busy) => {
-            return crate::error::busy_response(
+            return droppedneedle_kernel::error::busy_response(
                 "library.auth.user",
                 &uuid::Uuid::new_v4().to_string(),
             );

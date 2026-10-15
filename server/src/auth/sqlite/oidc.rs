@@ -6,7 +6,7 @@ use super::{AuthDb, op_error, store_unavailable};
 use crate::auth::federated::FederatedError;
 use crate::auth::federated::oidc::{OidcStateStore, STATE_TTL_SECS};
 use crate::auth::times::{parse_iso, to_iso};
-use crate::db::Lane;
+use droppedneedle_kernel::db::Lane;
 
 /// Short-lived OIDC PKCE states over `auth_oidc_states`.
 ///

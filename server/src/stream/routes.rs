@@ -63,8 +63,6 @@ use futures_util::StreamExt as _;
 use futures_util::stream::BoxStream;
 
 use crate::auth::session::middleware::CurrentSession;
-use crate::error::{ErrorBody, ErrorEnvelope};
-use crate::ids::IdGenerator;
 use axum::{
     Router,
     body::Body,
@@ -77,6 +75,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use droppedneedle_kernel::error::{ErrorBody, ErrorEnvelope};
+use droppedneedle_kernel::ids::IdGenerator;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::json;
@@ -589,8 +589,8 @@ impl StreamError {
             ),
             Self::Upstream { message } => (UPSTREAM_UNAVAILABLE.to_owned(), message.clone(), None),
             Self::Internal { error_id } => (
-                crate::error::INTERNAL_ERROR.to_owned(),
-                crate::error::FIXED_INTERNAL_MESSAGE.to_owned(),
+                droppedneedle_kernel::error::INTERNAL_ERROR.to_owned(),
+                droppedneedle_kernel::error::FIXED_INTERNAL_MESSAGE.to_owned(),
                 Some(json!({ "error_id": error_id })),
             ),
         };

@@ -148,15 +148,12 @@ impl<T> Masked<T> {
     /// must only reshape what it is given, never bring in secrets from
     /// elsewhere.
     #[must_use]
-    pub(crate) fn map<U>(self, derive: impl FnOnce(T) -> U) -> Masked<U> {
+    pub fn map<U>(self, derive: impl FnOnce(T) -> U) -> Masked<U> {
         Masked(derive(self.0))
     }
 
     /// [`Masked::map`] for a derivation that can fail.
-    pub(crate) fn try_map<U, E>(
-        self,
-        derive: impl FnOnce(T) -> Result<U, E>,
-    ) -> Result<Masked<U>, E> {
+    pub fn try_map<U, E>(self, derive: impl FnOnce(T) -> Result<U, E>) -> Result<Masked<U>, E> {
         derive(self.0).map(Masked)
     }
 }

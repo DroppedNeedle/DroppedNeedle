@@ -3,6 +3,9 @@
 //! import: the crate split cannot cut it into a crate. The allowed list sits
 //! beside this file in `backward_imports.txt` and is empty, so any backward
 //! import fails the test.
+//!
+//! The kernel crate sits below this crate, so it is not listed here: Cargo
+//! itself refuses an import from it back up into this crate.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -11,21 +14,6 @@ use std::path::{Path, PathBuf};
 /// Areas from the bottom layer up. An area may use areas in its own layer or
 /// below it. Areas in one layer become one crate once the split lands.
 const LAYERS: &[&[&str]] = &[
-    // Kernel: errors, ids, HTTP client, config, settings store, database,
-    // schema, events, jobs, logging and rate policy.
-    &[
-        "config",
-        "db",
-        "error",
-        "events",
-        "http_client",
-        "ids",
-        "jobs",
-        "observability",
-        "provider_policy",
-        "runtime_config",
-        "schema",
-    ],
     &["providers"],
     &["auth"],
     &["library"],
@@ -57,7 +45,6 @@ const LAYERS: &[&[&str]] = &[
 
 /// Names the crate root re-exports, mapped to the area that defines them.
 const ROOT_REEXPORTS: &[(&str, &str)] = &[
-    ("AppConfig", "config"),
     ("AppState", "state"),
     ("create_app", "app"),
     ("create_app_with_web", "app"),
@@ -213,7 +200,9 @@ fn crate_paths(text: &str) -> Vec<(usize, &str)> {
     const PREFIX: &str = "crate::";
     let mut out = Vec::new();
     for (at, _) in text.match_indices(PREFIX) {
-        if text[..at].ends_with(|c: char| c.is_alphanumeric() || c == '_') {
+        // A quote before it makes it text in a string literal, such as an
+        // API tag, not a path.
+        if text[..at].ends_with(|c: char| c.is_alphanumeric() || c == '_' || c == '"') {
             continue;
         }
         let after = at + PREFIX.len();

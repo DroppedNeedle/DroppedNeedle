@@ -17,9 +17,9 @@ use droppedneedle::auth::session::extract::Transport;
 use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::session::store::SessionKind;
 use droppedneedle::concerts::{ConcertsEvents, ConcertsNew, ConcertsSetup, Endpoints};
-use droppedneedle::db::Lane;
-use droppedneedle::runtime_config::secret_sections::EventsSettings;
-use droppedneedle::runtime_config::{ConfigStore, Crypto, Secret};
+use droppedneedle_kernel::db::Lane;
+use droppedneedle_kernel::runtime_config::secret_sections::EventsSettings;
+use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, Secret};
 
 use crate::common::ScratchDir;
 

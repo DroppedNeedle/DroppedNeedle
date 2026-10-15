@@ -32,10 +32,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use axum::Router;
 use sqlx::SqlitePool;
 
-use crate::db::{DbRuntime, WriteLane};
-use crate::http_client::HttpClientFactory;
-use crate::runtime_config::secret_sections::{EventsSettings, EventsSweepScope};
-use crate::runtime_config::{ConfigStore, Secret};
+use droppedneedle_kernel::db::{DbRuntime, WriteLane};
+use droppedneedle_kernel::http_client::HttpClientFactory;
+use droppedneedle_kernel::runtime_config::secret_sections::{EventsSettings, EventsSweepScope};
+use droppedneedle_kernel::runtime_config::{ConfigStore, Secret};
 
 pub use events::{ConcertsEvents, ConcertsNew, NoEventStream};
 pub use service::ConcertsService;

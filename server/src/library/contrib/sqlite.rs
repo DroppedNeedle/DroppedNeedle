@@ -45,7 +45,8 @@ pub struct SqliteContributions {
 impl SqliteContributions {
     /// Open against the migrated application database.
     pub fn open(path: &Path) -> Result<Self, String> {
-        let conn = crate::db::open_connection(path).map_err(|error| error.to_string())?;
+        let conn =
+            droppedneedle_kernel::db::open_connection(path).map_err(|error| error.to_string())?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })

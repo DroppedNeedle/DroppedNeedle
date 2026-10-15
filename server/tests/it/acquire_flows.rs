@@ -30,8 +30,8 @@ use droppedneedle::acquire::requests::{
     sqlite::{RequestStore, WantedStore},
 };
 use droppedneedle::acquire::search_jobs::store::JobStore;
-use droppedneedle::db::{DbRuntime, JobState};
-use droppedneedle::runtime_config::sections::UserPreferences;
+use droppedneedle_kernel::db::{DbRuntime, JobState};
+use droppedneedle_kernel::runtime_config::sections::UserPreferences;
 
 const NOW: i64 = 1_700_000_000;
 /// Scratch directory, removed when the test ends.

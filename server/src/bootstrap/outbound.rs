@@ -224,7 +224,7 @@ impl Outbound {
     /// built-in roots taken from here.
     pub fn musicbrainz_source(
         &self,
-        settings: &crate::runtime_config::sections::MusicBrainzSettings,
+        settings: &droppedneedle_kernel::runtime_config::sections::MusicBrainzSettings,
     ) -> musicbrainz::MbSource {
         musicbrainz::MbSource::from_settings(settings, &self.musicbrainz, &self.brainzmash)
     }

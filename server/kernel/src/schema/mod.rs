@@ -16,5 +16,6 @@ pub mod template;
 pub use boot::apply_migrations_blocking;
 pub use boot::{SchemaError, apply_migrations, assert_migrated, latest_version};
 
-/// Embedded migrations, applied in version order by [`apply_migrations`].
-pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+/// The migrations in `server/migrations`, embedded and applied in version
+/// order by [`apply_migrations`].
+pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../migrations");

@@ -945,7 +945,7 @@ fn below_cutoff(tier: &str, policy: &UpgradePolicy) -> bool {
     let Some(cutoff) = policy.quality_cutoff.as_deref() else {
         return false;
     };
-    let rank = |label: &str| crate::runtime_config::sections::tier_rank(label);
+    let rank = |label: &str| droppedneedle_kernel::runtime_config::sections::tier_rank(label);
     policy.upgrade_allowed
         && rank(cutoff).is_some_and(|cutoff_rank| rank(tier).unwrap_or(0) < cutoff_rank)
 }

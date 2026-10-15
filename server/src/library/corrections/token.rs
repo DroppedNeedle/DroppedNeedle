@@ -8,7 +8,7 @@
 
 use super::reasons;
 use crate::library::operations::reasons::Reason;
-use crate::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::ConfigStore;
 
 /// How long a preview stays good, as in v2.
 pub const TTL_SECS: i64 = 15 * 60;

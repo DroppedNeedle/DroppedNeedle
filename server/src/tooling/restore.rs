@@ -1,6 +1,6 @@
 //! Offline database restore: the CLI half of server backups.
 //!
-//! The mechanism is [`BackupService::restore`](crate::db::BackupService):
+//! The mechanism is [`BackupService::restore`](droppedneedle_kernel::db::BackupService):
 //! verify the backup (integrity plus schema stamp), copy it into an empty
 //! directory as `library.db`, and verify the copy. This module adds the
 //! operator face: a read-only preflight over the backup restore report
@@ -17,7 +17,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::admin::backups::restore_report;
-use crate::db::BackupService;
+use droppedneedle_kernel::db::BackupService;
 
 /// Restore failures. Messages name the fix, never file contents.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -78,8 +78,9 @@ pub fn restore_backup(
     }
     // Held for the run: a server on this directory refuses to start, and a
     // running one makes the restore refuse.
-    let _lock = crate::db::datalock::DataLock::exclusive(&target_dir.join("library.db"))
-        .map_err(|error| RestoreError::Refused(format!("{error}; stop the server first")))?;
+    let _lock =
+        droppedneedle_kernel::db::datalock::DataLock::exclusive(&target_dir.join("library.db"))
+            .map_err(|error| RestoreError::Refused(format!("{error}; stop the server first")))?;
     let mut checks_passed = preflight(backup_db, allow_downgrade)?;
     let parent = backup_db
         .parent()
@@ -118,7 +119,7 @@ fn preflight(backup_db: &Path, allow_downgrade: bool) -> Result<Vec<String>, Res
         Ok(report) => report,
         Err(_) => {
             let mut sidecar = backup_db.as_os_str().to_owned();
-            sidecar.push(crate::db::backup::MANIFEST_SUFFIX);
+            sidecar.push(droppedneedle_kernel::db::backup::MANIFEST_SUFFIX);
             if Path::new(&sidecar).exists() {
                 return Err(RestoreError::Refused(
                     "backup name must be a plain file name ending in .db; rename the backup \
@@ -155,15 +156,17 @@ fn preflight(backup_db: &Path, allow_downgrade: bool) -> Result<Vec<String>, Res
 }
 
 /// Map the storage-layer restore failure onto operator wording.
-fn map_db_error(error: &crate::db::DbError, target_dir: &Path) -> RestoreError {
+fn map_db_error(error: &droppedneedle_kernel::db::DbError, target_dir: &Path) -> RestoreError {
     match error {
-        crate::db::DbError::RestoreTargetNotEmpty { .. } => {
+        droppedneedle_kernel::db::DbError::RestoreTargetNotEmpty { .. } => {
             RestoreError::TargetNotEmpty(target_dir.display().to_string())
         }
-        crate::db::DbError::BackupTooNew { found, expected } => RestoreError::BackupTooNew {
-            found: *found,
-            expected: *expected,
-        },
+        droppedneedle_kernel::db::DbError::BackupTooNew { found, expected } => {
+            RestoreError::BackupTooNew {
+                found: *found,
+                expected: *expected,
+            }
+        }
         other => RestoreError::Failed(other.to_string()),
     }
 }
@@ -188,7 +191,7 @@ mod tests {
 
     #[test]
     fn unchecked_manifest_refuses() {
-        let dir = crate::db::scratch::ScratchDir::new("restore-sidecar").unwrap();
+        let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("restore-sidecar").unwrap();
         let backup = dir.join("backup.sqlite");
         std::fs::write(&backup, b"not checked").unwrap();
         std::fs::write(dir.join("backup.sqlite.manifest.json"), b"{}").unwrap();

@@ -13,7 +13,7 @@
 //! never 404. These routes take no session: the shared secret is the only
 //! credential, so they mount outside the session middleware.
 //!
-//! The error envelope mirrors `crate::error` exactly.
+//! The error envelope mirrors `droppedneedle_kernel::error` exactly.
 
 use std::sync::Arc;
 
@@ -28,7 +28,7 @@ use futures_util::future::BoxFuture;
 use sha2::{Digest, Sha256};
 
 use crate::auth::session::tokens::constant_time_eq;
-use crate::runtime_config::{ConfigStore, secret_sections::WrappedSettings};
+use droppedneedle_kernel::runtime_config::{ConfigStore, secret_sections::WrappedSettings};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -366,9 +366,9 @@ pub fn check_key(headers: &HeaderMap, expected: &str) -> bool {
 /// no `WWW-Authenticate` header on purpose: v2 sends none, and a Bearer
 /// challenge would misdescribe a shared-secret header scheme.
 fn wrapped_rejection() -> Response {
-    crate::error::envelope_response(
+    droppedneedle_kernel::error::envelope_response(
         StatusCode::UNAUTHORIZED,
-        crate::error::UNAUTHORIZED,
+        droppedneedle_kernel::error::UNAUTHORIZED,
         WRAPPED_UNAUTHORIZED_MESSAGE,
         None,
     )
@@ -514,7 +514,7 @@ mod tests {
 
     #[test]
     fn rotated_key_applies_without_a_restart() {
-        use crate::runtime_config::{Crypto, Secret};
+        use droppedneedle_kernel::runtime_config::{Crypto, Secret};
         let dir = std::env::temp_dir().join(format!("dn-wrapped-key-{}", std::process::id()));
         let crypto = || Crypto::from_key_bytes(&[7u8; 32]).unwrap();
         let store = Arc::new(ConfigStore::open(&dir.join("config.json"), crypto()).unwrap());

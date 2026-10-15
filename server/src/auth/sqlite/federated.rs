@@ -11,9 +11,9 @@ use crate::auth::federated::users::{
     FederatedUserStore, NewFederatedUser, ProviderBinding, ROLE_ADMIN, ROLE_USER, StoredUser,
 };
 use crate::auth::times::to_iso;
-use crate::db::{Lane, map_sqlx_busy};
-use crate::ids::IdGenerator;
-use crate::runtime_config::crypto::Crypto;
+use droppedneedle_kernel::db::{Lane, map_sqlx_busy};
+use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::runtime_config::crypto::Crypto;
 
 /// Federated user import over `auth_users` plus the non-local rows of
 /// `auth_providers`.

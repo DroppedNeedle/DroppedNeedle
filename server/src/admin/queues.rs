@@ -3,7 +3,7 @@
 //! Queue stats port v2's lane-occupancy gauge onto the v3 durable fabric:
 //! per-channel requested/consumed demand plus the job-registry rows. Reads
 //! are plain pool queries; the registry decode reuses the fabric's own
-//! [`crate::db::DurableWorkWakeups::list_jobs`].
+//! [`droppedneedle_kernel::db::DurableWorkWakeups::list_jobs`].
 //!
 //! Provider stats port v2's provider-counters snapshot onto the v3 pacing
 //! primitives: per-provider limiter posture (verified row plus live bucket)

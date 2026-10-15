@@ -28,8 +28,8 @@ use droppedneedle::auth::federated::users::{
 use droppedneedle::auth::wiring::Upstreams;
 use droppedneedle::playback::forwarding::{ScrobbleCredentials as _, StoredScrobbleCredentials};
 use droppedneedle::plugins::scrobble::MemoryListenBrainzLinkStore;
-use droppedneedle::runtime_config::Secret;
-use droppedneedle::runtime_config::secret_sections::{
+use droppedneedle_kernel::runtime_config::Secret;
+use droppedneedle_kernel::runtime_config::secret_sections::{
     JellyfinConnection, LastFmSettings, OidcConnection, PlexConnection,
 };
 use ring::rand::SystemRandom;

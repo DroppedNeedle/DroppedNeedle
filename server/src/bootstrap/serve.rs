@@ -19,7 +19,9 @@ use thiserror::Error;
 use tokio::{net::TcpListener, sync::watch, task::JoinHandle};
 
 use super::jobs::JobsSetup;
-use crate::{config::BindHost, db::DbRuntime, db::datalock::DataLock, events::EventHub};
+use droppedneedle_kernel::{
+    config::BindHost, db::DbRuntime, db::datalock::DataLock, events::EventHub,
+};
 
 /// Listen backlog, the usual server default.
 const BACKLOG: i32 = 1024;

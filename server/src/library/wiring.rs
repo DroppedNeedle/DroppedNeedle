@@ -38,17 +38,24 @@ use super::scan::roots::RootRegistry;
 use super::scan::sqlite_store::SqliteScanStore;
 use super::scan::watcher::{DirtyScopes, WatcherState, WorkWakeups};
 use crate::auth::users::UsersDeps;
-use crate::ids::IdGenerator;
-use crate::runtime_config::ConfigStore;
+use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::runtime_config::ConfigStore;
 
 /// Scratch database (a copy of the migrated template) plus config store in a
 /// directory that goes away when the last bundle clone drops.
 #[cfg(any(test, feature = "test-support"))]
-fn scratch_state() -> Result<(Arc<crate::db::scratch::ScratchDir>, Arc<ConfigStore>), String> {
-    let dir = crate::db::scratch::ScratchDir::new("library").map_err(|error| error.to_string())?;
+fn scratch_state() -> Result<
+    (
+        Arc<droppedneedle_kernel::db::scratch::ScratchDir>,
+        Arc<ConfigStore>,
+    ),
+    String,
+> {
+    let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("library")
+        .map_err(|error| error.to_string())?;
     let db_path = dir.path().join("app.db");
-    crate::schema::template::copy_to(&db_path)?;
-    let crypto = crate::runtime_config::Crypto::from_key_bytes(&[7u8; 32])
+    droppedneedle_kernel::schema::template::copy_to(&db_path)?;
+    let crypto = droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32])
         .map_err(|error| error.to_string())?;
     let config = ConfigStore::open(&dir.path().join("config.json"), crypto)
         .map_err(|error| error.to_string())?;
@@ -201,7 +208,7 @@ pub struct LibrarySetup {
     /// Shared root-directory lookup.
     pub root_dirs: RootDirs,
     /// Live event hub handle (scan events poke the revision poller).
-    pub events: crate::events::EventSink,
+    pub events: droppedneedle_kernel::events::EventSink,
     /// Download and wanted cleanup after an album removal, set at boot.
     pub removal_hook: super::mutations::AlbumRemovalSlot,
     /// Called after each scan run completes (the library image refresh
@@ -225,7 +232,7 @@ pub struct LibrarySetup {
     pub enrichment: super::management::enrich::EnrichmentSlot,
     /// Scratch state of a test bundle, removed with the last clone.
     #[cfg(any(test, feature = "test-support"))]
-    pub scratch: Option<Arc<crate::db::scratch::ScratchDir>>,
+    pub scratch: Option<Arc<droppedneedle_kernel::db::scratch::ScratchDir>>,
 }
 
 impl LibrarySetup {
@@ -236,7 +243,7 @@ impl LibrarySetup {
     #[allow(clippy::too_many_arguments)]
     pub fn build(
         users: UsersDeps,
-        http: &crate::http_client::HttpClientFactory,
+        http: &droppedneedle_kernel::http_client::HttpClientFactory,
         ids: Arc<dyn IdGenerator>,
         providers: Arc<crate::providers::Providers>,
         mb_source: crate::providers::musicbrainz::SourceFn,
@@ -430,7 +437,7 @@ impl LibrarySetup {
         let pool = BlockingPool::new(4);
         let wakeups = WorkWakeups::new();
         let fs = FsCoordinator::new();
-        let events = crate::events::EventSink::default();
+        let events = droppedneedle_kernel::events::EventSink::default();
         let scan_events = events.clone();
         let scan_completed: ScanCompletedSlot = Default::default();
         let completed_hook = Arc::clone(&scan_completed);
@@ -699,7 +706,7 @@ async fn leftover_pass(setup: LibrarySetup, shutdown: watch::Receiver<bool>) {
 pub fn edition_preferences(
     config: Arc<ConfigStore>,
 ) -> crate::library::identify::service::PreferenceSource {
-    use crate::runtime_config::sections::{EditionPreferences, GetIt};
+    use droppedneedle_kernel::runtime_config::sections::{EditionPreferences, GetIt};
     Arc::new(move || {
         let saved = config.get::<EditionPreferences>().unwrap_or_else(|error| {
             tracing::warn!(%error, "edition preferences unreadable; using the defaults");

@@ -10,7 +10,7 @@
 use axum::http::{HeaderMap, header::SET_COOKIE};
 
 use super::{origin::named_origin, stated::StatedAddresses, tokens::SESSION_MAX_AGE_SECS};
-use crate::runtime_config::origin::Origin;
+use droppedneedle_kernel::runtime_config::origin::Origin;
 
 /// Cookie name, unchanged from v2.
 pub const COOKIE_NAME: &str = "droppedneedle_session";

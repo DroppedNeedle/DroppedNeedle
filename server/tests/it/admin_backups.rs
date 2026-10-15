@@ -15,7 +15,7 @@ use droppedneedle::auth::session::extract::Transport;
 use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::users::memory::TestRig;
 use droppedneedle::auth::users::roles::{Role, SessionKind};
-use droppedneedle::db::{BACKUP_KEEP, DbRuntime};
+use droppedneedle_kernel::db::{BACKUP_KEEP, DbRuntime};
 use serde_json::Value;
 use tower::ServiceExt as _;
 
@@ -48,7 +48,7 @@ impl Rig {
         let backup_dir = dir.join("backups");
         let admin = AdminSetup::new(rig.deps.clone(), quota, cache, providers)
             .with_db(AdminDb::new(runtime.pool().clone(), runtime.lane().clone()))
-            .with_backups(droppedneedle::db::BackupService::new(
+            .with_backups(droppedneedle_kernel::db::BackupService::new(
                 &dir.join("app.db"),
                 &backup_dir,
             ))
@@ -123,7 +123,7 @@ async fn backup_run_then_list_then_report() {
     assert!(run["size_bytes"].as_u64().expect("size") > 0);
     assert_eq!(
         run["user_version"].as_i64(),
-        Some(droppedneedle::schema::latest_version())
+        Some(droppedneedle_kernel::schema::latest_version())
     );
     // Manifest sidecar sits beside the backup on disk.
     let sidecar = rig
@@ -260,7 +260,7 @@ async fn pre_upgrade_backup_runs_when_stale_and_skips_when_current() {
     let scratch = crate::common::ScratchDir::new("admin-preupgrade");
     let dir = scratch.to_path_buf();
     std::fs::create_dir_all(&dir).expect("scratch dir builds");
-    let latest = droppedneedle::schema::latest_version();
+    let latest = droppedneedle_kernel::schema::latest_version();
     assert!(latest >= 1, "a migration exists to be stale against");
 
     // A stale database: valid SQLite, older stamp.

@@ -4,30 +4,27 @@
 
 use std::sync::Arc;
 
-use crate::{
-    ids::IdGenerator,
-    reads::discover::{
-        error::ReadsError,
-        models::{
-            AlbumPreviewResponse, ChartRange, ChartSection, ChartSource, DiscoverActivityResponse,
-            DiscoverQueuePreview, DiscoverQueueResponse, DiscoverQueueStatusResponse,
-            DiscoverResponse, DiscoveryBatchCreate, DiscoveryBatchDetail,
-            DiscoveryBatchListResponse, DiscoveryBatchRemoveResult, GenreDetailResponse,
-            HomeResponse, IgnoredReleasesResponse, IntegrationStatus, NowPlayingSnapshot,
-            PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, PopularAlbumsPage,
-            QueueEnrichment, QueueGenerateRequest, QueueGenerateResponse, QueueIgnoreRequest,
-            QueueValidateRequest, QueueValidateResponse, RadioPlanRequest, RadioPlanResponse,
-            RadioRequest, RefreshResponse, TrackCacheCheckRequest, TrackCacheCheckResponse,
-            TrackCacheCheckResponseItem, TrackPreviewResponse, TrendingArtistsPage,
-            YouTubeQuotaResponse, YouTubeSearchResponse,
-        },
-        ports::{
-            BatchFailure, BatchRefusal, BatchStore, ChartsSource, Clock, DiscoverContent,
-            NowPlayingStore, PreviewSource, ProviderFailure, QueueStore, QueueTrigger,
-            RadioFailure, RadioPlanner, YouTubeSource,
-        },
+use crate::reads::discover::{
+    error::ReadsError,
+    models::{
+        AlbumPreviewResponse, ChartRange, ChartSection, ChartSource, DiscoverActivityResponse,
+        DiscoverQueuePreview, DiscoverQueueResponse, DiscoverQueueStatusResponse, DiscoverResponse,
+        DiscoveryBatchCreate, DiscoveryBatchDetail, DiscoveryBatchListResponse,
+        DiscoveryBatchRemoveResult, GenreDetailResponse, HomeResponse, IgnoredReleasesResponse,
+        IntegrationStatus, NowPlayingSnapshot, PlaylistSuggestionsRequest,
+        PlaylistSuggestionsResponse, PopularAlbumsPage, QueueEnrichment, QueueGenerateRequest,
+        QueueGenerateResponse, QueueIgnoreRequest, QueueValidateRequest, QueueValidateResponse,
+        RadioPlanRequest, RadioPlanResponse, RadioRequest, RefreshResponse, TrackCacheCheckRequest,
+        TrackCacheCheckResponse, TrackCacheCheckResponseItem, TrackPreviewResponse,
+        TrendingArtistsPage, YouTubeQuotaResponse, YouTubeSearchResponse,
+    },
+    ports::{
+        BatchFailure, BatchRefusal, BatchStore, ChartsSource, Clock, DiscoverContent,
+        NowPlayingStore, PreviewSource, ProviderFailure, QueueStore, QueueTrigger, RadioFailure,
+        RadioPlanner, YouTubeSource,
     },
 };
+use droppedneedle_kernel::ids::IdGenerator;
 
 /// Max cards served from one queue read.
 pub const QUEUE_COUNT_MAX: i64 = 20;

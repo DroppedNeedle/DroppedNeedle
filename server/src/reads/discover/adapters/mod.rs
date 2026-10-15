@@ -22,8 +22,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::auth::users::UsersDeps;
-use crate::db::WriteLane;
-use crate::ids::IdGenerator;
 use crate::plugins::scrobble::ListenBrainzLinkStore;
 use crate::providers::{
     Providers,
@@ -42,7 +40,9 @@ use crate::reads::discover::{
 use crate::remotes::connections::{
     ConfigServers, ConnectionResolver, CredentialCoder, SqliteConnectionStore,
 };
-use crate::runtime_config::{ConfigStore, secret_sections::AdvancedSettings};
+use droppedneedle_kernel::db::WriteLane;
+use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::runtime_config::{ConfigStore, secret_sections::AdvancedSettings};
 
 /// What production discover needs from the composition root.
 pub struct DiscoverInputs {

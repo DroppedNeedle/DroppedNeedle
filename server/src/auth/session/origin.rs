@@ -36,7 +36,7 @@
 use axum::http::{HeaderMap, Method};
 
 use super::extract::Transport;
-use crate::runtime_config::origin::Origin;
+use droppedneedle_kernel::runtime_config::origin::Origin;
 
 /// Unsafe methods carrying ambient-credential risk.
 pub fn is_unsafe_method(method: &Method) -> bool {

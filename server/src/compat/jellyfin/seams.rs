@@ -22,7 +22,7 @@
 
 use crate::auth::compat_auth::jellyfin::{JellyfinUser, PolicyFacts, effective_name};
 
-use crate::runtime_config::sections::DownloadAccess;
+use droppedneedle_kernel::runtime_config::sections::DownloadAccess;
 
 use super::models::UserDto;
 

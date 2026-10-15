@@ -129,7 +129,7 @@ impl From<MutationError> for MutationHttpError {
 
 impl IntoResponse for MutationHttpError {
     fn into_response(self) -> Response {
-        use crate::error::envelope_response;
+        use droppedneedle_kernel::error::envelope_response;
         let (status, reason) = match self.0 {
             MutationError::NotFound(reason) => (StatusCode::NOT_FOUND, reason),
             MutationError::Conflict(reason) => (StatusCode::CONFLICT, reason),

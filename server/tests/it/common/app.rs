@@ -14,7 +14,8 @@ use axum::{
     extract::ConnectInfo,
     http::{HeaderMap, Request, StatusCode},
 };
-use droppedneedle::{AppConfig, bootstrap};
+use droppedneedle::bootstrap;
+use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_testkit::{
     remotes::{MockServer, serve_plex},
     slskd::MockSlskd,

@@ -78,7 +78,7 @@ fn read_error(error: sqlx::Error) -> StoreError {
     StoreError(format!("drop import read: {error}"))
 }
 
-fn write_error(error: crate::db::DbError) -> StoreError {
+fn write_error(error: droppedneedle_kernel::db::DbError) -> StoreError {
     StoreError(format!("drop import write: {error}"))
 }
 

@@ -26,9 +26,9 @@ use std::time::Duration;
 use tokio::time::Instant;
 
 use crate::auth::users::stores::{LastFmStore, LastFmSwitch};
-use crate::http_client::{BodyError, read_capped};
 use crate::plugins::scrobble::ListenBrainzLinkStore;
-use crate::runtime_config::crypto::Crypto;
+use droppedneedle_kernel::http_client::{BodyError, read_capped};
+use droppedneedle_kernel::runtime_config::crypto::Crypto;
 
 use super::ports::{ReportTrack, ScrobbleLinks, ScrobbleSinks, ScrobbleTargets, ServiceOutcome};
 use super::scrobble_models::{AdditionalInfo, LastFmError, Listen, SubmitListens, TrackMetadata};

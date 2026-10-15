@@ -44,7 +44,7 @@ use super::usenet::newznab::{IndexerResult, NewznabIndexer, usenet_identity};
 use super::usenet::policy::UsenetPolicy;
 use super::usenet::prowlarr::ProwlarrIndexer;
 use super::usenet::sabnzbd::{SabnzbdError, SabnzbdQueue};
-use crate::runtime_config::sections::{UsenetBackend, UsenetBackendSetting};
+use droppedneedle_kernel::runtime_config::sections::{UsenetBackend, UsenetBackendSetting};
 
 /// Current unix time as float seconds for retention math.
 fn now_unix_f64() -> f64 {

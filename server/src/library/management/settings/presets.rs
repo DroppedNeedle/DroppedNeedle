@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::revision::{naming_script_revision, profile_revision};
-use crate::runtime_config::sections::{
+use droppedneedle_kernel::runtime_config::sections::{
     ArtworkImageType, DEFAULT_NAMING_TEMPLATE, FieldMode, GenreSource, LibraryManagement,
     LibraryManagementProfile, ManagedField, MetadataManagementSettings, NamingScript,
     OrganizationManagementSettings, ReplayGainMode, SourceCleanupMode,

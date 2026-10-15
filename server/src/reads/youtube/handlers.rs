@@ -14,13 +14,13 @@ use axum::{
     routing::{delete, get, post},
 };
 
-use crate::error::{
-    FIXED_INTERNAL_MESSAGE, FIXED_UPSTREAM_MESSAGE, INTERNAL_ERROR, INVALID_INPUT, NOT_FOUND,
-    UPSTREAM_ERROR, busy_response, envelope_response, fault_response,
-};
 use crate::reads::collections::db::StoreError;
 use crate::reads::discover::error::{NOT_CONFIGURED, RATE_LIMITED};
 use crate::reads::discover::handlers::AuthenticatedUser;
+use droppedneedle_kernel::error::{
+    FIXED_INTERNAL_MESSAGE, FIXED_UPSTREAM_MESSAGE, INTERNAL_ERROR, INVALID_INPUT, NOT_FOUND,
+    UPSTREAM_ERROR, busy_response, envelope_response, fault_response,
+};
 
 use super::models::{
     YouTubeLink, YouTubeLinkGenerateRequest, YouTubeLinkResponse, YouTubeLinkUpdateRequest,
@@ -60,12 +60,12 @@ pub fn router(links: YouTubeLinks) -> Router {
     request_body = YouTubeLinkGenerateRequest,
     responses(
         (status = 200, description = "Saved link and today's budget", body = YouTubeLinkResponse),
-        (status = 400, description = "Bad request body", body = crate::error::ErrorEnvelope),
+        (status = 400, description = "Bad request body", body = droppedneedle_kernel::error::ErrorEnvelope),
         (status = 401, description = "Not authenticated"),
-        (status = 404, description = "YouTube had no video for the album", body = crate::error::ErrorEnvelope),
-        (status = 429, description = "Today's search budget is spent (RATE_LIMITED)", body = crate::error::ErrorEnvelope),
-        (status = 502, description = "YouTube failed", body = crate::error::ErrorEnvelope),
-        (status = 503, description = "YouTube search is not set up (NOT_CONFIGURED)", body = crate::error::ErrorEnvelope),
+        (status = 404, description = "YouTube had no video for the album", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 429, description = "Today's search budget is spent (RATE_LIMITED)", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 502, description = "YouTube failed", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 503, description = "YouTube search is not set up (NOT_CONFIGURED)", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn generate_link(
@@ -157,9 +157,9 @@ pub async fn delete_link(
     request_body = YouTubeLinkUpdateRequest,
     responses(
         (status = 200, description = "Edited link", body = YouTubeLink),
-        (status = 400, description = "Bad body or not a YouTube URL", body = crate::error::ErrorEnvelope),
+        (status = 400, description = "Bad body or not a YouTube URL", body = droppedneedle_kernel::error::ErrorEnvelope),
         (status = 401, description = "Not authenticated"),
-        (status = 404, description = "No link saved for the album", body = crate::error::ErrorEnvelope),
+        (status = 404, description = "No link saved for the album", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn update_link(
@@ -182,7 +182,7 @@ pub async fn update_link(
     request_body = YouTubeManualLinkRequest,
     responses(
         (status = 200, description = "Saved link", body = YouTubeLink),
-        (status = 400, description = "Bad body or not a YouTube URL", body = crate::error::ErrorEnvelope),
+        (status = 400, description = "Bad body or not a YouTube URL", body = droppedneedle_kernel::error::ErrorEnvelope),
         (status = 401, description = "Not authenticated"),
     )
 )]
@@ -205,12 +205,12 @@ pub async fn save_manual_link(
     request_body = YouTubeTrackLinkGenerateRequest,
     responses(
         (status = 200, description = "Saved track link and today's budget", body = YouTubeTrackLinkResponse),
-        (status = 400, description = "Bad request body", body = crate::error::ErrorEnvelope),
+        (status = 400, description = "Bad request body", body = droppedneedle_kernel::error::ErrorEnvelope),
         (status = 401, description = "Not authenticated"),
-        (status = 404, description = "YouTube had no video for the track", body = crate::error::ErrorEnvelope),
-        (status = 429, description = "Today's search budget is spent (RATE_LIMITED)", body = crate::error::ErrorEnvelope),
-        (status = 502, description = "YouTube failed", body = crate::error::ErrorEnvelope),
-        (status = 503, description = "YouTube search is not set up (NOT_CONFIGURED)", body = crate::error::ErrorEnvelope),
+        (status = 404, description = "YouTube had no video for the track", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 429, description = "Today's search budget is spent (RATE_LIMITED)", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 502, description = "YouTube failed", body = droppedneedle_kernel::error::ErrorEnvelope),
+        (status = 503, description = "YouTube search is not set up (NOT_CONFIGURED)", body = droppedneedle_kernel::error::ErrorEnvelope),
     )
 )]
 pub async fn generate_track_link(
@@ -234,7 +234,7 @@ pub async fn generate_track_link(
     request_body = YouTubeTrackLinkBatchGenerateRequest,
     responses(
         (status = 200, description = "Saved track links, failures and today's budget", body = YouTubeTrackLinkBatchResponse),
-        (status = 400, description = "Bad request body or too many tracks", body = crate::error::ErrorEnvelope),
+        (status = 400, description = "Bad request body or too many tracks", body = droppedneedle_kernel::error::ErrorEnvelope),
         (status = 401, description = "Not authenticated"),
     )
 )]
@@ -288,7 +288,7 @@ pub async fn list_track_links(
     ),
     responses(
         (status = 204, description = "Removed, or nothing was saved"),
-        (status = 400, description = "Disc or track is not a number", body = crate::error::ErrorEnvelope),
+        (status = 400, description = "Disc or track is not a number", body = droppedneedle_kernel::error::ErrorEnvelope),
         (status = 401, description = "Not authenticated"),
     )
 )]

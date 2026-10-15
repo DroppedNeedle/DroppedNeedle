@@ -22,8 +22,8 @@ use std::sync::{Arc, Mutex, Weak};
 
 use serde_json::Value;
 
-use crate::runtime_config::ConfigStore;
-use crate::runtime_config::sections::PluginConfig;
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::sections::PluginConfig;
 
 use super::capabilities::events::EventState;
 use super::manifest::{PluginManifest, active_capabilities, load_manifest};
@@ -666,7 +666,7 @@ fn state_key(params: &Value) -> Result<String, RpcError> {
         .get("key")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    crate::jobs::plugin_ticks::validate_state_key(key).map_err(|_| {
+    droppedneedle_kernel::jobs::plugin_ticks::validate_state_key(key).map_err(|_| {
         RpcError::new(
             codes::INVALID_PARAMS,
             "state keys are 1-64 lowercase letters, digits, _ - or /, starting with a letter or digit",

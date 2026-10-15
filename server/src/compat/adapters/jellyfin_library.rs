@@ -28,7 +28,7 @@ use crate::reads::library::player::{
     AlbumOrder, AlbumQuery, OrderKey, PlayerAlbum, PlayerTrack, TrackOrder, TrackQuery,
 };
 use crate::reads::library::stores::{ArtistRecord, ArtistScope as CatalogScope};
-use crate::runtime_config::Crypto;
+use droppedneedle_kernel::runtime_config::Crypto;
 
 /// Shortest gap between two catalog reads for the id map.
 pub const REBUILD_COOLDOWN: Duration = Duration::from_secs(10);

@@ -31,7 +31,7 @@ const FIXED_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 #[derive(Debug, Clone)]
 struct FixedIds;
 
-impl droppedneedle::ids::IdGenerator for FixedIds {
+impl droppedneedle_kernel::ids::IdGenerator for FixedIds {
     fn new_id(&self) -> String {
         FIXED_ID.to_owned()
     }

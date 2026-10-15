@@ -11,7 +11,6 @@ use std::sync::Arc;
 use droppedneedle::acquire::requests::mix::{
     MixGrantHooks, MixSources, PersonalMixBuilder, SkipReason,
 };
-use droppedneedle::events::EventSink;
 use droppedneedle::plugins::scrobble::{
     MemoryScrobblePrefsStore, MixApprovalHook as _, MixStateReader as _, ScrobblePrefsPatch,
     ScrobblePrefsStore as _,
@@ -24,6 +23,7 @@ use droppedneedle::providers::listenbrainz::{
 };
 use droppedneedle::reads::collections::db::CollectionsDb;
 use droppedneedle::reads::collections::store::playlists::PlaylistStore;
+use droppedneedle_kernel::events::EventSink;
 use futures_util::future::BoxFuture;
 
 use axum::{

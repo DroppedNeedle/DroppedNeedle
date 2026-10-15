@@ -489,7 +489,7 @@ pub fn production_enrichment(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::http_client::HttpClientFactory;
+    use droppedneedle_kernel::http_client::HttpClientFactory;
 
     #[test]
     fn core_error_maps_to_a_leg_error_with_its_source() {

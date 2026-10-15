@@ -414,7 +414,7 @@ async fn import_serializes_with_a_concurrent_writer() {
         .connect_with(options)
         .await
         .unwrap();
-    droppedneedle::schema::apply_migrations(&pool)
+    droppedneedle_kernel::schema::apply_migrations(&pool)
         .await
         .unwrap();
 

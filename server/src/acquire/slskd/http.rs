@@ -9,7 +9,7 @@
 
 use std::future::Future;
 
-use crate::http_client::{BodyError, read_capped, transport_error};
+use droppedneedle_kernel::http_client::{BodyError, read_capped, transport_error};
 
 /// Largest slskd answer read. A search's responses list every file every
 /// peer offered and the transfer list is unpaged, so both can run to

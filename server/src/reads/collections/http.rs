@@ -1,7 +1,7 @@
 //! HTTP mapping for the collections routes.
 //!
 //! [`CollectionsHttpError`] is the only place a collections failure meets a
-//! status code; bodies come from the shared renderers in `crate::error`.
+//! status code; bodies come from the shared renderers in `droppedneedle_kernel::error`.
 //! The body extractors keep malformed input inside the same envelope
 //! instead of Axum's plain-text 400.
 
@@ -14,7 +14,7 @@ use axum::{
 use serde::de::DeserializeOwned;
 
 use super::error::CollectionsError;
-use crate::error::{
+use droppedneedle_kernel::error::{
     CONFLICT, FIXED_INTERNAL_MESSAGE, FORBIDDEN, INTERNAL_ERROR, INVALID_INPUT, NOT_FOUND,
     NOT_FOUND_MESSAGE, busy_response, envelope_response, fault_response, unauthorized_response,
 };

@@ -9,9 +9,9 @@
 
 use std::path::{Path, PathBuf};
 
-use droppedneedle::db::WriteLane;
-use droppedneedle::runtime_config::{Crypto, Secret};
 use droppedneedle::tooling::fixture::{UNKNOWN_USER_ID, build_v2_fixture, delete_orphan_rows};
+use droppedneedle_kernel::db::WriteLane;
+use droppedneedle_kernel::runtime_config::{Crypto, Secret};
 
 /// Scratch directory per brief, removed on drop.
 fn scratch_dir(tag: &str) -> crate::common::ScratchDir {
@@ -76,7 +76,7 @@ async fn seeded_target(root: &Path) -> (PathBuf, sqlx::SqlitePool) {
     std::fs::create_dir_all(v3_root.join("cache")).expect("v3 cache dir");
     let db_path = v3_root.join("cache").join("library.db");
     let pool = writable_pool(&db_path).await;
-    droppedneedle::schema::apply_migrations(&pool)
+    droppedneedle_kernel::schema::apply_migrations(&pool)
         .await
         .expect("scratch schema migrates");
     seed_conflicts(&pool).await;
@@ -185,12 +185,12 @@ async fn imported_counts_match_the_fixture() {
     // The v2 instance Last.fm key pair opens under the v3 key, so linking
     // and scrobbling keep working after the move.
     let config_dir = v3_root.join("config");
-    let store = droppedneedle::runtime_config::ConfigStore::open(
+    let store = droppedneedle_kernel::runtime_config::ConfigStore::open(
         &config_dir.join("config.json"),
         Crypto::load(&config_dir).expect("v3 key loads"),
     )
     .expect("v3 config opens");
-    let lastfm: droppedneedle::runtime_config::secret_sections::LastFmSettings =
+    let lastfm: droppedneedle_kernel::runtime_config::secret_sections::LastFmSettings =
         store.get_raw().expect("lastfm settings read");
     assert_eq!(lastfm.api_key.expose(), "lastfm-public-key");
     assert_eq!(lastfm.shared_secret.expose(), "lastfm-shared-plaintext");
@@ -536,7 +536,7 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
         fixture.secrets.lastfm_session
     );
     // A plugin setting sealed without a v2 manifest reads back plain.
-    let store = droppedneedle::runtime_config::ConfigStore::open(
+    let store = droppedneedle_kernel::runtime_config::ConfigStore::open(
         &v3_root.join("config").join("config.json"),
         crypto,
     )
@@ -682,7 +682,7 @@ async fn run_pipeline_with(
 /// fails.
 async fn login_rehashes(
     pool: &sqlx::SqlitePool,
-    lane: &droppedneedle::db::WriteLane,
+    lane: &droppedneedle_kernel::db::WriteLane,
     username: &str,
     user_id: &str,
     password: &str,
@@ -782,7 +782,7 @@ async fn assert_follows_intact(
 /// secret resolves nowhere.
 async fn assert_compat_reauth(
     pool: &sqlx::SqlitePool,
-    lane: &droppedneedle::db::WriteLane,
+    lane: &droppedneedle_kernel::db::WriteLane,
     v3_root: &Path,
     fixture: &droppedneedle::tooling::fixture::V2Fixture,
 ) {

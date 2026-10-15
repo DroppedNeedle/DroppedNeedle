@@ -35,7 +35,7 @@ use crate::library::management::tag_edit::{EditorContext, TagEditRequest};
 use crate::library::publish::PlacementMode;
 use crate::library::settings_models::LibraryManagementSettingsResponse;
 use crate::library::wiring::LibrarySetup;
-use crate::runtime_config::sections::LibraryManagement;
+use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
 
 /// The routes, relative for nesting under `/api/v3`.
 pub fn router() -> Router<LibrarySetup> {

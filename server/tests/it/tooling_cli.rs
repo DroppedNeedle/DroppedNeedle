@@ -57,7 +57,7 @@ fn repaired_export(
     let request = droppedneedle::export::ExportRequest {
         v2: droppedneedle::export::v2dir::V2Dirs::under_root(&fixture.root),
         db_path: None,
-        passphrase: droppedneedle::runtime_config::Secret::new("operator-passphrase"),
+        passphrase: droppedneedle_kernel::runtime_config::Secret::new("operator-passphrase"),
         exported_at: None,
         v2_commit: None,
     };
@@ -447,7 +447,7 @@ async fn import_refuses_a_locked_database() {
         .connect(&format!("sqlite:{}?mode=rwc", db.display()))
         .await
         .expect("writable pool opens");
-    droppedneedle::schema::apply_migrations(&pool)
+    droppedneedle_kernel::schema::apply_migrations(&pool)
         .await
         .expect("schema migrates");
     pool.close().await;
@@ -487,7 +487,7 @@ fn import_refuses_while_the_server_holds_the_database() {
     let db = root.join("v3.db");
     let config_dir = root.join("config");
     std::fs::create_dir_all(&config_dir).expect("config dir");
-    let _server = droppedneedle::db::datalock::DataLock::shared(&db).expect("server lock");
+    let _server = droppedneedle_kernel::db::datalock::DataLock::shared(&db).expect("server lock");
 
     let status = Command::new(tool())
         .args(["import", "--file"])
@@ -595,7 +595,7 @@ fn is_v3(root: &Path) -> bool {
 }
 
 fn upgrade_dirs(root: &Path) -> data_dirs::DataDirs {
-    data_dirs::DataDirs::from_config(&droppedneedle::AppConfig::with_root(0, root))
+    data_dirs::DataDirs::from_config(&droppedneedle_kernel::config::AppConfig::with_root(0, root))
 }
 
 /// The upgrade through the library, for the failure points the tool has
@@ -773,7 +773,8 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
         );
     };
     {
-        let _server = droppedneedle::db::datalock::DataLock::shared(&db_path).expect("server lock");
+        let _server =
+            droppedneedle_kernel::db::datalock::DataLock::shared(&db_path).expect("server lock");
         refused(&["recovery-code", "alice"], "Stop the server");
         refused(&["recovery-code", "--list-admins"], "Stop the server");
     }
@@ -781,7 +782,8 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
     // even while the server holds the data directory.
     refused(&["recovery-code", "-x"], "unknown flag");
     {
-        let _server = droppedneedle::db::datalock::DataLock::shared(&db_path).expect("server lock");
+        let _server =
+            droppedneedle_kernel::db::datalock::DataLock::shared(&db_path).expect("server lock");
         let help = tool_in(&root, &["recovery-code", "-h"]);
         assert!(help.status.success(), "stderr: {}", stderr_of(&help));
         assert!(String::from_utf8_lossy(&help.stdout).contains("--list-admins"));
@@ -823,9 +825,10 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
     assert_eq!(count(ALICE_CODES), 1);
 
     // The services the web routes call, over the same database.
-    let runtime = droppedneedle::db::open_runtime(&droppedneedle::db::DbConfig::new(&db_path))
-        .await
-        .expect("database opens");
+    let runtime =
+        droppedneedle_kernel::db::open_runtime(&droppedneedle_kernel::db::DbConfig::new(&db_path))
+            .await
+            .expect("database opens");
     let auth_db = AuthDb::new(runtime.pool(), runtime.lane());
     let hasher = Argon2idHasher::new();
     let mut deps = TestRig::new().expect("rig builds").deps;
@@ -921,9 +924,10 @@ async fn a_failed_upgrade_leaves_the_v2_directory_as_it_was() {
 
     // A running server holds the data lock: refused.
     {
-        let _server =
-            droppedneedle::db::datalock::DataLock::shared(&root.join("cache").join("library.db"))
-                .expect("server lock");
+        let _server = droppedneedle_kernel::db::datalock::DataLock::shared(
+            &root.join("cache").join("library.db"),
+        )
+        .expect("server lock");
         let run = tool_in(&root, &["upgrade"]);
         assert!(!run.status.success());
         assert!(
@@ -1070,9 +1074,10 @@ fn undo_returns_the_v2_files_and_no_backup_keeps_none() {
 
     // A running server holds the data lock: refused.
     {
-        let _server =
-            droppedneedle::db::datalock::DataLock::shared(&root.join("cache").join("library.db"))
-                .expect("server lock");
+        let _server = droppedneedle_kernel::db::datalock::DataLock::shared(
+            &root.join("cache").join("library.db"),
+        )
+        .expect("server lock");
         let refused = tool_in(&root, &["upgrade", "--undo", "--yes"]);
         assert!(!refused.status.success());
         assert!(
@@ -1145,7 +1150,7 @@ async fn merge_target(
         .connect(&format!("sqlite:{}?mode=rwc", db_path.display()))
         .await
         .expect("writable pool opens");
-    droppedneedle::schema::apply_migrations(&pool)
+    droppedneedle_kernel::schema::apply_migrations(&pool)
         .await
         .expect("schema migrates");
     let config_dir = root.join("config");
@@ -1158,8 +1163,8 @@ async fn run_merge(
     pool: &sqlx::SqlitePool,
     config_dir: &std::path::Path,
 ) -> droppedneedle::r#import::ImportReport {
-    let crypto =
-        droppedneedle::runtime_config::Crypto::load_or_generate(config_dir).expect("v3 key loads");
+    let crypto = droppedneedle_kernel::runtime_config::Crypto::load_or_generate(config_dir)
+        .expect("v3 key loads");
     droppedneedle::r#import::run_import(droppedneedle::r#import::ImportRequest {
         export_bytes: std::fs::read(export).expect("export reads"),
         passphrase: "operator-passphrase".to_owned(),
@@ -1305,7 +1310,7 @@ async fn approval_conflict_keeps_most_permissive() {
 
 #[tokio::test]
 async fn restore_round_trips_and_refuses() {
-    use droppedneedle::db::{BackupService, CancelFlag};
+    use droppedneedle_kernel::db::{BackupService, CancelFlag};
 
     let root = scratch_dir("restore");
     let live = root.join("live.db");
@@ -1314,7 +1319,7 @@ async fn restore_round_trips_and_refuses() {
         .connect(&format!("sqlite:{}?mode=rwc", live.display()))
         .await
         .expect("writable pool opens");
-    droppedneedle::schema::apply_migrations(&pool)
+    droppedneedle_kernel::schema::apply_migrations(&pool)
         .await
         .expect("schema migrates");
     sqlx::query(

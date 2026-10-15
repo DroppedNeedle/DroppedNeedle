@@ -47,16 +47,16 @@ use thiserror::Error;
 use crate::bootstrap::data_dirs::{
     BACKUP_DIR_NAME, DataDirs, Layout, MARKER_FILE_NAME, UnknownLayout, detect, wal_bytes, wal_path,
 };
-use crate::db::datalock::{DataLock, DataLockError, lock_path};
 use crate::export::v2dir::{self, V2Dirs};
 use crate::export::{ExportError, ExportRequest, export_v2_to_file};
 use crate::import::{
     ExitCode, ExportFile, ImportReport, ImportRequest, ValidationIssue, check_attachments,
     run_import, validate_export,
 };
-use crate::runtime_config::crypto::CryptoError;
-use crate::runtime_config::{Crypto, Secret};
-use crate::schema::SchemaError;
+use droppedneedle_kernel::db::datalock::{DataLock, DataLockError, lock_path};
+use droppedneedle_kernel::runtime_config::crypto::CryptoError;
+use droppedneedle_kernel::runtime_config::{Crypto, Secret};
+use droppedneedle_kernel::schema::SchemaError;
 
 /// Work folder in `cache/` for the export file and its bundle.
 const WORK_DIR_NAME: &str = ".upgrade-work";
@@ -1030,7 +1030,7 @@ async fn import_into(
     pool: &SqlitePool,
     job: OfflineImport,
 ) -> Result<ImportReport, OfflineImportError> {
-    crate::schema::apply_migrations(pool).await?;
+    droppedneedle_kernel::schema::apply_migrations(pool).await?;
     probe_write_lock(pool).await?;
     let crypto = if job.dry_run {
         // Throwaway in-memory key: a dry run re-encrypts into a config it

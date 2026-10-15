@@ -280,8 +280,10 @@ mod tests {
 
     #[test]
     fn only_files_inside_a_root_resolve() {
-        let music = crate::db::scratch::ScratchDir::new("download-root").expect("music dir");
-        let elsewhere = crate::db::scratch::ScratchDir::new("download-other").expect("other dir");
+        let music =
+            droppedneedle_kernel::db::scratch::ScratchDir::new("download-root").expect("music dir");
+        let elsewhere = droppedneedle_kernel::db::scratch::ScratchDir::new("download-other")
+            .expect("other dir");
         std::fs::create_dir_all(music.path().join("Artist")).expect("album dir");
         std::fs::write(music.path().join("Artist/song.flac"), b"x").expect("song");
         std::fs::write(elsewhere.path().join("secret.flac"), b"x").expect("secret");

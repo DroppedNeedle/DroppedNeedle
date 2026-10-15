@@ -9,7 +9,7 @@ use axum::{
 };
 use serde::de::DeserializeOwned;
 
-use crate::error::{
+use droppedneedle_kernel::error::{
     CONFLICT, FIXED_INTERNAL_MESSAGE, FORBIDDEN, INTERNAL_ERROR, INVALID_INPUT, NOT_FOUND,
     NOT_FOUND_MESSAGE, UPSTREAM_ERROR, envelope_response, fault_response, unauthorized_response,
 };
@@ -229,7 +229,7 @@ pub async fn run_precache(
         Ok(_) => Ok((
             StatusCode::ACCEPTED,
             Json(PrecacheRunResponse {
-                job: crate::jobs::precache::JOB_NAME.to_owned(),
+                job: droppedneedle_kernel::jobs::precache::JOB_NAME.to_owned(),
                 status: "started".to_owned(),
             }),
         )),
@@ -245,11 +245,11 @@ pub async fn run_precache(
 #[utoipa::path(
     get,
     path = "/api/v3/cache/sync/status",
-    responses((status = 200, description = "Precache progress", body = crate::events::CacheSyncProgress))
+    responses((status = 200, description = "Precache progress", body = droppedneedle_kernel::events::CacheSyncProgress))
 )]
 pub async fn cache_sync_status(
     State(admin): State<AdminSetup>,
-) -> Json<crate::events::CacheSyncProgress> {
+) -> Json<droppedneedle_kernel::events::CacheSyncProgress> {
     Json(
         admin
             .precache

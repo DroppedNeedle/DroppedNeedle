@@ -31,19 +31,19 @@
 
 use std::path::PathBuf;
 
-use droppedneedle::AppConfig;
 use droppedneedle::bootstrap::data_dirs::{DataDirs, Layout};
-use droppedneedle::db::datalock::DataLock;
 use droppedneedle::export::v2dir::V2Dirs;
 use droppedneedle::export::{ExportRequest, export_v2_to_file};
 use droppedneedle::r#import::ExitCode;
-use droppedneedle::runtime_config::Secret;
-use droppedneedle::runtime_config::sections::ContentSecurityPolicyMode;
 use droppedneedle::tooling::host_settings;
 use droppedneedle::tooling::recovery_code;
 use droppedneedle::tooling::upgrade::{
     self, OfflineImport, Step, Summary, UpgradeError, UpgradeRequest, Upgraded,
 };
+use droppedneedle_kernel::config::AppConfig;
+use droppedneedle_kernel::db::datalock::DataLock;
+use droppedneedle_kernel::runtime_config::Secret;
+use droppedneedle_kernel::runtime_config::sections::ContentSecurityPolicyMode;
 
 /// Usage text, printed for `help` and on bad invocations.
 const USAGE: &str = "\

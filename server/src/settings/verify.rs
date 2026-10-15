@@ -18,8 +18,8 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 
-use crate::http_client::read_capped;
-use crate::runtime_config::settings_error::SettingsError;
+use droppedneedle_kernel::http_client::read_capped;
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// Per-probe HTTP budget, matching the v2 repositories.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);

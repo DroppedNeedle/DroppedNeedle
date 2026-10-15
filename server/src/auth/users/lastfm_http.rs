@@ -9,8 +9,8 @@ use std::time::Duration;
 use super::lastfm_models::{ErrorWire, SessionWire, TokenWire};
 use super::stores::{BoxFuture, LastFmAuthClient, LastFmError};
 use crate::auth::federated::oidc::form_encode;
-use crate::http_client::{BodyError, read_capped};
 use crate::providers::lastfm::api_sig;
+use droppedneedle_kernel::http_client::{BodyError, read_capped};
 
 /// Where the user approves a token.
 pub const AUTH_PAGE: &str = "https://www.last.fm/api/auth/";

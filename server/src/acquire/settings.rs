@@ -36,8 +36,10 @@ use crate::reads::collections::state::{
     ApprovalSeedSink, PendingApproval, PendingApprovalsSource, PendingBatch,
 };
 use crate::reads::collections::store::FollowStore as CollectionsFollowStore;
-use crate::runtime_config::secret_sections::{LidarrImportConnection, SpotifySettings};
-use crate::runtime_config::{ConfigStore, Masked, Secret};
+use droppedneedle_kernel::runtime_config::secret_sections::{
+    LidarrImportConnection, SpotifySettings,
+};
+use droppedneedle_kernel::runtime_config::{ConfigStore, Masked, Secret};
 
 /// Lidarr connection settings over the `lidarr_import` secret section.
 /// Read failures fail closed to empty (the import then reports Lidarr as

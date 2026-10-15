@@ -9,7 +9,7 @@ use sqlx::Row;
 use super::candidates::Candidate;
 use crate::acquire::db::AcquireDb;
 use crate::acquire::downloads::store::{DownloadStore, NewTask, TaskDetails};
-use crate::db::OpError;
+use droppedneedle_kernel::db::OpError;
 
 /// Job statuses.
 pub const SEARCHING: &str = "searching";
@@ -467,7 +467,7 @@ impl JobStore {
             .await;
         match outcome {
             Ok(task_id) => Ok(Ok(task_id)),
-            Err(crate::db::DbError::WriteFailed { cause, .. })
+            Err(droppedneedle_kernel::db::DbError::WriteFailed { cause, .. })
                 if cause.starts_with(PICK_REFUSED) =>
             {
                 Ok(Err(match &cause[PICK_REFUSED.len()..] {

@@ -116,7 +116,7 @@ pub mod fake;
 
 use std::collections::HashMap;
 
-use crate::runtime_config::sections::DownloadAccess;
+use droppedneedle_kernel::runtime_config::sections::DownloadAccess;
 
 // Seam surface: public for the HTTP adapter.
 pub use auth::{Credentials, Principal, classify};
@@ -391,7 +391,7 @@ impl<P: Principal, S: Store, B: AudioBackend> Ctx<'_, P, S, B> {
 /// Log a storage failure and answer code 0 with the fixed message.
 fn store_failure<E: std::fmt::Display>(err: E) -> SubsonicError {
     tracing::error!(cause = %err, "subsonic store call failed");
-    SubsonicError::new(GENERIC, crate::error::FIXED_INTERNAL_MESSAGE)
+    SubsonicError::new(GENERIC, droppedneedle_kernel::error::FIXED_INTERNAL_MESSAGE)
 }
 
 /// Handler outcome: an envelope payload or a binary response.
@@ -756,6 +756,9 @@ mod tests {
     fn store_errors_never_reach_the_client() {
         let error = store_failure("disk I/O error at /srv/db/droppedneedle.sqlite");
         assert_eq!(error.code, GENERIC);
-        assert_eq!(error.message, crate::error::FIXED_INTERNAL_MESSAGE);
+        assert_eq!(
+            error.message,
+            droppedneedle_kernel::error::FIXED_INTERNAL_MESSAGE
+        );
     }
 }

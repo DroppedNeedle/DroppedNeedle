@@ -12,7 +12,7 @@ use crate::library::matching::model::{
     ArtistAlias, ArtistName, ArtistNames, CreditedArtist, RecordingRelations, Release,
     ReleaseTrack, RoleCredit, VARIOUS_ARTISTS_MBID,
 };
-use crate::runtime_config::sections::{ArtistCreditSettings, ArtistStandardization};
+use droppedneedle_kernel::runtime_config::sections::{ArtistCreditSettings, ArtistStandardization};
 
 /// How artist names are written, the way Picard 2.13.3 does it
 /// (`picard/mbjson.py`, `artist_credit_from_node`,
@@ -448,7 +448,9 @@ fn performer_role(attributes: &[String], relation_type: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime_config::sections::ArtistStandardization::{Canonical, Credited};
+    use droppedneedle_kernel::runtime_config::sections::ArtistStandardization::{
+        Canonical, Credited,
+    };
 
     /// A recorded names lookup (`tests/fixtures/musicbrainz`) as
     /// identification stores it, with its names part grafted on.

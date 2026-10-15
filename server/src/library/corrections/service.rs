@@ -22,7 +22,7 @@ use super::token::{self, TokenFault};
 use crate::library::clock::{now_ms, now_unix};
 use crate::library::identify::sqlite::SqliteIdentifyStore;
 use crate::library::wiring::LibrarySetup;
-use crate::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::ConfigStore;
 
 /// Catalog corrections over the library's store. Preview tokens are signed
 /// with the server's data key, held by the settings store.

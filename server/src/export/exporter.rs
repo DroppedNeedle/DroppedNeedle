@@ -31,7 +31,7 @@ use crate::export::fernet::FernetKey;
 use crate::export::seal::Sealer;
 use crate::export::v2dir::V2Dirs;
 use crate::export::{EXPORT_FORMAT, FORMAT_VERSION};
-use crate::runtime_config::Secret;
+use droppedneedle_kernel::runtime_config::Secret;
 
 /// Sections exported verbatim (secret positions sealed where present).
 const KEPT_SECTIONS: &[&str] = &[
@@ -421,7 +421,7 @@ fn open_v2_db(path: &Path) -> Result<Connection, ExportError> {
     }
     let uri = format!(
         "file:{}?immutable=1",
-        crate::db::factory::sqlite_uri_path(path)
+        droppedneedle_kernel::db::factory::sqlite_uri_path(path)
     );
     Connection::open_with_flags(
         uri,

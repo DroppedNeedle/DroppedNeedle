@@ -13,12 +13,12 @@ use droppedneedle::auth::session::extract::Transport;
 use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::session::store::SessionKind;
 use droppedneedle::auth::users::memory::with_test_principal;
-use droppedneedle::ids::IdGenerator;
 use droppedneedle::reads::discover::fakes::{
     FakeBatches, FakeCharts, FakeContent, FakeNowPlaying, FakePreviews, FakeQueues, FakeRadio,
     FakeYouTube, ManualClock,
 };
 use droppedneedle::reads::discover::services::ReadsDeps;
+use droppedneedle_kernel::ids::IdGenerator;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 

@@ -10,7 +10,7 @@ use crate::reads::discover::{
     models::YouTubeQuotaResponse,
     ports::{BoxFuture, ProviderFailure, YouTubeSource},
 };
-use crate::runtime_config::{ConfigStore, secret_sections::YouTubeConnection};
+use droppedneedle_kernel::runtime_config::{ConfigStore, secret_sections::YouTubeConnection};
 
 /// Live YouTube search.
 pub struct LiveYouTube {

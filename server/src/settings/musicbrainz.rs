@@ -20,14 +20,14 @@ use super::models::{
 };
 use super::verify::{VerifyProbes, require_service_url};
 use crate::bootstrap::Outbound;
-use crate::ids::IdGenerator;
-use crate::runtime_config::ConfigStore;
-use crate::runtime_config::sections::{
+use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::sections::{
     BRAINZMASH_CONCURRENT_SEARCHES, BRAINZMASH_ENDPOINT, BRAINZMASH_RATE_LIMIT, MbSourceMode,
     MusicBrainzSettings, OFFICIAL_MB_API_BASE, OFFICIAL_MB_CONCURRENT_SEARCHES,
     OFFICIAL_MB_RATE_LIMIT, exact_nonblank,
 };
-use crate::runtime_config::settings_error::SettingsError;
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// BrainzMash disclosure version. A proposal carrying any other version
 /// is outdated and cannot proceed.
@@ -124,7 +124,7 @@ impl MusicBrainzLifecycle {
         }
     }
 
-    fn config(&self, error: crate::runtime_config::ConfigError) -> SettingsError {
+    fn config(&self, error: droppedneedle_kernel::runtime_config::ConfigError) -> SettingsError {
         SettingsError::from_config(error, self.ids.as_ref())
     }
 
@@ -337,10 +337,10 @@ impl MusicBrainzLifecycle {
             }
         }
         drop(guard);
-        let mut internal: crate::runtime_config::sections::InternalState =
+        let mut internal: droppedneedle_kernel::runtime_config::sections::InternalState =
             self.store.get().map_err(|e| self.config(e))?;
         internal.brainzmash_consent_admin = Some(admin_id.to_owned());
-        let _: crate::runtime_config::sections::InternalState =
+        let _: droppedneedle_kernel::runtime_config::sections::InternalState =
             self.store.save(internal).map_err(|e| self.config(e))?;
         let stored: MusicBrainzSettings = self.store.get().map_err(|e| self.config(e))?;
         Ok(self.view(stored))
@@ -461,15 +461,17 @@ impl MusicBrainzLifecycle {
             selected_source_mode: MbSourceMode::Brainzmash,
             source_id: proposal.source_id.clone(),
             generation: proposal.generation,
-            active_brainzmash: Some(crate::runtime_config::sections::BrainzmashActiveBinding {
-                endpoint: proposal.endpoint.clone(),
-                access_revision: proposal.access_revision.clone(),
-                source_id: proposal.source_id.clone(),
-                generation: proposal.generation,
-                disclosure_version: proposal.disclosure_version.clone(),
-                consented: true,
-                verified: true,
-            }),
+            active_brainzmash: Some(
+                droppedneedle_kernel::runtime_config::sections::BrainzmashActiveBinding {
+                    endpoint: proposal.endpoint.clone(),
+                    access_revision: proposal.access_revision.clone(),
+                    source_id: proposal.source_id.clone(),
+                    generation: proposal.generation,
+                    disclosure_version: proposal.disclosure_version.clone(),
+                    consented: true,
+                    verified: true,
+                },
+            ),
             clamped_to_official_limits: false,
         };
         let saved: MusicBrainzSettings = self.store.save(promoted).map_err(|e| self.config(e))?;

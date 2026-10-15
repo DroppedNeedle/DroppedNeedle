@@ -43,7 +43,7 @@ use super::requests::quota::QuotaLedger;
 use super::requests::sqlite::WantedStore;
 use super::target::{SearchTarget, Targets};
 use super::worker::{DownloadWorker, Source};
-use crate::events::{EventSink, SearchJobUpdated, UserNotice, new_event_id};
+use droppedneedle_kernel::events::{EventSink, SearchJobUpdated, UserNotice, new_event_id};
 
 /// How long one source may take to answer a manual search.
 const SOURCE_TIMEOUT: Duration = Duration::from_secs(150);

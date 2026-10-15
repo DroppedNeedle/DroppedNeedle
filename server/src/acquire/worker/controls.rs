@@ -12,7 +12,7 @@ use crate::acquire::downloads::sources::TransferProgress;
 use crate::acquire::downloads::state::TaskStatus;
 use crate::acquire::downloads::store::TaskRow;
 use crate::acquire::downloads::watchdog::Watchdog;
-use crate::events::{DownloadProgress, UserNotice};
+use droppedneedle_kernel::events::{DownloadProgress, UserNotice};
 
 /// Why the next-source action was refused. The sentences are shown to
 /// the person who clicked.

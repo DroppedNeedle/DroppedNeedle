@@ -22,7 +22,6 @@ use super::models::{
 use super::plays;
 use super::reasons;
 use super::store::{self, Phase, RepairSnapshot};
-use crate::ids::IdGenerator;
 use crate::library::clock::{now_ms, now_unix};
 use crate::library::identify::models::{IdentifyKind, LocalAlbumFacts, RecallResult};
 use crate::library::identify::service::IdentifyService;
@@ -35,8 +34,9 @@ use crate::library::operations::reidentify::evaluation;
 use crate::library::operations::service::Operations;
 use crate::library::operations::store as jobs;
 use crate::library::wiring::{LibrarySetup, ScanCoordinator};
-use crate::runtime_config::ConfigStore;
-use crate::runtime_config::sections::LibraryManagement;
+use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
 
 /// How long one worker turn may run before the job goes back to the
 /// queue, so other operations get their turn.

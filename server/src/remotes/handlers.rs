@@ -14,7 +14,6 @@ use std::sync::Arc;
 use crate::auth::session::middleware::CurrentSession;
 use crate::auth::users::UsersDeps;
 use crate::auth::users::stores::StoreError as UserStoreError;
-use crate::ids::IdGenerator;
 use axum::{
     Json,
     extract::{FromRequestParts, Path, State},
@@ -22,6 +21,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use droppedneedle_kernel::ids::IdGenerator;
 
 use super::adapter::{AlbumBrowse, ArtistBrowse, TrackBrowse};
 use super::error::{RemotesError, ValidJson, ValidQuery};

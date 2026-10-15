@@ -31,7 +31,7 @@ use crate::reads::library::player::{
     AlbumOrder, AlbumQuery, PlayerAlbum, PlayerTrack, TrackOrder, TrackQuery,
 };
 use crate::reads::library::stores::ArtistRecord;
-use crate::runtime_config::Crypto;
+use droppedneedle_kernel::runtime_config::Crypto;
 
 /// Unix seconds to the `YYYY-MM-DDTHH:MM:SSZ` form Subsonic shows.
 fn iso_text(unix: u64) -> Option<String> {

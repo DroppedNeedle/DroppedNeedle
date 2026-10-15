@@ -11,7 +11,7 @@ use crate::library::management::settings;
 use crate::library::matching::model::{Release, ReleaseTrack};
 use crate::library::publish::TagDocument;
 use crate::library::tags::{TagEdit, TagField, picard, save};
-use crate::runtime_config::sections::{
+use droppedneedle_kernel::runtime_config::sections::{
     FieldMode, LibraryManagement, LibraryManagementProfile, LibraryManagementRootAssignment,
     LibraryManagementRootOverrides, TaggingScript,
 };
@@ -74,11 +74,13 @@ pub fn tag_edit_profile(
     profile.metadata.enabled = true;
     profile.metadata.fields = field_names
         .iter()
-        .map(|name| crate::runtime_config::sections::ManagedField {
-            field: name.clone(),
-            mode: FieldMode::Replace,
-            ..Default::default()
-        })
+        .map(
+            |name| droppedneedle_kernel::runtime_config::sections::ManagedField {
+                field: name.clone(),
+                mode: FieldMode::Replace,
+                ..Default::default()
+            },
+        )
         .collect();
     profile.metadata.tagging_script_ids.clear();
     profile.metadata.preserve_fields.clear();
@@ -102,14 +104,15 @@ pub fn pin_assignment(
     stored: &LibraryManagement,
     assignment: &LibraryManagementRootAssignment,
 ) -> Result<PinnedProfile, ManagementError> {
-    let invalid = |error: crate::runtime_config::settings_error::SettingsError| match error {
-        crate::runtime_config::settings_error::SettingsError::InvalidInput { message } => {
-            ManagementError::Invalid(format!(
+    let invalid =
+        |error: droppedneedle_kernel::runtime_config::settings_error::SettingsError| match error {
+            droppedneedle_kernel::runtime_config::settings_error::SettingsError::InvalidInput {
+                message,
+            } => ManagementError::Invalid(format!(
                 "{message} Edit the profile in Settings > Library Management."
-            ))
-        }
-        other => ManagementError::Store(format!("{other:?}")),
-    };
+            )),
+            other => ManagementError::Store(format!("{other:?}")),
+        };
     let mut profile = settings::pin_profile(stored, assignment).map_err(invalid)?;
     profile.revision = settings::profile_revision(&profile);
     let (naming_script, multi_disc_naming_script) =
@@ -1024,7 +1027,7 @@ fn replaygain(
     desired: &mut BTreeMap<String, Vec<String>>,
     warnings: &mut Vec<String>,
 ) -> Result<(), ItemReason> {
-    use crate::runtime_config::sections::ReplayGainMode;
+    use droppedneedle_kernel::runtime_config::sections::ReplayGainMode;
     let settings = &profile.enrichment.replaygain;
     if !settings.enabled || settings.mode == ReplayGainMode::Preserve {
         return Ok(());
@@ -1214,7 +1217,7 @@ mod tests {
     use crate::library::matching::model::{
         RecordingRelations, ReleaseRelations, RoleCredit, WorkCredit,
     };
-    use crate::runtime_config::sections::RelationshipType;
+    use droppedneedle_kernel::runtime_config::sections::RelationshipType;
 
     /// The classical probe: Gould and Karajan's Beethoven concerto, then
     /// Sibelius and a spoken track that performs no work.
@@ -1250,7 +1253,7 @@ mod tests {
     /// given, and `relationships` adjusted by `adjust`.
     fn credit_profile(
         clear: bool,
-        adjust: impl Fn(&mut crate::runtime_config::sections::RelationshipCreditSettings),
+        adjust: impl Fn(&mut droppedneedle_kernel::runtime_config::sections::RelationshipCreditSettings),
     ) -> PinnedProfile {
         let mut settings = settings::initial_settings("");
         for profile in &mut settings.profiles {
@@ -1648,7 +1651,7 @@ mod tests {
     /// defaults writes the credited names and needs no names part.
     #[test]
     fn artist_names_need_their_lookup() {
-        use crate::runtime_config::sections::ArtistStandardization;
+        use droppedneedle_kernel::runtime_config::sections::ArtistStandardization;
         let mut probe: serde_json::Value = serde_json::from_str(include_str!(
             "../../../tests/fixtures/musicbrainz/release_names_sakamoto.json"
         ))

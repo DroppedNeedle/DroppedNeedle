@@ -11,10 +11,10 @@ use axum::{
 };
 use serde_json::json;
 
-use crate::{
+use crate::reads::discover::ports::BatchRefusal;
+use droppedneedle_kernel::{
     error::{ErrorBody, ErrorEnvelope},
     ids::IdGenerator,
-    reads::discover::ports::BatchRefusal,
 };
 
 /// Missing or invalid session.
@@ -118,7 +118,7 @@ impl ReadsError {
             Self::Unauthorized { message } => (UNAUTHORIZED.to_owned(), message.clone(), None),
             Self::NotFound => (
                 NOT_FOUND.to_owned(),
-                crate::error::NOT_FOUND_MESSAGE.to_owned(),
+                droppedneedle_kernel::error::NOT_FOUND_MESSAGE.to_owned(),
                 None,
             ),
             Self::InvalidInput { message } => (INVALID_INPUT.to_owned(), message.clone(), None),
@@ -128,8 +128,8 @@ impl ReadsError {
                 Some(json!({ "error_id": error_id })),
             ),
             Self::Internal { error_id } => (
-                crate::error::INTERNAL_ERROR.to_owned(),
-                crate::error::FIXED_INTERNAL_MESSAGE.to_owned(),
+                droppedneedle_kernel::error::INTERNAL_ERROR.to_owned(),
+                droppedneedle_kernel::error::FIXED_INTERNAL_MESSAGE.to_owned(),
                 Some(json!({ "error_id": error_id })),
             ),
             Self::NotConfigured { message } => (NOT_CONFIGURED.to_owned(), message.clone(), None),

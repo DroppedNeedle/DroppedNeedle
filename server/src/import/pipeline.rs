@@ -40,7 +40,7 @@ use super::envelope::{ExportFile, Opener, collect_sealed, is_sealed, unseal_valu
 use super::r8::carry_frequency;
 use super::report::{ExitCode, ExportProvenance, ImportReport, ReportBuilder, utc_now_iso};
 use super::validate::{ValidationIssue, validate_export};
-use crate::runtime_config::Crypto;
+use droppedneedle_kernel::runtime_config::Crypto;
 
 /// Sections the export may carry (kept whole or in part). Present
 /// sections replace the v3 config wholesale; absent ones reset to v3
@@ -647,7 +647,7 @@ fn note_unflagged_plugin_settings(plugins: &Value, report: &mut ReportBuilder) {
 /// reader to report.
 fn carry_v2_management_fields(section: &mut Value) {
     use crate::library::management::settings::MANAGED_FIELDS;
-    use crate::runtime_config::sections::{FieldMode, ManagedField};
+    use droppedneedle_kernel::runtime_config::sections::{FieldMode, ManagedField};
     let Some(profiles) = section.get_mut("profiles").and_then(Value::as_array_mut) else {
         return;
     };
@@ -2318,7 +2318,9 @@ fn configs_equivalent(current: &Value, staged: &Value, crypto: &Crypto) -> bool 
 
 fn with_plaintexts(value: &Value, crypto: &Crypto) -> Value {
     match value {
-        Value::String(text) if text.starts_with(crate::runtime_config::crypto::CIPHER_PREFIX) => {
+        Value::String(text)
+            if text.starts_with(droppedneedle_kernel::runtime_config::crypto::CIPHER_PREFIX) =>
+        {
             crypto
                 .decrypt(text)
                 .map(Value::String)

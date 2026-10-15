@@ -32,7 +32,7 @@ use crate::library::wiring::LibrarySetup;
 use crate::media::MediaEngine;
 use crate::playback::services::PlaybackDeps;
 use crate::reads::ReadsSetup;
-use crate::runtime_config::Crypto;
+use droppedneedle_kernel::runtime_config::Crypto;
 
 /// Subsonic verifier over the app-password store.
 pub type CompatVerifier = SubsonicVerifier<ProdCompatPasswords, UsersDeps>;
@@ -171,7 +171,7 @@ impl CompatSetup {
         users: UsersDeps,
         scan: LibrarySetup,
         reads: &ReadsSetup,
-        ids: Arc<dyn crate::ids::IdGenerator>,
+        ids: Arc<dyn droppedneedle_kernel::ids::IdGenerator>,
     ) -> Result<Self, String> {
         use std::path::PathBuf;
 
@@ -192,7 +192,7 @@ impl CompatSetup {
         let crypto = Arc::new(
             Crypto::from_key_bytes(&[7u8; 32]).map_err(|error| format!("test key: {error}"))?,
         );
-        let http = crate::http_client::HttpClientFactory::new()
+        let http = droppedneedle_kernel::http_client::HttpClientFactory::new()
             .map_err(|error| format!("test compat http: {error}"))?
             .shared()
             .clone();
@@ -236,8 +236,8 @@ impl CompatSetup {
             reads,
             LiveSettings::fixed(Settings::default(), JellyfinSettings::default()),
             ListenerConfig {
-                port: crate::config::DEFAULT_PORT,
-                trusted_proxies: crate::config::TrustedProxies::default(),
+                port: droppedneedle_kernel::config::DEFAULT_PORT,
+                trusted_proxies: droppedneedle_kernel::config::TrustedProxies::default(),
                 base_path: String::new(),
             },
         )))

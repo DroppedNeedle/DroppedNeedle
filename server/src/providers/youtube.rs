@@ -465,7 +465,7 @@ impl YouTubeClient {
         if !(200..300).contains(&status) {
             return Err(YoutubeError::Api { status });
         }
-        let body = crate::http_client::read_capped(response, MAX_BODY_BYTES)
+        let body = droppedneedle_kernel::http_client::read_capped(response, MAX_BODY_BYTES)
             .await
             .map_err(|error| YoutubeError::Transport(error.kind().to_owned()))?;
         let video_id = match serde_json::from_slice::<YouTubeSearchResponse>(&body) {

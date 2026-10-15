@@ -43,7 +43,7 @@ use super::store::{
     CatalogEntry, ClassifyInput, CommitIndexedItem, IndexWindow, InventoryPage, RevisionKind,
     ScanStoreError, WindowOutcome,
 };
-use crate::db::fold_text;
+use droppedneedle_kernel::db::fold_text;
 
 /// Stale-inventory rows deleted per cleanup call (v2 page size).
 const STALE_PAGE: usize = 5_000;
@@ -95,7 +95,7 @@ pub struct SqliteScanStore {
     /// Declared after `inner`, so the connection closes before the
     /// directory goes.
     #[cfg(any(test, feature = "test-support"))]
-    scratch: Option<crate::db::scratch::ScratchDir>,
+    scratch: Option<droppedneedle_kernel::db::scratch::ScratchDir>,
 }
 
 /// Prepared statements the store's connection keeps.
@@ -106,7 +106,8 @@ impl SqliteScanStore {
     /// factory, with the canonical connection pragmas. The store creates
     /// no schema itself.
     pub fn open(path: &Path) -> Result<Self, String> {
-        let connection = crate::db::open_connection(path).map_err(|error| error.to_string())?;
+        let connection =
+            droppedneedle_kernel::db::open_connection(path).map_err(|error| error.to_string())?;
         Ok(Self::wrap(connection))
     }
 
@@ -114,10 +115,10 @@ impl SqliteScanStore {
     /// copy's directory is removed when the store drops.
     #[cfg(any(test, feature = "test-support"))]
     pub fn scratch() -> Result<Self, String> {
-        let dir =
-            crate::db::scratch::ScratchDir::new("scan-store").map_err(|error| error.to_string())?;
+        let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("scan-store")
+            .map_err(|error| error.to_string())?;
         let path = dir.path().join("app.db");
-        crate::schema::template::copy_to(&path)?;
+        droppedneedle_kernel::schema::template::copy_to(&path)?;
         let mut store = Self::open(&path)?;
         store.scratch = Some(dir);
         Ok(store)

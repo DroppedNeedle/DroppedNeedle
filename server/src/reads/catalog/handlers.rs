@@ -36,7 +36,8 @@ impl<S: Send + Sync> FromRequestParts<S> for SessionUser {
             .get::<CurrentSession>()
             .map(|session| Self(session.user_id.clone()))
             .ok_or_else(|| {
-                crate::error::unauthorized_response("Authentication required").into_response()
+                droppedneedle_kernel::error::unauthorized_response("Authentication required")
+                    .into_response()
             })
     }
 }
@@ -52,9 +53,9 @@ impl<T: serde::de::DeserializeOwned + Send, S: Send + Sync> FromRequestParts<S> 
             .await
             .map(|Query(value)| Self(value))
             .map_err(|cause| {
-                crate::error::envelope_response(
+                droppedneedle_kernel::error::envelope_response(
                     axum::http::StatusCode::BAD_REQUEST,
-                    crate::error::INVALID_INPUT,
+                    droppedneedle_kernel::error::INVALID_INPUT,
                     format!("Invalid query: {cause}"),
                     None,
                 )

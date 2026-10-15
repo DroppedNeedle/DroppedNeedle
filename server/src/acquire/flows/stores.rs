@@ -16,8 +16,8 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
 use crate::acquire::db::AcquireDb;
-use crate::db::{DbError, map_sqlx_busy};
-use crate::runtime_config::sections::tier_rank;
+use droppedneedle_kernel::db::{DbError, map_sqlx_busy};
+use droppedneedle_kernel::runtime_config::sections::tier_rank;
 
 /// A flows store failure, already logged by the caller with its context.
 #[derive(Debug, thiserror::Error)]

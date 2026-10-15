@@ -15,7 +15,7 @@ use crate::library::identify::sqlite::SqliteIdentifyStore;
 use crate::library::identify::stores::RELEASE_FRESH_SECS;
 use crate::library::matching::Release;
 use crate::library::matching::model::{RELATIONS_VERSION, ReleaseExtras};
-use crate::runtime_config::sections::RelationshipType;
+use droppedneedle_kernel::runtime_config::sections::RelationshipType;
 
 /// Longest one outside call may take while planning.
 const CALL_LIMIT: Duration = Duration::from_secs(20);
@@ -156,7 +156,7 @@ pub const CREDIT_FIELDS: [(&str, Option<RelationshipType>); 9] = [
 /// Whether the profile asks for a credit field: `None` when the name is
 /// not one, `Some(false)` when its Relationships type or switch is off.
 pub fn credit_asked(
-    profile: &crate::runtime_config::sections::LibraryManagementProfile,
+    profile: &droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
     field: &str,
 ) -> Option<bool> {
     let (_, kind) = CREDIT_FIELDS.iter().find(|(name, _)| *name == field)?;
@@ -166,8 +166,10 @@ pub fn credit_asked(
 
 /// Whether planning with this profile needs the credits: a credit field
 /// it asks for is managed and not preserved.
-pub fn credits_wanted(profile: &crate::runtime_config::sections::LibraryManagementProfile) -> bool {
-    use crate::runtime_config::sections::FieldMode;
+pub fn credits_wanted(
+    profile: &droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
+) -> bool {
+    use droppedneedle_kernel::runtime_config::sections::FieldMode;
     let metadata = &profile.metadata;
     metadata.enabled
         && metadata.fields.iter().any(|field| {
@@ -191,8 +193,10 @@ pub const ARTIST_FIELDS: [&str; 6] = [
 /// Whether planning with this profile needs the credited artists' own
 /// MusicBrainz names: it writes MusicBrainz or translated names into an
 /// artist field it manages and does not preserve.
-pub fn names_wanted(profile: &crate::runtime_config::sections::LibraryManagementProfile) -> bool {
-    use crate::runtime_config::sections::{ArtistStandardization, FieldMode};
+pub fn names_wanted(
+    profile: &droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
+) -> bool {
+    use droppedneedle_kernel::runtime_config::sections::{ArtistStandardization, FieldMode};
     let metadata = &profile.metadata;
     let credits = &metadata.artist_credits;
     metadata.enabled
@@ -213,7 +217,7 @@ pub fn names_wanted(profile: &crate::runtime_config::sections::LibraryManagement
 pub fn ensure_release_extras(
     slot: &EnrichmentSlot,
     store: &SqliteIdentifyStore,
-    profile: &crate::runtime_config::sections::LibraryManagementProfile,
+    profile: &droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
     release: &mut Release,
     background: bool,
 ) -> ReleaseParts {
@@ -392,11 +396,11 @@ pub struct ReplayGainValues {
 pub fn gather(
     slot: &EnrichmentSlot,
     store: &SqliteIdentifyStore,
-    profile: &crate::runtime_config::sections::LibraryManagementProfile,
+    profile: &droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
     release: &mut Release,
     automatic: bool,
 ) -> AlbumExtras {
-    use crate::runtime_config::sections::GenreSource;
+    use droppedneedle_kernel::runtime_config::sections::GenreSource;
     let parts = ensure_release_extras(slot, store, profile, release, automatic);
     let mut extras = AlbumExtras {
         credits: parts.credits,
@@ -412,8 +416,8 @@ pub fn gather(
     let archive = artwork.providers.iter().any(|provider| {
         matches!(
             provider,
-            crate::runtime_config::sections::ArtworkProvider::CoverArtArchiveRelease
-                | crate::runtime_config::sections::ArtworkProvider::CoverArtArchiveReleaseGroup
+            droppedneedle_kernel::runtime_config::sections::ArtworkProvider::CoverArtArchiveRelease
+                | droppedneedle_kernel::runtime_config::sections::ArtworkProvider::CoverArtArchiveReleaseGroup
         )
     });
     if (artwork.embedded_enabled || artwork.external_enabled) && archive {
@@ -455,7 +459,7 @@ pub enum LyricsAnswer {
 /// accuracy gate: title, artist, album and a length within two seconds).
 pub fn lyrics(
     slot: &EnrichmentSlot,
-    settings: &crate::runtime_config::sections::LyricsManagementSettings,
+    settings: &droppedneedle_kernel::runtime_config::sections::LyricsManagementSettings,
     release: &crate::library::matching::Release,
     track: &crate::library::matching::ReleaseTrack,
 ) -> LyricsAnswer {
@@ -502,9 +506,9 @@ pub struct RenderedCover {
 pub fn render_cover(
     bytes: &[u8],
     max: i64,
-    format: crate::runtime_config::sections::ArtworkOutputFormat,
+    format: droppedneedle_kernel::runtime_config::sections::ArtworkOutputFormat,
 ) -> Option<RenderedCover> {
-    use crate::runtime_config::sections::ArtworkOutputFormat;
+    use droppedneedle_kernel::runtime_config::sections::ArtworkOutputFormat;
     use image::{ImageFormat, ImageReader, imageops::FilterType};
     use std::io::Cursor;
 

@@ -10,7 +10,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-use crate::error::{
+use droppedneedle_kernel::error::{
     FIXED_UPSTREAM_MESSAGE, INVALID_INPUT, UPSTREAM_ERROR, envelope_response, fault_response,
 };
 
@@ -57,7 +57,7 @@ pub struct CatalogHttpError {
 
 impl CatalogHttpError {
     /// Pair a service error with the id its log line and body share.
-    pub fn new(error: CatalogError, ids: &dyn crate::ids::IdGenerator) -> Self {
+    pub fn new(error: CatalogError, ids: &dyn droppedneedle_kernel::ids::IdGenerator) -> Self {
         Self {
             error,
             error_id: ids.new_id(),
@@ -65,7 +65,10 @@ impl CatalogHttpError {
     }
 
     /// Reject a bad request parameter.
-    pub fn invalid(message: impl Into<String>, ids: &dyn crate::ids::IdGenerator) -> Self {
+    pub fn invalid(
+        message: impl Into<String>,
+        ids: &dyn droppedneedle_kernel::ids::IdGenerator,
+    ) -> Self {
         Self::new(CatalogError::Invalid(message.into()), ids)
     }
 }
@@ -76,22 +79,27 @@ impl IntoResponse for CatalogHttpError {
             CatalogError::Invalid(message) => {
                 envelope_response(StatusCode::BAD_REQUEST, INVALID_INPUT, message, None)
             }
-            CatalogError::NotFound => crate::error::ApiError::NotFound.into_response(),
+            CatalogError::NotFound => {
+                droppedneedle_kernel::error::ApiError::NotFound.into_response()
+            }
             CatalogError::Missing(message) => envelope_response(
                 StatusCode::NOT_FOUND,
-                crate::error::NOT_FOUND,
+                droppedneedle_kernel::error::NOT_FOUND,
                 message,
                 None,
             ),
             CatalogError::Forbidden => envelope_response(
                 StatusCode::FORBIDDEN,
-                crate::error::FORBIDDEN,
+                droppedneedle_kernel::error::FORBIDDEN,
                 "Curator access required",
                 None,
             ),
-            CatalogError::Conflict(message) => {
-                envelope_response(StatusCode::CONFLICT, crate::error::CONFLICT, message, None)
-            }
+            CatalogError::Conflict(message) => envelope_response(
+                StatusCode::CONFLICT,
+                droppedneedle_kernel::error::CONFLICT,
+                message,
+                None,
+            ),
             CatalogError::Unavailable(cause) => {
                 tracing::warn!(error_id = %self.error_id, %cause, "catalog upstream unavailable");
                 fault_response(
@@ -103,7 +111,7 @@ impl IntoResponse for CatalogHttpError {
             }
             CatalogError::Internal(cause) => {
                 tracing::error!(error_id = %self.error_id, %cause, "catalog request failed");
-                crate::error::ApiError::internal_response(&self.error_id)
+                droppedneedle_kernel::error::ApiError::internal_response(&self.error_id)
             }
         }
     }

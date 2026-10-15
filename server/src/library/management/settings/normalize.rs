@@ -11,13 +11,13 @@ use super::presets::{
 };
 use super::revision::{naming_script_revision, profile_revision, tagging_script_revision};
 use super::script::{ScriptCompiler, validate_naming_language, validate_tagging_language};
-use crate::runtime_config::sections::{
+use droppedneedle_kernel::runtime_config::sections::{
     ArtistStandardization, ArtworkProvider, FieldMode, Id3TextEncoding, Id3Version,
     LibraryManagement, LibraryManagementProfile, LibraryManagementRootAssignment,
     LibraryManagementRootOverrides, ManagedField, MultiDiscNamingMode,
     OrganizationManagementSettings,
 };
-use crate::runtime_config::settings_error::SettingsError;
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// Carry the activation pins and migration history forward on save:
 ///

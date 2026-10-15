@@ -18,7 +18,7 @@ use droppedneedle::compat::jellyfin::seams::{
 };
 use droppedneedle::compat::jellyfin::{JellyfinState, router};
 use droppedneedle::compat::shared::address::ListenerConfig;
-use droppedneedle::config::TrustedProxies;
+use droppedneedle_kernel::config::TrustedProxies;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 

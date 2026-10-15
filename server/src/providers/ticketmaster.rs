@@ -38,7 +38,7 @@ use thiserror::Error;
 
 use super::error::{MAX_RETRY_AFTER, ProviderError, classify_status};
 use super::limiter::RateLimiter;
-use crate::http_client::read_capped;
+use droppedneedle_kernel::http_client::read_capped;
 
 /// Provider key used in [ProviderError] and logs.
 pub const SOURCE: &str = "ticketmaster";

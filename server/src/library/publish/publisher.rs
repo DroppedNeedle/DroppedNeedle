@@ -663,7 +663,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         space: P,
         clock: impl Fn() -> i64 + Send + 'static,
     ) -> Result<Self, PublishError> {
-        let conn = crate::db::open_journal_connection(db_path)
+        let conn = droppedneedle_kernel::db::open_journal_connection(db_path)
             .map_err(|error| PublishError::Store(error.to_string()))?;
         Ok(Self {
             sandbox,

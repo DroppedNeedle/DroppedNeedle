@@ -20,7 +20,6 @@ use super::reasons;
 use super::reidentify::{MAX_ATTEMPTS, RETRY_SECS, evaluation, unavailable};
 use super::store::{self, NewReidentification};
 use super::{choice, decisions, history, reviews};
-use crate::ids::IdGenerator;
 use crate::library::clock::now_unix;
 use crate::library::identify::models::IdentifyKind;
 use crate::library::identify::models::LocalAlbumFacts;
@@ -30,6 +29,7 @@ use crate::library::identify::sqlite::SqliteIdentifyStore;
 use crate::library::identify::sqlite::album_identity_row;
 use crate::library::matching::model::Release;
 use crate::library::wiring::{LibrarySetup, ScanCoordinator};
+use droppedneedle_kernel::ids::IdGenerator;
 
 /// Most reviews one "retry all" or bulk action takes on.
 pub const BULK_MAX: u32 = 5_000;

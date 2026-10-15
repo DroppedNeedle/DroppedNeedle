@@ -320,7 +320,7 @@ pub struct CatalogDeps {
     /// The service.
     pub catalog: Catalog,
     /// Fresh ids for error correlation.
-    pub ids: Arc<dyn crate::ids::IdGenerator>,
+    pub ids: Arc<dyn droppedneedle_kernel::ids::IdGenerator>,
 }
 
 /// Mount the artist and album routes, relative to `/api/v3`. Path

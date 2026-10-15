@@ -3,8 +3,8 @@
 //! scratch databases live only in memory, except the baseline upgrade,
 //! which runs through the production runtime on a file.
 
-use droppedneedle::db::{DbConfig, open_runtime};
-use droppedneedle::schema::{MIGRATOR, apply_migrations, assert_migrated, latest_version};
+use droppedneedle_kernel::db::{DbConfig, open_runtime};
+use droppedneedle_kernel::schema::{MIGRATOR, apply_migrations, assert_migrated, latest_version};
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 
@@ -1923,7 +1923,7 @@ async fn migrations_stamp_their_own_version_in_order() {
 
 /// Number of migrations the binary carries.
 fn migration_count() -> i64 {
-    i64::try_from(droppedneedle::schema::MIGRATOR.migrations.len()).unwrap_or(i64::MAX)
+    i64::try_from(droppedneedle_kernel::schema::MIGRATOR.migrations.len()).unwrap_or(i64::MAX)
 }
 
 // ---------------------------------------------------------------------------

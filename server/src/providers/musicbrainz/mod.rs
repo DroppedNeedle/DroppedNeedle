@@ -101,11 +101,13 @@ impl MbSource {
     /// rate was typed in. `official` and `brainzmash` are the roots of the
     /// two built-in sources.
     pub fn from_settings(
-        settings: &crate::runtime_config::sections::MusicBrainzSettings,
+        settings: &droppedneedle_kernel::runtime_config::sections::MusicBrainzSettings,
         official: &str,
         brainzmash: &str,
     ) -> Self {
-        use crate::runtime_config::sections::{MbSourceMode, is_mb_rate_policy_public_host};
+        use droppedneedle_kernel::runtime_config::sections::{
+            MbSourceMode, is_mb_rate_policy_public_host,
+        };
         match settings.source_mode {
             MbSourceMode::Brainzmash => Self::BrainzMash {
                 base_url: brainzmash.to_owned(),

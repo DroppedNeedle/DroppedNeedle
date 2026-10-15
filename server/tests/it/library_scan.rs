@@ -78,8 +78,9 @@ fn bundle(music: &Path) -> LibrarySetup {
     let users = droppedneedle::auth::wiring::AuthSetup::for_tests()
         .expect("test auth builds")
         .users;
-    let library = LibrarySetup::for_tests(users, Arc::new(droppedneedle::ids::UuidGenerator))
-        .expect("library bundle builds");
+    let library =
+        LibrarySetup::for_tests(users, Arc::new(droppedneedle_kernel::ids::UuidGenerator))
+            .expect("library bundle builds");
     library
         .add_root(
             Some("music".to_owned()),
@@ -979,7 +980,8 @@ async fn cleanup_leaves_a_half_retagged_album_alone_mid_scan() {
     let retired = Arc::new(std::sync::Mutex::new(None));
     let cell = Arc::clone(&retired);
     rig.meanwhile(LAST_FILE, move || {
-        let mut conn = droppedneedle::db::open_connection(&db).expect("side connection opens");
+        let mut conn =
+            droppedneedle_kernel::db::open_connection(&db).expect("side connection opens");
         conn.execute_batch(&format!(
             "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
              album_artist_name, album_artist_name_folded, album_artist_id, grouping_source, \
@@ -1153,7 +1155,7 @@ fn match_sql(album: &str, source: &str, release: &str) -> String {
 /// The album's match: its release and who decided it.
 fn match_of(rig: &RegroupRig, album: &str) -> Option<(String, String)> {
     use rusqlite::OptionalExtension as _;
-    droppedneedle::db::open_connection(&rig.db())
+    droppedneedle_kernel::db::open_connection(&rig.db())
         .expect("side connection opens")
         .query_row(
             "SELECT release_mbid, decision_source FROM local_album_external_identities \
@@ -1415,7 +1417,7 @@ fn tracks_on(album: &str, release: &str) -> String {
 /// The releases the album's files wait to be placed on with nothing else
 /// changed (`place_only` rows, queued by nobody).
 fn placements_queued(rig: &RegroupRig, album: &str) -> Vec<String> {
-    let conn = droppedneedle::db::open_connection(&rig.db()).expect("side connection opens");
+    let conn = droppedneedle_kernel::db::open_connection(&rig.db()).expect("side connection opens");
     let mut statement = conn
         .prepare(
             "SELECT release_mbid FROM library_edition_remap_queue WHERE local_album_id = ?1 \
@@ -1588,7 +1590,8 @@ async fn cleanup_does_not_skip_the_survivor_of_a_finished_follow() {
     let retired = Arc::new(std::sync::Mutex::new(None));
     let cell = Arc::clone(&retired);
     rig.meanwhile(LAST_FILE, move || {
-        let mut conn = droppedneedle::db::open_connection(&db).expect("side connection opens");
+        let mut conn =
+            droppedneedle_kernel::db::open_connection(&db).expect("side connection opens");
         conn.execute_batch(&format!(
             "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
              album_artist_name, album_artist_name_folded, album_artist_id, grouping_source, \
@@ -1809,7 +1812,7 @@ async fn imported_group_match_and_a_chosen_release_of_it_are_one_album() {
 /// The pairs of album rows recorded as looking like one retagged album,
 /// as (old row, new row, reason, state).
 fn retag_pairs(rig: &RegroupRig) -> Vec<(String, String, String, String)> {
-    let conn = droppedneedle::db::open_connection(&rig.db()).expect("side connection opens");
+    let conn = droppedneedle_kernel::db::open_connection(&rig.db()).expect("side connection opens");
     let mut stmt = conn
         .prepare("SELECT old_album_id, new_album_id, reason, state FROM library_retag_pairs")
         .expect("pairs read");
@@ -1966,7 +1969,7 @@ async fn followed_album_with_a_chosen_edition_is_stamped() {
     .await;
     assert!(rig.stamped(&album));
 
-    let conn = droppedneedle::db::open_connection(&rig.db()).expect("side connection opens");
+    let conn = droppedneedle_kernel::db::open_connection(&rig.db()).expect("side connection opens");
     droppedneedle::library::management::automatic::queue(&conn, &album, 2.0e9)
         .expect("queued again");
     assert!(rig.stamped(&album), "queueing again keeps the stamp");
@@ -2109,7 +2112,7 @@ impl RegroupRig {
     /// One text value read by SQL, `None` for no row or NULL.
     fn text(&self, sql: &str) -> Option<String> {
         use rusqlite::OptionalExtension as _;
-        droppedneedle::db::open_connection(&self.db())
+        droppedneedle_kernel::db::open_connection(&self.db())
             .expect("side connection opens")
             .query_row(sql, [], |row| row.get::<_, Option<String>>(0))
             .optional()
@@ -3951,7 +3954,7 @@ async fn an_edition_choice_moves_nothing_onto_a_file_it_leaves_out() {
         "unmatched_expected_tracks": [],
     }))
     .expect("candidate");
-    let mut db = droppedneedle::db::open_connection(&rig.db()).expect("db opens");
+    let mut db = droppedneedle_kernel::db::open_connection(&rig.db()).expect("db opens");
     let tx = db.transaction().expect("transaction");
     let choice = droppedneedle::library::operations::choice::apply_choice(
         &tx, &album, &candidate, None, None, 1.0,
@@ -4543,7 +4546,7 @@ async fn a_join_waits_for_the_rest_of_the_old_album() {
 async fn an_album_replaced_on_two_albums_is_left_to_a_person() {
     use droppedneedle::library::corrections::Corrections;
     use droppedneedle::library::corrections::models::PairJoinRequest;
-    use droppedneedle::runtime_config::{ConfigStore, Crypto};
+    use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 
     let (mut rig, old, old_rows) = mapped_album("join-split", 2).await;
     rig.tag(&["b/t000.flac".to_owned()], "join-split one");
@@ -4595,7 +4598,7 @@ async fn an_album_replaced_on_two_albums_is_left_to_a_person() {
         droppedneedle::auth::wiring::AuthSetup::for_tests()
             .expect("test auth builds")
             .users,
-        Arc::new(droppedneedle::ids::UuidGenerator),
+        Arc::new(droppedneedle_kernel::ids::UuidGenerator),
         &rig.db(),
         config,
     )
@@ -5295,7 +5298,7 @@ impl ArtistRig {
     }
 
     fn db(&self) -> rusqlite::Connection {
-        droppedneedle::db::open_connection(&self.scratch.join("app.db")).expect("db opens")
+        droppedneedle_kernel::db::open_connection(&self.scratch.join("app.db")).expect("db opens")
     }
 
     /// Plant (or retag) `relative` as a track of `album` with these
@@ -6149,7 +6152,8 @@ impl RegroupRig {
     }
 
     fn texts(&self, sql: &str) -> Vec<String> {
-        let conn = droppedneedle::db::open_connection(&self.db()).expect("side connection opens");
+        let conn =
+            droppedneedle_kernel::db::open_connection(&self.db()).expect("side connection opens");
         let mut statement = conn.prepare(sql).expect(sql);
         statement
             .query_map([], |row| row.get(0))

@@ -29,8 +29,8 @@ use super::downloads::watchdog::RetryPolicy;
 use super::edition::chosen_edition;
 use super::flows::seams as flows;
 use super::requests::dispatch as requests;
-use crate::db::{DbError, Lane, OpError};
-use crate::ids::IdGenerator;
+use droppedneedle_kernel::db::{DbError, Lane, OpError};
+use droppedneedle_kernel::ids::IdGenerator;
 
 /// Current unix time as the float seconds the journal stores.
 fn now_unix_f64() -> f64 {

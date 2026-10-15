@@ -19,7 +19,7 @@ use axum::http::{HeaderMap, Request, StatusCode};
 use droppedneedle::auth::session::extract::Transport;
 use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::users::roles::SessionKind;
-use droppedneedle::ids::{IdGenerator, UuidGenerator};
+use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
 use futures_util::StreamExt as _;
 use serde_json::Value;
 use stream::gateway::{Gateway, RemoteMedia, RemoteReader};

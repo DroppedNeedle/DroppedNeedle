@@ -119,8 +119,9 @@ async fn full_scan_throughput() {
     let users = droppedneedle::auth::wiring::AuthSetup::for_tests()
         .expect("test auth builds")
         .users;
-    let library = LibrarySetup::for_tests(users, Arc::new(droppedneedle::ids::UuidGenerator))
-        .expect("library bundle builds");
+    let library =
+        LibrarySetup::for_tests(users, Arc::new(droppedneedle_kernel::ids::UuidGenerator))
+            .expect("library bundle builds");
     library
         .add_root(
             Some("music".to_owned()),

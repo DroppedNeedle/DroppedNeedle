@@ -30,8 +30,6 @@ use crate::auth::session::rate_limit::{LOGIN_CLASS, RateLimiter, rate_limited_re
 use crate::auth::session::stated::StatedAddresses;
 use crate::auth::session::tokens::{constant_time_eq, hash_token};
 use crate::auth::users::handlers::ValidJson;
-use crate::config::TrustedProxies;
-use crate::ids::IdGenerator;
 use axum::{
     Json, Router,
     extract::{FromRequestParts, State},
@@ -39,6 +37,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use droppedneedle_kernel::config::TrustedProxies;
+use droppedneedle_kernel::ids::IdGenerator;
 
 use super::error::{AuthRouteError, ValidQuery};
 use super::models::{
@@ -47,7 +47,7 @@ use super::models::{
     PlexLoginPollResult, PlexPinBody, PlexStartBody, TransportDto,
 };
 use crate::auth::federated::settings::{enabled_providers, oidc_config};
-use crate::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::ConfigStore;
 
 /// Jellyfin rejection, v2 message verbatim.
 pub const JELLYFIN_INVALID: &str = "Invalid credentials";

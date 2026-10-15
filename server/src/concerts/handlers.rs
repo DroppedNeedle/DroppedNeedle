@@ -19,11 +19,11 @@ use super::models::{
 };
 use super::service::{ConcertsError, ConcertsService};
 use crate::auth::session::middleware::CurrentSession;
-use crate::error::{
+use crate::reads::collections::models::UnseenCountResponse;
+use droppedneedle_kernel::error::{
     FIXED_INTERNAL_MESSAGE, FIXED_UPSTREAM_MESSAGE, INTERNAL_ERROR, INVALID_INPUT, UPSTREAM_ERROR,
     busy_response, envelope_response, unauthorized_response,
 };
-use crate::reads::collections::models::UnseenCountResponse;
 
 /// A concerts failure on its way to the wire.
 #[derive(Debug)]

@@ -26,14 +26,15 @@ use axum::{
 use sha2::Digest as _;
 
 use crate::{
-    auth::session::middleware::arrived_over_https,
-    compat::shared::path_case::is_compat_path,
+    auth::session::middleware::arrived_over_https, compat::shared::path_case::is_compat_path,
+    state::AppState,
+};
+use droppedneedle_kernel::{
     config::TrustedProxies,
     runtime_config::{
         ConfigStore,
         sections::{ContentSecurityPolicyMode, HSTS_MAX_AGE_LIMIT, SecuritySettings},
     },
-    state::AppState,
 };
 
 /// Put on a response by `web.rs` when its body is the web UI's page

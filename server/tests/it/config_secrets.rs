@@ -7,27 +7,27 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use crate::common::ScratchDir;
-use droppedneedle::runtime_config::crypto::Crypto;
-use droppedneedle::runtime_config::mask::{
+use droppedneedle_kernel::runtime_config::crypto::Crypto;
+use droppedneedle_kernel::runtime_config::mask::{
     ACOUSTID_KEY_MASK, AUDIODB_API_KEY_MASK, INDEXER_API_KEY_MASK, JELLYFIN_API_KEY_MASK,
     LIDARR_API_KEY_MASK, LISTENBRAINZ_TOKEN_MASK, NAVIDROME_PASSWORD_MASK, OIDC_SECRET_MASK,
     PLEX_TOKEN_MASK, PLUGIN_SECRET_MASK, PROWLARR_API_KEY_MASK, SABNZBD_API_KEY_MASK,
     SKIDDLE_KEY_MASK, SLSKD_API_KEY_MASK, SPOTIFY_SECRET_MASK, TICKETMASTER_KEY_MASK,
     WRAPPED_API_KEY_MASK, YOUTUBE_API_KEY_MASK,
 };
-use droppedneedle::runtime_config::quota::{QuotaError, QuotaStore};
-use droppedneedle::runtime_config::secret::Secret;
-use droppedneedle::runtime_config::secret_sections::{
+use droppedneedle_kernel::runtime_config::quota::{QuotaError, QuotaStore};
+use droppedneedle_kernel::runtime_config::secret::Secret;
+use droppedneedle_kernel::runtime_config::secret_sections::{
     AdvancedSettings, DownloadClients, EventsSettings, JellyfinConnection, LidarrImportConnection,
     ListenBrainzConnection, NavidromeConnection, NewznabIndexer, OidcConnection, PlexConnection,
     ProwlarrConnection, SlskdConnection, SpotifySettings, TypedLibrary, WrappedSettings,
     YouTubeConnection,
 };
-use droppedneedle::runtime_config::sections::{
+use droppedneedle_kernel::runtime_config::sections::{
     LibraryScanSchedule, MusicBrainzSettings, PluginConfig,
 };
-use droppedneedle::runtime_config::store::{ConfigStore, INSTANCE_ID_KEY};
-use droppedneedle::runtime_config::{ConfigError, DROPPED_SECTIONS};
+use droppedneedle_kernel::runtime_config::store::{ConfigStore, INSTANCE_ID_KEY};
+use droppedneedle_kernel::runtime_config::{ConfigError, DROPPED_SECTIONS};
 
 fn test_dir(name: &str) -> ScratchDir {
     ScratchDir::new(&format!("config-{name}"))
@@ -259,7 +259,7 @@ fn wrong_key_fails_closed_never_legacy_passthrough() {
     assert!(matches!(
         result,
         Err(ConfigError::Crypto(
-            droppedneedle::runtime_config::crypto::CryptoError::DecryptFailed
+            droppedneedle_kernel::runtime_config::crypto::CryptoError::DecryptFailed
         ))
     ));
 }
@@ -422,7 +422,7 @@ fn plugin_secrets_encrypted_and_mask_resolved() {
     store
         .save_plugin(
             "demo",
-            droppedneedle::runtime_config::sections::PluginConfig {
+            droppedneedle_kernel::runtime_config::sections::PluginConfig {
                 enabled: true,
                 settings,
             },
@@ -440,7 +440,7 @@ fn plugin_secrets_encrypted_and_mask_resolved() {
     store
         .save_plugin(
             "demo",
-            droppedneedle::runtime_config::sections::PluginConfig {
+            droppedneedle_kernel::runtime_config::sections::PluginConfig {
                 enabled: true,
                 settings,
             },
@@ -456,7 +456,7 @@ fn plugin_secrets_encrypted_and_mask_resolved() {
 fn musicbrainz_official_clamp_and_mirror_rules() {
     let (_dir, store) = test_store("musicbrainz");
     let settings = MusicBrainzSettings {
-        source_mode: droppedneedle::runtime_config::sections::MbSourceMode::Mirror,
+        source_mode: droppedneedle_kernel::runtime_config::sections::MbSourceMode::Mirror,
         api_url: "https://musicbrainz.org/ws/2".to_owned(),
         rate_limit: 50.0,
         concurrent_searches: 32,
@@ -470,7 +470,7 @@ fn musicbrainz_official_clamp_and_mirror_rules() {
     assert_eq!(reread.rate_limit, 1.0);
     assert!(!reread.clamped_to_official_limits);
     let settings = MusicBrainzSettings {
-        source_mode: droppedneedle::runtime_config::sections::MbSourceMode::Mirror,
+        source_mode: droppedneedle_kernel::runtime_config::sections::MbSourceMode::Mirror,
         api_url: "not-a-url".to_owned(),
         ..Default::default()
     };
@@ -515,7 +515,8 @@ fn dropped_and_unknown_keys_reported_never_read() {
     let unknown = store.unknown_top_level_keys().unwrap();
     assert!(unknown.contains(&"future_section".to_owned()));
     assert!(!DROPPED_SECTIONS.is_empty());
-    let prefs: droppedneedle::runtime_config::sections::UserPreferences = store.get().unwrap();
+    let prefs: droppedneedle_kernel::runtime_config::sections::UserPreferences =
+        store.get().unwrap();
     assert_eq!(prefs.primary_types, vec!["album", "ep", "single"]);
 }
 

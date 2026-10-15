@@ -14,8 +14,6 @@ use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::session::store::SessionKind;
 use droppedneedle::auth::users::memory::with_test_principal;
 use droppedneedle::auth::users::roles::Role;
-use droppedneedle::db::{DbConfig, DbRuntime, Lane, open_runtime};
-use droppedneedle::ids::IdGenerator;
 use droppedneedle::plugins::fakes::{FakeRoles, FakeVerifier};
 use droppedneedle::plugins::handlers::{ScrobbleHttpDeps, scrobble_router};
 use droppedneedle::plugins::scrobble::{
@@ -25,7 +23,9 @@ use droppedneedle::plugins::scrobble::{
     connect_listenbrainz,
 };
 use droppedneedle::providers::listenbrainz::{HttpListenBrainzVerifier, VerifyOutcome};
-use droppedneedle::runtime_config::crypto::Crypto;
+use droppedneedle_kernel::db::{DbConfig, DbRuntime, Lane, open_runtime};
+use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use tower::ServiceExt as _;
 
 /// Fixed id generator so error ids assert stably.

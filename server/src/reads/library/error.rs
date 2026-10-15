@@ -5,13 +5,13 @@
 //! handlers convert. Server faults carry the fixed generic body plus an
 //! error id; the cause goes to the structured log only.
 
-use crate::error::{ErrorBody, ErrorEnvelope};
-use crate::ids::IdGenerator;
 use axum::{
     Json,
     http::{HeaderValue, StatusCode},
     response::{IntoResponse, Response},
 };
+use droppedneedle_kernel::error::{ErrorBody, ErrorEnvelope};
+use droppedneedle_kernel::ids::IdGenerator;
 use serde_json::json;
 
 /// Missing or invalid session.
@@ -88,16 +88,18 @@ impl LibraryError {
             Self::Unauthorized { message } => (UNAUTHORIZED.to_owned(), message.clone(), None),
             Self::NotFound => (
                 NOT_FOUND.to_owned(),
-                crate::error::NOT_FOUND_MESSAGE.to_owned(),
+                droppedneedle_kernel::error::NOT_FOUND_MESSAGE.to_owned(),
                 None,
             ),
-            Self::Forbidden { message } => {
-                (crate::error::FORBIDDEN.to_owned(), message.clone(), None)
-            }
+            Self::Forbidden { message } => (
+                droppedneedle_kernel::error::FORBIDDEN.to_owned(),
+                message.clone(),
+                None,
+            ),
             Self::InvalidInput { message } => (INVALID_INPUT.to_owned(), message.clone(), None),
             Self::Busy { error_id } | Self::Internal { error_id } => (
-                crate::error::INTERNAL_ERROR.to_owned(),
-                crate::error::FIXED_INTERNAL_MESSAGE.to_owned(),
+                droppedneedle_kernel::error::INTERNAL_ERROR.to_owned(),
+                droppedneedle_kernel::error::FIXED_INTERNAL_MESSAGE.to_owned(),
                 Some(json!({ "error_id": error_id })),
             ),
         };
@@ -155,8 +157,14 @@ mod tests {
             error_id: "e1".to_owned(),
         };
         let envelope = error.envelope();
-        assert_eq!(envelope.error.code, crate::error::INTERNAL_ERROR);
-        assert_eq!(envelope.error.message, crate::error::FIXED_INTERNAL_MESSAGE);
+        assert_eq!(
+            envelope.error.code,
+            droppedneedle_kernel::error::INTERNAL_ERROR
+        );
+        assert_eq!(
+            envelope.error.message,
+            droppedneedle_kernel::error::FIXED_INTERNAL_MESSAGE
+        );
         assert_eq!(envelope.error.details, Some(json!({ "error_id": "e1" })));
     }
 }

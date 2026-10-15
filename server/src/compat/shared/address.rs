@@ -9,7 +9,7 @@ use axum::http::Request;
 
 use crate::auth::session::middleware::effective_origin;
 use crate::compat::settings::LiveSettings;
-use crate::config::TrustedProxies;
+use droppedneedle_kernel::config::TrustedProxies;
 
 /// How clients reach this server: the port it listens on, the proxies
 /// whose forwarded headers are believed and the deployment base path.

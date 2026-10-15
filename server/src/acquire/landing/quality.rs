@@ -6,7 +6,7 @@
 //! an MP4-family file counts as lossless only when the header reports a
 //! bit depth (ALAC), as in v2.
 
-use crate::runtime_config::sections::tier_rank;
+use droppedneedle_kernel::runtime_config::sections::tier_rank;
 
 /// Containers that are always lossless.
 const LOSSLESS: [&str; 4] = ["flac", "wav", "ape", "wv"];

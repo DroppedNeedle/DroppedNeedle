@@ -164,7 +164,7 @@ pub fn live_builder(
     links: Arc<dyn ListenBrainzLinkStore>,
     prefs: Arc<dyn crate::plugins::scrobble::ScrobblePrefsStore>,
     playlists: crate::reads::collections::store::playlists::PlaylistStore,
-    events: crate::events::EventSink,
+    events: droppedneedle_kernel::events::EventSink,
     listenbrainz: &str,
 ) -> Option<Arc<super::mix::PersonalMixBuilder>> {
     use crate::providers::listenbrainz::SOURCE;

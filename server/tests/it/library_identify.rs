@@ -60,7 +60,7 @@ fn rig_with_recall(recall: RecallResult) -> Rig {
     let dir = ScratchDir::new("lib-identify");
     let path = dir.join("app.db");
     migrated_db(&path);
-    let db = droppedneedle::db::open_connection(&path).expect("side connection opens");
+    let db = droppedneedle_kernel::db::open_connection(&path).expect("side connection opens");
     let store = Arc::new(SqliteIdentifyStore::open(&path).expect("store opens"));
     let providers = Arc::new(FakeProviders::with_recall(recall));
     let service = IdentifyService::new(IdentifyDeps {
@@ -1162,7 +1162,7 @@ fn artist_identity_rows_round_trip() {
 /// migrated through 0010, keeping the catalog rows already there.
 #[tokio::test]
 async fn identify_state_migration_upgrades_in_place() {
-    use droppedneedle::schema::{MIGRATOR, apply_migrations};
+    use droppedneedle_kernel::schema::{MIGRATOR, apply_migrations};
     use sqlx::sqlite::SqlitePoolOptions;
 
     let pool = SqlitePoolOptions::new()

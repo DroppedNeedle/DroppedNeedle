@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use droppedneedle::jobs::registry::{
+use droppedneedle_kernel::jobs::registry::{
     AlreadyRunning, JobCtx, JobExit, JobKind, JobRegistry, JobState, MemoryRegistryStore,
     RegistryStore,
 };
@@ -108,7 +108,7 @@ async fn panicking_task_marks_failed_row() {
 
 #[test]
 fn boot_jobs_lists_every_always_on_loop_once() {
-    use droppedneedle::jobs::{
+    use droppedneedle_kernel::jobs::{
         BOOT_JOBS, checkpoint, discovery_demand, events_watcher, personal_mix, playlist_sync,
         presence,
     };

@@ -19,7 +19,7 @@ use sqlx::SqliteConnection;
 
 use super::{CarryError, SectionResult};
 use crate::export::envelope::ConnectionRecord;
-use crate::runtime_config::Crypto;
+use droppedneedle_kernel::runtime_config::Crypto;
 
 /// Report entity for this section.
 pub(crate) const ENTITY: &str = "connection";

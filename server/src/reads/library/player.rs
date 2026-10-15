@@ -468,7 +468,7 @@ fn placeholders(len: usize) -> String {
 
 /// Folded LIKE pattern for a substring filter.
 fn like_pattern(raw: &str) -> String {
-    let folded = crate::db::fold_text(raw)
+    let folded = droppedneedle_kernel::db::fold_text(raw)
         .replace('\\', "\\\\")
         .replace('%', "\\%")
         .replace('_', "\\_");
@@ -558,7 +558,9 @@ fn finish_track_clause(mut clause: Clause, query: &TrackQuery) -> Clause {
     if let Some(title) = &query.title {
         clause.push(
             "t.title_folded = ?",
-            [Bind::Text(crate::db::fold_text(title.trim()))],
+            [Bind::Text(droppedneedle_kernel::db::fold_text(
+                title.trim(),
+            ))],
         );
     }
     if let Some(album_id) = &query.album_id {
@@ -584,7 +586,7 @@ fn finish_track_clause(mut clause: Clause, query: &TrackQuery) -> Clause {
         );
     }
     if let Some(genre) = &query.genre {
-        let folded = crate::db::fold_text(genre.trim());
+        let folded = droppedneedle_kernel::db::fold_text(genre.trim());
         clause.push(
             TRACK_GENRE_MATCH,
             [Bind::Text(folded.clone()), Bind::Text(folded)],
@@ -597,7 +599,7 @@ fn finish_track_clause(mut clause: Clause, query: &TrackQuery) -> Clause {
         clause.push("t.year <= ?", [Bind::Int(to)]);
     }
     if let Some(name) = &query.artist_name {
-        let folded = crate::db::fold_text(name.trim());
+        let folded = droppedneedle_kernel::db::fold_text(name.trim());
         clause.push(
             "(t.artist_name_folded = ? OR t.album_artist_name_folded = ?)",
             [Bind::Text(folded.clone()), Bind::Text(folded)],
@@ -1059,7 +1061,7 @@ fn album_clause(query: &AlbumQuery) -> Clause {
         );
     }
     if let Some(genre) = &query.genre {
-        let folded = crate::db::fold_text(genre.trim());
+        let folded = droppedneedle_kernel::db::fold_text(genre.trim());
         clause.push(
             &format!(
                 "EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id \

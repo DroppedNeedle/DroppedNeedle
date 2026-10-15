@@ -25,7 +25,7 @@ use crate::library::management::models::{
 use crate::library::management::reasons::ItemReason;
 use crate::library::management::service::{ApplyRequest, Management, PreviewRequest};
 use crate::library::wiring::LibrarySetup;
-use crate::runtime_config::sections::LibraryManagementRootOverrides;
+use droppedneedle_kernel::runtime_config::sections::LibraryManagementRootOverrides;
 
 /// Management routes, relative for nesting under `/api/v3`.
 pub fn management_router() -> Router<LibrarySetup> {

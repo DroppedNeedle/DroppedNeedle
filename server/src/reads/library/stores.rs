@@ -34,8 +34,8 @@ pub enum StoreError {
 impl StoreError {
     /// A read failure: busy stays busy, anything else is internal.
     pub(crate) fn read(operation: &str, error: sqlx::Error) -> Self {
-        match crate::db::map_sqlx_busy(operation, error) {
-            crate::db::DbError::Busy { .. } => Self::Busy(operation.to_owned()),
+        match droppedneedle_kernel::db::map_sqlx_busy(operation, error) {
+            droppedneedle_kernel::db::DbError::Busy { .. } => Self::Busy(operation.to_owned()),
             error => Self::Internal(error.to_string()),
         }
     }

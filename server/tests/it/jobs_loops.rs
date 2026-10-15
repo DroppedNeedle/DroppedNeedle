@@ -9,18 +9,18 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use droppedneedle::jobs::checkpoint::{self, FakeCheckpointRunner};
-use droppedneedle::jobs::personal_mix::{self, PersonalMixer};
-use droppedneedle::jobs::precache::{
+use droppedneedle_kernel::jobs::checkpoint::{self, FakeCheckpointRunner};
+use droppedneedle_kernel::jobs::personal_mix::{self, PersonalMixer};
+use droppedneedle_kernel::jobs::precache::{
     self, PrecacheLimits, PrecacheOutcome, PrecacheWork, Progress,
 };
-use droppedneedle::jobs::presence::{
+use droppedneedle_kernel::jobs::presence::{
     self, PresenceSession, PresenceSources, PresenceStore, SourceStatus,
 };
-use droppedneedle::jobs::registry::{
+use droppedneedle_kernel::jobs::registry::{
     BoxFuture, JobRegistry, JobState, MemoryRegistryStore, RegistryStore,
 };
-use droppedneedle::jobs::schedule::Schedule;
+use droppedneedle_kernel::jobs::schedule::Schedule;
 
 type TestRegistry = JobRegistry<MemoryRegistryStore>;
 

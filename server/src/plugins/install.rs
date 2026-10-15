@@ -21,7 +21,7 @@ use super::host::PluginHost;
 use super::manifest::{PluginManifest, load_manifest};
 use super::models::PluginRefKind;
 use super::runtime::BoxFuture;
-use crate::http_client::{BodyError, read_capped};
+use droppedneedle_kernel::http_client::{BodyError, read_capped};
 
 /// Largest install archive (32 MiB).
 pub const MAX_PLUGIN_ZIP_BYTES: usize = 32 * 1024 * 1024;

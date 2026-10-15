@@ -18,7 +18,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 
 use super::policy::UsenetPolicy;
-use crate::http_client::{BodyError, read_capped, transport_error};
+use droppedneedle_kernel::http_client::{BodyError, read_capped, transport_error};
 
 pub use super::sabnzbd_models::{
     AddResponse, Category, Config, History, HistorySlot, Misc, Queue, QueueSlot,
@@ -1674,7 +1674,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn enumerate_never_follows_symlinks() {
-        let base = crate::db::scratch::ScratchDir::new("sab-enum").unwrap();
+        let base = droppedneedle_kernel::db::scratch::ScratchDir::new("sab-enum").unwrap();
         let mount = base.join("mount");
         let outside = base.join("outside");
         std::fs::create_dir_all(mount.join("release")).unwrap();

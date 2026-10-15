@@ -18,13 +18,13 @@ use std::sync::Arc;
 use axum::Router;
 
 use crate::auth::users::{UsersDeps, roles::Role};
-use crate::db::WriteLane;
-use crate::ids::IdGenerator;
-use crate::jobs::plugin_ticks::SqliteTickStore;
-use crate::jobs::registry::JobRegistry;
-use crate::jobs::registry::StoreKind;
 use crate::providers::cache::{ProviderCache, invalidate_source};
-use crate::runtime_config::{ConfigStore, Crypto};
+use droppedneedle_kernel::db::WriteLane;
+use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::jobs::plugin_ticks::SqliteTickStore;
+use droppedneedle_kernel::jobs::registry::JobRegistry;
+use droppedneedle_kernel::jobs::registry::StoreKind;
+use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 
 use super::handlers::{
     ExtRateLimiter, PluginsDeps, ScrobbleHttpDeps, UserRoles, plugins_router, scrobble_router,
@@ -198,9 +198,9 @@ impl PluginsSetup {
 
         use super::fakes::FakeLauncher;
         use super::scrobble::{MemoryListenBrainzLinkStore, MemoryScrobblePrefsStore};
-        use crate::http_client::HttpClientFactory;
-        use crate::jobs::plugin_ticks::MemoryTickStore;
         use crate::providers::InMemoryProviderCache;
+        use droppedneedle_kernel::http_client::HttpClientFactory;
+        use droppedneedle_kernel::jobs::plugin_ticks::MemoryTickStore;
 
         /// Scratch-dir sequence so parallel test states never share a store.
         static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);

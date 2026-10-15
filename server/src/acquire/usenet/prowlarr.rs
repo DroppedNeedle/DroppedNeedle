@@ -22,7 +22,7 @@ use super::newznab::{
     IndexerHealth, IndexerResult, UsenetRelease, normalize_newznab_query, parse_rfc2822_date,
 };
 use super::{MAX_INDEXER_BODY_BYTES, read_indexer_body};
-use crate::http_client::{BodyError, transport_error};
+use droppedneedle_kernel::http_client::{BodyError, transport_error};
 
 // ---------------------------------------------------------------------------
 // Wire models (v2 `prowlarr_models.py`: devopsarr/prowlarr-py shapes,

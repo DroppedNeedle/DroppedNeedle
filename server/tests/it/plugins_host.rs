@@ -20,11 +20,6 @@ use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::session::store::SessionKind;
 use droppedneedle::auth::users::memory::with_test_principal;
 use droppedneedle::auth::users::roles::Role;
-use droppedneedle::ids::IdGenerator;
-use droppedneedle::jobs::plugin_ticks::{
-    MemoryTickStore, TickHost as JobsTickHost, TickPlugin as JobsTickPlugin,
-};
-use droppedneedle::jobs::registry::{JobRegistry, MemoryRegistryStore};
 use droppedneedle::middleware::request_scope;
 use droppedneedle::plugins::fakes::{
     FakeConnection, FakeFetcher, FakeLauncher, FakeRoles, FakeUnpacker, scrobble_plugin_event,
@@ -38,8 +33,13 @@ use droppedneedle::plugins::runtime::{PublishPayload, ScrobbleEvent};
 use droppedneedle::plugins::ticks::{
     HostTickAdapter, NoopTickSync, PluginTickLoops, TickLoopSync, TickStoreKind,
 };
-use droppedneedle::runtime_config::ConfigStore;
-use droppedneedle::runtime_config::crypto::Crypto;
+use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::jobs::plugin_ticks::{
+    MemoryTickStore, TickHost as JobsTickHost, TickPlugin as JobsTickPlugin,
+};
+use droppedneedle_kernel::jobs::registry::{JobRegistry, MemoryRegistryStore};
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use serde_json::json;
 use tower::ServiceExt as _;
 
@@ -565,8 +565,8 @@ async fn plugin_routes_need_sessions_and_admins() {
 /// policy leaves this one as the route set it.
 #[tokio::test]
 async fn the_panel_page_is_sealed_on_every_answer() {
-    use droppedneedle::runtime_config::sections::SecuritySettings;
     use droppedneedle::security_headers::{ContentSecurity, content_security};
+    use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 
     const DASHBOARD: &str = "https://home.example.com";
     let policy = |ancestors: &str| {

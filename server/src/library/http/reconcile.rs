@@ -65,7 +65,7 @@ impl From<ReconcileError> for ReconcileHttpError {
 
 impl IntoResponse for ReconcileHttpError {
     fn into_response(self) -> Response {
-        use crate::error::envelope_response;
+        use droppedneedle_kernel::error::envelope_response;
         let error = match self {
             Self::Library(error) => return error.into_response(),
             Self::Reconcile(error) => error,

@@ -49,7 +49,7 @@ use super::search_jobs::review::ReviewMode;
 use super::sources::{JournalOwnership, SabnzbdSource, SlskdSource};
 use super::target::Targets;
 use super::target::reasons::TrackReason;
-use crate::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
+use droppedneedle_kernel::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
 
 mod controls;
 mod landings;
@@ -541,7 +541,7 @@ pub struct DownloadWorker {
     /// Spawned landings, awaited on shutdown.
     landing_tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
     /// Live progress for the web UI (`download_progress`).
-    events: crate::events::EventSink,
+    events: droppedneedle_kernel::events::EventSink,
     /// Wakes the loop early after a queue action (retry, next source).
     wake: tokio::sync::Notify,
     /// Album targets for the look before an automatic grab; without them
@@ -575,7 +575,7 @@ impl DownloadWorker {
             settled: None,
             in_flight: Arc::new(Mutex::new(HashSet::new())),
             landing_tasks: Mutex::new(Vec::new()),
-            events: crate::events::EventSink::default(),
+            events: droppedneedle_kernel::events::EventSink::default(),
             wake: tokio::sync::Notify::new(),
             targets: None,
             reviews: review::Reviews::default(),
@@ -590,7 +590,7 @@ impl DownloadWorker {
     }
 
     /// Send live progress through this sink.
-    pub fn with_events(mut self, events: crate::events::EventSink) -> Self {
+    pub fn with_events(mut self, events: droppedneedle_kernel::events::EventSink) -> Self {
         self.events = events;
         self
     }

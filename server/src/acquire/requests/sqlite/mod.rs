@@ -26,7 +26,7 @@ pub use requests::RequestStore;
 pub use wanted::{WantedStore, WatchChange};
 
 use super::error::RequestsError;
-use crate::db::{DbError, map_sqlx_busy};
+use droppedneedle_kernel::db::{DbError, map_sqlx_busy};
 
 /// Map a writer-lane failure: busy stays retryable, the rest is a fault.
 fn lane_error(operation: &'static str, error: DbError) -> RequestsError {

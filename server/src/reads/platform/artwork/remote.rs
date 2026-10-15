@@ -3,10 +3,10 @@
 
 use futures_util::future::BoxFuture;
 
-use crate::http_client::{BodyError, read_capped};
 use crate::providers::coverart::{
     ArtworkBytes, CaaClient, CaaError, CaaTransport, DownloadSize, EntityKind, RateGate,
 };
+use droppedneedle_kernel::http_client::{BodyError, read_capped};
 
 use super::MAX_REMOTE_BYTES;
 

@@ -18,7 +18,7 @@ use droppedneedle::auth::session::extract::Transport;
 use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::session::store::SessionKind;
 use droppedneedle::auth::users::memory::with_test_principal;
-use droppedneedle::ids::IdGenerator;
+use droppedneedle_kernel::ids::IdGenerator;
 use playback::PlaybackDeps;
 use playback::error::PlaybackError;
 use playback::fakes::{

@@ -26,8 +26,8 @@ use droppedneedle::reads::catalog::{
     upstream::{CatalogSettings, Endpoints, Upstream},
 };
 use droppedneedle::reads::search::{self, SearchDeps, service::SearchService};
-use droppedneedle::runtime_config::secret_sections::AdvancedSettings;
-use droppedneedle::runtime_config::sections::{
+use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
+use droppedneedle_kernel::runtime_config::sections::{
     MbSourceMode, MusicBrainzSettings, MusicSource, UserPreferences,
 };
 use serde_json::{Value, json};
@@ -391,7 +391,7 @@ async fn app_with(fixtures: &Fixtures, mb_url: String) -> axum::Router {
         )
         .await
         .unwrap();
-    let http = droppedneedle::http_client::HttpClientFactory::new().unwrap();
+    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
     let upstream = Upstream::new(
         &http,
         Arc::new(Providers::unpaced()),
@@ -400,7 +400,7 @@ async fn app_with(fixtures: &Fixtures, mb_url: String) -> axum::Router {
         fixtures.endpoints(),
     );
     let catalog = Catalog::new(upstream, LocalCatalog::new(pool.clone()));
-    let ids: Arc<dyn droppedneedle::ids::IdGenerator> =
+    let ids: Arc<dyn droppedneedle_kernel::ids::IdGenerator> =
         Arc::new(common::FixedIdGenerator::new(common::FIXED_ID));
     let search = SearchDeps::new(
         SearchService::new(pool).with_remote(catalog.clone()),
@@ -898,7 +898,7 @@ async fn clearing_a_pin_names_the_copy_and_never_calls_musicbrainz() {
     let curator = rig
         .seed_user("curator", droppedneedle::auth::users::roles::Role::Trusted)
         .await;
-    let http = droppedneedle::http_client::HttpClientFactory::new().unwrap();
+    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
     // Nothing listens here: any MusicBrainz call would fail the clear.
     let upstream = Upstream::new(
         &http,
@@ -932,7 +932,7 @@ async fn clearing_a_pin_names_the_copy_and_never_calls_musicbrainz() {
 #[tokio::test]
 async fn lastfm_reads_fall_back_to_the_instance_key() {
     let rig = TestRig::new().unwrap();
-    let http = droppedneedle::http_client::HttpClientFactory::new().unwrap();
+    let http = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
     let upstream = Upstream::new(
         &http,
         Arc::new(Providers::unpaced()),

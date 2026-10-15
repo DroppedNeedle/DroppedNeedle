@@ -18,9 +18,11 @@ use crate::providers::lastfm::{self, LastFmClient, LastFmCredentials};
 use crate::providers::listenbrainz::{self, ListenBrainzClient, ListenBrainzCredentials};
 use crate::providers::musicbrainz::{MbPacing, MbSource, MusicBrainzClient, ReqwestMbTransport};
 use crate::providers::{ProviderCache, Providers, RequestPriority};
-use crate::runtime_config::ConfigStore;
-use crate::runtime_config::secret_sections::{AdvancedSettings, ListenBrainzConnection};
-use crate::runtime_config::sections::{
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::secret_sections::{
+    AdvancedSettings, ListenBrainzConnection,
+};
+use droppedneedle_kernel::runtime_config::sections::{
     GetIt, MusicBrainzSettings, MusicSource, PrimaryMusicSource, UserPreferences,
 };
 
@@ -85,7 +87,7 @@ impl CatalogSettings for ConfigStore {
     fn edition_preferences(&self) -> crate::library::edition_prefs::Preferences {
         let saved = or_default(
             "edition_preferences",
-            self.get::<crate::runtime_config::sections::EditionPreferences>(),
+            self.get::<droppedneedle_kernel::runtime_config::sections::EditionPreferences>(),
         );
         crate::library::edition_prefs::Preferences::from_settings(&saved, &self.store_region())
     }
@@ -200,7 +202,7 @@ impl Upstream {
     /// Assemble from the shared HTTP clients and provider deps, reaching
     /// the upstreams at `endpoints`.
     pub fn new(
-        http: &crate::http_client::HttpClientFactory,
+        http: &droppedneedle_kernel::http_client::HttpClientFactory,
         providers: Arc<Providers>,
         settings: Arc<dyn CatalogSettings>,
         users: UsersDeps,

@@ -17,9 +17,9 @@ use sqlx::{Row as _, SqlitePool};
 
 use super::models::{SectionPrefItem, SectionPrefsResponse, SectionPrefsUpdate};
 use crate::auth::users::stores::{LastFmStore, StoreError};
-use crate::db::{Lane, WriteLane};
-use crate::ids::IdGenerator;
-use crate::runtime_config::settings_error::SettingsError;
+use droppedneedle_kernel::db::{Lane, WriteLane};
+use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// Visible pages.
 pub const PAGES: &[&str] = &["home", "discover", "sidebar"];
@@ -451,14 +451,14 @@ impl SectionPrefsStore for SqliteSectionPrefsStore {
                         "DELETE FROM user_section_prefs WHERE user_id = ?1 AND page = ?2",
                         rusqlite::params![user_id, page],
                     )
-                    .map_err(crate::db::OpError::Sql)?;
+                    .map_err(droppedneedle_kernel::db::OpError::Sql)?;
                     for key in &disabled {
                         tx.execute(
                             "INSERT INTO user_section_prefs (user_id, page, section_key, enabled, updated_at)
                              VALUES (?1, ?2, ?3, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
                             rusqlite::params![user_id, page, key],
                         )
-                        .map_err(crate::db::OpError::Sql)?;
+                        .map_err(droppedneedle_kernel::db::OpError::Sql)?;
                     }
                     Ok(())
                 },

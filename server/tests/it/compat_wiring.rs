@@ -203,8 +203,21 @@ async fn api_bodies_compress_when_the_client_accepts() {
 /// only read a request URI's path, query or host, and never log a URI.
 #[test]
 fn access_logging_records_path_only() {
-    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut dirs = vec![root];
+    // Every shipping crate of the workspace: each member's `src`, except the
+    // testkit's mock servers.
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest = std::fs::read_to_string(manifest_dir.join("Cargo.toml")).expect("manifest");
+    let manifest: toml::Table = manifest.parse().expect("manifest parses");
+    let members = manifest["workspace"]["members"]
+        .as_array()
+        .expect("workspace members");
+    let mut dirs: Vec<_> = members
+        .iter()
+        .map(|member| member.as_str().expect("member path"))
+        .filter(|member| *member != "testkit")
+        .map(|member| manifest_dir.join(member).join("src"))
+        .collect();
+    assert!(dirs.len() > 1, "the workspace lists its crates");
     let mut violations = Vec::new();
     while let Some(dir) = dirs.pop() {
         for entry in std::fs::read_dir(&dir).expect("src lists") {

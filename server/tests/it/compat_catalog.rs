@@ -17,13 +17,13 @@ use droppedneedle::compat::jellyfin::seams::{
 use droppedneedle::compat::subsonic::fake::{FakeAudio, FakeVerifier, NOW_UNIX, USER_ID};
 use droppedneedle::compat::subsonic::params::SubsonicParameters;
 use droppedneedle::compat::subsonic::{Request, Settings, dispatch};
-use droppedneedle::db::{DbRuntime, Lane};
-use droppedneedle::ids::UuidGenerator;
 use droppedneedle::reads::ReadsSetup;
 use droppedneedle::reads::collections::db::CollectionsDb;
 use droppedneedle::reads::collections::models::{AddTracksBody, CreatePlaylistBody, TrackInput};
 use droppedneedle::reads::collections::service::CollectionsService;
-use droppedneedle::runtime_config::Crypto;
+use droppedneedle_kernel::db::{DbRuntime, Lane};
+use droppedneedle_kernel::ids::UuidGenerator;
+use droppedneedle_kernel::runtime_config::Crypto;
 
 use crate::common::ScratchDir;
 
@@ -67,7 +67,7 @@ impl Rig {
             .await
             .unwrap();
         let auth = droppedneedle::auth::wiring::AuthSetup::for_tests().unwrap();
-        let ids: Arc<dyn droppedneedle::ids::IdGenerator> = Arc::new(UuidGenerator);
+        let ids: Arc<dyn droppedneedle_kernel::ids::IdGenerator> = Arc::new(UuidGenerator);
         let reads = ReadsSetup::build(
             runtime.pool(),
             auth.users.clone(),
@@ -470,8 +470,8 @@ async fn playlist_refusals_keep_their_codes_and_repeats_stay() {
 /// sends float seconds) does not make the playlist read fail.
 #[tokio::test]
 async fn native_playlists_export_to_m3u_with_their_files() {
-    use droppedneedle::jobs::playlist_export::M3uPlaylistExporter;
-    use droppedneedle::jobs::playlist_sync::{PlaylistExporter as _, PlaylistSyncConfig};
+    use droppedneedle_kernel::jobs::playlist_export::M3uPlaylistExporter;
+    use droppedneedle_kernel::jobs::playlist_sync::{PlaylistExporter as _, PlaylistSyncConfig};
 
     let rig = Rig::open().await;
     let native = CollectionsService::new(&rig.reads.collections);

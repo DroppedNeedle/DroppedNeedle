@@ -24,7 +24,7 @@
 //!   [`UserNotice`].
 //!
 //! Bundles built before the application state hold an [`EventSink`];
-//! [`crate::AppState::with_events`] attaches the hub to all of them.
+//! the server's `AppState::with_events` attaches the hub to all of them.
 
 pub mod downloads;
 pub mod hub;

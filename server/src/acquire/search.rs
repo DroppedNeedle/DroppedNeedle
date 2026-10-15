@@ -21,7 +21,7 @@ use crate::providers::degradation::DegradationSink;
 use crate::providers::musicbrainz::{
     Criticality, MbPacing, MbTransport, MusicBrainzClient, ReqwestMbTransport,
 };
-use crate::runtime_config::sections::{UsenetBackend, UsenetBackendSetting};
+use droppedneedle_kernel::runtime_config::sections::{UsenetBackend, UsenetBackendSetting};
 
 /// Candidates returned per search, at most. The wanted loop only needs to
 /// know a candidate exists; the worker re-searches at enqueue time.
@@ -218,7 +218,7 @@ impl<T: MbTransport, S: DegradationSink> ReleasePoll for MusicBrainzReleasePoll<
 /// configured MusicBrainz source read per request, failures counted
 /// toward system health.
 pub fn live_release_poll(
-    http: &crate::http_client::HttpClientFactory,
+    http: &droppedneedle_kernel::http_client::HttpClientFactory,
     providers: Arc<crate::providers::Providers>,
     source: crate::providers::musicbrainz::SourceFn,
 ) -> MusicBrainzReleasePoll<ReqwestMbTransport, HealthSink> {

@@ -18,7 +18,7 @@
 use std::time::Duration;
 
 use super::{DegradationSink, Pacer};
-use crate::http_client::read_capped;
+use droppedneedle_kernel::http_client::read_capped;
 
 /// Default API host (v2 `AUDIODB_API_URL`, without the key segment).
 pub const DEFAULT_BASE_URL: &str = "https://www.theaudiodb.com/api/v1/json";

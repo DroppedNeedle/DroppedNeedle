@@ -15,9 +15,6 @@ use std::sync::Arc;
 use axum::Router;
 
 use crate::auth::users::UsersDeps;
-use crate::config::AppConfig;
-use crate::db::WriteLane;
-use crate::ids::IdGenerator;
 use crate::playback::forwarding::{ForwardWorker, ScrobbleForwarder, StoredScrobbleCredentials};
 use crate::playback::ports::SystemClock;
 use crate::playback::reports::{ReportQueue, run_report_worker};
@@ -35,9 +32,6 @@ use crate::remotes::handlers::{RemotesDeps, remotes_router};
 use crate::remotes::plex::PlexTokenProbe;
 use crate::remotes::reader::RemotesRemoteReader;
 use crate::remotes::service::RemotesService;
-use crate::runtime_config::ConfigStore;
-use crate::runtime_config::crypto::Crypto;
-use crate::runtime_config::sections::{AudioFormat, ConnectApps};
 use crate::stream::download::{DownloadState, access_from_config, download_routes};
 use crate::stream::gateway::Gateway;
 use crate::stream::local_files::LibraryFiles;
@@ -46,6 +40,12 @@ use crate::stream::transcode::{
     FfmpegTranscoder, LocalTranscodeGate, OutFormat, StdFfmpegSpawner, TranscodeSettings,
     ffmpeg_available,
 };
+use droppedneedle_kernel::config::AppConfig;
+use droppedneedle_kernel::db::WriteLane;
+use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::crypto::Crypto;
+use droppedneedle_kernel::runtime_config::sections::{AudioFormat, ConnectApps};
 
 /// Production stream engine: gateway over stored-connection remote reads
 /// and ffmpeg transcodes behind the shared transcode gate.
@@ -103,7 +103,7 @@ impl MediaSetup {
         app_config: &AppConfig,
         users: UsersDeps,
         crypto: Arc<Crypto>,
-        http_factory: &crate::http_client::HttpClientFactory,
+        http_factory: &droppedneedle_kernel::http_client::HttpClientFactory,
         ids: Arc<dyn IdGenerator>,
         library_roots: Option<crate::library::wiring::RootSource>,
         pool: sqlx::SqlitePool,
@@ -224,7 +224,7 @@ impl MediaSetup {
         use crate::remotes::connections::{MemoryConnectionStore, NoServers};
         use crate::remotes::folders::MemoryFolderStore;
 
-        let http = crate::http_client::HttpClientFactory::new()
+        let http = droppedneedle_kernel::http_client::HttpClientFactory::new()
             .map_err(|error| format!("test media http: {error}"))?
             .shared()
             .clone();
@@ -239,7 +239,9 @@ impl MediaSetup {
         // No library wired: downloads answer 404.
         let download = DownloadState::new(
             None,
-            Arc::new(|| Ok(crate::runtime_config::sections::SecuritySettings::default())),
+            Arc::new(|| {
+                Ok(droppedneedle_kernel::runtime_config::sections::SecuritySettings::default())
+            }),
             users.clone(),
             ids.clone(),
         );

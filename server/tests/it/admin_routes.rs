@@ -15,8 +15,8 @@ use droppedneedle::auth::session::extract::Transport;
 use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::users::memory::TestRig;
 use droppedneedle::auth::users::roles::{Role, SessionKind};
-use droppedneedle::db::{DbRuntime, Lane};
 use droppedneedle::providers::ProviderCache as _;
+use droppedneedle_kernel::db::{DbRuntime, Lane};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
@@ -43,7 +43,7 @@ impl Rig {
 
     async fn open_with(
         tag: &str,
-        precache: Option<Arc<dyn droppedneedle::jobs::precache_phases::PrecacheSources>>,
+        precache: Option<Arc<dyn droppedneedle_kernel::jobs::precache_phases::PrecacheSources>>,
     ) -> Self {
         let scratch = crate::common::ScratchDir::new(&format!("admin-routes-{tag}"));
         let dir = scratch.to_path_buf();
@@ -64,7 +64,7 @@ impl Rig {
         }
         let admin = AdminSetup::new(rig.deps.clone(), quota.clone(), cache.clone(), providers)
             .with_db(AdminDb::new(runtime.pool().clone(), runtime.lane().clone()))
-            .with_backups(droppedneedle::db::BackupService::new(
+            .with_backups(droppedneedle_kernel::db::BackupService::new(
                 &dir.join("app.db"),
                 &dir.join("backups"),
             ))
@@ -257,11 +257,11 @@ async fn cache_clear_all_and_per_source() {
 #[derive(Clone)]
 struct HangWork;
 
-impl droppedneedle::jobs::precache::PrecacheWork for HangWork {
+impl droppedneedle_kernel::jobs::precache::PrecacheWork for HangWork {
     fn run(
         &self,
-        _progress: droppedneedle::jobs::precache::Progress,
-    ) -> droppedneedle::jobs::registry::BoxFuture<'_, Result<(), String>> {
+        _progress: droppedneedle_kernel::jobs::precache::Progress,
+    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'_, Result<(), String>> {
         Box::pin(async { std::future::pending().await })
     }
 }
@@ -270,10 +270,10 @@ impl droppedneedle::jobs::precache::PrecacheWork for HangWork {
 async fn precache_second_run_is_409_while_live() {
     let rig = Rig::open("precache-busy").await;
     // Hold the shared registry name directly: the route must see it.
-    let _held = droppedneedle::jobs::precache::spawn_run(
+    let _held = droppedneedle_kernel::jobs::precache::spawn_run(
         rig.jobs.registry(),
         HangWork,
-        droppedneedle::jobs::precache::PrecacheLimits::new(
+        droppedneedle_kernel::jobs::precache::PrecacheLimits::new(
             Duration::from_secs(60),
             Duration::from_secs(600),
         ),
@@ -324,9 +324,9 @@ impl ScriptedLibrary {
     }
 }
 
-impl droppedneedle::jobs::precache_phases::PrecacheSources for ScriptedLibrary {
-    fn tuning(&self) -> droppedneedle::jobs::precache_phases::PrecacheTuning {
-        droppedneedle::jobs::precache_phases::PrecacheTuning {
+impl droppedneedle_kernel::jobs::precache_phases::PrecacheSources for ScriptedLibrary {
+    fn tuning(&self) -> droppedneedle_kernel::jobs::precache_phases::PrecacheTuning {
+        droppedneedle_kernel::jobs::precache_phases::PrecacheTuning {
             artist_delay: Duration::ZERO,
             album_delay: Duration::ZERO,
             discovery_delay: Duration::ZERO,
@@ -337,11 +337,13 @@ impl droppedneedle::jobs::precache_phases::PrecacheSources for ScriptedLibrary {
 
     fn library(
         &self,
-    ) -> droppedneedle::jobs::registry::BoxFuture<
+    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<
         '_,
-        Result<droppedneedle::jobs::precache_phases::PrecacheLibrary, String>,
+        Result<droppedneedle_kernel::jobs::precache_phases::PrecacheLibrary, String>,
     > {
-        use droppedneedle::jobs::precache_phases::{LibraryAlbum, LibraryArtist, PrecacheLibrary};
+        use droppedneedle_kernel::jobs::precache_phases::{
+            LibraryAlbum, LibraryArtist, PrecacheLibrary,
+        };
         Box::pin(async {
             Ok(PrecacheLibrary {
                 artists: vec![
@@ -365,15 +367,15 @@ impl droppedneedle::jobs::precache_phases::PrecacheSources for ScriptedLibrary {
 
     fn artist_cached<'a>(
         &'a self,
-        _artist: &'a droppedneedle::jobs::precache_phases::LibraryArtist,
-    ) -> droppedneedle::jobs::registry::BoxFuture<'a, bool> {
+        _artist: &'a droppedneedle_kernel::jobs::precache_phases::LibraryArtist,
+    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'a, bool> {
         Box::pin(async { false })
     }
 
     fn warm_artist<'a>(
         &'a self,
-        artist: &'a droppedneedle::jobs::precache_phases::LibraryArtist,
-    ) -> droppedneedle::jobs::registry::BoxFuture<'a, ()> {
+        artist: &'a droppedneedle_kernel::jobs::precache_phases::LibraryArtist,
+    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'a, ()> {
         Box::pin(async move { self.record(format!("artist:{}", artist.mbid)) })
     }
 
@@ -381,21 +383,21 @@ impl droppedneedle::jobs::precache_phases::PrecacheSources for ScriptedLibrary {
         &'a self,
         user_id: &'a str,
         artist_mbid: &'a str,
-    ) -> droppedneedle::jobs::registry::BoxFuture<'a, ()> {
+    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'a, ()> {
         Box::pin(async move { self.record(format!("discovery:{user_id}:{artist_mbid}")) })
     }
 
     fn album_cached<'a>(
         &'a self,
-        _album: &'a droppedneedle::jobs::precache_phases::LibraryAlbum,
-    ) -> droppedneedle::jobs::registry::BoxFuture<'a, bool> {
+        _album: &'a droppedneedle_kernel::jobs::precache_phases::LibraryAlbum,
+    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'a, bool> {
         Box::pin(async { false })
     }
 
     fn warm_album<'a>(
         &'a self,
-        album: &'a droppedneedle::jobs::precache_phases::LibraryAlbum,
-    ) -> droppedneedle::jobs::registry::BoxFuture<'a, ()> {
+        album: &'a droppedneedle_kernel::jobs::precache_phases::LibraryAlbum,
+    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'a, ()> {
         Box::pin(async move {
             let _permit = self.album_gate.acquire().await;
             self.record(format!("album:{}", album.release_group_mbid));
@@ -404,29 +406,29 @@ impl droppedneedle::jobs::precache_phases::PrecacheSources for ScriptedLibrary {
 
     fn audiodb_artist_cached<'a>(
         &'a self,
-        _artist: &'a droppedneedle::jobs::precache_phases::LibraryArtist,
-    ) -> droppedneedle::jobs::registry::BoxFuture<'a, bool> {
+        _artist: &'a droppedneedle_kernel::jobs::precache_phases::LibraryArtist,
+    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'a, bool> {
         Box::pin(async { true })
     }
 
     fn warm_audiodb_artist<'a>(
         &'a self,
-        artist: &'a droppedneedle::jobs::precache_phases::LibraryArtist,
-    ) -> droppedneedle::jobs::registry::BoxFuture<'a, ()> {
+        artist: &'a droppedneedle_kernel::jobs::precache_phases::LibraryArtist,
+    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'a, ()> {
         Box::pin(async move { self.record(format!("audiodb:{}", artist.mbid)) })
     }
 
     fn audiodb_album_cached<'a>(
         &'a self,
-        _album: &'a droppedneedle::jobs::precache_phases::LibraryAlbum,
-    ) -> droppedneedle::jobs::registry::BoxFuture<'a, bool> {
+        _album: &'a droppedneedle_kernel::jobs::precache_phases::LibraryAlbum,
+    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'a, bool> {
         Box::pin(async { false })
     }
 
     fn warm_audiodb_album<'a>(
         &'a self,
-        album: &'a droppedneedle::jobs::precache_phases::LibraryAlbum,
-    ) -> droppedneedle::jobs::registry::BoxFuture<'a, ()> {
+        album: &'a droppedneedle_kernel::jobs::precache_phases::LibraryAlbum,
+    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'a, ()> {
         Box::pin(async move { self.record(format!("audiodb:{}", album.release_group_mbid)) })
     }
 }

@@ -90,7 +90,7 @@ pub struct BundleRecovery {
 /// factory. Recovery writes journal rows and then moves files, so its
 /// rows are synced like the publisher's.
 pub fn open_recovery_connection(db_path: &Path) -> Result<Connection, PublishError> {
-    crate::db::open_journal_connection(db_path)
+    droppedneedle_kernel::db::open_journal_connection(db_path)
         .map_err(|error| PublishError::Store(error.to_string()))
 }
 

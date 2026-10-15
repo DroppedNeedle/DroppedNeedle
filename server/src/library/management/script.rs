@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 
 use unicode_normalization::UnicodeNormalization as _;
 
-use crate::runtime_config::sections::{
+use droppedneedle_kernel::runtime_config::sections::{
     ExtensionCase, PathCompatibilitySettings, UnicodeNormalization,
 };
 

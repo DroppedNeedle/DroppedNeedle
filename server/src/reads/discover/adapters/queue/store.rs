@@ -12,9 +12,9 @@ use std::collections::{HashMap, HashSet};
 
 use sqlx::SqlitePool;
 
-use crate::db::{WriteLane, writer::Lane};
 use crate::reads::discover::adapters::ownership;
 use crate::reads::discover::models::{IgnoredRelease, QueueIgnoreRequest};
+use droppedneedle_kernel::db::{WriteLane, writer::Lane};
 
 /// Snapshot key prefix the decks share with v2.
 const DECK_KEY_PREFIX: &str = "discover_queue:";

@@ -19,9 +19,9 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use rusqlite::{Connection, OptionalExtension as _, params};
 
 use super::commit::{TRACK_GONE, UNKNOWN_ARTIST, UNKNOWN_ARTIST_ID, stable_id};
-use crate::db::fold_text;
 use crate::library::matching::model::VARIOUS_ARTISTS_MBID;
 use crate::library::tags::AudioArtistCredit;
+use droppedneedle_kernel::db::fold_text;
 
 /// The catalog's "Various Artists" sentinel (seeded by the baseline).
 const VARIOUS_ARTISTS_ID: &str = "00000000-0000-4000-8000-000000000001";

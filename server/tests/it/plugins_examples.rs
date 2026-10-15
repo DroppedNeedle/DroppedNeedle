@@ -16,8 +16,8 @@ use droppedneedle::plugins::process::ProcessLauncher;
 use droppedneedle::plugins::runtime::{
     DownloadTaskEvent, EventKind, EventPayload, PluginEvent, RuntimeState, ScrobbleEvent,
 };
-use droppedneedle::runtime_config::ConfigStore;
-use droppedneedle::runtime_config::crypto::Crypto;
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 fn repo() -> PathBuf {

@@ -42,7 +42,7 @@ use std::collections::BTreeMap;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
 use super::models::{Purpose, Scope, Summary};
-use crate::db::fold::fold_text;
+use droppedneedle_kernel::db::fold::fold_text;
 
 /// Version of the filing rules, kept on the job.
 pub const PLAYS_VERSION: &str = "play-history-filing-v1";

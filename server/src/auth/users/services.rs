@@ -1153,7 +1153,7 @@ pub async fn lastfm_set_credentials(
     shared_secret: &str,
 ) -> Result<LastFmConnection, UsersError> {
     require_lastfm_enabled(deps)?;
-    let mask = crate::runtime_config::mask::LASTFM_SECRET_MASK;
+    let mask = droppedneedle_kernel::runtime_config::mask::LASTFM_SECRET_MASK;
     let current = deps
         .lastfm
         .get(user_id)

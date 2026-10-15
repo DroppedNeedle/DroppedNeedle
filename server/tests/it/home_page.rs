@@ -8,7 +8,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use droppedneedle::db::{Lane, OpError};
 use droppedneedle::reads::discover::adapters::home::LiveHome;
 use droppedneedle::reads::discover::adapters::home::artwork::GenreArt;
 use droppedneedle::reads::discover::adapters::home::genre::GenrePages;
@@ -20,6 +19,7 @@ use droppedneedle::reads::discover::adapters::queue::sources::{
 };
 use droppedneedle::reads::discover::models::{SectionItem, WeeklyExploration};
 use droppedneedle::reads::discover::ports::BoxFuture;
+use droppedneedle_kernel::db::{Lane, OpError};
 
 const OWNED_RG: &str = "0a1b2c3d-0000-4000-8000-000000000001";
 const OTHER_RG: &str = "0a1b2c3d-0000-4000-8000-000000000002";

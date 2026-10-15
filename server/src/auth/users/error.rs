@@ -4,7 +4,7 @@
 //! ([`super::handlers::UsersHttpError`]). Anything unexpected carries an
 //! error id whose cause went to the log, never to the caller.
 
-use crate::ids::IdGenerator;
+use droppedneedle_kernel::ids::IdGenerator;
 
 /// Every failure the users routes can return to a caller.
 #[derive(Debug)]

@@ -48,7 +48,7 @@ use sqlx::SqlitePool;
 use super::federated::FederatedError;
 use super::federated::password_import::HashScheme;
 use super::users::stores::StoreError;
-use crate::db::WriteLane;
+use droppedneedle_kernel::db::WriteLane;
 
 pub use app_passwords::SqliteAppPasswordStore;
 pub use federated::SqliteFederatedStore;
@@ -124,9 +124,9 @@ fn internal(error: impl std::fmt::Display) -> StoreError {
 
 /// Store failure from a lane or pool error: busy stays busy, the rest is
 /// [`internal`].
-fn store_error(error: crate::db::DbError) -> StoreError {
+fn store_error(error: droppedneedle_kernel::db::DbError) -> StoreError {
     match error {
-        crate::db::DbError::Busy { .. } => StoreError::Busy,
+        droppedneedle_kernel::db::DbError::Busy { .. } => StoreError::Busy,
         error => internal(error),
     }
 }
@@ -166,19 +166,19 @@ const CONFLICT_ABORT: &str = "conflicting state";
 
 /// Convert a rusqlite failure inside a write closure: constraint violations
 /// become the conflict marker, everything else stays a SQL error.
-fn op_error(error: rusqlite::Error) -> crate::db::OpError {
+fn op_error(error: rusqlite::Error) -> droppedneedle_kernel::db::OpError {
     if is_constraint(&error) {
-        crate::db::OpError::Abort(CONFLICT_ABORT.to_owned())
+        droppedneedle_kernel::db::OpError::Abort(CONFLICT_ABORT.to_owned())
     } else {
-        crate::db::OpError::Sql(error)
+        droppedneedle_kernel::db::OpError::Sql(error)
     }
 }
 
 /// True when a lane failure carries the conflict marker.
-fn is_write_conflict(error: &crate::db::DbError) -> bool {
+fn is_write_conflict(error: &droppedneedle_kernel::db::DbError) -> bool {
     matches!(
         error,
-        crate::db::DbError::WriteFailed { cause, .. } if cause == CONFLICT_ABORT
+        droppedneedle_kernel::db::DbError::WriteFailed { cause, .. } if cause == CONFLICT_ABORT
     )
 }
 
@@ -189,7 +189,7 @@ fn row_exists(
     tx: &rusqlite::Transaction,
     table: &str,
     id: &str,
-) -> Result<bool, crate::db::OpError> {
+) -> Result<bool, droppedneedle_kernel::db::OpError> {
     let found: Option<i64> = tx
         .query_row(
             &format!("SELECT 1 FROM {table} WHERE id = ?"),

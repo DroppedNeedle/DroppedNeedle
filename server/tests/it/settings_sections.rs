@@ -18,9 +18,6 @@ use droppedneedle::auth::session::extract::Transport;
 use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::users::memory::TestRig;
 use droppedneedle::auth::users::roles::{Role, SessionKind};
-use droppedneedle::runtime_config::mask::{INDEXER_API_KEY_MASK, JELLYFIN_API_KEY_MASK};
-use droppedneedle::runtime_config::secret_sections::{JellyfinConnection, TypedLibrary};
-use droppedneedle::runtime_config::{ConfigStore, Crypto};
 use droppedneedle::settings::effects::{SaveEffects, SavedSection};
 use droppedneedle::settings::models::{AdvancedSettingsForm, LibrarySettingsSaveRequest};
 use droppedneedle::settings::musicbrainz::BRAINZMASH_DISCLOSURE_VERSION;
@@ -30,6 +27,9 @@ use droppedneedle::settings::verify::{
     ProwlarrVerdict, SabnzbdMountDiagnosis, SabnzbdVerdict, VerifyProbes, VersionVerdict,
 };
 use droppedneedle::settings::wiring::SettingsSetup;
+use droppedneedle_kernel::runtime_config::mask::{INDEXER_API_KEY_MASK, JELLYFIN_API_KEY_MASK};
+use droppedneedle_kernel::runtime_config::secret_sections::{JellyfinConnection, TypedLibrary};
+use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use futures_util::future::BoxFuture;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -284,8 +284,8 @@ impl VerifyProbes for FakeProbes {
 /// AudioDB key, and fire the Advanced fan-out.
 #[tokio::test]
 async fn advanced_round_trip_scales_and_masks() {
-    use droppedneedle::runtime_config::mask::AUDIODB_API_KEY_MASK;
-    use droppedneedle::runtime_config::secret_sections::AdvancedSettings;
+    use droppedneedle_kernel::runtime_config::mask::AUDIODB_API_KEY_MASK;
+    use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 
     let (service, effects, _scratch) = scratch_service();
     let form = AdvancedSettingsForm {
@@ -321,7 +321,7 @@ async fn advanced_round_trip_scales_and_masks() {
 /// path add/remove normalize through the same save.
 #[tokio::test]
 async fn library_round_trip_cas_and_paths() {
-    use droppedneedle::runtime_config::mask::ACOUSTID_KEY_MASK;
+    use droppedneedle_kernel::runtime_config::mask::ACOUSTID_KEY_MASK;
 
     let (service, effects, _scratch) = scratch_service();
     let view = service.get_library().await.expect("reads default");
@@ -344,7 +344,7 @@ async fn library_round_trip_cas_and_paths() {
         .expect_err("stale fails");
     assert!(matches!(
         error,
-        droppedneedle::runtime_config::settings_error::SettingsError::StaleRevision { .. }
+        droppedneedle_kernel::runtime_config::settings_error::SettingsError::StaleRevision { .. }
     ));
 
     let dir = ScratchDir::new("settings-library");
@@ -418,7 +418,7 @@ async fn concurrent_library_saves_cannot_both_pass_the_revision_check() {
         .filter(|result| {
             matches!(
                 result,
-                Err(droppedneedle::runtime_config::settings_error::SettingsError::StaleRevision { .. })
+                Err(droppedneedle_kernel::runtime_config::settings_error::SettingsError::StaleRevision { .. })
             )
         })
         .count();
@@ -1145,10 +1145,10 @@ async fn live_save_effects_sweep_only_the_saved_section() {
     use std::sync::atomic::AtomicBool;
     use std::time::Duration;
 
-    use droppedneedle::jobs::events_kick::FnKick;
     use droppedneedle::providers::InMemoryProviderCache;
     use droppedneedle::providers::ProviderCache as _;
     use droppedneedle::settings::effects::LiveSaveEffects;
+    use droppedneedle_kernel::jobs::events_kick::FnKick;
 
     let cache = Arc::new(InMemoryProviderCache::new());
     for key in [

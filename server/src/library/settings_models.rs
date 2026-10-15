@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::library::management::settings::ProfileImportWarning;
-use crate::runtime_config::Masked;
-use crate::runtime_config::secret_sections::{IdentificationPolicy, TypedLibrary};
-use crate::runtime_config::sections::{
+use droppedneedle_kernel::runtime_config::Masked;
+use droppedneedle_kernel::runtime_config::secret_sections::{IdentificationPolicy, TypedLibrary};
+use droppedneedle_kernel::runtime_config::sections::{
     FieldMode, LibraryManagement, LibraryManagementProfile, NamingScript, TaggingScript,
 };
 

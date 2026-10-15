@@ -64,7 +64,7 @@ pub struct ArtistCoverDebug {
 
 /// True when the tooling routes may mount: the constructor flag set, in a
 /// debug build. Release builds always refuse.
-pub fn tooling_routes_enabled(config: &crate::config::AppConfig) -> bool {
+pub fn tooling_routes_enabled(config: &droppedneedle_kernel::config::AppConfig) -> bool {
     config.tooling_routes && cfg!(debug_assertions)
 }
 
@@ -148,9 +148,14 @@ mod tests {
 
     #[test]
     fn gate_needs_flag_and_debug_build() {
-        let off = crate::config::AppConfig::new(crate::config::DEFAULT_PORT);
+        let off = droppedneedle_kernel::config::AppConfig::new(
+            droppedneedle_kernel::config::DEFAULT_PORT,
+        );
         assert!(!tooling_routes_enabled(&off));
-        let on = crate::config::AppConfig::new(crate::config::DEFAULT_PORT).with_tooling_routes();
+        let on = droppedneedle_kernel::config::AppConfig::new(
+            droppedneedle_kernel::config::DEFAULT_PORT,
+        )
+        .with_tooling_routes();
         assert_eq!(tooling_routes_enabled(&on), cfg!(debug_assertions));
         #[cfg(not(debug_assertions))]
         assert!(!tooling_routes_enabled(&on));

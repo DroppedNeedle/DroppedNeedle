@@ -142,7 +142,8 @@ pub struct FakeStore {
 
 impl Default for FakeStore {
     fn default() -> Self {
-        let crypto = match crate::runtime_config::Crypto::from_key_bytes(&[9u8; 32]) {
+        let crypto = match droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[9u8; 32])
+        {
             Ok(crypto) => crypto,
             Err(_) => unreachable!("a 32-byte key is always valid"),
         };

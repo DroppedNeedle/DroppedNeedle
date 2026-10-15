@@ -25,7 +25,7 @@ use super::models::SPOTIFY_SECRET_MASK;
 use super::models::{
     SpotifyAuthUrlResponse, SpotifyPlaylistItem, SpotifyPlaylistListResponse, SpotifySettings,
 };
-use crate::http_client::{BodyError, read_capped};
+use droppedneedle_kernel::http_client::{BodyError, read_capped};
 
 /// OAuth scopes (v2 `_SPOTIFY_SCOPES`, verbatim).
 pub const SPOTIFY_SCOPES: &str =

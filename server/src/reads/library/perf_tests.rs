@@ -14,8 +14,8 @@ use crate::reads::library;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::db::{DbConfig, DbRuntime, Lane, OpError, fold_text, open_runtime};
-use crate::schema::{MIGRATOR, apply_migrations, latest_version};
+use droppedneedle_kernel::db::{DbConfig, DbRuntime, Lane, OpError, fold_text, open_runtime};
+use droppedneedle_kernel::schema::{MIGRATOR, apply_migrations, latest_version};
 use library::sqlite::{
     ALBUM_COLUMNS, ALBUM_FILTER, ALBUM_JOINS, ARTIST_CREDIT_COUNTS, LibraryDb, STATS_FORMATS,
     STATS_MAIN, SqliteCatalog, TRACK_COLUMNS, TRACK_FILTER, TRACK_JOINS, TRACK_MISS_ORACLE,
@@ -36,15 +36,15 @@ struct Fixture {
     pool: SqlitePool,
     catalog: SqliteCatalog,
     /// Dropped last: removes the scratch database.
-    _dir: crate::db::scratch::ScratchDir,
+    _dir: droppedneedle_kernel::db::scratch::ScratchDir,
 }
 
 async fn seed_small() -> Fixture {
     let seq = PERF_SEQ.fetch_add(1, Ordering::Relaxed);
-    let dir =
-        crate::db::scratch::ScratchDir::new(&format!("reads-perf-{seq}")).expect("scratch dir");
+    let dir = droppedneedle_kernel::db::scratch::ScratchDir::new(&format!("reads-perf-{seq}"))
+        .expect("scratch dir");
     let path = dir.join("app.db");
-    crate::schema::template::copy_to(&path).expect("migrated database copies");
+    droppedneedle_kernel::schema::template::copy_to(&path).expect("migrated database copies");
     let runtime = open_runtime(&DbConfig::new(&path))
         .await
         .expect("scratch runtime opens");
@@ -1980,10 +1980,13 @@ async fn perf_100k_player_pages_hold_p95() {
     seed_100k_plays(&fixture).await;
     // Production statistics: the maintenance ANALYZE, then the hot plans
     // must still walk their indexes.
-    crate::db::AnalyzeService::new(fixture.runtime.lane().clone(), fixture.pool.clone())
-        .run()
-        .await
-        .expect("analyze runs");
+    droppedneedle_kernel::db::AnalyzeService::new(
+        fixture.runtime.lane().clone(),
+        fixture.pool.clone(),
+    )
+    .run()
+    .await
+    .expect("analyze runs");
     assert_hot_plans(&fixture.pool).await;
     assert_history_plans(&fixture.pool, "100k with statistics").await;
     let player = SqlitePlayerCatalog::new(&LibraryDb::new(&fixture.pool));
@@ -2202,7 +2205,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
-use crate::db::{Db, DbError, WriteLane};
+use droppedneedle_kernel::db::{Db, DbError, WriteLane};
 use library::player::{
     AlbumOrder, AlbumQuery, OrderKey, PlayerAlbum, PlayerCatalog, PlayerTrack, SqlitePlayerCatalog,
     TrackOrder, TrackQuery,
@@ -3486,10 +3489,13 @@ async fn replay_pass(number: usize, file: PathBuf) -> Pass {
     seed_100k(&fixture).await;
     seed_replay(&fixture).await;
     // Production statistics, as the player acceptance test runs them.
-    crate::db::AnalyzeService::new(fixture.runtime.lane().clone(), fixture.pool.clone())
-        .run()
-        .await
-        .expect("analyze runs");
+    droppedneedle_kernel::db::AnalyzeService::new(
+        fixture.runtime.lane().clone(),
+        fixture.pool.clone(),
+    )
+    .run()
+    .await
+    .expect("analyze runs");
     settle(&fixture).await;
     let stats = fixture.catalog.stats().await.expect("stats read");
     assert_eq!(stats.total_tracks, 100007);
@@ -3542,7 +3548,8 @@ fn replay_rule_and_saved_passes() {
     assert!(serial_holds(12.0, 12.5) && !serial_holds(12.0, 12.51));
     assert_eq!(median(vec![3.0, 1.0, 2.0]), 2.0);
 
-    let dir = crate::db::scratch::ScratchDir::new("replay-passes").expect("scratch dir");
+    let dir =
+        droppedneedle_kernel::db::scratch::ScratchDir::new("replay-passes").expect("scratch dir");
     let file = dir.join("passes.tsv");
     assert!(load_passes(&file).is_empty());
     for pass in 0..3 {

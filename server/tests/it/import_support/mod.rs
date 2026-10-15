@@ -10,7 +10,7 @@ use crate::common::ScratchDir;
 use std::path::PathBuf;
 
 use droppedneedle::export::seal::{DIGEST_KEY, Opener, Sealer};
-use droppedneedle::runtime_config::Crypto;
+use droppedneedle_kernel::runtime_config::Crypto;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -154,7 +154,7 @@ pub async fn migrated_pool() -> SqlitePool {
         .connect("sqlite::memory:")
         .await
         .unwrap();
-    droppedneedle::schema::apply_migrations(&pool)
+    droppedneedle_kernel::schema::apply_migrations(&pool)
         .await
         .unwrap();
     pool

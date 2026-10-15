@@ -20,12 +20,12 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::runtime_config::ConfigStore;
-use crate::runtime_config::crypto::{Crypto, CryptoError};
-use crate::runtime_config::secret_sections::{
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::crypto::{Crypto, CryptoError};
+use droppedneedle_kernel::runtime_config::secret_sections::{
     JellyfinConnection, NavidromeConnection, PlexConnection,
 };
-use crate::runtime_config::sections::InternalState;
+use droppedneedle_kernel::runtime_config::sections::InternalState;
 
 use super::adapter::{AdapterError, BoxFuture};
 use super::models::SourceName;
@@ -89,12 +89,12 @@ pub trait ConnectionStore: Send + Sync {
 #[derive(Clone)]
 pub struct SqliteConnectionStore {
     pool: sqlx::SqlitePool,
-    lane: crate::db::WriteLane,
+    lane: droppedneedle_kernel::db::WriteLane,
 }
 
 impl SqliteConnectionStore {
     /// Bind the store to a migrated database.
-    pub fn new(pool: sqlx::SqlitePool, lane: crate::db::WriteLane) -> Self {
+    pub fn new(pool: sqlx::SqlitePool, lane: droppedneedle_kernel::db::WriteLane) -> Self {
         Self { pool, lane }
     }
 }
@@ -115,7 +115,7 @@ impl ConnectionStore for SqliteConnectionStore {
             .fetch_optional(&self.pool)
             .await
             .map_err(|error| {
-                crate::db::map_sqlx_busy("remotes.connection.get", error).to_string()
+                droppedneedle_kernel::db::map_sqlx_busy("remotes.connection.get", error).to_string()
             })?;
             Ok(row.map(|(service, enabled, data)| ConnectionRow {
                 service,
@@ -136,7 +136,7 @@ impl ConnectionStore for SqliteConnectionStore {
         Box::pin(async move {
             self.lane
                 .write(
-                    crate::db::Lane::Foreground,
+                    droppedneedle_kernel::db::Lane::Foreground,
                     "remotes.connection.upsert",
                     move |tx| {
                         let now = crate::auth::times::to_iso(unix_now());
@@ -167,7 +167,7 @@ impl ConnectionStore for SqliteConnectionStore {
         Box::pin(async move {
             self.lane
                 .write(
-                    crate::db::Lane::Foreground,
+                    droppedneedle_kernel::db::Lane::Foreground,
                     "remotes.connection.delete",
                     move |tx| {
                         Ok(tx.execute(
@@ -192,7 +192,8 @@ impl ConnectionStore for SqliteConnectionStore {
             .fetch_all(&self.pool)
             .await
             .map_err(|error| {
-                crate::db::map_sqlx_busy("remotes.connection.list", error).to_string()
+                droppedneedle_kernel::db::map_sqlx_busy("remotes.connection.list", error)
+                    .to_string()
             })?;
             Ok(rows
                 .into_iter()
@@ -938,14 +939,15 @@ impl ConnectionResolver {
 
     /// The `username` field of a stored document, sealed whole or plain.
     fn document_username(&self, data: &str) -> String {
-        let plaintext = if data.starts_with(crate::runtime_config::crypto::CIPHER_PREFIX) {
-            match self.coder.open(data) {
-                Ok(plaintext) => plaintext,
-                Err(_) => return String::new(),
-            }
-        } else {
-            data.to_owned()
-        };
+        let plaintext =
+            if data.starts_with(droppedneedle_kernel::runtime_config::crypto::CIPHER_PREFIX) {
+                match self.coder.open(data) {
+                    Ok(plaintext) => plaintext,
+                    Err(_) => return String::new(),
+                }
+            } else {
+                data.to_owned()
+            };
         #[derive(Deserialize)]
         struct Named {
             #[serde(default)]

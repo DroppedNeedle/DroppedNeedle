@@ -39,9 +39,9 @@ use droppedneedle::auth::users::stores::{
     AppPasswordStore as _, BoxFuture, Clock, HibpPolicy, RoleChange, SessionManager as _,
     UserDeletion, UserStore as _,
 };
-use droppedneedle::db::{DbRuntime, Lane};
-use droppedneedle::ids::IdGenerator;
-use droppedneedle::runtime_config::crypto::Crypto;
+use droppedneedle_kernel::db::{DbRuntime, Lane};
+use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use rusqlite::params;
 
 /// Fixed test clock: 2023-11-14T22:13:20Z.

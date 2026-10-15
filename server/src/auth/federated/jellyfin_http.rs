@@ -12,9 +12,9 @@ use super::jellyfin_models::{AuthenticationResultWire, UserWire};
 use super::settings::{InstallIds, jellyfin_login_server};
 use super::users::PROVIDER_JELLYFIN;
 use crate::auth::users::stores::{BoxFuture, DirectoryError, DirectoryUser, UserDirectory};
-use crate::http_client::read_capped;
-use crate::runtime_config::ConfigStore;
-use crate::runtime_config::secret_sections::JellyfinConnection;
+use droppedneedle_kernel::http_client::read_capped;
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::secret_sections::JellyfinConnection;
 
 /// Request timeout (v2 parity).
 const TIMEOUT: Duration = Duration::from_secs(15);

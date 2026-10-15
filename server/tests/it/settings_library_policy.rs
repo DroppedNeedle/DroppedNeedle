@@ -8,14 +8,14 @@ use crate::common::{FIXED_ID, FixedIdGenerator, ScratchDir};
 use std::sync::Arc;
 
 use droppedneedle::auth::users::memory::TestRig;
-use droppedneedle::db::{Lane, OpError};
-use droppedneedle::runtime_config::secret_sections::IdentificationPolicy;
-use droppedneedle::runtime_config::settings_error::SettingsError;
 use droppedneedle::settings::library_catalog::SqliteLibraryPolicyCatalog;
 use droppedneedle::settings::models::{
     LibraryPolicyApplyRequest, LibraryRestoreRootsRequest, LibrarySettingsSaveRequest,
 };
 use droppedneedle::settings::wiring::SettingsSetup;
+use droppedneedle_kernel::db::{Lane, OpError};
+use droppedneedle_kernel::runtime_config::secret_sections::IdentificationPolicy;
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use serde_json::json;
 
 #[tokio::test]

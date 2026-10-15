@@ -7,11 +7,11 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use droppedneedle::jobs::events_kick::{self, KickOutcome};
-use droppedneedle::jobs::events_watcher::{
+use droppedneedle_kernel::jobs::events_kick::{self, KickOutcome};
+use droppedneedle_kernel::jobs::events_watcher::{
     self, EventsWatcher, PollTimeSource, SweepEnd, WallTime, WatchClock,
 };
-use droppedneedle::jobs::registry::{BoxFuture, JobRegistry, MemoryRegistryStore};
+use droppedneedle_kernel::jobs::registry::{BoxFuture, JobRegistry, MemoryRegistryStore};
 
 type TestRegistry = JobRegistry<MemoryRegistryStore>;
 

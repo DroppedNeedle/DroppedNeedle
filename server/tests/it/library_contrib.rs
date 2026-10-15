@@ -124,7 +124,7 @@ impl Rig {
         let dir = ScratchDir::new("lib-contrib");
         let path = dir.join("app.db");
         migrated_db(&path);
-        let db = droppedneedle::db::open_connection(&path).unwrap();
+        let db = droppedneedle_kernel::db::open_connection(&path).unwrap();
         let store = Arc::new(SqliteContributions::open(&path).unwrap());
         let discogs = Arc::new(ScriptedDiscogs::new());
         let musicbrainz = Arc::new(ScriptedMusicBrainz::new());

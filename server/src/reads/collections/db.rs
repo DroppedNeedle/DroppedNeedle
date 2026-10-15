@@ -11,7 +11,7 @@
 use rusqlite::Transaction;
 use sqlx::SqlitePool;
 
-use crate::db::{DbError, Lane, OpError, WriteLane, map_sqlx_busy};
+use droppedneedle_kernel::db::{DbError, Lane, OpError, WriteLane, map_sqlx_busy};
 
 /// Every way a store call can fail. The text goes to the log only.
 #[derive(Debug, thiserror::Error)]

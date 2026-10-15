@@ -17,14 +17,14 @@ use droppedneedle::acquire::landing::{
 };
 use droppedneedle::acquire::wiring::settled_hook;
 use droppedneedle::acquire::worker::{DownloadWorker, FixedSource, Source, WorkerConfig};
-use droppedneedle::ids::{IdGenerator, UuidGenerator};
 use droppedneedle::library::identify::sources::{ReleaseHit, ReleaseSource, SourceError};
 use droppedneedle::library::matching::{CreditedArtist, Release, ReleaseMedium, ReleaseTrack};
 use droppedneedle::library::scan::EffectivePolicy;
 use droppedneedle::library::tags::TagField;
 use droppedneedle::library::tags::save::{TagEdit, save_tags};
 use droppedneedle::library::wiring::LibrarySetup;
-use droppedneedle::runtime_config::{ConfigStore, Crypto};
+use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
+use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use futures_util::future::BoxFuture;
 
 const GOOD_GROUP: &str = "6d0b7a1e-0000-4000-8000-000000000001";
@@ -906,7 +906,7 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
     use droppedneedle::acquire::usenet::policy::UsenetPolicy;
     use droppedneedle::acquire::usenet::prowlarr::ProwlarrIndexer;
     use droppedneedle::acquire::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
-    use droppedneedle::runtime_config::sections::UsenetBackendSetting;
+    use droppedneedle_kernel::runtime_config::sections::UsenetBackendSetting;
     use droppedneedle_testkit::usenet::{SabnzbdMock, serve_loopback};
     use std::time::{Duration, SystemTime};
 

@@ -25,7 +25,6 @@ use super::error::RequestsError;
 use super::models::AlbumIntake;
 use super::service::RequestsService;
 
-use crate::events::{EventSink, PersonalMixRefreshed, UserNotice, model::new_event_id};
 use crate::plugins::scrobble::{ScrobblePrefsPatch, ScrobblePrefsStore};
 use crate::providers::listenbrainz::playlists::{RecommendationPlaylist, RecommendationTrack};
 use crate::providers::listenbrainz::{
@@ -35,6 +34,9 @@ use crate::reads::catalog::library::LocalCatalog;
 use crate::reads::collections::store::playlists::{NewEntry, PlaylistStore, Written};
 use crate::reads::discover::adapters::queue::select::{self, Shuffler};
 use crate::reads::discover::models::QueueItemLight;
+use droppedneedle_kernel::events::{
+    EventSink, PersonalMixRefreshed, UserNotice, model::new_event_id,
+};
 
 /// The playlist's display name (v2).
 pub const PLAYLIST_NAME: &str = "Your Weekly Mix";
@@ -850,8 +852,10 @@ impl crate::plugins::scrobble::MixStateReader for MixGrantHooks {
 
 /// The daily sweep drives the builder in the slot; before boot fills it
 /// the sweep has nothing to do.
-impl crate::jobs::personal_mix::PersonalMixer for MixGrantHooks {
-    fn run_for_all_users(&self) -> crate::jobs::registry::BoxFuture<'_, Result<(), String>> {
+impl droppedneedle_kernel::jobs::personal_mix::PersonalMixer for MixGrantHooks {
+    fn run_for_all_users(
+        &self,
+    ) -> droppedneedle_kernel::jobs::registry::BoxFuture<'_, Result<(), String>> {
         Box::pin(async move {
             match self.slot.get() {
                 Some(builder) => builder.run_for_all_users().await.map(|_| ()),

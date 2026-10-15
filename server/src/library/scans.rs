@@ -16,7 +16,7 @@ use super::scan::selection::{UnknownScopes, select_scopes};
 use super::scan::store::ScanStoreError;
 use super::service::ServiceError;
 use super::wiring::LibrarySetup;
-use crate::runtime_config::secret_sections::TypedLibrary;
+use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 
 /// Most finished runs one history page carries.
 pub const MAX_PAGE: usize = 50;

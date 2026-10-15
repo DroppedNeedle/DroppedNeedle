@@ -26,7 +26,7 @@ pub enum Transport {
     Cookie,
 }
 
-pub use crate::error::{FORBIDDEN, UNAUTHORIZED};
+pub use droppedneedle_kernel::error::{FORBIDDEN, UNAUTHORIZED};
 
 /// Extract the presented credential, Bearer-then-cookie. Returns the raw token
 /// and the transport that carried it.
@@ -73,12 +73,12 @@ fn strip_bearer_prefix(value: &str) -> Option<&str> {
 
 /// 401 response: shared envelope, `WWW-Authenticate: Bearer`.
 pub fn unauthorized_response(message: &str) -> Response {
-    crate::error::unauthorized_response(message)
+    droppedneedle_kernel::error::unauthorized_response(message)
 }
 
 /// 403 response: shared envelope, no auth challenge (the session is valid).
 pub fn forbidden_response(message: &str) -> Response {
-    crate::error::envelope_response(StatusCode::FORBIDDEN, FORBIDDEN, message, None)
+    droppedneedle_kernel::error::envelope_response(StatusCode::FORBIDDEN, FORBIDDEN, message, None)
 }
 
 #[cfg(test)]

@@ -25,7 +25,7 @@ use data_dirs::{BootRefusal, DataDirs, check_bootable};
 use jobs::JobsSetup;
 
 use crate::{
-    AppConfig, AppState,
+    AppState,
     acquire::AcquireSetup,
     admin::{AdminDb, AdminSetup, quota::reload_overrides},
     app::create_app_with_web,
@@ -33,15 +33,6 @@ use crate::{
     compat::{
         CompatSetup, settings::LiveSettings, setup::CompatDeps, shared::address::ListenerConfig,
     },
-    db::{
-        BackupService, DbConfig,
-        datalock::{DataLock, DataLockError},
-        error::DbError,
-        open_runtime,
-    },
-    events::EventHub,
-    http_client::{HttpClientError, HttpClientFactory},
-    ids::UuidGenerator,
     library::wiring::LibrarySetup,
     media::MediaSetup,
     playback::plugin_events::PluginPlayEvents,
@@ -65,10 +56,6 @@ use crate::{
         plex::ConfiguredPlexServer,
         presence_feed::MediaJobs,
     },
-    runtime_config::{
-        ConfigStore, Crypto, crypto::CryptoError, quota::QUOTA_FILE_NAME,
-        secret_sections::ListenBrainzConnection, sections::LyricsSettings,
-    },
     settings::{
         effects::{LiveSaveEffects, SaveEffects},
         library_catalog::SqliteLibraryPolicyCatalog,
@@ -77,6 +64,22 @@ use crate::{
         wiring::SettingsSetup,
     },
     web::{WebError, WebUi},
+};
+use droppedneedle_kernel::{
+    config::AppConfig,
+    db::{
+        BackupService, DbConfig,
+        datalock::{DataLock, DataLockError},
+        error::DbError,
+        open_runtime,
+    },
+    events::EventHub,
+    http_client::{HttpClientError, HttpClientFactory},
+    ids::UuidGenerator,
+    runtime_config::{
+        ConfigStore, Crypto, crypto::CryptoError, quota::QUOTA_FILE_NAME,
+        secret_sections::ListenBrainzConnection, sections::LyricsSettings,
+    },
 };
 
 /// Why the server could not boot.
@@ -103,7 +106,7 @@ pub enum BootError {
     DataDir(#[from] BootRefusal),
     /// The settings file could not be opened.
     #[error("settings: {0}")]
-    Settings(#[from] crate::runtime_config::ConfigError),
+    Settings(#[from] droppedneedle_kernel::runtime_config::ConfigError),
     /// One bundle failed to wire or recover.
     #[error("{stage}: {message}")]
     Stage {
@@ -123,7 +126,7 @@ fn stage(stage: &'static str) -> impl FnOnce(String) -> BootError {
 /// `pool` and `lane`.
 pub fn sign_in_links(
     pool: sqlx::SqlitePool,
-    lane: crate::db::WriteLane,
+    lane: droppedneedle_kernel::db::WriteLane,
     crypto: Arc<Crypto>,
     config_store: Arc<ConfigStore>,
 ) -> MediaLinks {
@@ -185,7 +188,8 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // A fresh install has no MusicBrainz section; its default mints a source
     // id, so store it once or every read reports a new source (and clients
     // keyed on it refetch without end).
-    config_store.seed_default::<crate::runtime_config::sections::MusicBrainzSettings>()?;
+    config_store
+        .seed_default::<droppedneedle_kernel::runtime_config::sections::MusicBrainzSettings>()?;
     let ids = Arc::new(UuidGenerator);
     let clock = Arc::new(SystemClock);
     // One live event hub for the process. Bundles built below publish into
@@ -486,7 +490,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     .with_events(Arc::new(events.clone()));
     // Your Weekly Mix: one builder behind the refresh route, the daily
     // loop and the scrobble-settings toggle.
-    let mix_events = crate::events::EventSink::default();
+    let mix_events = droppedneedle_kernel::events::EventSink::default();
     mix_events.attach(&events);
     if let Some(builder) = crate::acquire::requests::mix_sources::live_builder(
         &acquire.requests,
@@ -683,7 +687,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // `activity.changed` for every open stream.
     background.push(
         "event-revisions",
-        tokio::spawn(crate::events::revisions::run(
+        tokio::spawn(droppedneedle_kernel::events::revisions::run(
             events.clone(),
             runtime.pool().clone(),
             stop.clone(),
@@ -692,7 +696,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // `downloads.changed` for every open stream.
     background.push(
         "event-downloads",
-        tokio::spawn(crate::events::downloads::run(
+        tokio::spawn(droppedneedle_kernel::events::downloads::run(
             events.clone(),
             runtime.pool().clone(),
             stop,

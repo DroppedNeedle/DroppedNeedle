@@ -4,7 +4,7 @@ use super::{AuthDb, internal, op_error, store_error};
 use crate::auth::times::to_iso;
 use crate::auth::users::models::LastFmConnection;
 use crate::auth::users::stores::{BoxFuture, LastFmStore, StoreError};
-use crate::db::{Lane, map_sqlx_busy};
+use droppedneedle_kernel::db::{Lane, map_sqlx_busy};
 
 /// Last.fm rows in `user_connections` carry this service tag.
 const LASTFM_SERVICE: &str = "lastfm";

@@ -165,7 +165,7 @@ impl GitHubClient {
             );
             return Ok(Vec::new());
         }
-        let body = crate::http_client::read_capped(response, MAX_BODY_BYTES)
+        let body = droppedneedle_kernel::http_client::read_capped(response, MAX_BODY_BYTES)
             .await
             .map_err(|error| FetchError::Transport(error.kind().to_owned()))?;
         let raw: Vec<RawRelease> = match serde_json::from_slice(&body) {

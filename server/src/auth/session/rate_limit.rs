@@ -37,7 +37,7 @@ use axum::{
 
 use super::middleware::CurrentSession;
 use crate::auth::session::client_ip::client_ip;
-use crate::config::TrustedProxies;
+use droppedneedle_kernel::config::TrustedProxies;
 
 /// Most keys one map tracks before evicting the stalest.
 pub const MAX_ENTRIES: usize = 10_000;
@@ -450,7 +450,7 @@ pub fn stamp_budget_headers(headers: &mut HeaderMap, class: RateClass, remaining
 
 /// 429 in the shared envelope with `Retry-After` and zeroed budget headers.
 pub fn rate_limited_response(class: RateClass, retry_after_secs: u64) -> Response {
-    let mut response = crate::error::envelope_response(
+    let mut response = droppedneedle_kernel::error::envelope_response(
         StatusCode::TOO_MANY_REQUESTS,
         RATE_LIMITED,
         "Too many requests",

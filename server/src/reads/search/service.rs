@@ -9,7 +9,7 @@
 //!
 //! Local matching is accent- and case-insensitive through the baseline folded
 //! columns (`folded_name`, `title_folded`, ...): the query is folded with
-//! the same [`fold_text`](crate::db::fold::fold_text) the writers
+//! the same [`fold_text`](droppedneedle_kernel::db::fold::fold_text) the writers
 //! use, so a keyboard without accents still finds the artist. Retired
 //! (merged-away) artists and albums never match, and tracks outside the
 //! `indexed` availability never match. Empty results are absence, never
@@ -126,7 +126,7 @@ impl SearchService {
         limits: BucketLimits,
         buckets: &[Bucket],
     ) -> Result<SearchResponse, sqlx::Error> {
-        let folded = crate::db::fold::fold_text(query);
+        let folded = droppedneedle_kernel::db::fold::fold_text(query);
         if folded.is_empty() {
             return Ok(SearchResponse {
                 artists: Vec::new(),
@@ -207,7 +207,7 @@ impl SearchService {
         limit: u32,
         offset: u32,
     ) -> Result<SearchBucketResponse, sqlx::Error> {
-        let folded = crate::db::fold::fold_text(query);
+        let folded = droppedneedle_kernel::db::fold::fold_text(query);
         let (results, status) = if folded.is_empty() {
             (Vec::new(), SearchRemoteStatus::Ok)
         } else {
@@ -285,7 +285,7 @@ impl SearchService {
     /// artists and albums (60% of the limit each, as in v2) under a short
     /// deadline. Short queries return empty; handlers enforce that first.
     pub async fn suggest(&self, query: &str, limit: u32) -> Result<SuggestResponse, sqlx::Error> {
-        let folded = crate::db::fold::fold_text(query);
+        let folded = droppedneedle_kernel::db::fold::fold_text(query);
         if folded.trim().len() < 2 {
             return Ok(SuggestResponse {
                 results: Vec::new(),
@@ -600,7 +600,7 @@ impl SearchService {
 /// absent counts and source `none`. The cause goes to the log only.
 pub async fn enrich_with_degradation(
     port: &dyn EnrichmentPort,
-    ids: &dyn crate::ids::IdGenerator,
+    ids: &dyn droppedneedle_kernel::ids::IdGenerator,
     request: EnrichmentBatchRequest,
 ) -> EnrichmentResponse {
     let artists: Vec<super::models::ArtistEnrichmentRequest> = request
@@ -704,7 +704,7 @@ fn detect_top_result(items: &[SearchResultItem], query_folded: &str) -> Option<S
     if best.score < SCORE_PREFIX {
         return None;
     }
-    let title_folded = crate::db::fold::fold_text(&best.title);
+    let title_folded = droppedneedle_kernel::db::fold::fold_text(&best.title);
     let query_tokens = search_tokens(query_folded);
     let title_tokens = search_tokens(&title_folded);
     if query_tokens.is_empty() || title_tokens.is_empty() {

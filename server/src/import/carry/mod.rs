@@ -40,7 +40,7 @@ use thiserror::Error;
 
 use crate::export::sections::{ALL, Column, TableSection, Target};
 use crate::import::report::{EntityCounts, ReportBuilder, utc_now_iso};
-use crate::runtime_config::Crypto;
+use droppedneedle_kernel::runtime_config::Crypto;
 
 /// How the carry can fail. Messages stay free of row contents and secrets.
 #[derive(Debug, Error)]
