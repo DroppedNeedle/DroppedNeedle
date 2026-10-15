@@ -11918,3 +11918,417 @@ fn grafted_credits_keep_the_stored_edition() {
         );
     }
 }
+
+/// Two editions, `R` and `R2`, of made-up album `n` titled `title`: the
+/// same three recordings, each edition with its own track ids.
+fn sibling_editions(n: u32, title: &str) -> (Release, Release) {
+    const TITLES: [&str; 3] = ["Airbag", "Paranoid Android", "Subterranean Homesick Alien"];
+    let edition = |letter: char| Release {
+        id: format!("5e1a0000-000{n}-4000-8000-00000000000{letter}"),
+        release_group_id: format!("5e1a0000-000{n}-4000-8000-0000000000ff"),
+        title: title.to_owned(),
+        artists: vec![CreditedArtist {
+            id: "a74b1b7f-71a5-4011-9441-d0b5e4122711".to_owned(),
+            name: "Radiohead".to_owned(),
+            sort_name: None,
+            join: String::new(),
+        }],
+        tracks: TITLES
+            .iter()
+            .enumerate()
+            .map(|(index, title)| ReleaseTrack {
+                isrcs: Vec::new(),
+                genres: Vec::new(),
+                id: format!("5e1a0000-000{n}-4000-8000-0000000{letter}{index:04}"),
+                recording_id: format!("5e1a0000-000{n}-4000-8000-0000000d{index:04}"),
+                title: (*title).to_owned(),
+                artists: Vec::new(),
+                disc: 1,
+                position: index as u32 + 1,
+                absolute_position: index as u32 + 1,
+                length_ms: None,
+            })
+            .collect(),
+        ..Release::default()
+    };
+    (edition('a'), edition('b'))
+}
+
+/// One file per track of `release` in `folder`, tagged as that release
+/// with its recordings (when `recordings`) and the given track ids.
+fn plant_edition(
+    music: &Path,
+    folder: &str,
+    album: &str,
+    release: &Release,
+    track_ids: &[String],
+    recordings: bool,
+) {
+    use droppedneedle::library::tags::TagField;
+    use droppedneedle::library::tags::save::{TagEdit, save_tags};
+    for (index, track) in release.tracks.iter().enumerate() {
+        let file = plant(
+            music,
+            &format!("{folder}/{:02}.flac", index + 1),
+            "flac_full_01.flac",
+        );
+        let recording = if recordings {
+            vec![track.recording_id.clone()]
+        } else {
+            Vec::new()
+        };
+        save_tags(
+            &file,
+            &[
+                TagEdit::verbatim(TagField::Title, vec![track.title.clone()]),
+                TagEdit::verbatim(TagField::Album, vec![album.to_owned()]),
+                TagEdit::verbatim(TagField::TrackNumber, vec![(index + 1).to_string()]),
+                TagEdit::verbatim(TagField::MusicBrainzReleaseId, vec![release.id.clone()]),
+                TagEdit::verbatim(
+                    TagField::MusicBrainzReleaseGroupId,
+                    vec![release.release_group_id.clone()],
+                ),
+                TagEdit::verbatim(TagField::MusicBrainzRecordingId, recording),
+                TagEdit::verbatim(
+                    TagField::MusicBrainzReleaseTrackId,
+                    vec![track_ids[index].clone()],
+                ),
+            ],
+        )
+        .expect("file tagged");
+    }
+}
+
+/// The track ids of `release`, with track 2's taken from `other`.
+fn stray_second(release: &Release, other: &Release) -> Vec<String> {
+    let mut ids: Vec<String> = release
+        .tracks
+        .iter()
+        .map(|track| track.id.clone())
+        .collect();
+    ids[1] = other.tracks[1].id.clone();
+    ids
+}
+
+/// A file whose release and recording ids name edition R and whose track
+/// id is R2's is matched to R by its recording: the plan says so, and the
+/// Picard profile writes R's track id into it, after which the plan has
+/// nothing to say. A file naming R with R2's track id and no recording id
+/// is not placed on R, and the plan says why.
+#[tokio::test]
+async fn a_track_id_from_another_edition_is_corrected() {
+    use droppedneedle::library::management::models::SelectionKind;
+    use droppedneedle::library::operations::plan::EditionPlan;
+    use droppedneedle::library::operations::service::Operations;
+    use droppedneedle::library::tags::TagField;
+
+    let managed = ManagedLibrary::start("lib-stray-track-id", |_| {}).await;
+    let library = &managed.library;
+    let (r, r2) = sibling_editions(1, "Stray Ids");
+    plant_edition(
+        &managed.music,
+        "stray",
+        "Stray Ids",
+        &r,
+        &stray_second(&r, &r2),
+        true,
+    );
+    rescan(library).await;
+    let tracks: Vec<String> = (1..=3)
+        .map(|n| {
+            library
+                .scan_store
+                .track_at("music", &format!("stray/{n:02}.flac"))
+                .expect("track indexed")
+        })
+        .collect();
+    let album = library
+        .scan_store
+        .album_for_track(&tracks[0])
+        .expect("album");
+    let scripted = library.test_providers.as_ref().expect("scripted providers");
+    scripted.set_recall(RecallResult {
+        releases: vec![r.clone(), r2.clone()],
+        ..RecallResult::default()
+    });
+    assert_eq!(library.identify_tick().await, 1);
+    let identity = library
+        .identify_store
+        .album_identity(&album)
+        .expect("identity");
+    assert_eq!(identity.release_mbid.as_deref(), Some(r.id.as_str()));
+
+    let ops = Operations::new(library);
+    let notes = |plan: &EditionPlan| -> Vec<(String, &'static str, Option<&'static str>)> {
+        let mut notes: Vec<_> = plan
+            .files
+            .iter()
+            .map(|file| {
+                (
+                    file.local_track_id.clone(),
+                    file.fate.as_str(),
+                    file.note.map(|note| note.code),
+                )
+            })
+            .collect();
+        notes.sort();
+        notes
+    };
+    let mut expected = vec![
+        (tracks[0].clone(), "keep", None),
+        (tracks[1].clone(), "keep", Some("TRACK_ID_CORRECTED")),
+        (tracks[2].clone(), "keep", None),
+    ];
+    expected.sort();
+    let plan = ops.edition_plan(&album, Some(&r.id)).await.expect("plan");
+    assert_eq!(notes(&plan), expected);
+
+    let (handle, items) = managed
+        .preview(SelectionKind::Albums, &[&album], "stray-ids")
+        .await;
+    assert!(
+        items.iter().all(|item| item.eligibility.writes()),
+        "{:?}",
+        items.iter().map(|item| &item.facts).collect::<Vec<_>>()
+    );
+    let applied = management_apply(library, &handle).await;
+    assert_eq!(applied.job.state.as_str(), "succeeded");
+    assert_eq!(
+        native_values(
+            &managed.path(&tracks[1]),
+            TagField::MusicBrainzReleaseTrackId
+        ),
+        vec![r.tracks[1].id.clone()]
+    );
+    rescan(library).await;
+    let plan = ops.edition_plan(&album, Some(&r.id)).await.expect("plan");
+    assert!(
+        plan.files.iter().all(|file| file.note.is_none()),
+        "{plan:?}"
+    );
+
+    // One file naming R with R2's track id and nothing to match it by: the
+    // album is contradictory, and the plan of R says why the file is off it.
+    let mut lone = r.clone();
+    lone.tracks.truncate(2);
+    lone.tracks.remove(0);
+    let ids = vec![r2.tracks[1].id.clone()];
+    plant_edition(
+        &managed.music,
+        "lone",
+        "Stray Ids Extra",
+        &lone,
+        &ids,
+        false,
+    );
+    rescan(library).await;
+    let track = library
+        .scan_store
+        .track_at("music", "lone/01.flac")
+        .expect("track indexed");
+    let lone_album = library.scan_store.album_for_track(&track).expect("album");
+    scripted.set_recall(RecallResult {
+        releases: vec![r.clone()],
+        ..RecallResult::default()
+    });
+    library.identify_tick().await;
+    assert!(library.identify_store.album_identity(&lone_album).is_none());
+    let plan = ops
+        .edition_plan(&lone_album, Some(&r.id))
+        .await
+        .expect("plan");
+    let file = &plan.files[0];
+    assert_ne!(file.fate.as_str(), "keep", "{plan:?}");
+    assert_eq!(file.note.map(|note| note.code), Some("TRACK_ID_ELSEWHERE"));
+}
+
+/// After an upgrade, albums the old rule may have left on the wrong
+/// edition because one file's track id named another are identified once
+/// more, by themselves: an automatic identity on another edition (A)
+/// moves to the edition its files name, keeping its album and tracks, and
+/// the edition it replaced can be undone. A person's edition (B), a match
+/// a person took off (C) and an album already on its files' edition (D)
+/// are left alone. It happens once.
+#[tokio::test]
+async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
+    use droppedneedle::library::repairs::service::Repairs;
+
+    let (scratch, library, music) = bare_library("lib-track-id-relook");
+    let editions: Vec<(Release, Release)> = (1..=4)
+        .map(|n| sibling_editions(n, &format!("Relook {n}")))
+        .collect();
+    for (index, (r, r2)) in editions.iter().enumerate() {
+        let ids = if index == 3 {
+            r.tracks.iter().map(|track| track.id.clone()).collect()
+        } else {
+            stray_second(r, r2)
+        };
+        let folder = format!("album-{index}");
+        plant_edition(&music, &folder, &r.title, r, &ids, true);
+    }
+    add_music_root(&library, &music).await;
+    let album = |index: usize| {
+        let track = library
+            .scan_store
+            .track_at("music", &format!("album-{index}/01.flac"))
+            .expect("track indexed");
+        library.scan_store.album_for_track(&track).expect("album")
+    };
+    let (a, b, c, d) = (album(0), album(1), album(2), album(3));
+    // C's editions are never offered, so it ends unmatched.
+    let releases = editions
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != 2)
+        .flat_map(|(_, (r, r2))| [r.clone(), r2.clone()])
+        .collect();
+    library
+        .test_providers
+        .as_ref()
+        .expect("scripted providers")
+        .set_recall(RecallResult {
+            releases,
+            ..RecallResult::default()
+        });
+    assert_eq!(library.identify_tick().await, 4);
+
+    // What the older matcher and people left behind.
+    let db = droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db"))
+        .expect("db opens");
+    let on_r2 = |album: &str, r2: &Release, source: &str| {
+        db.execute(
+            "UPDATE local_album_external_identities SET release_mbid = ?2, \
+             decision_source = ?3 WHERE local_album_id = ?1",
+            rusqlite::params![album, r2.id, source],
+        )
+        .expect("identity moved");
+        db.execute(
+            "UPDATE local_track_external_identities SET release_mbid = ?2, \
+             release_track_mbid = replace(release_track_mbid, '-0000000a', '-0000000b') \
+             WHERE local_track_id IN (SELECT id FROM local_tracks WHERE local_album_id = ?1)",
+            rusqlite::params![album, r2.id],
+        )
+        .expect("tracks moved");
+    };
+    on_r2(&a, &editions[0].1, "automatic");
+    on_r2(&b, &editions[1].1, "automatic");
+    // The older matcher left C unmatched, its edition vetoed by the stray
+    // track id; that release's document has since aged out.
+    let (c_release, c_other) = &editions[2];
+    let c_tracks: Vec<String> = {
+        let mut stmt = db
+            .prepare("SELECT id FROM local_tracks WHERE local_album_id = ?1 ORDER BY track_number")
+            .expect("tracks read");
+        stmt.query_map([&c], |row| row.get(0))
+            .expect("tracks read")
+            .collect::<Result<_, _>>()
+            .expect("tracks read")
+    };
+    let vetoed = json!([{
+        "candidate_key": c_release.id,
+        "release_group_mbid": c_release.release_group_id,
+        "release_mbid": c_release.id,
+        "album_title": c_release.title,
+        "album_artist_name": "Radiohead",
+        "track_evidence": c_tracks.iter().enumerate().map(|(index, track)| {
+            let stray = index == 1;
+            json!({
+                "local_track_id": track,
+                "classification": if stray { "contradictory" } else { "supported" },
+                "evidence_kinds": [if stray { "release_track_mbid_conflict" } else { "embedded_id" }],
+                "recording_mbid": (!stray).then(|| c_release.tracks[index].recording_id.clone()),
+                "release_track_mbid": (!stray).then(|| c_release.tracks[index].id.clone()),
+            })
+        }).collect::<Vec<_>>(),
+        "score": 0.0,
+        "reason_code": "CONFLICTING_TRACK_EVIDENCE",
+    }]);
+    assert_ne!(c_other.tracks[1].id, c_release.tracks[1].id);
+    db.execute(
+        "INSERT OR REPLACE INTO library_album_match_state \
+         (local_album_id, state, reason_code, candidates_json, updated_at) \
+         VALUES (?1, 'unmatched', 'CONFLICTING_TRACK_EVIDENCE', ?2, 0)",
+        rusqlite::params![c, vetoed.to_string()],
+    )
+    .expect("old verdict planted");
+    let sorted = |mut albums: Vec<String>| {
+        albums.sort();
+        albums
+    };
+    let set = || {
+        droppedneedle::library::repairs::store::track_id_backfill_albums(&db).expect("set reads")
+    };
+    assert_eq!(set(), sorted(vec![a.clone(), b.clone(), c.clone()]));
+    on_r2(&b, &editions[1].1, "manual");
+    db.execute(
+        "UPDATE library_album_match_state SET reason_code = 'DETACHED_BY_PERSON' \
+         WHERE local_album_id = ?1",
+        [&c],
+    )
+    .expect("match taken off");
+    let track_ids = |album: &str| -> Vec<String> {
+        let mut stmt = db
+            .prepare("SELECT id FROM local_tracks WHERE local_album_id = ?1 ORDER BY id")
+            .expect("tracks read");
+        stmt.query_map([album], |row| row.get(0))
+            .expect("tracks read")
+            .collect::<Result<_, _>>()
+            .expect("tracks read")
+    };
+    assert_eq!(set(), vec![a.clone()]);
+    let a_tracks = track_ids(&a);
+    let queued = || -> Vec<String> {
+        let mut stmt = db
+            .prepare(
+                "SELECT local_album_id FROM library_identify_jobs \
+                 WHERE state = 'queued' ORDER BY local_album_id",
+            )
+            .expect("queue reads");
+        stmt.query_map([], |row| row.get(0))
+            .expect("queue reads")
+            .collect::<Result<_, _>>()
+            .expect("queue reads")
+    };
+    assert!(queued().is_empty());
+
+    let repairs = Repairs::new(&library);
+    droppedneedle::library::repairs::tick(&library, &repairs, "worker").await;
+    assert_eq!(queued(), vec![a.clone()]);
+    assert_eq!(library.identify_tick().await, 1);
+
+    let release_of = |album: &str| {
+        library
+            .identify_store
+            .album_identity(album)
+            .map(|identity| {
+                (
+                    identity.release_mbid,
+                    identity.decision_source.as_str().to_owned(),
+                )
+            })
+    };
+    let named =
+        |index: usize, source: &str| Some((Some(editions[index].0.id.clone()), source.to_owned()));
+    assert_eq!(release_of(&a), named(0, "automatic"));
+    assert_eq!(
+        release_of(&b),
+        Some((Some(editions[1].1.id.clone()), "manual".to_owned()))
+    );
+    assert_eq!(release_of(&c), None);
+    assert_eq!(release_of(&d), named(3, "automatic"));
+    assert_eq!(track_ids(&a), a_tracks);
+    let undo: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM library_automatic_edition_undo \
+             WHERE local_album_id = ?1 AND consumed_at IS NULL",
+            [&a],
+            |row| row.get(0),
+        )
+        .expect("undo reads");
+    assert_eq!(undo, 1, "the replaced edition can be undone");
+
+    // The next start looks no more.
+    let restarted = Repairs::new(&library);
+    droppedneedle::library::repairs::tick(&library, &restarted, "worker").await;
+    assert!(queued().is_empty());
+}

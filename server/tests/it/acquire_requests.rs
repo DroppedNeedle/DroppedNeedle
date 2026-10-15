@@ -816,6 +816,7 @@ impl droppedneedle::library::operations::port::EditionPlans for PlannedEdition {
             length_ms: None,
             fate: FileFate::Keep,
             edition_track: None,
+            note: None,
         };
         let two = self.complete.then_some("t2");
         let mut files = vec![kept("t1"), kept("t3")];

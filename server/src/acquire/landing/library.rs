@@ -14,7 +14,7 @@ use super::ports::{
     VersionRow,
 };
 use crate::acquire::downloads::manifest::PlannedAlbum;
-use crate::library::identify::sources::{EditionQuery, ReleaseHit, ReleaseSource, SourceError};
+use crate::library::identify::sources::{ReleaseHit, ReleaseSource, SourceError, group_editions};
 use crate::library::import::{DownloadImport, ImportError, ImportSource};
 use crate::library::management::service::Management;
 use crate::library::matching::Release;
@@ -397,16 +397,8 @@ impl LandingLibrary for LibraryLanding {
         release_group_mbid: &'a str,
     ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
         Box::pin(async move {
-            let query = EditionQuery {
-                title: String::new(),
-                artist: String::new(),
-                release_group_mbid: Some(release_group_mbid.to_owned()),
-                limit: 25,
-                offset: 0,
-            };
-            let page = self.releases.search_editions(&query).await?;
-            Ok(page
-                .items
+            Ok(group_editions(self.releases.as_ref(), release_group_mbid)
+                .await?
                 .into_iter()
                 .map(|edition| ReleaseHit {
                     id: edition.release_mbid,

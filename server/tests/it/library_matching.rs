@@ -100,10 +100,14 @@ struct Rig {
 }
 
 fn rig(down: bool) -> Rig {
+    rig_with(routes(), down)
+}
+
+fn rig_with(routes: HashMap<String, RawResponse>, down: bool) -> Rig {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let musicbrainz = MusicBrainzClient::official(
         FakeMb {
-            routes: routes(),
+            routes,
             seen: seen.clone(),
             down,
         },
@@ -358,4 +362,179 @@ async fn musicbrainz_outage_defers_the_job() {
     let report = identify(&rig, album(&[("Lamplight", 214, None)])).await;
     assert_eq!(report.outcome, IdentificationOutcome::ProviderDeferred);
     assert!(rig.store.album_identity("album-1").is_none());
+}
+
+/// Random Access Memories (Daft Punk), as two of its editions: the
+/// release ids are MusicBrainz's, every other id is made up. Both list
+/// the same 13 recordings, each with its own track ids.
+const RAM: &str = "36e2aede-346d-4931-8565-78d810d167c7";
+const RAM_CD: &str = "158f94bf-d77f-4055-afa4-8fc7e0b2a004";
+const RAM_GROUP: &str = "0ad0b0a0-0000-4000-8000-00000000b0b0";
+const RAM_TRACKS: [(&str, u64); 13] = [
+    ("Give Life Back to Music", 274),
+    ("The Game of Love", 321),
+    ("Giorgio by Moroder", 544),
+    ("Within", 228),
+    ("Instant Crush", 337),
+    ("Lose Yourself to Dance", 353),
+    ("Touch", 498),
+    ("Get Lucky", 369),
+    ("Beyond", 290),
+    ("Motherboard", 341),
+    ("Fragments of Time", 279),
+    ("Doin' It Right", 251),
+    ("Contact", 381),
+];
+
+fn ram_recording(index: usize) -> String {
+    format!("0ad0b0a0-0000-4000-8000-0000000d{index:04}")
+}
+
+/// The made-up track id of track `index` on `release`.
+fn ram_track(release: &str, index: usize) -> String {
+    format!("{}-0000-4000-8000-0000000e{index:04}", &release[..8])
+}
+
+/// A release lookup in the WS/2 shape of `release_standard.json`.
+fn ram_release(release: &str, format: &str) -> serde_json::Value {
+    let credit = serde_json::json!([{
+        "name": "Daft Punk",
+        "joinphrase": "",
+        "artist": {
+            "id": "0ad0b0a0-0000-4000-8000-00000000a0a0",
+            "name": "Daft Punk",
+            "sort-name": "Daft Punk"
+        }
+    }]);
+    let tracks: Vec<serde_json::Value> = RAM_TRACKS
+        .iter()
+        .enumerate()
+        .map(|(index, (title, seconds))| {
+            serde_json::json!({
+                "id": ram_track(release, index),
+                "position": index + 1,
+                "number": (index + 1).to_string(),
+                "title": title,
+                "length": seconds * 1000,
+                "recording": {
+                    "id": ram_recording(index),
+                    "title": title,
+                    "length": seconds * 1000,
+                    "artist-credit": credit
+                },
+                "artist-credit": credit
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "id": release,
+        "title": "Random Access Memories",
+        "status": "Official",
+        "date": "2013-05-17",
+        "country": "XW",
+        "artist-credit": credit,
+        "label-info": [],
+        "release-group": {
+            "id": RAM_GROUP,
+            "title": "Random Access Memories",
+            "primary-type": "Album",
+            "secondary-types": [],
+            "first-release-date": "2013-05-17",
+            "artist-credit": credit
+        },
+        "media": [{
+            "position": 1,
+            "format": format,
+            "track-offset": 0,
+            "track-count": 13,
+            "tracks": tracks
+        }]
+    })
+}
+
+/// A release search page in the shape of `release_search.json`: both
+/// editions, for every search and every listing of the group.
+fn ram_search() -> serde_json::Value {
+    let hit = |release: &str, format: &str| {
+        serde_json::json!({
+            "id": release,
+            "score": 100,
+            "title": "Random Access Memories",
+            "status": "Official",
+            "artist-credit": [{
+                "name": "Daft Punk",
+                "artist": {
+                    "id": "0ad0b0a0-0000-4000-8000-00000000a0a0",
+                    "name": "Daft Punk",
+                    "sort-name": "Daft Punk"
+                }
+            }],
+            "release-group": {
+                "id": RAM_GROUP,
+                "title": "Random Access Memories",
+                "primary-type": "Album"
+            },
+            "track-count": 13,
+            "media": [{"format": format, "disc-count": 0, "track-count": 13}]
+        })
+    };
+    serde_json::json!({
+        "created": "2026-10-14T09:00:00.000Z",
+        "count": 2,
+        "offset": 0,
+        "releases": [hit(RAM_CD, "CD"), hit(RAM, "Digital Media")]
+    })
+}
+
+/// Thirteen files name the digital release and carry its recordings and
+/// track ids, except file 8, whose track id is the CD's track 8 (as a
+/// downloaded album's often is). The album is the release its files name,
+/// and file 8 is mapped to that release's track 8.
+#[tokio::test]
+async fn a_stray_track_id_does_not_move_the_album_to_another_edition() {
+    let ok = |document: serde_json::Value| {
+        RawResponse::new(200, Vec::new(), document.to_string().into_bytes())
+    };
+    let rig = rig_with(
+        HashMap::from([
+            ("/release".to_owned(), ok(ram_search())),
+            (
+                format!("/release/{RAM}"),
+                ok(ram_release(RAM, "Digital Media")),
+            ),
+            (format!("/release/{RAM_CD}"), ok(ram_release(RAM_CD, "CD"))),
+        ]),
+        false,
+    );
+    let facts = LocalAlbumFacts {
+        local_album_id: "album-1".to_owned(),
+        title: "Random Access Memories".to_owned(),
+        album_artist_name: "Daft Punk".to_owned(),
+        tracks: RAM_TRACKS
+            .iter()
+            .enumerate()
+            .map(|(index, (title, seconds))| LocalTrackFacts {
+                local_track_id: format!("t{}", index + 1),
+                title: (*title).to_owned(),
+                artist_name: "Daft Punk".to_owned(),
+                track_number: index as u32 + 1,
+                disc_number: 1,
+                duration_secs: Some(*seconds),
+                recording_mbid: Some(ram_recording(index)),
+                release_track_mbid: Some(ram_track(if index == 7 { RAM_CD } else { RAM }, index)),
+                release_mbid: Some(RAM.to_owned()),
+                ..LocalTrackFacts::default()
+            })
+            .collect(),
+        ..LocalAlbumFacts::default()
+    };
+
+    let report = identify(&rig, facts).await;
+
+    assert_eq!(report.outcome, IdentificationOutcome::Identified);
+    let identity = rig.store.album_identity("album-1").expect("identity");
+    assert_eq!(identity.release_mbid.as_deref(), Some(RAM));
+    let track = rig.store.track_identity("t8").expect("track identity");
+    let expected = ram_track(RAM, 7);
+    assert_eq!(track.release_track_mbid.as_deref(), Some(expected.as_str()));
 }

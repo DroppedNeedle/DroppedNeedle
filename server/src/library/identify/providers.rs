@@ -29,7 +29,7 @@ use super::evidence::local_album;
 use super::models::{LocalAlbumFacts, RecallResult};
 use super::sources::{
     AlbumQuery, EditionPage, EditionQuery, FingerprintSource, ReleaseHit, ReleaseSource,
-    SourceError,
+    SourceError, group_editions,
 };
 use super::sqlite::SqliteIdentifyStore;
 use super::stores::{fresh_release, keep_releases};
@@ -44,9 +44,6 @@ pub const FETCH_LIMIT: usize = 5;
 pub const PER_GROUP: usize = 3;
 /// Further editions of the best release group fetched per album.
 pub const GROUP_FETCH: usize = 6;
-/// Releases per page, and pages at most, when listing a group's editions.
-const GROUP_PAGE: u32 = 100;
-const GROUP_PAGES: u32 = 3;
 /// Merged-recording lookups per album.
 const ALIAS_LOOKUPS: usize = 4;
 /// Releases nominated by fingerprints fetched per album.
@@ -201,24 +198,7 @@ impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
         let Some(group) = group else {
             return Ok(());
         };
-        let mut editions = Vec::new();
-        for page in 0..GROUP_PAGES {
-            let found = self
-                .releases
-                .search_editions(&EditionQuery {
-                    title: String::new(),
-                    artist: String::new(),
-                    release_group_mbid: Some(group.clone()),
-                    limit: GROUP_PAGE,
-                    offset: page * GROUP_PAGE,
-                })
-                .await?;
-            let got = found.items.len();
-            editions.extend(found.items);
-            if got == 0 || editions.len() as u64 >= found.total {
-                break;
-            }
-        }
+        let editions = group_editions(&self.releases, &group).await?;
         let files = local.tracks.len();
         let hints = &local.hints;
         let mut wanted: Vec<_> = editions

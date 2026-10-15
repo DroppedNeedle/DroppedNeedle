@@ -16,8 +16,10 @@ use std::collections::HashSet;
 
 use super::choice::place;
 use super::models::ReidentificationCandidate;
+use super::reasons::{Reason, TRACK_ID_CORRECTED, TRACK_ID_ELSEWHERE};
 use crate::library::identify::models::{LocalAlbumFacts, LocalTrackFacts};
 use crate::library::matching::model::{Release, credit_text};
+use crate::library::matching::score::{ConflictKind, Support};
 use crate::library::matching::strings::fold;
 
 /// What happens to one file when the album takes the edition.
@@ -71,6 +73,9 @@ pub struct PlanFile {
     /// The edition track (disc, position) the file keeps, duplicates or is
     /// another version of.
     pub edition_track: Option<(u32, u32)>,
+    /// Why the file is where it is, when its tags need a word: a track id
+    /// from another edition, set aside or in the way.
+    pub note: Option<Reason>,
 }
 
 /// What MusicBrainz says about the planned edition.
@@ -230,6 +235,7 @@ pub fn build(
                     },
                 }
             };
+            let note = note_for(candidate, track_id, fate);
             PlanFile {
                 local_track_id: track_id.clone(),
                 title: local.map(|file| file.title.clone()).unwrap_or_default(),
@@ -238,6 +244,7 @@ pub fn build(
                 length_ms: local.and_then(length_ms),
                 fate,
                 edition_track,
+                note,
             }
         })
         .collect();
@@ -280,6 +287,27 @@ pub fn build(
         edition: EditionFacts::of(release),
         tracks,
         files,
+    }
+}
+
+/// The note for a file whose track id belongs to another edition: set
+/// aside when the file is kept by its recording, in the way when it is not.
+fn note_for(
+    candidate: &ReidentificationCandidate,
+    track_id: &str,
+    fate: FileFate,
+) -> Option<Reason> {
+    let kinds = &candidate
+        .evidence
+        .track_evidence
+        .iter()
+        .find(|evidence| evidence.local_track_id == track_id)?
+        .evidence_kinds;
+    let has = |code: &str| kinds.iter().any(|kind| kind == code);
+    if fate == FileFate::Keep {
+        has(Support::TrackIdElsewhere.code()).then_some(TRACK_ID_CORRECTED)
+    } else {
+        has(ConflictKind::ReleaseTrack.code()).then_some(TRACK_ID_ELSEWHERE)
     }
 }
 

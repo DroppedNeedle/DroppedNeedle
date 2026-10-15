@@ -32268,6 +32268,17 @@
           "local_track_id": {
             "type": "string"
           },
+          "note": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReasonView",
+                "description": "A sentence about the file's tags, when they need one:\n`TRACK_ID_CORRECTED` on a kept file whose track ID belongs to\nanother edition (it is matched by its recording, and the ID is\ncorrected when the album's MusicBrainz tags are written), or\n`TRACK_ID_ELSEWHERE` on a file that is not kept because its track ID\nbelongs to another edition and it has no recording ID. Absent\notherwise."
+              }
+            ]
+          },
           "title": {
             "type": "string"
           },
@@ -41773,7 +41784,7 @@
             "items": {
               "type": "string"
             },
-            "description": "What ties the file to the release track (`embedded_id`, `acoustid`,\n`title_position_length`), or why it does not."
+            "description": "What ties the file to the release track (`embedded_id`, `acoustid`,\n`title_position_length`, or `track_id_elsewhere`: the recording ID,\non a file whose track ID belongs to another edition), or why it does\nnot."
           },
           "local_track_id": {
             "type": "string"

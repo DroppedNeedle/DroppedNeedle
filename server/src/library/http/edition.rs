@@ -265,6 +265,14 @@ pub struct EditionPlanFileView {
     /// of.
     pub edition_disc_number: Option<u32>,
     pub edition_position: Option<u32>,
+    /// A sentence about the file's tags, when they need one:
+    /// `TRACK_ID_CORRECTED` on a kept file whose track ID belongs to
+    /// another edition (it is matched by its recording, and the ID is
+    /// corrected when the album's MusicBrainz tags are written), or
+    /// `TRACK_ID_ELSEWHERE` on a file that is not kept because its track ID
+    /// belongs to another edition and it has no recording ID. Absent
+    /// otherwise.
+    pub note: Option<ReasonView>,
 }
 
 /// What MusicBrainz says about the planned edition.
@@ -375,6 +383,7 @@ impl From<EditionPlan> for EditionPlanView {
                     fate: file.fate.as_str().to_owned(),
                     edition_disc_number: file.edition_track.map(|(disc, _)| disc),
                     edition_position: file.edition_track.map(|(_, position)| position),
+                    note: file.note.map(ReasonView::from),
                 })
                 .collect(),
         }

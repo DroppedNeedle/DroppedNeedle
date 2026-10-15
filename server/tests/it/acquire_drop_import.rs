@@ -17,7 +17,9 @@ use droppedneedle::acquire::drop_import::Viewer;
 use droppedneedle::acquire::drop_import::store::JobRecord;
 use droppedneedle::acquire::landing::library::LibraryLanding;
 use droppedneedle::ids::{IdGenerator, UuidGenerator};
-use droppedneedle::library::identify::sources::{ReleaseHit, ReleaseSource, SourceError};
+use droppedneedle::library::identify::sources::{
+    Edition, EditionPage, EditionQuery, ReleaseHit, ReleaseSource, SourceError,
+};
 use droppedneedle::library::matching::{CreditedArtist, Release, ReleaseMedium, ReleaseTrack};
 use droppedneedle::library::scan::EffectivePolicy;
 use droppedneedle::library::tags::TagField;
@@ -144,8 +146,15 @@ fn length_ms(bytes: &[u8], scratch: &Path) -> Option<u64> {
         .map(|seconds| (seconds * 1000.0) as u64)
 }
 
-#[tokio::test]
-async fn dropped_album_lands_and_the_unknown_folder_waits_for_review() {
+/// The acquire and library bundles over one scratch database, with the
+/// curator and asker users and a `music` root, and the scratch folder.
+/// The reads bundle is returned only to live as long as the others.
+async fn bundles() -> (
+    droppedneedle::acquire::AcquireSetup,
+    LibrarySetup,
+    PathBuf,
+    droppedneedle::reads::ReadsSetup,
+) {
     let auth = droppedneedle::auth::wiring::AuthSetup::for_tests().expect("test auth");
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
     let mut reads = droppedneedle::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
@@ -178,7 +187,13 @@ async fn dropped_album_lands_and_the_unknown_folder_waits_for_review() {
             EffectivePolicy::Automatic,
         )
         .expect("root adds");
+    (acquire, library, dir, reads)
+}
 
+#[tokio::test]
+async fn dropped_album_lands_and_the_unknown_folder_waits_for_review() {
+    let (acquire, library, dir, _reads) = bundles().await;
+    let music = dir.join("music");
     let work = dir.join("work");
     std::fs::create_dir_all(&work).expect("work dir");
     // The first drop has a low-quality MP3 of track 1 and a bonus track
@@ -322,6 +337,162 @@ async fn dropped_album_lands_and_the_unknown_folder_waits_for_review() {
     );
     assert!(shelf.join("0101 Mysterons.flac").is_file());
     assert!(!shelf.join("0101 Mysterons.mp3").exists(), "recycled");
+}
+
+/// MusicBrainz knowing large release groups: the search finds nothing,
+/// the release index lists a group by page.
+struct LargeGroups(Vec<Release>);
+
+impl ReleaseSource for LargeGroups {
+    fn search<'a>(
+        &'a self,
+        _title: &'a str,
+        _artist: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    fn release<'a>(&'a self, mbid: &'a str) -> BoxFuture<'a, Result<Option<Release>, SourceError>> {
+        let found = self
+            .0
+            .iter()
+            .find(|release| release.answers_to(mbid))
+            .cloned();
+        Box::pin(async move { Ok(found) })
+    }
+
+    fn canonical_recording<'a>(
+        &'a self,
+        _mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, SourceError>> {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn search_editions<'a>(
+        &'a self,
+        query: &'a EditionQuery,
+    ) -> BoxFuture<'a, Result<EditionPage, SourceError>> {
+        let in_group = |release: &&Release| {
+            query
+                .release_group_mbid
+                .as_deref()
+                .is_some_and(|group| group.eq_ignore_ascii_case(&release.release_group_id))
+        };
+        let total = self.0.iter().filter(in_group).count() as u64;
+        let items = self
+            .0
+            .iter()
+            .filter(in_group)
+            .skip(query.offset as usize)
+            .take(query.limit as usize)
+            .map(|release| Edition {
+                release_mbid: release.id.clone(),
+                release_group_mbid: release.release_group_id.clone(),
+                title: release.title.clone(),
+                disc_count: 1,
+                track_count: release.tracks.len() as u32,
+                score: 100,
+                ..Edition::default()
+            })
+            .collect();
+        Box::pin(async move {
+            Ok(EditionPage {
+                items,
+                total,
+                offset: u64::from(query.offset),
+            })
+        })
+    }
+}
+
+/// Files matched by hand to an album of 150 editions land on the edition
+/// they fit: the release their tags name, else the one with their track
+/// count, wherever the release index lists it.
+#[tokio::test]
+async fn a_hand_match_finds_the_edition_in_a_large_group() {
+    const TITLES: [&str; 5] = ["Wandering Star", "It's a Fire", "Numb", "Roads", "Pedestal"];
+    let group = |case: u32| format!("8e1c8b2f-0000-4000-8000-00000000000{case}");
+    let release_id = |case: u32, index: usize| format!("8e1c8b2f-000{case}-4000-8000-{index:012}");
+    // Case 1: every edition has the files' three tracks, and the files
+    // name edition 130. Case 2: only edition 130 has three tracks, and
+    // the files name none.
+    let editions = |case: u32| -> Vec<Release> {
+        (0..150)
+            .map(|index| {
+                let count = if case == 2 && index != 130 { 5 } else { 3 };
+                let mut edition = release(&TITLES[..count], &[None; 5][..count]);
+                edition.id = release_id(case, index);
+                edition.release_group_id = group(case);
+                edition.title = format!("Dummy, part {case}");
+                for (position, track) in edition.tracks.iter_mut().enumerate() {
+                    track.id = format!("8e1c8b2f-000{case}-4000-9000-{index:06}{position:06}");
+                    track.recording_id = format!("8e1c8b2f-000{case}-4000-a000-{position:012}");
+                }
+                edition
+            })
+            .collect()
+    };
+    let (acquire, library, dir, _reads) = bundles().await;
+    let mut known = editions(1);
+    known.extend(editions(2));
+    let pool = acquire.db.pool().clone();
+    let acquire = acquire.with_library(Arc::new(LibraryLanding::new(
+        library.clone(),
+        Arc::new(LargeGroups(known)),
+        pool,
+    )));
+    let curator = Viewer {
+        user_id: "u-curator".to_owned(),
+        admin: false,
+    };
+
+    for case in [1, 2] {
+        let work = dir.join(format!("work-{case}"));
+        std::fs::create_dir_all(&work).expect("work dir");
+        let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+        for (index, title) in TITLES[..3].iter().enumerate() {
+            let track = index as u32 + 1;
+            let mut bytes = tagged(&work, "flac_full_01.flac", "Rough Mixes", title, track);
+            if case == 1 {
+                let path = work.join(format!("{track:02}-{title}.flac"));
+                let named = TagEdit::new(TagField::MusicBrainzReleaseId, vec![release_id(1, 130)]);
+                save_tags(&path, &[named]).expect("release id saved");
+                bytes = std::fs::read(&path).expect("read tagged copy");
+            }
+            files.push((format!("Rough Mixes {case}/{track:02} {title}.flac"), bytes));
+        }
+        let entries: Vec<(&str, &Vec<u8>)> = files
+            .iter()
+            .map(|(name, bytes)| (name.as_str(), bytes))
+            .collect();
+        let job = drop_zip(&acquire, &curator, &format!("upload-{case}"), &entries).await;
+        let item = &job.items[0];
+        assert_eq!(
+            item.status, "needs_review",
+            "case {case}: {:?}",
+            item.detail
+        );
+
+        let matched = acquire
+            .drops
+            .match_item(&curator, item.id, &group(case))
+            .await
+            .expect("matched by hand");
+        assert_eq!(
+            matched.status, "imported",
+            "case {case}: {:?}",
+            matched.detail
+        );
+        let releases: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT release_mbid FROM local_album_external_identities \
+             WHERE release_group_mbid = ?1",
+        )
+        .bind(group(case))
+        .fetch_all(acquire.db.pool())
+        .await
+        .expect("identities");
+        assert_eq!(releases, vec![release_id(case, 130)], "case {case}");
+    }
 }
 
 /// Upload one zip of `entries` and wait for its job to settle.

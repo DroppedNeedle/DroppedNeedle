@@ -129,6 +129,48 @@ pub trait ReleaseSource: Send + Sync {
     }
 }
 
+/// Releases per page, and pages at most, when listing a group's editions.
+const GROUP_PAGE: u32 = 100;
+const GROUP_PAGES: u32 = 3;
+
+/// Every edition of release group `group`, from the release index: pages
+/// of [`GROUP_PAGE`] until an empty page or the index's total, at most
+/// [`GROUP_PAGES`]. A larger group is listed in part, with one log line.
+/// The source's own priority applies; nothing here throttles.
+pub async fn group_editions(
+    source: &(impl ReleaseSource + ?Sized),
+    group: &str,
+) -> Result<Vec<Edition>, SourceError> {
+    let mut editions = Vec::new();
+    let mut total = 0;
+    for page in 0..GROUP_PAGES {
+        let found = source
+            .search_editions(&EditionQuery {
+                title: String::new(),
+                artist: String::new(),
+                release_group_mbid: Some(group.to_owned()),
+                limit: GROUP_PAGE,
+                offset: page * GROUP_PAGE,
+            })
+            .await?;
+        total = found.total;
+        let got = found.items.len();
+        editions.extend(found.items);
+        if got == 0 || editions.len() as u64 >= total {
+            break;
+        }
+    }
+    if (editions.len() as u64) < total {
+        tracing::info!(
+            release_group = group,
+            listed = editions.len(),
+            total,
+            "release group has more editions than are listed"
+        );
+    }
+    Ok(editions)
+}
+
 /// Search hits that name their release group, with their track totals.
 fn release_hits(items: Vec<ReleaseSearchHit>) -> Vec<ReleaseHit> {
     items

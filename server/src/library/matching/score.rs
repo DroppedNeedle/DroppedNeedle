@@ -5,10 +5,14 @@
 //! known), the optimal pairing is found, and the album distance adds the
 //! album-level penalties plus one entry per paired, missing, and
 //! unmatched track. Embedded ids are proof: a local recording MBID that
-//! the release does not carry, or a release-track MBID that disagrees
-//! with the release the tags name, vetoes the release outright. So does a
-//! length more than 40 s off when nothing but the description ties the
-//! pair (v2's duration conflict).
+//! the release does not carry vetoes the release outright. So does a
+//! release-track MBID the release the file names does not carry, unless
+//! the file's recording MBID places it on that release: then the file's
+//! release id outranks its track id, as in Picard, and the track id is set
+//! aside as a tagging mistake (the file pairs as it would with no track
+//! id, see [`Support::TrackIdElsewhere`]). A length more than 40 s off
+//! vetoes a pair when nothing but the description ties it (v2's duration
+//! conflict).
 //!
 //! The album title and artist also pass v2's 0.20 gate: a release whose
 //! title (edition words aside) or artist is further off than that never
@@ -40,6 +44,10 @@ pub const LENGTH_MAX_SECS: f64 = 30.0;
 pub enum Support {
     /// The embedded recording or release-track MBID.
     EmbeddedId,
+    /// The recording MBID, on a file whose release id names this release
+    /// and whose track id belongs to another edition. Weaker than
+    /// `EmbeddedId`: never proof for the name gate or for credits.
+    TrackIdElsewhere,
     /// The audio's AcoustID recordings include the release track's.
     Fingerprint,
     /// Title, position, and length only.
@@ -50,6 +58,7 @@ impl Support {
     pub fn code(self) -> &'static str {
         match self {
             Support::EmbeddedId => "embedded_id",
+            Support::TrackIdElsewhere => "track_id_elsewhere",
             Support::Fingerprint => "acoustid",
             Support::Description => "title_position_length",
         }
@@ -148,13 +157,45 @@ pub fn match_release(
             .as_deref()
             .is_some_and(|mbid| release.answers_to(mbid))
     };
+    let on_release = |recording: &str| {
+        release
+            .tracks
+            .iter()
+            .any(|candidate| candidate.recording_id.eq_ignore_ascii_case(recording))
+    };
+    // A track id the release the file names does not carry: a veto, unless
+    // the file's recording is on the release, which sets the id aside.
+    let foreign_track_id = |track: &LocalTrack| {
+        track.release_track_mbid.as_deref().is_some_and(|id| {
+            claims_release(track)
+                && !release
+                    .tracks
+                    .iter()
+                    .any(|candidate| candidate.id.eq_ignore_ascii_case(id))
+        })
+    };
+    let set_aside: Vec<bool> = local
+        .tracks
+        .iter()
+        .zip(&recordings)
+        .map(|(track, recording)| {
+            foreign_track_id(track) && recording.as_deref().is_some_and(on_release)
+        })
+        .collect();
     let mut pair_costs: HashMap<(usize, usize), (f64, Support)> = HashMap::new();
     for (row, track) in local.tracks.iter().enumerate() {
         for (column, candidate) in release.tracks.iter().enumerate() {
+            let track_id = if set_aside[row] {
+                TrackId::SetAside
+            } else if claims_release(track) {
+                TrackId::Binding
+            } else {
+                TrackId::Ignored
+            };
             if let Some(scored) = track_distance(
                 track,
                 recordings[row].as_deref(),
-                claims_release(track),
+                track_id,
                 candidate,
                 various,
             ) {
@@ -193,22 +234,13 @@ pub fn match_release(
     let mut conflicts = Vec::new();
     for (row, track) in local.tracks.iter().enumerate() {
         if let Some(recording) = recordings[row].as_deref()
-            && !release
-                .tracks
-                .iter()
-                .any(|candidate| candidate.recording_id.eq_ignore_ascii_case(recording))
+            && !on_release(recording)
         {
             conflicts.push(Conflict {
                 local: row,
                 kind: ConflictKind::Recording,
             });
-        } else if let Some(release_track) = track.release_track_mbid.as_deref()
-            && claims_release(track)
-            && !release
-                .tracks
-                .iter()
-                .any(|candidate| candidate.id.eq_ignore_ascii_case(release_track))
-        {
+        } else if !set_aside[row] && foreign_track_id(track) {
             conflicts.push(Conflict {
                 local: row,
                 kind: ConflictKind::ReleaseTrack,
@@ -288,18 +320,31 @@ fn canonical_recording(track: &LocalTrack, aliases: &HashMap<String, String>) ->
     Some(aliases.get(&mbid).cloned().unwrap_or(mbid))
 }
 
+/// How a file's release-track id counts against one release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrackId {
+    /// The file names this release: its track id picks the track.
+    Binding,
+    /// The file names this release, but its track id belongs to another
+    /// edition while its recording is on this one: the id is left out.
+    SetAside,
+    /// The file names another release (or none): its track id says
+    /// nothing here.
+    Ignored,
+}
+
 /// One pair's normalized distance, or `None` when ids rule it out.
 fn track_distance(
     local: &LocalTrack,
     recording: Option<&str>,
-    claims_release: bool,
+    track_id: TrackId,
     candidate: &ReleaseTrack,
     various: bool,
 ) -> Option<(f64, Support)> {
     let mut distance = Distance::default();
     let mut support = Support::Description;
     if let Some(release_track) = local.release_track_mbid.as_deref()
-        && claims_release
+        && track_id == TrackId::Binding
     {
         if !release_track.eq_ignore_ascii_case(&candidate.id) {
             return None;
@@ -311,7 +356,11 @@ fn track_distance(
             return None;
         }
         distance.add_bool("recording_id", false);
-        support = Support::EmbeddedId;
+        support = if track_id == TrackId::SetAside {
+            Support::TrackIdElsewhere
+        } else {
+            Support::EmbeddedId
+        };
     } else if !local.fingerprint_recordings.is_empty() {
         let heard = local
             .fingerprint_recordings

@@ -13661,6 +13661,7 @@ export interface components {
              */
             length_ms?: number | null;
             local_track_id: string;
+            note?: null | components["schemas"]["ReasonView"];
             title: string;
             /** Format: int32 */
             track_number: number;
@@ -18048,7 +18049,9 @@ export interface components {
             classification: string;
             /**
              * @description What ties the file to the release track (`embedded_id`, `acoustid`,
-             *     `title_position_length`), or why it does not.
+             *     `title_position_length`, or `track_id_elsewhere`: the recording ID,
+             *     on a file whose track ID belongs to another edition), or why it does
+             *     not.
              */
             evidence_kinds: string[];
             local_track_id: string;

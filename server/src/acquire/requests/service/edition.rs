@@ -522,6 +522,7 @@ mod tests {
                     length_ms: None,
                     fate: FileFate::Keep,
                     edition_track: None,
+                    note: None,
                 })
                 .collect(),
         };

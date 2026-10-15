@@ -175,7 +175,9 @@ pub struct OperationTrackEvidenceView {
     /// `supported`, `unknown`, or `contradictory`.
     pub classification: String,
     /// What ties the file to the release track (`embedded_id`, `acoustid`,
-    /// `title_position_length`), or why it does not.
+    /// `title_position_length`, or `track_id_elsewhere`: the recording ID,
+    /// on a file whose track ID belongs to another edition), or why it does
+    /// not.
     pub evidence_kinds: Vec<String>,
     pub candidate_track_title: Option<String>,
     pub candidate_disc_number: Option<u32>,

@@ -27,7 +27,8 @@
 //!   goes to review however close its tracks are.
 //! - Live releases, and compilations the tags do not call compilations,
 //!   need confirmation (v2): unless every file carries its release-track
-//!   id, only the release group is pinned.
+//!   id, only the release group is pinned. A track id set aside as
+//!   another edition's (see `score`) does not name its track.
 //!
 //! "Library distance" leaves missing tracks out, as Lidarr does for files
 //! already on disk: holding part of an album is normal.
@@ -387,8 +388,9 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
+    use crate::library::matching::model::ReleaseMedium;
     use crate::library::matching::model::{CreditedArtist, LocalTrack, ReleaseTrack};
-    use crate::library::matching::score::match_release;
+    use crate::library::matching::score::{ConflictKind, Support, match_release};
 
     const TITLES: [&str; 4] = ["Lamplight", "Blue Hour", "Night Shift", "Last Train Home"];
 
@@ -518,5 +520,226 @@ mod tests {
         for (name, local, releases, expected) in cases {
             assert_eq!(verdict(&local, &releases), expected, "{name}");
         }
+    }
+
+    /// Release `id` of `group`: the four recordings, its own track ids.
+    fn edition(group: &str, id: &str, title: &str) -> Release {
+        let mut release = release(group, title, 4);
+        release.id = id.to_owned();
+        for (index, track) in release.tracks.iter_mut().enumerate() {
+            track.id = format!("{id}-track-{index}");
+        }
+        release
+    }
+
+    /// Four files naming `release`, each with its recording and track.
+    fn named(release: &str) -> LocalAlbum {
+        let mut album = local(4, 0, true);
+        for (index, track) in album.tracks.iter_mut().enumerate() {
+            track.release_mbid = Some(release.to_owned());
+            track.release_track_mbid = Some(format!("{release}-track-{index}"));
+        }
+        album
+    }
+
+    fn scored(local: &LocalAlbum, releases: &[Release]) -> (Verdict, Vec<ReleaseMatch>) {
+        let matches: Vec<_> = releases
+            .iter()
+            .map(|release| match_release(local, release, &HashMap::new()))
+            .collect();
+        let verdict = decide(local, releases, &matches, EditionPrefs::default());
+        (verdict, matches)
+    }
+
+    /// The file's release id outranks its track id, as in Picard: a file
+    /// whose release id names R and whose recording is on R pairs on R as
+    /// if it had no track id when its track id belongs to another edition
+    /// (R2). Never stronger than that: not proof for the name gate, and
+    /// not naming its track for a release that needs confirmation.
+    #[test]
+    fn a_track_id_from_another_edition_is_set_aside() {
+        let r = || edition("g", "r", "Night Shift");
+        let r2 = || edition("g", "r2", "Night Shift");
+        let stray = |mut album: LocalAlbum| {
+            album.tracks[1].release_track_mbid = Some("r2-track-1".to_owned());
+            album
+        };
+
+        // The rule, against the same album with file 2's track id removed.
+        let mut clean = named("r");
+        clean.tracks[1].release_track_mbid = None;
+        let (verdict, matches) = scored(&stray(named("r")), &[r(), r2()]);
+        let (clean_verdict, clean_matches) = scored(&clean, &[r(), r2()]);
+        assert_eq!(verdict, Verdict::Identified(0));
+        assert_eq!(clean_verdict, Verdict::Identified(0));
+        assert!(matches[0].conflicts.is_empty());
+        assert_eq!(matches[0].distance, clean_matches[0].distance);
+        let pair = matches[0]
+            .pair_for(1)
+            .map(|pair| (pair.track, pair.support));
+        assert_eq!(pair, Some((1, Support::TrackIdElsewhere)));
+        let mut expected = clean_matches[0].pairs.clone();
+        for pair in expected.iter_mut().filter(|pair| pair.local == 1) {
+            pair.support = Support::TrackIdElsewhere;
+        }
+        assert_eq!(matches[0].pairs, expected);
+
+        let mut no_recording = stray(named("r"));
+        no_recording.tracks[1].recording_mbid = None;
+        let mut not_on_r = stray(named("r"));
+        not_on_r.tracks[1].recording_mbid = Some("recording-9".to_owned());
+        let mut names_r2 = stray(named("r"));
+        names_r2.tracks[1].release_mbid = Some("r2".to_owned());
+        let mut live = r();
+        live.secondary_types = vec!["Live".to_owned()];
+        let mut retitled = r();
+        retitled.title = "Night Shift Sessions".to_owned();
+        let mut merged = r();
+        merged.old_ids = vec!["r-old".to_owned()];
+        let mut via_old_id = named("r");
+        for (index, track) in via_old_id.tracks.iter_mut().enumerate() {
+            track.release_mbid = Some("r-old".to_owned());
+            track.release_track_mbid = Some(format!("r2-track-{index}"));
+        }
+        let mut all_r2 = named("r");
+        for (index, track) in all_r2.tracks.iter_mut().enumerate() {
+            track.release_track_mbid = Some(format!("r2-track-{index}"));
+        }
+        let cases: Vec<(&str, LocalAlbum, Vec<Release>, Verdict)> = vec![
+            (
+                "no recording id: the track id still vetoes",
+                no_recording.clone(),
+                vec![r()],
+                Verdict::Contradictory,
+            ),
+            (
+                "a recording not on R vetoes",
+                not_on_r.clone(),
+                vec![r()],
+                Verdict::Contradictory,
+            ),
+            (
+                "file 2 names R2: its track id is ignored on R",
+                names_r2.clone(),
+                vec![r()],
+                Verdict::Identified(0),
+            ),
+            (
+                "a live release still needs every track named",
+                stray(named("r")),
+                vec![live],
+                Verdict::EditionUncertain(0),
+            ),
+            (
+                "clean ids prove a retitled album",
+                named("r"),
+                vec![retitled.clone()],
+                Verdict::Identified(0),
+            ),
+            (
+                "a set-aside id proves nothing",
+                stray(named("r")),
+                vec![retitled],
+                Verdict::Review(ReviewReason::WeakMatch),
+            ),
+            (
+                "every file names R through a merged id",
+                via_old_id,
+                vec![merged],
+                Verdict::Identified(0),
+            ),
+            (
+                "every track id is R2's, R2 scored too",
+                all_r2,
+                vec![r(), r2()],
+                Verdict::Identified(0),
+            ),
+        ];
+        for (name, local, releases, expected) in cases {
+            assert_eq!(scored(&local, &releases).0, expected, "{name}");
+        }
+
+        let (_, matches) = scored(&no_recording, &[r()]);
+        assert_eq!(matches[0].conflicts[0].kind, ConflictKind::ReleaseTrack);
+        let (_, matches) = scored(&not_on_r, &[r()]);
+        assert_eq!(matches[0].conflicts[0].kind, ConflictKind::Recording);
+        let (_, matches) = scored(&names_r2, &[r()]);
+        let support = matches[0].pair_for(1).map(|pair| pair.support);
+        assert_eq!(support, Some(Support::EmbeddedId));
+
+        // Two set-aside files on one recording: one takes the track.
+        let mut twice = stray(named("r"));
+        twice.tracks[2].recording_mbid = Some("recording-1".to_owned());
+        twice.tracks[2].title = "Blue Hour".to_owned();
+        twice.tracks[2].release_track_mbid = Some("r2-track-1".to_owned());
+        let (_, matches) = scored(&twice, &[r()]);
+        assert!(matches[0].conflicts.is_empty());
+        assert_eq!(matches[0].unmatched.len(), 1);
+        assert!([1, 2].contains(&matches[0].unmatched[0]));
+        assert_eq!(matches[0].missing, vec![2]);
+
+        // A recording on R twice: the file's disc and position pick it.
+        let mut two_discs = r();
+        two_discs.tracks[2].recording_id = "recording-1".to_owned();
+        two_discs.tracks[2].title = "Blue Hour".to_owned();
+        for (index, track) in two_discs.tracks.iter_mut().enumerate() {
+            track.disc = index as u32 / 2 + 1;
+            track.position = index as u32 % 2 + 1;
+        }
+        two_discs.media = (1..=2)
+            .map(|position| ReleaseMedium {
+                position,
+                format: None,
+                title: None,
+                track_count: 2,
+            })
+            .collect();
+        let mut late = stray(named("r"));
+        late.tracks.truncate(2);
+        late.tracks[1].disc_number = 2;
+        late.tracks[1].track_number = 1;
+        let (_, matches) = scored(&late, &[two_discs]);
+        assert_eq!(matches[0].pair_for(1).map(|pair| pair.track), Some(2));
+    }
+
+    /// Files naming single S that carry album A's track ids: the release
+    /// id decides, and the name gate sends them to review when the album
+    /// title tag follows A.
+    #[test]
+    fn a_single_with_the_album_track_ids() {
+        let album = edition("ga", "a", "Night Shift");
+        let mut single = edition("gs", "s", "Blue Hour");
+        single.tracks.truncate(2);
+        for (index, track) in single.tracks.iter_mut().enumerate() {
+            track.recording_id = format!("recording-{}", index + 1);
+            track.title = TITLES[index + 1].to_owned();
+        }
+        let files = |title: &str| LocalAlbum {
+            title: title.to_owned(),
+            artist: "The Lanterns".to_owned(),
+            tracks: (0..2)
+                .map(|index| LocalTrack {
+                    id: format!("t{index}"),
+                    title: TITLES[index + 1].to_owned(),
+                    track_number: index as u32 + 1,
+                    disc_number: 1,
+                    duration_secs: Some(200.0),
+                    recording_mbid: Some(format!("recording-{}", index + 1)),
+                    release_mbid: Some("s".to_owned()),
+                    release_track_mbid: Some(format!("a-track-{}", index + 1)),
+                    ..LocalTrack::default()
+                })
+                .collect(),
+            ..LocalAlbum::default()
+        };
+        let releases = [album, single];
+        assert_eq!(
+            scored(&files("Night Shift"), &releases).0,
+            Verdict::Review(ReviewReason::WeakMatch)
+        );
+        assert_eq!(
+            scored(&files("Blue Hour"), &releases).0,
+            Verdict::Identified(1)
+        );
     }
 }

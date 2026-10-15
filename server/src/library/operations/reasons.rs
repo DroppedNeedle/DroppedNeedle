@@ -1,5 +1,6 @@
-//! Why an operation request was refused, or why a job ended where it did:
-//! one stable code, one plain sentence, and what to do about it.
+//! Why an operation request was refused, why a job ended where it did, or
+//! a note on a planned file: one stable code, one plain sentence, and what
+//! to do about it.
 //!
 //! Refusals travel in [`super::models::OperationError`]; job endings are
 //! looked up from the stored `terminal_code` with [`terminal`]. Several
@@ -180,6 +181,18 @@ pub const NO_MATCH_TO_CONFIRM: Reason = reason(
     "NO_MATCH_TO_CONFIRM",
     "This album has no MusicBrainz match yet, so there is nothing to confirm.",
     "Pick an edition for it instead.",
+);
+
+// Notes on one planned file.
+pub const TRACK_ID_CORRECTED: Reason = reason(
+    "TRACK_ID_CORRECTED",
+    "This file's track ID belongs to another edition. It is matched by its recording instead, and the right ID is written when DroppedNeedle writes this album's MusicBrainz tags.",
+    "Nothing to do.",
+);
+pub const TRACK_ID_ELSEWHERE: Reason = reason(
+    "TRACK_ID_ELSEWHERE",
+    "This file names this edition, but its track ID belongs to another edition and it has no recording ID to match it by.",
+    "Fix the file's MusicBrainz tags and rescan, or keep it as an extra.",
 );
 
 // A custom edition cannot be sealed.

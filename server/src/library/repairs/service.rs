@@ -23,10 +23,10 @@ use super::plays;
 use super::reasons;
 use super::store::{self, Phase, RepairSnapshot};
 use crate::ids::IdGenerator;
-use crate::library::clock::now_unix;
-use crate::library::identify::models::{LocalAlbumFacts, RecallResult};
+use crate::library::clock::{now_ms, now_unix};
+use crate::library::identify::models::{IdentifyKind, LocalAlbumFacts, RecallResult};
 use crate::library::identify::service::IdentifyService;
-use crate::library::identify::sqlite::SqliteIdentifyStore;
+use crate::library::identify::sqlite::{SqliteIdentifyStore, album_input_revision};
 use crate::library::operations::models::{
     Control, OperationDetail, OperationError, OperationJob, OperationKind,
     ReidentificationCandidate,
@@ -80,6 +80,9 @@ pub struct Repairs {
     /// The latest ended scan when play filing was last queued or skipped.
     /// `None` until the first look after a server start.
     plays_scan: Arc<Mutex<Option<Option<String>>>>,
+    /// The latest ended scan when the one-time track id re-look was last
+    /// checked; `None` until the first look after a server start.
+    track_id_scan: Arc<Mutex<Option<Option<String>>>>,
     config: Arc<ConfigStore>,
 }
 
@@ -95,6 +98,7 @@ impl Repairs {
             hygiene_scan: Arc::new(Mutex::new(None)),
             hygiene_identified: Arc::new(Mutex::new(crate::library::clock::now_ms() as i64)),
             plays_scan: Arc::new(Mutex::new(None)),
+            track_id_scan: Arc::new(Mutex::new(None)),
             config: setup.config.clone(),
         }
     }
@@ -320,6 +324,68 @@ impl Repairs {
         })
     }
 
+    /// Identify once more, at background priority, every album an older
+    /// matcher may have left on another edition or unmatched because one
+    /// file's track id named another edition (see
+    /// [`store::track_id_backfill_albums`]). Looked at once per server
+    /// start and after each scan until the set first holds an album, so a
+    /// library that arrives later (a v2 import, a first scan) still gets
+    /// it; then never again.
+    fn queue_track_id_backfill_once(&self) -> Result<(), OperationError> {
+        let run = self.read(|conn| Ok(store::latest_ended_scan(conn)?))?;
+        {
+            let mut seen = self
+                .track_id_scan
+                .lock()
+                .map_err(|_| OperationError::Store("track id marker poisoned".to_owned()))?;
+            if seen.as_ref() == Some(&run) {
+                return Ok(());
+            }
+            *seen = Some(run);
+        }
+        let albums = self.read(|conn| {
+            if store::track_id_backfill_done(conn)? {
+                return Ok(Vec::new());
+            }
+            let mut albums = Vec::new();
+            for album in store::track_id_backfill_albums(conn)? {
+                let revision = album_input_revision(conn, &album)?;
+                albums.push((album, revision));
+            }
+            Ok(albums)
+        })?;
+        if albums.is_empty() {
+            return Ok(());
+        }
+        // Enqueueing takes the store's own connection, so it runs outside
+        // any transaction here. A crash before the mark only queues the
+        // same albums again, which is harmless.
+        for (album, revision) in &albums {
+            let queued = self.identify.enqueue_album(
+                &self.ids.new_id(),
+                album,
+                IdentifyKind::Historical,
+                revision,
+                None,
+                now_ms(),
+            );
+            if queued.is_none() {
+                tracing::warn!(local_album_id = %album, "could not queue an album's re-identification");
+            }
+        }
+        tracing::info!(
+            albums = albums.len(),
+            "queued albums for re-identification after the track id rule changed"
+        );
+        self.write(|tx| {
+            Ok(store::mark_track_id_backfill(
+                tx,
+                &self.ids.new_id(),
+                now_unix(),
+            )?)
+        })
+    }
+
     /// After each finished scan, queue a cleanup of the albums that scan
     /// changed and of empty album shells (v2's per-album hygiene). Checked
     /// once per run; nothing is queued when no album qualifies.
@@ -475,6 +541,7 @@ impl Repairs {
     /// block: run this on a blocking thread.
     pub async fn run_next(&self, worker: &str) -> Result<Option<OperationJob>, OperationError> {
         self.queue_hygiene_once()?;
+        self.queue_track_id_backfill_once()?;
         self.queue_hygiene_after_scan()?;
         self.queue_hygiene_after_identification()?;
         self.queue_play_filing()?;

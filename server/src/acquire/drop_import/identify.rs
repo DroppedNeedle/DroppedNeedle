@@ -150,8 +150,10 @@ pub async fn identify(library: &dyn LandingLibrary, landing: &Landing, folder: &
 }
 
 /// Files a person assigned to one release group: the library's edition of
-/// it when it keeps one, else the group's closest edition. No closeness
-/// gate: the person's choice of album is the authority.
+/// it when it keeps one, else the group's closest edition, out of the
+/// release the files' tags name (when it is of the group) and the
+/// editions closest by track count. No closeness gate: the person's choice
+/// of album is the authority.
 pub async fn assigned(
     library: &dyn LandingLibrary,
     landing: &Landing,
@@ -172,7 +174,18 @@ pub async fn assigned(
             Err(error) => return Outcome::Unavailable(error.0),
         }
     }
-    if releases.is_empty() {
+    if releases.is_empty()
+        && let Some(tagged) = local.tagged_release()
+    {
+        match library.release(&tagged).await {
+            Ok(Some(release)) if release.release_group_id.eq_ignore_ascii_case(&group) => {
+                releases.push(release);
+            }
+            Ok(_) => {}
+            Err(error) => return Outcome::Unavailable(error.0),
+        }
+    }
+    if target.release_mbid.is_none() {
         let mut hits = match library.group_releases(&group).await {
             Ok(hits) => hits,
             Err(error) => return Outcome::Unavailable(error.0),
@@ -182,6 +195,7 @@ pub async fn assigned(
             hit.track_count
                 .map_or(usize::MAX, |count| (count as usize).abs_diff(files))
         });
+        hits.retain(|hit| !releases.iter().any(|known| known.answers_to(&hit.id)));
         for hit in hits.iter().take(FETCH) {
             match library.release(&hit.id).await {
                 Ok(Some(release)) if release.release_group_id.eq_ignore_ascii_case(&group) => {

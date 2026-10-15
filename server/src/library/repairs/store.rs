@@ -375,6 +375,85 @@ pub fn hygiene_backfill_queued(conn: &Connection) -> rusqlite::Result<bool> {
     )
 }
 
+/// Marks the one-time identification of albums an older matcher left on
+/// another edition, or unmatched, because one file's track id named
+/// another edition.
+pub const TRACK_ID_BACKFILL_KEY: &str = "track-id-elsewhere:v1:backfill";
+
+pub fn track_id_backfill_done(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM library_operation_jobs WHERE idempotency_key = ?1)",
+        params![TRACK_ID_BACKFILL_KEY],
+        |row| row.get(0),
+    )
+}
+
+/// Albums whose identification may have obeyed a file's stray track id.
+/// On an identity, a file carrying release, track and recording ids counts
+/// when it names another release than the identity's (by id or a merged
+/// id), or when the stored document of the release it names lacks its
+/// track id. An unmatched or unconfirmed album counts when its recorded
+/// candidates show a release vetoed by a file's track id (its documents
+/// may have aged out). Only automatic identities and flagged albums; never
+/// an album a person decided: a chosen or imported identity, a match taken
+/// off, or a review a person settled.
+pub fn track_id_backfill_albums(conn: &Connection) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT a.id FROM local_albums a \
+         LEFT JOIN local_album_external_identities i \
+             ON i.local_album_id = a.id AND i.provider = ?1 \
+         LEFT JOIN library_album_match_state m ON m.local_album_id = a.id \
+         WHERE a.retired_into_album_id IS NULL \
+         AND (i.local_album_id IS NOT NULL OR m.local_album_id IS NOT NULL) \
+         AND (i.decision_source IS NULL OR i.decision_source IN ('automatic','embedded')) \
+         AND COALESCE(m.reason_code, '') != 'DETACHED_BY_PERSON' \
+         AND NOT EXISTS (SELECT 1 FROM library_identify_reviews r \
+             WHERE r.local_album_id = a.id AND r.state IN ('rejected','dismissed','excluded')) \
+         AND ((i.local_album_id IS NOT NULL AND EXISTS (SELECT 1 FROM local_tracks t \
+             WHERE t.local_album_id = a.id AND t.availability = 'indexed' \
+             AND COALESCE(t.embedded_release_mbid, '') != '' \
+             AND COALESCE(t.embedded_release_track_mbid, '') != '' \
+             AND COALESCE(t.embedded_recording_mbid, '') != '' \
+             AND ((i.local_album_id IS NOT NULL \
+                 AND lower(t.embedded_release_mbid) != lower(COALESCE(i.release_mbid, '')) \
+                 AND NOT EXISTS (SELECT 1 FROM library_management_metadata_snapshots s, \
+                     json_each(s.canonical_payload_json, '$.old_ids') old \
+                     WHERE s.provider = ?1 AND s.entity_kind = 'release' \
+                     AND s.entity_id = lower(i.release_mbid) \
+                     AND lower(old.value) = lower(t.embedded_release_mbid))) \
+             OR EXISTS (SELECT 1 FROM library_management_metadata_snapshots s \
+                 WHERE s.provider = ?1 AND s.entity_kind = 'release' \
+                 AND s.entity_id = lower(t.embedded_release_mbid) \
+                 AND NOT EXISTS (SELECT 1 FROM json_each(s.canonical_payload_json, '$.tracks') rt \
+                     WHERE lower(json_extract(rt.value, '$.id')) \
+                         = lower(t.embedded_release_track_mbid)))))) \
+         OR EXISTS (SELECT 1 FROM json_each(m.candidates_json) candidate, \
+             json_each(candidate.value, '$.track_evidence') track, \
+             json_each(track.value, '$.evidence_kinds') kind \
+             WHERE kind.value = 'release_track_mbid_conflict')) \
+         ORDER BY a.id",
+    )?;
+    stmt.query_map(params![PROVIDER], |row| row.get(0))?
+        .collect()
+}
+
+/// Record that the one-time identification was queued: a finished job
+/// row under [`TRACK_ID_BACKFILL_KEY`], which no list shows.
+pub fn mark_track_id_backfill(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    now: f64,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO library_operation_jobs (id, kind, state, terminal_code, idempotency_key, \
+         created_at, updated_at, terminal_at) \
+         VALUES (?1, 'repair', 'succeeded', 'IDENTIFY_QUEUED', ?2, ?3, ?3, ?3) \
+         ON CONFLICT DO NOTHING",
+        params![job_id, TRACK_ID_BACKFILL_KEY, now],
+    )?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Estimates and history.
 // ---------------------------------------------------------------------------
