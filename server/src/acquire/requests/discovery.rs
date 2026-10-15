@@ -10,11 +10,11 @@ use super::error::{QUOTA_EXCEEDED, RequestsError, STORAGE_FULL};
 use super::models::{BatchIntake, BatchItem, RequestKind};
 use super::service::RequestsService;
 use super::{RequestsState, ledger::STATUS_FAILED};
-use crate::auth::users::roles::Role as UserRole;
 use crate::library::mutations::{MutationError, Mutations};
 use crate::library::wiring::LibrarySetup;
 use crate::reads::discover::adapters::batches::{BatchAlbum, BatchCaller, BatchRequests};
 use crate::reads::discover::ports::{BatchFailure, BatchRefusal, ProviderFailure};
+use droppedneedle_auth::users::roles::Role as UserRole;
 
 /// Discovery batches over the request ledger and the library.
 pub struct DiscoveryBatchRequests {

@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use crate::auth::compat_auth::jellyfin::PolicyFacts;
+use droppedneedle_auth::compat_auth::jellyfin::PolicyFacts;
 
 // ===== System / identity =====
 

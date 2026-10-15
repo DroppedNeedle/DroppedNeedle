@@ -30,7 +30,7 @@ use super::{
     },
     services::{self, ReadsDeps, ServiceError},
 };
-use crate::auth::session::middleware::CurrentSession;
+use droppedneedle_auth::session::middleware::CurrentSession;
 
 /// The authenticated caller. The deny-by-default session middleware stashes
 /// the session; this extractor reads it without a store round-trip (all

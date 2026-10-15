@@ -9,7 +9,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-use crate::auth::session::middleware::CurrentSession;
+use droppedneedle_auth::session::middleware::CurrentSession;
 
 use super::CatalogDeps;
 use super::error::CatalogHttpError;

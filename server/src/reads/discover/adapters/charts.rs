@@ -27,7 +27,6 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 
 use super::ownership::{owned_albums, owned_artists};
-use crate::auth::users::UsersDeps;
 use crate::plugins::scrobble::ListenBrainzLinkStore;
 use crate::reads::catalog::upstream::{InstanceLastFmKey, user_lastfm};
 use crate::reads::discover::{
@@ -37,6 +36,7 @@ use crate::reads::discover::{
     },
     ports::{BoxFuture, ChartsSource, ProviderFailure},
 };
+use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_providers::adapters::{CorePacer, CoreSink};
 use droppedneedle_providers::lastfm::{self, LastFmClient, LastFmCredentials, TopItem};
 use droppedneedle_providers::listenbrainz::{
@@ -455,8 +455,8 @@ mod tests {
     use axum::{Json, Router, extract::Query, routing::get};
 
     use super::*;
-    use crate::auth::users::memory::TestRig;
     use crate::plugins::scrobble::MemoryListenBrainzLinkStore;
+    use droppedneedle_auth::users::memory::TestRig;
     use droppedneedle_kernel::http_client::HttpClientFactory;
     use droppedneedle_providers::Providers;
 

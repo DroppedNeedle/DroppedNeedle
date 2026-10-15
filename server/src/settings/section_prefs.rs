@@ -16,7 +16,7 @@ use futures_util::future::BoxFuture;
 use sqlx::{Row as _, SqlitePool};
 
 use super::models::{SectionPrefItem, SectionPrefsResponse, SectionPrefsUpdate};
-use crate::auth::users::stores::{LastFmStore, StoreError};
+use droppedneedle_auth::users::stores::{LastFmStore, StoreError};
 use droppedneedle_kernel::db::{Lane, WriteLane};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;

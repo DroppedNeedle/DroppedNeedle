@@ -15,11 +15,6 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use droppedneedle::auth::session::extract::Transport;
-use droppedneedle::auth::session::middleware::CurrentSession;
-use droppedneedle::auth::session::store::SessionKind;
-use droppedneedle::auth::users::memory::with_test_principal;
-use droppedneedle::auth::users::roles::Role;
 use droppedneedle::middleware::request_scope;
 use droppedneedle::plugins::fakes::{
     FakeConnection, FakeFetcher, FakeLauncher, FakeRoles, FakeUnpacker, scrobble_plugin_event,
@@ -33,6 +28,11 @@ use droppedneedle::plugins::runtime::{PublishPayload, ScrobbleEvent};
 use droppedneedle::plugins::ticks::{
     HostTickAdapter, NoopTickSync, PluginTickLoops, TickLoopSync, TickStoreKind,
 };
+use droppedneedle_auth::session::extract::Transport;
+use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::session::store::SessionKind;
+use droppedneedle_auth::users::memory::with_test_principal;
+use droppedneedle_auth::users::roles::Role;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::jobs::plugin_ticks::{
     MemoryTickStore, TickHost as JobsTickHost, TickPlugin as JobsTickPlugin,

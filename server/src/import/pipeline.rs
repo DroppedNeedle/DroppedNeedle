@@ -1938,7 +1938,9 @@ fn v3_avatar_url(user_id: &str, raw: Option<String>) -> Option<String> {
         .strip_prefix("?v=")
         .filter(|version| !version.is_empty())
         .unwrap_or("0");
-    Some(crate::auth::users::services::avatar_url(user_id, version))
+    Some(droppedneedle_auth::users::services::avatar_url(
+        user_id, version,
+    ))
 }
 
 fn users_identical(existing: &UserRow, imported: &Value) -> bool {

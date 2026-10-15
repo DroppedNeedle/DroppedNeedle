@@ -10,10 +10,10 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use droppedneedle::auth::session::extract::Transport;
-use droppedneedle::auth::session::middleware::CurrentSession;
-use droppedneedle::auth::users::memory::TestRig;
-use droppedneedle::auth::users::roles::{Role, SessionKind};
+use droppedneedle_auth::session::extract::Transport;
+use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::users::memory::TestRig;
+use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_testkit::remotes::{
     JELLYFIN_KEY, MATCH_MBID, NAVIDROME_USER, PLEX_TOKEN, serve_jellyfin, serve_navidrome,

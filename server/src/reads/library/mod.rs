@@ -30,11 +30,11 @@ pub mod tags;
 
 use std::sync::Arc;
 
-use crate::auth::users::UsersDeps;
 use axum::{
     Router,
     routing::{get, post},
 };
+use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::ids::IdGenerator;
 
 use stores::{

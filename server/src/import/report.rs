@@ -10,8 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
-use crate::auth::times::to_iso;
 use crate::export::envelope::LeftBehind;
+use droppedneedle_auth::times::to_iso;
 
 /// Report envelope marker.
 pub const REPORT_FORMAT: &str = "droppedneedle-import-report";

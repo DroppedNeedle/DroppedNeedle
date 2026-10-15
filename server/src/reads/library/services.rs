@@ -18,7 +18,7 @@ use super::stores::{
     AlbumFilter, AlbumRecord, AlbumSort, ArtistRecord, ArtistScope, ArtistSort, StoreError,
     TagRead, TrackFilter, TrackRecord, TrackSort, UpgradePolicy,
 };
-use crate::auth::users::roles::Role;
+use droppedneedle_auth::users::roles::Role;
 
 /// Domain failures. Handlers convert these; nothing here names HTTP.
 #[derive(Debug, PartialEq, Eq)]

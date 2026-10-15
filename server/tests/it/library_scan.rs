@@ -75,7 +75,7 @@ fn snapshot(root: &Path) -> BTreeMap<String, (u64, i64, String)> {
 
 /// Production-wired bundle over a scratch database, with one root.
 fn bundle(music: &Path) -> LibrarySetup {
-    let users = droppedneedle::auth::wiring::AuthSetup::for_tests()
+    let users = droppedneedle_auth::wiring::AuthSetup::for_tests()
         .expect("test auth builds")
         .users;
     let library =
@@ -4595,7 +4595,7 @@ async fn an_album_replaced_on_two_albums_is_left_to_a_person() {
         .expect("config opens"),
     );
     let library = LibrarySetup::for_tests_at(
-        droppedneedle::auth::wiring::AuthSetup::for_tests()
+        droppedneedle_auth::wiring::AuthSetup::for_tests()
             .expect("test auth builds")
             .users,
         Arc::new(droppedneedle_kernel::ids::UuidGenerator),

@@ -22,8 +22,8 @@ use axum::{
 };
 use serde::de::DeserializeOwned;
 
-use crate::auth::session::middleware::CurrentSession;
-use crate::auth::users::roles::Role;
+use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::users::roles::Role;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 

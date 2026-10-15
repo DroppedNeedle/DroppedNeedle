@@ -1,11 +1,11 @@
 //! Library browsing: views, items, latest, artists, genres, filters and
 //! the owned-only discovery routes.
 
-use crate::auth::compat_auth::jellyfin::{JellyfinPasswordStore, server_id};
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{Request, StatusCode};
 use axum::response::Response;
+use droppedneedle_auth::compat_auth::jellyfin::{JellyfinPasswordStore, server_id};
 
 use super::builders::{self, Builder, LIBRARY_INTERNAL_ID};
 use super::models::{BaseItemDto, BaseItemDtoQueryResult};

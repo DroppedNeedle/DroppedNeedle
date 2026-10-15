@@ -7,8 +7,8 @@
 use axum::body::Body;
 use axum::http::Request;
 
-use crate::auth::session::middleware::effective_origin;
 use crate::compat::settings::LiveSettings;
+use droppedneedle_auth::session::middleware::effective_origin;
 use droppedneedle_kernel::config::TrustedProxies;
 
 /// How clients reach this server: the port it listens on, the proxies

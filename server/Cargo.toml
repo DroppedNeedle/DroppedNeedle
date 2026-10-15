@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = [".", "kernel", "providers", "testkit"]
+members = [".", "auth", "kernel", "providers", "testkit"]
 
 [workspace.package]
 version = "3.0.0"
@@ -9,6 +9,7 @@ rust-version = "1.89"
 license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
+droppedneedle-auth = { path = "auth", version = "3.0.0" }
 droppedneedle-kernel = { path = "kernel", version = "3.0.0" }
 droppedneedle-providers = { path = "providers", version = "3.0.0" }
 argon2 = { version = "0.5", features = ["alloc"] }
@@ -70,6 +71,7 @@ description = "DroppedNeedle v3 backend"
 license.workspace = true
 
 [dependencies]
+droppedneedle-auth.workspace = true
 droppedneedle-kernel.workspace = true
 droppedneedle-providers.workspace = true
 argon2.workspace = true
@@ -121,6 +123,7 @@ regex.workspace = true
 test-support = [
     "droppedneedle-kernel/test-support",
     "droppedneedle-providers/test-support",
+    "droppedneedle-auth/test-support",
 ]
 
 [dev-dependencies]

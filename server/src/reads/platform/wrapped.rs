@@ -27,7 +27,7 @@ use axum::{
 use futures_util::future::BoxFuture;
 use sha2::{Digest, Sha256};
 
-use crate::auth::session::tokens::constant_time_eq;
+use droppedneedle_auth::session::tokens::constant_time_eq;
 use droppedneedle_kernel::runtime_config::{ConfigStore, secret_sections::WrappedSettings};
 use serde::Serialize;
 use utoipa::ToSchema;

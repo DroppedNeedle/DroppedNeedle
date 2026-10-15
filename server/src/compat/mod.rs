@@ -1,14 +1,14 @@
 //! Third-party protocol shims: Subsonic/OpenSubsonic and Jellyfin.
 //!
 //! Both routers mount outside the `/api` session gate with their own
-//! app-password auth ([`crate::auth::compat_auth`]), the stream engine for
+//! app-password auth ([`droppedneedle_auth::compat_auth`]), the stream engine for
 //! bytes, and the shared edge policy (kill switches default off, CORS `*` creds
 //! off, case-insensitive paths, rate limits plus auth backoff, log
 //! redaction).
 //!
 //! # Seams
 //!
-//! - Auth: [`ProdCompatPasswords`](crate::auth::compat_auth::prod::ProdCompatPasswords)
+//! - Auth: [`ProdCompatPasswords`](droppedneedle_auth::compat_auth::prod::ProdCompatPasswords)
 //!   over the real users tables (app passwords only, never native tokens
 //!   or account passwords). The Subsonic [`Verifier`](subsonic::Verifier)
 //!   maps classified credentials back onto `compat_auth`'s `authenticate`

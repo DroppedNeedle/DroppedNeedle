@@ -16,7 +16,6 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode, header};
 use axum::middleware::from_fn_with_state;
-use droppedneedle::auth::compat_auth::fakes::FakeCompatPasswords;
 use droppedneedle::compat::adapters::principal::{CompatProfile, CompatProfiles, SubsonicVerifier};
 use droppedneedle::compat::http::{
     CompatLimits, StoreLabels, SubsonicState, cors_layer, limits_layer, redact_target,
@@ -32,6 +31,7 @@ use droppedneedle::compat::jellyfin::{JellyfinState, router as jellyfin_router};
 use droppedneedle::compat::shared::address::ListenerConfig;
 use droppedneedle::compat::subsonic::Settings as SubsonicSettings;
 use droppedneedle::compat::subsonic::fake::{FakeAudio, FakeStore};
+use droppedneedle_auth::compat_auth::fakes::FakeCompatPasswords;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 

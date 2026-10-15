@@ -24,8 +24,6 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 
-use crate::auth::compat_auth::jellyfin::{JellyfinPasswordStore, extract_token};
-use crate::auth::session::client_ip::ClientIp;
 use crate::compat::jellyfin::QueryTokens;
 use crate::compat::settings::LiveSettings;
 use crate::compat::shared::address::{ListenerConfig, base_address};
@@ -39,6 +37,8 @@ use crate::compat::subsonic::{
     AudioBackend, Request as SubsonicRequest, Settings, Store, Verifier, classify, dispatch_with,
     normalize_endpoint,
 };
+use droppedneedle_auth::compat_auth::jellyfin::{JellyfinPasswordStore, extract_token};
+use droppedneedle_auth::session::client_ip::ClientIp;
 use droppedneedle_kernel::config::TrustedProxies;
 
 /// Jellyfin route templates (registered casing) for path canonicalization.
@@ -259,7 +259,9 @@ fn limit_ip(request: &Request, trusted: &TrustedProxies) -> Option<IpAddr> {
     request
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
-        .map(|info| crate::auth::session::client_ip::client_ip(info.0, request.headers(), trusted))
+        .map(|info| {
+            droppedneedle_auth::session::client_ip::client_ip(info.0, request.headers(), trusted)
+        })
 }
 
 fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
@@ -741,7 +743,7 @@ where
                 // Code 0 is a server-side failure (the credential store
                 // broke), not a wrong guess: it must not count toward the
                 // caller's lockout.
-                if denied.code != crate::auth::compat_auth::subsonic::GENERIC {
+                if denied.code != droppedneedle_auth::compat_auth::subsonic::GENERIC {
                     let _ = auth::record_auth_denial(
                         &mut state
                             .limits

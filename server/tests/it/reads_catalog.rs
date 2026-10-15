@@ -13,11 +13,6 @@ use axum::{
     http::{Method, Request, StatusCode, Uri},
     middleware,
 };
-use droppedneedle::auth::session::middleware::{SessionAuth, require_session};
-use droppedneedle::auth::session::store::{MemorySessionStore, SessionRecord, SessionStore};
-use droppedneedle::auth::session::tokens::hash_token;
-use droppedneedle::auth::users::memory::TestRig;
-use droppedneedle::auth::users::models::LastFmConnection;
 use droppedneedle::middleware::request_scope;
 use droppedneedle::reads::catalog::{
     self, Catalog, CatalogDeps,
@@ -25,6 +20,11 @@ use droppedneedle::reads::catalog::{
     upstream::{CatalogSettings, Endpoints, Upstream},
 };
 use droppedneedle::reads::search::{self, SearchDeps, service::SearchService};
+use droppedneedle_auth::session::middleware::{SessionAuth, require_session};
+use droppedneedle_auth::session::store::{MemorySessionStore, SessionRecord, SessionStore};
+use droppedneedle_auth::session::tokens::hash_token;
+use droppedneedle_auth::users::memory::TestRig;
+use droppedneedle_auth::users::models::LastFmConnection;
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_kernel::runtime_config::sections::{
     MbSourceMode, MusicBrainzSettings, MusicSource, UserPreferences,
@@ -353,13 +353,13 @@ async fn seed_library(pool: &SqlitePool) {
 
 async fn session_auth() -> SessionAuth<MemorySessionStore> {
     let store = MemorySessionStore::new();
-    let now = droppedneedle::auth::session::store::now_unix();
+    let now = droppedneedle_auth::session::store::now_unix();
     store
         .insert(SessionRecord {
             id: "session-1".to_owned(),
             user_id: USER.to_owned(),
             token_hash: hash_token(TOKEN),
-            kind: droppedneedle::auth::session::store::SessionKind::Standard,
+            kind: droppedneedle_auth::session::store::SessionKind::Standard,
             label: None,
             issued_at: now,
             expires_at: now + 3600,
@@ -896,7 +896,7 @@ async fn clearing_a_pin_names_the_copy_and_never_calls_musicbrainz() {
     }
     let rig = TestRig::new().unwrap();
     let curator = rig
-        .seed_user("curator", droppedneedle::auth::users::roles::Role::Trusted)
+        .seed_user("curator", droppedneedle_auth::users::roles::Role::Trusted)
         .await;
     let http = droppedneedle_kernel::http_client::HttpClientFactory::new().unwrap();
     // Nothing listens here: any MusicBrainz call would fail the clear.

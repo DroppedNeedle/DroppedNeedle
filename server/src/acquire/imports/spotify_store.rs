@@ -21,9 +21,9 @@ use super::spotify::{
     SpotifyConnection, SpotifyConnectionStore, SpotifyStateStore, now_unix_secs,
 };
 use crate::acquire::db::AcquireDb;
-use crate::auth::times::{parse_iso, to_iso};
 use crate::reads::collections::store::PlaylistStore;
 use crate::reads::collections::store::playlists::{CoverImage, NewEntry, Written};
+use droppedneedle_auth::times::{parse_iso, to_iso};
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 
 /// The `user_connections.service` tag for Spotify links (v2's).

@@ -29,7 +29,6 @@ use crate::{
     acquire::AcquireSetup,
     admin::{AdminDb, AdminSetup, quota::reload_overrides},
     app::create_app_with_web,
-    auth::{federated::MediaLinks, prod::ProdAuth, users::stores::SystemClock, wiring::AuthSetup},
     compat::{
         CompatSetup, settings::LiveSettings, setup::CompatDeps, shared::address::ListenerConfig,
     },
@@ -63,6 +62,9 @@ use crate::{
         wiring::SettingsSetup,
     },
     web::{WebError, WebUi},
+};
+use droppedneedle_auth::{
+    federated::MediaLinks, prod::ProdAuth, users::stores::SystemClock, wiring::AuthSetup,
 };
 use droppedneedle_kernel::{
     config::AppConfig,

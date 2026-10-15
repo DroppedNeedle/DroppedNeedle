@@ -4,8 +4,8 @@
 
 use std::collections::BTreeSet;
 
-use droppedneedle::auth::session::allowlist::{PUBLIC_PATHS, PUBLIC_PREFIXES};
 use droppedneedle::docs::ApiDoc;
+use droppedneedle_auth::session::allowlist::{PUBLIC_PATHS, PUBLIC_PREFIXES};
 use utoipa::OpenApi as _;
 
 #[test]

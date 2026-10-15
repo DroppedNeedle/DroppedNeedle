@@ -99,7 +99,7 @@ impl<S: Send + Sync> FromRequestParts<S> for RequireCurator {
 /// the users role extractors: the role rereads the user row every
 /// request. A session whose account is gone reads as stale (401).
 pub async fn translate_principal(
-    axum::extract::State(users): axum::extract::State<crate::auth::users::UsersDeps>,
+    axum::extract::State(users): axum::extract::State<droppedneedle_auth::users::UsersDeps>,
     mut request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
@@ -110,7 +110,7 @@ pub async fn translate_principal(
     };
     let Some(session) = request
         .extensions()
-        .get::<crate::auth::session::middleware::CurrentSession>()
+        .get::<droppedneedle_auth::session::middleware::CurrentSession>()
         .cloned()
     else {
         return missing().into_response();
@@ -118,19 +118,19 @@ pub async fn translate_principal(
     let user = match users.users.get_by_id(&session.user_id).await {
         Ok(Some(user)) => user,
         Ok(None) => return missing().into_response(),
-        Err(crate::auth::users::stores::StoreError::Conflict) => {
+        Err(droppedneedle_auth::users::stores::StoreError::Conflict) => {
             return LibraryError::Conflict {
                 message: "Conflicting state".to_owned(),
             }
             .into_response();
         }
-        Err(crate::auth::users::stores::StoreError::Busy) => {
+        Err(droppedneedle_auth::users::stores::StoreError::Busy) => {
             return droppedneedle_kernel::error::busy_response(
                 "library.auth.user",
                 &uuid::Uuid::new_v4().to_string(),
             );
         }
-        Err(crate::auth::users::stores::StoreError::Internal(cause)) => {
+        Err(droppedneedle_auth::users::stores::StoreError::Internal(cause)) => {
             return LibraryError::internal(&cause).into_response();
         }
     };
@@ -138,9 +138,9 @@ pub async fn translate_principal(
         user_id: user.id,
         username: user.username,
         role: match user.role {
-            crate::auth::users::roles::Role::User => Role::User,
-            crate::auth::users::roles::Role::Trusted => Role::Trusted,
-            crate::auth::users::roles::Role::Admin => Role::Admin,
+            droppedneedle_auth::users::roles::Role::User => Role::User,
+            droppedneedle_auth::users::roles::Role::Trusted => Role::Trusted,
+            droppedneedle_auth::users::roles::Role::Admin => Role::Admin,
         },
     });
     next.run(request).await

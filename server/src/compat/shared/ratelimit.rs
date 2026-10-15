@@ -7,14 +7,14 @@
 //! failures in 60s locks out for 10s, doubling to 5min). Media and artwork
 //! skip the buckets (a cover grid is dozens of requests at once); every 429
 //! carries `Retry-After`. Buckets and the bounded TTL maps are the native
-//! limiter's ([`crate::auth::session::rate_limit`]).
+//! limiter's ([`droppedneedle_auth::session::rate_limit`]).
 //!
 //! Time is an explicit `now` (monotonic seconds) so tests pin behavior
 //! without sleeping; production passes its monotonic clock.
 
 use std::collections::VecDeque;
 
-use crate::auth::session::rate_limit::{BoundedMap, TokenBucket};
+use droppedneedle_auth::session::rate_limit::{BoundedMap, TokenBucket};
 
 /// Failures inside the window that trigger a lockout.
 pub const AUTH_FAILURE_LIMIT: usize = 5;

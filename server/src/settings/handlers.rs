@@ -27,7 +27,6 @@ use super::models::{
     UsenetSearchBackend, VerifyConnectionResponse,
 };
 use super::wiring::{AdminUser, SettingsSetup};
-use crate::auth::session::middleware::CurrentSession;
 use crate::library::management::settings::{ActivationHealth, ChangeImpact, PresetDiff};
 use crate::library::settings_models::{
     LibraryManagementProfileExportResponse, LibraryManagementProfileImportPreviewResponse,
@@ -35,6 +34,7 @@ use crate::library::settings_models::{
     LibraryManagementSettingsResponse, LibraryPathMappingReport, LibraryPolicyApplyPreviewResponse,
     LibraryPolicyImpactResponse, LibraryPolicyTreeResponse, LibrarySettingsResponse,
 };
+use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_kernel::runtime_config::Masked;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     EventsSettings, JellyfinConnection, LastFmSettings, ListenBrainzConnection,

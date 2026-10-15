@@ -687,10 +687,10 @@ async fn login_rehashes(
     user_id: &str,
     password: &str,
 ) {
-    use droppedneedle::auth::session::login::{
+    use droppedneedle_auth::session::login::{
         LoginContext, LoginError, LoginRequest, LoginService, TransportParam,
     };
-    use droppedneedle::auth::sqlite::{AuthDb, SqliteCredentialLookup, SqliteSessionStore};
+    use droppedneedle_auth::sqlite::{AuthDb, SqliteCredentialLookup, SqliteSessionStore};
 
     let before: String = sqlx::query_scalar(
         "SELECT provider_data FROM auth_providers WHERE user_id = ? AND provider = 'local'",
@@ -702,7 +702,7 @@ async fn login_rehashes(
     assert!(before.contains("$2b$"), "bcrypt carried verbatim: {before}");
 
     let auth_db = AuthDb::new(pool, lane);
-    let hasher = droppedneedle::auth::passwords::Argon2idHasher::new();
+    let hasher = droppedneedle_auth::passwords::Argon2idHasher::new();
     let mut sessions = SqliteSessionStore::new(&auth_db);
     sessions.set_rehash_queue(hasher.rehash_queue().clone());
     let login = LoginService::new(sessions, hasher, SqliteCredentialLookup::new(&auth_db));
@@ -786,9 +786,9 @@ async fn assert_compat_reauth(
     v3_root: &Path,
     fixture: &droppedneedle::tooling::fixture::V2Fixture,
 ) {
-    use droppedneedle::auth::session::tokens::hash_token;
-    use droppedneedle::auth::sqlite::{AuthDb, SqliteAppPasswordStore};
-    use droppedneedle::auth::users::stores::AppPasswordStore;
+    use droppedneedle_auth::session::tokens::hash_token;
+    use droppedneedle_auth::sqlite::{AuthDb, SqliteAppPasswordStore};
+    use droppedneedle_auth::users::stores::AppPasswordStore;
 
     let auth_db = AuthDb::new(pool, lane);
     let store = SqliteAppPasswordStore::new(&auth_db);

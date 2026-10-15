@@ -1,10 +1,10 @@
 //! Audio streaming and PlaybackInfo.
 
-use crate::auth::compat_auth::jellyfin::JellyfinPasswordStore;
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, Request, StatusCode};
 use axum::response::Response;
+use droppedneedle_auth::compat_auth::jellyfin::JellyfinPasswordStore;
 use uuid::Uuid;
 
 use super::builders::{self};

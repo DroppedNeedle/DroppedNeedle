@@ -4,9 +4,9 @@
 //! beside this file in `backward_imports.txt` and is empty, so any backward
 //! import fails the test.
 //!
-//! The kernel and providers crates sit below this crate, so they are not
-//! listed here: Cargo itself refuses an import from them back up into this
-//! crate.
+//! The kernel, providers and auth crates sit below this crate, so they are
+//! not listed here: Cargo itself refuses an import from them back up into
+//! this crate.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -15,7 +15,6 @@ use std::path::{Path, PathBuf};
 /// Areas from the bottom layer up. An area may use areas in its own layer or
 /// below it. Areas in one layer become one crate once the split lands.
 const LAYERS: &[&[&str]] = &[
-    &["auth"],
     &["library"],
     &["plugins"],
     &["media", "playback", "remotes", "stream"],

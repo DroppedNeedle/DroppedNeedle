@@ -12,10 +12,6 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use droppedneedle::auth::session::extract::Transport;
-use droppedneedle::auth::session::middleware::CurrentSession;
-use droppedneedle::auth::session::store::SessionKind;
-use droppedneedle::auth::users::memory::with_test_principal;
 use droppedneedle::reads::discover::adapters::content::LiveContent;
 use droppedneedle::reads::discover::adapters::page::sources::{
     LastFmChartAlbum, PageSources, PlayedArtist, RankedAlbum, ScoredArtist, SourceContext,
@@ -34,6 +30,10 @@ use droppedneedle::reads::discover::fakes::{
 };
 use droppedneedle::reads::discover::ports::{BoxFuture, SystemClock};
 use droppedneedle::reads::discover::services::ReadsDeps;
+use droppedneedle_auth::session::extract::Transport;
+use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::session::store::SessionKind;
+use droppedneedle_auth::users::memory::with_test_principal;
 use droppedneedle_kernel::db::{DbRuntime, Lane};
 use droppedneedle_kernel::ids::UuidGenerator;
 use serde_json::{Value, json};

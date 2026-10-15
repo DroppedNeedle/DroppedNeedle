@@ -14,14 +14,14 @@
 //! no `/jellyfin/socket` endpoint, on purpose (v2 gap: uvicorn 403s the
 //! websocket scope; Finamp PlayOn only, non-blocking).
 
-use crate::auth::compat_auth::jellyfin::{
-    JellyfinPasswordStore, JellyfinRequest, extract_client, extract_token, resolve_token, server_id,
-};
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode};
 use axum::response::Response;
 use axum::routing::{get, post};
+use droppedneedle_auth::compat_auth::jellyfin::{
+    JellyfinPasswordStore, JellyfinRequest, extract_client, extract_token, resolve_token, server_id,
+};
 
 use crate::compat::body::AudioBody;
 use crate::compat::settings::LiveSettings;

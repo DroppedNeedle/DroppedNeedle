@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::auth::users::roles::Role;
+use droppedneedle_auth::users::roles::Role;
 
 use super::install::{ArchiveEntry, ArchiveFetcher, ArchiveUnpacker, FetchError, Fetched};
 use super::protocol::RpcError;

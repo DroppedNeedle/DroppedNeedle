@@ -66,7 +66,7 @@ impl Rig {
             })
             .await
             .unwrap();
-        let auth = droppedneedle::auth::wiring::AuthSetup::for_tests().unwrap();
+        let auth = droppedneedle_auth::wiring::AuthSetup::for_tests().unwrap();
         let ids: Arc<dyn droppedneedle_kernel::ids::IdGenerator> = Arc::new(UuidGenerator);
         let reads = ReadsSetup::build(
             runtime.pool(),

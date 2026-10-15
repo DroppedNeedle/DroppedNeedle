@@ -5,12 +5,12 @@
 //! is that lookup, implemented for [`UsersDeps`] in production and scripted
 //! by tests.
 
-use crate::auth::compat_auth::subsonic::{
-    SubsonicDenied, SubsonicParams, SubsonicPasswordStore, authenticate,
-};
-use crate::auth::users::UsersDeps;
 use crate::compat::subsonic::auth::{Credentials, Principal};
 use crate::compat::subsonic::error::SubsonicError;
+use droppedneedle_auth::compat_auth::subsonic::{
+    SubsonicDenied, SubsonicParams, SubsonicPasswordStore, authenticate,
+};
+use droppedneedle_auth::users::UsersDeps;
 
 /// Profile facts the compat handlers read off a principal.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,7 +145,9 @@ impl<P: SubsonicPasswordStore, U: CompatProfiles> crate::compat::subsonic::Verif
             .profile(&principal.user_id)
             .await
             .ok_or_else(|| {
-                SubsonicError::code_only(crate::auth::compat_auth::subsonic::WRONG_CREDENTIALS)
+                SubsonicError::code_only(
+                    droppedneedle_auth::compat_auth::subsonic::WRONG_CREDENTIALS,
+                )
             })?;
         Ok(CompatPrincipal { profile })
     }

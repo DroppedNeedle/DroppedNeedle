@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use axum::Router;
 
-use crate::auth::users::{UsersDeps, roles::Role};
+use droppedneedle_auth::users::{UsersDeps, roles::Role};
 use droppedneedle_kernel::db::WriteLane;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::jobs::plugin_ticks::SqliteTickStore;

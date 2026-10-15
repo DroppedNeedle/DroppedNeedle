@@ -1,10 +1,10 @@
 //! Favorites, played markers and playback reporting.
 
-use crate::auth::compat_auth::jellyfin::JellyfinPasswordStore;
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, Request, StatusCode};
 use axum::response::Response;
+use droppedneedle_auth::compat_auth::jellyfin::JellyfinPasswordStore;
 
 use super::builders::{self};
 use super::models::{PlaybackProgressInfo, PlaybackStartInfo, PlaybackStopInfo, UserItemDataDto};

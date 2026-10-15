@@ -890,7 +890,7 @@ impl Catalog {
     /// Whether the user may choose editions: admins and trusted users (v2
     /// curators). A user who is gone reads as not allowed.
     async fn require_curator(&self, user_id: &str) -> Result<(), CatalogError> {
-        use crate::auth::users::roles::Role;
+        use droppedneedle_auth::users::roles::Role;
         let user = self
             .upstream()
             .users()

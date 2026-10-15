@@ -11,23 +11,23 @@ use axum::routing::{get, post};
 use axum::{Form, Json, Router, extract::Path, extract::Query, extract::State};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use droppedneedle::auth::federated::SessionIssuer;
-use droppedneedle::auth::federated::fakes::{FakeHasher, FakeSessionIssuer, FakeUserStore};
-use droppedneedle::auth::federated::jellyfin_login::emby_auth_header;
-use droppedneedle::auth::federated::oidc::{
+use droppedneedle::playback::forwarding::{ScrobbleCredentials as _, StoredScrobbleCredentials};
+use droppedneedle::plugins::scrobble::MemoryListenBrainzLinkStore;
+use droppedneedle_auth::federated::SessionIssuer;
+use droppedneedle_auth::federated::fakes::{FakeHasher, FakeSessionIssuer, FakeUserStore};
+use droppedneedle_auth::federated::jellyfin_login::emby_auth_header;
+use droppedneedle_auth::federated::oidc::{
     AuthorizeParams, OidcConfig, RawClaims, authorize_url, form_encode, normalise_claims,
     pkce_challenge,
 };
-use droppedneedle::auth::federated::password_import::{
+use droppedneedle_auth::federated::password_import::{
     LocalCredential, PasswordCheck, SESSIONS_SURVIVE_IMPORT, verify_and_maybe_rehash,
 };
-use droppedneedle::auth::federated::plex::plex_auth_url;
-use droppedneedle::auth::federated::users::{
+use droppedneedle_auth::federated::plex::plex_auth_url;
+use droppedneedle_auth::federated::users::{
     FederatedProfile, derive_username, find_or_create_federated_user, username_base,
 };
-use droppedneedle::auth::wiring::Upstreams;
-use droppedneedle::playback::forwarding::{ScrobbleCredentials as _, StoredScrobbleCredentials};
-use droppedneedle::plugins::scrobble::MemoryListenBrainzLinkStore;
+use droppedneedle_auth::wiring::Upstreams;
 use droppedneedle_kernel::runtime_config::Secret;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     JellyfinConnection, LastFmSettings, OidcConnection, PlexConnection,
@@ -1114,9 +1114,9 @@ async fn old_sessions_die_on_import_while_new_logins_work() {
 
 #[tokio::test]
 async fn imported_app_passwords_verify_on_both_compat_paths() {
-    use droppedneedle::auth::compat_auth::fakes::FakeCompatPasswords;
-    use droppedneedle::auth::compat_auth::jellyfin;
-    use droppedneedle::auth::compat_auth::subsonic;
+    use droppedneedle_auth::compat_auth::fakes::FakeCompatPasswords;
+    use droppedneedle_auth::compat_auth::jellyfin;
+    use droppedneedle_auth::compat_auth::subsonic;
 
     let passwords = FakeCompatPasswords::new();
     passwords.add_user(

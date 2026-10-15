@@ -309,11 +309,11 @@ fn stored_unknown_field_is_dropped_on_read() {
 async fn profile_create_export_preview_import_round_trip() {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
-    use droppedneedle::auth::session::extract::Transport;
-    use droppedneedle::auth::session::middleware::CurrentSession;
-    use droppedneedle::auth::users::memory::TestRig;
-    use droppedneedle::auth::users::roles::{Role, SessionKind};
     use droppedneedle::settings::wiring::SettingsSetup;
+    use droppedneedle_auth::session::extract::Transport;
+    use droppedneedle_auth::session::middleware::CurrentSession;
+    use droppedneedle_auth::users::memory::TestRig;
+    use droppedneedle_auth::users::roles::{Role, SessionKind};
     use serde_json::{Value, json};
     use std::sync::Arc;
     use tower::ServiceExt as _;

@@ -766,14 +766,15 @@ impl VerifyProbes for LiveProbes {
                 return ProbeVerdict::failed("Issuer URL is required.");
             }
             // Same transport rule the login applies, so Test fails early.
-            if let Err(reason) = crate::auth::federated::transport::check_provider_url(issuer).await
+            if let Err(reason) =
+                droppedneedle_auth::federated::transport::check_provider_url(issuer).await
             {
                 return ProbeVerdict::failed(reason);
             }
             let url = format!(
                 "{}{}",
                 issuer.trim_end_matches('/'),
-                crate::auth::federated::oidc::DISCOVERY_SUFFIX
+                droppedneedle_auth::federated::oidc::DISCOVERY_SUFFIX
             );
             let response = self.http.get(&url).timeout(PROBE_TIMEOUT).send().await;
             match response {

@@ -14,9 +14,9 @@ use std::sync::{Arc, Mutex};
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Method, Request, StatusCode};
-use droppedneedle::auth::session::extract::Transport;
-use droppedneedle::auth::session::middleware::CurrentSession;
-use droppedneedle::auth::users::roles::SessionKind;
+use droppedneedle_auth::session::extract::Transport;
+use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::users::roles::SessionKind;
 use gateway::{
     AudioSource, OpenMedia, StreamEngine, StreamFault, StreamOpen, StreamState,
     content_type_for_extension, stream_routes,

@@ -290,7 +290,7 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
         .expect("config opens"),
     );
     let library = LibrarySetup::for_tests_at(
-        droppedneedle::auth::wiring::AuthSetup::for_tests()
+        droppedneedle_auth::wiring::AuthSetup::for_tests()
             .expect("auth builds")
             .users,
         Arc::new(UuidGenerator) as Arc<dyn IdGenerator>,

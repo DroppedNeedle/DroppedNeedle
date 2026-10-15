@@ -40,9 +40,9 @@ use super::models::{
     PlaylistSummary, SearchResults, SessionView, SessionsView, SourceName, StatsView, TrackView,
 };
 use super::plex_models::{Container, Envelope, Metadata};
-use crate::auth::federated::FederatedError;
-use crate::auth::federated::plex::PlexServerIdentity;
-use crate::auth::federated::settings::InstallIds;
+use droppedneedle_auth::federated::FederatedError;
+use droppedneedle_auth::federated::plex::PlexServerIdentity;
+use droppedneedle_auth::federated::settings::InstallIds;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::PlexConnection;
 use droppedneedle_providers::plextv::Resource;

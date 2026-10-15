@@ -22,7 +22,7 @@ use super::{
     },
     services::{self, PlaybackDeps},
 };
-use crate::auth::session::middleware::CurrentSession;
+use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_kernel::events::NowPlayingSnapshot;
 
 /// The authenticated caller. The deny-by-default session middleware stashes

@@ -20,13 +20,13 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use sqlx::SqlitePool;
 
-use crate::auth::users::{roles::Role, stores::UserStore};
 use crate::reads::catalog::library::LocalCatalog;
 use crate::reads::discover::models::{
     DiscoveryBatchCreate, DiscoveryBatchDetail, DiscoveryBatchItemStatus,
     DiscoveryBatchRemoveResult, DiscoveryBatchSummary,
 };
 use crate::reads::discover::ports::{BatchFailure, BatchStore, BoxFuture, ProviderFailure};
+use droppedneedle_auth::users::{roles::Role, stores::UserStore};
 use droppedneedle_kernel::db::{WriteLane, writer::Lane};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 

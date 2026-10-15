@@ -26,10 +26,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::models::{QuotaOverrideView, QuotaResponse};
 use super::{AdminDb, error::AdminError, models::QuotaOverrideBody};
-use crate::{
-    acquire::requests::quota::{QuotaLedger, QuotaOverride},
-    auth::users::UsersDeps,
-};
+use crate::acquire::requests::quota::{QuotaLedger, QuotaOverride};
+use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::db::writer::Lane;
 
 /// Top of every quota bound (the v2 1M ceiling).

@@ -10,8 +10,8 @@
 
 use std::sync::Arc;
 
-use crate::auth::users::UsersDeps;
-use crate::auth::users::stores::LastFmSwitch;
+use droppedneedle_auth::users::UsersDeps;
+use droppedneedle_auth::users::stores::LastFmSwitch;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     AdvancedSettings, ListenBrainzConnection,

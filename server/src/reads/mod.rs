@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use axum::{Router, extract::Request, middleware::Next, response::Response};
 
-use crate::auth::{
+use droppedneedle_auth::{
     session::middleware::CurrentSession,
     users::{UsersDeps, stores::StoreError},
 };
@@ -528,9 +528,9 @@ async fn translate_principal(
         user_id: user.id,
         username: user.username,
         role: match user.role {
-            crate::auth::users::roles::Role::User => collections::auth::Role::User,
-            crate::auth::users::roles::Role::Trusted => collections::auth::Role::Trusted,
-            crate::auth::users::roles::Role::Admin => collections::auth::Role::Admin,
+            droppedneedle_auth::users::roles::Role::User => collections::auth::Role::User,
+            droppedneedle_auth::users::roles::Role::Trusted => collections::auth::Role::Trusted,
+            droppedneedle_auth::users::roles::Role::Admin => collections::auth::Role::Admin,
         },
     });
     next.run(request).await

@@ -1560,7 +1560,7 @@ fn open_library(dir: &Path) -> LibrarySetup {
         .expect("config opens"),
     );
     LibrarySetup::for_tests_at(
-        droppedneedle::auth::wiring::AuthSetup::for_tests()
+        droppedneedle_auth::wiring::AuthSetup::for_tests()
             .expect("test auth builds")
             .users,
         Arc::new(UuidGenerator) as Arc<dyn IdGenerator>,

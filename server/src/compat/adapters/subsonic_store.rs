@@ -12,7 +12,6 @@ use std::sync::Arc;
 use super::library::{CompatError, CompatLibrary, ImageBytes, whole};
 use super::playback::CompatPlayback;
 use super::queues::CompatQueues;
-use crate::auth::users::UsersDeps;
 use crate::compat::settings::LiveSettings;
 use crate::compat::subsonic::advanced;
 use crate::compat::subsonic::ids::IdKind;
@@ -31,6 +30,7 @@ use crate::reads::library::player::{
     AlbumOrder, AlbumQuery, PlayerAlbum, PlayerTrack, TrackOrder, TrackQuery,
 };
 use crate::reads::library::stores::ArtistRecord;
+use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::runtime_config::Crypto;
 
 /// Unix seconds to the `YYYY-MM-DDTHH:MM:SSZ` form Subsonic shows.

@@ -18,16 +18,6 @@ use std::time::{Duration, Instant};
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode};
-use droppedneedle::auth::compat_auth::jellyfin::{authenticate_by_name, resolve_token};
-use droppedneedle::auth::compat_auth::prod::ProdCompatPasswords;
-use droppedneedle::auth::compat_auth::subsonic::{
-    SubsonicDenied, SubsonicParams, WRONG_CREDENTIALS, authenticate, md5_hex,
-};
-use droppedneedle::auth::prod::ProdAuth;
-use droppedneedle::auth::session::cookies::COOKIE_NAME;
-use droppedneedle::auth::users::UsersDeps;
-use droppedneedle::auth::users::stores::SystemClock;
-use droppedneedle::auth::wiring::{AuthSetup, Upstreams};
 use droppedneedle::docs::ApiDoc;
 use droppedneedle::reads::catalog::{
     Catalog,
@@ -35,6 +25,16 @@ use droppedneedle::reads::catalog::{
     upstream::{CatalogSettings, Upstream},
 };
 use droppedneedle::{AppState, create_app, reads::ReadsSetup};
+use droppedneedle_auth::compat_auth::jellyfin::{authenticate_by_name, resolve_token};
+use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
+use droppedneedle_auth::compat_auth::subsonic::{
+    SubsonicDenied, SubsonicParams, WRONG_CREDENTIALS, authenticate, md5_hex,
+};
+use droppedneedle_auth::prod::ProdAuth;
+use droppedneedle_auth::session::cookies::COOKIE_NAME;
+use droppedneedle_auth::users::UsersDeps;
+use droppedneedle_auth::users::stores::SystemClock;
+use droppedneedle_auth::wiring::{AuthSetup, Upstreams};
 use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::config::DEFAULT_PORT;
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, open_runtime};
@@ -111,7 +111,7 @@ impl E2e {
             runtime.lane(),
             Arc::clone(&crypto),
             Arc::clone(&ids) as Arc<dyn IdGenerator>,
-            Arc::clone(&clock) as Arc<dyn droppedneedle::auth::users::stores::Clock>,
+            Arc::clone(&clock) as Arc<dyn droppedneedle_auth::users::stores::Clock>,
             &dir.join("avatars"),
         );
         let http = HttpClientFactory::new().expect("http factory builds");
@@ -155,7 +155,7 @@ impl E2e {
             Arc::clone(&self.crypto),
             &self.http,
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            Arc::clone(&self.clock) as Arc<dyn droppedneedle::auth::users::stores::Clock>,
+            Arc::clone(&self.clock) as Arc<dyn droppedneedle_auth::users::stores::Clock>,
             "",
             &self.upstreams,
             Arc::new(droppedneedle::remotes::plex::ConfiguredPlexServer::new(

@@ -14,10 +14,10 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use droppedneedle::auth::session::extract::Transport;
-use droppedneedle::auth::session::middleware::CurrentSession;
-use droppedneedle::auth::session::store::SessionKind;
-use droppedneedle::auth::users::memory::with_test_principal;
+use droppedneedle_auth::session::extract::Transport;
+use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::session::store::SessionKind;
+use droppedneedle_auth::users::memory::with_test_principal;
 use droppedneedle_kernel::ids::IdGenerator;
 use playback::PlaybackDeps;
 use playback::error::PlaybackError;
@@ -661,7 +661,7 @@ async fn a_scrobble_reaches_listenbrainz_once() {
 
     let (forwarder, rx) = ScrobbleForwarder::channel(
         Arc::new(ListenBrainzOnly),
-        Arc::new(droppedneedle::auth::users::memory::StaticLastFmSwitch(true)),
+        Arc::new(droppedneedle_auth::users::memory::StaticLastFmSwitch(true)),
     );
     let worker = ForwardWorker::new(
         rx,

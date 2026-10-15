@@ -445,7 +445,7 @@
     "/api/v3/admin/app-passwords": {
       "get": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Every live app password across users, with owners.",
         "operationId": "admin_list_app_passwords",
@@ -466,7 +466,7 @@
     "/api/v3/admin/app-passwords/{id}": {
       "delete": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Revoke any user's app password.",
         "operationId": "admin_revoke_app_password",
@@ -615,7 +615,7 @@
     "/api/v3/admin/import": {
       "post": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Import a batch of accounts from one provider. The catalog is re-read\nserver-side; unknown, already-bound, and failed uids land in `skipped`.",
         "operationId": "admin_import_users",
@@ -646,7 +646,7 @@
     "/api/v3/admin/import/jellyfin": {
       "get": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "List Jellyfin accounts available for import. 503 when Jellyfin is off,\nhas no API key, or cannot be reached.",
         "operationId": "admin_import_list_jellyfin",
@@ -670,7 +670,7 @@
     "/api/v3/admin/import/plex": {
       "get": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "List Plex accounts (Plex Home users and friends) available for import.\n503 when no Plex token is set up or plex.tv cannot be reached.",
         "operationId": "admin_import_list_plex",
@@ -760,7 +760,7 @@
     "/api/v3/admin/users": {
       "get": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Admin user listing, paged.",
         "operationId": "admin_list_users",
@@ -779,7 +779,7 @@
       },
       "post": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Create a local account.",
         "operationId": "admin_create_user",
@@ -810,7 +810,7 @@
     "/api/v3/admin/users/{id}": {
       "get": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Fetch one user.",
         "operationId": "admin_get_user",
@@ -840,7 +840,7 @@
       },
       "delete": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Delete one user.",
         "operationId": "admin_delete_user",
@@ -937,7 +937,7 @@
     "/api/v3/admin/users/{id}/recovery-code": {
       "post": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Mint a recovery code for one user. The code returns once.",
         "operationId": "admin_mint_recovery_code",
@@ -969,7 +969,7 @@
     "/api/v3/admin/users/{id}/role": {
       "put": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Change one user's role.",
         "operationId": "admin_set_role",
@@ -1011,7 +1011,7 @@
     "/api/v3/admin/users/{id}/sessions": {
       "delete": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Revoke every session of one user.",
         "operationId": "admin_revoke_sessions",
@@ -2268,7 +2268,7 @@
     "/api/v3/auth/device-sessions": {
       "post": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Mint a named companion Bearer token. Standard sessions only.",
         "operationId": "mint_device_session",
@@ -2299,7 +2299,7 @@
     "/api/v3/auth/jellyfin/login": {
       "post": {
         "tags": [
-          "crate::auth::routes::federated"
+          "droppedneedle_auth::routes::federated"
         ],
         "summary": "Jellyfin login: checks credentials against the configured server, imports\nthe user, and mints a session. Transport rule matches local login.",
         "operationId": "jellyfin_login_handler",
@@ -2332,7 +2332,7 @@
     "/api/v3/auth/login": {
       "post": {
         "tags": [
-          "crate::auth::routes::native"
+          "droppedneedle_auth::routes::native"
         ],
         "summary": "Local login. Cookie mode (default) sets the session cookie and the body\ncarries no token; Bearer mode returns the raw token once and sets no\ncookie. Failures are one uniform 401 with a dummy-hash verify behind it.",
         "operationId": "login_handler",
@@ -2386,7 +2386,7 @@
     "/api/v3/auth/logout": {
       "post": {
         "tags": [
-          "crate::auth::routes::native"
+          "droppedneedle_auth::routes::native"
         ],
         "summary": "Logout. Public so a stale client can always clear its cookie: revokes the\npresented token when it resolves, always clears the cookie, always 204.",
         "operationId": "logout_handler",
@@ -2400,7 +2400,7 @@
     "/api/v3/auth/logout-all": {
       "post": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Revoke every own session.",
         "operationId": "logout_all",
@@ -2414,7 +2414,7 @@
     "/api/v3/auth/oidc/authorize": {
       "post": {
         "tags": [
-          "crate::auth::routes::federated"
+          "droppedneedle_auth::routes::federated"
         ],
         "summary": "Start an OIDC login: returns the browser URL (PKCE, state and nonce\nbaked in) and sets a short-lived cookie tying the state to this browser.",
         "operationId": "oidc_authorize_handler",
@@ -2438,7 +2438,7 @@
     "/api/v3/auth/oidc/callback": {
       "get": {
         "tags": [
-          "crate::auth::routes::federated"
+          "droppedneedle_auth::routes::federated"
         ],
         "summary": "OIDC callback: consumes the IdP code/state and redirects (relative\nLocation, same-site hand-off, v2 parity) to the SPA callback carrying the\none-time exchange code. Always `no-store`.",
         "operationId": "oidc_callback_handler",
@@ -2478,7 +2478,7 @@
     "/api/v3/auth/oidc/exchange": {
       "post": {
         "tags": [
-          "crate::auth::routes::federated"
+          "droppedneedle_auth::routes::federated"
         ],
         "summary": "OIDC exchange: swaps the one-time callback code for a session. Cookie\nmode (default) sets the session cookie and the body carries no token;\nBearer mode returns the raw token once.",
         "operationId": "oidc_exchange_handler",
@@ -2505,7 +2505,7 @@
     "/api/v3/auth/password-recovery/reset": {
       "post": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Reset a password with a recovery code. Public: a locked-out user holds\nno session.",
         "operationId": "reset_password",
@@ -2529,7 +2529,7 @@
     "/api/v3/auth/plex/poll/connect": {
       "post": {
         "tags": [
-          "crate::auth::routes::federated"
+          "droppedneedle_auth::routes::federated"
         ],
         "summary": "Plex settings completion: polls the PIN and returns the raw auth token\nuntouched. Requires a session (the token is an account credential).",
         "operationId": "plex_poll_connect_handler",
@@ -2569,7 +2569,7 @@
     "/api/v3/auth/plex/poll/link": {
       "post": {
         "tags": [
-          "crate::auth::routes::federated"
+          "droppedneedle_auth::routes::federated"
         ],
         "summary": "Plex link completion: polls the PIN and, once authorized, stores the\nverified account as the caller's Plex media link (v2 parity). Requires\na session; the answer carries the Plex user name, never its tokens.",
         "operationId": "plex_poll_link_handler",
@@ -2609,7 +2609,7 @@
     "/api/v3/auth/plex/poll/login": {
       "post": {
         "tags": [
-          "crate::auth::routes::federated"
+          "droppedneedle_auth::routes::federated"
         ],
         "summary": "Plex login completion: polls the PIN, and once authorized imports the\nuser and mints a session. Pending polls carry only the flag.",
         "operationId": "plex_poll_login_handler",
@@ -2646,7 +2646,7 @@
     "/api/v3/auth/plex/start": {
       "post": {
         "tags": [
-          "crate::auth::routes::federated"
+          "droppedneedle_auth::routes::federated"
         ],
         "summary": "Start a Plex sign-in: mints a PIN, its browser URL, and the secret\nevery poll must present. 503 while Plex login is switched off.",
         "operationId": "plex_start_handler",
@@ -2670,7 +2670,7 @@
     "/api/v3/auth/plex/start/connect": {
       "post": {
         "tags": [
-          "crate::auth::routes::federated"
+          "droppedneedle_auth::routes::federated"
         ],
         "summary": "Start the settings sign-in that hands an admin their Plex token for\nthe server settings. Admin only.",
         "operationId": "plex_start_connect_handler",
@@ -2700,7 +2700,7 @@
     "/api/v3/auth/plex/start/link": {
       "post": {
         "tags": [
-          "crate::auth::routes::federated"
+          "droppedneedle_auth::routes::federated"
         ],
         "summary": "Start linking the caller's Plex account. 400 without a configured Plex\nserver.",
         "operationId": "plex_start_link_handler",
@@ -2730,7 +2730,7 @@
     "/api/v3/auth/providers": {
       "get": {
         "tags": [
-          "crate::auth::routes::federated"
+          "droppedneedle_auth::routes::federated"
         ],
         "summary": "Which sign-in methods are switched on (v2 `GET /auth/providers`).",
         "operationId": "providers_handler",
@@ -2751,7 +2751,7 @@
     "/api/v3/auth/sessions": {
       "get": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "List the caller's sessions for the session-list UI.",
         "operationId": "list_sessions",
@@ -2772,7 +2772,7 @@
     "/api/v3/auth/sessions/{id}": {
       "delete": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Revoke one own session.",
         "operationId": "revoke_session",
@@ -2797,7 +2797,7 @@
     "/api/v3/auth/setup": {
       "post": {
         "tags": [
-          "crate::auth::routes::native"
+          "droppedneedle_auth::routes::native"
         ],
         "summary": "First-admin setup. Creates the admin and logs them in (201 + session,\nv2 parity) iff no users exist; otherwise 409. The emptiness check runs\ninside the insert transaction, so concurrent setups, or a setup racing\na first federated login (whose role is also decided in its insert),\nleave exactly one admin. The early probe only skips the password hash.",
         "operationId": "setup_handler",
@@ -2851,7 +2851,7 @@
     "/api/v3/auth/setup/status": {
       "get": {
         "tags": [
-          "crate::auth::routes::native"
+          "droppedneedle_auth::routes::native"
         ],
         "summary": "Setup-required probe for the SPA first-run gate.",
         "operationId": "setup_status_handler",
@@ -14107,7 +14107,7 @@
     "/api/v3/me": {
       "get": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Profile of the caller.",
         "operationId": "get_profile",
@@ -14126,7 +14126,7 @@
       },
       "patch": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Change the caller's display name.",
         "operationId": "patch_profile",
@@ -14157,7 +14157,7 @@
     "/api/v3/me/app-passwords": {
       "get": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Caller's app passwords.",
         "operationId": "list_app_passwords",
@@ -14176,7 +14176,7 @@
       },
       "post": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Create an app password. The secret returns once.",
         "operationId": "create_app_password",
@@ -14207,7 +14207,7 @@
     "/api/v3/me/app-passwords/{id}": {
       "delete": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Revoke one own app password.",
         "operationId": "revoke_app_password",
@@ -14232,7 +14232,7 @@
     "/api/v3/me/avatar": {
       "post": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Upload a new avatar from base64 bytes.",
         "operationId": "post_avatar",
@@ -14284,7 +14284,7 @@
     "/api/v3/me/connections/lastfm": {
       "get": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Per-user Last.fm link status.",
         "operationId": "lastfm_status",
@@ -14303,7 +14303,7 @@
       },
       "put": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Store the caller's own Last.fm API credentials.",
         "operationId": "lastfm_set_credentials",
@@ -14332,7 +14332,7 @@
       },
       "delete": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Unlink Last.fm (drops credentials and session).",
         "operationId": "lastfm_unlink",
@@ -14346,7 +14346,7 @@
     "/api/v3/me/connections/lastfm/session": {
       "post": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Exchange an approved token for a linked session.",
         "operationId": "lastfm_session",
@@ -14377,7 +14377,7 @@
     "/api/v3/me/connections/lastfm/token": {
       "post": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Fetch a Last.fm sign-in token plus approval URL.",
         "operationId": "lastfm_token",
@@ -14505,7 +14505,7 @@
     "/api/v3/me/email": {
       "put": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Set or clear the caller's email.",
         "operationId": "put_email",
@@ -14536,7 +14536,7 @@
     "/api/v3/me/local-password": {
       "post": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Set the first local password on an account without one.",
         "operationId": "post_local_password",
@@ -14567,7 +14567,7 @@
     "/api/v3/me/password": {
       "post": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Change the caller's password.",
         "operationId": "post_password",
@@ -14710,7 +14710,7 @@
     "/api/v3/me/username": {
       "put": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Rename the caller.",
         "operationId": "put_username",
@@ -22693,7 +22693,7 @@
     "/api/v3/users/{id}/avatar": {
       "get": {
         "tags": [
-          "crate::auth::users::handlers"
+          "droppedneedle_auth::users::handlers"
         ],
         "summary": "Serve one user's avatar. Self-or-admin; the `v` query is ignored.",
         "operationId": "get_avatar",

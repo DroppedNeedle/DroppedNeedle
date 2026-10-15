@@ -221,7 +221,7 @@ pub async fn get_quota(
 )]
 pub async fn run_precache(
     State(admin): State<AdminSetup>,
-    session: Option<axum::Extension<crate::auth::session::middleware::CurrentSession>>,
+    session: Option<axum::Extension<droppedneedle_auth::session::middleware::CurrentSession>>,
 ) -> Result<(StatusCode, Json<PrecacheRunResponse>), AdminHttpError> {
     let trigger = admin.precache.as_ref().ok_or_else(unwired_precache)?;
     let user_id = session.map(|axum::Extension(session)| session.user_id);

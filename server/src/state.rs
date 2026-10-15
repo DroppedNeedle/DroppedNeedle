@@ -7,10 +7,11 @@
 use std::sync::Arc;
 
 use crate::{
-    acquire::AcquireSetup, admin::AdminSetup, auth::wiring::AuthSetup, bootstrap::jobs::JobsSetup,
-    compat::CompatSetup, concerts::ConcertsSetup, library::wiring::LibrarySetup, media::MediaSetup,
+    acquire::AcquireSetup, admin::AdminSetup, bootstrap::jobs::JobsSetup, compat::CompatSetup,
+    concerts::ConcertsSetup, library::wiring::LibrarySetup, media::MediaSetup,
     plugins::wiring::PluginsSetup, reads::ReadsSetup, settings::wiring::SettingsSetup,
 };
+use droppedneedle_auth::wiring::AuthSetup;
 use droppedneedle_kernel::{
     config::AppConfig, events::EventHub, http_client::HttpClientFactory, ids::IdGenerator,
 };

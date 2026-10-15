@@ -139,7 +139,7 @@ impl ConnectionStore for SqliteConnectionStore {
                     droppedneedle_kernel::db::Lane::Foreground,
                     "remotes.connection.upsert",
                     move |tx| {
-                        let now = crate::auth::times::to_iso(unix_now());
+                        let now = droppedneedle_auth::times::to_iso(unix_now());
                         tx.execute(
                             "INSERT INTO user_connections \
                              (user_id, service, connection_data, enabled, created_at, updated_at) \
@@ -1067,11 +1067,11 @@ impl SignInLinks {
     }
 }
 
-impl crate::auth::federated::MediaLinkStore for SignInLinks {
+impl droppedneedle_auth::federated::MediaLinkStore for SignInLinks {
     fn link_plex<'a>(
         &'a self,
         user_id: &'a str,
-        profile: &'a crate::auth::federated::plex::PlexProfile,
+        profile: &'a droppedneedle_auth::federated::plex::PlexProfile,
     ) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(self.store(
             user_id,
@@ -1087,7 +1087,7 @@ impl crate::auth::federated::MediaLinkStore for SignInLinks {
     fn link_jellyfin<'a>(
         &'a self,
         user_id: &'a str,
-        profile: &'a crate::auth::federated::jellyfin_login::JellyfinProfile,
+        profile: &'a droppedneedle_auth::federated::jellyfin_login::JellyfinProfile,
     ) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(self.store(
             user_id,

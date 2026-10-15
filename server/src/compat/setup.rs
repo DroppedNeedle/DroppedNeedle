@@ -15,8 +15,6 @@ use std::sync::Arc;
 use axum::Router;
 use axum::middleware::from_fn_with_state;
 
-use crate::auth::compat_auth::prod::ProdCompatPasswords;
-use crate::auth::users::UsersDeps;
 use crate::compat::adapters::engines::{GatewayAudio, GatewayStream};
 use crate::compat::adapters::jellyfin_library::{CatalogIds, JellyfinLibrary, REBUILD_COOLDOWN};
 use crate::compat::adapters::library::CompatLibrary;
@@ -32,6 +30,8 @@ use crate::library::wiring::LibrarySetup;
 use crate::media::MediaEngine;
 use crate::playback::services::PlaybackDeps;
 use crate::reads::ReadsSetup;
+use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
+use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::runtime_config::Crypto;
 
 /// Subsonic verifier over the app-password store.

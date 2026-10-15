@@ -14,10 +14,6 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use common::{FIXED_ID, FixedIdGenerator};
-use droppedneedle::auth::session::extract::Transport;
-use droppedneedle::auth::session::middleware::CurrentSession;
-use droppedneedle::auth::users::memory::TestRig;
-use droppedneedle::auth::users::roles::{Role, SessionKind};
 use droppedneedle::settings::effects::{SaveEffects, SavedSection};
 use droppedneedle::settings::models::{AdvancedSettingsForm, LibrarySettingsSaveRequest};
 use droppedneedle::settings::musicbrainz::BRAINZMASH_DISCLOSURE_VERSION;
@@ -27,6 +23,10 @@ use droppedneedle::settings::verify::{
     ProwlarrVerdict, SabnzbdMountDiagnosis, SabnzbdVerdict, VerifyProbes, VersionVerdict,
 };
 use droppedneedle::settings::wiring::SettingsSetup;
+use droppedneedle_auth::session::extract::Transport;
+use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::users::memory::TestRig;
+use droppedneedle_auth::users::roles::{Role, SessionKind};
 use droppedneedle_kernel::runtime_config::mask::{INDEXER_API_KEY_MASK, JELLYFIN_API_KEY_MASK};
 use droppedneedle_kernel::runtime_config::secret_sections::{JellyfinConnection, TypedLibrary};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};

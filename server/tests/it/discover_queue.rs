@@ -11,10 +11,6 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use droppedneedle::auth::session::extract::Transport;
-use droppedneedle::auth::session::middleware::CurrentSession;
-use droppedneedle::auth::session::store::SessionKind;
-use droppedneedle::auth::users::memory::with_test_principal;
 use droppedneedle::reads::discover::adapters::queue::sources::{
     AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmFacts, MusicSource,
     QueueSources, ReleaseGroupFacts, SourceResult, StatsRange, UserMusic,
@@ -27,6 +23,10 @@ use droppedneedle::reads::discover::fakes::{
 };
 use droppedneedle::reads::discover::ports::{BoxFuture, SystemClock};
 use droppedneedle::reads::discover::services::ReadsDeps;
+use droppedneedle_auth::session::extract::Transport;
+use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::session::store::SessionKind;
+use droppedneedle_auth::users::memory::with_test_principal;
 use droppedneedle_kernel::db::DbRuntime;
 use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_providers::Providers;

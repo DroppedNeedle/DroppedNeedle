@@ -5,11 +5,11 @@
 //! are made with the data key, so nobody without an account can work one
 //! out. Everything else is the same empty 404.
 
-use crate::auth::compat_auth::jellyfin::JellyfinPasswordStore;
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{Request, StatusCode};
 use axum::response::Response;
+use droppedneedle_auth::compat_auth::jellyfin::JellyfinPasswordStore;
 
 use super::params::CiParams;
 use super::router::*;

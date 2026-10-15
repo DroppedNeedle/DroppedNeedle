@@ -314,7 +314,7 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
         .expect("config opens"),
     );
     let library = LibrarySetup::for_tests_at(
-        droppedneedle::auth::wiring::AuthSetup::for_tests()
+        droppedneedle_auth::wiring::AuthSetup::for_tests()
             .expect("auth builds")
             .users,
         Arc::new(UuidGenerator) as Arc<dyn IdGenerator>,

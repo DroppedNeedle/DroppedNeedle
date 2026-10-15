@@ -2,7 +2,7 @@
 //! generic over every trait here; `compat::setup` binds the production
 //! adapters and `fake` holds the test doubles.
 //!
-//! - Auth: [`crate::auth::compat_auth::jellyfin::JellyfinPasswordStore`]
+//! - Auth: [`droppedneedle_auth::compat_auth::jellyfin::JellyfinPasswordStore`]
 //!   (from `compat_auth`). This file only adds the thin [`Principal`]
 //!   view over its `JellyfinUser`. Login bodies reuse `compat_auth`'s
 //!   `login_echo_json`, so the Finamp/Manet login contract has one owner.
@@ -20,7 +20,7 @@
 //! - Playback sessions: [`PlaybackSessions`]. Production binds the
 //!   scrobble adapter (presence + scrobble forwarding).
 
-use crate::auth::compat_auth::jellyfin::{JellyfinUser, PolicyFacts, effective_name};
+use droppedneedle_auth::compat_auth::jellyfin::{JellyfinUser, PolicyFacts, effective_name};
 
 use droppedneedle_kernel::runtime_config::sections::DownloadAccess;
 

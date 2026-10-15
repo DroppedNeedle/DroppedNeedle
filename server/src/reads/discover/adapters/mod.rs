@@ -21,7 +21,6 @@ pub mod youtube;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::auth::users::UsersDeps;
 use crate::plugins::scrobble::ListenBrainzLinkStore;
 use crate::reads::catalog::Catalog;
 use crate::reads::catalog::library::LocalCatalog;
@@ -33,6 +32,7 @@ use crate::reads::discover::{
 use crate::remotes::connections::{
     ConfigServers, ConnectionResolver, CredentialCoder, SqliteConnectionStore,
 };
+use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::db::WriteLane;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::{ConfigStore, secret_sections::AdvancedSettings};

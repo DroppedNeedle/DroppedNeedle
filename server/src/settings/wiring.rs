@@ -24,10 +24,6 @@ use axum::{
     routing::{get, post, put},
 };
 
-use crate::auth::{
-    session::middleware::CurrentSession,
-    users::{UsersDeps, roles::Role},
-};
 use crate::bootstrap::Outbound;
 use crate::library::management::settings::StructuralCompiler;
 use crate::library::management::settings::service::LibraryManagementService;
@@ -38,6 +34,10 @@ use crate::settings::musicbrainz::MusicBrainzLifecycle;
 use crate::settings::section_prefs::{LinkStatus, SectionPrefsStore};
 use crate::settings::services::{PolicyImpactBuckets, SettingsService};
 use crate::settings::verify::{LiveProbes, VerifyProbes};
+use droppedneedle_auth::{
+    session::middleware::CurrentSession,
+    users::{UsersDeps, roles::Role},
+};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;

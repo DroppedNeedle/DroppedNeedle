@@ -16,8 +16,8 @@ use super::wrapped::{
     ServerWrappedResponse, UserWrappedResponse, WrappedAlbum, WrappedArtist, WrappedData,
     WrappedGenre, WrappedLeaderboardEntry, WrappedTrack, WrappedUserSummary,
 };
-use crate::auth::users::stores::UserStore;
 use crate::plugins::scrobble::ListenBrainzLinkStore;
+use droppedneedle_auth::users::stores::UserStore;
 use droppedneedle_providers::adapters::{CorePacer, CoreSink};
 use droppedneedle_providers::listenbrainz::{ListenBrainzClient, Outcome};
 
@@ -52,7 +52,7 @@ impl ListenBrainzWrapped {
         }
     }
 
-    async fn all_users(&self) -> Vec<crate::auth::users::models::UserRecord> {
+    async fn all_users(&self) -> Vec<droppedneedle_auth::users::models::UserRecord> {
         let mut all = Vec::new();
         let mut offset = 0;
         loop {

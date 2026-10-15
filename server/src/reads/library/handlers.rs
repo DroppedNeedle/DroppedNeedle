@@ -5,15 +5,15 @@
 //! Query strings parse through [`ValidQuery`], which keeps malformed input
 //! inside the shared error envelope instead of Axum's default plain-text 400.
 
-use crate::auth::session::extract::Transport;
-use crate::auth::session::middleware::CurrentSession;
-use crate::auth::users::roles::AuthContext;
-use crate::auth::users::stores::StoreError as UserStoreError;
 use axum::{
     Json,
     extract::{FromRequestParts, Path, Query, Request, State},
     http::request::Parts,
 };
+use droppedneedle_auth::session::extract::Transport;
+use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::users::roles::AuthContext;
+use droppedneedle_auth::users::stores::StoreError as UserStoreError;
 use serde::de::DeserializeOwned;
 
 use super::LibraryDeps;

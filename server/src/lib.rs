@@ -16,7 +16,6 @@
 pub mod acquire;
 pub mod admin;
 pub mod app;
-pub mod auth;
 pub mod bootstrap;
 pub mod compat;
 pub mod concerts;

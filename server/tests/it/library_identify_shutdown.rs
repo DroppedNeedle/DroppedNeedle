@@ -19,15 +19,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::common::ScratchDir;
-use droppedneedle::auth::prod::ProdAuth;
-use droppedneedle::auth::users::stores::SystemClock;
-use droppedneedle::auth::wiring::AuthSetup;
 use droppedneedle::library::identify::models::{
     IdentifyKind, JobState, LocalAlbumFacts, RecallResult,
 };
 use droppedneedle::library::identify::providers::{IdentifyProviders, RecallOutcome};
 use droppedneedle::library::wiring::LibrarySetup;
 use droppedneedle::remotes::plex::ConfiguredPlexServer;
+use droppedneedle_auth::prod::ProdAuth;
+use droppedneedle_auth::users::stores::SystemClock;
+use droppedneedle_auth::wiring::AuthSetup;
 use droppedneedle_kernel::db::DbRuntime;
 use droppedneedle_kernel::http_client::HttpClientFactory;
 use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
@@ -147,7 +147,7 @@ impl Lib {
             runtime.lane(),
             Arc::clone(&crypto),
             Arc::clone(&ids) as Arc<dyn IdGenerator>,
-            Arc::clone(&clock) as Arc<dyn droppedneedle::auth::users::stores::Clock>,
+            Arc::clone(&clock) as Arc<dyn droppedneedle_auth::users::stores::Clock>,
             &dir.join("avatars"),
         );
         let http = HttpClientFactory::new().expect("http factory builds");
@@ -157,7 +157,7 @@ impl Lib {
             Arc::clone(&crypto),
             &http,
             Arc::clone(&ids) as Arc<dyn IdGenerator>,
-            Arc::clone(&clock) as Arc<dyn droppedneedle::auth::users::stores::Clock>,
+            Arc::clone(&clock) as Arc<dyn droppedneedle_auth::users::stores::Clock>,
             "",
             &droppedneedle::bootstrap::Outbound::live().sign_in(),
             Arc::new(ConfiguredPlexServer::new(

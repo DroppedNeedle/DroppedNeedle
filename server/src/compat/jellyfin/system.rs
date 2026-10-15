@@ -1,14 +1,14 @@
 //! System info, login and user identity routes.
 
-use crate::auth::compat_auth::jellyfin::{
-    JellyfinPasswordStore, JellyfinRequest, SessionFacts, authenticate_by_name, extract_client,
-    extract_device, extract_version, login_echo_json, server_id,
-};
-use crate::auth::session::client_ip::ClientIp;
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{Request, StatusCode};
 use axum::response::Response;
+use droppedneedle_auth::compat_auth::jellyfin::{
+    JellyfinPasswordStore, JellyfinRequest, SessionFacts, authenticate_by_name, extract_client,
+    extract_device, extract_version, login_echo_json, server_id,
+};
+use droppedneedle_auth::session::client_ip::ClientIp;
 use uuid::Uuid;
 
 use super::builders::{self};

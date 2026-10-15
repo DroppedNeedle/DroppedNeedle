@@ -195,7 +195,7 @@ pub fn prod_like_state() -> AppState {
 
 /// Unwired acquire bundle over the test auth deps.
 fn test_acquire(
-    auth: &droppedneedle::auth::wiring::AuthSetup,
+    auth: &droppedneedle_auth::wiring::AuthSetup,
     ids: Arc<dyn IdGenerator>,
     reads: &mut droppedneedle::reads::ReadsSetup,
 ) -> droppedneedle::acquire::AcquireSetup {
@@ -205,7 +205,7 @@ fn test_acquire(
 
 /// Unwired media bundle over the test auth deps.
 fn test_media(
-    auth: &droppedneedle::auth::wiring::AuthSetup,
+    auth: &droppedneedle_auth::wiring::AuthSetup,
     ids: Arc<dyn IdGenerator>,
 ) -> droppedneedle::media::MediaSetup {
     droppedneedle::media::MediaSetup::for_tests(auth.users.clone(), ids)
@@ -214,7 +214,7 @@ fn test_media(
 
 /// Unwired reads bundle over the test auth deps.
 fn test_reads(
-    auth: &droppedneedle::auth::wiring::AuthSetup,
+    auth: &droppedneedle_auth::wiring::AuthSetup,
     ids: Arc<dyn IdGenerator>,
 ) -> droppedneedle::reads::ReadsSetup {
     droppedneedle::reads::ReadsSetup::for_tests(auth.users.clone(), ids)
@@ -223,7 +223,7 @@ fn test_reads(
 
 /// Unwired library bundle over the test auth deps.
 fn test_library(
-    auth: &droppedneedle::auth::wiring::AuthSetup,
+    auth: &droppedneedle_auth::wiring::AuthSetup,
     ids: Arc<dyn IdGenerator>,
 ) -> droppedneedle::library::wiring::LibrarySetup {
     droppedneedle::library::wiring::LibrarySetup::for_tests(auth.users.clone(), ids)
@@ -232,8 +232,8 @@ fn test_library(
 
 /// Unwired auth bundle: every adapter fails closed, which is what non-auth
 /// tests need (the gate passes non-v3 paths through untouched).
-fn test_auth() -> droppedneedle::auth::wiring::AuthSetup {
-    droppedneedle::auth::wiring::AuthSetup::for_tests().expect("test auth bundle builds")
+fn test_auth() -> droppedneedle_auth::wiring::AuthSetup {
+    droppedneedle_auth::wiring::AuthSetup::for_tests().expect("test auth bundle builds")
 }
 
 /// Provider deps with the byte cache shared out, so the admin bundle

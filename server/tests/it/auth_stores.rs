@@ -9,33 +9,31 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use droppedneedle::auth::compat_auth::subsonic::md5_hex;
-use droppedneedle::auth::federated::oidc::OidcStateStore as _;
-use droppedneedle::auth::federated::password_import::PasswordHasher as _;
-use droppedneedle::auth::federated::users::{
+use droppedneedle_auth::compat_auth::subsonic::md5_hex;
+use droppedneedle_auth::federated::oidc::OidcStateStore as _;
+use droppedneedle_auth::federated::password_import::PasswordHasher as _;
+use droppedneedle_auth::federated::users::{
     FederatedProfile, FederatedUserStore as _, find_or_create_federated_user,
 };
-use droppedneedle::auth::prod::{
+use droppedneedle_auth::prod::{
     Argon2idHasher, OWASP_M_COST_KIB, OWASP_P_COST, OWASP_T_COST, ProdAuth,
 };
-use droppedneedle::auth::session::login::{
+use droppedneedle_auth::session::login::{
     LoginContext, LoginRequest, LoginService, PasswordVerifier as _, TransportParam,
 };
-use droppedneedle::auth::session::store::{
-    SessionKind, SessionRecord, SessionStore as _, now_unix,
-};
-use droppedneedle::auth::session::tokens;
-use droppedneedle::auth::users::UsersDeps;
-use droppedneedle::auth::users::hibp::{HibpHttp, HibpHttpError, HibpScreen};
-use droppedneedle::auth::users::memory::{
+use droppedneedle_auth::session::store::{SessionKind, SessionRecord, SessionStore as _, now_unix};
+use droppedneedle_auth::session::tokens;
+use droppedneedle_auth::users::UsersDeps;
+use droppedneedle_auth::users::hibp::{HibpHttp, HibpHttpError, HibpScreen};
+use droppedneedle_auth::users::memory::{
     CounterIdGenerator, ManualClock, Sha256TestHasher, StaticSecurityPolicy, TestRig,
 };
-use droppedneedle::auth::users::models::{
+use droppedneedle_auth::users::models::{
     AppPasswordRecord, LocalCredential, PasswordReset, UserRecord,
 };
-use droppedneedle::auth::users::roles::{Role, SessionKind as UserSessionKind};
-use droppedneedle::auth::users::services::{self, verify_app_password};
-use droppedneedle::auth::users::stores::{
+use droppedneedle_auth::users::roles::{Role, SessionKind as UserSessionKind};
+use droppedneedle_auth::users::services::{self, verify_app_password};
+use droppedneedle_auth::users::stores::{
     AppPasswordStore as _, BoxFuture, Clock, HibpPolicy, RoleChange, SessionManager as _,
     UserDeletion, UserStore as _,
 };

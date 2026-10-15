@@ -3,13 +3,13 @@
 //! echo, and account-password rejection on both protocols.
 
 #[allow(dead_code)]
-use droppedneedle::auth::compat_auth::fakes::FakeCompatPasswords;
-use droppedneedle::auth::compat_auth::jellyfin::{
+use droppedneedle_auth::compat_auth::fakes::FakeCompatPasswords;
+use droppedneedle_auth::compat_auth::jellyfin::{
     JellyfinRequest, JellyfinUser, MAX_AUTH_VALUE_LENGTH, PolicyFacts, SessionFacts, UNAUTHORIZED,
     authenticate_by_name, effective_name, extract_client, extract_device, extract_token,
     login_echo_json, resolve_token, server_id,
 };
-use droppedneedle::auth::compat_auth::subsonic::{
+use droppedneedle_auth::compat_auth::subsonic::{
     API_VERSION, AUTH_CODES, AVATAR_FORBIDDEN_MESSAGE, AppSecret, BINARY_ENDPOINTS,
     CONFLICTING_AUTH, GENERIC, INVALID_APIKEY, MAX_CLIENT_NAME_LENGTH, MAX_ENCODED_PASSWORD_LENGTH,
     NAMESPACE, NOT_AUTHORIZED, NOT_FOUND, PARAM_MISSING, PUBLIC_ENDPOINT, SubsonicDenied,

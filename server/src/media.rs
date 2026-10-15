@@ -14,7 +14,6 @@ use std::sync::Arc;
 
 use axum::Router;
 
-use crate::auth::users::UsersDeps;
 use crate::playback::forwarding::{ForwardWorker, ScrobbleForwarder, StoredScrobbleCredentials};
 use crate::playback::ports::SystemClock;
 use crate::playback::reports::{ReportQueue, run_report_worker};
@@ -40,6 +39,7 @@ use crate::stream::transcode::{
     FfmpegTranscoder, LocalTranscodeGate, OutFormat, StdFfmpegSpawner, TranscodeSettings,
     ffmpeg_available,
 };
+use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::db::WriteLane;
 use droppedneedle_kernel::ids::IdGenerator;

@@ -7,7 +7,7 @@ docker-compose.*.yml                                 @HabiRabbu
 entrypoint.sh                                        @HabiRabbu
 
 # Security-sensitive server paths
-server/src/auth/                                     @HabiRabbu
+server/auth/                                         @HabiRabbu
 server/src/middleware.rs                             @HabiRabbu
 server/kernel/src/error.rs                           @HabiRabbu
 server/kernel/src/runtime_config/crypto.rs           @HabiRabbu

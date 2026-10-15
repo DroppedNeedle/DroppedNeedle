@@ -705,19 +705,19 @@ fn upgrade_turns_a_v2_directory_into_v3_in_place() {
 /// still refuses such an account.
 #[tokio::test]
 async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
-    use droppedneedle::auth::prod::{
+    use droppedneedle_auth::prod::{
         Argon2idHasher, AuthDb, SqliteCredentialLookup, SqliteRecoveryStore, SqliteSessionStore,
         SqliteUserStore,
     };
-    use droppedneedle::auth::session::login::{
+    use droppedneedle_auth::session::login::{
         LoginContext, LoginRequest, LoginService, TransportParam,
     };
-    use droppedneedle::auth::session::store::{SessionKind, SessionRecord, SessionStore as _};
-    use droppedneedle::auth::session::tokens;
-    use droppedneedle::auth::users::memory::TestRig;
-    use droppedneedle::auth::users::models::PasswordReset;
-    use droppedneedle::auth::users::services;
-    use droppedneedle::auth::users::stores::SystemClock;
+    use droppedneedle_auth::session::store::{SessionKind, SessionRecord, SessionStore as _};
+    use droppedneedle_auth::session::tokens;
+    use droppedneedle_auth::users::memory::TestRig;
+    use droppedneedle_auth::users::models::PasswordReset;
+    use droppedneedle_auth::users::services;
+    use droppedneedle_auth::users::stores::SystemClock;
     use std::sync::Arc;
 
     const NEW_PASSWORD: &str = "a brand new password 99";
@@ -866,12 +866,12 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
             },
             LoginContext {
                 user_agent: None,
-                now_unix: droppedneedle::auth::session::store::now_unix(),
+                now_unix: droppedneedle_auth::session::store::now_unix(),
             },
         )
     };
     assert!(sign_in().await.is_err(), "no password before the reset");
-    let now = droppedneedle::auth::session::store::now_unix();
+    let now = droppedneedle_auth::session::store::now_unix();
     SqliteSessionStore::new(&auth_db)
         .insert(SessionRecord {
             id: "sess-alice".to_owned(),

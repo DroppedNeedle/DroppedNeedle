@@ -13,14 +13,14 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use crate::auth::prod::{AuthDb, SqliteRecoveryStore, SqliteUserStore};
-use crate::auth::session::store::now_unix;
-use crate::auth::users::roles::Role;
-use crate::auth::users::services::{
+use crate::bootstrap::data_dirs::{BootRefusal, DataDirs, check_bootable};
+use droppedneedle_auth::prod::{AuthDb, SqliteRecoveryStore, SqliteUserStore};
+use droppedneedle_auth::session::store::now_unix;
+use droppedneedle_auth::users::roles::Role;
+use droppedneedle_auth::users::services::{
     IssuedRecoveryCode, RecoveryIssueError, RecoveryReach, issue_recovery_code,
 };
-use crate::auth::users::stores::UserStore as _;
-use crate::bootstrap::data_dirs::{BootRefusal, DataDirs, check_bootable};
+use droppedneedle_auth::users::stores::UserStore as _;
 use droppedneedle_kernel::db::datalock::{DataLock, DataLockError};
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, open_runtime};
 

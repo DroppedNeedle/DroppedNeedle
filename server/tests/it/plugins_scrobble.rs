@@ -9,11 +9,6 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::response::IntoResponse as _;
-use droppedneedle::auth::session::extract::Transport;
-use droppedneedle::auth::session::middleware::CurrentSession;
-use droppedneedle::auth::session::store::SessionKind;
-use droppedneedle::auth::users::memory::with_test_principal;
-use droppedneedle::auth::users::roles::Role;
 use droppedneedle::plugins::fakes::{FakeRoles, FakeVerifier};
 use droppedneedle::plugins::handlers::{ScrobbleHttpDeps, scrobble_router};
 use droppedneedle::plugins::scrobble::{
@@ -22,6 +17,11 @@ use droppedneedle::plugins::scrobble::{
     ScrobblePrefsStore, SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore, StaticMixState,
     connect_listenbrainz,
 };
+use droppedneedle_auth::session::extract::Transport;
+use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::session::store::SessionKind;
+use droppedneedle_auth::users::memory::with_test_principal;
+use droppedneedle_auth::users::roles::Role;
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, Lane, open_runtime};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;

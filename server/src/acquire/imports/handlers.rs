@@ -13,11 +13,6 @@
 
 use std::sync::Arc;
 
-use crate::auth::session::extract::Transport;
-use crate::auth::session::middleware::{CurrentSession, effective_origin};
-use crate::auth::users::UsersDeps;
-use crate::auth::users::roles::{AuthContext, Role};
-use crate::auth::users::stores::StoreError as UserStoreError;
 use axum::{
     Json,
     extract::{FromRequestParts, Path, Request, State},
@@ -25,6 +20,11 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     routing::{delete, get, post},
 };
+use droppedneedle_auth::session::extract::Transport;
+use droppedneedle_auth::session::middleware::{CurrentSession, effective_origin};
+use droppedneedle_auth::users::UsersDeps;
+use droppedneedle_auth::users::roles::{AuthContext, Role};
+use droppedneedle_auth::users::stores::StoreError as UserStoreError;
 use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::http_client::read_capped;
 use droppedneedle_kernel::ids::IdGenerator;

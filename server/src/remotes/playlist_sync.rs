@@ -18,8 +18,8 @@ use axum::{
     routing::post,
 };
 
-use crate::auth::session::middleware::CurrentSession;
-use crate::auth::users::roles::Role;
+use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::users::roles::Role;
 use droppedneedle_kernel::jobs::playlist_sync::{
     DISABLED_MESSAGE, PlaylistExporter, PlaylistSyncResult, PlaylistSyncSettings,
 };

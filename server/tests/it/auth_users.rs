@@ -9,8 +9,8 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use droppedneedle::auth::session::middleware::CurrentSession;
-use droppedneedle::auth::users::{
+use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_auth::users::{
     Role, admin_router, import,
     memory::{self, FakeUserDirectory, TestRig},
     models, public_router,
@@ -301,7 +301,7 @@ async fn lastfm_link_flow_keeps_secrets_sealed() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!({"username": "mollylfm", "linked": true}));
-    use droppedneedle::auth::users::stores::LastFmStore as _;
+    use droppedneedle_auth::users::stores::LastFmStore as _;
     let link = rig.lastfm.get(&user.id).await.unwrap().unwrap();
     assert!(link.session_key_encrypted.unwrap().starts_with("v3:"));
 
@@ -347,10 +347,10 @@ async fn admins_cannot_demote_or_delete_themselves() {
 
 #[tokio::test]
 async fn breached_passwords_reject_when_screening_is_on() {
-    use droppedneedle::auth::users::{hibp::HibpScreen, memory::FakeHibpHttp, stores::HibpPolicy};
+    use droppedneedle_auth::users::{hibp::HibpScreen, memory::FakeHibpHttp, stores::HibpPolicy};
 
     let (mut rig, _, user) = rig_with_admin().await;
-    let digest = droppedneedle::auth::users::hibp::sha1_hex_upper(b"password12xxxx");
+    let digest = droppedneedle_auth::users::hibp::sha1_hex_upper(b"password12xxxx");
     rig.deps.screen = std::sync::Arc::new(HibpScreen::new(std::sync::Arc::new(
         FakeHibpHttp::with_hits(&[digest.as_str()]),
     )));

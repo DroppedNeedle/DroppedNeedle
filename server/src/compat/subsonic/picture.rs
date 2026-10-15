@@ -29,7 +29,7 @@ use super::store::Store;
 use super::stream::cover_bucket;
 use super::value::Rendered;
 use super::{Outcome, Settings};
-use crate::auth::session::tokens::constant_time_eq;
+use droppedneedle_auth::session::tokens::constant_time_eq;
 use droppedneedle_kernel::runtime_config::Crypto;
 
 /// The route, as registered.

@@ -736,7 +736,7 @@ fn run_recovery_code(args: &[String]) -> Result<(), String> {
         "Recovery code for {username}, good for {} minutes and one use. Start the server, \
          open \"Forgot password?\" on the sign-in page and enter this username, the code and \
          a new password.",
-        droppedneedle::auth::users::services::RECOVERY_TTL_SECS / 60
+        droppedneedle_auth::users::services::RECOVERY_TTL_SECS / 60
     );
     if !issued.has_local_password {
         eprintln!(

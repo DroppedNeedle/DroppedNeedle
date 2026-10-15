@@ -16,7 +16,7 @@ use std::sync::Arc;
 #[cfg(any(test, feature = "test-support"))]
 use std::{collections::HashMap, sync::Mutex};
 
-use crate::auth::times::to_iso;
+use droppedneedle_auth::times::to_iso;
 use droppedneedle_kernel::db::{WriteLane, writer::Lane};
 
 use super::runtime::BoxFuture;

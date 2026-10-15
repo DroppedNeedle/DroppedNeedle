@@ -1,10 +1,10 @@
 //! Playlist routes over the shared playlists.
 
-use crate::auth::compat_auth::jellyfin::JellyfinPasswordStore;
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{Request, StatusCode};
 use axum::response::Response;
+use droppedneedle_auth::compat_auth::jellyfin::JellyfinPasswordStore;
 
 use super::models::{BaseItemDtoQueryResult, CreatePlaylistDto};
 use super::params::{self, CiParams};

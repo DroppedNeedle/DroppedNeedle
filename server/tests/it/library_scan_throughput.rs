@@ -116,7 +116,7 @@ async fn full_scan_throughput() {
     let one_artist = std::env::var(ONE_ARTIST_ENV).is_ok_and(|value| value == "1");
     let tree_bytes = generate(&music, files, one_artist);
 
-    let users = droppedneedle::auth::wiring::AuthSetup::for_tests()
+    let users = droppedneedle_auth::wiring::AuthSetup::for_tests()
         .expect("test auth builds")
         .users;
     let library =

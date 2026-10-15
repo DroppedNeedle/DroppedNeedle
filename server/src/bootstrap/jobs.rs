@@ -22,10 +22,10 @@ use std::time::Duration;
 
 use axum::Router;
 
-use crate::auth::users::{UsersDeps, roles::Role};
 use crate::concerts::ConcertsSweep;
 use crate::remotes::playlist_sync::{self as playlist_route, PlaylistSyncState, SyncRoles};
 use crate::remotes::presence_feed::{MediaJobs, RegistryFeed, RemoteSessionPollers};
+use droppedneedle_auth::users::{UsersDeps, roles::Role};
 use droppedneedle_kernel::db::{CheckpointService, DurableWorkWakeups, WriteLane};
 use droppedneedle_kernel::jobs::cache_sync::CacheSyncStatus;
 use droppedneedle_kernel::jobs::checkpoint::{self, CheckpointRunner};

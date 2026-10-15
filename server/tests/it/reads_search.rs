@@ -14,10 +14,10 @@ use axum::{
     http::{Method, Request, StatusCode},
     middleware,
 };
-use droppedneedle::auth::session::middleware::{SessionAuth, require_session};
-use droppedneedle::auth::session::store::{MemorySessionStore, SessionRecord, SessionStore};
-use droppedneedle::auth::session::tokens::hash_token;
 use droppedneedle::middleware::request_scope;
+use droppedneedle_auth::session::middleware::{SessionAuth, require_session};
+use droppedneedle_auth::session::store::{MemorySessionStore, SessionRecord, SessionStore};
+use droppedneedle_auth::session::tokens::hash_token;
 use search::SearchDeps;
 use search::models::{EnrichmentBatchRequest, EnrichmentResponse};
 use search::ports::{EnrichmentPort, EnrichmentPortError};
@@ -130,13 +130,13 @@ async fn seed_catalog(pool: &SqlitePool) {
 /// Session store holding one valid standard session for the test token.
 async fn session_auth() -> SessionAuth<MemorySessionStore> {
     let store = MemorySessionStore::new();
-    let now = droppedneedle::auth::session::store::now_unix();
+    let now = droppedneedle_auth::session::store::now_unix();
     store
         .insert(SessionRecord {
             id: "session-1".to_owned(),
             user_id: "user-1".to_owned(),
             token_hash: hash_token(TEST_TOKEN),
-            kind: droppedneedle::auth::session::store::SessionKind::Standard,
+            kind: droppedneedle_auth::session::store::SessionKind::Standard,
             label: None,
             issued_at: now,
             expires_at: now + 3600,

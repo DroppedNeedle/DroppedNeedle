@@ -25,10 +25,8 @@ use axum::{
 };
 use sha2::Digest as _;
 
-use crate::{
-    auth::session::middleware::arrived_over_https, compat::shared::path_case::is_compat_path,
-    state::AppState,
-};
+use crate::{compat::shared::path_case::is_compat_path, state::AppState};
+use droppedneedle_auth::session::middleware::arrived_over_https;
 use droppedneedle_kernel::{
     config::TrustedProxies,
     runtime_config::{

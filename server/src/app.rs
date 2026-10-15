@@ -42,7 +42,6 @@ use axum::{Router, extract::Request, middleware, response::IntoResponse, routing
 use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
 
 use crate::{
-    auth::session::{middleware::require_session, rate_limit::rate_limit},
     compat::http::fallback_redispatch,
     handlers,
     middleware::request_scope,
@@ -52,6 +51,7 @@ use crate::{
     state::AppState,
     web::WebUi,
 };
+use droppedneedle_auth::session::{middleware::require_session, rate_limit::rate_limit};
 
 /// Build the application router without a web UI.
 pub fn create_app(state: AppState) -> Router {
@@ -134,9 +134,9 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
                 .merge(state.settings.me_router())
                 .merge(state.jobs.settings_router())
                 .merge(state.concerts.gated_router())
-                .merge(crate::auth::session::event_stream::router(
+                .merge(droppedneedle_auth::session::event_stream::router(
                     state.events.clone(),
-                    crate::auth::session::event_stream::session_check(
+                    droppedneedle_auth::session::event_stream::session_check(
                         state.auth.session_auth.store.clone(),
                     ),
                 )),
@@ -314,7 +314,7 @@ fn compression_layer() -> tower_http::compression::CompressionLayer<impl Predica
 fn debug_cors_layer() -> tower_http::cors::CorsLayer {
     use tower_http::cors::AllowOrigin;
 
-    use crate::auth::session::cors::DEBUG_CORS_ORIGINS;
+    use droppedneedle_auth::session::cors::DEBUG_CORS_ORIGINS;
 
     let origins: Vec<axum::http::HeaderValue> = DEBUG_CORS_ORIGINS
         .iter()
@@ -355,7 +355,7 @@ fn debug_cors_layer() -> tower_http::cors::CorsLayer {
 fn debug_preflight_response(
     origin: Option<&axum::http::HeaderValue>,
 ) -> Option<axum::response::Response> {
-    use crate::auth::session::cors::DEBUG_CORS_ORIGINS;
+    use droppedneedle_auth::session::cors::DEBUG_CORS_ORIGINS;
 
     let origin = origin?;
     let allowed = DEBUG_CORS_ORIGINS

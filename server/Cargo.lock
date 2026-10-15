@@ -575,6 +575,7 @@ dependencies = [
  "cbc",
  "chacha20poly1305",
  "droppedneedle",
+ "droppedneedle-auth",
  "droppedneedle-kernel",
  "droppedneedle-providers",
  "droppedneedle-testkit",
@@ -613,6 +614,36 @@ dependencies = [
  "utoipa",
  "uuid",
  "zip",
+]
+
+[[package]]
+name = "droppedneedle-auth"
+version = "3.0.0"
+dependencies = [
+ "argon2",
+ "axum",
+ "base64 0.22.1",
+ "bcrypt",
+ "droppedneedle-kernel",
+ "droppedneedle-providers",
+ "futures-util",
+ "getrandom 0.3.4",
+ "hmac",
+ "md5",
+ "reqwest",
+ "ring",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror",
+ "time",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "utoipa",
+ "uuid",
 ]
 
 [[package]]

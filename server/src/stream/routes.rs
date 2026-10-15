@@ -62,7 +62,6 @@ use std::sync::Arc;
 use futures_util::StreamExt as _;
 use futures_util::stream::BoxStream;
 
-use crate::auth::session::middleware::CurrentSession;
 use axum::{
     Router,
     body::Body,
@@ -75,6 +74,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_kernel::error::{ErrorBody, ErrorEnvelope};
 use droppedneedle_kernel::ids::IdGenerator;
 use serde::Deserialize;

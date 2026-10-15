@@ -32,7 +32,7 @@ use axum::{
 };
 use sqlx::SqlitePool;
 
-use crate::auth::{
+use droppedneedle_auth::{
     session::middleware::CurrentSession,
     users::{UsersDeps, models::UserRecord, roles::Role},
 };

@@ -155,7 +155,7 @@ async fn bundles() -> (
     PathBuf,
     droppedneedle::reads::ReadsSetup,
 ) {
-    let auth = droppedneedle::auth::wiring::AuthSetup::for_tests().expect("test auth");
+    let auth = droppedneedle_auth::wiring::AuthSetup::for_tests().expect("test auth");
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
     let mut reads = droppedneedle::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
         .expect("reads bundle");
