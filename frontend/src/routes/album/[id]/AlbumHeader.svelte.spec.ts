@@ -116,7 +116,6 @@ vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 }));
 
 vi.mock('$lib/queries/library/LibraryOperationQueries.svelte', () => ({
-	getLibraryOperationQuery: () => ({ data: undefined, isError: false }),
 	getCurrentLibraryRunsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	getLibraryRunQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	getLibraryRunHistoryQuery: () => ({ data: undefined, isLoading: false, isError: false }),
@@ -135,13 +134,7 @@ vi.mock('$lib/queries/library/LibraryEditionQueries.svelte', () => ({
 }));
 
 vi.mock('$lib/queries/library/LibraryCatalogMutations.svelte', () => ({
-	reidentifyLibraryAlbum: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false }),
-	reenableAlbumManagement: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false }),
-	selectReidentificationCandidate: () => ({
-		mutateAsync: vi.fn(),
-		isPending: false,
-		isError: false
-	})
+	reenableAlbumManagement: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false })
 }));
 
 vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', () => ({

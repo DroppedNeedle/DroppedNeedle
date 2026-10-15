@@ -172,10 +172,6 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	invalidateAlbumEdition: () => Promise.resolve()
 }));
 
-vi.mock('$lib/queries/library/LibraryOperationQueries.svelte', () => ({
-	getLibraryOperationQuery: () => ({ data: undefined, isError: false })
-}));
-
 vi.mock('$lib/queries/library/LibraryEditionQueries.svelte', () => ({
 	getReleaseEditionSearchQuery: () => ({
 		data: {
@@ -201,8 +197,6 @@ vi.mock('$lib/queries/library/LibraryCatalogMutations.svelte', () => {
 		reset: vi.fn()
 	});
 	return {
-		reidentifyLibraryAlbum: mutation,
-		selectReidentificationCandidate: mutation,
 		reenableAlbumManagement: mutation,
 		previewAlbumMembership: mutation,
 		applyAlbumMembership: mutation

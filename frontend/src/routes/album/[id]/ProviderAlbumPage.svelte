@@ -19,6 +19,7 @@
 	import AlbumPluginDetails from './AlbumPluginDetails.svelte';
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import LibraryAlbumCard from '$lib/components/library/LibraryAlbumCard.svelte';
+	import ManagementHoldSection from '$lib/components/library/ManagementHoldSection.svelte';
 	import {
 		getLibraryAlbumCopiesQuery,
 		getLibraryAlbumDetailQuery,
@@ -153,6 +154,10 @@
 				onrefresh={state.refreshAll}
 				onartistclick={state.goToArtist}
 			/>
+
+			{#if authStore.isAdmin && localAlbumQuery.data}
+				<ManagementHoldSection album={localAlbumQuery.data} />
+			{/if}
 
 			{#if localCopies.length > 1}
 				<section

@@ -3,10 +3,8 @@ import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
-import { toOperationResponse } from './libraryOperationAdapters';
 import { toCurrentRuns, toRunDetail, toScanRun } from './libraryScanAdapters';
 import type {
-	OperationResponse,
 	ScanEstimateResponse,
 	ScanRunFailuresResponse,
 	ScanRunHistoryResponse
@@ -96,18 +94,5 @@ export const getLibraryRunEstimateQuery = (
 					estimated_at: estimate.estimated_at ?? null
 				};
 			}
-		};
-	});
-
-export const getLibraryOperationQuery = (getJobId: Getter<string | null>) =>
-	createQuery(() => {
-		const jobId = getJobId();
-		return {
-			enabled: Boolean(jobId),
-			queryKey: LibraryQueryKeyFactory.repair(jobId ?? ''),
-			queryFn: async ({ signal }): Promise<OperationResponse> =>
-				toOperationResponse(
-					await api.global.v3.GET(LibraryV3Api.operation(jobId ?? ''), { signal })
-				)
 		};
 	});

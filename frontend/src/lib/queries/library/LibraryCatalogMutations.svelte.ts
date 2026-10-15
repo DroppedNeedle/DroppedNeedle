@@ -4,12 +4,10 @@ import { toastStore } from '$lib/stores/toast';
 import { invalidateLibraryCatalog } from './LibraryCatalogInvalidation';
 import { invalidateLibraryManagementSurfaces } from '$lib/queries/library-management/LibraryManagementInvalidation';
 import { LibraryV3Api } from './LibraryV3Api';
-import { toOperationResponse } from './libraryOperationAdapters';
 import { createUuid } from '$lib/utils/uuid';
 import type {
 	CatalogCorrectionResponse,
-	MembershipPreviewResponse,
-	OperationResponse
+	MembershipPreviewResponse
 } from './LibraryOperationsTypes';
 
 export interface MembershipPreviewInput {
@@ -26,62 +24,6 @@ export interface ArtistMergePreviewInput {
 	surviving_artist_id: string;
 	expected_revisions: Record<string, number>;
 	provider_choice?: 'detach' | 'retain_survivor';
-}
-
-// Re-identification evaluates candidates as an operation the user confirms:
-// nothing seals until a candidate is chosen. The album views carry no
-// revisions yet (0 and ''), so those guards are only sent when known.
-export function reidentifyLibraryAlbum() {
-	return createMutation(() => ({
-		mutationFn: async (input: {
-			albumId: string;
-			expectedAlbumRevision: number;
-			expectedInputRevision: string;
-			oneOffLocalMetadata: boolean;
-			releaseMbid?: string | null;
-		}): Promise<OperationResponse> =>
-			toOperationResponse(
-				await api.global.v3.POST(LibraryV3Api.reidentifyAlbum(input.albumId), {
-					expected_album_revision:
-						input.expectedAlbumRevision > 0 ? input.expectedAlbumRevision : null,
-					expected_input_revision: input.expectedInputRevision || null,
-					idempotency_key: createUuid(),
-					one_off_local_metadata: input.oneOffLocalMetadata,
-					release_mbid: input.releaseMbid ?? null
-				})
-			),
-		onSuccess: async () => {
-			await invalidateLibraryCatalog();
-			toastStore.show({ message: 'Identification started', type: 'success' });
-		},
-		onError: () => toastStore.show({ message: 'Could not start identification', type: 'error' })
-	}));
-}
-
-export function selectReidentificationCandidate() {
-	return createMutation(() => ({
-		mutationFn: async (input: {
-			jobId: string;
-			expectedRevision: number;
-			candidateKey?: string;
-			confirmation: boolean;
-			decisionMode?: 'exact_release' | 'custom_edition' | 'leave_unmanaged';
-		}): Promise<OperationResponse> =>
-			toOperationResponse(
-				await api.global.v3.POST(LibraryV3Api.operationCandidate(input.jobId), {
-					expected_row_revision: input.expectedRevision,
-					candidate_key: input.candidateKey ?? '',
-					confirmation: input.confirmation,
-					decision_mode: input.decisionMode ?? 'exact_release'
-				})
-			),
-		onSuccess: invalidateLibraryCatalog,
-		onError: (error) =>
-			toastStore.show({
-				message: error instanceof Error ? error.message : 'Could not save this album decision',
-				type: 'error'
-			})
-	}));
 }
 
 export function reenableAlbumManagement() {

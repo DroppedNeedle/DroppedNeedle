@@ -341,8 +341,8 @@ vi.mock('$lib/components/NowPlayingIndicator.svelte', () => {
 	Comp.prototype = {};
 	return { default: Comp };
 });
-// The re-identify control reads its own queries; its presence is not what these specs check.
-vi.mock('./LocalAlbumIdentificationControl.svelte', () => {
+// The left-unmanaged section reads its own queries; its presence is not what these specs check.
+vi.mock('$lib/components/library/ManagementHoldSection.svelte', () => {
 	const Comp = function () {};
 	Comp.prototype = {};
 	return { default: Comp };

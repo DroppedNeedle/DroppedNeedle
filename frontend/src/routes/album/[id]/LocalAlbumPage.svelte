@@ -4,7 +4,7 @@
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import LibraryFormatBadge from '$lib/components/library/LibraryFormatBadge.svelte';
 	import LocalIdentityBadge from '$lib/components/library/LocalIdentityBadge.svelte';
-	import AlbumIdentificationPanel from '$lib/components/library/AlbumIdentificationPanel.svelte';
+	import ManagementHoldSection from '$lib/components/library/ManagementHoldSection.svelte';
 	import EditionPlate from '$lib/components/library/edition/EditionPlate.svelte';
 	import AlbumOrganizationDialog from '$lib/components/library/AlbumOrganizationDialog.svelte';
 	import LocalAlbumTrackList from '$lib/components/library/LocalAlbumTrackList.svelte';
@@ -67,18 +67,6 @@
 		album?.album_identity_state === 'release_group_linked' && album.pick_basis
 			? (pickBasisQualifier[album.pick_basis] ?? null)
 			: null
-	);
-	const managementIdentityAttention = $derived(
-		album?.management_identity_readiness === 'exact_release_required'
-			? 'Exact MusicBrainz edition required'
-			: album?.management_identity_readiness === 'track_mapping_required'
-				? 'Exact track map required'
-				: album?.management_identity_readiness === 'custom_manifest_stale'
-					? 'Custom edition review required'
-					: album?.identification_status === 'needs_review' ||
-						  album?.identification_status === 'manual_identity_needs_review'
-						? 'Identity review required'
-						: null
 	);
 
 	function play(shuffle: boolean): void {
@@ -226,10 +214,7 @@
 							{album.contribution_id ? 'Contribution in progress' : 'Contribute to MusicBrainz'}
 						</button>
 					{/if}
-					{#if authStore.isAdmin}<AlbumIdentificationPanel
-							{album}
-							attentionLabel={managementIdentityAttention}
-						/><AlbumOrganizationDialog {album} {tracks} />{/if}
+					{#if authStore.isAdmin}<AlbumOrganizationDialog {album} {tracks} />{/if}
 				</div>
 				{#if album.review_id && authStore.isAdmin}
 					<a
@@ -240,6 +225,10 @@
 				{/if}
 			</div>
 		</header>
+
+		{#if authStore.isAdmin}
+			<div class="mt-6"><ManagementHoldSection {album} /></div>
+		{/if}
 
 		<section class="mt-8" aria-labelledby="local-tracks-title">
 			<div class="flex items-center gap-2">

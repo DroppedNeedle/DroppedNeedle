@@ -321,4 +321,22 @@ describe('LibraryManagementIdentityReadiness', () => {
 			expectedIdentityRevision: 2
 		});
 	});
+
+	it("links a finding that needs an edition to the album's edition sheet", async () => {
+		h.preparations = {
+			data: { pages: [{ items: [readyReport()] }] },
+			isLoading: false,
+			isError: false
+		};
+		h.findings.data.pages[0].items[0] = {
+			...h.findings.data.pages[0].items[0],
+			finding_code: 'exact_release_required'
+		};
+		await render(LibraryManagementIdentityReadiness, { roots });
+		await page.getByRole('button', { name: /^Choose edition/ }).click();
+
+		await expect
+			.element(page.getByRole('link', { name: 'Choose edition' }))
+			.toHaveAttribute('href', '/album/album-1?edition=choose');
+	});
 });

@@ -11,9 +11,9 @@
 		Trash2
 	} from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import IdentityFindingEditionButton from './IdentityFindingEditionButton.svelte';
 	import { controlLibraryOperation } from '$lib/queries/library/LibraryOperationMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import { withBasePath } from '$lib/utils/basePath';
 	import {
 		applyLibraryIdentityPreparation,
 		createLibraryIdentityPreparation,
@@ -480,13 +480,13 @@
 										</button>
 									{/if}
 								</div>
-							{:else if !refreshRequired && activeTab === 'exact_release_required'}
-								<IdentityFindingEditionButton albumId={finding.local_album_id} />
-							{:else if !refreshRequired && activeTab === 'needs_review'}
-								<IdentityFindingEditionButton
-									albumId={finding.local_album_id}
-									label="Re-identify"
-								/>
+							{:else if !refreshRequired && (activeTab === 'exact_release_required' || activeTab === 'needs_review')}
+								<a
+									class="btn btn-ghost btn-xs"
+									href={withBasePath(
+										`/album/${encodeURIComponent(finding.local_album_id)}?edition=choose`
+									)}>Choose edition <ArrowRight class="h-3.5 w-3.5" /></a
+								>
 							{:else if !refreshRequired}
 								<a
 									class="btn btn-ghost btn-xs"
