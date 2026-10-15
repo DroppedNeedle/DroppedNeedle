@@ -9,7 +9,8 @@ const h = vi.hoisted(() => ({
 	},
 	invalidate: vi.fn().mockResolvedValue(undefined),
 	removeBasic: vi.fn(),
-	removeTracks: vi.fn()
+	removeTracks: vi.fn(),
+	cached: undefined as unknown
 }));
 
 vi.mock('@tanstack/svelte-query', () => ({
@@ -26,7 +27,8 @@ vi.mock('$lib/constants', () => ({
 }));
 
 vi.mock('$lib/queries/QueryClient', () => ({
-	invalidateQueriesWithPersister: h.invalidate
+	invalidateQueriesWithPersister: h.invalidate,
+	queryClient: { getQueryData: () => h.cached }
 }));
 
 vi.mock('$lib/queries/library-management/LibraryManagementInvalidation', () => ({
@@ -49,18 +51,17 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 import {
 	acquireEdition,
 	chooseAlbumEdition,
-	clearEditionPin,
 	editionsKey,
 	getAlbumEditionStatusQuery,
 	getAlbumEditionsQuery,
-	handBackAlbumEdition,
-	setEditionPin
+	handBackAlbumEdition
 } from './EditionQueries.svelte';
 
 type EditionQueryOptions = {
 	queryKey: readonly unknown[];
 	enabled: boolean;
 	queryFn: (context: { signal: AbortSignal }) => Promise<unknown>;
+	refetchInterval: (query: { state: { data?: unknown } }) => number | false;
 };
 
 type EditionMutationOptions = {
@@ -71,6 +72,7 @@ type EditionMutationOptions = {
 beforeEach(() => {
 	vi.clearAllMocks();
 	h.invalidate.mockResolvedValue(undefined);
+	h.cached = undefined;
 });
 
 it('includes the authenticated user in every editions query key', () => {
@@ -102,33 +104,69 @@ it('includes the authenticated user in every editions query key', () => {
 	expect(queryA.enabled).toBe(true);
 });
 
-it('pins by group on v3 and refreshes the group and its one copy', async () => {
-	const pin = setEditionPin() as unknown as EditionMutationOptions;
-	const clear = clearEditionPin() as unknown as EditionMutationOptions;
-	const pinVariables = {
+it('refreshes the copy, its plans and pages and both groups after a choice', async () => {
+	const choose = chooseAlbumEdition() as unknown as EditionMutationOptions;
+	const variables = {
 		userId: 'user-a',
-		mbid: 'release-group',
-		releaseMbid: 'release',
-		localId: 'local-1'
+		localId: 'local-1',
+		rgMbid: 'old-group',
+		releaseMbid: 'release'
 	};
-	const clearVariables = { userId: 'user-b', mbid: 'release-group' };
 
-	await pin.mutationFn(pinVariables);
-	await pin.onSuccess(undefined, pinVariables);
-	await clear.mutationFn(clearVariables);
-	await clear.onSuccess(undefined, clearVariables);
+	await choose.mutationFn(variables);
+	await choose.onSuccess({ release_group_mbid: 'new-group' }, variables);
 
-	expect(h.v3.PUT).toHaveBeenCalledWith('/api/v3/albums/release-group/edition', {
+	expect(h.v3.PUT).toHaveBeenCalledWith('/api/v3/library/albums/local-1/edition', {
 		release_mbid: 'release'
 	});
-	expect(h.v3.DELETE).toHaveBeenCalledWith('/api/v3/albums/release-group/edition');
 	const invalidated = h.invalidate.mock.calls.map(([arg]) => arg.queryKey);
-	expect(invalidated).toContainEqual(editionsKey('user-a', 'release-group'));
-	expect(invalidated).toContainEqual(editionsKey('user-b', 'release-group'));
-	expect(invalidated).toContainEqual(['library', 'catalog', 'user-a', 'edition', 'local-1']);
-	expect(invalidated).toContainEqual(['library', 'catalog', 'user-a', 'album-detail', 'local-1']);
-	expect(h.removeTracks).toHaveBeenCalledWith('release-group');
-	expect(h.removeBasic).toHaveBeenCalledWith('release-group');
+	expect(invalidated).toEqual(
+		expect.arrayContaining([
+			['library', 'catalog', 'user-a', 'edition', 'local-1'],
+			['library', 'catalog', 'user-a', 'album-detail', 'local-1'],
+			['library', 'catalog', 'user-a', 'album-tracks', 'local-1'],
+			['library', 'catalog', 'user-a', 'album-copies'],
+			['library', 'album'],
+			editionsKey('user-a', 'old-group'),
+			editionsKey('user-a', 'new-group')
+		])
+	);
+	expect(h.removeBasic).toHaveBeenCalledWith('old-group');
+	expect(h.removeBasic).toHaveBeenCalledWith('new-group');
+	expect(h.removeTracks).toHaveBeenCalledWith('new-group');
+});
+
+it('polls the status while the files are placed or written, and only then', () => {
+	const query = getAlbumEditionStatusQuery(
+		() => 'user-a',
+		() => 'local-1'
+	) as unknown as EditionQueryOptions;
+	const poll = (data: Record<string, unknown>) => query.refetchInterval({ state: { data } });
+
+	expect(poll({ placing: { attempts: 0 }, writing: false, identifying: false })).toBe(2000);
+	expect(poll({ placing: null, writing: true, identifying: false })).toBe(2000);
+	expect(poll({ placing: null, writing: false, identifying: true })).toBe(2000);
+	expect(poll({ placing: null, writing: false, identifying: false })).toBe(false);
+});
+
+it('marks the plans stale once the files are placed', async () => {
+	const query = getAlbumEditionStatusQuery(
+		() => 'user-a',
+		() => 'local-1'
+	) as unknown as EditionQueryOptions;
+	const plans = ['library', 'catalog', 'user-a', 'edition', 'local-1', 'plan'];
+	const plansInvalidated = () =>
+		h.invalidate.mock.calls.some(([arg]) => JSON.stringify(arg.queryKey) === JSON.stringify(plans));
+
+	h.cached = { release_mbid: 'release', placing: { attempts: 0 } };
+	h.v3.GET.mockResolvedValueOnce({ release_mbid: 'release', placing: { attempts: 1 } });
+	await query.queryFn({ signal: new AbortController().signal });
+	expect(plansInvalidated()).toBe(false);
+
+	h.cached = { release_mbid: 'release', placing: { attempts: 1 } };
+	h.v3.GET.mockResolvedValueOnce({ release_mbid: 'release', placing: null });
+	await query.queryFn({ signal: new AbortController().signal });
+	expect(plansInvalidated()).toBe(true);
 });
 
 it('keeps acquire invalidation scoped to the authenticated download queue', async () => {

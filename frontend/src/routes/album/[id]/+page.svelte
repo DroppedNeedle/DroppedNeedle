@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
+	import { editionSheet } from '$lib/components/library/edition/editionSheetState.svelte';
 	import {
 		cacheCanonicalLibraryAlbumDetail,
 		getLibraryAlbumDetailQuery
@@ -16,12 +18,18 @@
 	const localQuery = getLibraryAlbumDetailQuery(() => data.albumId);
 	const localAlbum = $derived(localQuery.data);
 	const providerAlbumId = $derived(localAlbum?.musicbrainz_release_group_id ?? null);
-	const shouldRedirect = $derived(providerAlbumId !== null && providerAlbumId !== data.albumId);
+	const matchedElsewhere = $derived(providerAlbumId !== null && providerAlbumId !== data.albumId);
+	// An edition chosen in the sheet can match a local album to a release
+	// group; the page follows it there once the sheet is closed.
+	const shouldRedirect = $derived(matchedElsewhere && !editionSheet.open);
 
 	$effect(() => {
 		if (localAlbum && shouldRedirect) {
 			void cacheCanonicalLibraryAlbumDetail(localAlbum);
-			void goto(albumHref(providerAlbumId ?? data.albumId), { replaceState: true });
+			// The query (`?edition=choose`) goes along to the album's page.
+			void goto(`${albumHref(providerAlbumId ?? data.albumId)}${page.url.search}`, {
+				replaceState: true
+			});
 		}
 	});
 </script>
@@ -37,7 +45,7 @@
 			</div>
 		</div>
 	</div>
-{:else if localAlbum && !providerAlbumId}
+{:else if localAlbum && (!providerAlbumId || matchedElsewhere)}
 	<LocalAlbumPage albumId={localAlbum.id} />
 {:else}
 	<ProviderAlbumPage {data} {localAlbum} />

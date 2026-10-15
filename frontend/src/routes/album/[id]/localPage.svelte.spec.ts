@@ -32,7 +32,9 @@ const h = vi.hoisted(() => ({
 	toast: vi.fn()
 }));
 
-vi.mock('$app/state', () => ({ page: { params: { id: 'local-album-1' } } }));
+vi.mock('$app/state', () => ({
+	page: { params: { id: 'local-album-1' }, url: new URL('http://localhost/album/local-album-1') }
+}));
 vi.mock('$app/navigation', () => ({ goto: (...args: unknown[]) => h.goto(...args) }));
 vi.mock('$lib/stores/authStore.svelte', () => ({
 	authStore: {

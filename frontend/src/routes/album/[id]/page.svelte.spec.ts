@@ -24,6 +24,7 @@ const {
 	mockLocalCopiesData,
 	mockLocalDetailData,
 	mockEditionsData,
+	mockEditionStatus,
 	mockLocalMatch,
 	mockNavidromeMatch
 } = vi.hoisted(() => ({
@@ -48,10 +49,12 @@ const {
 	mockLibraryStatusData: { value: undefined as unknown },
 	mockLocalCopiesData: { value: {} as Record<string, unknown> },
 	mockLocalDetailData: { value: {} as Record<string, unknown> },
-	mockEditionsData: { value: undefined as unknown }
+	mockEditionsData: { value: undefined as unknown },
+	mockEditionStatus: { value: undefined as unknown }
 }));
 
 vi.mock('$app/environment', () => ({ browser: true }));
+vi.mock('$app/state', () => ({ page: { url: new URL('http://localhost/album/x') } }));
 vi.mock('$app/navigation', () => ({
 	goto: (...args: unknown[]) => mockGoto(...args)
 }));
@@ -221,16 +224,18 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 			return mockEditionsData.value;
 		}
 	}),
-	setEditionPin: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	clearEditionPin: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	acquireEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	getAlbumEditionStatusQuery: () => ({ data: undefined, isLoading: false, isError: false }),
-	getEditionTracksQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getAlbumEditionStatusQuery: () => ({
+		get data() {
+			return mockEditionStatus.value;
+		},
+		isPending: false,
+		isError: false
+	}),
 	chooseAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	handBackAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	confirmAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	undoAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	retagAfterChoice: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	editionsKey: (id: string) => ['editions', id],
 	getEditionPlanQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	removeEditionExtras: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
@@ -368,6 +373,7 @@ describe('album detail page track rendering', () => {
 		mockLocalCopiesData.value = {};
 		mockLocalDetailData.value = {};
 		mockEditionsData.value = undefined;
+		mockEditionStatus.value = undefined;
 		mockHydrateDetailCacheEntry.mockImplementation(({ cache, onHydrate }: HydrateOptions) => {
 			if (cache === mockAlbumBasicCache) {
 				onHydrate({
@@ -690,6 +696,21 @@ describe('album detail page track rendering', () => {
 				}
 			};
 			mockLocalCopiesData.value = { [localAlbumId]: { items: [] } };
+			mockEditionStatus.value = {
+				album_id: localAlbumId,
+				candidates: [],
+				edition_kind: 'none',
+				files_by_itself: true,
+				identifying: false,
+				identity_revision: 0,
+				placing: null,
+				reason: { code: 'UNIDENTIFIED', message: 'Not matched yet.', action: '' },
+				release_mbid: null,
+				release_group_mbid: null,
+				state: 'unidentified',
+				undo_available: false,
+				writing: false
+			};
 		}
 
 		async function renderMatchedAlbum(): Promise<void> {
@@ -715,14 +736,16 @@ describe('album detail page track rendering', () => {
 			};
 		});
 
-		it('offers Change edition when the release group has a local copy', async () => {
+		it('shows the edition plate of the copy the release group holds', async () => {
 			holdLocalCopy();
 			await renderMatchedAlbum();
 
-			await expect.element(page.getByRole('button', { name: 'Change edition' })).toBeVisible();
+			await expect
+				.element(page.getByRole('button', { name: /^Edition: No edition yet\./ }))
+				.toBeVisible();
 		});
 
-		it('offers no Change edition when the library holds no copy', async () => {
+		it('shows no edition plate when the library holds no copy', async () => {
 			mockLibraryStatusData.value = {
 				in_library: false,
 				album_id: albumId,
@@ -731,10 +754,7 @@ describe('album detail page track rendering', () => {
 			};
 			await renderMatchedAlbum();
 
-			await expect.element(page.getByText(/Edition: Automatic/)).toBeVisible();
-			await expect
-				.element(page.getByRole('button', { name: 'Change edition' }))
-				.not.toBeInTheDocument();
+			await expect.element(page.getByRole('button', { name: /^Edition:/ })).not.toBeInTheDocument();
 		});
 	});
 });

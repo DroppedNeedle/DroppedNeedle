@@ -101,6 +101,15 @@ export const LibraryQueryKeyFactory = {
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'stats'] as const,
 		edition: (userId: LibraryV3UserId, albumId: string) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'edition', albumId] as const,
+		editionPlanPrefix: (userId: LibraryV3UserId, albumId: string) =>
+			[...LibraryQueryKeyFactory.catalog.edition(userId, albumId), 'plan'] as const,
+		// A null release is the album's own edition, the plan the album page shows.
+		editionPlan: (userId: LibraryV3UserId, albumId: string, release: string | null) =>
+			[...LibraryQueryKeyFactory.catalog.editionPlanPrefix(userId, albumId), release] as const,
+		albumTracksPrefix: (userId: LibraryV3UserId, albumId: string) =>
+			[...LibraryQueryKeyFactory.catalog.root(userId), 'album-tracks', albumId] as const,
+		albumCopiesPrefix: (userId: LibraryV3UserId) =>
+			[...LibraryQueryKeyFactory.catalog.root(userId), 'album-copies'] as const,
 		unconfirmed: (userId: LibraryV3UserId, state: string, offset: number) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'unconfirmed', state, offset] as const
 	},
@@ -177,6 +186,7 @@ export const LibraryQueryKeyFactory = {
 			findingCategory,
 			cursor ?? 'first'
 		] as const,
+	albumPrefix: () => [...LibraryQueryKeyFactory.all, 'album'] as const,
 	album: (mbid: string) => [...LibraryQueryKeyFactory.all, 'album', mbid] as const,
 	reidentificationReleases: (
 		userId: LibraryV3UserId,

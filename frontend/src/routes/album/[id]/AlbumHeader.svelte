@@ -22,18 +22,16 @@
 		Square,
 		TrendingUp,
 		TriangleAlert,
-		ChevronDown,
-		Hand
+		ChevronDown
 	} from 'lucide-svelte';
 	import { rescanAlbum } from '$lib/queries/library/LibraryMutations.svelte';
 	import { requestUpgradeAlbum } from '$lib/queries/downloads/UpgradeQueries.svelte';
-	import { acquireEdition, getAlbumEditionsQuery } from '$lib/queries/albums/EditionQueries.svelte';
-	import type { AlbumEditionItem } from '$lib/types';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { deckSampler } from '$lib/stores/deckSampler.svelte';
 	import LocalAlbumIdentificationControl from './LocalAlbumIdentificationControl.svelte';
-	import EditionPicker from '$lib/components/library/EditionPicker.svelte';
+	import EditionPlate from '$lib/components/library/edition/EditionPlate.svelte';
+	import { editionSheet } from '$lib/components/library/edition/editionSheetState.svelte';
 	import AlbumDownloadButton from './AlbumDownloadButton.svelte';
 
 	interface Props {
@@ -159,93 +157,16 @@
 		}
 	}
 
-	// Edition selection (admin/trusted, CollectionManagement Feature E): pick the
-	// MB release the album page + acquisition follow (D16), and acquire it (D13).
-	// ST7 W2: the query warms as soon as the album identity is known - the old
-	// !loadingTracks term serialized a depth-3 chain for no data dependency
-	// (editions key off the authenticated user and RG mbid). The picker section
-	// below still waits on !loadingTracks so the visible behavior is unchanged.
-	const editionsMbid = $derived(releaseGroupMbid || album.musicbrainz_id);
-	const editionsQuery = getAlbumEditionsQuery(
-		() => authStore.user?.id,
-		() => editionsMbid,
-		() => authStore.isTrusted && downloadClientConfigured && Boolean(editionsMbid)
-	);
-	const editions = $derived(editionsQuery.data?.items ?? []);
-	const pinnedEdition = $derived(editions.find((edition) => edition.is_pinned) ?? null);
-	const currentEdition = $derived(
-		pinnedEdition ??
-			editions.find(
-				(edition) =>
-					edition.release_mbid ===
-					(tracksInfo?.selected_release_mbid ?? editionsQuery.data?.selected_release_mbid)
-			) ??
-			null
-	);
-	const hasEffectivePin = $derived(pinnedEdition !== null);
-	const editionActionLabel = $derived(
-		!libraryInLibrary
-			? 'Acquire this edition'
-			: libraryComplete
-				? 'Upgrade this edition'
-				: 'Complete this edition'
-	);
-	const editionActionTitle = $derived(
-		!libraryInLibrary
-			? "Request this edition's tracks"
-			: libraryComplete
-				? "Upgrade this edition's below-cutoff tracks"
-				: "Request this edition's missing tracks and upgrade its below-cutoff ones"
-	);
-	const acquireMutation = acquireEdition();
-
 	// SvelteKit reuses this component instance across album navigations, so the
-	// per-album "queued" button states must reset when the album changes
+	// per-album "queued" button state must reset when the album changes
 	$effect(() => {
-		void editionsMbid;
+		void (releaseGroupMbid || album.musicbrainz_id);
 		upgradeQueued = false;
-		acquireQueued = false;
 	});
 
-	function editionLabel(e: AlbumEditionItem): string {
-		const bits = [
-			e.disambiguation,
-			e.date?.slice(0, 4),
-			e.country,
-			`${e.track_count} tracks`
-		].filter(Boolean);
-		return bits.join(' · ') || e.release_mbid.slice(0, 8);
-	}
-
-	// One picker for every way of choosing an edition. The choice lands on a
-	// library copy; with several copies the picker asks which one.
-	let picker = $state<{ open: () => void } | null>(null);
-	const pickerCopies = $derived(
-		localCopies.flatMap((copy) => (copy.id ? [{ id: copy.id, title: copy.title }] : []))
-	);
-
-	// after a successful acquire the button parks as "Queued" (server-side dedup
-	// makes a re-click harmless, but the UI shouldn't invite one)
-	let acquireQueued = $state(false);
-	async function handleAcquireEdition() {
-		try {
-			const result = await acquireMutation.mutateAsync({ mbid: editionsMbid });
-			if (result.status === 'already_complete') {
-				toastStore.show({
-					message: 'Nothing to do - this edition is complete and at your cutoff.',
-					type: 'info'
-				});
-			} else {
-				acquireQueued = true;
-				toastStore.show({ message: result.message, type: 'success' });
-			}
-		} catch (e) {
-			toastStore.show({
-				message: e instanceof Error ? e.message : 'Could not acquire this edition',
-				type: 'error'
-			});
-		}
-	}
+	// The edition plate stays while its sheet is open, even when a choice
+	// moved the copy off this page.
+	const showPlate = $derived(localCopies.length > 0 || editionSheet.open);
 
 	let backdropUrl = $derived(
 		album.musicbrainz_id
@@ -330,51 +251,8 @@
 				{/if}
 			</div>
 
-			{#if authStore.isTrusted && downloadClientConfigured && !loadingTracks && editions.length > 0}
-				<div class="flex flex-wrap items-center gap-2">
-					<span class="inline-flex items-center gap-1 text-xs text-base-content/70">
-						{#if hasEffectivePin}
-							<Hand class="h-3 w-3 text-primary" aria-label="Chosen by a person" />
-						{/if}
-						Edition: {currentEdition
-							? `${hasEffectivePin ? '' : 'Automatic · '}${editionLabel(currentEdition)}`
-							: 'Automatic'}
-					</span>
-					{#if pickerCopies.length}
-						<button type="button" class="btn btn-ghost btn-xs" onclick={() => picker?.open()}
-							>Change edition</button
-						>
-					{/if}
-					{#if currentEdition}
-						{#if libraryComplete && !libraryBelowCutoff}
-							<span
-								class="inline-flex h-6 items-center gap-1 px-2 text-xs font-medium text-success"
-								title="This edition is complete and meets your quality cutoff"
-							>
-								<Check class="h-3.5 w-3.5" />
-								Edition complete
-							</span>
-						{:else}
-							<button
-								class="btn btn-ghost btn-xs gap-1 {acquireQueued ? 'text-success' : 'text-primary'}"
-								onclick={handleAcquireEdition}
-								disabled={acquireMutation.isPending || acquireQueued}
-								title={editionActionTitle}
-							>
-								{#if acquireMutation.isPending}
-									<span class="loading loading-spinner loading-xs"></span>
-									Acquiring...
-								{:else if acquireQueued}
-									<Check class="h-3.5 w-3.5" />
-									Acquisition queued
-								{:else}
-									<Plus class="h-3.5 w-3.5" />
-									{editionActionLabel}
-								{/if}
-							</button>
-						{/if}
-					{/if}
-				</div>
+			{#if showPlate}
+				<EditionPlate copies={localCopies} groupMbid={releaseGroupMbid || album.musicbrainz_id} />
 			{/if}
 
 			{#if libraryInLibrary}
@@ -557,14 +435,6 @@
 		</div>
 	</div>
 </div>
-{#if pickerCopies.length}
-	<EditionPicker
-		bind:this={picker}
-		groupMbid={editionsMbid}
-		copies={pickerCopies}
-		onchanged={onrefresh}
-	/>
-{/if}
 
 <style>
 	.album-hero {

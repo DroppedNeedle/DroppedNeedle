@@ -17,6 +17,9 @@ const h = vi.hoisted(() => ({
 	acquire: vi.fn()
 }));
 
+vi.mock('$app/state', () => ({ page: { url: new URL('http://localhost/album/x') } }));
+vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+
 vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	getAlbumEditionsQuery: () => ({
 		get data() {

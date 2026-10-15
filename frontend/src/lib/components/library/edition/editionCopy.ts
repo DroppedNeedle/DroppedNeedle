@@ -1,0 +1,293 @@
+// Every sentence the edition plate and the edition sheet show, with their
+// plural forms. Numbers are only ever counts of the person's own files and
+// tracks.
+import type { components } from '$lib/api/v3/openapi';
+
+type EditionStatus = components['schemas']['EditionStatusView'];
+type EditionPlan = components['schemas']['EditionPlanView'];
+
+/** The facts an edition is named and described by, from any source. */
+export interface EditionFactsLike {
+	title?: string | null;
+	disambiguation?: string | null;
+	date?: string | null;
+	country?: string | null;
+	formats?: string[] | null;
+	track_count?: number | null;
+}
+
+export function count(n: number, one: string, many: string): string {
+	return `${n} ${n === 1 ? one : many}`;
+}
+
+/** `CD`, `2×CD`, `CD + DVD`: one format per medium, repeats folded. */
+export function formatsLabel(formats: string[] | null | undefined): string {
+	const runs: { format: string; times: number }[] = [];
+	for (const format of formats ?? []) {
+		const last = runs.at(-1);
+		if (last && last.format === format) last.times += 1;
+		else runs.push({ format, times: 1 });
+	}
+	return runs.map((run) => (run.times > 1 ? `${run.times}×${run.format}` : run.format)).join(' + ');
+}
+
+export function editionYear(date: string | null | undefined): string | null {
+	return date?.slice(0, 4) || null;
+}
+
+/** Line 1 everywhere: the disambiguation, else "{first format} edition". */
+export function editionName(facts: EditionFactsLike): string {
+	const disambiguation = facts.disambiguation?.trim();
+	if (disambiguation) return disambiguation.charAt(0).toUpperCase() + disambiguation.slice(1);
+	const format = facts.formats?.[0];
+	if (format) return `${format} edition`;
+	return facts.title?.trim() || 'Untitled edition';
+}
+
+/** A list row's line 2: "{year} · {country} · {formats} · {n} tracks". */
+export function editionFactsLine(facts: EditionFactsLike): string {
+	return [
+		editionYear(facts.date),
+		facts.country,
+		formatsLabel(facts.formats),
+		facts.track_count ? count(facts.track_count, 'track', 'tracks') : null
+	]
+		.filter(Boolean)
+		.join(' · ');
+}
+
+/** A list row's line 3. Null when nothing is known about the fit. */
+export function fitLine(kept: number, files: number): string | null {
+	if (files <= 0) return null;
+	if (kept <= 0) return 'Fits none of your files';
+	if (kept >= files) return files === 1 ? 'Fits your 1 file' : `Fits all ${files} of your files`;
+	return `Fits ${kept} of your ${files} files`;
+}
+
+export function planFit(plan: EditionPlan): string | null {
+	return fitLine(plan.kept_count, plan.files.length);
+}
+
+/** Tracks of the edition no file holds in any version. */
+export function trulyMissing(plan: EditionPlan): number {
+	return Math.max(0, plan.missing_count - plan.other_version_count);
+}
+
+const isAre = (n: number) => (n === 1 ? 'is' : 'are');
+
+/** The detail pane's summary sentence. */
+export function summarySentence(plan: EditionPlan): string {
+	const files = plan.files.length;
+	const kept = plan.kept_count;
+	if (files > 0 && kept === 0) {
+		return 'None of your files fit this edition, so it is probably a different album.';
+	}
+	const parts: string[] = [];
+	if (kept === files) {
+		parts.push(
+			files === 1
+				? 'Your 1 file fits this edition.'
+				: `All ${files} of your files fit this edition.`
+		);
+	} else {
+		parts.push(`${kept} of your ${files} files fit this edition.`);
+	}
+	const missing = trulyMissing(plan);
+	if (missing) parts.push(`${missing} of its tracks ${isAre(missing)} missing.`);
+	const versions = plan.other_version_count;
+	if (versions) {
+		parts.push(`${versions} of your files ${isAre(versions)} another version of a track on it.`);
+	}
+	if (plan.extra_count) {
+		parts.push(
+			`${plan.extra_count} of your files ${plan.extra_count === 1 ? "isn't" : "aren't"} on it.`
+		);
+	}
+	if (plan.duplicate_count) {
+		parts.push(
+			plan.duplicate_count === 1
+				? '1 is a second copy.'
+				: `${plan.duplicate_count} are second copies.`
+		);
+	}
+	return parts.join(' ');
+}
+
+/** True when choosing the edition would place none of the files. */
+export function fitsNoFile(plan: EditionPlan): boolean {
+	return plan.files.length > 0 && plan.kept_count === 0;
+}
+
+export type DiscTone = 'accent' | 'warning' | 'none' | 'busy';
+
+export interface PlateCopy {
+	line1: string;
+	chip: { label: string; kind: 'yours' | 'picked' | 'guess' } | null;
+	line2: string;
+	/** Appended to line 2 in the warning colour. */
+	warnings: string[];
+	action: 'Change' | 'Choose';
+	disc: { tone: DiscTone; fill: number; spinning: boolean };
+	label: string;
+}
+
+function chipFor(status: EditionStatus): PlateCopy['chip'] {
+	if (status.state === 'chosen') return { label: 'Your choice', kind: 'yours' };
+	if (status.state === 'confirmed') return { label: 'Picked by DroppedNeedle', kind: 'picked' };
+	if (status.state === 'unconfirmed') return { label: 'Best guess', kind: 'guess' };
+	return null;
+}
+
+/** Line 2 while the edition's files are placed or written, if they are. */
+export function busyLine(status: EditionStatus): string | null {
+	if (status.placing) {
+		return status.placing.attempts > 0 ? 'Waiting for MusicBrainz' : 'Matching your files to it...';
+	}
+	if (status.writing) return 'Writing tags and file names...';
+	return null;
+}
+
+/**
+ * The plate's copy. `plan` is the album's own edition plan when it has
+ * loaded; `fileCount` is the number of files the album holds.
+ */
+export function plateCopy(
+	status: EditionStatus,
+	plan: EditionPlan | null,
+	fileCount: number
+): PlateCopy {
+	const busy = busyLine(status);
+	let copy: Omit<PlateCopy, 'label'>;
+	if (status.edition_kind === 'custom') {
+		copy = {
+			line1: 'Your own track list',
+			chip: chipFor(status),
+			line2: busy ?? `Kept as your files are · ${count(fileCount, 'track', 'tracks')}`,
+			warnings: [],
+			action: 'Change',
+			disc: { tone: busy ? 'busy' : 'accent', fill: 1, spinning: Boolean(busy) }
+		};
+	} else if (status.edition_kind === 'release') {
+		const total = plan?.tracks.length ?? 0;
+		const kept = plan?.kept_count ?? 0;
+		const missing = plan ? trulyMissing(plan) : 0;
+		const versions = plan?.other_version_count ?? 0;
+		const facts = plan
+			? [
+					editionYear(plan.edition.date) ? `Released ${editionYear(plan.edition.date)}` : null,
+					plan.edition.country,
+					formatsLabel(plan.edition.formats),
+					`${kept} of ${count(total, 'track', 'tracks')}`
+				]
+					.filter(Boolean)
+					.join(' · ')
+			: '';
+		const warnings = busy
+			? []
+			: [
+					missing ? `${missing} missing` : null,
+					versions ? `${versions} in another version` : null
+				].filter((text): text is string => Boolean(text));
+		const complete = Boolean(plan) && kept >= total && missing === 0 && versions === 0;
+		copy = {
+			line1: plan ? editionName(plan.edition) : 'Your edition',
+			chip: chipFor(status),
+			line2: busy ?? facts,
+			warnings,
+			action: 'Change',
+			disc: {
+				tone: busy
+					? 'busy'
+					: complete && status.state !== 'unconfirmed'
+						? 'accent'
+						: plan || status.state === 'unconfirmed'
+							? 'warning'
+							: 'none',
+				fill: total ? kept / total : 0,
+				spinning: Boolean(busy)
+			}
+		};
+	} else {
+		const line2 =
+			status.edition_kind === 'group_only'
+				? 'Left unmanaged'
+				: status.state === 'unmatched'
+					? 'Nothing on MusicBrainz fits it yet'
+					: status.reason.code === 'FOLDER_KEEPS_TAGS'
+						? 'This folder keeps its own tags'
+						: "DroppedNeedle hasn't matched it yet";
+		copy = {
+			line1: 'No edition yet',
+			chip: null,
+			line2: busy ?? line2,
+			warnings: [],
+			action: 'Choose',
+			disc: { tone: busy ? 'busy' : 'none', fill: 0, spinning: Boolean(busy) }
+		};
+	}
+	const line2 = [copy.line2, ...copy.warnings].filter(Boolean).join(' · ');
+	return {
+		...copy,
+		label: `Edition: ${copy.line1}. ${line2}. ${copy.action} edition`
+	};
+}
+
+export function moreCopies(n: number): string {
+	return `and ${n} more ${n === 1 ? 'copy' : 'copies'}`;
+}
+
+// The same sentences as the server's 409 while the files are still placed.
+export function placingSentence(attempts: number): string {
+	return attempts > 0
+		? 'Still matching this album to the edition you chose. MusicBrainz is not answering, so this waits until it does.'
+		: 'Still matching this album to the edition you chose. Try again in a moment.';
+}
+
+/** The Files row of Next steps once the files are placed. */
+export function filesPlacedSentence(kept: number, notKept: number): string {
+	const placed =
+		kept === 1 ? '1 of your files sits on its tracks.' : `${kept} of your files sit on its tracks.`;
+	if (!notKept) return placed;
+	const rest =
+		notKept === 1
+			? "1 file isn't on it and keeps its own tags."
+			: `${notKept} files aren't on it and keep their own tags.`;
+	return `${placed} ${rest}`;
+}
+
+export type TagsMode = 'held' | 'writing' | 'written' | 'manual';
+
+export function tagsSentence(mode: TagsMode): string {
+	switch (mode) {
+		case 'held':
+			return 'This album is left unmanaged, so its files keep their tags until you choose "Manage it again".';
+		case 'writing':
+			return "Writing this edition's tags and file names...";
+		case 'written':
+			return 'Tags and file names are written. You can undo that from History.';
+		case 'manual':
+			return 'Your files still carry their old tags. Apps like Subsonic and Jellyfin read the tags, so they show the new edition once you write them.';
+	}
+}
+
+export function extrasButton(n: number): string {
+	return `Move ${count(n, 'file', 'files')} not on this edition to the recycle bin`;
+}
+
+export function putBackButton(n: number): string {
+	return `Put back ${n} removed ${n === 1 ? 'file' : 'files'}`;
+}
+
+export function otherAlbumSentence(title: string, artist: string): string {
+	return `This edition belongs to another album on MusicBrainz: ${title} by ${artist}. Your copy moves to that album.`;
+}
+
+export const MUSICBRAINZ_DOWN =
+	"MusicBrainz isn't answering, so this edition can't be compared with your files right now.";
+
+export const SHEET_DESCRIPTION = 'Pick the release your copy is, or the one you want it to become.';
+
+// The app stepped back from the album by itself; choosing an edition
+// does not hand it back.
+export const LEFT_UNMANAGED_NOTE =
+	'This album is left unmanaged. Choosing an edition does not hand it back: DroppedNeedle leaves its files alone until you choose "Manage it again". Writing the edition\'s tags to the files overwrites the changes made outside DroppedNeedle.';
