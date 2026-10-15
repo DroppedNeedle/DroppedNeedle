@@ -381,6 +381,7 @@ describe('an album left unmanaged', () => {
 		['files_changed', 'These files were changed outside DroppedNeedle'],
 		['retag_followed', 'This album was retagged outside DroppedNeedle'],
 		['run_undone', "You undid DroppedNeedle's changes to this album"],
+		['replaced_hands_off', 'These files may be your retag of another album'],
 		['your_choice', 'You chose to leave this album unmanaged']
 	])('says what %s means and offers one button', async (kind, heading) => {
 		await renderHeld({ kind, held_at: heldAt, handing_back: false, exclusion_revision: 3 });

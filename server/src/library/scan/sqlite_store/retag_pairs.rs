@@ -34,10 +34,15 @@ pub enum RetagPairReason {
     WorkOnNewRow,
     /// The store failed while joining them. Tried again when a scan ends.
     StoreError,
+    /// The old album, left unmanaged, kept as a custom edition or stepped
+    /// back from, lost its files in the scan in which the new album's
+    /// files appeared beside it. Nothing proves they are one album. Tried
+    /// again so a join on proof of the same edition is not stopped by it.
+    ReplacedHandsOff,
 }
 
 impl RetagPairReason {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::MostlyMissing,
         Self::NewFilesAdded,
         Self::TracksElsewhere,
@@ -46,6 +51,7 @@ impl RetagPairReason {
         Self::LiveWork,
         Self::WorkOnNewRow,
         Self::StoreError,
+        Self::ReplacedHandsOff,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -58,6 +64,7 @@ impl RetagPairReason {
             Self::LiveWork => "live_work",
             Self::WorkOnNewRow => "work_on_new_row",
             Self::StoreError => "store_error",
+            Self::ReplacedHandsOff => "replaced_hands_off",
         }
     }
 
@@ -70,7 +77,10 @@ impl RetagPairReason {
     /// Whether an open pair with this reason is tried again when a scan
     /// ends.
     pub(super) fn tried_again(self) -> bool {
-        matches!(self, Self::StoreError | Self::LiveWork | Self::WorkOnNewRow)
+        matches!(
+            self,
+            Self::StoreError | Self::LiveWork | Self::WorkOnNewRow | Self::ReplacedHandsOff
+        )
     }
 }
 

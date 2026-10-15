@@ -39192,7 +39192,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "`your_choice` when a person chose to leave the album unmanaged.\nOtherwise why DroppedNeedle stepped back by itself: `files_changed`\n(its files were changed outside DroppedNeedle), `retag_followed`\n(it was retagged outside DroppedNeedle) or `run_undone` (a person\nundid DroppedNeedle's changes to it)."
+            "description": "`your_choice` when a person chose to leave the album unmanaged.\nOtherwise why DroppedNeedle stepped back by itself: `files_changed`\n(its files were changed outside DroppedNeedle), `retag_followed`\n(it was retagged outside DroppedNeedle), `run_undone` (a person\nundid DroppedNeedle's changes to it) or `replaced_hands_off` (its\nfiles appeared beside a hands-off album in the scan that saw that\nalbum's files go)."
           }
         }
       },
@@ -40533,7 +40533,7 @@
           },
           "cause": {
             "type": "string",
-            "description": "`files_changed`, `retag_followed` or `run_undone`."
+            "description": "`files_changed`, `retag_followed`, `run_undone` or\n`replaced_hands_off`."
           },
           "noticed_at": {
             "type": "integer",
@@ -47669,7 +47669,8 @@
         "enum": [
           "chosen_matches_differ",
           "tracks_elsewhere",
-          "custom_edition"
+          "custom_edition",
+          "replaced_hands_off"
         ]
       },
       "RetagPairView": {

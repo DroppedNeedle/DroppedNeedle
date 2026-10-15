@@ -149,6 +149,11 @@
 				an album renamed. If {newAlbum.title} is {oldAlbum.title} renamed, merge them: {oldAlbum.title}'s
 				edition goes to {newAlbum.title} only.
 			</p>
+		{:else if pair.reason === 'replaced_hands_off'}
+			<p>
+				{@render album(oldAlbum)} lost its files in the same scan that {@render album(newAlbum)} appeared
+				beside it. Nothing shows they are one album, so DroppedNeedle has left {newAlbum.title} alone.
+			</p>
 		{:else if pair.reason === 'custom_edition'}
 			<p>
 				{@render album(oldAlbum)} ({tracks(oldAlbum.track_count)}) looks like it was retagged as {@render album(
@@ -198,6 +203,12 @@
 			Merging keeps {newAlbum.title} and moves {oldAlbum.title}'s favorite, plays and playlist
 			entries to it.
 		</p>
+		{#if pair.reason === 'replaced_hands_off'}
+			<p class="text-base-content/60">
+				Plays of single tracks stay with the old tracks. Merged or kept apart, {newAlbum.title} stays
+				left unmanaged until you choose "Manage it again".
+			</p>
+		{/if}
 		{#if keepsOldEdition}
 			<p class="text-base-content/60">
 				If DroppedNeedle never wrote these files, the album is left unmanaged after the merge until

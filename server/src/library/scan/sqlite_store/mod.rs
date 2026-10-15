@@ -556,6 +556,7 @@ mod artwork;
 pub use artwork::ArtworkSweep;
 mod catalog;
 mod commit;
+mod hands_off;
 mod inventory;
 pub mod retag_pairs;
 mod runs;

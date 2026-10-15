@@ -844,7 +844,8 @@ pub struct ManagementTakeoverView {
     pub album_id: String,
     pub album_title: String,
     pub artist_name: Option<String>,
-    /// `files_changed`, `retag_followed` or `run_undone`.
+    /// `files_changed`, `retag_followed`, `run_undone` or
+    /// `replaced_hands_off`.
     pub cause: String,
     /// When it stepped back, unix milliseconds.
     pub noticed_at: i64,

@@ -25,6 +25,7 @@
 use std::collections::BTreeMap;
 
 use super::artists::{self, Credit, Own, upsert_artist};
+use super::hands_off::hold_replacements;
 use super::retag_pairs::{self, RetagPairReason, RetagPairState};
 use super::*;
 use crate::library::corrections::artist_convergence::converge_artists;
@@ -279,23 +280,43 @@ struct TrackKey<'a> {
     duration_seconds: Option<f64>,
 }
 
+/// A track this run walked past: a scope of the run whose discovery
+/// completed covers its path, and the walk did not see the file. `$guard`
+/// is added to the scope's conditions.
+macro_rules! walked_past {
+    ($guard:literal) => {
+        concat!(
+            "(EXISTS (SELECT 1 FROM library_scan_run_scopes s WHERE s.run_id = ?1 \
+              AND s.root_id = t.root_id AND s.discovery_state = 'completed' ",
+            $guard,
+            " AND (s.relative_path = '.' OR t.relative_path = s.relative_path \
+                OR substr(t.relative_path, 1, length(s.relative_path) + 1) = s.relative_path || '/')) \
+            AND NOT EXISTS (SELECT 1 FROM library_scan_inventory i WHERE i.run_id = ?1 \
+              AND i.root_id = t.root_id AND i.relative_path = t.relative_path))"
+        )
+    };
+}
+
+/// A track this run walked past, whether or not the mass-missing guard
+/// held its scope back.
+pub(super) const WALKED_PAST: &str = walked_past!("");
+
 /// A track is gone when it is already marked missing, or when this run
 /// walked its folder to the end without seeing the file. A scope the
 /// mass-missing guard held back (an unmounted share looks like that)
 /// does not count as walked.
-pub(super) const TRACK_GONE: &str = "(t.availability = 'missing' OR (t.availability = 'indexed' \
-    AND EXISTS (SELECT 1 FROM library_scan_run_scopes s WHERE s.run_id = ?1 \
-      AND s.root_id = t.root_id AND s.discovery_state = 'completed' \
-      AND NOT EXISTS (SELECT 1 FROM library_scan_failures f WHERE f.run_id = ?1 \
-        AND f.root_id = s.root_id AND f.relative_path = s.relative_path \
-        AND f.failure_code = 'MASS_MISSING_GUARD') \
-      AND (s.relative_path = '.' OR t.relative_path = s.relative_path \
-        OR substr(t.relative_path, 1, length(s.relative_path) + 1) = s.relative_path || '/')) \
-    AND NOT EXISTS (SELECT 1 FROM library_scan_inventory i WHERE i.run_id = ?1 \
-      AND i.root_id = t.root_id AND i.relative_path = t.relative_path)))";
+pub(super) const TRACK_GONE: &str = concat!(
+    "(t.availability = 'missing' OR (t.availability = 'indexed' AND ",
+    walked_past!(
+        "AND NOT EXISTS (SELECT 1 FROM library_scan_failures f WHERE f.run_id = ?1 \
+          AND f.root_id = s.root_id AND f.relative_path = s.relative_path \
+          AND f.failure_code = 'MASS_MISSING_GUARD')"
+    ),
+    "))"
+);
 
 /// Durations closer than this are the same recording.
-const DURATION_TOLERANCE_SECONDS: f64 = 1.0;
+pub(super) const DURATION_TOLERANCE_SECONDS: f64 = 1.0;
 
 /// The gone track a newly seen file continues, as (track id, album id):
 /// the same album names, disc and track number, plus the same recording
@@ -1391,7 +1412,9 @@ fn released_by(tx: &Connection, run_id: &str, album_id: &str) -> rusqlite::Resul
 ///    ([`continue_tracks`]);
 /// 7. artist rows MusicBrainz proves to be one artist are merged
 ///    ([`converge_artists`]);
-/// 8. the albums the run held back are offered ([`offer_held_back`]).
+/// 8. new files that took the place of a hands-off album's are left
+///    alone ([`hold_replacements`]);
+/// 9. the albums the run held back are offered ([`offer_held_back`]).
 pub(super) fn settle_ended_run(
     tx: &rusqlite::Transaction<'_>,
     run_id: &str,
@@ -1404,6 +1427,7 @@ pub(super) fn settle_ended_run(
     place_scanned(tx, now)?;
     continue_tracks(tx, Scope::Library, now)?;
     converge_artists(tx, now)?;
+    hold_replacements(tx, run_id, now)?;
     enqueued += offer_held_back(tx, run_id, now)?;
     if enqueued > 0
         && let Some(column) = counter_column(counter_names::IDENTIFICATION_ENQUEUED)

@@ -163,7 +163,8 @@ pub struct AlbumRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagementHoldRecord {
     /// `your_choice` for a person's own exclusion, else why the app
-    /// stepped back: `files_changed`, `retag_followed` or `run_undone`.
+    /// stepped back: `files_changed`, `retag_followed`, `run_undone` or
+    /// `replaced_hands_off`.
     pub kind: String,
     /// Since when, unix milliseconds.
     pub held_at: i64,

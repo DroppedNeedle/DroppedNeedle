@@ -1,6 +1,8 @@
 //! Retag pairs a person decides on: two album rows a scan would not join
 //! by itself, because each holds an edition a person chose, the old row
-//! holds a custom edition, or the album was split against a rename.
+//! holds a custom edition, the album was split against a rename, or new
+//! files appeared beside a hands-off album in the scan that saw its files
+//! go (nothing proves those are one album; the new album stays held).
 //!
 //! A join drops what stands in the way first, all in the caller's
 //! transaction, so a refusal leaves both albums as they were:
@@ -33,7 +35,7 @@ use crate::library::scan::sqlite_store::retag_pairs::{RetagPairReason, RetagPair
 
 /// The reasons a person decides on. The app settles every other one by
 /// itself.
-const SHOWN: [(RetagPairReason, PairReason); 3] = [
+const SHOWN: [(RetagPairReason, PairReason); 4] = [
     (
         RetagPairReason::ChosenMatchesDiffer,
         PairReason::ChosenMatchesDiffer,
@@ -43,6 +45,10 @@ const SHOWN: [(RetagPairReason, PairReason); 3] = [
         PairReason::TracksElsewhere,
     ),
     (RetagPairReason::CustomEdition, PairReason::CustomEdition),
+    (
+        RetagPairReason::ReplacedHandsOff,
+        PairReason::ReplacedHandsOff,
+    ),
 ];
 
 /// At most this many pairs are listed.
@@ -55,7 +61,7 @@ const OPEN_PAIRS: &str = "FROM library_retag_pairs p \
      JOIN local_albums o ON o.id = p.old_album_id \
      JOIN local_albums n ON n.id = p.new_album_id \
      LEFT JOIN local_albums t ON t.id = n.retired_into_album_id \
-     WHERE p.state = ?1 AND p.reason IN (?2, ?3, ?4) \
+     WHERE p.state = ?1 AND p.reason IN (?2, ?3, ?4, ?5) \
      AND o.retired_into_album_id IS NULL \
      AND (n.retired_into_album_id IS NULL OR t.retired_into_album_id IS NULL) \
      AND COALESCE(n.retired_into_album_id, n.id) <> p.old_album_id";
@@ -67,6 +73,7 @@ pub(super) fn list(conn: &Connection) -> Result<RetagPairList, CorrectionError> 
         SHOWN[0].0.as_str(),
         SHOWN[1].0.as_str(),
         SHOWN[2].0.as_str(),
+        SHOWN[3].0.as_str(),
     ];
     let total: i64 = conn.query_row(&format!("SELECT COUNT(*) {OPEN_PAIRS}"), values, |row| {
         row.get(0)

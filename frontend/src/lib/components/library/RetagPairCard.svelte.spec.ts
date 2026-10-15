@@ -150,6 +150,35 @@ describe('RetagPairCard', () => {
 			.toBeVisible();
 	});
 
+	it('says new files beside a hands-off album are left alone, merged or not', async () => {
+		render(RetagPairCard, {
+			pair: pair({
+				reason: 'replaced_hands_off',
+				editions_differ: false,
+				old_album: side('old', 'Blue Hour', null),
+				new_album: side('new', 'Retagged', null)
+			})
+		});
+
+		await expect
+			.element(
+				page.getByText(
+					'Nothing shows they are one album, so DroppedNeedle has left Retagged alone.',
+					{
+						exact: false
+					}
+				)
+			)
+			.toBeVisible();
+		await expect
+			.element(
+				page.getByText('Retagged stays left unmanaged until you choose "Manage it again".', {
+					exact: false
+				})
+			)
+			.toBeVisible();
+	});
+
 	it('keeps them apart with a dismiss', async () => {
 		render(RetagPairCard, { pair: pair() });
 

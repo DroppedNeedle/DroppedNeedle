@@ -60,8 +60,10 @@ pub struct ManagementHoldView {
     /// `your_choice` when a person chose to leave the album unmanaged.
     /// Otherwise why DroppedNeedle stepped back by itself: `files_changed`
     /// (its files were changed outside DroppedNeedle), `retag_followed`
-    /// (it was retagged outside DroppedNeedle) or `run_undone` (a person
-    /// undid DroppedNeedle's changes to it).
+    /// (it was retagged outside DroppedNeedle), `run_undone` (a person
+    /// undid DroppedNeedle's changes to it) or `replaced_hands_off` (its
+    /// files appeared beside a hands-off album in the scan that saw that
+    /// album's files go).
     pub kind: String,
     /// Since when, unix milliseconds.
     pub held_at: i64,

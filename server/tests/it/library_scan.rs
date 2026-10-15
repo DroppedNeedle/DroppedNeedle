@@ -426,6 +426,9 @@ struct RetagReader {
     ids: std::sync::Mutex<HashMap<String, FileIds>>,
     /// File name, and what happens just before it is read.
     meanwhile: std::sync::Mutex<Option<(String, Meanwhile)>>,
+    /// The length a file reads as, when it has one.
+    lengths: std::sync::Mutex<HashMap<String, f64>>,
+    root: PathBuf,
 }
 
 impl RetagReader {
@@ -440,8 +443,11 @@ impl RetagReader {
 impl TagReader for RetagReader {
     fn read_tags(&self, path: &Path) -> Result<ScannedTags, TagReadError> {
         let name = path.file_name().expect("name").to_string_lossy();
-        let folder = path.parent().and_then(Path::file_name).expect("folder");
-        let relative = format!("{}/{name}", folder.to_string_lossy());
+        let relative = path
+            .strip_prefix(&self.root)
+            .expect("under the root")
+            .to_string_lossy()
+            .into_owned();
         let due = {
             let mut meanwhile = self.meanwhile.lock().expect("meanwhile");
             match meanwhile.as_ref() {
@@ -457,6 +463,12 @@ impl TagReader for RetagReader {
         read.tag.artist = "Artist".to_owned();
         read.tag.album_artist = Some("Artist".to_owned());
         read.tag.album = self.albums.lock().expect("albums")[&relative].clone();
+        read.header.duration_seconds = self
+            .lengths
+            .lock()
+            .expect("lengths")
+            .get(&relative)
+            .copied();
         if let Some(ids) = self.ids.lock().expect("ids").get(&relative) {
             let some = |value: &str| (!value.is_empty()).then(|| value.to_owned());
             read.tag.musicbrainz_release_id = some(&ids.release);
@@ -497,6 +509,8 @@ impl RegroupRig {
             albums: std::sync::Mutex::default(),
             ids: std::sync::Mutex::default(),
             meanwhile: std::sync::Mutex::default(),
+            lengths: std::sync::Mutex::default(),
+            root: root.clone(),
         });
         let registry = RootRegistry::new(
             vec![LibraryRoot::new(
@@ -4169,7 +4183,13 @@ async fn an_album_is_not_joined_without_proof_it_was_replaced() {
         ),
     ];
     for (index, (case, story)) in refusals.into_iter().enumerate() {
-        let (rig, old, _, o, _) = tell(&format!("join-refused-{index}"), story).await;
+        let (rig, old, new, o, _) = tell(&format!("join-refused-{index}"), story).await;
+        if story.custom_on_old {
+            // A custom edition is hands-off: its replacement is held and
+            // offered to a person instead.
+            assert_eq!(rig.hands_off_pairs(), vec![pair(&old, &new)], "{case}");
+            rig.run("DELETE FROM library_retag_pairs WHERE reason = 'replaced_hands_off';");
+        }
         rig.assert_apart(&old, &o, case);
     }
 
@@ -5856,4 +5876,634 @@ async fn an_automatic_link_neither_proves_nor_merges() {
     assert_eq!(rig.retired_into(&proven), None);
     assert_eq!(rig.merges(), 0);
     assert_eq!(rig.track_artist("P/01.flac", 0), proven);
+}
+
+/// How a hands-off brief's old album is kept from the app.
+#[derive(Clone, Copy, PartialEq)]
+enum Hands {
+    Unmanaged,
+    Custom,
+    TakenOver,
+    /// Matched by the app, nothing kept.
+    Automatic,
+}
+
+/// SQL that keeps `album` from the app as `hands` says.
+fn keep(album: &str, hands: Hands) -> String {
+    match hands {
+        Hands::Unmanaged => format!(
+            "{PERSON} INSERT INTO library_management_exclusions (local_album_id, reason, \
+             excluded_by_user_id, excluded_at) VALUES ('{album}', 'by hand', 'u1', 5);"
+        ),
+        Hands::Custom => format!(
+            "{PERSON} INSERT INTO library_custom_edition_manifests (id, local_album_id, \
+             version, release_group_mbid, album_title, album_artist_name, \
+             source_album_revision, input_revision, content_hash, sealed_by_user_id, \
+             sealed_at) VALUES ('m-{album}', '{album}', 1, 'rg-r', 'T', 'A', 1, 'in', 'hash', \
+             'u1', 0); \
+             INSERT INTO library_custom_edition_active (local_album_id, manifest_id, \
+             activated_at) VALUES ('{album}', 'm-{album}', 0);"
+        ),
+        Hands::TakenOver => format!(
+            "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+             VALUES ('{album}', 'files_changed', 0);"
+        ),
+        Hands::Automatic => on_release(album, REL_R),
+    }
+}
+
+/// How a hands-off brief moves the old album's files in one scan.
+#[derive(Clone, Copy)]
+struct Move {
+    hands: Hands,
+    old: &'static str,
+    new: &'static str,
+    /// Put before each file name where it lands.
+    prefix: &'static str,
+    count: usize,
+    /// How many of the old files are moved (the first ones).
+    moved: usize,
+    /// The moved files carry a new album name.
+    retag: bool,
+    /// An album of three files elsewhere in the root, so the mass-missing
+    /// guard holds no scope back.
+    filler: bool,
+    /// Lengths of the old files and of the moved ones, from these seconds.
+    old_lengths: Option<f64>,
+    new_lengths: Option<f64>,
+}
+
+impl Default for Move {
+    fn default() -> Self {
+        Self {
+            hands: Hands::Unmanaged,
+            old: "x/old",
+            new: "x/new",
+            prefix: "",
+            count: 3,
+            moved: 3,
+            retag: true,
+            filler: true,
+            old_lengths: None,
+            new_lengths: None,
+        }
+    }
+}
+
+impl RegroupRig {
+    /// Files `folder/tNNN.flac` tagged with `album`, lengths from `from`
+    /// seconds when given.
+    fn plant(&mut self, folder: &str, count: usize, album: &str, from: Option<f64>) -> Vec<String> {
+        let files: Vec<String> = (0..count)
+            .map(|n| format!("{folder}/t{n:03}.flac"))
+            .collect();
+        self.tag(&files, album);
+        self.lengths(&files, from);
+        files
+    }
+
+    fn lengths(&self, files: &[String], from: Option<f64>) {
+        let mut lengths = self.reader.lengths.lock().expect("lengths");
+        for (n, file) in files.iter().enumerate() {
+            match from {
+                Some(from) => lengths.insert(file.clone(), from + n as f64),
+                None => lengths.remove(file),
+            };
+        }
+    }
+
+    /// Move `files` into `folder` (each name after `prefix`), tagged with
+    /// `album`; no scan. Returns where they landed.
+    fn move_into(
+        &mut self,
+        files: &[String],
+        folder: &str,
+        prefix: &str,
+        album: &str,
+        from: Option<f64>,
+    ) -> Vec<String> {
+        let landed: Vec<String> = files
+            .iter()
+            .map(|file| {
+                let name = file
+                    .rsplit_once('/')
+                    .map_or(file.as_str(), |(_, name)| name);
+                format!("{folder}/{prefix}{name}")
+            })
+            .collect();
+        for file in files {
+            std::fs::remove_file(self.root.join(file)).expect("removed");
+        }
+        self.tag(&landed, album);
+        self.lengths(&landed, from);
+        landed
+    }
+
+    /// Albums held as a hands-off album's replacement.
+    fn held(&self) -> Vec<String> {
+        self.texts(
+            "SELECT local_album_id FROM library_album_takeovers \
+             WHERE cause = 'replaced_hands_off' ORDER BY local_album_id",
+        )
+    }
+
+    /// Open pairs recorded for a hands-off album, as "old>new".
+    fn hands_off_pairs(&self) -> Vec<String> {
+        self.texts(
+            "SELECT old_album_id || '>' || new_album_id FROM library_retag_pairs \
+             WHERE reason = 'replaced_hands_off' AND state = 'open' \
+             ORDER BY old_album_id, new_album_id",
+        )
+    }
+
+    fn texts(&self, sql: &str) -> Vec<String> {
+        let conn = droppedneedle::db::open_connection(&self.db()).expect("side connection opens");
+        let mut statement = conn.prepare(sql).expect(sql);
+        statement
+            .query_map([], |row| row.get(0))
+            .expect(sql)
+            .collect::<rusqlite::Result<_>>()
+            .expect(sql)
+    }
+
+    /// `management_stepped_back` actions for a hands-off replacement.
+    fn hands_off_actions(&self) -> i64 {
+        self.count(
+            "SELECT COUNT(*) FROM library_catalog_actions \
+             WHERE action_kind = 'management_stepped_back' AND reason_code = 'replaced_hands_off'",
+        )
+    }
+}
+
+fn pair(old: &str, new: &str) -> String {
+    format!("{old}>{new}")
+}
+
+/// The story `story` tells: the rig, the old album and the album the first
+/// moved file is on after the scan.
+async fn moved_story(name: &str, story: Move) -> (RegroupRig, String, String) {
+    let mut rig = RegroupRig::new(name);
+    let before = rig.before.clone();
+    let files = rig.plant(story.old, story.count, &before, story.old_lengths);
+    if story.filler {
+        rig.plant("filler", 3, "Filler", None);
+    }
+    rig.scan().await;
+    let old = rig.album_of(&files[0]);
+    rig.run(&keep(&old, story.hands));
+    let album = if story.retag {
+        rig.after.clone()
+    } else {
+        before
+    };
+    let lengths = story.new_lengths.or(story.old_lengths);
+    let landed = rig.move_into(
+        &files[..story.moved],
+        story.new,
+        story.prefix,
+        &album,
+        lengths,
+    );
+    rig.scan().await;
+    let new = rig.album_of(&landed[0]);
+    (rig, old, new)
+}
+
+/// New files that appear beside an album a person keeps from the app, in
+/// the scan that sees that album's files go, are held from automatic
+/// writes as that album's replacement; when the old album is empty and
+/// the only one they fit, the two are offered as a pair.
+#[tokio::test]
+async fn new_files_beside_a_hands_off_album_are_held() {
+    let rows = [
+        (
+            "renamed in its folder",
+            Move {
+                new: "x/old",
+                prefix: "r-",
+                ..Move::default()
+            },
+            true,
+        ),
+        ("moved beside it", Move::default(), true),
+        (
+            "at the top level",
+            Move {
+                old: "old",
+                new: "new",
+                ..Move::default()
+            },
+            true,
+        ),
+        (
+            "a custom edition",
+            Move {
+                hands: Hands::Custom,
+                ..Move::default()
+            },
+            true,
+        ),
+        (
+            "taken over",
+            Move {
+                hands: Hands::TakenOver,
+                ..Move::default()
+            },
+            true,
+        ),
+        (
+            "two of five, three left",
+            Move {
+                count: 5,
+                moved: 2,
+                ..Move::default()
+            },
+            false,
+        ),
+        (
+            "lengths that fit",
+            Move {
+                old_lengths: Some(100.0),
+                ..Move::default()
+            },
+            true,
+        ),
+    ];
+    for (index, (case, story, paired)) in rows.into_iter().enumerate() {
+        let (rig, old, new) = moved_story(&format!("hands-off-held-{index}"), story).await;
+        assert_ne!(old, new, "{case}: a new album");
+        assert_eq!(rig.held(), vec![new.clone()], "{case}");
+        let pairs = if paired {
+            vec![pair(&old, &new)]
+        } else {
+            vec![]
+        };
+        assert_eq!(rig.hands_off_pairs(), pairs, "{case}");
+        assert_eq!(rig.retired_into(&old), None, "{case}");
+    }
+
+    // Half of twenty files retagged and renamed beside, the rest deleted:
+    // the mass-missing guard holds the scope back and the old rows stay
+    // indexed. Held, with no pair while the old album still has rows.
+    let (mut rig, _, files) = kept_album("hands-off-held-guard", 20).await;
+    let after = rig.after.clone();
+    let landed = rig.move_into(&files[..10], "x/new", "", &after, None);
+    for file in &files[10..] {
+        std::fs::remove_file(rig.root.join(file)).expect("removed");
+    }
+    rig.scan().await;
+    assert_eq!(
+        rig.count(
+            "SELECT COUNT(*) FROM library_scan_failures WHERE failure_code = 'MASS_MISSING_GUARD'"
+        ),
+        1,
+        "the guard held the scope back"
+    );
+    assert_eq!(rig.held(), vec![rig.album_of(&landed[0])], "guard");
+    assert!(rig.hands_off_pairs().is_empty(), "guard");
+
+    // Held once: a second run end writes nothing more, and a hand-back
+    // (the mark lifted) is not undone by a later scan.
+    let (rig, old, new) = moved_story("hands-off-held-once", Move::default()).await;
+    assert_eq!(rig.hands_off_actions(), 1);
+    rig.scan().await;
+    assert_eq!(rig.hands_off_actions(), 1);
+    assert_eq!(rig.hands_off_pairs(), vec![pair(&old, &new)]);
+    rig.run(&format!(
+        "DELETE FROM library_album_takeovers WHERE local_album_id = '{new}'"
+    ));
+    rig.scan().await;
+    assert!(rig.held().is_empty());
+    assert_eq!(rig.hands_off_actions(), 1);
+}
+
+/// Each row lifts one condition of the plain story ("moved beside it"),
+/// which holds: nothing is held or recorded.
+#[tokio::test]
+async fn new_files_are_not_held_without_the_signal() {
+    let rows = [
+        (
+            "an automatic match, nothing kept",
+            Move {
+                hands: Hands::Automatic,
+                ..Move::default()
+            },
+        ),
+        (
+            "a folder not beside the old one",
+            Move {
+                new: "y/new",
+                ..Move::default()
+            },
+        ),
+        (
+            "moved and renamed, tags unchanged",
+            Move {
+                retag: false,
+                ..Move::default()
+            },
+        ),
+        (
+            "retagged in place",
+            Move {
+                new: "x/old",
+                ..Move::default()
+            },
+        ),
+        (
+            "lengths that fit no lost file",
+            Move {
+                old_lengths: Some(100.0),
+                new_lengths: Some(500.0),
+                ..Move::default()
+            },
+        ),
+    ];
+    for (index, (case, story)) in rows.into_iter().enumerate() {
+        let (rig, _, _) = moved_story(&format!("hands-off-not-{index}"), story).await;
+        assert!(rig.held().is_empty(), "{case}");
+        assert!(rig.hands_off_pairs().is_empty(), "{case}");
+        assert_eq!(rig.hands_off_actions(), 0, "{case}");
+    }
+}
+
+/// A hands-off album of `count` files in `x/old`, in a rig with a filler
+/// album: the rig, the album and its files.
+async fn kept_album(name: &str, count: usize) -> (RegroupRig, String, Vec<String>) {
+    let mut rig = RegroupRig::new(name);
+    let before = rig.before.clone();
+    let files = rig.plant("x/old", count, &before, None);
+    rig.plant("filler", 3, "Filler", None);
+    rig.scan().await;
+    let old = rig.album_of(&files[0]);
+    rig.run(&keep(&old, Hands::Unmanaged));
+    (rig, old, files)
+}
+
+/// A retag spread over scans: held at the first scan's end, the pair once
+/// the old album is empty.
+#[tokio::test]
+async fn a_retag_two_scans_see_is_held_then_paired() {
+    let (mut rig, old, files) = kept_album("hands-off-two-runs", 4).await;
+    let after = rig.after.clone();
+    let landed = rig.move_into(&files[..2], "x/new", "", &after, None);
+    rig.scan().await;
+    let new = rig.album_of(&landed[0]);
+    assert_eq!(rig.held(), vec![new.clone()], "first sitting");
+    assert!(rig.hands_off_pairs().is_empty(), "first sitting");
+    rig.move_into(&files[2..], "x/new", "", &after, None);
+    rig.scan().await;
+    assert_eq!(rig.held(), vec![new.clone()], "second sitting");
+    assert_eq!(
+        rig.hands_off_pairs(),
+        vec![pair(&old, &new)],
+        "second sitting"
+    );
+
+    // Two retagged and renamed, then the other three deleted.
+    // With real lengths: the files deleted later fit none of the new ones.
+    let (mut rig, old, files) = kept_album("hands-off-delete-rest", 5).await;
+    let before = rig.before.clone();
+    rig.tag(&files, &before);
+    rig.lengths(&files, Some(100.0));
+    rig.scan().await;
+    let after = rig.after.clone();
+    let landed = rig.move_into(&files[..2], "x/new", "", &after, Some(100.0));
+    rig.scan().await;
+    let new = rig.album_of(&landed[0]);
+    assert_eq!(rig.held(), vec![new.clone()], "retagged");
+    assert!(rig.hands_off_pairs().is_empty(), "retagged");
+    rig.lose(&files[2..]).await;
+    assert_eq!(
+        rig.hands_off_pairs(),
+        vec![pair(&old, &new)],
+        "the rest deleted"
+    );
+}
+
+/// Copying first and deleting later (or the reverse) is two scans: the
+/// new files are not held. Both in one scan, they are.
+#[tokio::test]
+async fn new_files_and_the_loss_in_different_scans_are_not_held() {
+    for (case, copy_first) in [("copy first", true), ("delete first", false)] {
+        let (mut rig, _, files) = kept_album(&format!("hands-off-apart-{copy_first}"), 3).await;
+        let after = rig.after.clone();
+        let copies: Vec<String> = files
+            .iter()
+            .map(|file| file.replace("x/old", "x/new"))
+            .collect();
+        if copy_first {
+            rig.tag(&copies, &after);
+            rig.scan().await;
+            rig.lose(&files).await;
+        } else {
+            rig.lose(&files).await;
+            rig.tag(&copies, &after);
+            rig.scan().await;
+        }
+        assert!(rig.held().is_empty(), "{case}");
+        assert!(rig.hands_off_pairs().is_empty(), "{case}");
+    }
+    let (mut rig, old, files) = kept_album("hands-off-apart-twin", 3).await;
+    let after = rig.after.clone();
+    let landed = rig.move_into(&files, "x/new", "", &after, None);
+    rig.scan().await;
+    let new = rig.album_of(&landed[0]);
+    assert_eq!(rig.held(), vec![new.clone()], "one scan");
+    assert_eq!(rig.hands_off_pairs(), vec![pair(&old, &new)], "one scan");
+}
+
+/// A new album that also took a track from another album is not a
+/// replacement; without that track it is.
+#[tokio::test]
+async fn a_new_album_holding_a_moved_track_is_not_held() {
+    for moved_onto in [true, false] {
+        let mut rig = RegroupRig::new(&format!("hands-off-moved-onto-{moved_onto}"));
+        let before = rig.before.clone();
+        let files = rig.plant("x/old", 3, &before, None);
+        rig.plant("filler", 3, "Filler", None);
+        let other = vec!["x/new/c.flac".to_owned()];
+        rig.tag(&other, "Other");
+        rig.scan().await;
+        let old = rig.album_of(&files[0]);
+        rig.run(&keep(&old, Hands::Unmanaged));
+        let after = rig.after.clone();
+        let landed = rig.move_into(&files, "x/new", "", &after, None);
+        if moved_onto {
+            rig.tag(&other, &after);
+        }
+        rig.scan().await;
+        let new = rig.album_of(&landed[0]);
+        if moved_onto {
+            assert!(rig.held().is_empty(), "a track moved onto it");
+        } else {
+            assert_eq!(rig.held(), vec![new], "only new files");
+        }
+    }
+}
+
+/// One album split into two new ones beside it: both held, two pairs.
+/// Two hands-off albums losing files beside one new album: held, with no
+/// pair while both fit it, and a pair with the one it fits by length. At
+/// the top level, an album deleted and two unrelated ones copied in: held
+/// only where the lengths fit.
+#[tokio::test]
+async fn splits_and_several_albums_beside() {
+    let (mut rig, old, files) = kept_album("hands-off-split", 4).await;
+    let first = rig.move_into(&files[..2], "x/one", "", "One", None);
+    let second = rig.move_into(&files[2..], "x/two", "", "Two", None);
+    rig.scan().await;
+    let (one, two) = (rig.album_of(&first[0]), rig.album_of(&second[0]));
+    let mut held = vec![one.clone(), two.clone()];
+    held.sort();
+    assert_eq!(rig.held(), held, "split");
+    let mut pairs = vec![pair(&old, &one), pair(&old, &two)];
+    pairs.sort();
+    assert_eq!(rig.hands_off_pairs(), pairs, "split");
+
+    for fits_one in [false, true] {
+        let mut rig = RegroupRig::new(&format!("hands-off-two-old-{fits_one}"));
+        let lengths = |from: f64| fits_one.then_some(from);
+        let first = rig.plant("x/one", 2, "First", lengths(100.0));
+        let second = rig.plant("x/two", 2, "Second", lengths(200.0));
+        rig.plant("filler", 3, "Filler", None);
+        rig.scan().await;
+        let (a1, a2) = (rig.album_of(&first[0]), rig.album_of(&second[0]));
+        rig.run(&keep(&a1, Hands::Unmanaged));
+        rig.run(&keep(&a2, Hands::Unmanaged));
+        let after = rig.after.clone();
+        let landed = if fits_one {
+            for file in &second {
+                std::fs::remove_file(rig.root.join(file)).expect("removed");
+            }
+            rig.move_into(&first, "x/new", "", &after, lengths(100.0))
+        } else {
+            let mut all = first.clone();
+            all.extend(second.clone());
+            rig.move_into(&all, "x/new", "", &after, None)
+        };
+        rig.scan().await;
+        let new = rig.album_of(&landed[0]);
+        assert_eq!(rig.held(), vec![new.clone()], "fits one: {fits_one}");
+        let pairs = if fits_one {
+            vec![pair(&a1, &new)]
+        } else {
+            vec![]
+        };
+        assert_eq!(rig.hands_off_pairs(), pairs, "fits one: {fits_one}");
+    }
+
+    for fits in [false, true] {
+        let mut rig = RegroupRig::new(&format!("hands-off-flat-{fits}"));
+        let files = rig.plant("X - Live", 2, "Live", Some(100.0));
+        rig.plant("filler", 3, "Filler", None);
+        rig.scan().await;
+        let old = rig.album_of(&files[0]);
+        rig.run(&keep(&old, Hands::Unmanaged));
+        for file in &files {
+            std::fs::remove_file(rig.root.join(file)).expect("removed");
+        }
+        let length = if fits { 100.0 } else { 300.0 };
+        let y = rig.plant("Y - New", 2, "New", Some(length));
+        rig.plant("Z - Other", 2, "Other", Some(400.0));
+        rig.scan().await;
+        if fits {
+            let new = rig.album_of(&y[0]);
+            assert_eq!(rig.held(), vec![new.clone()], "flat, fits");
+            assert_eq!(rig.hands_off_pairs(), vec![pair(&old, &new)], "flat, fits");
+        } else {
+            assert!(rig.held().is_empty(), "flat");
+            assert!(rig.hands_off_pairs().is_empty(), "flat");
+        }
+    }
+}
+
+/// A 300-file hands-off album retagged into `b/` over two windows, with
+/// `meanwhile` run between them (or the scan stopped there): the rig, the
+/// old album and the new one.
+async fn big_retag(
+    name: &str,
+    meanwhile: Option<&str>,
+    stop: bool,
+) -> (RegroupRig, String, String) {
+    let (mut rig, files, old) = big_album(name).await;
+    rig.run(&keep(&old, Hands::Unmanaged));
+    let after = rig.after.clone();
+    let landed = rig.move_into(&files, "b", "", &after, None);
+    if let Some(sql) = meanwhile {
+        rig.meanwhile_sql(sql.to_owned());
+    }
+    if stop {
+        rig.stop_before(LAST_FILE);
+        assert_eq!(rig.scan_to_its_end().await.state, ScanState::Cancelled);
+    } else {
+        rig.scan().await;
+    }
+    let new = rig.album_of(&landed[0]);
+    (rig, old, new)
+}
+
+/// A large retag: held when the scan stops after its first window (the
+/// pair at the next scan's end); not held when a person chose the new
+/// album's match while it ran, or its first rows came from an import.
+#[tokio::test]
+async fn a_large_retag_is_held_by_what_the_scan_saw() {
+    let (rig, old, new) = big_retag("hands-off-big-stopped", None, true).await;
+    assert_eq!(rig.held(), vec![new.clone()], "stopped");
+    assert!(rig.hands_off_pairs().is_empty(), "stopped");
+    rig.scan().await;
+    assert_eq!(
+        rig.hands_off_pairs(),
+        vec![pair(&old, &new)],
+        "the next scan"
+    );
+
+    let (rig, _, new) = big_retag("hands-off-big-twin", None, false).await;
+    assert_eq!(rig.held(), vec![new], "the twin");
+
+    let chosen = "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_at) \
+         SELECT DISTINCT local_album_id, 'musicbrainz', 'rg-1', 'rel-1', 'manual', 0 \
+         FROM local_tracks WHERE relative_path LIKE 'b/%';";
+    let imported = "UPDATE local_tracks SET ingest_source = 'download' \
+         WHERE relative_path LIKE 'b/%';";
+    for (index, (case, sql)) in [("a person's match", chosen), ("imported rows", imported)]
+        .into_iter()
+        .enumerate()
+    {
+        let (rig, _, _) = big_retag(&format!("hands-off-big-{index}"), Some(sql), false).await;
+        assert!(rig.held().is_empty(), "{case}");
+        assert!(rig.hands_off_pairs().is_empty(), "{case}");
+    }
+}
+
+/// An album only taken over (no "leave unmanaged"), matched to an edition:
+/// its replacement is held, and paired once the old files are marked
+/// missing. Once the new album is matched to the same edition, the join on
+/// proof still goes ahead and the new album stays held. Matched to another
+/// edition, the two stay a pair.
+#[tokio::test]
+async fn a_taken_over_album_is_still_joined_on_proof() {
+    for same in [true, false] {
+        let (mut rig, old, old_rows) = mapped_album(&format!("hands-off-proof-{same}"), 2).await;
+        rig.run(&keep(&old, Hands::TakenOver));
+        let after = rig.after.clone();
+        let new_rows = rig.replace(&[0, 1], "b", &after).await;
+        let new = rig.album_of("b/t000.flac");
+        assert_eq!(rig.held(), vec![new.clone()], "held at once");
+        rig.scan().await;
+        assert_eq!(rig.hands_off_pairs(), vec![pair(&old, &new)], "paired");
+        let rows: Vec<(&str, usize)> = new_rows.iter().map(String::as_str).zip(0..).collect();
+        rig.match_rows(&new, if same { REL_R } else { "rel-other" }, &rows);
+        rig.scan().await;
+        assert_eq!(rig.mark_of(&new).as_deref(), Some("replaced_hands_off"));
+        if same {
+            assert_eq!(rig.retired_into(&old).as_deref(), Some(new.as_str()));
+            assert_eq!(rig.stars_and_aliases(&old_rows[0]).0, 0);
+            assert_eq!(rig.stars_and_aliases(&new_rows[0]).0, 1);
+        } else {
+            assert_eq!(rig.retired_into(&old), None);
+            assert_eq!(rig.hands_off_pairs(), vec![pair(&old, &new)]);
+        }
+    }
 }

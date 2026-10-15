@@ -727,6 +727,11 @@ pub enum RetagPairReasonView {
     TracksElsewhere,
     /// The old album holds a custom edition, which does not carry over.
     CustomEdition,
+    /// The old album was left unmanaged, kept as a custom edition or
+    /// stepped back from, and lost its files in the scan in which the new
+    /// album's files appeared beside it. Nothing shows they are one
+    /// album, so the new album is left alone until "Manage it again".
+    ReplacedHandsOff,
 }
 
 /// One album of a retag pair.
@@ -819,6 +824,7 @@ fn pair_view(pair: RetagPair) -> RetagPairView {
             PairReason::ChosenMatchesDiffer => RetagPairReasonView::ChosenMatchesDiffer,
             PairReason::TracksElsewhere => RetagPairReasonView::TracksElsewhere,
             PairReason::CustomEdition => RetagPairReasonView::CustomEdition,
+            PairReason::ReplacedHandsOff => RetagPairReasonView::ReplacedHandsOff,
         },
         editions_differ: pair.editions_differ,
         recorded_at: pair.recorded_at,

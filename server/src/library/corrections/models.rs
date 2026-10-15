@@ -232,6 +232,9 @@ pub enum PairReason {
     TracksElsewhere,
     /// The old album holds a custom edition.
     CustomEdition,
+    /// New files appeared beside a hands-off album in the scan that saw
+    /// its files go.
+    ReplacedHandsOff,
 }
 
 /// Two album rows the scan would not join, waiting for a person.

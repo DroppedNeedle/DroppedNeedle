@@ -1592,6 +1592,145 @@ async fn remap_queue_keeps_its_rows_and_takes_place_only() {
     );
 }
 
+/// Migration 0052 rebuilds the takeover marks and the retag pairs to take
+/// `replaced_hands_off`. A database from before it keeps every row and
+/// column; the new value is taken by both, one nobody named is refused by
+/// both, both still go with their album, stay STRICT and keep the index.
+#[tokio::test]
+async fn takeovers_and_retag_pairs_take_replaced_hands_off() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 52)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+         ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1), \
+         ('al2', 'r1', 'g2', 'T', 't', 'a1', 'automatic', 1, 1), \
+         ('al3', 'r1', 'g3', 'T', 't', 'a1', 'automatic', 1, 1), \
+         ('al4', 'r1', 'g4', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at, \
+         handed_back_at, hand_back_tries, hand_back_retry_at) VALUES \
+         ('al1', 'files_changed', 10, 20, 2, 30), ('al2', 'run_undone', 11, NULL, 0, NULL); \
+         INSERT INTO library_retag_pairs (old_album_id, new_album_id, reason, state, \
+         recorded_at, updated_at) VALUES ('al1', 'al2', 'tracks_elsewhere', 'dismissed', 5, 6);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    type Mark = (String, String, i64, Option<i64>, i64, Option<i64>);
+    let marks: Vec<Mark> = sqlx::query_as(
+        "SELECT local_album_id, cause, noticed_at, handed_back_at, hand_back_tries, \
+         hand_back_retry_at FROM library_album_takeovers ORDER BY local_album_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        marks,
+        vec![
+            (
+                "al1".to_owned(),
+                "files_changed".to_owned(),
+                10,
+                Some(20),
+                2,
+                Some(30)
+            ),
+            ("al2".to_owned(), "run_undone".to_owned(), 11, None, 0, None),
+        ]
+    );
+    let pairs: Vec<(String, String, String, String, i64, i64)> = sqlx::query_as(
+        "SELECT old_album_id, new_album_id, reason, state, recorded_at, updated_at \
+         FROM library_retag_pairs",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        pairs,
+        vec![(
+            "al1".to_owned(),
+            "al2".to_owned(),
+            "tracks_elsewhere".to_owned(),
+            "dismissed".to_owned(),
+            5,
+            6
+        )]
+    );
+
+    sqlx::raw_sql(
+        "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+         VALUES ('al3', 'replaced_hands_off', 12); \
+         INSERT INTO library_retag_pairs (old_album_id, new_album_id, reason, state, \
+         recorded_at, updated_at) VALUES ('al4', 'al3', 'replaced_hands_off', 'open', 7, 7);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    for refused in [
+        "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+         VALUES ('al4', 'x', 1)",
+        "INSERT INTO library_retag_pairs (old_album_id, new_album_id, reason, state, \
+         recorded_at, updated_at) VALUES ('al3', 'al4', 'x', 'open', 1, 1)",
+        "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+         VALUES ('al4', 'files_changed', 'soon')",
+    ] {
+        assert!(
+            sqlx::raw_sql(refused).execute(&pool).await.is_err(),
+            "{refused}"
+        );
+    }
+
+    sqlx::raw_sql("DELETE FROM local_albums WHERE id = 'al3'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let left: (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM library_album_takeovers WHERE local_album_id = 'al3'), \
+         (SELECT COUNT(*) FROM library_retag_pairs WHERE new_album_id = 'al3')",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(left, (0, 0));
+
+    let index: Option<String> = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' \
+         AND name = 'idx_library_retag_pairs_new' AND tbl_name = 'library_retag_pairs'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(index.is_some_and(|sql| sql.contains("(new_album_id)")));
+    for table in ["library_album_takeovers", "library_retag_pairs"] {
+        let sql: String =
+            sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1")
+                .bind(table)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(sql.trim_end().ends_with("STRICT"), "{table}: {sql}");
+    }
+}
+
 /// The origins a remap may carry in the database are exactly the ones the
 /// code names, in both directions.
 #[tokio::test]

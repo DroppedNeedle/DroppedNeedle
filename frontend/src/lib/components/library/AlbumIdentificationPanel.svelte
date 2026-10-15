@@ -111,6 +111,11 @@
 					heading: "You undid DroppedNeedle's changes to this album",
 					body: `It has left the files alone since ${since}.`
 				};
+			case 'replaced_hands_off':
+				return {
+					heading: 'These files may be your retag of another album',
+					body: `They appeared on ${since} next to an album DroppedNeedle was not managing, in the same scan that saw that album's files go. DroppedNeedle has left them alone in case you retagged them by hand.`
+				};
 			case 'your_choice':
 				return {
 					heading: 'You chose to leave this album unmanaged',

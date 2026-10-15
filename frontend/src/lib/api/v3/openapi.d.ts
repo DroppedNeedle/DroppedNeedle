@@ -16943,8 +16943,10 @@ export interface components {
              * @description `your_choice` when a person chose to leave the album unmanaged.
              *     Otherwise why DroppedNeedle stepped back by itself: `files_changed`
              *     (its files were changed outside DroppedNeedle), `retag_followed`
-             *     (it was retagged outside DroppedNeedle) or `run_undone` (a person
-             *     undid DroppedNeedle's changes to it).
+             *     (it was retagged outside DroppedNeedle), `run_undone` (a person
+             *     undid DroppedNeedle's changes to it) or `replaced_hands_off` (its
+             *     files appeared beside a hands-off album in the scan that saw that
+             *     album's files go).
              */
             kind: string;
         };
@@ -17415,7 +17417,10 @@ export interface components {
             album_id: string;
             album_title: string;
             artist_name?: string | null;
-            /** @description `files_changed`, `retag_followed` or `run_undone`. */
+            /**
+             * @description `files_changed`, `retag_followed`, `run_undone` or
+             *     `replaced_hands_off`.
+             */
             cause: string;
             /**
              * Format: int64
@@ -20681,7 +20686,7 @@ export interface components {
          * @description Why the scan left a retag pair for a person.
          * @enum {string}
          */
-        RetagPairReasonView: "chosen_matches_differ" | "tracks_elsewhere" | "custom_edition";
+        RetagPairReasonView: "chosen_matches_differ" | "tracks_elsewhere" | "custom_edition" | "replaced_hands_off";
         /**
          * @description Two album rows that look like one retagged album, which the scan would
          *     not join by itself.

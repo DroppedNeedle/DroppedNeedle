@@ -54,16 +54,26 @@ pub enum Cause {
     RetagFollowed,
     /// A person undid a run of the album's profile.
     RunUndone,
+    /// New files appeared beside an album left unmanaged, kept as a custom
+    /// edition or stepped back from, in the scan that saw that album's
+    /// files go: they may be a person's retag of it.
+    ReplacedHandsOff,
 }
 
 impl Cause {
-    pub const ALL: [Self; 3] = [Self::FilesChanged, Self::RetagFollowed, Self::RunUndone];
+    pub const ALL: [Self; 4] = [
+        Self::FilesChanged,
+        Self::RetagFollowed,
+        Self::RunUndone,
+        Self::ReplacedHandsOff,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::FilesChanged => "files_changed",
             Self::RetagFollowed => "retag_followed",
             Self::RunUndone => "run_undone",
+            Self::ReplacedHandsOff => "replaced_hands_off",
         }
     }
 

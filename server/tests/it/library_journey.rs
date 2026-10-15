@@ -14396,3 +14396,318 @@ async fn credits_and_names_come_in_one_lookup() {
         )]
     );
 }
+
+impl ManagedLibrary {
+    /// Retag every one of `tracks` outside the app to the album "Retagged"
+    /// with its MusicBrainz ids removed, and rename it `NN renamed.flac`:
+    /// in its own folder, or in the folder `sibling` next to it. Scans, and
+    /// returns the new rows in order.
+    async fn retag_by_hand(&self, tracks: &[String], sibling: Option<&str>) -> Vec<String> {
+        use droppedneedle::library::tags::{TagEdit, TagField, save_tags};
+        let mut moved = Vec::new();
+        for (index, track) in tracks.iter().enumerate() {
+            let from = self.path(track);
+            let mut edits = vec![TagEdit::verbatim(
+                TagField::Album,
+                vec!["Retagged".to_owned()],
+            )];
+            edits.extend(
+                [
+                    TagField::MusicBrainzReleaseId,
+                    TagField::MusicBrainzReleaseGroupId,
+                    TagField::MusicBrainzReleaseTrackId,
+                    TagField::MusicBrainzRecordingId,
+                ]
+                .map(|field| TagEdit::verbatim(field, Vec::new())),
+            );
+            save_tags(&from, &edits).expect("retagged outside the app");
+            let folder = from.parent().expect("album folder");
+            let folder = match sibling {
+                Some(name) => folder.parent().expect("parent folder").join(name),
+                None => folder.to_path_buf(),
+            };
+            let dest = folder.join(format!("{:02} renamed.flac", index + 1));
+            std::fs::create_dir_all(&folder).expect("mkdir");
+            std::fs::rename(&from, &dest).expect("renamed outside the app");
+            moved.push(
+                dest.strip_prefix(&self.music)
+                    .expect("under the root")
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
+        rescan(&self.library).await;
+        moved
+            .iter()
+            .map(|path| indexed_at(&self.library, path))
+            .collect()
+    }
+
+    fn edition_revision(&self, album: &str) -> i64 {
+        use rusqlite::OptionalExtension as _;
+        self.db()
+            .query_row(
+                "SELECT row_revision FROM local_album_external_identities \
+                 WHERE local_album_id = ?1",
+                [album],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("edition reads")
+            .unwrap_or(0)
+    }
+
+    /// Identification of `album` run until it is idle, MusicBrainz
+    /// offering two editions its files fit, and the match confirmed.
+    async fn identify_and_confirm(&self, album: &str) {
+        let mut recall = ambiguous_recall(&self.library.identify_store, album);
+        for (edition, release) in recall.releases.iter_mut().enumerate() {
+            release.id = format!("000000ff-{edition:04x}-4111-8111-111111111111");
+            release.release_group_id = format!("rg-ff-{edition}");
+        }
+        self.library
+            .test_providers
+            .as_ref()
+            .expect("scripted providers")
+            .set_recall(recall);
+        while self.library.identify_tick().await > 0 {}
+        droppedneedle::library::operations::service::Operations::new(&self.library)
+            .confirm_match(album, "admin")
+            .expect("match confirmed");
+    }
+
+    fn bytes(&self, tracks: &[String]) -> Vec<String> {
+        tracks
+            .iter()
+            .map(|track| file_sha256(&self.path(track)))
+            .collect()
+    }
+}
+
+/// An album the app wrote, then left unmanaged by a person, whose files
+/// are retagged outside the app to a new name with their MusicBrainz ids
+/// removed and renamed in their folder: the new album is identified like
+/// any other, and automatic management leaves its files alone. The two
+/// are offered as a pair; the old album keeps its id, "leave unmanaged",
+/// star and rows. "Manage it again" writes the new album, and a later scan
+/// does not hold it again.
+#[tokio::test]
+async fn files_retagged_in_place_of_an_unmanaged_album_are_left_alone() {
+    use droppedneedle::library::corrections::Corrections;
+    use droppedneedle::library::corrections::models::PairReason;
+    use droppedneedle::library::mutations::Mutations;
+    use droppedneedle::library::operations::service::Operations;
+
+    let managed = ManagedLibrary::start("lib-hands-off-replaced", |_| {}).await;
+    let (album, old) = managed.add_album("first", 2).await;
+    managed.add_album("filler", 1).await;
+    managed.activate().await;
+    managed.look(&album).await;
+    rescan(&managed.library).await;
+    managed.worker_looks().await;
+    assert!(
+        managed.recorded(&old[0]).is_some(),
+        "the app wrote the files"
+    );
+    Operations::new(&managed.library)
+        .leave_unmanaged(&album, managed.edition_revision(&album), "admin")
+        .expect("left unmanaged");
+    let db = managed.db();
+    db.execute(
+        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('listener', 'album', ?1, 1)",
+        [&album],
+    )
+    .expect("album starred");
+
+    let new = managed.retag_by_hand(&old, None).await;
+    let replacement = managed.album_of(&new[0]);
+    assert_ne!(replacement, album, "an album row of its own");
+    let bytes = managed.bytes(&new);
+    managed.identify_and_confirm(&replacement).await;
+    // A plan is made on one look and applied on the next.
+    managed.look(&replacement).await;
+    managed.worker_looks().await;
+
+    assert_eq!(managed.bytes(&new), bytes, "nothing written");
+    assert_eq!(
+        managed.mark(&replacement).as_deref(),
+        Some("replaced_hands_off")
+    );
+    assert_eq!(
+        managed.count(&format!(
+            "SELECT COUNT(*) FROM library_management_automatic_queue \
+             WHERE local_album_id = '{replacement}' AND last_reason_code = 'TAKEN_OVER'"
+        )),
+        1,
+        "parked"
+    );
+    let corrections = Corrections::new(&managed.library);
+    let listed = corrections.retag_pairs().expect("pairs listed");
+    let pairs: Vec<_> = listed
+        .pairs
+        .iter()
+        .map(|pair| {
+            (
+                pair.old_album.id.clone(),
+                pair.new_album.id.clone(),
+                pair.reason,
+            )
+        })
+        .collect();
+    assert_eq!(
+        pairs,
+        vec![(
+            album.clone(),
+            replacement.clone(),
+            PairReason::ReplacedHandsOff
+        )]
+    );
+    let stepped_back = format!(
+        "SELECT COUNT(*) FROM library_catalog_actions WHERE action_kind = \
+         'management_stepped_back' AND local_album_id = '{replacement}' \
+         AND reason_code = 'replaced_hands_off'"
+    );
+    assert_eq!(managed.count(&stepped_back), 1);
+    assert_eq!(retired_into(&db, &album), None);
+    assert_eq!(
+        managed.count(&format!(
+            "SELECT (SELECT COUNT(*) FROM library_management_exclusions \
+             WHERE local_album_id = '{album}') + (SELECT COUNT(*) FROM library_user_favorites \
+             WHERE item_kind = 'album' AND item_id = '{album}')"
+        )),
+        2,
+        "the old album keeps its choice and its star"
+    );
+    for track in &old {
+        assert_eq!(album_row(&db, track), album);
+        assert_eq!(where_gone(&db, track).1, "missing");
+    }
+
+    let all_actions = "SELECT COUNT(*) FROM library_catalog_actions";
+    let actions = managed.count(all_actions);
+    rescan(&managed.library).await;
+    managed.worker_looks().await;
+    assert_eq!(
+        managed.count(all_actions),
+        actions,
+        "a second scan writes nothing"
+    );
+    assert_eq!(corrections.retag_pairs().expect("pairs listed").total, 1);
+
+    assert!(
+        Mutations::new(&managed.library)
+            .hand_back_management(&replacement, "admin")
+            .expect("hand-back answers")
+    );
+    managed.worker_looks().await;
+    managed.worker_looks().await;
+    assert_ne!(managed.bytes(&new), bytes, "written once handed back");
+    rescan(&managed.library).await;
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&replacement), None, "not held again");
+}
+
+/// A custom edition whose files are retagged by hand and renamed into a
+/// folder next to its own: the new album is held and offered as a pair.
+/// Merging them retires the old album into the new one, drops the custom
+/// edition with a review on the new album, and leaves it held.
+#[tokio::test]
+async fn a_custom_edition_replaced_by_hand_is_merged_by_a_person() {
+    use droppedneedle::library::corrections::Corrections;
+    use droppedneedle::library::corrections::models::{PairJoinRequest, PairReason};
+    use droppedneedle::library::operations::service::Operations;
+
+    let managed = ManagedLibrary::start("lib-hands-off-custom", |_| {}).await;
+    // One file: the fixture's own track number would repeat on a second.
+    let (album, old) = managed.add_album("first", 1).await;
+    managed.add_album("filler", 1).await;
+    managed.activate().await;
+    // A custom edition is sealed under a real release group id.
+    let group = "aaaaaaaa-0000-4000-8000-000000000001";
+    managed
+        .db()
+        .execute(
+            "UPDATE local_album_external_identities SET release_group_mbid = ?2 \
+             WHERE local_album_id = ?1",
+            [&album, group],
+        )
+        .expect("group id");
+    let mut recall = ambiguous_recall(&managed.library.identify_store, &album);
+    for release in &mut recall.releases {
+        release.release_group_id = group.to_owned();
+    }
+    managed
+        .library
+        .test_providers
+        .as_ref()
+        .expect("scripted providers")
+        .set_recall(recall);
+    Operations::new(&managed.library)
+        .seal_custom_edition(&album, REL_1, managed.edition_revision(&album), "admin")
+        .await
+        .expect("custom edition sealed");
+
+    let new = managed.retag_by_hand(&old, Some("Retagged")).await;
+    let replacement = managed.album_of(&new[0]);
+    assert_ne!(replacement, album, "an album row of its own");
+    managed.identify_and_confirm(&replacement).await;
+    assert_eq!(
+        managed.mark(&replacement).as_deref(),
+        Some("replaced_hands_off")
+    );
+    let corrections = Corrections::new(&managed.library);
+    let listed = corrections.retag_pairs().expect("pairs listed");
+    assert_eq!(listed.pairs.len(), 1);
+    let pair = &listed.pairs[0];
+    assert_eq!(
+        (pair.old_album.id.as_str(), pair.new_album.id.as_str()),
+        (album.as_str(), replacement.as_str())
+    );
+    assert_eq!(pair.reason, PairReason::ReplacedHandsOff);
+    assert!(
+        pair.old_album
+            .edition
+            .as_ref()
+            .is_some_and(|edition| edition.custom)
+    );
+    corrections
+        .join_retag_pair(&PairJoinRequest {
+            old_album_id: album.clone(),
+            new_album_id: replacement.clone(),
+            keep_edition_of: None,
+            expected_identity_revisions: std::collections::BTreeMap::from([
+                (album.clone(), pair.old_album.identity_revision),
+                (replacement.clone(), pair.new_album.identity_revision),
+            ]),
+            actor: "admin".to_owned(),
+        })
+        .expect("joined");
+
+    let db = managed.db();
+    assert_eq!(retired_into(&db, &album), Some(replacement.clone()));
+    assert_eq!(
+        managed.count(&format!(
+            "SELECT COUNT(*) FROM library_custom_edition_active WHERE local_album_id \
+             IN ('{album}', '{replacement}')"
+        )),
+        0,
+        "the custom edition is dropped"
+    );
+    assert_eq!(
+        managed.count(&format!(
+            "SELECT COUNT(*) FROM library_identify_reviews WHERE local_album_id = \
+             '{replacement}' AND state = 'pending' AND reason_code = 'EDITION_CLEARED_CUSTOM'"
+        )),
+        1,
+        "with a review on the album that stays"
+    );
+    assert_eq!(
+        managed.mark(&replacement).as_deref(),
+        Some("replaced_hands_off")
+    );
+    let bytes = managed.bytes(&new);
+    managed.look(&replacement).await;
+    managed.worker_looks().await;
+    assert_eq!(managed.bytes(&new), bytes, "nothing written");
+}
