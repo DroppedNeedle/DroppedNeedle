@@ -191,6 +191,14 @@
 					'The album is left unmanaged. Choose "Manage it again" on its page to have DroppedNeedle retag and rename it from its edition.'
 			};
 		}
+		if (operation.terminal_code === 'ACTIVATION_CONFIRMED') {
+			return {
+				className: 'alert-success',
+				label: 'Dry run confirmed',
+				detail:
+					'This dry run turned on automatic management for its library folder. It changed no files itself.'
+			};
+		}
 		if (operation.state === 'succeeded') {
 			return {
 				className: 'alert-success',

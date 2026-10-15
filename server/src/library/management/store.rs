@@ -695,6 +695,22 @@ pub fn fail_job(
     Ok(())
 }
 
+/// A condition on `job` (a `library_operation_jobs` row) that holds while
+/// the job still has work coming on its albums: queued, running, paused,
+/// or ready and not past its expiry. A ready preview past its expiry can
+/// never be applied, so it holds nothing back; one with no expiry stored
+/// still does. A dry run for turning automatic management on is never
+/// applied either, so it holds nothing back while ready. `now` is the SQL
+/// parameter holding the current time in seconds.
+pub fn live_job_sql(now: &str) -> String {
+    format!(
+        "(job.state IN ('queued','running','paused') OR (job.state = 'ready' \
+         AND NOT EXISTS(SELECT 1 FROM library_management_job_snapshots expiry \
+         WHERE expiry.job_id = job.id AND (expiry.preview_expires_at <= {now} \
+         OR expiry.proposed_settings_revision IS NOT NULL))))"
+    )
+}
+
 /// Set a ready preview aside. Only a ready preview can be discarded.
 pub fn discard(
     tx: &Transaction<'_>,

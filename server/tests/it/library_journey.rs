@@ -5518,6 +5518,12 @@ async fn library_management_tools_journey() {
             "admin",
         )
         .expect("activation confirmed");
+    let proved = management.detail(&dry_run.job_id).expect("detail").job;
+    assert_eq!(
+        (proved.state.as_str(), proved.terminal_code.as_deref()),
+        ("succeeded", Some("ACTIVATION_CONFIRMED")),
+        "a confirmed dry run is done"
+    );
 
     // The album is then managed without asking: moved by the profile.
     library.queue_automatic_management(&album);
@@ -6383,9 +6389,36 @@ impl ManagedLibrary {
 
     /// Turn automatic management on for the folder: a dry run, confirmed.
     async fn activate(&self) {
-        use droppedneedle::library::management::activation::{
-            ActivationConfirm, ActivationProof, ActivationRequest,
-        };
+        use droppedneedle::library::management::activation::{ActivationConfirm, ActivationProof};
+        let (dry_run, proposed) = self.dry_run("dry-run", |_| {}).await;
+        self.management()
+            .confirm_activation(
+                ActivationConfirm {
+                    settings: proposed,
+                    proofs: vec![ActivationProof {
+                        root_id: "music".to_owned(),
+                        job_id: dry_run.job_id,
+                        preview_token: dry_run.preview_token,
+                    }],
+                    expected_settings_revision: self.settings_revision(),
+                    confirmation: true,
+                },
+                "admin",
+            )
+            .expect("activation confirmed");
+    }
+
+    /// A planned dry run for turning automatic management on for the
+    /// folder, with the settings `change` made, and those settings.
+    async fn dry_run(
+        &self,
+        key: &str,
+        change: impl Fn(&mut droppedneedle::runtime_config::sections::LibraryManagement),
+    ) -> (
+        droppedneedle::library::management::models::PreviewHandle,
+        droppedneedle::runtime_config::sections::LibraryManagement,
+    ) {
+        use droppedneedle::library::management::activation::ActivationRequest;
         use droppedneedle::runtime_config::sections::{
             LibraryManagement, LibraryManagementRootAssignment,
         };
@@ -6419,6 +6452,7 @@ impl ManagedLibrary {
                     ..Default::default()
                 }),
         }
+        change(&mut proposed);
         let dry_run = management
             .create_activation(
                 ActivationRequest {
@@ -6430,7 +6464,7 @@ impl ManagedLibrary {
                         .live_registry()
                         .policy_revision()
                         .to_owned(),
-                    idempotency_key: Some("dry-run".to_owned()),
+                    idempotency_key: Some(key.to_owned()),
                 },
                 "admin",
             )
@@ -6439,21 +6473,7 @@ impl ManagedLibrary {
             management_step(&self.library).await,
             "dry run planning runs"
         );
-        management
-            .confirm_activation(
-                ActivationConfirm {
-                    settings: proposed,
-                    proofs: vec![ActivationProof {
-                        root_id: "music".to_owned(),
-                        job_id: dry_run.job_id,
-                        preview_token: dry_run.preview_token,
-                    }],
-                    expected_settings_revision: self.settings_revision(),
-                    confirmation: true,
-                },
-                "admin",
-            )
-            .expect("activation confirmed");
+        (dry_run, proposed)
     }
 
     /// Have automatic management look at the album now, and run whatever
@@ -10205,20 +10225,6 @@ async fn a_joined_album_gets_its_files_placed_and_stays_the_users() {
     managed.add_album("first", 1).await;
     let (album, tracks) = managed.add_album("second", 4).await;
     managed.activate().await;
-    // The activation's dry run is a preview waiting on every album, which
-    // would hold the join back until it is set aside.
-    let (dry_run, revision): (String, i64) = managed
-        .db()
-        .query_row(
-            "SELECT id, row_revision FROM library_operation_jobs WHERE state = 'ready'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .expect("dry run");
-    managed
-        .management()
-        .discard(&dry_run, revision)
-        .expect("dry run set aside");
     managed
         .db()
         .execute(
@@ -10268,6 +10274,76 @@ async fn a_joined_album_gets_its_files_placed_and_stays_the_users() {
     assert_eq!(managed.mark(&new).as_deref(), Some("retag_followed"));
     assert_eq!(bytes(), edited, "nothing written");
     assert_eq!(choice_row(&db, &new), chosen, "the match is as it was");
+}
+
+/// A dry run set aside for another one, here made before a rule was
+/// changed, can never be applied: an album retagged across two scans is
+/// joined although that dry run planned the album.
+#[tokio::test]
+async fn a_replaced_dry_run_does_not_hold_a_join_back() {
+    let managed = ManagedLibrary::start("lib-replaced-dry-run", |_| {}).await;
+    managed.add_album("first", 1).await;
+    let (album, tracks) = managed.add_album("second", 4).await;
+    managed
+        .dry_run("set-aside", |settings| {
+            settings.preview_retention_hours = 48
+        })
+        .await;
+    managed.activate().await;
+    let db = managed.db();
+    db.execute(
+        "UPDATE local_track_external_identities SET release_mbid = 'rel-elsewhere' \
+         WHERE local_track_id IN (?1, ?2)",
+        [&tracks[0], &tracks[1]],
+    )
+    .expect("two files on another release");
+
+    managed.rename_outside(&tracks[..2], "Renamed").await;
+    let new = managed.album_of(&tracks[0]);
+    assert_ne!(new, album, "the first half sits on a row of its own");
+    managed.rename_outside(&tracks[2..], "Renamed").await;
+    assert_eq!(managed.album_of(&tracks[3]), new);
+    assert_eq!(choice_row(&db, &new).0, "manual", "joined with its match");
+}
+
+/// A preview left ready past its expiry is nobody's work: an album
+/// retagged across two scans is joined although the preview planned it.
+#[tokio::test]
+async fn an_expired_preview_does_not_hold_a_join_back() {
+    let managed = ManagedLibrary::start("lib-expired-preview", |_| {}).await;
+    managed.add_album("first", 1).await;
+    let (album, tracks) = managed.add_album("second", 4).await;
+    managed.activate().await;
+    let db = managed.db();
+    let left_ready = db
+        .execute(
+            "UPDATE library_operation_jobs SET state = 'ready', terminal_code = NULL, \
+             terminal_at = NULL WHERE id IN (SELECT job_id FROM \
+             library_management_job_snapshots WHERE proposed_settings_revision IS NOT NULL)",
+            [],
+        )
+        .expect("preview left ready");
+    assert_eq!(left_ready, 1, "one preview");
+    db.execute(
+        "UPDATE library_management_job_snapshots SET phase = 'ready', \
+         preview_expires_at = 1, proposed_settings_revision = NULL \
+         WHERE proposed_settings_revision IS NOT NULL",
+        [],
+    )
+    .expect("an ordinary preview, expired");
+    db.execute(
+        "UPDATE local_track_external_identities SET release_mbid = 'rel-elsewhere' \
+         WHERE local_track_id IN (?1, ?2)",
+        [&tracks[0], &tracks[1]],
+    )
+    .expect("two files on another release");
+
+    managed.rename_outside(&tracks[..2], "Renamed").await;
+    let new = managed.album_of(&tracks[0]);
+    assert_ne!(new, album, "the first half sits on a row of its own");
+    managed.rename_outside(&tracks[2..], "Renamed").await;
+    assert_eq!(managed.album_of(&tracks[3]), new);
+    assert_eq!(choice_row(&db, &new).0, "manual", "joined with its match");
 }
 
 // ---------------------------------------------------------------------------
@@ -10869,17 +10945,6 @@ async fn a_persons_match_joins_an_album_retagged_without_its_ids() {
 }
 
 impl ManagedLibrary {
-    /// End the activation's dry run, which stays ready after it is
-    /// confirmed: a ready plan on an album is live work that holds a join.
-    fn end_dry_runs(&self) {
-        self.db()
-            .execute(
-                "UPDATE library_operation_jobs SET state = 'succeeded' WHERE state = 'ready'",
-                [],
-            )
-            .expect("dry run ended");
-    }
-
     /// Retag every one of `tracks` outside the app to the album "Retagged"
     /// with its MusicBrainz ids removed, rename each into `retagged/`, and
     /// scan. Returns the new rows, in order.
@@ -10984,7 +11049,6 @@ async fn an_automatic_album_retagged_without_its_ids_is_joined_at_the_seal() {
     ))
     .expect("the app's own match");
     managed.activate().await;
-    managed.end_dry_runs();
     managed.look(&album).await;
     rescan(&managed.library).await;
     managed.worker_looks().await;
@@ -11103,7 +11167,6 @@ async fn a_persons_edition_retagged_without_its_ids_is_left_alone_after_the_join
     let managed = ManagedLibrary::start("lib-join-chosen", |_| {}).await;
     let (album, old) = managed.add_album("first", 2).await;
     managed.activate().await;
-    managed.end_dry_runs();
     let db = managed.db();
     let chosen = choice_row(&db, &album);
     assert_eq!(chosen.0, "manual");

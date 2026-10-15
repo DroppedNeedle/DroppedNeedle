@@ -90,20 +90,28 @@ fn identity(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Identi
 }
 
 /// Work a person or a job is doing on these albums: leave them alone.
-fn busy(conn: &Connection, albums: &[&str]) -> rusqlite::Result<bool> {
-    let marks = vec!["?"; albums.len()].join(",");
+fn busy(conn: &Connection, albums: &[&str], now: f64) -> rusqlite::Result<bool> {
+    let marks = (1..=albums.len())
+        .map(|number| format!("?{number}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let live = crate::library::management::store::live_job_sql(&format!("?{}", albums.len() + 1));
     conn.query_row(
         &format!(
             "SELECT EXISTS(SELECT 1 FROM library_contribution_drafts WHERE local_album_id IN \
              ({marks}) AND state IN ('draft','ready','seeded','verifying','needs_review')) \
              OR EXISTS(SELECT 1 FROM library_management_plan_items item \
              JOIN library_operation_jobs job ON job.id = item.job_id \
-             WHERE item.local_album_id IN ({marks}) \
-             AND job.state IN ('queued','running','paused','ready')) \
+             WHERE item.local_album_id IN ({marks}) AND {live}) \
              OR EXISTS(SELECT 1 FROM library_management_overrides \
              WHERE local_album_id IN ({marks}))"
         ),
-        params_from_iter(albums.iter().chain(albums).chain(albums)),
+        params_from_iter(
+            albums
+                .iter()
+                .map(|album| rusqlite::types::Value::Text((*album).to_owned()))
+                .chain([rusqlite::types::Value::Real(now)]),
+        ),
         |row| row.get(0),
     )
 }
@@ -171,7 +179,7 @@ fn retire_empty_shell(
     let [target] = targets.as_slice() else {
         return Ok(None);
     };
-    if busy(tx, &[&album.id])? {
+    if busy(tx, &[&album.id], now)? {
         return Ok(None);
     }
     // The receiver may be the new row of an album a running scan is half
@@ -350,7 +358,10 @@ fn fold_split_legacy_album(
     let positions: HashSet<(i64, i64)> = all.iter().map(|t| (t.disc, t.number)).collect();
     let positions_unique =
         all.iter().all(|t| t.disc > 0 && t.number > 0) && positions.len() == all.len();
-    if !target_agrees || folders.len() != 1 || !positions_unique || busy(tx, &[&album.id, target])?
+    if !target_agrees
+        || folders.len() != 1
+        || !positions_unique
+        || busy(tx, &[&album.id, target], now)?
     {
         return Ok(None);
     }

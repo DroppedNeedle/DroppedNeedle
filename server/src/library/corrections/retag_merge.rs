@@ -110,7 +110,7 @@ pub(crate) fn merge_retagged(
     if custom {
         return refused(RetagPairReason::CustomEdition);
     }
-    if live_work(tx, old)? || (merge_moves_match(tx, old, new)? && live_work(tx, new)?) {
+    if live_work(tx, old, now)? || (merge_moves_match(tx, old, new)? && live_work(tx, new, now)?) {
         return refused(RetagPairReason::LiveWork);
     }
     let chosen_release = release_chosen(tx, old)?;
@@ -196,16 +196,19 @@ pub(crate) fn merge_retagged(
 }
 
 /// Work a person or a job is doing on the album: an open draft, or a plan
-/// item of a job that is queued, running, paused or ready. An album field
-/// override is not.
-fn live_work(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
+/// item of a job that is queued, running, paused, or ready and not past
+/// its expiry. An album field override is not.
+fn live_work(conn: &Connection, album_id: &str, now: f64) -> rusqlite::Result<bool> {
     conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM library_contribution_drafts WHERE local_album_id = ?1 \
-         AND state IN ('draft','ready','seeded','verifying','needs_review')) \
-         OR EXISTS(SELECT 1 FROM library_management_plan_items item \
-         JOIN library_operation_jobs job ON job.id = item.job_id \
-         WHERE item.local_album_id = ?1 AND job.state IN ('queued','running','paused','ready'))",
-        params![album_id],
+        &format!(
+            "SELECT EXISTS(SELECT 1 FROM library_contribution_drafts WHERE local_album_id = ?1 \
+             AND state IN ('draft','ready','seeded','verifying','needs_review')) \
+             OR EXISTS(SELECT 1 FROM library_management_plan_items item \
+             JOIN library_operation_jobs job ON job.id = item.job_id \
+             WHERE item.local_album_id = ?1 AND {})",
+            crate::library::management::store::live_job_sql("?2")
+        ),
+        params![album_id, now],
         |row| row.get(0),
     )
 }

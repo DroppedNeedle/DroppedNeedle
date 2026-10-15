@@ -11,6 +11,7 @@ use super::models::{
 };
 use super::profile;
 use super::service::{JobSpec, Management, stale};
+use super::store;
 use crate::library::clock::now_unix;
 use crate::library::publish::snapshots::sha256_hex;
 use crate::runtime_config::sections::LibraryManagement;
@@ -18,6 +19,9 @@ use crate::settings::error::SettingsError;
 use crate::settings::management::service::{ActivationProofPins, LibraryManagementService};
 use crate::settings::management::{StructuralCompiler, settings_revision};
 use crate::settings::models::LibraryManagementSettingsResponse;
+
+/// How a dry run ends once it has proved the settings that were saved.
+const ACTIVATION_CONFIRMED: &str = "ACTIVATION_CONFIRMED";
 
 /// A dry run request for one library folder.
 pub struct ActivationRequest {
@@ -194,6 +198,17 @@ impl Management {
         let saved = service
             .confirm_activation(request.settings, &request.expected_settings_revision, &pins)
             .map_err(settings_error)?;
+        // A dry run is never applied: once it has proved the settings it
+        // is done, and no longer holds its albums as planned work.
+        let now = now_unix();
+        if let Err(error) = self.write(|tx| {
+            for proof in &request.proofs {
+                store::complete_without_work(tx, &proof.job_id, ACTIVATION_CONFIRMED, now)?;
+            }
+            Ok(())
+        }) {
+            tracing::warn!(%error, "confirmed dry runs left ready until they expire");
+        }
         // Albums skipped while the folder was off or out of date get
         // another look.
         if let Err(error) = self.read(|conn| Ok(super::automatic::wake(conn, None, now_unix())?)) {
