@@ -17,8 +17,11 @@ const h = vi.hoisted(() => ({
 	choose: vi.fn(),
 	confirm: vi.fn(),
 	acquire: vi.fn(),
+	seal: vi.fn(),
+	leave: vi.fn(),
 	downloads: [] as unknown[],
 	isTrusted: true,
+	isAdmin: false,
 	url: new URL('http://localhost/album/group-1'),
 	goto: vi.fn()
 }));
@@ -36,6 +39,9 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 		user: { id: 'user-1' },
 		get isTrusted() {
 			return h.isTrusted;
+		},
+		get isAdmin() {
+			return h.isAdmin;
 		}
 	},
 	LAST_USER_ID_KEY: 'test:last-user'
@@ -89,7 +95,9 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	writeEditionTags: () => mutation(),
 	undoTagWrite: () => mutation(),
 	removeEditionExtras: () => mutation(),
-	restoreEditionExtras: () => mutation()
+	restoreEditionExtras: () => mutation(),
+	sealCustomEdition: () => mutation((...args: unknown[]) => h.seal(...args)),
+	leaveAlbumUnmanaged: () => mutation((...args: unknown[]) => h.leave(...args))
 }));
 vi.mock('$lib/stores/integration', async () => {
 	const { writable } = await import('svelte/store');
@@ -296,9 +304,12 @@ beforeEach(async () => {
 	];
 	h.choose.mockReset();
 	h.acquire.mockReset();
+	h.seal.mockReset();
+	h.leave.mockReset();
 	h.downloads = [];
 	(integrationStore as unknown as { set: (value: unknown) => void }).set({ download_client: true });
 	h.isTrusted = true;
+	h.isAdmin = false;
 	h.url = new URL('http://localhost/album/group-1');
 	h.goto.mockReset();
 });
@@ -620,5 +631,66 @@ describe('making your copy the chosen edition', () => {
 			.element(sheet().getByRole('button', { name: 'Replace 1 track you have in another version' }))
 			.toBeVisible();
 		await expect.element(sheet().getByRole('checkbox')).not.toBeInTheDocument();
+	});
+});
+
+describe('when none of the editions is right', () => {
+	const noneRight = () => sheet().getByRole('region', { name: 'None of these is right' });
+
+	it('keeps the files as they are under the selected edition, for an admin', async () => {
+		h.isAdmin = true;
+		h.status = status({ undo_available: true });
+		h.seal.mockResolvedValue({});
+		await openSheet();
+		await sheet()
+			.getByRole('button', { name: /5th anniversary remaster/ })
+			.click();
+
+		await expect
+			.element(
+				noneRight().getByText(
+					'DroppedNeedle manages your files as they are now, under Night Shift.'
+				)
+			)
+			.toBeVisible();
+		await noneRight().getByRole('button', { name: 'Keep your own track list' }).click();
+
+		expect(h.seal).toHaveBeenCalledWith(
+			expect.objectContaining({
+				localId: 'local-1',
+				releaseMbid: 'release-remaster',
+				identityRevision: 2
+			})
+		);
+		await expect
+			.element(noneRight().getByText('Your own track list is the edition now.'))
+			.toBeVisible();
+		await expect.element(sheet().getByRole('button', { name: 'Undo last change' })).toBeVisible();
+	});
+
+	it('leaves the album unmanaged, showing a refusal in place', async () => {
+		h.isAdmin = true;
+		h.leave.mockRejectedValue(
+			new ApiError(409, 'The album changed since this was shown.', 'STALE_REVISION', {
+				action: 'Look again.'
+			})
+		);
+		await openSheet();
+
+		await noneRight().getByRole('button', { name: 'Leave this album unmanaged' }).click();
+
+		expect(h.leave).toHaveBeenCalledWith(
+			expect.objectContaining({ localId: 'local-1', identityRevision: 2 })
+		);
+		await expect
+			.element(noneRight().getByRole('alert'))
+			.toHaveTextContent('The album changed since this was shown. Look again.');
+	});
+
+	it('is not offered to a trusted user', async () => {
+		await openSheet();
+
+		await expect.element(sheet().getByText('All 4 of your files fit this edition.')).toBeVisible();
+		await expect.element(noneRight()).not.toBeInTheDocument();
 	});
 });

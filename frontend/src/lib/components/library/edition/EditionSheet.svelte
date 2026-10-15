@@ -24,8 +24,10 @@
 		getAlbumEditionsQuery,
 		getEditionPlanQuery,
 		handBackAlbumEdition,
+		leaveAlbumUnmanaged,
 		removeEditionExtras,
 		restoreEditionExtras,
+		sealCustomEdition,
 		undoAlbumEdition,
 		type EditionChoice
 	} from '$lib/queries/albums/EditionQueries.svelte';
@@ -34,6 +36,7 @@
 	import EditionDetail from './EditionDetail.svelte';
 	import EditionNextSteps from './EditionNextSteps.svelte';
 	import EditionFind from './EditionFind.svelte';
+	import EditionNoneRight from './EditionNoneRight.svelte';
 	import type { TracksOutcome } from './EditionTracks.svelte';
 	import { editionSheet } from './editionSheetState.svelte';
 	import {
@@ -65,6 +68,7 @@
 
 	const userId = () => authStore.user?.id;
 	const canEdit = $derived(authStore.isTrusted);
+	const isAdmin = $derived(authStore.isAdmin);
 
 	let copyId = $state('');
 	let selected = $state<string | null>(null);
@@ -83,6 +87,10 @@
 	let findArtist = $state('');
 	let searchArgs = $state<{ title: string; artist: string } | null>(null);
 	let actionError = $state<string | null>(null);
+	let noneRight = $state<{ done: string | null; error: string | null }>({
+		done: null,
+		error: null
+	});
 	let lastRemoval = $state<{ actionId: string; count: number } | null>(null);
 	let fits = $state<Record<string, string>>({});
 	let tracks = $state<TracksOutcome | null>(null);
@@ -117,6 +125,7 @@
 		findArtist = '';
 		searchArgs = null;
 		actionError = null;
+		noneRight = { done: null, error: null };
 		lastRemoval = null;
 		tracks = null;
 	}
@@ -174,6 +183,8 @@
 	const removeExtras = removeEditionExtras();
 	const restoreExtras = restoreEditionExtras();
 	const acquire = acquireEdition();
+	const sealCustom = sealCustomEdition();
+	const leaveUnmanaged = leaveAlbumUnmanaged();
 
 	// A new copy starts over on its own edition.
 	$effect(() => {
@@ -183,6 +194,7 @@
 			view = 'compare';
 			chosen = null;
 			actionError = null;
+			noneRight = { done: null, error: null };
 			lastRemoval = null;
 			tracks = null;
 		});
@@ -444,6 +456,7 @@
 			movedTo = null;
 			view = 'compare';
 			initialisedFor = '';
+			noneRight = { done: null, error: null };
 		} catch (error) {
 			actionError = failureSentence(error, "The change couldn't be undone.");
 			step = 'detail';
@@ -505,6 +518,54 @@
 				taskId: null,
 				error: failureSentence(error, "The missing tracks couldn't be requested."),
 				replaceVersions: replace
+			};
+		}
+	}
+
+	// "None of these is right": the selected release's album to keep the
+	// files under, as its plan names it.
+	const customAlbum = $derived.by(() => {
+		if (!selected) return null;
+		const plan = selectedIsCurrent ? currentPlan : selectedPlan;
+		return plan?.release_mbid === selected ? plan.title : null;
+	});
+
+	async function keepOwnTrackList(): Promise<void> {
+		const release = selected;
+		if (!release || !status) return;
+		noneRight = { done: null, error: null };
+		try {
+			await sealCustom.mutateAsync({
+				userId: userId(),
+				localId: copyId,
+				rgMbid: group || undefined,
+				releaseMbid: release,
+				identityRevision: status.identity_revision
+			});
+			noneRight = { done: 'Your own track list is the edition now.', error: null };
+		} catch (error) {
+			noneRight = {
+				done: null,
+				error: failureSentence(error, "Your track list couldn't be kept.")
+			};
+		}
+	}
+
+	async function leaveAlone(): Promise<void> {
+		if (!status) return;
+		noneRight = { done: null, error: null };
+		try {
+			await leaveUnmanaged.mutateAsync({
+				userId: userId(),
+				localId: copyId,
+				rgMbid: group || undefined,
+				identityRevision: status.identity_revision
+			});
+			noneRight = { done: 'This album is left unmanaged now.', error: null };
+		} catch (error) {
+			noneRight = {
+				done: null,
+				error: failureSentence(error, "The album couldn't be left unmanaged.")
 			};
 		}
 	}
@@ -592,6 +653,16 @@
 						searching={searchQuery.isFetching}
 						onpaste={select}
 						onsearch={() => (searchArgs = { title: findTitle.trim(), artist: findArtist.trim() })}
+					/>
+				{/if}
+				{#if isAdmin && status}
+					<EditionNoneRight
+						album={customAlbum}
+						canLeave={hold?.kind !== 'your_choice'}
+						done={noneRight.done}
+						error={noneRight.error}
+						onkeep={keepOwnTrackList}
+						onleave={leaveAlone}
 					/>
 				{/if}
 				<div class="flex flex-wrap gap-2 md:hidden">

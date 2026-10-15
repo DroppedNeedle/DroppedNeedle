@@ -351,6 +351,14 @@ export const REPLACE_ALSO_GETS_MISSING =
 export const NO_SOURCE_SENTENCE =
 	'No download source is set up yet, so the download waits and starts by itself once Soulseek, Usenet or a plugin source is saved.';
 
+/** "None of these is right" (admins): what each way out does, shown before the click. */
+export function customEditionSentence(album: string): string {
+	return `DroppedNeedle manages your files as they are now, under ${album}.`;
+}
+
+export const LEAVE_UNMANAGED_SENTENCE =
+	'DroppedNeedle stops retagging and renaming these files and drops the edition it guessed. Choose "Manage it again" on the album page to undo this.';
+
 export const SHEET_DESCRIPTION = 'Pick the release your copy is, or the one you want it to become.';
 
 // The app stepped back from the album by itself; choosing an edition
