@@ -40,6 +40,7 @@ use droppedneedle::acquire::requests::{
     models::RequestKind,
     quota::{QuotaLedger, QuotaPolicy},
     service::RequestsService,
+    state::AcquireReadiness,
 };
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -829,12 +830,9 @@ impl droppedneedle::library::operations::port::EditionPlans for PlannedEdition {
     }
 }
 
-// "Get missing tracks" sends one album download on the chosen edition for
-// the missing track plus the owned track below the cutoff, and refuses a
-// second while it runs.
-#[tokio::test]
-async fn edition_acquire_asks_once_for_missing_and_below_cutoff_tracks() {
-    let (state, db, dispatch) = setup().await;
+/// The library album "al1" the edition tests plan from: one flac track and
+/// one mp3 track, so the plan has a missing track and one below cutoff.
+async fn seed_edition_album(db: &AcquireDb) {
     db.write("test.seed_library", |tx| {
         tx.execute_batch(
             "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at)
@@ -855,6 +853,15 @@ async fn edition_acquire_asks_once_for_missing_and_below_cutoff_tracks() {
     })
     .await
     .unwrap();
+}
+
+// "Get missing tracks" sends one album download on the chosen edition for
+// the missing track plus the owned track below the cutoff, and refuses a
+// second while it runs.
+#[tokio::test]
+async fn edition_acquire_asks_once_for_missing_and_below_cutoff_tracks() {
+    let (state, db, dispatch) = setup().await;
+    seed_edition_album(&db).await;
     assert!(state.edition_plans.set(Arc::new(PlannedEdition)).is_ok());
     assert!(
         state
@@ -956,4 +963,35 @@ async fn edition_acquire_without_a_plan_fetches_for_the_named_copy() {
             release_mbid: "rel-x".into()
         })
     );
+}
+
+// With no download source set up, "Get missing tracks" is held like any
+// request: the download is queued for the worker, which waits for a source,
+// and the answer says so. It is not refused.
+#[tokio::test]
+async fn edition_acquire_is_held_while_no_source_is_ready() {
+    let (state, db, dispatch) = setup().await;
+    seed_edition_album(&db).await;
+    assert!(state.edition_plans.set(Arc::new(PlannedEdition)).is_ok());
+    let staging = crate::common::ScratchDir::new("edition-held");
+    assert!(
+        state
+            .readiness
+            .set(AcquireReadiness {
+                sources_ready: Arc::new(|| false),
+                staging_root: staging.to_path_buf(),
+            })
+            .is_ok()
+    );
+    let uri = format!("/albums/{MBID_A}/edition/acquire?album_id=al1");
+    let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "started", "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("waits")),
+        "{body}"
+    );
+    assert_eq!(dispatch.take_calls().len(), 1, "queued, not refused");
 }

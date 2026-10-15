@@ -24741,7 +24741,7 @@ export interface operations {
                     "application/json": components["schemas"]["EditionAcquireResponse"];
                 };
             };
-            /** @description No download source, not enough disk space, or not in the library */
+            /** @description Not enough disk space, or not in the library */
             400: {
                 headers: {
                     [name: string]: unknown;

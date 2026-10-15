@@ -106,15 +106,6 @@ impl RequestsService {
                 ..EditionAcquireResponse::default()
             });
         }
-        if let Some(readiness) = self.readiness.get()
-            && !(readiness.sources_ready)()
-        {
-            return Err(RequestsError::InvalidInput {
-                message: "No download source is set up, so nothing can be fetched. Set up \
-                          Soulseek, Usenet or a plugin source in Settings, then try again."
-                    .to_owned(),
-            });
-        }
         self.quota
             .check_storage_admission(&principal.user_id, principal.role, DispatchOrigin::Edition)
             .await?;
@@ -165,6 +156,12 @@ impl RequestsService {
             .as_ref()
             .map(|gap| gap.missing.iter().chain(&gap.upgrades).copied().collect())
             .unwrap_or_default();
+        // With no source set up the queued download waits for the worker,
+        // which starts it once a source is saved.
+        let waiting = self
+            .readiness
+            .get()
+            .is_some_and(|readiness| !(readiness.sources_ready)());
         let request = DispatchRequest {
             user_id: principal.user_id.clone(),
             kind: "edition".to_owned(),
@@ -200,13 +197,23 @@ impl RequestsService {
                     })
                     .await?;
                 response.status = "started".to_owned();
-                response.message = match (response.requested, response.upgrades) {
-                    (Some(1), _) => "Downloading the 1 missing track of this edition.".to_owned(),
-                    (Some(0), Some(_)) => {
-                        "Looking for better copies of this edition's tracks.".to_owned()
+                response.message = if waiting {
+                    "No download source is set up, so this edition waits. It starts by \
+                     itself once Soulseek, Usenet or a plugin source is saved."
+                        .to_owned()
+                } else {
+                    match (response.requested, response.upgrades) {
+                        (Some(1), _) => {
+                            "Downloading the 1 missing track of this edition.".to_owned()
+                        }
+                        (Some(0), Some(_)) => {
+                            "Looking for better copies of this edition's tracks.".to_owned()
+                        }
+                        (Some(n), _) => {
+                            format!("Downloading the {n} missing tracks of this edition.")
+                        }
+                        (None, _) => "Downloading this edition.".to_owned(),
                     }
-                    (Some(n), _) => format!("Downloading the {n} missing tracks of this edition."),
-                    (None, _) => "Downloading this edition.".to_owned(),
                 };
                 response.task_id = Some(task_id);
                 Ok(response)

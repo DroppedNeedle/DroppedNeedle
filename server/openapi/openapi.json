@@ -1265,7 +1265,7 @@
             }
           },
           "400": {
-            "description": "No download source, not enough disk space, or not in the library"
+            "description": "Not enough disk space, or not in the library"
           }
         }
       }

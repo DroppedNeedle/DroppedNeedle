@@ -190,7 +190,7 @@ pub async fn clear_history_handler(
     params(("album_id" = String, Path, description = "Release-group MBID"), EditionAcquireQuery),
     responses(
         (status = 200, body = EditionAcquireResponse),
-        (status = 400, description = "No download source, not enough disk space, or not in the library"),
+        (status = 400, description = "Not enough disk space, or not in the library"),
     )
 )]
 pub async fn acquire_edition_handler(
