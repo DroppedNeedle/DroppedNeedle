@@ -15,6 +15,10 @@ use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::users::memory::TestRig;
 use droppedneedle::auth::users::roles::{Role, SessionKind};
 use droppedneedle::runtime_config::crypto::Crypto;
+use droppedneedle_testkit::remotes::{
+    JELLYFIN_KEY, MATCH_MBID, NAVIDROME_USER, PLEX_TOKEN, serve_jellyfin, serve_navidrome,
+    serve_plex,
+};
 use remotes::adapter::{
     AdapterError, AlbumBrowse, ArtistBrowse, MemoryImportSink, RemoteHandle, TrackBrowse,
 };
@@ -25,10 +29,6 @@ use remotes::connections::{
 use remotes::folders::{FolderPreference, MemoryFolderStore, resolve_scope};
 use remotes::handlers::{RemotesDeps, remotes_router};
 use remotes::jellyfin::JellyfinAdapter;
-use remotes::mocks::{
-    JELLYFIN_KEY, MATCH_MBID, NAVIDROME_USER, PLEX_TOKEN, serve_jellyfin, serve_navidrome,
-    serve_plex,
-};
 use remotes::models::SourceName;
 use remotes::navidrome::NavidromeAdapter;
 use remotes::plex::PlexAdapter;
@@ -688,7 +688,7 @@ async fn linked_connections_survive_a_restart() {
 /// stores it, and browses with it.
 #[tokio::test]
 async fn plex_links_without_a_server_token_look_one_up_and_keep_it() {
-    use remotes::mocks::PLEX_ACCOUNT_TOKEN;
+    use droppedneedle_testkit::remotes::PLEX_ACCOUNT_TOKEN;
     use remotes::plex::PlexTokenProbe;
 
     let mock = serve_plex().await.expect("mock serves");

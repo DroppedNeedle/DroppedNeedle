@@ -67,6 +67,7 @@ test-support = []
 
 [dev-dependencies]
 droppedneedle = { path = ".", features = ["test-support"] }
+droppedneedle-testkit = { path = "testkit", version = "0.1.0" }
 tokio = { version = "1", features = ["test-util"] }
 
 # Debug builds carry line tables for this crate and no debug info for

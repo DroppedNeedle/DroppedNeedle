@@ -902,12 +902,12 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
         ImportFile, ImportOrigin, ImportRequest, LandingLibrary,
     };
     use droppedneedle::acquire::sources::SabnzbdSource;
-    use droppedneedle::acquire::usenet::mocks::{SabnzbdMock, serve_loopback};
     use droppedneedle::acquire::usenet::newznab::NewznabIndexer;
     use droppedneedle::acquire::usenet::policy::UsenetPolicy;
     use droppedneedle::acquire::usenet::prowlarr::ProwlarrIndexer;
     use droppedneedle::acquire::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
     use droppedneedle::runtime_config::sections::UsenetBackendSetting;
+    use droppedneedle_testkit::usenet::{SabnzbdMock, serve_loopback};
     use std::time::{Duration, SystemTime};
 
     const TASK: &str = "0123456789abcdef0123456789abcdef";

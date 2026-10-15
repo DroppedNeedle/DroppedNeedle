@@ -16,7 +16,7 @@ use droppedneedle::acquire::requests::dispatch::{
     DispatchOrigin, DispatchOutcome, DispatchRequest, DownloadDispatch,
 };
 use droppedneedle::acquire::slskd::{
-    DownloadPolicy, MOCK_API_KEY, MockSlskd, ReqwestSlskdHttp, SlskdClient, SlskdRepository,
+    DownloadPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository,
 };
 use droppedneedle::acquire::sources::SlskdSource;
 use droppedneedle::acquire::target::Targets;
@@ -25,6 +25,7 @@ use droppedneedle::acquire::target::lookup::{
 };
 use droppedneedle::acquire::worker::{DownloadWorker, Source, WorkerConfig};
 use droppedneedle::ids::UuidGenerator;
+use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use serde_json::{Value, json};
 
 const RECORDING: &str = "11111111-1111-4111-8111-111111111111";

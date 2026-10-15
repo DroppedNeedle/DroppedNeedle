@@ -14,10 +14,11 @@ use droppedneedle::acquire::slskd;
 
 use std::time::Duration;
 
+use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use slskd::{
-    DownloadPolicy, EnqueueFile, Locator, MOCK_API_KEY, MockSlskd, QualityRecipeEntry,
-    ReqwestSlskdHttp, SlskdClient, SlskdRepository, TaskHandle, aggregate_status,
-    album_query_ladder, match_transfers, validate_quality_recipe,
+    DownloadPolicy, EnqueueFile, Locator, QualityRecipeEntry, ReqwestSlskdHttp, SlskdClient,
+    SlskdRepository, TaskHandle, aggregate_status, album_query_ladder, match_transfers,
+    validate_quality_recipe,
 };
 
 fn test_policy() -> DownloadPolicy {

@@ -18,13 +18,14 @@ use droppedneedle::acquire::search_jobs::candidates::CandidateTier;
 use droppedneedle::acquire::search_jobs::store::JobStore;
 use droppedneedle::acquire::search_jobs::{AlbumSearch, SearchJobError, SearchJobs, StartOutcome};
 use droppedneedle::acquire::slskd::{
-    DownloadPolicy, MOCK_API_KEY, MockSlskd, ReqwestSlskdHttp, SlskdClient, SlskdRepository,
+    DownloadPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository,
 };
 use droppedneedle::acquire::sources::SlskdSource;
 use droppedneedle::acquire::target::Targets;
 use droppedneedle::acquire::target::lookup::{AlbumRelease, AlbumTrack, FixedAlbums};
 use droppedneedle::acquire::worker::{DownloadWorker, Source, WorkerConfig};
 use droppedneedle::events::{EventHub, EventSink};
+use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use serde_json::{Value, json};
 
 const RELEASE: &str = "22222222-2222-4222-8222-222222222222";

@@ -4,7 +4,7 @@
 //! in history.
 
 use axum::http::StatusCode;
-use droppedneedle::remotes::mocks::{PLEX_TOKEN, canned_stream_bytes};
+use droppedneedle_testkit::remotes::{PLEX_TOKEN, canned_stream_bytes};
 use serde_json::json;
 
 use crate::common::TestApp;

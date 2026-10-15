@@ -14,8 +14,8 @@
 //! [`jobs::SpotifyImportExecutor`] seam onto the downloads state machine
 //! (the in-memory implementation spawns a task), `health`
 //! holds the slskd/Usenet smoke plus the per-source release gates,
-//! `handlers` owns the native routes, and `mocks` carries the loopback mock
-//! servers the tests run against. The app mounts
+//! and `handlers` owns the native routes; the loopback mock servers the
+//! tests run against live in the testkit crate. The app mounts
 //! [`handlers::imports_gated_router`] inside the session gate and the
 //! OAuth callback outside it.
 
@@ -24,8 +24,6 @@ pub mod handlers;
 pub mod health;
 pub mod jobs;
 pub mod lidarr;
-#[cfg(any(test, feature = "test-support"))]
-pub mod mocks;
 pub mod models;
 pub mod mount;
 pub mod spotify;

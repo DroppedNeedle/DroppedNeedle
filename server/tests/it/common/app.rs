@@ -14,14 +14,11 @@ use axum::{
     extract::ConnectInfo,
     http::{HeaderMap, Request, StatusCode},
 };
-use droppedneedle::{
-    AppConfig,
-    acquire::{
-        slskd::mock::MockSlskd,
-        usenet::mocks::{SabnzbdMock, serve_loopback},
-    },
-    bootstrap,
-    remotes::mocks::{MockServer, serve_plex},
+use droppedneedle::{AppConfig, bootstrap};
+use droppedneedle_testkit::{
+    remotes::{MockServer, serve_plex},
+    slskd::MockSlskd,
+    usenet::{SabnzbdMock, serve_loopback},
 };
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};

@@ -18,8 +18,9 @@
 //! `user_connections`); `folders` holds the Navidrome folder preferences;
 //! `adapter` holds the unified surface plus the import sink;
 //! `jellyfin`/`navidrome`/`plex` hold the source clients; `analytics`
-//! summarizes listening history; `reader` serves the stream gateway; and
-//! `mocks` carries the loopback mock servers the tests run against.
+//! summarizes listening history; and `reader` serves the stream gateway.
+//! The loopback mock servers the tests run against live in the testkit
+//! crate.
 //! `MediaSetup` mounts [`remotes_router`](handlers::remotes_router)
 //! inside the session gate.
 
@@ -31,8 +32,6 @@ pub mod folders;
 pub mod handlers;
 pub mod jellyfin;
 pub mod jellyfin_models;
-#[cfg(any(test, feature = "test-support"))]
-pub mod mocks;
 pub mod models;
 pub mod navidrome;
 pub mod navidrome_models;

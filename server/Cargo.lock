@@ -575,6 +575,7 @@ dependencies = [
  "cbc",
  "chacha20poly1305",
  "droppedneedle",
+ "droppedneedle-testkit",
  "flate2",
  "futures-util",
  "getrandom 0.3.4",

@@ -11,7 +11,7 @@ use droppedneedle::acquire::usenet;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use usenet::mocks::{
+use droppedneedle_testkit::usenet::{
     NewznabMock, NewznabScenario, ProwlarrMock, ProwlarrScenario, SabnzbdMock, serve_loopback,
 };
 use usenet::newznab::{
@@ -229,7 +229,7 @@ async fn sab_no_addurl_on_content_rejection() {
 /// All three SABnzbd error forms, plus auth detection by message.
 #[tokio::test]
 async fn sab_error_forms() {
-    use usenet::mocks::SabErrorForm;
+    use droppedneedle_testkit::usenet::SabErrorForm;
 
     let mock = SabnzbdMock::new();
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");

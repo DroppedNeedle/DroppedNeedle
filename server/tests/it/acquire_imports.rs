@@ -19,6 +19,10 @@ use droppedneedle::auth::session::extract::Transport;
 use droppedneedle::auth::session::middleware::CurrentSession;
 use droppedneedle::auth::users::memory::TestRig;
 use droppedneedle::auth::users::roles::{Role, SessionKind};
+use droppedneedle_testkit::imports::{
+    LIDARR_KEY, LIDARR_MBID_ALL, LIDARR_MBID_NONE, MockRecorder, SPOTIFY_TOKEN, serve_lidarr,
+    serve_spotify,
+};
 use imports::handlers::{ImportsDeps, imports_router};
 use imports::health::{
     ClientProbe, HealthProbes, ScriptedLidarr, ScriptedNewznab, ScriptedSabnzbd, ScriptedSlskd,
@@ -26,10 +30,6 @@ use imports::health::{
 use imports::jobs::{JobRegistry, QueuedSpotifyImport, TaskExecutor};
 use imports::lidarr::{
     LidarrClient, LidarrImportService, MemoryApprovalSink, MemoryFollowStore, MemoryLidarrSettings,
-};
-use imports::mocks::{
-    LIDARR_KEY, LIDARR_MBID_ALL, LIDARR_MBID_NONE, MockRecorder, SPOTIFY_TOKEN, serve_lidarr,
-    serve_spotify,
 };
 use imports::models::{LidarrConnectionSettings, SpotifySettings};
 use imports::spotify::{

@@ -4,3 +4,8 @@
 //! mock. It must never depend on the server crate.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+pub mod imports;
+pub mod remotes;
+pub mod slskd;
+pub mod usenet;
