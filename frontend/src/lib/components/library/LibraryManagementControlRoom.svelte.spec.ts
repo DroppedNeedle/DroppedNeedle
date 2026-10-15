@@ -72,7 +72,14 @@ const h = vi.hoisted(() => ({
 		refetch: vi.fn()
 	},
 	handBack: vi.fn(),
-	handBackAll: vi.fn()
+	handBackAll: vi.fn(),
+	retagPairs: {
+		data: undefined as { total: number; pairs: Array<Record<string, unknown>> } | undefined,
+		isPending: false,
+		isError: false,
+		error: null,
+		refetch: vi.fn()
+	}
 }));
 
 vi.mock('$app/navigation', () => ({ goto: h.goto, replaceState: h.replaceState }));
@@ -279,6 +286,15 @@ vi.mock('$lib/queries/library-management/LibraryManagementMutations.svelte', () 
 		isPending: false
 	})
 }));
+vi.mock('$lib/queries/library/LibraryRetagPairQueries.svelte', () => ({
+	getRetagPairsQuery: () => h.retagPairs,
+	joinRetagPair: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	dismissRetagPair: () => ({ mutateAsync: vi.fn(), isPending: false })
+}));
+vi.mock('$lib/queries/albums/EditionQueries.svelte', async (importOriginal) => ({
+	...(await importOriginal<object>()),
+	getAlbumEditionsQuery: () => ({ data: undefined })
+}));
 vi.mock('$lib/queries/library/LibraryIdentityPreparationQueries.svelte', () => ({
 	getLibraryIdentityPreparationsQuery: () => h.identityPreparations,
 	getLibraryIdentityPreparationEstimateQuery: () => h.identityEstimate,
@@ -370,6 +386,7 @@ beforeEach(() => {
 	h.recovery.isLoading = false;
 	h.recovery.isError = false;
 	h.admin = true;
+	h.retagPairs.data = undefined;
 	h.resolveImportBundle.mockResolvedValue({
 		bundle_id: 'bundle-1',
 		state: 'resolved',
@@ -457,6 +474,47 @@ describe('albums left unmanaged', () => {
 		await render(LibraryManagementControlRoom);
 
 		await expect.element(page.getByText('3 albums are being handed back.')).toBeVisible();
+	});
+});
+
+function retagPair(id: string) {
+	const album = (albumId: string, title: string) => ({
+		id: albumId,
+		title,
+		album_artist_name: 'Signal Artist',
+		track_count: 10,
+		identity_revision: 1,
+		edition: null
+	});
+	return {
+		old_album: album(`${id}-old`, `Old ${id}`),
+		new_album: album(`${id}-new`, `New ${id}`),
+		reason: 'tracks_elsewhere',
+		editions_differ: false,
+		recorded_at: 0
+	};
+}
+
+describe('albums that might be one album retagged', () => {
+	it('says nothing when no pair is waiting', async () => {
+		h.retagPairs.data = { total: 0, pairs: [] };
+		await render(LibraryManagementControlRoom);
+
+		await expect.element(page.getByText('Ready previews')).toBeVisible();
+		await expect.element(page.getByText(/might (each )?be one album/)).not.toBeInTheDocument();
+	});
+
+	it('counts the pairs and opens to their cards', async () => {
+		h.retagPairs.data = { total: 2, pairs: [retagPair('a'), retagPair('b')] };
+		await render(LibraryManagementControlRoom);
+
+		await page.getByText('2 pairs of albums might each be one album retagged').click();
+		await expect
+			.element(page.getByRole('article', { name: 'Might be one album: Old a and New a' }))
+			.toBeVisible();
+		await expect
+			.element(page.getByRole('article', { name: 'Might be one album: Old b and New b' }))
+			.toBeVisible();
 	});
 });
 

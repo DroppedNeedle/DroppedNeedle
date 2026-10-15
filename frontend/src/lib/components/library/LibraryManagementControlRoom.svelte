@@ -18,6 +18,7 @@
 	import LibraryManagementDiscardPreview from './LibraryManagementDiscardPreview.svelte';
 	import LibraryManagementIdentityReadiness from './LibraryManagementIdentityReadiness.svelte';
 	import LibraryRepairPanel from './LibraryRepairPanel.svelte';
+	import RetagPairCard from './RetagPairCard.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { invalidateLibraryManagementSurfaces } from '$lib/queries/library-management/LibraryManagementInvalidation';
 	import {
@@ -52,6 +53,7 @@
 		getLibraryManagementTakeoversQuery,
 		TAKEOVERS_POLL_MS
 	} from '$lib/queries/library-management/LibraryManagementQueries.svelte';
+	import { getRetagPairsQuery } from '$lib/queries/library/LibraryRetagPairQueries.svelte';
 
 	const settingsQuery = getLibraryManagementSettingsQuery(
 		() => authStore.user?.id,
@@ -130,6 +132,7 @@
 		() => authStore.user?.id,
 		() => authStore.isAdmin
 	);
+	const retagPairsQuery = getRetagPairsQuery(() => authStore.isAdmin);
 	const handingBack = $derived(takeoversQuery.data?.handing_back ?? 0);
 	const skippedQuery = getLibraryManagementAutomaticSkippedQuery(
 		() => authStore.user?.id,
@@ -767,6 +770,34 @@
 									DroppedNeedle will retag and rename an album's files from its edition. Changes
 									made outside DroppedNeedle are overwritten. The run can be undone from the
 									operations page.
+								</p>
+							{/if}
+						</details>
+					{/snippet}
+				</QueryBoundary>
+				<QueryBoundary
+					query={retagPairsQuery}
+					what="albums that might be one album"
+					isEmpty={(data) => data.total === 0}
+				>
+					{#snippet loading()}{/snippet}
+					{#snippet empty()}{/snippet}
+					{#snippet children(retagPairs)}
+						<details class="rounded-lg border border-base-content/10 p-3">
+							<summary class="cursor-pointer text-sm font-semibold"
+								>{retagPairs.total}
+								{retagPairs.total === 1
+									? 'pair of albums might be one album'
+									: 'pairs of albums might each be one album'} retagged</summary
+							>
+							<div class="mt-3 flex flex-col gap-3">
+								{#each retagPairs.pairs as pair (`${pair.old_album.id}/${pair.new_album.id}`)}
+									<RetagPairCard {pair} />
+								{/each}
+							</div>
+							{#if retagPairs.total > retagPairs.pairs.length}
+								<p class="mt-3 text-sm text-base-content/60">
+									Showing the newest {retagPairs.pairs.length}.
 								</p>
 							{/if}
 						</details>
