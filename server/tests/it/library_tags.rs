@@ -3366,3 +3366,193 @@ fn mp4_integer_atoms_keep_their_type_and_order() {
     assert_eq!(cnid(&m4a), vec![(21, b"Jk<-".to_vec())]);
     assert_eq!(view(&m4a), before);
 }
+
+// ---------------------------------------------------------------------------
+// Save wrapper: frames lofty would re-encode go back byte for byte
+// ---------------------------------------------------------------------------
+
+/// An MP3 whose ID3 tag (`major` 3 or 4) holds exactly these frames,
+/// built by bytes over the management fixture's audio.
+fn raw_id3_mp3(test: &str, major: u8, frames: &[(&str, Vec<u8>)]) -> (ScratchDir, PathBuf) {
+    let syncsafe = |size: usize| {
+        [
+            ((size >> 21) & 0x7F) as u8,
+            ((size >> 14) & 0x7F) as u8,
+            ((size >> 7) & 0x7F) as u8,
+            (size & 0x7F) as u8,
+        ]
+    };
+    let mut body = Vec::new();
+    for (id, payload) in frames {
+        body.extend_from_slice(id.as_bytes());
+        if major == 4 {
+            body.extend_from_slice(&syncsafe(payload.len()));
+        } else {
+            body.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        }
+        body.extend_from_slice(&[0, 0]);
+        body.extend_from_slice(payload);
+    }
+    body.resize(body.len() + 256, 0);
+    let mut out = vec![b'I', b'D', b'3', major, 0, 0];
+    out.extend_from_slice(&syncsafe(body.len()));
+    out.extend_from_slice(&body);
+    out.extend_from_slice(mp3_audio_tail(
+        &std::fs::read(fixture("management_full.mp3")).unwrap(),
+    ));
+    let dir = ScratchDir::new(&format!("tags-{test}"));
+    let path = dir.join("raw.mp3");
+    std::fs::write(&path, out).unwrap();
+    (dir, path)
+}
+
+/// Little-endian UTF-16 with its byte order mark.
+fn utf16(text: &str) -> Vec<u8> {
+    let mut out = vec![0xFF, 0xFE];
+    for unit in text.encode_utf16() {
+        out.extend_from_slice(&unit.to_le_bytes());
+    }
+    out
+}
+
+/// A title save keeps every other frame byte for byte in a v2.3 and a
+/// v2.4 tag, though lofty would rewrite each of these: Latin-1 pictures
+/// and lyrics, a UTF-16 URL, the ratings Windows Media Player, MusicBee
+/// and Picard write (a counter added, a rating rounded to stars) and
+/// an `ETCO` it cannot write at all.
+#[test]
+fn title_save_keeps_frames_lofty_rewrites() {
+    let frames: Vec<(&str, Vec<u8>)> = vec![
+        ("TIT2", latin1(&["Probe"])),
+        (
+            "APIC",
+            b"\0image/png\0\x03cover\0\x89PNG\r\n\x1a\ndata".to_vec(),
+        ),
+        ("USLT", b"\0eng\0Some lyrics\nline two".to_vec()),
+        (
+            "USLT",
+            [
+                &[1u8][..],
+                b"eng",
+                &utf16("d"),
+                &[0, 0],
+                &utf16("UTF-16 lyrics"),
+            ]
+            .concat(),
+        ),
+        (
+            "WXXX",
+            [&[1u8][..], &utf16("s"), &[0, 0], b"http://example.org/y"].concat(),
+        ),
+        ("POPM", b"Windows Media Player 9 Series\0\xC4".to_vec()),
+        ("POPM", b"MusicBee\0\xBA".to_vec()),
+        ("POPM", b"users@musicbrainz.org\0\x99\0\0\0\0".to_vec()),
+        ("POPM", b"\0\x05".to_vec()),
+        ("ETCO", vec![2, 3, 0, 0, 0, 1]),
+    ];
+    for major in [3, 4] {
+        let (_dir, path) = raw_id3_mp3(&format!("kept-{major}"), major, &frames);
+        let tail = after_id3v2(&path);
+        let (_, before) = id3_view(&path);
+        assert_eq!(tags::save::id3_unkept_frames(&path).unwrap(), None);
+
+        tags::save_tags(&path, &[TagEdit::set_title("New")]).unwrap();
+        let (after_major, after) = id3_view(&path);
+        assert_eq!(after_major, major);
+        assert_eq!(
+            view_without(&after, &["TIT2"]),
+            view_without(&before, &["TIT2"]),
+            "v2.{major}"
+        );
+        assert_eq!(id3_text_values(&path, "TIT2"), texts(&["New"]));
+        assert_eq!(after_id3v2(&path), tail);
+    }
+}
+
+/// A tag holding two frames the writer keeps only once (identical
+/// pictures, two play counters, two `UFID`s of one owner) is refused at
+/// preview in words, and a save leaves the file as it was.
+#[test]
+fn frames_kept_only_once_are_refused_before_saving() {
+    let cases: Vec<(&str, Vec<u8>, Vec<u8>)> = vec![
+        (
+            "APIC",
+            b"\0image/png\0\x03\0abc".to_vec(),
+            b"\0image/png\0\x03\0abc".to_vec(),
+        ),
+        ("PCNT", vec![0, 0, 0, 1], vec![0, 0, 0, 2]),
+        ("UFID", b"owner\0one".to_vec(), b"owner\0two".to_vec()),
+    ];
+    for (id, first, second) in cases {
+        let frames = vec![("TIT2", latin1(&["Probe"])), (id, first), (id, second)];
+        let (_dir, path) = raw_id3_mp3(&format!("unkept-{id}"), 3, &frames);
+        let message = tags::save::id3_unkept_frames(&path).unwrap().unwrap();
+        assert!(message.contains(&format!("two {id} frames")), "{message}");
+        let before = std::fs::read(&path).unwrap();
+        assert!(matches!(
+            tags::save_tags(&path, &[TagEdit::set_title("New")]),
+            Err(TagsError::SaveRefused { .. })
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), before, "{id}");
+    }
+}
+
+/// A v2.3 tag saved as v2.4 (it holds a `TDRC`) keeps its chapters
+/// readable: a chapter picture of 128 bytes or more has its embedded
+/// frame size rewritten as syncsafe, its bytes unchanged.
+#[test]
+fn chapters_move_to_v24_readable() {
+    let picture: Vec<u8> = (0..300u32).map(|byte| byte as u8).collect();
+    let sub_frame = |id: &str, body: &[u8]| {
+        let mut out = id.as_bytes().to_vec();
+        out.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        out.extend_from_slice(&[0, 0]);
+        out.extend_from_slice(body);
+        out
+    };
+    let mut chap = b"ch1\0".to_vec();
+    chap.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0x27, 0x10]);
+    chap.extend_from_slice(&[0xFF; 8]);
+    chap.extend(sub_frame("TIT2", b"\0Intro"));
+    chap.extend(sub_frame(
+        "APIC",
+        &[&b"\0image/png\0\x03\0"[..], &picture].concat(),
+    ));
+    let frames = vec![
+        ("TIT2", latin1(&["Probe"])),
+        ("TDRC", latin1(&["2024"])),
+        ("CHAP", chap),
+    ];
+    let (_dir, path) = raw_id3_mp3("chapters", 3, &frames);
+    assert_eq!(tags::save::id3_unkept_frames(&path).unwrap(), None);
+
+    let report = tags::save_tags(&path, &[TagEdit::set_title("New")]).unwrap();
+    assert_eq!(report.id3_version.as_deref(), Some("2.4"));
+    let mut file = std::fs::File::open(&path).unwrap();
+    let mpeg = <lofty::mpeg::MpegFile as lofty::file::AudioFile>::read_from(
+        &mut file,
+        lofty::config::ParseOptions::new(),
+    )
+    .unwrap();
+    let chapter = mpeg
+        .id3v2()
+        .unwrap()
+        .iter()
+        .find_map(|frame| match frame {
+            lofty::id3::v2::Frame::Chapter(chapter) => Some(chapter.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(chapter.id, "ch1");
+    assert_eq!(chapter.times, 0..10_000);
+    assert_eq!(chapter.title(), Some("Intro"));
+    let pictures: Vec<Vec<u8>> = chapter
+        .children
+        .iter()
+        .filter_map(|frame| match frame {
+            lofty::id3::v2::Frame::Picture(apic) => Some(apic.picture.data().to_vec()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(pictures, vec![picture]);
+}

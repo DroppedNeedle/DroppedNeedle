@@ -295,6 +295,16 @@ pub fn file_not_linkable(message: &str) -> ItemReason {
     )
 }
 
+/// A tag the writer cannot keep whole, so its file is left alone.
+/// `message` is the tag reader's sentence.
+pub fn tags_not_kept(message: &str) -> ItemReason {
+    ItemReason::new(
+        "WRITE_FAILED",
+        message,
+        "Remove or fix the frame it names with a tag editor, then make a new preview.",
+    )
+}
+
 pub fn root_read_only() -> ItemReason {
     ItemReason::new(
         "ROOT_READ_ONLY",

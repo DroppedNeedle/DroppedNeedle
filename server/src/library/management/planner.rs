@@ -578,6 +578,13 @@ fn plan_file(
             reasons::file_unreadable()
         })?;
         item.facts.warnings.extend(notes);
+        let unkept = tags::save::id3_unkept_frames(&path).map_err(|error| {
+            tracing::info!(%error, track = track.id, "tags unreadable at preview");
+            reasons::file_unreadable()
+        })?;
+        if let Some(message) = unkept {
+            return Err(reasons::tags_not_kept(&message));
+        }
     }
     item.diff.path_changed = moves;
     let mut outputs = Vec::new();

@@ -1122,11 +1122,6 @@ fn is_text_id(id: &str) -> bool {
     (id.starts_with('T') && !is_key_value_id(id)) || matches!(id, "MVNM" | "MVIN")
 }
 
-/// Frames of name pairs: v2.4's `TIPL` and `TMCL`, v2.3's `IPLS`.
-fn is_people_id(id: &str) -> bool {
-    matches!(id, "TIPL" | "TMCL" | "IPLS")
-}
-
 fn parse_id3_deep(data: &[u8]) -> Result<Option<DeepId3>, Refusal> {
     if data.len() < 10 || &data[..3] != b"ID3" {
         return Ok(None);
@@ -2040,6 +2035,62 @@ pub fn id3_upgrade_notes(path: &Path) -> Result<Vec<String>, TagsError> {
     Ok(notes)
 }
 
+/// Frames lofty 0.25.4 keeps only once per tag: a second one replaces
+/// the first on insert.
+const ONE_PER_TAG_IDS: &[&str] = &[
+    "MCDI", "ETCO", "MLLT", "SYTC", "RVRB", "PCNT", "RBUF", "POSS", "OWNE", "SEEK", "ASPI",
+];
+
+/// Why a save cannot keep this MP3's ID3 tag whole, in plain words, or
+/// `None` when it can. The writer keeps one of two identical frames,
+/// one `PCNT` and the like, and one `UFID` per owner, so a tag holding
+/// more would lose a frame. A mixed v2.3 tag whose chapter or `LINK`
+/// frames cannot move to ID3v2.4 is named too. The save would refuse
+/// either; the preview says so first.
+pub fn id3_unkept_frames(path: &Path) -> Result<Option<String>, TagsError> {
+    if format_for_path(path)? != AudioFormat::Mp3 {
+        return Ok(None);
+    }
+    let bytes = fs::read(path).map_err(|source| TagsError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    let unreadable = |refusal: Refusal| TagsError::TagRead {
+        path: path.display().to_string(),
+        reason: refusal.to_string(),
+    };
+    let Some(tag) = parse_id3_deep(&bytes).map_err(unreadable)? else {
+        return Ok(None);
+    };
+    if is_mixed_v23(&tag)
+        && let Err(reason) = v24_layouts(&tag)
+    {
+        return Ok(Some(reason));
+    }
+    let tag = as_saved(tag).map_err(unreadable)?;
+    let mut seen: std::collections::HashSet<(&str, &[u8])> = std::collections::HashSet::new();
+    for frame in tag.frames.iter().filter(|frame| frame.text.is_none()) {
+        let key: &[u8] = if ONE_PER_TAG_IDS.contains(&frame.id.as_str()) {
+            &[]
+        } else if frame.id == "UFID" {
+            frame
+                .payload
+                .split(|byte| *byte == 0)
+                .next()
+                .unwrap_or_default()
+        } else {
+            &frame.payload
+        };
+        if !seen.insert((frame.id.as_str(), key)) {
+            return Ok(Some(format!(
+                "The file's ID3 tag holds two {} frames where the tag writer keeps only one, so saving its tags would lose one.",
+                frame.id
+            )));
+        }
+    }
+    Ok(None)
+}
+
 /// A mixed tag as ID3v2.4, and its conflict notes.
 struct Upgrade {
     tag: DeepId3,
@@ -2255,6 +2306,13 @@ fn upgrade_to_v24(tag: &DeepId3) -> Result<Upgrade, Refusal> {
         moved.extend(["IPLS".to_owned(), "TIPL".to_owned()]);
     }
 
+    for (index, payload) in v24_layouts(tag).map_err(|reason| Refusal::SaveFailed { reason })? {
+        if let Some(frame) = frames[index].as_mut() {
+            frame.payload = payload;
+            moved.insert(frame_key(frame));
+        }
+    }
+
     let mut out = Vec::with_capacity(count + added.len());
     for (index, frame) in frames.into_iter().enumerate() {
         out.extend(
@@ -2283,9 +2341,111 @@ fn upgrade_to_v24(tag: &DeepId3) -> Result<Upgrade, Refusal> {
     })
 }
 
+/// The frames of a v2.3 tag whose payload is laid out by the tag's
+/// version, rewritten for ID3v2.4: each index whose payload changes, with
+/// its new payload. `CHAP` and `CTOC` embed whole frames, whose sizes
+/// become syncsafe; nothing else in them changes. `LINK` names a frame
+/// in three bytes in v2.3 and four in v2.4, so it cannot move unchanged.
+/// The error is a plain sentence.
+fn v24_layouts(tag: &DeepId3) -> Result<Vec<(usize, Vec<u8>)>, String> {
+    let mut out = Vec::new();
+    for (index, frame) in tag.frames.iter().enumerate() {
+        let id = frame.id.as_str();
+        let unmovable = || {
+            format!(
+                "The file's ID3v2.3 tag must be saved as ID3v2.4, and its {id} frame cannot \
+                 move to ID3v2.4 unchanged."
+            )
+        };
+        match id {
+            "LINK" => return Err(unmovable()),
+            "CHAP" | "CTOC" => {
+                let payload = chapter_payload_v24(id, &frame.payload).ok_or_else(unmovable)?;
+                if payload != frame.payload {
+                    out.push((index, payload));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(out)
+}
+
+/// A v2.3 `CHAP` or `CTOC` payload with its embedded frame headers in
+/// the v2.4 layout, or `None` when it cannot be read or holds a frame
+/// with flags.
+fn chapter_payload_v24(id: &str, payload: &[u8]) -> Option<Vec<u8>> {
+    let after_string = |at: usize| -> Option<usize> {
+        Some(at + payload.get(at..)?.iter().position(|byte| *byte == 0)? + 1)
+    };
+    let mut at = after_string(0)?;
+    if id == "CHAP" {
+        at += 16;
+    } else {
+        let count = *payload.get(at + 1)?;
+        at += 2;
+        for _ in 0..count {
+            at = after_string(at)?;
+        }
+    }
+    let mut out = payload.get(..at)?.to_vec();
+    while at < payload.len() {
+        if payload[at] == 0 {
+            out.extend_from_slice(&payload[at..]);
+            break;
+        }
+        let header = payload.get(at..at + 10)?;
+        let size = u32::from_be_bytes([header[4], header[5], header[6], header[7]]);
+        if header[8] != 0 || header[9] != 0 || size >= 1 << 28 {
+            return None;
+        }
+        let end = (at + 10).checked_add(size as usize)?;
+        out.extend_from_slice(&header[..4]);
+        out.extend_from_slice(&[
+            (size >> 21) as u8 & 0x7F,
+            (size >> 14) as u8 & 0x7F,
+            (size >> 7) as u8 & 0x7F,
+            size as u8 & 0x7F,
+        ]);
+        out.extend_from_slice(&[0, 0]);
+        out.extend_from_slice(payload.get(at + 10..end)?);
+        at = end;
+    }
+    Some(out)
+}
+
+/// Whether lofty reads a `CHAP` or `CTOC` the same from its v2.3 and its
+/// v2.4 payload: element id, times or entries, and every embedded frame.
+fn same_chapter(id: &str, v23: &[u8], v24: &[u8]) -> bool {
+    use lofty::config::ParseOptions;
+    use lofty::id3::v2::{ChapterFrame, ChapterTableOfContentsFrame, FrameFlags, Id3v2Version};
+    let options = ParseOptions::new();
+    let flags = FrameFlags::default();
+    if id == "CHAP" {
+        let old = ChapterFrame::parse(&mut &v23[..], options, Id3v2Version::V3, flags);
+        let new = ChapterFrame::parse(&mut &v24[..], options, Id3v2Version::V4, flags);
+        matches!((old, new), (Ok(old), Ok(new))
+            if old.id == new.id
+                && old.times == new.times
+                && old.offsets == new.offsets
+                && old.children == new.children)
+    } else {
+        let old =
+            ChapterTableOfContentsFrame::parse(&mut &v23[..], options, Id3v2Version::V3, flags);
+        let new =
+            ChapterTableOfContentsFrame::parse(&mut &v24[..], options, Id3v2Version::V4, flags);
+        matches!((old, new), (Ok(old), Ok(new))
+            if old.id == new.id
+                && old.flags == new.flags
+                && old.entries == new.entries
+                && old.children == new.children)
+    }
+}
+
 /// The upgrade's promises, checked: frames outside `moved` are as they
 /// were, every field reads its v2.4 value or else the moved v2.3 one (an
-/// ISRC its split values), and the credits are the merged pairs.
+/// ISRC its split values), the credits are the merged pairs, and each
+/// chapter frame reads as it did.
 fn check_upgrade(
     original: &DeepId3,
     upgraded: &DeepId3,
@@ -2342,6 +2502,22 @@ fn check_upgrade(
         {
             return Err(fail("the credits did not merge as promised".to_owned()));
         }
+    }
+    let chapters = |tag: &DeepId3| -> Vec<(String, Vec<u8>)> {
+        tag.frames
+            .iter()
+            .filter(|frame| matches!(frame.id.as_str(), "CHAP" | "CTOC"))
+            .map(|frame| (frame.id.clone(), frame.payload.clone()))
+            .collect()
+    };
+    let (old, new) = (chapters(original), chapters(upgraded));
+    if old.len() != new.len()
+        || old
+            .iter()
+            .zip(&new)
+            .any(|((id, v23), (new_id, v24))| id != new_id || !same_chapter(id, v23, v24))
+    {
+        return Err(fail("a chapter frame does not read as it did".to_owned()));
     }
     Ok(())
 }
@@ -4463,21 +4639,19 @@ fn repair_id3_text(native: &mut Id3v2Tag, truth: Option<&DeepId3>) {
             )));
         }
     }
-    // People and comment frames go back as the bytes they were: the
-    // generic round-trip re-encodes them, and on v2.3 reads `IPLS` as a
-    // `TIPL` the sweep above removes. So do v2.4 picture and lyrics
-    // frames whose text is not UTF-8, as a v2.3 tag saved as v2.4 holds:
-    // lofty 0.25.4 writes them back as UTF-8 (seen 2026-10-14). An edit
-    // of either replaces them after this.
-    let reencoded = |frame: &Id3FrameTruth| {
-        truth.major == 4
-            && matches!(frame.id.as_str(), "APIC" | "USLT")
-            && frame.payload.first() != Some(&3)
-    };
+    // Every other frame but `UFID` goes back as the bytes it was. The
+    // generic round-trip in lofty 0.25.4 changes many of them (seen
+    // 2026-10-15 on v2.3 and v2.4 tags): pictures, lyrics and comments
+    // are re-encoded, a `WXXX` URL is written as UTF-16, a `POPM` gains
+    // a play counter and has its rating rounded to stars (an empty email
+    // even becomes "MusicBee"), `ETCO` and `OWNE` cannot be written at
+    // all, and `IPLS` is read as a `TIPL` the sweep above removes. `UFID`
+    // survives, and its edits find it by owner. An edit of any of these
+    // removes them by id after this.
     let mut raw_ids: Vec<&str> = truth
         .frames
         .iter()
-        .filter(|frame| is_people_id(&frame.id) || frame.id == "COMM" || reencoded(frame))
+        .filter(|frame| frame.text.is_none() && frame.id != "UFID")
         .map(|frame| frame.id.as_str())
         .collect();
     raw_ids.sort_unstable();
