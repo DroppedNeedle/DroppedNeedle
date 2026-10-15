@@ -884,6 +884,197 @@ async fn retag_preview_lists_the_tags_that_change() {
     rig.stop().await;
 }
 
+/// An artist whose files carry its MusicBrainz id keeps its row when a
+/// managed run renames it in the tags: the credits, the album's artist,
+/// a listener's favorite and plays and the MusicBrainz link stay on the
+/// row, which takes the new name and sort name. A rescan with nothing new
+/// changes no artist row; undoing the run gives the row its old name back.
+#[tokio::test]
+async fn an_artist_renamed_by_a_managed_run_keeps_its_row() {
+    use droppedneedle::library::tags::save::{TagEdit, save_tags};
+    use droppedneedle::library::tags::{TagField, read_fields};
+
+    const ARTIST: &str = "10000000-0000-4000-8000-000000000005";
+    let rig = Rig::start("lib-artist-rename").await;
+    rig.identify.recall_from(|facts| {
+        let mut recall = ambiguous_from(facts);
+        let alfa = CreditedArtist {
+            id: ARTIST.to_owned(),
+            name: "Alfa".to_owned(),
+            sort_name: Some("Alfa, The".to_owned()),
+            join: String::new(),
+        };
+        for release in &mut recall.releases {
+            release.artists = vec![alfa.clone()];
+            for track in &mut release.tracks {
+                track.artists = vec![alfa.clone()];
+            }
+        }
+        recall
+    });
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    for number in [1, 2] {
+        let relative = format!("album/0{number}.flac");
+        let file = plant(&music, &relative, "management_full.flac");
+        let one = |value: &str| vec![value.to_owned()];
+        let edits = vec![
+            TagEdit::verbatim(TagField::Title, one(&format!("Song {number}"))),
+            TagEdit::verbatim(TagField::TrackNumber, one(&number.to_string())),
+            TagEdit::verbatim(TagField::Compilation, Vec::new()),
+            TagEdit::verbatim(TagField::Artist, one("Alpha")),
+            TagEdit::verbatim(TagField::Artists, one("Alpha")),
+            TagEdit::verbatim(TagField::ArtistSort, Vec::new()),
+            TagEdit::verbatim(TagField::AlbumArtist, one("Alpha")),
+            TagEdit::verbatim(TagField::AlbumArtists, one("Alpha")),
+            TagEdit::verbatim(TagField::AlbumArtistSort, Vec::new()),
+            TagEdit::verbatim(TagField::MusicBrainzArtistId, one(ARTIST)),
+            TagEdit::verbatim(TagField::MusicBrainzAlbumArtistId, one(ARTIST)),
+            TagEdit::verbatim(
+                TagField::MusicBrainzRecordingId,
+                one(&format!("10000000-0000-4000-8000-00000000010{number}")),
+            ),
+            TagEdit::verbatim(
+                TagField::MusicBrainzReleaseTrackId,
+                one(&format!("10000000-0000-4000-8000-00000000020{number}")),
+            ),
+        ];
+        save_tags(&file, &edits).expect("fixture tagged");
+    }
+    app.add_library_folder("music", &music).await;
+    let track = rig
+        .scan_store
+        .track_at("music", "album/01.flac")
+        .expect("track indexed");
+    let album = rig.scan_store.album_for_track(&track).expect("album");
+    rig.identified(1).await;
+    rig.choose_first_edition(&album).await;
+    rig.edition_settled(&album).await;
+
+    let db = app.db();
+    let text = |sql: &str| -> Vec<String> {
+        let mut statement = db.prepare(sql).expect("query prepares");
+        statement
+            .query_map([], |row| row.get(0))
+            .expect("query runs")
+            .collect::<Result<_, _>>()
+            .expect("rows read")
+    };
+    let rows_of_album = format!(
+        "SELECT c.local_artist_id FROM local_track_artists c JOIN local_tracks t \
+         ON t.id = c.local_track_id WHERE t.local_album_id = '{album}' \
+         UNION ALL SELECT local_artist_id FROM local_album_artists WHERE local_album_id = '{album}' \
+         UNION ALL SELECT album_artist_id FROM local_albums WHERE id = '{album}'"
+    );
+    let artist = text(&rows_of_album)[0].clone();
+    assert_eq!(text(&rows_of_album), vec![artist.clone(); 4]);
+    let user = text("SELECT id FROM auth_users WHERE role = 'admin'")[0].clone();
+    db.execute_batch(&format!(
+        "INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+         provider_artist_id, decision_source, selected_at) \
+         VALUES ('{artist}', 'musicbrainz', '{ARTIST}', 'legacy_import', 1); \
+         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('{user}', 'artist', '{artist}', 1); \
+         INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
+         artist_name, played_at) VALUES ('play-1', '{user}', '{artist}', 'Song 1', 'Alpha', \
+         '2026-01-01T00:00:00Z');"
+    ))
+    .expect("link, favorite and play seeded");
+
+    let retag =
+        |rel_path: &str| json!({"root_id": "music", "rel_path": rel_path, "managed_updates": {}});
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/preview",
+            &headers,
+            Some(json!({
+                "kind": "retag",
+                "album_id": album,
+                "items": [retag("album/01.flac"), retag("album/02.flac")],
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/apply",
+            &headers,
+            Some(json!({"preview_token": body["preview_token"]})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let bundle = body["bundle_id"].as_str().expect("bundle").to_owned();
+    let written = read_fields(&music.join("album/02.flac")).expect("fields read");
+    assert_eq!(
+        (
+            &written[&TagField::Artists],
+            &written[&TagField::ArtistSort]
+        ),
+        (&vec!["Alfa".to_owned()], &vec!["Alfa, The".to_owned()]),
+        "the run renamed the artist in the tags"
+    );
+    app.scan_library().await;
+
+    assert_eq!(text(&rows_of_album), vec![artist.clone(); 4]);
+    let named = format!(
+        "SELECT display_name || ' / ' || sort_name FROM local_artists WHERE id = '{artist}'"
+    );
+    assert_eq!(text(&named), ["Alfa / Alfa, The"]);
+    assert_eq!(
+        text(
+            "SELECT item_id FROM library_user_favorites WHERE item_kind = 'artist' \
+             UNION ALL SELECT local_artist_id FROM library_play_history"
+        ),
+        vec![artist.clone(); 2]
+    );
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/artists/{artist}"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["artist_mbid"], json!(ARTIST), "{body}");
+    assert_eq!(
+        text(&format!(
+            "SELECT id FROM local_artists WHERE display_name = 'Alfa' \
+             AND retired_into_artist_id IS NULL AND id <> '{artist}'"
+        )),
+        Vec::<String>::new()
+    );
+
+    let revisions = "SELECT group_concat(id || ':' || row_revision) FROM \
+                     (SELECT id, row_revision FROM local_artists ORDER BY id)";
+    let before = text(revisions);
+    app.scan_library().await;
+    assert_eq!(text(revisions), before, "a rescan with nothing new");
+
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/undo",
+            &headers,
+            Some(json!({"bundle_id": bundle})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    app.scan_library().await;
+    assert_eq!(text(&rows_of_album), vec![artist.clone(); 4]);
+    assert_eq!(
+        text(&format!(
+            "SELECT display_name FROM local_artists WHERE id = '{artist}'"
+        )),
+        ["Alpha"]
+    );
+    rig.stop().await;
+}
+
 /// A trusted user may write an album's edition tags into its files and
 /// nothing more: no destination, no tag values of their own, no undo and
 /// no restore. An admin's same calls go through.

@@ -67,6 +67,11 @@ pub struct AudioTag {
     pub album_artists: Vec<AudioArtistCredit>,
     pub musicbrainz_artist_ids: Vec<String>,
     pub musicbrainz_album_artist_ids: Vec<String>,
+    /// The track artist names came from the multi-valued `ARTISTS` key,
+    /// so they line up one for one with `musicbrainz_artist_ids`.
+    pub artists_listed: bool,
+    /// The same for `ALBUMARTISTS` and `musicbrainz_album_artist_ids`.
+    pub album_artists_listed: bool,
     /// Edition hints: `MEDIA`, `BARCODE`, `CATALOGNUMBER`,
     /// `RELEASECOUNTRY`, and the disc total.
     pub edition: EditionTags,
@@ -247,11 +252,13 @@ fn audio_tag_from_values(values_of: impl Fn(ItemKey) -> Vec<String>) -> AudioTag
     let artist_ids = values_of(ItemKey::MusicBrainzArtistId);
     let album_artist_ids = values_of(ItemKey::MusicBrainzReleaseArtistId);
     let mut artist_names = values_of(ItemKey::TrackArtists);
-    if artist_names.is_empty() {
+    let artists_listed = !artist_names.is_empty();
+    if !artists_listed {
         artist_names = values_of(ItemKey::TrackArtist);
     }
     let mut album_artist_names = values_of(ItemKey::AlbumArtists);
-    if album_artist_names.is_empty() {
+    let album_artists_listed = !album_artist_names.is_empty();
+    if !album_artists_listed {
         album_artist_names = values_of(ItemKey::AlbumArtist);
     }
     let artist_sort = first(ItemKey::TrackArtistSortOrder);
@@ -290,6 +297,8 @@ fn audio_tag_from_values(values_of: impl Fn(ItemKey) -> Vec<String>) -> AudioTag
         album_artists: artist_credits(&album_artist_names, &album_artist_ids, album_artist_sort),
         musicbrainz_artist_ids: artist_ids,
         musicbrainz_album_artist_ids: album_artist_ids,
+        artists_listed,
+        album_artists_listed,
         musicbrainz_release_group_id: first(ItemKey::MusicBrainzReleaseGroupId),
         musicbrainz_release_id: first(ItemKey::MusicBrainzReleaseId),
         musicbrainz_recording_id: first(ItemKey::MusicBrainzRecordingId),

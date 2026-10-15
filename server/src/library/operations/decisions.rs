@@ -848,6 +848,40 @@ pub(crate) fn record_action(
     Ok(id)
 }
 
+/// One audit row for a catalog decision about an artist.
+pub(crate) struct ArtistAction<'a> {
+    pub actor: &'a str,
+    pub kind: &'a str,
+    pub artist_id: &'a str,
+    pub before: serde_json::Value,
+    pub after: serde_json::Value,
+    pub reason: &'a str,
+}
+
+pub(crate) fn record_artist_action(
+    tx: &Transaction<'_>,
+    action: ArtistAction<'_>,
+    now: f64,
+) -> rusqlite::Result<String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    tx.execute(
+        "INSERT INTO library_catalog_actions (id, actor_user_id, action_kind, local_artist_id, \
+         before_json, after_json, reason_code, created_at) \
+         VALUES (?1, (SELECT id FROM auth_users WHERE id = ?2), ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            id,
+            action.actor,
+            action.kind,
+            action.artist_id,
+            action.before.to_string(),
+            action.after.to_string(),
+            action.reason,
+            now,
+        ],
+    )?;
+    Ok(id)
+}
+
 /// Move the catalog revision so cached reads of the album refresh.
 pub(crate) fn bump_catalog(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     tx.execute(

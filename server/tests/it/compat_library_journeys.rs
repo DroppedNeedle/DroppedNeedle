@@ -1885,6 +1885,69 @@ async fn merged_artists_and_album_aliases_open_in_player_apps() {
     rig.stop().await;
 }
 
+/// An artist row proven by its files to be MusicBrainz artist x merges at
+/// the next scan into the row a person links to x, and a player app that
+/// saved the merged artist opens the survivor: Subsonic `getArtist`
+/// answers with the survivor's id, Jellyfin signed in with the survivor's
+/// `Id`, and with no token it is a 401.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_artist_merged_by_its_musicbrainz_id_opens_in_player_apps() {
+    use droppedneedle::library::tags::TagField;
+    use droppedneedle::library::tags::save::{TagEdit, save_tags};
+
+    const ARTIST: &str = "aaaaaaaa-0000-4000-8000-000000000001";
+    let rig = CompatApp::start("compat-converged-artist").await;
+    let (teardrop, _, linked) = catalog_ids(&rig, "Massive Attack/Mezzanine/04 Teardrop.m4a");
+    let music = rig.app.config.root_app_dir.join("music");
+    let live = music.join("MA/Live/01.flac");
+    std::fs::create_dir_all(live.parent().expect("folder")).expect("folder made");
+    std::fs::copy(music.join("Radiohead/OK Computer/01 Airbag.flac"), &live).expect("copied");
+    let one = |value: &str| vec![value.to_owned()];
+    save_tags(
+        &live,
+        &[
+            TagEdit::verbatim(TagField::Album, one("Live")),
+            TagEdit::verbatim(TagField::Artist, one("MA")),
+            TagEdit::verbatim(TagField::Artists, one("MA")),
+            TagEdit::verbatim(TagField::AlbumArtist, one("MA")),
+            TagEdit::verbatim(TagField::AlbumArtists, one("MA")),
+            TagEdit::verbatim(TagField::MusicBrainzArtistId, one(ARTIST)),
+            TagEdit::verbatim(TagField::MusicBrainzAlbumArtistId, one(ARTIST)),
+            TagEdit::verbatim(TagField::MusicBrainzReleaseId, Vec::new()),
+            TagEdit::verbatim(TagField::MusicBrainzReleaseGroupId, Vec::new()),
+            TagEdit::verbatim(TagField::MusicBrainzRecordingId, Vec::new()),
+        ],
+    )
+    .expect("copy tagged");
+    rig.app.scan_library().await;
+    let (live_track, _, merged) = catalog_ids(&rig, "MA/Live/01.flac");
+    assert_ne!(merged, linked);
+    // Jellyfin reads its ids once, so only after the new file is in.
+    let saved = jellyfin_artist_id(&rig, &live_track).await;
+    let survivor_id = jellyfin_artist_id(&rig, &teardrop).await;
+
+    rig.app
+        .db()
+        .execute(
+            "INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+             provider_artist_id, decision_source, selected_at) \
+             VALUES (?1, 'musicbrainz', ?2, 'manual', 1)",
+            [linked.as_str(), ARTIST],
+        )
+        .expect("link seeded");
+    rig.app.scan_library().await;
+
+    let artist = subsonic_ok(&rig, &format!("getArtist?id=ar-{merged}")).await;
+    assert_eq!(artist["artist"]["id"], json!(format!("ar-{linked}")));
+    assert_eq!(jellyfin_item(&rig, &saved).await.0, json!(survivor_id));
+    let (status, _) = rig
+        .app
+        .call("GET", &format!("/jellyfin/Items/{saved}"), &[], None)
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    rig.stop().await;
+}
+
 /// A track whose file was deleted while a copy of it stays, both mapped
 /// to the same release track of the album's edition, continues into the
 /// copy, and the id a player app saved for it opens the copy. Subsonic:

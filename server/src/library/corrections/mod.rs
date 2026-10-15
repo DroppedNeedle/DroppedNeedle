@@ -5,7 +5,9 @@
 //! - merge: whole albums fold into another album;
 //! - move: selected tracks join another album;
 //! - reset grouping: tracks grouped by hand go back to automatic grouping;
-//! - artist merge: duplicate artists fold into one survivor.
+//! - artist merge: duplicate artists fold into one survivor;
+//! - artist convergence: at the end of a scan run, artist rows MusicBrainz
+//!   proves to be one artist fold into one, with no one asking.
 //!
 //! Each is previewed first and applied with the preview's token. They
 //! change catalog rows only, for the albums and artists involved: no file
@@ -16,7 +18,8 @@
 //! Layout: `models` holds the types, `reasons` the refusal and outcome
 //! sentences, `token` the preview tokens, `membership` split, merge and
 //! move, `reset` reset grouping, `edition` what happens to editions,
-//! `artists` the artist merge, `retag_merge` the join of an album
+//! `artists` the artist merge, `artist_convergence` the automatic one,
+//! `retag_merge` the join of an album
 //! retagged across two scans, `retag_pairs` the pairs a person joins or
 //! dismisses, `release_join` the join of an album whose files another
 //! album replaced on the same edition, `placement` a scanned file placed
@@ -24,6 +27,7 @@
 //! continuing into the track that took its place, and `service` the entry
 //! points.
 
+pub(crate) mod artist_convergence;
 mod artists;
 pub(crate) mod continuation;
 mod edition;

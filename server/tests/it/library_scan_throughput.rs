@@ -9,6 +9,11 @@
 //!     full_scan_throughput -- --ignored --nocapture
 //! ```
 //!
+//! Every file lists its artist and album artist (`ARTISTS`,
+//! `ALBUMARTISTS`) with their MusicBrainz ids, so each credit is placed by
+//! id. `DN_SCAN_ONE_ARTIST=1` credits every file to one artist, which
+//! shows whether placing a credit grows with the size of its artist.
+//!
 //! The tree and the database live under the temp dir (`TMPDIR`) and are
 //! removed when the test ends. The files were just written, so the page
 //! cache is warm: the number covers the walk, the tag reads and the
@@ -25,6 +30,7 @@ use droppedneedle::library::scan::{
 use droppedneedle::library::wiring::LibrarySetup;
 
 const FILES_ENV: &str = "DN_SCAN_FILES";
+const ONE_ARTIST_ENV: &str = "DN_SCAN_ONE_ARTIST";
 const DEFAULT_FILES: usize = 2_000;
 const TRACKS_PER_ALBUM: usize = 8;
 const ALBUMS_PER_ARTIST: usize = 4;
@@ -48,16 +54,24 @@ fn replace(bytes: &mut [u8], from: &str, to: &str) {
 }
 
 /// Write `files` copies of one tagged FLAC fixture, each retagged as its
-/// own track: eight tracks to an album, four albums to an artist, with
-/// MusicBrainz ids that differ per artist, album and track.
-fn generate(root: &Path, files: usize) -> u64 {
+/// own track: eight tracks to an album, four albums to an artist (or all
+/// on one artist), with MusicBrainz ids that differ per artist, album and
+/// track, and the artist lists that line up with the artist ids.
+fn generate(root: &Path, files: usize, one_artist: bool) -> u64 {
+    use droppedneedle::library::tags::TagField;
+    use droppedneedle::library::tags::save::{TagEdit, save_tags};
+
     let template = std::fs::read(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library/flac_full_01.flac"),
     )
     .expect("fixture reads");
     for index in 0..files {
         let album = index / TRACKS_PER_ALBUM;
-        let artist = album / ALBUMS_PER_ARTIST;
+        let artist = if one_artist {
+            0
+        } else {
+            album / ALBUMS_PER_ARTIST
+        };
         let track = index % TRACKS_PER_ALBUM + 1;
         let mut bytes = template.clone();
         replace(&mut bytes, "=Airbag", &format!("=Song {track}"));
@@ -72,7 +86,20 @@ fn generate(root: &Path, files: usize) -> u64 {
         if track == 1 {
             std::fs::create_dir_all(&dir).expect("album dir creates");
         }
-        std::fs::write(dir.join(format!("{track:02}.flac")), bytes).expect("track writes");
+        let path = dir.join(format!("{track:02}.flac"));
+        std::fs::write(&path, bytes).expect("track writes");
+        let name = vec![format!("Art{artist:06}")];
+        let id = vec![format!("a74b1b7f-71a5-4011-9441-{artist:012x}")];
+        save_tags(
+            &path,
+            &[
+                TagEdit::verbatim(TagField::Artists, name.clone()),
+                TagEdit::verbatim(TagField::AlbumArtists, name),
+                TagEdit::verbatim(TagField::MusicBrainzArtistId, id.clone()),
+                TagEdit::verbatim(TagField::MusicBrainzAlbumArtistId, id),
+            ],
+        )
+        .expect("artist lists written");
     }
     (template.len() * files) as u64
 }
@@ -86,7 +113,8 @@ async fn full_scan_throughput() {
     };
     let scratch = ScratchDir::new("scan-throughput");
     let music = scratch.join("music");
-    let tree_bytes = generate(&music, files);
+    let one_artist = std::env::var(ONE_ARTIST_ENV).is_ok_and(|value| value == "1");
+    let tree_bytes = generate(&music, files, one_artist);
 
     let users = droppedneedle::auth::wiring::AuthSetup::for_tests()
         .expect("test auth builds")
@@ -132,7 +160,8 @@ async fn full_scan_throughput() {
     let database_bytes =
         query("SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()");
 
-    println!("full scan: {files} files, {albums} albums");
+    let artists = query("SELECT COUNT(DISTINCT local_artist_id) FROM local_track_artists");
+    println!("full scan: {files} files, {albums} albums, {artists} artists");
     println!("  wall time     {elapsed:.2} s");
     println!("  throughput    {:.0} files/s", files as f64 / elapsed);
     let mut phases: Vec<_> = run.phase_timings.iter().collect();

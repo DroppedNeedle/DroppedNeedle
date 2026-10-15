@@ -24,8 +24,10 @@
 
 use std::collections::BTreeMap;
 
+use super::artists::{self, Credit, Own, upsert_artist};
 use super::retag_pairs::{self, RetagPairReason, RetagPairState};
 use super::*;
+use crate::library::corrections::artist_convergence::converge_artists;
 use crate::library::corrections::continuation::{Scope, continue_tracks};
 use crate::library::corrections::placement::place_scanned;
 use crate::library::corrections::release_join::join_replaced;
@@ -45,10 +47,10 @@ use crate::library::scan::store::{IndexWindow, WindowOutcome};
 
 /// The catalog's "Unknown Artist" sentinel (seeded by the baseline).
 pub(super) const UNKNOWN_ARTIST_ID: &str = "00000000-0000-4000-8000-000000000002";
-const UNKNOWN_ARTIST: &str = "Unknown Artist";
+pub(super) const UNKNOWN_ARTIST: &str = "Unknown Artist";
 
 /// A stable UUID-shaped id from a namespaced key.
-fn stable_id(key: &str) -> String {
+pub(super) fn stable_id(key: &str) -> String {
     let digest = Sha256::digest(key.as_bytes());
     let mut bytes = [0u8; 16];
     bytes.copy_from_slice(&digest[..16]);
@@ -60,66 +62,6 @@ fn stable_id(key: &str) -> String {
 fn non_empty(value: &str) -> Option<String> {
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
-}
-
-/// One artist credit as the catalog stores it.
-struct Credit {
-    name: String,
-    sort_name: Option<String>,
-    credited_name: String,
-    join_phrase: String,
-}
-
-fn artist_id(credit: &Credit) -> String {
-    if credit.name == UNKNOWN_ARTIST {
-        return UNKNOWN_ARTIST_ID.to_owned();
-    }
-    stable_id(&format!(
-        "artist:{}:{}",
-        credit.name,
-        credit.sort_name.as_deref().unwrap_or("")
-    ))
-}
-
-fn credits(
-    from_tags: &[crate::library::tags::AudioArtistCredit],
-    fallback: &str,
-    fallback_sort: Option<&str>,
-) -> Vec<Credit> {
-    let mut out: Vec<Credit> = from_tags
-        .iter()
-        .filter(|credit| !credit.name.trim().is_empty())
-        .map(|credit| Credit {
-            name: credit.name.trim().to_owned(),
-            sort_name: credit.sort_name.clone(),
-            credited_name: credit
-                .credited_name
-                .clone()
-                .unwrap_or_else(|| credit.name.trim().to_owned()),
-            join_phrase: credit.join_phrase.clone(),
-        })
-        .collect();
-    if out.is_empty() {
-        out.push(Credit {
-            name: fallback.to_owned(),
-            sort_name: fallback_sort.map(str::to_owned),
-            credited_name: fallback.to_owned(),
-            join_phrase: String::new(),
-        });
-    }
-    out
-}
-
-fn upsert_artist(tx: &Connection, credit: &Credit, now: f64) -> rusqlite::Result<String> {
-    let id = artist_id(credit);
-    let folded = fold_text(&credit.name);
-    tx.prepare_cached(
-        "INSERT INTO local_artists (id, display_name, sort_name, folded_name, normalized_name, \
-         kind, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4, 'group', ?5, ?5) \
-         ON CONFLICT (id) DO NOTHING",
-    )?
-    .execute(params![id, credit.name, credit.sort_name, folded, now])?;
-    Ok(id)
 }
 
 /// How one file names its album.
@@ -341,7 +283,7 @@ struct TrackKey<'a> {
 /// walked its folder to the end without seeing the file. A scope the
 /// mass-missing guard held back (an unmounted share looks like that)
 /// does not count as walked.
-const TRACK_GONE: &str = "(t.availability = 'missing' OR (t.availability = 'indexed' \
+pub(super) const TRACK_GONE: &str = "(t.availability = 'missing' OR (t.availability = 'indexed' \
     AND EXISTS (SELECT 1 FROM library_scan_run_scopes s WHERE s.run_id = ?1 \
       AND s.root_id = t.root_id AND s.discovery_state = 'completed' \
       AND NOT EXISTS (SELECT 1 FROM library_scan_failures f WHERE f.run_id = ?1 \
@@ -462,6 +404,7 @@ fn write_album(
          album_artist_name_folded = excluded.album_artist_name_folded, \
          tag_album_title = excluded.tag_album_title, \
          tag_album_artist_name = excluded.tag_album_artist_name, \
+         album_artist_id = excluded.album_artist_id, \
          album_artist_sort_name = excluded.album_artist_sort_name, \
          year = COALESCE(excluded.year, local_albums.year), \
          original_release_date = COALESCE(excluded.original_release_date, \
@@ -489,10 +432,10 @@ fn write_album(
     ])?;
     let mut album_artist_rows = tx.prepare_cached(
         "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role, \
-         credited_name, join_phrase) VALUES (?1, ?2, ?3, 'main', ?4, ?5) \
+         credited_name, join_phrase, artist_mbid) VALUES (?1, ?2, ?3, 'main', ?4, ?5, ?6) \
          ON CONFLICT (local_album_id, position) DO UPDATE SET \
          local_artist_id = excluded.local_artist_id, credited_name = excluded.credited_name, \
-         join_phrase = excluded.join_phrase",
+         join_phrase = excluded.join_phrase, artist_mbid = excluded.artist_mbid",
     )?;
     for (position, (credit, id)) in album_credits.iter().zip(album_artist_ids).enumerate() {
         album_artist_rows.execute(params![
@@ -501,6 +444,7 @@ fn write_album(
             id,
             credit.credited_name,
             credit.join_phrase,
+            credit.mbid,
         ])?;
     }
 
@@ -585,28 +529,20 @@ fn write_item(
         .year
         .or_else(|| parsed.as_ref().and_then(|names| names.year));
 
-    let album_credits = credits(
+    let album_credits = artists::credits(
         &tag.album_artists,
+        &tag.musicbrainz_album_artist_ids,
+        tag.album_artists_listed,
         &album_artist,
         tag.album_artist_sort.as_deref(),
     );
-    let track_credits = credits(&tag.artists, &track_artist, tag.artist_sort.as_deref());
-    let mut album_artist_ids = Vec::with_capacity(album_credits.len());
-    for credit in &album_credits {
-        album_artist_ids.push(upsert_artist(tx, credit, now)?);
-    }
-    let mut track_artist_ids = Vec::with_capacity(track_credits.len());
-    for credit in &track_credits {
-        // A track credit naming an album artist reuses that artist row.
-        let shared = album_credits
-            .iter()
-            .position(|album| fold_text(&album.name) == fold_text(&credit.name));
-        let id = match shared.and_then(|index| album_artist_ids.get(index)) {
-            Some(id) => id.clone(),
-            None => upsert_artist(tx, credit, now)?,
-        };
-        track_artist_ids.push(id);
-    }
+    let track_credits = artists::credits(
+        &tag.artists,
+        &tag.musicbrainz_artist_ids,
+        tag.artists_listed,
+        &track_artist,
+        tag.artist_sort.as_deref(),
+    );
 
     let release_mbid = tag
         .musicbrainz_release_id
@@ -699,6 +635,17 @@ fn write_item(
             legacy,
         )?,
     };
+    let (album_artist_ids, track_artist_ids) = artists::resolve(
+        tx,
+        &album_credits,
+        &track_credits,
+        Own {
+            run_id,
+            track_id: previous.as_ref().map(|(id, _)| id.as_str()),
+            album_id: &album_id,
+        },
+        now,
+    )?;
     if !locked && joined.is_none() {
         write_album(
             tx,
@@ -907,7 +854,7 @@ fn write_item(
         .execute(params![track_id])?;
     let mut track_artist_rows = tx.prepare_cached(
         "INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role, \
-         credited_name, join_phrase) VALUES (?1, ?2, ?3, 'main', ?4, ?5)",
+         credited_name, join_phrase, artist_mbid) VALUES (?1, ?2, ?3, 'main', ?4, ?5, ?6)",
     )?;
     for (position, (credit, id)) in track_credits.iter().zip(&track_artist_ids).enumerate() {
         track_artist_rows.execute(params![
@@ -916,6 +863,7 @@ fn write_item(
             id,
             credit.credited_name,
             credit.join_phrase,
+            credit.mbid,
         ])?;
     }
     tx.prepare_cached(
@@ -1441,7 +1389,9 @@ fn released_by(tx: &Connection, run_id: &str, album_id: &str) -> rusqlite::Resul
 ///    by their own ids ([`place_scanned`]);
 /// 6. missing tracks continue into the tracks that took their place
 ///    ([`continue_tracks`]);
-/// 7. the albums the run held back are offered ([`offer_held_back`]).
+/// 7. artist rows MusicBrainz proves to be one artist are merged
+///    ([`converge_artists`]);
+/// 8. the albums the run held back are offered ([`offer_held_back`]).
 pub(super) fn settle_ended_run(
     tx: &rusqlite::Transaction<'_>,
     run_id: &str,
@@ -1453,6 +1403,7 @@ pub(super) fn settle_ended_run(
     keep_departures(tx, run_id, now)?;
     place_scanned(tx, now)?;
     continue_tracks(tx, Scope::Library, now)?;
+    converge_artists(tx, now)?;
     enqueued += offer_held_back(tx, run_id, now)?;
     if enqueued > 0
         && let Some(column) = counter_column(counter_names::IDENTIFICATION_ENQUEUED)
@@ -2353,6 +2304,7 @@ pub(crate) fn automatic_album_for(
         sort_name: stored.album_artist_sort.clone(),
         credited_name: stored.album_artist.clone(),
         join_phrase: String::new(),
+        mbid: None,
     };
     let artist_id = match known {
         Some(id) => id,

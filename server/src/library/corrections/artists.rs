@@ -234,7 +234,7 @@ fn reference_counts(
 }
 
 /// Point every reference of `artist` at `survivor` and retire it.
-fn retire_artist(
+pub(super) fn retire_artist(
     tx: &Transaction<'_>,
     artist: &str,
     survivor: &str,

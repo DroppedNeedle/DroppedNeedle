@@ -98,6 +98,9 @@ pub struct SqliteScanStore {
     scratch: Option<crate::tooling::scratch::ScratchDir>,
 }
 
+/// Prepared statements the store's connection keeps.
+const STATEMENT_CACHE: usize = 128;
+
 impl SqliteScanStore {
     /// Open against a migrated database file through the database
     /// factory, with the canonical connection pragmas. The store creates
@@ -121,6 +124,9 @@ impl SqliteScanStore {
     }
 
     fn wrap(conn: Connection) -> Self {
+        // One file's write runs a few dozen distinct statements; rusqlite's
+        // default cache of 16 would prepare most of them again per file.
+        conn.set_prepared_statement_cache_capacity(STATEMENT_CACHE);
         Self {
             inner: Mutex::new(Inner {
                 conn,
@@ -545,6 +551,7 @@ fn scope_covers(existing: &ScanScope, requested_root: &str, requested: &ScanScop
         && scope_covers_path(&existing.relative_path, &requested.relative_path)
 }
 
+pub(crate) mod artists;
 mod artwork;
 pub use artwork::ArtworkSweep;
 mod catalog;

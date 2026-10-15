@@ -1290,6 +1290,102 @@ async fn track_aliases_keep_moving_overrides() {
     assert!(refused.is_err(), "only 0 or 1");
 }
 
+/// Migration 0050 records the MusicBrainz artist id each credit's file
+/// gave and the id an automatic merge proved. Credits and artists made
+/// before it keep every row with no id; only a lowercased 36-character id
+/// is accepted; the four lookups are partial indexes.
+#[tokio::test]
+async fn artist_credits_gain_their_evidence() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 50)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+         ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         album_title, album_title_folded, file_format, ingest_source, imported_at, \
+         membership_source) VALUES \
+         ('t1', 'al1', 'r1', '/m/1.flac', '1.flac', 'h1', 1, 0, 's', 'T', 't', 'T', 't', \
+         'flac', 'scan', 0, 'automatic'); \
+         INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role, \
+         credited_name, join_phrase) VALUES ('t1', 0, 'a1', 'main', 'A', ''); \
+         INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role, \
+         credited_name, join_phrase) VALUES ('al1', 0, 'a1', 'main', 'A', '');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let kept: (
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT t.local_artist_id, t.artist_mbid, b.local_artist_id, b.artist_mbid, \
+         a.converged_mbid FROM local_track_artists t, local_album_artists b, local_artists a \
+         WHERE a.id = 'a1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, ("a1".to_owned(), None, "a1".to_owned(), None, None));
+    let good = "aaaaaaaa-0000-4000-8000-000000000001";
+    for (table, column) in [
+        ("local_track_artists", "artist_mbid"),
+        ("local_album_artists", "artist_mbid"),
+        ("local_artists", "converged_mbid"),
+    ] {
+        for bad in ["AAAAAAAA-0000-4000-8000-000000000001", "not-an-id"] {
+            let refused = sqlx::query(&format!("UPDATE {table} SET {column} = ?1"))
+                .bind(bad)
+                .execute(&pool)
+                .await;
+            assert!(refused.is_err(), "{table}.{column} refuses {bad}");
+        }
+        sqlx::query(&format!("UPDATE {table} SET {column} = ?1"))
+            .bind(good)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let indexes: Vec<(String, String)> = sqlx::query_as(
+        "SELECT name, sql FROM sqlite_master WHERE type = 'index' \
+         AND name IN ('idx_local_track_artists_mbid', 'idx_local_track_artists_artist_mbid', \
+         'idx_local_album_artists_mbid', 'idx_local_album_artists_artist_mbid') ORDER BY name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(indexes.len(), 4);
+    for (name, sql) in indexes {
+        assert!(
+            sql.contains("WHERE artist_mbid IS NOT NULL"),
+            "{name} is partial"
+        );
+    }
+}
+
 /// The causes a takeover may carry in the database are exactly the ones
 /// the code names, in both directions.
 #[tokio::test]

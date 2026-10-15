@@ -686,6 +686,7 @@ fn retag_warnings() -> &'static std::sync::Mutex<Vec<String>> {
             if line.contains("retagged album")
                 || line.contains("tracks not continued")
                 || line.contains("not placed on the album's edition")
+                || line.contains("could not be merged")
             {
                 retag_warnings()
                     .lock()
@@ -5059,4 +5060,800 @@ async fn a_failed_placement_takes_its_mark_with_it() {
     assert_eq!(rig.release_track_of(&new).as_deref(), Some("p-rt-1"));
     assert_eq!(rig.mark_of(&album).as_deref(), Some("retag_followed"));
     assert_eq!(warned(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Which artist row a file's credits land on, and the merge of rows
+// MusicBrainz proves to be one artist.
+// ---------------------------------------------------------------------------
+
+const MBID_X: &str = "aaaaaaaa-0000-4000-8000-000000000001";
+const MBID_Y: &str = "aaaaaaaa-0000-4000-8000-000000000002";
+const MBID_Z: &str = "aaaaaaaa-0000-4000-8000-000000000003";
+const VARIOUS_ARTISTS_MBID: &str = "89ad4ac3-39f7-470e-963a-56509c546377";
+const CONVERGED: &str = "AUTOMATIC_PROVIDER_PROVEN_ARTIST_CONVERGENCE";
+
+/// One side of a file's artist tags. A listed side writes its names to
+/// the list key (ARTISTS, ALBUMARTISTS) as well as joined to the single
+/// one; an unlisted side writes only the single key.
+#[derive(Clone, Copy)]
+struct Side<'a> {
+    names: &'a [&'a str],
+    ids: &'a [&'a str],
+    sort: Option<&'a str>,
+    listed: bool,
+}
+
+fn listed<'a>(names: &'a [&'a str], ids: &'a [&'a str]) -> Side<'a> {
+    Side {
+        names,
+        ids,
+        sort: None,
+        listed: true,
+    }
+}
+
+fn plain<'a>(names: &'a [&'a str]) -> Side<'a> {
+    Side {
+        names,
+        ids: &[],
+        sort: None,
+        listed: false,
+    }
+}
+
+/// A scan of real tagged files through the production tag reader.
+struct ArtistRig {
+    scratch: ScratchDir,
+    root: PathBuf,
+    coordinator: Arc<LibraryScanCoordinator<droppedneedle::library::adapters::LoftyTagReader>>,
+    writes: AtomicU64,
+}
+
+impl ArtistRig {
+    fn new(name: &str) -> Self {
+        let scratch = ScratchDir::new(name);
+        let root = scratch.join("music");
+        std::fs::create_dir_all(&root).expect("root");
+        let db = scratch.join("app.db");
+        migrated_db(&db);
+        let store = Arc::new(SqliteScanStore::open(&db).expect("scan store opens"));
+        let registry = RootRegistry::new(
+            vec![LibraryRoot::new(
+                "music",
+                root.clone(),
+                EffectivePolicy::Automatic,
+            )],
+            true,
+            "rev-1",
+        );
+        let coordinator = LibraryScanCoordinator::new(
+            store,
+            BlockingPool::new(2),
+            Arc::new(droppedneedle::library::adapters::LoftyTagReader),
+            Arc::new(StaticResolver::new(registry)),
+        )
+        .with_wakeups(WorkWakeups::new());
+        Self {
+            scratch,
+            root,
+            coordinator: Arc::new(coordinator),
+            writes: AtomicU64::new(0),
+        }
+    }
+
+    fn db(&self) -> rusqlite::Connection {
+        droppedneedle::db::open_connection(&self.scratch.join("app.db")).expect("db opens")
+    }
+
+    /// Plant (or retag) `relative` as a track of `album` with these
+    /// artist tags, and date it later than before so the next scan reads
+    /// it again.
+    fn put(&self, relative: &str, album: &str, album_side: Side<'_>, track_side: Side<'_>) {
+        self.put_on(relative, album, None, album_side, track_side);
+    }
+
+    /// [`Self::put`], with the release id the album is keyed by.
+    fn put_on(
+        &self,
+        relative: &str,
+        album: &str,
+        release: Option<&str>,
+        album_side: Side<'_>,
+        track_side: Side<'_>,
+    ) {
+        use droppedneedle::library::tags::TagField;
+        use droppedneedle::library::tags::save::{TagEdit, save_tags};
+        let path = self.root.join(relative);
+        if !path.exists() {
+            plant(&self.root, relative, "management_full.flac");
+        }
+        let strings = |values: &[&str]| values.iter().map(|value| (*value).to_owned()).collect();
+        let list = |side: Side<'_>| {
+            if side.listed {
+                strings(side.names)
+            } else {
+                Vec::new()
+            }
+        };
+        let sort = |side: Side<'_>| {
+            side.sort
+                .map(|sort| vec![sort.to_owned()])
+                .unwrap_or_default()
+        };
+        let edits = vec![
+            TagEdit::verbatim(TagField::Title, vec![relative.to_owned()]),
+            TagEdit::verbatim(TagField::Album, vec![album.to_owned()]),
+            TagEdit::verbatim(TagField::Artist, vec![track_side.names.join(" & ")]),
+            TagEdit::verbatim(TagField::Artists, list(track_side)),
+            TagEdit::verbatim(TagField::ArtistSort, sort(track_side)),
+            TagEdit::verbatim(TagField::AlbumArtist, vec![album_side.names.join(" & ")]),
+            TagEdit::verbatim(TagField::AlbumArtists, list(album_side)),
+            TagEdit::verbatim(TagField::AlbumArtistSort, sort(album_side)),
+            TagEdit::verbatim(TagField::MusicBrainzArtistId, strings(track_side.ids)),
+            TagEdit::verbatim(TagField::MusicBrainzAlbumArtistId, strings(album_side.ids)),
+            TagEdit::verbatim(TagField::MusicBrainzReleaseId, strings(release.as_slice())),
+            TagEdit::verbatim(TagField::MusicBrainzReleaseGroupId, Vec::new()),
+            TagEdit::verbatim(TagField::MusicBrainzRecordingId, Vec::new()),
+            TagEdit::verbatim(TagField::MusicBrainzReleaseTrackId, Vec::new()),
+        ];
+        save_tags(&path, &edits).expect("file tagged");
+        let write = self.writes.fetch_add(1, Ordering::SeqCst) + 1;
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect("file opens")
+            .set_modified(
+                std::time::SystemTime::UNIX_EPOCH
+                    + std::time::Duration::from_secs(1_700_000_000 + write),
+            )
+            .expect("mtime set");
+    }
+
+    async fn scan(&self) {
+        self.coordinator
+            .request_run(&request(&self.root))
+            .expect("requested");
+        let paths = HashMap::from([("music".to_owned(), self.root.clone())]);
+        let run = self.coordinator.run_once(&paths).await.expect("scan runs");
+        assert_eq!(run.state, ScanState::Completed);
+    }
+
+    fn run(&self, sql: &str) {
+        self.coordinator
+            .store()
+            .execute_batch_for_tests(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error}"));
+    }
+
+    fn count(&self, sql: &str) -> i64 {
+        self.coordinator
+            .store()
+            .query_i64_for_tests(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error}"))
+    }
+
+    fn text(&self, sql: &str) -> Option<String> {
+        self.db()
+            .query_row(sql, [], |row| row.get(0))
+            .unwrap_or_else(|error| panic!("{sql}: {error}"))
+    }
+
+    /// The artist row of the track credit at `position` of the file.
+    fn track_artist(&self, relative: &str, position: i64) -> String {
+        self.text(&format!(
+            "SELECT c.local_artist_id FROM local_track_artists c JOIN local_tracks t \
+             ON t.id = c.local_track_id WHERE t.relative_path = '{relative}' \
+             AND c.position = {position}"
+        ))
+        .expect("track credit")
+    }
+
+    /// The artist rows of the file's album: its first album credit and
+    /// its `album_artist_id`.
+    fn album_artist(&self, relative: &str) -> (String, String) {
+        let credit = self
+            .text(&format!(
+                "SELECT c.local_artist_id FROM local_album_artists c JOIN local_tracks t \
+                 ON t.local_album_id = c.local_album_id \
+                 WHERE t.relative_path = '{relative}' AND c.position = 0"
+            ))
+            .expect("album credit");
+        let artist = self
+            .text(&format!(
+                "SELECT a.album_artist_id FROM local_albums a JOIN local_tracks t \
+                 ON t.local_album_id = a.id WHERE t.relative_path = '{relative}'"
+            ))
+            .expect("album artist");
+        (credit, artist)
+    }
+
+    fn name(&self, artist: &str) -> String {
+        self.text(&format!(
+            "SELECT display_name FROM local_artists WHERE id = '{artist}'"
+        ))
+        .expect("artist name")
+    }
+
+    fn retired_into(&self, artist: &str) -> Option<String> {
+        self.text(&format!(
+            "SELECT retired_into_artist_id FROM local_artists WHERE id = '{artist}'"
+        ))
+    }
+
+    /// A person's link of the artist to a MusicBrainz artist, as a
+    /// contribution writes it.
+    fn link(&self, artist: &str, mbid: &str) {
+        self.link_by(artist, mbid, "manual");
+    }
+
+    /// A link of the artist to a MusicBrainz artist with this decision
+    /// source.
+    fn link_by(&self, artist: &str, mbid: &str, source: &str) {
+        self.run(&format!(
+            "INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+             provider_artist_id, decision_source, selected_at) \
+             VALUES ('{artist}', 'musicbrainz', '{mbid}', '{source}', 1)"
+        ));
+    }
+
+    /// One favorite and one play of the artist for `user`.
+    fn listen(&self, user: &str, artist: &str) {
+        self.run(&format!(
+            "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+             VALUES ('{user}', 'artist', '{artist}', 1); \
+             INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
+             artist_name, played_at) VALUES ('{user}-{artist}', '{user}', '{artist}', 'Song', \
+             'Artist', '2026-01-01T00:00:00Z');"
+        ));
+    }
+
+    fn merges(&self) -> i64 {
+        self.count(&format!(
+            "SELECT COUNT(*) FROM library_catalog_actions WHERE reason_code = '{CONVERGED}'"
+        ))
+    }
+}
+
+/// An artist row with no link, proven by its files to be MusicBrainz
+/// artist x, merges at the next run end into the row a person then links
+/// to x, with no file changed: its credits, album artist, favorites and
+/// plays move, its id stays as an alias, and the duplicate artists list
+/// shows the merge as resolved. A second run end merges nothing. A later
+/// file named like the retired row but with another id gets a row of its
+/// own, not the survivor.
+#[tokio::test]
+async fn rows_proven_to_be_one_artist_merge_at_the_run_end() {
+    use droppedneedle::library::reconcile::groups::build;
+    use droppedneedle::library::reconcile::models::GroupState;
+    use droppedneedle::library::reconcile::store::inputs;
+
+    let rig = ArtistRig::new("artist-converge");
+    rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
+    rig.put(
+        "B/01.flac",
+        "Album B",
+        listed(&["En"], &[MBID_X]),
+        listed(&["En"], &[MBID_X]),
+    );
+    rig.scan().await;
+    let survivor = rig.track_artist("A/01.flac", 0);
+    let retired = rig.track_artist("B/01.flac", 0);
+    assert_ne!(survivor, retired);
+    rig.listen("listener", &survivor);
+    rig.listen("listener", &retired);
+    rig.link(&survivor, MBID_X);
+
+    rig.scan().await;
+    assert_eq!(rig.retired_into(&retired), Some(survivor.clone()));
+    assert_eq!(
+        rig.text(&format!(
+            "SELECT local_artist_id || ' ' || kind FROM local_artist_aliases \
+             WHERE alias = '{retired}'"
+        )),
+        Some(format!("{survivor} merged_artist"))
+    );
+    assert_eq!(rig.track_artist("B/01.flac", 0), survivor);
+    assert_eq!(
+        rig.album_artist("B/01.flac"),
+        (survivor.clone(), survivor.clone())
+    );
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM library_user_favorites WHERE item_kind = 'artist' \
+             AND item_id = '{survivor}'"
+        )),
+        1
+    );
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM library_user_favorites WHERE item_id = '{retired}'"
+        )),
+        0
+    );
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM library_play_history WHERE local_artist_id = '{survivor}'"
+        )),
+        2
+    );
+    assert_eq!(rig.merges(), 1);
+    let resolved: Vec<_> = build(&inputs(&rig.db()).expect("groups read"))
+        .into_iter()
+        .filter(|group| group.state == GroupState::ResolvedAutomatically)
+        .collect();
+    assert_eq!(resolved.len(), 1);
+    let mut members: Vec<&str> = resolved[0].members.iter().map(|m| m.id.as_str()).collect();
+    members.sort_unstable();
+    let mut expected = vec![survivor.as_str(), retired.as_str()];
+    expected.sort_unstable();
+    assert_eq!(members, expected);
+    assert_eq!(resolved[0].provider_mbids, vec![MBID_X.to_owned()]);
+
+    rig.scan().await;
+    assert_eq!(rig.merges(), 1, "nothing new to merge");
+
+    rig.put(
+        "C/01.flac",
+        "Album C",
+        listed(&["En"], &[MBID_Y]),
+        listed(&["En"], &[MBID_Y]),
+    );
+    rig.scan().await;
+    let other = rig.track_artist("C/01.flac", 0);
+    assert_ne!(other, survivor, "another artist named like the merged row");
+    assert_ne!(other, retired);
+    assert_eq!(rig.name(&other), "En");
+    assert_eq!(rig.retired_into(&other), None);
+}
+
+/// A row with a file that carries no id is not merged, even though its
+/// other files prove it is the linked artist: the id-less file may be
+/// another artist's.
+#[tokio::test]
+async fn a_row_with_a_file_without_the_id_is_not_merged() {
+    let rig = ArtistRig::new("artist-converge-partial");
+    rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
+    rig.put(
+        "B/01.flac",
+        "Album B",
+        listed(&["En"], &[MBID_X]),
+        listed(&["En"], &[MBID_X]),
+    );
+    rig.put("B/02.flac", "Album B", plain(&["En"]), plain(&["En"]));
+    rig.scan().await;
+    let linked = rig.track_artist("A/01.flac", 0);
+    let proven = rig.track_artist("B/01.flac", 0);
+    assert_eq!(rig.track_artist("B/02.flac", 0), proven);
+    rig.link(&linked, MBID_X);
+    rig.scan().await;
+    assert_eq!(rig.retired_into(&proven), None);
+    assert_eq!(rig.merges(), 0);
+}
+
+/// A group of three rows proven to be one artist, two of which an
+/// administrator marked as distinct, is not merged at all. Once the mark
+/// is gone, both merge into the linked row in one go.
+#[tokio::test]
+async fn a_group_marked_distinct_is_not_merged() {
+    let rig = ArtistRig::new("artist-converge-distinct");
+    rig.put("S/01.flac", "Album S", plain(&["Es"]), plain(&["Es"]));
+    rig.put("A/01.flac", "Album A", plain(&["Ay"]), plain(&["Ay"]));
+    rig.put("B/01.flac", "Album B", plain(&["Bee"]), plain(&["Bee"]));
+    rig.scan().await;
+    let survivor = rig.track_artist("S/01.flac", 0);
+    let mut pair = [
+        rig.track_artist("A/01.flac", 0),
+        rig.track_artist("B/01.flac", 0),
+    ];
+    pair.sort();
+    let [left, right] = &pair;
+    // Two rows each proven by its files, as rows split before the scan
+    // kept ids are once their files are read again.
+    rig.run(&format!(
+        "UPDATE local_track_artists SET artist_mbid = '{MBID_X}' \
+         WHERE local_artist_id IN ('{left}', '{right}'); \
+         UPDATE local_album_artists SET artist_mbid = '{MBID_X}' \
+         WHERE local_artist_id IN ('{left}', '{right}'); \
+         INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z'); \
+         INSERT INTO library_artist_reconciliation_dismissals (left_artist_id, \
+         right_artist_id, left_artist_revision, right_artist_revision, dismissed_by_user_id, \
+         created_at, updated_at) VALUES ('{left}', '{right}', 1, 1, 'admin', 1, 1);"
+    ));
+    rig.link(&survivor, MBID_X);
+    rig.scan().await;
+    assert_eq!(rig.retired_into(left), None);
+    assert_eq!(rig.retired_into(right), None);
+    assert_eq!(rig.merges(), 0);
+
+    rig.run("DELETE FROM library_artist_reconciliation_dismissals");
+    rig.scan().await;
+    assert_eq!(rig.retired_into(left), Some(survivor.clone()));
+    assert_eq!(rig.retired_into(right), Some(survivor));
+    assert_eq!(rig.merges(), 1);
+}
+
+/// A merge the store refuses is rolled back with one warning and the run
+/// still ends; the next run end merges.
+#[tokio::test]
+async fn a_refused_merge_waits_for_the_next_run() {
+    let rig = ArtistRig::new("artist-converge-refused");
+    rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
+    rig.put(
+        "B/01.flac",
+        "Album B",
+        listed(&["En"], &[MBID_X]),
+        listed(&["En"], &[MBID_X]),
+    );
+    rig.scan().await;
+    let survivor = rig.track_artist("A/01.flac", 0);
+    let retired = rig.track_artist("B/01.flac", 0);
+    rig.link(&survivor, MBID_X);
+    rig.run(
+        "CREATE TRIGGER refuse_alias BEFORE INSERT ON local_artist_aliases \
+         BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+    );
+    let warned = || {
+        retag_warnings()
+            .lock()
+            .expect("lines")
+            .iter()
+            .filter(|line| line.contains("could not be merged") && line.contains(&retired))
+            .count()
+    };
+    retag_warnings();
+    rig.scan().await;
+    assert_eq!(rig.retired_into(&retired), None);
+    assert_eq!(rig.track_artist("B/01.flac", 0), retired);
+    assert_eq!(rig.merges(), 0);
+    assert_eq!(warned(), 1);
+
+    rig.run("DROP TRIGGER refuse_alias");
+    rig.scan().await;
+    assert_eq!(rig.retired_into(&retired), Some(survivor));
+    assert_eq!(rig.merges(), 1);
+}
+
+/// ARTIST "Ay feat. Bee" with one id, no ARTISTS list, while the row "Ay"
+/// is proven to be that id: the credit stays on its own row and "Ay" is
+/// not renamed.
+#[tokio::test]
+async fn a_joined_credit_with_one_id_keeps_its_own_row() {
+    let rig = ArtistRig::new("artist-joined");
+    rig.put(
+        "A/01.flac",
+        "Album A",
+        listed(&["Ay"], &[MBID_X]),
+        listed(&["Ay"], &[MBID_X]),
+    );
+    let joined = Side {
+        names: &["Ay feat. Bee"],
+        ids: &[MBID_X],
+        sort: None,
+        listed: false,
+    };
+    rig.put("F/01.flac", "Album F", plain(&["Ay feat. Bee"]), joined);
+    rig.scan().await;
+    let own = rig.track_artist("A/01.flac", 0);
+    let feat = rig.track_artist("F/01.flac", 0);
+    assert_ne!(own, feat);
+    assert_eq!(rig.name(&own), "Ay");
+    assert_eq!(rig.name(&feat), "Ay feat. Bee");
+}
+
+/// Ids that do not line up with the names (fewer ids than names, or an
+/// id that is not a UUID) prove nothing: the credits go by name.
+#[tokio::test]
+async fn ids_that_do_not_line_up_go_by_name() {
+    let rig = ArtistRig::new("artist-unaligned");
+    rig.put(
+        "P/01.flac",
+        "Album P",
+        plain(&["Pe"]),
+        listed(&["Pe", "Cue"], &[MBID_X]),
+    );
+    rig.put(
+        "R/01.flac",
+        "Album R",
+        plain(&["Ar"]),
+        listed(&["Ar"], &["a/b"]),
+    );
+    rig.scan().await;
+    let pe = rig.track_artist("P/01.flac", 0);
+    assert_eq!(rig.name(&pe), "Pe");
+    assert_eq!(rig.album_artist("P/01.flac").0, pe);
+    assert_eq!(rig.name(&rig.track_artist("P/01.flac", 1)), "Cue");
+    assert_eq!(rig.name(&rig.track_artist("R/01.flac", 0)), "Ar");
+    assert_eq!(
+        rig.count("SELECT COUNT(*) FROM local_track_artists WHERE artist_mbid IS NOT NULL"),
+        0
+    );
+}
+
+/// A Various Artists id proves nothing: the album credit takes the name
+/// row, keeps no id, and the Various Artists record is left alone.
+#[tokio::test]
+async fn a_various_artists_id_goes_by_name() {
+    let rig = ArtistRig::new("artist-various");
+    let sentinel = "SELECT row_revision FROM local_artists \
+                    WHERE id = '00000000-0000-4000-8000-000000000001'";
+    let before = rig.count(sentinel);
+    rig.put(
+        "V/01.flac",
+        "Album V",
+        listed(&["Various Artists"], &[VARIOUS_ARTISTS_MBID]),
+        listed(&["Vee"], &[MBID_X]),
+    );
+    rig.scan().await;
+    let (credit, album_artist) = rig.album_artist("V/01.flac");
+    assert_eq!(credit, album_artist);
+    assert_ne!(credit, "00000000-0000-4000-8000-000000000001");
+    assert_eq!(rig.name(&credit), "Various Artists");
+    assert_eq!(
+        rig.count("SELECT COUNT(*) FROM local_album_artists WHERE artist_mbid IS NOT NULL"),
+        0
+    );
+    assert_eq!(rig.count(sentinel), before);
+}
+
+/// A name change in a file without artist ids makes a new row, as it
+/// always has: names prove nothing. The album, kept by its release id,
+/// takes the new row as its artist along with its credit.
+#[tokio::test]
+async fn a_name_change_without_ids_makes_a_new_row() {
+    const RELEASE: &str = "bbbbbbbb-0000-4000-8000-000000000001";
+    let rig = ArtistRig::new("artist-renamed-plain");
+    rig.put_on(
+        "G/01.flac",
+        "Album G",
+        Some(RELEASE),
+        plain(&["Ex"]),
+        plain(&["Ex"]),
+    );
+    rig.scan().await;
+    let old = rig.track_artist("G/01.flac", 0);
+    let album = "SELECT local_album_id FROM local_tracks WHERE relative_path = 'G/01.flac'";
+    let before = rig.text(album);
+    rig.put_on(
+        "G/01.flac",
+        "Album G",
+        Some(RELEASE),
+        plain(&["Wy"]),
+        plain(&["Wy"]),
+    );
+    rig.scan().await;
+    let new = rig.track_artist("G/01.flac", 0);
+    assert_ne!(new, old);
+    assert_eq!(rig.name(&new), "Wy");
+    assert_eq!(rig.name(&old), "Ex");
+    assert_eq!(rig.text(album), before, "the same album");
+    assert_eq!(rig.album_artist("G/01.flac"), (new.clone(), new));
+}
+
+/// Two artists who share a name but not their MusicBrainz id get a row
+/// each.
+#[tokio::test]
+async fn two_artists_with_one_name_get_two_rows() {
+    let rig = ArtistRig::new("artist-same-name");
+    rig.put(
+        "J1/01.flac",
+        "Album J1",
+        listed(&["Jay"], &[MBID_X]),
+        listed(&["Jay"], &[MBID_X]),
+    );
+    rig.put(
+        "J2/01.flac",
+        "Album J2",
+        listed(&["Jay"], &[MBID_Y]),
+        listed(&["Jay"], &[MBID_Y]),
+    );
+    rig.scan().await;
+    let one = rig.track_artist("J1/01.flac", 0);
+    let two = rig.track_artist("J2/01.flac", 0);
+    assert_ne!(one, two);
+    assert_eq!(rig.name(&two), "Jay");
+    assert_eq!(rig.album_artist("J2/01.flac"), (two.clone(), two));
+}
+
+/// After a person merges artist A (files with id a) into artist B
+/// (linked to b), files of both read again credit B, and no row is made
+/// for A's name or id.
+#[tokio::test]
+async fn a_persons_merge_holds_when_the_files_are_read_again() {
+    let rig = ArtistRig::new("artist-person-merge");
+    let em = listed(&["Em"], &[MBID_X]);
+    let be = listed(&["Be"], &[MBID_Y]);
+    rig.put("M/01.flac", "Album M", em, em);
+    rig.put("N/01.flac", "Album N", be, be);
+    rig.scan().await;
+    let merged = rig.track_artist("M/01.flac", 0);
+    let kept = rig.track_artist("N/01.flac", 0);
+    rig.link(&kept, MBID_Y);
+    // What the manual merge leaves behind.
+    rig.run(&format!(
+        "UPDATE local_track_artists SET local_artist_id = '{kept}' \
+         WHERE local_artist_id = '{merged}'; \
+         UPDATE local_album_artists SET local_artist_id = '{kept}' \
+         WHERE local_artist_id = '{merged}'; \
+         UPDATE local_albums SET album_artist_id = '{kept}' WHERE album_artist_id = '{merged}'; \
+         UPDATE local_artists SET retired_into_artist_id = '{kept}' WHERE id = '{merged}'; \
+         INSERT INTO local_artist_aliases (alias, local_artist_id, kind, created_at) \
+         VALUES ('{merged}', '{kept}', 'merged_artist', 1);"
+    ));
+    let rows = rig.count("SELECT COUNT(*) FROM local_artists");
+    rig.put("M/01.flac", "Album M", em, em);
+    rig.put("N/01.flac", "Album N", be, be);
+    rig.scan().await;
+    assert_eq!(rig.track_artist("M/01.flac", 0), kept);
+    assert_eq!(rig.album_artist("M/01.flac"), (kept.clone(), kept.clone()));
+    assert_eq!(rig.track_artist("N/01.flac", 0), kept);
+    assert_eq!(rig.count("SELECT COUNT(*) FROM local_artists"), rows);
+}
+
+/// ARTISTS with id x and only ALBUMARTIST, while the row the name keys to
+/// is proven to be another artist y: the album credit and the album's
+/// artist go with the track credit to x's row, not to y's by name.
+#[tokio::test]
+async fn an_album_artist_without_an_id_follows_the_track_credit() {
+    let rig = ArtistRig::new("artist-album-side");
+    rig.put(
+        "Y/01.flac",
+        "Album Y",
+        listed(&["Foo"], &[MBID_Y]),
+        listed(&["Foo"], &[MBID_Y]),
+    );
+    rig.put(
+        "X/01.flac",
+        "Album X",
+        plain(&["Foo"]),
+        listed(&["Foo"], &[MBID_X]),
+    );
+    rig.scan().await;
+    let y = rig.track_artist("Y/01.flac", 0);
+    let x = rig.track_artist("X/01.flac", 0);
+    assert_ne!(x, y);
+    assert_eq!(rig.album_artist("X/01.flac"), (x.clone(), x));
+}
+
+/// One file carrying another artist's id (a copy-paste slip) lands on
+/// that artist's row but does not rename it while its own files use its
+/// name.
+#[tokio::test]
+async fn one_stray_id_does_not_rename_an_artist() {
+    let rig = ArtistRig::new("artist-stray-id");
+    let bar = listed(&["Bar"], &[MBID_X]);
+    rig.put("B/01.flac", "Album B", bar, bar);
+    rig.put("B/02.flac", "Album B", bar, bar);
+    let foo = listed(&["Foo"], &[MBID_X]);
+    rig.put("F/01.flac", "Album F", foo, foo);
+    rig.scan().await;
+    let bar_row = rig.track_artist("B/01.flac", 0);
+    assert_eq!(rig.track_artist("F/01.flac", 0), bar_row);
+    assert_eq!(rig.name(&bar_row), "Bar");
+}
+
+/// An artist proven only by its own files (no link) keeps its row when
+/// every file is renamed with its id: the row takes the new name and
+/// sort name, and its favorite and play stay with it.
+#[tokio::test]
+async fn a_renamed_artist_proven_by_its_files_keeps_its_row() {
+    let rig = ArtistRig::new("artist-renamed-by-id");
+    let old = listed(&["Old"], &[MBID_X]);
+    rig.put("R/01.flac", "Album R", old, old);
+    rig.put("R/02.flac", "Album R", old, old);
+    rig.scan().await;
+    let artist = rig.track_artist("R/01.flac", 0);
+    rig.listen("listener", &artist);
+    let new = Side {
+        names: &["New"],
+        ids: &[MBID_X],
+        sort: Some("New, The"),
+        listed: true,
+    };
+    rig.put("R/01.flac", "Album R", new, new);
+    rig.put("R/02.flac", "Album R", new, new);
+    rig.scan().await;
+    assert_eq!(rig.track_artist("R/01.flac", 0), artist);
+    assert_eq!(rig.track_artist("R/02.flac", 0), artist);
+    assert_eq!(
+        rig.album_artist("R/02.flac"),
+        (artist.clone(), artist.clone())
+    );
+    assert_eq!(
+        rig.text(&format!(
+            "SELECT display_name || ' / ' || sort_name FROM local_artists WHERE id = '{artist}'"
+        )),
+        Some("New / New, The".to_owned())
+    );
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT (SELECT COUNT(*) FROM library_user_favorites WHERE item_id = '{artist}') \
+             + (SELECT COUNT(*) FROM library_play_history WHERE local_artist_id = '{artist}')"
+        )),
+        2
+    );
+    assert_eq!(
+        rig.count(
+            "SELECT COUNT(*) FROM local_artists WHERE display_name = 'Old' \
+             AND retired_into_artist_id IS NULL"
+        ),
+        0
+    );
+}
+
+/// One file whose album artist "Jay" has id z and whose track artist
+/// "Jay" has id x credits two rows: one file never puts two ids on one
+/// row.
+#[tokio::test]
+async fn one_file_never_puts_two_ids_on_one_row() {
+    let rig = ArtistRig::new("artist-two-ids-one-file");
+    rig.put(
+        "K/01.flac",
+        "Album K",
+        listed(&["Jay"], &[MBID_Z]),
+        listed(&["Jay"], &[MBID_X]),
+    );
+    rig.scan().await;
+    let (album, _) = rig.album_artist("K/01.flac");
+    let track = rig.track_artist("K/01.flac", 0);
+    assert_ne!(album, track);
+}
+
+/// An artist renamed by an outside tagger that also moves its files (new
+/// folder, new album artist) takes the new name in the scan that reads
+/// them: the old paths, still indexed until that scan ends, do not hold
+/// the old name, and neither does a file of the artist already missing.
+#[tokio::test]
+async fn an_artist_renamed_and_moved_by_a_tagger_takes_the_new_name() {
+    let rig = ArtistRig::new("artist-renamed-moved");
+    let foo = listed(&["Foo"], &[MBID_X]);
+    rig.put("Foo/A/01.flac", "Album A", foo, foo);
+    rig.put("Foo/A/02.flac", "Album A", foo, foo);
+    rig.put("Foo/B/01.flac", "Album B", foo, foo);
+    rig.scan().await;
+    let artist = rig.track_artist("Foo/A/01.flac", 0);
+    std::fs::remove_file(rig.root.join("Foo/B/01.flac")).expect("file removed");
+    rig.scan().await;
+    assert_eq!(
+        rig.text("SELECT availability FROM local_tracks WHERE relative_path = 'Foo/B/01.flac'"),
+        Some("missing".to_owned())
+    );
+
+    let bar = listed(&["Bar"], &[MBID_X]);
+    std::fs::create_dir_all(rig.root.join("Bar/A")).expect("folder made");
+    for file in ["01.flac", "02.flac"] {
+        std::fs::rename(
+            rig.root.join("Foo/A").join(file),
+            rig.root.join("Bar/A").join(file),
+        )
+        .expect("file moved");
+        rig.put(&format!("Bar/A/{file}"), "Album A", bar, bar);
+    }
+    rig.scan().await;
+    assert_eq!(rig.track_artist("Bar/A/01.flac", 0), artist);
+    assert_eq!(rig.track_artist("Bar/A/02.flac", 0), artist);
+    assert_eq!(rig.name(&artist), "Bar");
+}
+
+/// A link the app made by itself proves nothing yet: the linked row is
+/// neither the survivor of a merge nor merged, and a credit with the
+/// linked id goes to the row its files prove.
+#[tokio::test]
+async fn an_automatic_link_neither_proves_nor_merges() {
+    let rig = ArtistRig::new("artist-automatic-link");
+    rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
+    let en = listed(&["En"], &[MBID_X]);
+    rig.put("B/01.flac", "Album B", en, en);
+    rig.scan().await;
+    let linked = rig.track_artist("A/01.flac", 0);
+    let proven = rig.track_artist("B/01.flac", 0);
+    rig.link_by(&linked, MBID_X, "automatic");
+    let pe = listed(&["Pe"], &[MBID_X]);
+    rig.put("P/01.flac", "Album P", pe, pe);
+    rig.scan().await;
+    assert_eq!(rig.retired_into(&linked), None);
+    assert_eq!(rig.retired_into(&proven), None);
+    assert_eq!(rig.merges(), 0);
+    assert_eq!(rig.track_artist("P/01.flac", 0), proven);
 }

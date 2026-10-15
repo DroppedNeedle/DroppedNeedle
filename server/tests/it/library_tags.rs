@@ -530,6 +530,42 @@ fn read_management_m4a() {
     );
 }
 
+/// The reader says whether a file's artist names came from the list keys
+/// (ARTISTS, ALBUMARTISTS), the only names that line up with the
+/// MusicBrainz artist ids one for one. An ID3v2.3 file holds a list as one
+/// joined value, so two artists there do not line up.
+#[test]
+fn artist_lists_say_where_their_names_came_from() {
+    let uuid = |id: &String| id.len() == 36 && uuid::Uuid::parse_str(id).is_ok();
+    for name in [
+        "management_full.flac",
+        "management_full.mp3",
+        "management_full.m4a",
+    ] {
+        let (tag, _) = tags::read_tags(&fixture(name)).unwrap();
+        assert!(tag.artists_listed, "{name}");
+        assert_eq!(tag.artists.len(), 2, "{name}");
+        assert_eq!(tag.musicbrainz_artist_ids.len(), 2, "{name}");
+        assert!(tag.musicbrainz_artist_ids.iter().all(uuid), "{name}");
+        // The fixtures carry ALBUMARTIST but no ALBUMARTISTS list.
+        assert!(!tag.album_artists_listed, "{name}");
+    }
+
+    let (plain, _) = tags::read_tags(&fixture("flac_full_01.flac")).unwrap();
+    assert!(!plain.artists_listed);
+    assert!(!plain.album_artists_listed);
+
+    let (v23, _) = tags::read_tags(&fixture("management_full_v23.mp3")).unwrap();
+    let aligned = v23.artists_listed
+        && v23.artists.len() == v23.musicbrainz_artist_ids.len()
+        && v23.musicbrainz_artist_ids.iter().all(uuid);
+    assert!(
+        !aligned,
+        "{:?} / {:?}",
+        v23.artists, v23.musicbrainz_artist_ids
+    );
+}
+
 #[test]
 fn read_management_wav_pair() {
     let (id3, _) = tags::read_tags(&fixture("management_full.wav")).unwrap();
