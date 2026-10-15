@@ -45,9 +45,11 @@ make server-lint            # clippy, warnings are errors
 make server-fmt-check       # rustfmt
 make contract-check         # OpenAPI snapshot and generated TypeScript are in sync
 make frontend-check         # svelte-check
+make frontend-lint          # eslint
+make frontend-format-check  # prettier
 make frontend-test-server   # vitest, node project
 make frontend-test-client   # vitest, browser project
-make check                  # all of the above, plus lint and format checks
+make check                  # all of the above (not cargo audit, cargo deny or the container test)
 ```
 
 Browser tests use Playwright. Install the browser once with `make frontend-browser-install`.
