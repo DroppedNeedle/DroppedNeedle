@@ -115,7 +115,9 @@ fn text(code: &str) -> (&'static str, &'static str) {
         codes::MASS_MISSING_GUARD => (
             "Most of the files under this folder vanished at once, so none were marked missing.",
             "Check that the drive or share is mounted, then scan again. If you deleted the files \
-             on purpose, remove those albums from the library instead.",
+             on purpose, remove those albums from the library instead. Until a scan finds the \
+             folder as expected, DroppedNeedle does not retag or rename files that appeared in \
+             it since.",
         ),
         codes::CATALOG_COMMIT_FAILED => (
             "This file could not be added to the library catalog in this scan.",

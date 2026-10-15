@@ -61,7 +61,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 153);
+    assert_eq!(table_names(&pool).await.len(), 154);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -1729,6 +1729,90 @@ async fn takeovers_and_retag_pairs_take_replaced_hands_off() {
                 .unwrap();
         assert!(sql.trim_end().ends_with("STRICT"), "{table}: {sql}");
     }
+}
+
+/// Migration 0053 carries the folders a scan holds back at upgrade: a
+/// folder held back with no later completed scan that walked a folder
+/// covering it without holding that one back, from the start of the
+/// earliest scan that held it since. The table is strict and keyed by
+/// root and folder.
+#[tokio::test]
+async fn held_scopes_arrive_with_the_holds_that_stand() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 53)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    // (run, started_at, root, folder walked, held back)
+    let runs = [
+        ("g1", 100, "r1", ".", true),
+        ("g2", 200, "r1", ".", true),
+        ("g3", 100, "r2", "x", true),
+        ("c1", 300, "r2", ".", false),
+        ("g4", 100, "r3", ".", true),
+        ("c2", 300, "r3", "y", false),
+        ("g5", 100, "r4", ".", true),
+        ("c3", 200, "r4", ".", false),
+        ("g6", 300, "r4", ".", true),
+    ];
+    for (run, started, root, folder, held) in runs {
+        let mut sql = format!(
+            "INSERT INTO library_scan_runs (id, kind, trigger, state, phase, aggregate_scope, \
+             queued_at, started_at, updated_at) VALUES ('{run}', 'incremental', 'manual', \
+             'completed', 'reconciling', '{root}', {started}, {started}, {started}); \
+             INSERT INTO library_scan_run_scopes (run_id, scope_sequence, root_id, \
+             relative_path, effective_policy, policy_revision, discovery_state) VALUES \
+             ('{run}', 0, '{root}', '{folder}', 'automatic', 'p', 'completed');"
+        );
+        if held {
+            sql.push_str(&format!(
+                "INSERT INTO library_scan_failures (run_id, root_id, relative_path, \
+                 failure_code, phase, recorded_at) VALUES ('{run}', '{root}', '{folder}', \
+                 'MASS_MISSING_GUARD', 'discovering', {started});"
+            ));
+        }
+        sqlx::raw_sql(&sql).execute(&pool).await.unwrap();
+    }
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let held: Vec<(String, String, i64)> = sqlx::query_as(
+        "SELECT root_id, relative_path, held_at FROM library_scan_held_scopes \
+         ORDER BY root_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        held,
+        vec![
+            ("r1".to_owned(), ".".to_owned(), 100_000),
+            ("r3".to_owned(), ".".to_owned(), 100_000),
+            ("r4".to_owned(), ".".to_owned(), 300_000),
+        ]
+    );
+    let sql: String = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'library_scan_held_scopes'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(sql.trim_end().ends_with("STRICT"), "{sql}");
+    assert!(
+        sql.contains("PRIMARY KEY (root_id, relative_path)"),
+        "{sql}"
+    );
 }
 
 /// The origins a remap may carry in the database are exactly the ones the

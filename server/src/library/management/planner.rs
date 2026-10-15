@@ -20,7 +20,7 @@ use super::profile::{self, CompiledScripts, NamingFacts};
 use super::reasons::{self, ItemReason};
 use super::script;
 use super::selection::{AlbumScope, CatalogTrack};
-use super::takeover;
+use super::{automatic, takeover};
 use crate::library::matching::model::Release;
 use crate::library::publish::planner::{
     Capability, CollisionGate, DiskPreflight, FileFingerprint, PlanBundle, PlanItem, PlanKind,
@@ -30,6 +30,7 @@ use crate::library::publish::snapshots::sha256_hex;
 use crate::library::publish::{MAX_PLAN_SUBJECTS, PublishError, Sandbox, collision_key};
 use crate::library::scan::models::EffectivePolicy;
 use crate::library::scan::roots::RootRegistry;
+use crate::library::scan::sqlite_store::holds_new_files;
 use crate::library::tags::{self, TagField};
 use crate::library::wiring::LibrarySetup;
 
@@ -251,6 +252,15 @@ fn album_state(
             .map_err(ManagementError::from)?
     {
         return Ok(AlbumState::Blocked(reasons::taken_over()));
+    }
+    if ctx.wide
+        && store
+            .with_connection(|conn| holds_new_files(conn, album_id))
+            .map_err(ManagementError::from)?
+    {
+        return Ok(AlbumState::Blocked(automatic::skip_reason(
+            automatic::SCAN_HELD_BACK,
+        )));
     }
     let Some(identity) = store.album_identity(album_id) else {
         return Ok(AlbumState::Blocked(reasons::identity_not_accepted()));

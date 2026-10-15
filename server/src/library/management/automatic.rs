@@ -24,6 +24,7 @@ use crate::library::identify::models::AlbumIdentity;
 use crate::library::operations::status;
 use crate::library::publish::Sandbox;
 use crate::library::publish::snapshots::sha256_hex;
+use crate::library::scan::sqlite_store::holds_new_files;
 use crate::runtime_config::sections::{LibraryManagement, LibraryManagementRootAssignment};
 use crate::settings::management::{activation_is_current, migration_carry_applies};
 
@@ -36,6 +37,9 @@ const MAX_ATTEMPTS: i64 = 8;
 const FIRST_RETRY_SECONDS: f64 = 60.0;
 /// `not_before` of an album skipped until something changes.
 pub(super) const PARKED: f64 = 1.0e15;
+/// Skip code of an album with files a scan found in a folder it holds
+/// back.
+pub const SCAN_HELD_BACK: &str = "SCAN_HELD_BACK";
 
 /// The catalog revision the worker saw last, and when it last moved.
 #[derive(Debug, Clone, Default)]
@@ -164,6 +168,11 @@ pub fn skip_reason(code: &str) -> ItemReason {
         "UNCONFIRMED_MATCH" => reasons::unconfirmed_match(),
         "IDENTITY_NOT_ACCEPTED" => reasons::identity_not_accepted(),
         "TRACK_NOT_MAPPED" => reasons::track_not_mapped(),
+        SCAN_HELD_BACK => reason(
+            code,
+            "The last scan of this album's library folder found most of its files gone at once, and this album's files arrived after that. DroppedNeedle leaves them alone in case they are your own retag.",
+            "Nothing to do if the folder is mounted: the next full scan of it lets the album go ahead. If a drive or share is not mounted, mount it and scan again. To have it written now, preview the album by itself.",
+        ),
         _ => reason(
             "MANAGEMENT_FAILED",
             "Automatic management could not look at this album.",
@@ -642,6 +651,13 @@ impl Management {
             // Confirming the match, or turning on "Also manage unconfirmed
             // matches", looks at the album again.
             return Ok(Gate::Closed(Verdict::Park("UNCONFIRMED_MATCH")));
+        }
+        // Last, so it stops only a look that would write: new files in a
+        // folder the scan holds back may be a person's retag the takeover
+        // checks cannot see yet. The album goes ahead once a scan settles
+        // the folder.
+        if self.read(|conn| Ok(holds_new_files(conn, album_id)?))? {
+            return Ok(Gate::NotYet(Verdict::Park(SCAN_HELD_BACK)));
         }
         Ok(Gate::Open(Box::new(Opened {
             files,

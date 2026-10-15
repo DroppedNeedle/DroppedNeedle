@@ -181,6 +181,7 @@ library_retag_pairs
 library_review_exclusions
 library_scan_album_moves
 library_scan_failures
+library_scan_held_scopes
 library_scan_inventory
 library_scan_run_scopes
 library_scan_runs

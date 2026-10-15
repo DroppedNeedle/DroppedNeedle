@@ -227,6 +227,138 @@ async fn vanished_files_are_marked_missing_and_mass_loss_is_held_back() {
     );
 }
 
+/// Scan only `folder` of the music root and drive it to the end.
+async fn scan_folder(library: &LibrarySetup, folder: &str) -> ScanRun {
+    let registry = library.live_registry();
+    let mut scopes = registry.scheduled_root_scopes();
+    for scope in &mut scopes {
+        scope.relative_path = folder.to_owned();
+    }
+    let result = library
+        .coordinator
+        .request_run(&ScanRequest {
+            kind: ScanKind::Incremental,
+            trigger: ScanTrigger::Manual,
+            scopes,
+            requested_by_user_id: None,
+            policy_revision: registry.policy_revision().to_owned(),
+        })
+        .expect("scan requested");
+    for _ in 0..50 {
+        library.supervisor_tick().await;
+        if library.coordinator.current().is_empty() {
+            break;
+        }
+    }
+    library.coordinator.snapshot(&result.run_id).expect("run").0
+}
+
+/// A folder the guard holds back stays held, from the start of the first
+/// scan that held it, through more held scans and through a clean scan of
+/// a narrower folder. The first scan that finds it as expected lets it go
+/// and looks again at the albums parked on the hold, and only those. A
+/// clean scan with nothing held wakes nothing.
+#[tokio::test]
+async fn a_held_back_folder_is_held_until_a_scan_finds_it_again() {
+    let scratch = ScratchDir::new("scan-held");
+    let music = scratch.join("music");
+    for n in 0..30 {
+        plant(&music, &format!("Album/{n:02}.flac"), "flac_full_01.flac");
+    }
+    plant(&music, "Other/01.flac", "flac_full_01.flac");
+    let library = bundle(&music);
+    assert_eq!(count(&scan(&library).await, counter_names::INDEXED), 31);
+    let held = |library: &LibrarySetup| {
+        (
+            query(library, "SELECT COUNT(*) FROM library_scan_held_scopes"),
+            query(
+                library,
+                "SELECT COUNT(*) FROM library_scan_held_scopes \
+                 WHERE root_id = 'music' AND relative_path = '.'",
+            ),
+        )
+    };
+
+    let aside = scratch.join("aside");
+    std::fs::create_dir_all(&aside).expect("aside");
+    for n in 1..30 {
+        let name = format!("{n:02}.flac");
+        std::fs::rename(music.join("Album").join(&name), aside.join(&name)).expect("move");
+    }
+    let first = scan(&library).await;
+    assert_eq!(held(&library), (1, 1));
+    let held_at = query(&library, "SELECT held_at FROM library_scan_held_scopes");
+    assert_eq!(
+        held_at,
+        query(
+            &library,
+            &format!(
+                "SELECT CAST(started_at * 1000 AS INTEGER) FROM library_scan_runs \
+                 WHERE id = '{}'",
+                first.id
+            ),
+        )
+    );
+    scan(&library).await;
+    assert_eq!(held(&library), (1, 1));
+    assert_eq!(
+        query(&library, "SELECT held_at FROM library_scan_held_scopes"),
+        held_at,
+        "a hold keeps its start"
+    );
+    let narrow = scan_folder(&library, "Other").await;
+    assert_eq!(narrow.state, ScanState::Completed);
+    assert_eq!(
+        held(&library),
+        (1, 1),
+        "a narrower clean scan lets nothing go"
+    );
+
+    let album_of = |path: &str| {
+        library
+            .scan_store
+            .album_for_track(&library.scan_store.track_at("music", path).expect("track"))
+            .expect("album")
+    };
+    let (parked, taken) = (album_of("Album/00.flac"), album_of("Other/01.flac"));
+    library
+        .scan_store
+        .execute_batch_for_tests(&format!(
+            "INSERT INTO library_management_automatic_queue (local_album_id, queued_at, \
+             not_before, attempts, last_reason_code) VALUES \
+             ('{parked}', 1, 1e15, 3, 'SCAN_HELD_BACK'), ('{taken}', 1, 1e15, 0, 'TAKEN_OVER');"
+        ))
+        .expect("parked");
+    let due = |library: &LibrarySetup, album: &str| {
+        query(
+            library,
+            &format!(
+                "SELECT COUNT(*) FROM library_management_automatic_queue \
+                 WHERE local_album_id = '{album}' AND not_before < 1e15 AND attempts = 0"
+            ),
+        )
+    };
+
+    for n in 1..30 {
+        let name = format!("{n:02}.flac");
+        std::fs::rename(aside.join(&name), music.join("Album").join(&name)).expect("move back");
+    }
+    scan(&library).await;
+    assert_eq!(held(&library), (0, 0));
+    assert_eq!(due(&library, &parked), 1, "looked at again");
+    assert_eq!(due(&library, &taken), 0, "another reason stays");
+
+    library
+        .scan_store
+        .execute_batch_for_tests(&format!(
+            "UPDATE library_management_automatic_queue SET not_before = 1e15 \
+             WHERE local_album_id = '{parked}'"
+        ))
+        .expect("parked again");
+    scan(&library).await;
+    assert_eq!(due(&library, &parked), 0, "nothing held, nothing woken");
+}
+
 /// Tag reader that signals shutdown on one nominated read, and holds that
 /// read until the test has seen the drive abandoned.
 struct ShutdownOnRead {

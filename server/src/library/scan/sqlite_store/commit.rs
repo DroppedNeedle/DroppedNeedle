@@ -26,6 +26,7 @@ use std::collections::BTreeMap;
 
 use super::artists::{self, Credit, Own, upsert_artist};
 use super::hands_off::hold_replacements;
+use super::held_scopes;
 use super::retag_pairs::{self, RetagPairReason, RetagPairState};
 use super::*;
 use crate::library::corrections::artist_convergence::converge_artists;
@@ -1414,7 +1415,9 @@ fn released_by(tx: &Connection, run_id: &str, album_id: &str) -> rusqlite::Resul
 ///    ([`converge_artists`]);
 /// 8. new files that took the place of a hands-off album's are left
 ///    alone ([`hold_replacements`]);
-/// 9. the albums the run held back are offered ([`offer_held_back`]).
+/// 9. the albums the run held back are offered ([`offer_held_back`]);
+/// 10. the folders the mass-missing guard held back are recorded, and
+///     those the run walked as expected are let go ([`held_scopes::settle`]).
 pub(super) fn settle_ended_run(
     tx: &rusqlite::Transaction<'_>,
     run_id: &str,
@@ -1429,6 +1432,7 @@ pub(super) fn settle_ended_run(
     converge_artists(tx, now)?;
     hold_replacements(tx, run_id, now)?;
     enqueued += offer_held_back(tx, run_id, now)?;
+    held_scopes::settle(tx, run_id, now)?;
     if enqueued > 0
         && let Some(column) = counter_column(counter_names::IDENTIFICATION_ENQUEUED)
     {

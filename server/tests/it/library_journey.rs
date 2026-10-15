@@ -11210,30 +11210,7 @@ impl ManagedLibrary {
     /// with its MusicBrainz ids removed, rename each into `retagged/`, and
     /// scan. Returns the new rows, in order.
     async fn retag_without_ids(&self, tracks: &[String]) -> Vec<String> {
-        use droppedneedle::library::tags::{TagEdit, TagField, save_tags};
-        let mut moved = Vec::new();
-        for (index, track) in tracks.iter().enumerate() {
-            let from = self.path(track);
-            let mut edits = vec![TagEdit::verbatim(
-                TagField::Album,
-                vec!["Retagged".to_owned()],
-            )];
-            edits.extend(
-                [
-                    TagField::MusicBrainzReleaseId,
-                    TagField::MusicBrainzReleaseGroupId,
-                    TagField::MusicBrainzReleaseTrackId,
-                    TagField::MusicBrainzRecordingId,
-                ]
-                .map(|field| TagEdit::verbatim(field, Vec::new())),
-            );
-            save_tags(&from, &edits).expect("retagged outside the app");
-            let to = format!("retagged/{:02}.flac", index + 1);
-            let dest = self.music.join(&to);
-            std::fs::create_dir_all(dest.parent().expect("parent")).expect("mkdir");
-            std::fs::rename(&from, &dest).expect("renamed outside the app");
-            moved.push(to);
-        }
+        let moved = self.retag_into(tracks, "Retagged", "retagged");
         rescan(&self.library).await;
         moved
             .iter()
@@ -11417,6 +11394,369 @@ async fn an_automatic_album_retagged_without_its_ids_is_joined_at_the_seal() {
         (1, 1),
         "a second scan writes nothing more"
     );
+}
+
+impl ManagedLibrary {
+    /// Retag every one of `tracks` outside the app to the album `title`
+    /// with its MusicBrainz ids removed, and rename each into `folder`.
+    /// Returns the new paths, in order. Nothing is scanned.
+    fn retag_into(&self, tracks: &[String], title: &str, folder: &str) -> Vec<String> {
+        use droppedneedle::library::tags::{TagEdit, TagField, save_tags};
+        let mut moved = Vec::new();
+        for (index, track) in tracks.iter().enumerate() {
+            let from = self.path(track);
+            let mut edits = vec![TagEdit::verbatim(TagField::Album, vec![title.to_owned()])];
+            edits.extend(
+                [
+                    TagField::MusicBrainzReleaseId,
+                    TagField::MusicBrainzReleaseGroupId,
+                    TagField::MusicBrainzReleaseTrackId,
+                    TagField::MusicBrainzRecordingId,
+                ]
+                .map(|field| TagEdit::verbatim(field, Vec::new())),
+            );
+            save_tags(&from, &edits).expect("retagged outside the app");
+            let to = format!("{folder}/{:02}.flac", index + 1);
+            let dest = self.music.join(&to);
+            std::fs::create_dir_all(dest.parent().expect("parent")).expect("mkdir");
+            std::fs::rename(&from, &dest).expect("renamed outside the app");
+            moved.push(to);
+        }
+        moved
+    }
+
+    /// The skip codes automatic management lists, by album.
+    fn skipped_codes(&self) -> Vec<(String, String)> {
+        self.management()
+            .automatic_skipped(50)
+            .expect("skipped")
+            .into_iter()
+            .map(|album| (album.album_id, album.reason.code))
+            .collect()
+    }
+
+    /// How many runs were made for the album.
+    fn runs_for(&self, album: &str) -> i64 {
+        self.db()
+            .query_row(
+                "SELECT COUNT(*) FROM library_management_job_snapshots s \
+                 WHERE EXISTS (SELECT 1 FROM json_each(s.selection_json, '$.ids') \
+                   WHERE value = ?1)",
+                [album],
+                |row| row.get(0),
+            )
+            .expect("runs read")
+    }
+
+    /// Folders a scan holds back.
+    fn held_scopes(&self) -> Vec<(String, String, i64)> {
+        self.db()
+            .prepare(
+                "SELECT root_id, relative_path, held_at FROM library_scan_held_scopes \
+                 ORDER BY root_id, relative_path",
+            )
+            .expect("held scopes")
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .expect("held scopes")
+            .collect::<rusqlite::Result<_>>()
+            .expect("held scopes")
+    }
+
+    /// Whether the latest scan held the whole music folder back.
+    fn latest_scan_held_back(&self) -> bool {
+        self.count(
+            "SELECT COUNT(*) FROM library_scan_failures WHERE run_id = \
+             (SELECT id FROM library_scan_runs ORDER BY started_at DESC LIMIT 1) \
+             AND root_id = 'music' AND relative_path = '.' \
+             AND failure_code = 'MASS_MISSING_GUARD'",
+        ) > 0
+    }
+}
+
+/// An album the app wrote, retagged and renamed outside it in a pass that
+/// also moves a file out of the folder for a while: the scan holds the
+/// folder back, so the old rows stay and nothing can tell the new album
+/// replaced them. Automatic management writes none of the new files and
+/// says why. The next scan finds the folder as expected and marks the old
+/// rows missing, but the join waits a scan, and so does the hold. The scan
+/// after joins the old albums into the new ones (one of them lost an extra
+/// file in the retag), the hold lifts, and the woken look finds the files
+/// changed outside.
+#[tokio::test]
+async fn new_files_wait_while_a_scan_holds_their_folder_back() {
+    let managed = ManagedLibrary::start("lib-held-scope", |_| {}).await;
+    let (album, old) = managed.add_album("first", 2).await;
+    let (album_two, old_two) = managed.add_album("second", 3).await;
+    let (_, others) = managed.add_album("third", 11).await;
+    let db = managed.db();
+    for (id, tracks) in [(&album, &old), (&album_two, &old_two)] {
+        db.execute(
+            "UPDATE local_album_external_identities SET decision_source = 'automatic', \
+             selected_by_user_id = NULL WHERE local_album_id = ?1",
+            rusqlite::params![id],
+        )
+        .expect("the app's own match");
+        for track in tracks.iter() {
+            db.execute(
+                "UPDATE local_track_external_identities SET decision_source = 'automatic' \
+                 WHERE local_track_id = ?1",
+                [track],
+            )
+            .expect("the app's own match");
+        }
+    }
+    managed.activate().await;
+    managed.look(&album).await;
+    managed.look(&album_two).await;
+    rescan(&managed.library).await;
+    managed.worker_looks().await;
+    assert!(
+        managed.recorded(&old[0]).is_some(),
+        "the app wrote the files"
+    );
+    assert!(managed.recorded(&old_two[0]).is_some());
+
+    // One pass of a tagger: both albums retagged and renamed, the second
+    // one's extra file deleted, and another album's files still away.
+    let paths = managed.retag_into(&old, "Retagged", "new");
+    let paths_two = managed.retag_into(&old_two[..2], "Retagged Two", "new-two");
+    std::fs::remove_file(managed.path(&old_two[2])).expect("extra deleted");
+    let away = managed.scratch.to_path_buf().join("away");
+    std::fs::create_dir_all(&away).expect("away");
+    let moved: Vec<(PathBuf, PathBuf)> = others
+        .iter()
+        .enumerate()
+        .map(|(index, track)| (managed.path(track), away.join(format!("{index}.flac"))))
+        .collect();
+    for (from, to) in &moved {
+        std::fs::rename(from, to).expect("moved away");
+    }
+    rescan(&managed.library).await;
+    assert!(managed.latest_scan_held_back(), "16 gone of 20");
+    let indexed = |album: &str| {
+        db.query_row(
+            "SELECT COUNT(*) FROM local_tracks WHERE local_album_id = ?1 \
+             AND availability = 'indexed'",
+            [album],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("rows read")
+    };
+    assert_eq!(indexed(&album), 2, "nothing marked missing");
+    let new: Vec<String> = paths
+        .iter()
+        .map(|path| indexed_at(&managed.library, path))
+        .collect();
+    let new_two: Vec<String> = paths_two
+        .iter()
+        .map(|path| indexed_at(&managed.library, path))
+        .collect();
+    let own_row = managed.album_of(&new[0]);
+    let own_row_two = managed.album_of(&new_two[0]);
+    assert_ne!(own_row, album);
+    let defer_two = |not_before: i64| {
+        db.execute(
+            "UPDATE library_identify_jobs SET not_before_ms = ?2 WHERE local_album_id = ?1 \
+             AND state IN ('queued', 'deferred')",
+            rusqlite::params![own_row_two, not_before],
+        )
+        .expect("job deferred")
+    };
+    defer_two(i64::MAX);
+    managed.identify_as(&own_row, &album).await;
+    defer_two(0);
+    managed.identify_as(&own_row_two, &album_two).await;
+    assert_eq!(retired_into(&db, &album), None, "the old rows still stand");
+    let bytes = |tracks: &[String]| -> Vec<String> {
+        tracks
+            .iter()
+            .map(|track| file_sha256(&managed.path(track)))
+            .collect()
+    };
+    let (before, before_two) = (bytes(&new), bytes(&new_two));
+
+    managed.look(&own_row).await;
+    managed.look(&own_row_two).await;
+    assert_eq!(
+        (managed.runs_for(&own_row), managed.runs_for(&own_row_two)),
+        (0, 0),
+        "no run started while held"
+    );
+    assert_eq!(bytes(&new), before, "nothing written while held");
+    assert_eq!(bytes(&new_two), before_two);
+    assert_eq!(managed.held_scopes().len(), 1);
+    let skipped = managed.management().automatic_skipped(50).expect("skipped");
+    let held = skipped
+        .iter()
+        .find(|skipped| skipped.album_id == own_row)
+        .expect("listed");
+    let reason = droppedneedle::library::management::automatic::skip_reason("SCAN_HELD_BACK");
+    assert_eq!(
+        (held.reason.code.as_str(), held.reason.message.as_str()),
+        ("SCAN_HELD_BACK", reason.message.as_str())
+    );
+
+    // The files come back: the scan walks the folder as expected and
+    // marks the old rows missing. The new rows were there before that scan
+    // began, so the join waits a scan, and the hold waits for the join.
+    for (to, from) in &moved {
+        std::fs::rename(from, to).expect("moved back");
+    }
+    rescan(&managed.library).await;
+    assert!(!managed.latest_scan_held_back());
+    assert_eq!(indexed(&album), 0, "the old rows are missing");
+    assert_eq!(retired_into(&db, &album), None);
+    assert_eq!(retired_into(&db, &album_two), None);
+    assert_eq!(managed.held_scopes().len(), 1, "held until the join");
+    managed.look(&own_row).await;
+    managed.look(&own_row_two).await;
+    let codes = managed.skipped_codes();
+    for new_album in [&own_row, &own_row_two] {
+        assert!(codes.contains(&(new_album.clone(), "SCAN_HELD_BACK".to_owned())));
+    }
+    assert_eq!(bytes(&new), before);
+    assert_eq!(bytes(&new_two), before_two);
+
+    // One more scan joins both albums and lets the folder go.
+    rescan(&managed.library).await;
+    assert_eq!(retired_into(&db, &album), Some(own_row.clone()));
+    assert_eq!(retired_into(&db, &album_two), Some(own_row_two.clone()));
+    assert_eq!(managed.held_scopes(), Vec::new());
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&own_row).as_deref(), Some("files_changed"));
+    assert_eq!(managed.mark(&own_row_two).as_deref(), Some("files_changed"));
+    assert_eq!(bytes(&new), before);
+    assert_eq!(bytes(&new_two), before_two);
+    assert!(
+        managed
+            .skipped_codes()
+            .iter()
+            .all(|(_, code)| code != "SCAN_HELD_BACK")
+    );
+}
+
+/// Who a held folder holds: an album with a scanned file first indexed in
+/// it since the hold began. Files from before the hold, downloads, other
+/// folders and other roots are looked at as before. An album also taken
+/// over says so first, and a held album is still one the app writes by
+/// itself, just not now.
+#[tokio::test]
+async fn a_held_folder_holds_only_files_scanned_into_it_since() {
+    let managed = ManagedLibrary::start("lib-held-who", |_| {}).await;
+    let (album, tracks) = managed.add_album("p", 2).await;
+    managed.activate().await;
+    managed.set_automatic(true, true);
+    managed.look(&album).await;
+    assert!(managed.recorded(&tracks[0]).is_some(), "written");
+    let relative = managed.relative(&tracks[0]);
+    let (folder, _) = relative.rsplit_once('/').expect("in a folder");
+    let db = managed.db();
+    let look = |held: &[(&str, &str)], imported_at: f64, source: &str| {
+        db.execute_batch(
+            "DELETE FROM library_scan_held_scopes; \
+             DELETE FROM library_management_automatic_queue;",
+        )
+        .expect("reset");
+        for (root, path) in held {
+            db.execute(
+                "INSERT INTO library_scan_held_scopes (root_id, relative_path, held_at) \
+                 VALUES (?1, ?2, 2000000)",
+                rusqlite::params![root, path],
+            )
+            .expect("held");
+        }
+        db.execute(
+            "UPDATE local_tracks SET imported_at = ?2, ingest_source = ?3 \
+             WHERE local_album_id = ?1",
+            rusqlite::params![album, imported_at, source],
+        )
+        .expect("rows set");
+        managed.library.queue_automatic_management(&album);
+        assert!(managed.management().automatic_next().expect("looked"));
+        db.query_row(
+            "SELECT last_reason_code FROM library_management_automatic_queue \
+             WHERE local_album_id = ?1",
+            [&album],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .unwrap_or(None)
+    };
+    let held = Some("SCAN_HELD_BACK".to_owned());
+    for (case, scopes, imported_at, source, expected) in [
+        (
+            "whole root, after",
+            &[("music", ".")][..],
+            3000.0,
+            "scan",
+            &held,
+        ),
+        (
+            "its folder, after",
+            &[("music", folder)][..],
+            3000.0,
+            "scan",
+            &held,
+        ),
+        (
+            "whole root, before",
+            &[("music", ".")][..],
+            1000.0,
+            "scan",
+            &None,
+        ),
+        (
+            "its folder, before",
+            &[("music", folder)][..],
+            1000.0,
+            "scan",
+            &None,
+        ),
+        (
+            "a download",
+            &[("music", ".")][..],
+            3000.0,
+            "download",
+            &None,
+        ),
+        (
+            "another folder",
+            &[("music", "other")][..],
+            3000.0,
+            "scan",
+            &None,
+        ),
+        (
+            "another root",
+            &[("elsewhere", ".")][..],
+            3000.0,
+            "scan",
+            &None,
+        ),
+    ] {
+        assert_eq!(&look(scopes, imported_at, source), expected, "{case}");
+    }
+
+    db.execute(
+        "INSERT INTO library_album_takeovers (local_album_id, cause, noticed_at) \
+         VALUES (?1, 'files_changed', 1)",
+        [&album],
+    )
+    .expect("taken over");
+    assert_eq!(
+        look(&[("music", ".")], 3000.0, "scan").as_deref(),
+        Some("TAKEN_OVER")
+    );
+    db.execute(
+        "DELETE FROM library_album_takeovers WHERE local_album_id = ?1",
+        [&album],
+    )
+    .expect("handed back");
+    assert_eq!(look(&[("music", ".")], 3000.0, "scan"), held);
+    let writes = managed
+        .management()
+        .writes_by_itself(&album)
+        .expect("writes read");
+    assert!(writes.by_itself && !writes.pending, "{writes:?}");
 }
 
 /// An album whose edition a person chose, never written by the app,
