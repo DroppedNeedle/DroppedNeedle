@@ -23,6 +23,7 @@ mod auth_e2e;
 mod auth_federated;
 mod auth_stores;
 mod auth_users;
+mod backward_imports;
 mod boot;
 mod compat_adapters;
 mod compat_catalog;
