@@ -120,10 +120,12 @@ describe("writing the edition's tags in a folder the app does not write by itsel
 		await page.getByRole('button', { name: 'Preview the new tags' }).click();
 
 		const list = page.getByRole('list', { name: 'Tags that change' });
+		const albumTag = list.getByRole('definition').filter({ hasText: 'Night Shift' });
+		await expect.element(albumTag.getByRole('deletion')).toHaveTextContent('Night Shift');
 		await expect
-			.element(list.getByText('Album: Night Shift -> Night Shift (5th anniversary remaster)'))
-			.toBeVisible();
-		await expect.element(list.getByText('MusicBrainz IDs: 4 changed, 2 kept')).toBeVisible();
+			.element(albumTag.getByRole('insertion'))
+			.toHaveTextContent('Night Shift (5th anniversary remaster)');
+		await expect.element(list.getByText('4 changed, 2 kept')).toBeVisible();
 		await expect.element(page.getByText('2 files already carry these tags.')).toBeVisible();
 		expect(h.preview).toHaveBeenCalledWith({ ...album, files });
 		expect(h.write).not.toHaveBeenCalled();

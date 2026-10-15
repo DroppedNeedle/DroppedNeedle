@@ -5,11 +5,19 @@
 	import LibraryFormatBadge from '$lib/components/library/LibraryFormatBadge.svelte';
 	import LocalIdentityBadge from '$lib/components/library/LocalIdentityBadge.svelte';
 	import ManagementHoldSection from '$lib/components/library/ManagementHoldSection.svelte';
+	import AlbumHistory from '$lib/components/library/AlbumHistory.svelte';
+	import RetagPairCard from '$lib/components/library/RetagPairCard.svelte';
 	import EditionPlate from '$lib/components/library/edition/EditionPlate.svelte';
 	import AlbumOrganizationDialog from '$lib/components/library/AlbumOrganizationDialog.svelte';
 	import LocalAlbumTrackList from '$lib/components/library/LocalAlbumTrackList.svelte';
 	import AlbumDownloadButton from './AlbumDownloadButton.svelte';
 	import { getDownloadAccessQuery } from '$lib/queries/local/DownloadAccessQuery.svelte';
+	import {
+		getAlbumEditionStatusQuery,
+		getEditionPlanQuery
+	} from '$lib/queries/albums/EditionQueries.svelte';
+	import { getRetagPairsQuery } from '$lib/queries/library/LibraryRetagPairQueries.svelte';
+	import { notesByFile } from './albumEdition';
 	import AddToPlaylistModal from '$lib/components/AddToPlaylistModal.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 	import { getTrackContextMenuItems } from './albumPlaybackHandlers';
@@ -46,6 +54,28 @@
 		album?.download_allowed !== false && downloadAccessQuery.data?.allowed !== false
 	);
 	const contributionMutation = createLibraryContributionMutation();
+
+	// The edition plan's word on single files, read under the plate's keys.
+	const userId = () => authStore.user?.id;
+	const editionStatusQuery = getAlbumEditionStatusQuery(userId, () => albumId);
+	const editionPlanQuery = getEditionPlanQuery(
+		userId,
+		() => albumId,
+		() => null,
+		() =>
+			editionStatusQuery.data?.album_id === albumId &&
+			editionStatusQuery.data.edition_kind === 'release'
+	);
+	const fileNotes = $derived(
+		editionPlanQuery.data?.album_id === albumId ? notesByFile(editionPlanQuery.data) : undefined
+	);
+
+	const retagPairsQuery = getRetagPairsQuery(() => authStore.isAdmin);
+	const retagPairs = $derived(
+		(retagPairsQuery.data?.pairs ?? []).filter(
+			(pair) => pair.old_album.id === albumId || pair.new_album.id === albumId
+		)
+	);
 
 	const reviewLabel = $derived(
 		album?.identification_status === 'needs_review'
@@ -230,6 +260,10 @@
 			<div class="mt-6"><ManagementHoldSection {album} /></div>
 		{/if}
 
+		{#each retagPairs as pair (`${pair.old_album.id}/${pair.new_album.id}`)}
+			<div class="mt-6"><RetagPairCard {pair} currentAlbumId={albumId} /></div>
+		{/each}
+
 		<section class="mt-8" aria-labelledby="local-tracks-title">
 			<div class="flex items-center gap-2">
 				<ListMusic class="h-5 w-5 text-primary" />
@@ -247,9 +281,15 @@
 					<p class="mt-2">No playable tracks are attached to this album.</p>
 				</div>
 			{:else}
-				<LocalAlbumTrackList {tracks} getTrackMenuItems={getLocalTrackMenuItems} />
+				<LocalAlbumTrackList
+					{tracks}
+					notes={fileNotes}
+					getTrackMenuItems={getLocalTrackMenuItems}
+				/>
 			{/if}
 		</section>
+
+		<AlbumHistory {albumId} />
 
 		<AddToPlaylistModal bind:this={playlistModal} />
 	{/if}

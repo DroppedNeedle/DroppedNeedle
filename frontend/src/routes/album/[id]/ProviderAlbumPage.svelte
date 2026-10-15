@@ -20,6 +20,9 @@
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import LibraryAlbumCard from '$lib/components/library/LibraryAlbumCard.svelte';
 	import ManagementHoldSection from '$lib/components/library/ManagementHoldSection.svelte';
+	import AlbumHistory from '$lib/components/library/AlbumHistory.svelte';
+	import RetagPairCard from '$lib/components/library/RetagPairCard.svelte';
+	import { getRetagPairsQuery } from '$lib/queries/library/LibraryRetagPairQueries.svelte';
 	import {
 		getLibraryAlbumCopiesQuery,
 		getLibraryAlbumDetailQuery,
@@ -52,6 +55,14 @@
 	const fallbackAlbum = $derived(localAlbum ?? localAlbumQuery.data ?? null);
 	const localCopies = $derived(
 		localAlbumQuery.data ? [localAlbumQuery.data, ...(localCopiesQuery.data?.items ?? [])] : []
+	);
+	const retagPairsQuery = getRetagPairsQuery(() => authStore.isAdmin);
+	const retagPairs = $derived(
+		localAlbumId
+			? (retagPairsQuery.data?.pairs ?? []).filter(
+					(pair) => pair.old_album.id === localAlbumId || pair.new_album.id === localAlbumId
+				)
+			: []
 	);
 	const primaryError = $derived(state.primaryError);
 	const albumNotFound = $derived(primaryError instanceof ApiError && primaryError.status === 404);
@@ -143,8 +154,7 @@
 				libraryInLibrary={state.libraryInLibrary}
 				libraryTrackCount={state.libraryTrackCount}
 				libraryBelowCutoff={state.libraryBelowCutoff}
-				coverageExpected={state.coverageExpected}
-				coverageCovered={state.coverageCovered}
+				editionCounts={state.editionCounts}
 				mbTrackCount={state.tracksInfo?.total_tracks ?? 0}
 				releaseGroupMbid={album.musicbrainz_id}
 				{localCopies}
@@ -158,6 +168,10 @@
 			{#if authStore.isAdmin && localAlbumQuery.data}
 				<ManagementHoldSection album={localAlbumQuery.data} />
 			{/if}
+
+			{#each retagPairs as pair (`${pair.old_album.id}/${pair.new_album.id}`)}
+				<RetagPairCard {pair} currentAlbumId={localAlbumId} />
+			{/each}
 
 			{#if localCopies.length > 1}
 				<section
@@ -269,6 +283,7 @@
 						heldByRecording={state.heldByRecording}
 						heldByPosition={state.heldByPosition}
 						trackDownloadTasks={state.trackDownloadTasks}
+						editionRows={state.editionRows}
 						releaseGroupMbid={album.musicbrainz_id}
 						releaseMbid={state.tracksInfo?.selected_release_mbid}
 						onPlaySourceTrack={state.playSourceTrack}
@@ -278,10 +293,15 @@
 					/>
 
 					<UnmatchedFilesSection
-						orphans={state.libraryOrphans}
+						files={state.libraryUnmatchedFiles}
 						albumMbid={album.musicbrainz_id}
+						albumId={localAlbumId}
 						canRemove={authStore.isTrusted}
 					/>
+
+					{#if localAlbumId}
+						<AlbumHistory albumId={localAlbumId} />
+					{/if}
 
 					<AddToPlaylistModal bind:this={state.playlistModalRef} />
 				</div>

@@ -25,6 +25,9 @@ const {
 	mockLocalDetailData,
 	mockEditionsData,
 	mockEditionStatus,
+	mockEditionPlan,
+	mockHistoryData,
+	mockDetailIdsRead,
 	mockLocalMatch,
 	mockNavidromeMatch
 } = vi.hoisted(() => ({
@@ -50,7 +53,10 @@ const {
 	mockLocalCopiesData: { value: {} as Record<string, unknown> },
 	mockLocalDetailData: { value: {} as Record<string, unknown> },
 	mockEditionsData: { value: undefined as unknown },
-	mockEditionStatus: { value: undefined as unknown }
+	mockEditionStatus: { value: undefined as unknown },
+	mockEditionPlan: { value: undefined as unknown },
+	mockHistoryData: { value: undefined as unknown },
+	mockDetailIdsRead: new Set<string>()
 }));
 
 vi.mock('$app/environment', () => ({ browser: true }));
@@ -145,8 +151,10 @@ vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 		get data() {
 			return mockLibraryStatusData.value;
 		},
+		isError: false,
 		refetch: vi.fn()
 	}),
+	cacheCanonicalLibraryAlbumDetail: vi.fn(),
 	// Keyed by the asked id: these reads only answer local album ids.
 	getLibraryAlbumCopiesQuery: (getAlbumId: () => string) => ({
 		get data() {
@@ -154,9 +162,12 @@ vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 		},
 		isLoading: false
 	}),
+	// Records each id it is asked to read, as the real query would fetch it.
 	getLibraryAlbumDetailQuery: (getAlbumId: () => string) => ({
 		get data() {
-			return mockLocalDetailData.value[getAlbumId()];
+			const id = getAlbumId();
+			if (id) mockDetailIdsRead.add(id);
+			return mockLocalDetailData.value[id];
 		},
 		isLoading: false,
 		isError: false
@@ -242,11 +253,34 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	writeEditionTags: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	undoTagWrite: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	editionsKey: (id: string) => ['editions', id],
-	getEditionPlanQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getEditionPlanQuery: () => ({
+		get data() {
+			return mockEditionPlan.value;
+		},
+		isLoading: false,
+		isError: false
+	}),
 	removeEditionExtras: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
 	restoreEditionExtras: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
 	getWaitingAlbumsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	invalidateAlbumEdition: () => Promise.resolve()
+}));
+
+vi.mock('$lib/queries/library/LibraryAlbumHistoryQueries.svelte', () => ({
+	getAlbumHistoryQuery: () => ({
+		get data() {
+			return mockHistoryData.value;
+		},
+		isPending: false,
+		isError: false,
+		refetch: vi.fn()
+	})
+}));
+
+vi.mock('$lib/queries/library/LibraryRetagPairQueries.svelte', () => ({
+	getRetagPairsQuery: () => ({ data: { pairs: [], total: 0 } }),
+	joinRetagPair: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	dismissRetagPair: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 
 vi.mock('$lib/queries/downloads/UpgradeQueries.svelte', () => ({
@@ -355,6 +389,7 @@ vi.mock('$lib/player/launchLocalPlayback', () => ({ launchLocalPlayback: vi.fn()
 vi.mock('$lib/player/launchNavidromePlayback', () => ({ launchNavidromePlayback: vi.fn() }));
 
 import AlbumPage from './ProviderAlbumPage.svelte';
+import AlbumRoute from './+page.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toAuthUser } from '$lib/queries/auth/types';
 
@@ -379,6 +414,9 @@ describe('album detail page track rendering', () => {
 		mockLocalDetailData.value = {};
 		mockEditionsData.value = undefined;
 		mockEditionStatus.value = undefined;
+		mockEditionPlan.value = undefined;
+		mockHistoryData.value = undefined;
+		mockDetailIdsRead.clear();
 		mockHydrateDetailCacheEntry.mockImplementation(({ cache, onHydrate }: HydrateOptions) => {
 			if (cache === mockAlbumBasicCache) {
 				onHydrate({
@@ -410,7 +448,8 @@ describe('album detail page track rendering', () => {
 					total_length: 736326,
 					label: null,
 					barcode: null,
-					country: null
+					country: null,
+					selected_release_mbid: 'release-remaster'
 				});
 				return false;
 			}
@@ -559,7 +598,8 @@ describe('album detail page track rendering', () => {
 						total_length: 736326,
 						label: null,
 						barcode: null,
-						country: null
+						country: null,
+						selected_release_mbid: 'release-remaster'
 					})
 				);
 			}
@@ -760,6 +800,182 @@ describe('album detail page track rendering', () => {
 			await renderMatchedAlbum();
 
 			await expect.element(page.getByRole('button', { name: /^Edition:/ })).not.toBeInTheDocument();
+		});
+	});
+
+	describe('the page agrees with the edition', () => {
+		const localAlbumId = 'local-album-1';
+		const songs: [number, number, string, number][] = [
+			[1, 1, 'Infinite ❤️ Without Fulfillment', 95327],
+			[1, 5, 'Circumambient', 223280],
+			[2, 1, 'Ambrosia', 213093],
+			[2, 5, 'Be a Body (Baarsden rework)', 204626]
+		];
+
+		// After choosing the remaster: Circumambient's file is another version
+		// (3:30 against the edition's 3:43), the others sit on their tracks.
+		function chooseRemaster(): void {
+			mockLibraryStatusData.value = {
+				in_library: true,
+				album_id: localAlbumId,
+				track_count: 4,
+				tracks: songs.map(([disc, position, title], i) => ({
+					id: `file-${i}`,
+					title,
+					disc_number: disc,
+					track_number: position,
+					format: 'flac',
+					artist_name: 'Grimes',
+					musicbrainz_recording_id: null,
+					below_cutoff: false
+				}))
+			};
+			mockLocalDetailData.value = {
+				[localAlbumId]: {
+					id: localAlbumId,
+					title: 'Visions',
+					artist_name: 'Grimes',
+					musicbrainz_release_group_id: albumId
+				}
+			};
+			mockLocalCopiesData.value = { [localAlbumId]: { items: [] } };
+			mockEditionPlan.value = {
+				album_id: localAlbumId,
+				release_mbid: 'release-remaster',
+				kept_count: 3,
+				missing_count: 1,
+				other_version_count: 1,
+				duplicate_count: 0,
+				extra_count: 0,
+				files: songs.map(([disc, position, title], i) => ({
+					local_track_id: `file-${i}`,
+					title,
+					disc_number: disc,
+					track_number: position,
+					edition_disc_number: disc,
+					edition_position: position,
+					fate: title === 'Circumambient' ? 'other_version' : 'keep',
+					length_ms: title === 'Circumambient' ? 210000 : 200000,
+					note: null
+				})),
+				tracks: songs.map(([disc, position, title, length], i) => ({
+					disc_number: disc,
+					position,
+					title,
+					length_ms: length,
+					local_track_id: title === 'Circumambient' ? null : `file-${i}`,
+					recording_mbid: `rec-${i}`,
+					release_track_mbid: `track-${i}`
+				}))
+			};
+		}
+
+		function signIn(role: 'admin' | 'user'): void {
+			authStore.setUser(
+				toAuthUser({
+					id: 'user-1',
+					display_name: 'Someone',
+					role,
+					email: null,
+					avatar_url: null,
+					username: 'someone',
+					username_display: 'Someone'
+				})
+			);
+		}
+
+		async function renderPage(): Promise<void> {
+			await render(AlbumPage, {
+				props: { data: { albumId } }
+			} as Parameters<typeof render<typeof AlbumPage>>[1]);
+			await expect.element(page.getByRole('heading', { name: 'Visions', level: 1 })).toBeVisible();
+		}
+
+		const trackRow = (title: string) =>
+			page.getByRole('listitem').filter({ hasText: title }).first();
+
+		for (const role of ['admin', 'user'] as const) {
+			it(`shows the chosen edition's counts and gaps to ${role === 'admin' ? 'an admin' : 'a plain user'}`, async () => {
+				signIn(role);
+				chooseRemaster();
+				await renderPage();
+
+				const missing = trackRow('Circumambient');
+				await expect.element(missing.getByText('Missing', { exact: true })).toBeVisible();
+				await expect.element(missing.getByText('3:43')).toBeVisible();
+				await expect.element(missing.getByText('Your version 3:30')).toBeVisible();
+				await expect.element(trackRow('Ambrosia').getByText('3:20')).toBeVisible();
+				await expect.element(page.getByText('3/4', { exact: true })).toBeVisible();
+				await expect.element(page.getByText('Edition complete')).not.toBeInTheDocument();
+				await expect
+					.element(page.getByText('Another version of track 5', { exact: true }))
+					.toBeVisible();
+			});
+		}
+
+		it("shows a file's note on its row", async () => {
+			chooseRemaster();
+			const plan = mockEditionPlan.value as {
+				files: { title: string; fate: string; note: unknown }[];
+			};
+			plan.files[2].note = { code: 'TRACK_ID_CORRECTED', message: '', action: '' };
+			plan.files.push({
+				...(plan.files[0] as object),
+				local_track_id: 'file-other',
+				title: 'Genesis',
+				fate: 'extra',
+				edition_position: null,
+				note: { code: 'TRACK_ID_ELSEWHERE', message: '', action: '' }
+			} as (typeof plan.files)[number]);
+			await renderPage();
+
+			await expect
+				.element(
+					trackRow('Ambrosia').getByText(
+						"This file's track id belonged to another edition; it will be corrected when tags are written"
+					)
+				)
+				.toBeVisible();
+			const leftOut = page.getByRole('listitem').filter({ hasText: 'Genesis' });
+			await expect.element(leftOut.getByText('Not on this edition')).toBeVisible();
+			await expect
+				.element(leftOut.getByText("This file's track id belongs to another edition of this album"))
+				.toBeVisible();
+		});
+
+		it('shows the album history below the track list', async () => {
+			chooseRemaster();
+			mockHistoryData.value = {
+				items: [
+					{
+						kind: 'tracks_continued',
+						at: Date.UTC(2026, 9, 12),
+						by: null,
+						track_count: 1,
+						track_titles: ['Ambrosia'],
+						other_album_title: null
+					}
+				]
+			};
+			await renderPage();
+
+			const history = page.getByRole('heading', { name: 'Album history' });
+			await expect.element(history).toBeVisible();
+			const tracks = page.getByRole('heading', { name: 'Tracks', exact: true }).element();
+			expect(
+				tracks.compareDocumentPosition(history.element()) & Node.DOCUMENT_POSITION_FOLLOWING
+			).toBeTruthy();
+		});
+
+		it('never reads the release group id as a local album', async () => {
+			chooseRemaster();
+			await render(AlbumRoute, {
+				props: { data: { albumId } }
+			} as unknown as Parameters<typeof render<typeof AlbumRoute>>[1]);
+			await expect.element(page.getByRole('heading', { name: 'Visions', level: 1 })).toBeVisible();
+
+			expect(mockDetailIdsRead.has(localAlbumId)).toBe(true);
+			expect(mockDetailIdsRead.has(albumId)).toBe(false);
 		});
 	});
 });

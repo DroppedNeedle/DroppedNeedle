@@ -48,8 +48,8 @@
 		libraryTrackCount?: number;
 		mbTrackCount?: number;
 		libraryBelowCutoff?: boolean;
-		coverageExpected?: number;
-		coverageCovered?: number;
+		/** The current edition's tracks a file sits on, out of all of them, once its plan is read. */
+		editionCounts?: { kept: number; total: number } | null;
 		releaseGroupMbid?: string;
 		localCopies?: LibraryAlbumSummary[];
 		downloadAllowed?: boolean;
@@ -74,8 +74,7 @@
 		libraryTrackCount = 0,
 		mbTrackCount = 0,
 		libraryBelowCutoff = false,
-		coverageExpected = 0,
-		coverageCovered = 0,
+		editionCounts = null,
 		releaseGroupMbid = '',
 		localCopies = [],
 		downloadAllowed = true,
@@ -102,18 +101,16 @@
 	}
 
 	const rescan = rescanAlbum();
-	// Coverage-aware library state (P5, 2026-07-05 incident): with a known tracklist,
-	// "In Library" means COVERED - a wrong file squatting under the album reads
-	// "Unmatched files", never owned. coverageExpected === 0 (tracklist unavailable)
-	// falls back to the pre-P5 presence counting.
-	const coverageKnown = $derived(coverageExpected > 0);
+	// With the edition's plan read, "In Library" counts the edition's tracks a
+	// file sits on: a file that sits on none reads "Unmatched files", never
+	// owned. Before the plan is there, held files are counted.
 	const libraryComplete = $derived(
-		coverageKnown
-			? libraryInLibrary && coverageCovered >= coverageExpected
+		editionCounts
+			? libraryInLibrary && editionCounts.kept >= editionCounts.total
 			: libraryInLibrary && mbTrackCount > 0 && libraryTrackCount >= mbTrackCount
 	);
 	const libraryUnmatchedOnly = $derived(
-		coverageKnown && libraryInLibrary && libraryTrackCount > 0 && coverageCovered === 0
+		!!editionCounts && libraryInLibrary && libraryTrackCount > 0 && editionCounts.kept === 0
 	);
 
 	async function handleRescan() {
@@ -231,7 +228,7 @@
 
 				{#if album.year}
 					<span class="opacity-50">•</span>
-					<span>{album.year}</span>
+					<span title="First released">{album.year}</span>
 				{/if}
 
 				{#if tracksInfo && tracksInfo.total_tracks > 0}
@@ -267,8 +264,8 @@
 							? 'In Library'
 							: libraryUnmatchedOnly
 								? 'Unmatched files'
-								: coverageKnown
-									? `${coverageCovered}/${coverageExpected}`
+								: editionCounts
+									? `${editionCounts.kept}/${editionCounts.total}`
 									: `${libraryTrackCount}/${mbTrackCount}`}
 					</span>
 					{#if authStore.isAdmin}
@@ -334,9 +331,9 @@
 									style="background-color: {colors.accent}; color: {colors.secondary};"
 								>
 									<Check class="h-4 w-4" />
-									{libraryComplete || !coverageKnown
+									{libraryComplete || !editionCounts
 										? 'In Library'
-										: `In Library • ${coverageCovered}/${coverageExpected}`}
+										: `In Library • ${editionCounts.kept}/${editionCounts.total}`}
 								</div>
 							{/if}
 							<AlbumDownloadButton

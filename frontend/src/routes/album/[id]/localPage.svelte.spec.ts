@@ -29,6 +29,8 @@ const h = vi.hoisted(() => ({
 				selected_release_mbid: string | null;
 		  }
 		| undefined,
+	plan: undefined as unknown,
+	history: undefined as unknown,
 	toast: vi.fn()
 }));
 
@@ -167,11 +169,34 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	editionsKey: (id: string) => ['editions', id],
 	setEditionPin: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
 	clearEditionPin: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
-	getEditionPlanQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getEditionPlanQuery: () => ({
+		get data() {
+			return h.plan;
+		},
+		isLoading: false,
+		isError: false
+	}),
 	removeEditionExtras: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
 	restoreEditionExtras: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
 	getWaitingAlbumsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	invalidateAlbumEdition: () => Promise.resolve()
+}));
+
+vi.mock('$lib/queries/library/LibraryAlbumHistoryQueries.svelte', () => ({
+	getAlbumHistoryQuery: () => ({
+		get data() {
+			return h.history;
+		},
+		isPending: false,
+		isError: false,
+		refetch: vi.fn()
+	})
+}));
+
+vi.mock('$lib/queries/library/LibraryRetagPairQueries.svelte', () => ({
+	getRetagPairsQuery: () => ({ data: { pairs: [], total: 0 } }),
+	joinRetagPair: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	dismissRetagPair: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 
 vi.mock('$lib/queries/library/LibraryEditionQueries.svelte', () => ({
@@ -238,6 +263,8 @@ beforeEach(() => {
 	h.isAdmin = false;
 	h.isTrusted = false;
 	h.editions = undefined;
+	h.plan = undefined;
+	h.history = undefined;
 	album.management_identity_readiness = 'exact_release_required';
 	album.identification_status = 'local_metadata';
 	album.musicbrainz_release_group_id = null;
@@ -271,5 +298,51 @@ describe('local album page track menu', () => {
 		await (await page.getByLabelText('More actions').all())[0].click();
 		await expect.element(page.getByRole('menuitem', { name: 'Add to Queue' })).toBeVisible();
 		expect(page.getByRole('menuitem', { name: 'Download' }).elements()).toHaveLength(0);
+	});
+});
+
+describe('local album page and its edition', () => {
+	it("shows a file's note on its row and the album history below the tracks", async () => {
+		h.plan = {
+			album_id: album.id,
+			files: [
+				{
+					local_track_id: track.id,
+					title: track.title,
+					fate: 'keep',
+					note: { code: 'TRACK_ID_CORRECTED', message: '', action: '' }
+				}
+			]
+		};
+		h.history = {
+			items: [
+				{
+					kind: 'tracks_continued',
+					at: Date.UTC(2026, 9, 12),
+					by: null,
+					track_count: 1,
+					track_titles: ['Unmatched Song'],
+					other_album_title: null
+				}
+			]
+		};
+		await render(LocalAlbumPage, {
+			props: { albumId: album.id }
+		} as unknown as Parameters<typeof render>[1]);
+
+		const row = page.getByRole('listitem').filter({ hasText: 'Unmatched Song' }).first();
+		await expect
+			.element(
+				row.getByText(
+					"This file's track id belonged to another edition; it will be corrected when tags are written"
+				)
+			)
+			.toBeVisible();
+		const history = page.getByRole('heading', { name: 'Album history' });
+		await expect.element(history).toBeVisible();
+		const tracks = page.getByRole('heading', { name: 'Tracks', exact: true }).element();
+		expect(
+			tracks.compareDocumentPosition(history.element()) & Node.DOCUMENT_POSITION_FOLLOWING
+		).toBeTruthy();
 	});
 });

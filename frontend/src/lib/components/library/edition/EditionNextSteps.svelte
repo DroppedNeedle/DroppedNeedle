@@ -5,7 +5,7 @@
 	the download of its missing tracks.
 -->
 <script lang="ts">
-	import { CircleCheck, Undo2 } from 'lucide-svelte';
+	import { CircleCheck, Download, FolderInput, Tags, Undo2 } from 'lucide-svelte';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -72,6 +72,7 @@
 				? filesPlacedSentence(plan.kept_count, plan.files.length - plan.kept_count)
 				: filesPlacedSentence(choice.retag_files.length, choice.extra_track_ids.length)
 	);
+	const showTracks = $derived(Boolean(group && (tracks || missing > 0 || versions > 0)));
 	const tags = $derived.by((): TagsMode => {
 		if (held) return 'held';
 		if (status?.files_by_itself) return status.writing || placing ? 'writing' : 'written';
@@ -79,10 +80,31 @@
 	});
 </script>
 
-<section class="flex flex-col gap-4" aria-labelledby="edition-next-steps-title">
-	<div class="flex flex-wrap items-start justify-between gap-3">
-		<h3 id="edition-next-steps-title" class="flex items-start gap-2 text-base font-semibold">
-			<CircleCheck class="mt-0.5 h-5 w-5 shrink-0 text-success" aria-hidden="true" />
+{#snippet stepIcon(Icon: typeof Tags, busy: boolean, joined: boolean)}
+	{#if joined}
+		<span
+			class="absolute top-8 bottom-0 left-4 w-px -translate-x-1/2 bg-base-content/10"
+			aria-hidden="true"
+		></span>
+	{/if}
+	<span
+		class="relative z-10 grid h-8 w-8 shrink-0 place-items-center rounded-full border border-base-content/10 bg-base-200 text-base-content/70"
+		aria-hidden="true"
+	>
+		{#if busy}
+			<span class="loading loading-spinner loading-xs"></span>
+		{:else}
+			<Icon class="h-4 w-4" />
+		{/if}
+	</span>
+{/snippet}
+
+<section class="flex flex-col gap-5" aria-labelledby="edition-next-steps-title">
+	<div
+		class="flex flex-wrap items-center justify-between gap-3 rounded-box border border-success/25 bg-success/10 px-4 py-3"
+	>
+		<h3 id="edition-next-steps-title" class="flex items-center gap-3 text-base font-semibold">
+			<CircleCheck class="h-6 w-6 shrink-0 text-success" aria-hidden="true" />
 			<span>This is your edition now: {name}</span>
 		</h3>
 		<AsyncButton class="btn btn-ghost btn-sm gap-1" onclick={onundo}>
@@ -92,45 +114,48 @@
 	{#if error}
 		<p class="text-sm text-error" role="alert">{error}</p>
 	{/if}
-	<dl class="grid grid-cols-[4rem_minmax(0,1fr)] gap-x-4 gap-y-3 text-sm" aria-live="polite">
-		<dt class="font-semibold text-base-content/60">Files</dt>
-		<dd class="flex items-start gap-2">
-			{#if placing}<span class="loading loading-spinner loading-xs mt-0.5" aria-hidden="true"
-				></span>{/if}
-			<span id="edition-files-sentence">{files}</span>
-		</dd>
-		<dt class="font-semibold text-base-content/60">Tags</dt>
-		<dd class="flex items-start gap-2">
-			{#if tags === 'writing'}<span
-					class="loading loading-spinner loading-xs mt-0.5"
-					aria-hidden="true"
-				></span>{/if}
-			{#if tags === 'manual' && choice.retag_files.length}
-				<!-- A new choice starts its own preview. -->
-				{#key choice}
-					<TagWritePreview
-						{album}
-						files={choice.retag_files}
-						placing={Boolean(placing)}
-						placingSentenceId="edition-files-sentence"
-					/>
-				{/key}
-			{:else if tags === 'written'}
-				<span
-					>Tags and file names are written. You can undo that from {#if authStore.isAdmin}<a
-							class="link"
-							href={withBasePath('/library/management/history')}>History</a
-						>{:else}History{/if}.</span
-				>
-			{:else}
-				<span>{tagsSentence(tags)}</span>
-			{/if}
-		</dd>
-		{#if group && (tracks || missing > 0 || versions > 0)}
-			<dt class="font-semibold text-base-content/60">Tracks</dt>
-			<dd>
-				<EditionTracks {group} {missing} {versions} {sourceReady} outcome={tracks} {onacquire} />
-			</dd>
+	<ol class="flex flex-col text-sm" aria-live="polite">
+		<li class="relative grid grid-cols-[2rem_minmax(0,1fr)] gap-x-3">
+			{@render stepIcon(FolderInput, Boolean(placing), true)}
+			<div class="flex min-w-0 flex-col gap-1 pb-5">
+				<h4 class="text-xs font-semibold tracking-wide text-base-content/60 uppercase">Files</h4>
+				<span id="edition-files-sentence">{files}</span>
+			</div>
+		</li>
+		<li class="relative grid grid-cols-[2rem_minmax(0,1fr)] gap-x-3">
+			{@render stepIcon(Tags, tags === 'writing', showTracks)}
+			<div class="flex min-w-0 flex-col gap-1 {showTracks ? 'pb-5' : ''}">
+				<h4 class="text-xs font-semibold tracking-wide text-base-content/60 uppercase">Tags</h4>
+				{#if tags === 'manual' && choice.retag_files.length}
+					<!-- A new choice starts its own preview. -->
+					{#key choice}
+						<TagWritePreview
+							{album}
+							files={choice.retag_files}
+							placing={Boolean(placing)}
+							placingSentenceId="edition-files-sentence"
+						/>
+					{/key}
+				{:else if tags === 'written'}
+					<span
+						>Tags and file names are written. You can undo that from {#if authStore.isAdmin}<a
+								class="link"
+								href={withBasePath('/library/management/history')}>History</a
+							>{:else}History{/if}.</span
+					>
+				{:else}
+					<span>{tagsSentence(tags)}</span>
+				{/if}
+			</div>
+		</li>
+		{#if showTracks}
+			<li class="relative grid grid-cols-[2rem_minmax(0,1fr)] gap-x-3">
+				{@render stepIcon(Download, Boolean(tracks?.pending), false)}
+				<div class="flex min-w-0 flex-col gap-1">
+					<h4 class="text-xs font-semibold tracking-wide text-base-content/60 uppercase">Tracks</h4>
+					<EditionTracks {group} {missing} {versions} {sourceReady} outcome={tracks} {onacquire} />
+				</div>
+			</li>
 		{/if}
-	</dl>
+	</ol>
 </section>

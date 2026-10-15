@@ -4,7 +4,8 @@
 	import { editionSheet } from '$lib/components/library/edition/editionSheetState.svelte';
 	import {
 		cacheCanonicalLibraryAlbumDetail,
-		getLibraryAlbumDetailQuery
+		getLibraryAlbumDetailQuery,
+		getLibraryAlbumStatusQuery
 	} from '$lib/queries/library/LibraryQueries.svelte';
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import LocalAlbumPage from './LocalAlbumPage.svelte';
@@ -15,7 +16,17 @@
 	}
 
 	let { data }: Props = $props();
-	const localQuery = getLibraryAlbumDetailQuery(() => data.albumId);
+	// The status names the local album that holds the asked id. When that is
+	// another album, the id is a release group the library holds: its page is
+	// the matched one, and the id is never read as a local album.
+	const statusQuery = getLibraryAlbumStatusQuery(() => data.albumId);
+	const heldByAnotherAlbum = $derived(
+		statusQuery.data !== undefined && statusQuery.data.album_id !== data.albumId
+	);
+	const statusSettled = $derived(statusQuery.data !== undefined || statusQuery.isError);
+	const localQuery = getLibraryAlbumDetailQuery(() =>
+		statusSettled && !heldByAnotherAlbum ? data.albumId : ''
+	);
 	const localAlbum = $derived(localQuery.data);
 	const providerAlbumId = $derived(localAlbum?.musicbrainz_release_group_id ?? null);
 	const matchedElsewhere = $derived(providerAlbumId !== null && providerAlbumId !== data.albumId);
@@ -34,7 +45,7 @@
 	});
 </script>
 
-{#if localQuery.isLoading || shouldRedirect}
+{#if !statusSettled || localQuery.isLoading || shouldRedirect}
 	<div class="w-full max-w-7xl mx-auto px-2 py-4 sm:px-4 sm:py-8 lg:px-8">
 		<div class="grid gap-6 lg:grid-cols-[20rem_1fr]">
 			<div class="skeleton aspect-square w-full rounded-box"></div>

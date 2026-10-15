@@ -9,10 +9,12 @@
 
 	interface Props {
 		tracks: NativeTrackListItem[];
+		/** A sentence about a file, by track id, shown on its row. */
+		notes?: Map<string, string>;
 		getTrackMenuItems?: (track: NativeTrackListItem) => MenuItem[];
 	}
 
-	let { tracks, getTrackMenuItems }: Props = $props();
+	let { tracks, notes, getTrackMenuItems }: Props = $props();
 </script>
 
 <ol
@@ -35,6 +37,9 @@
 					class="truncate text-xs text-base-content/55 hover:underline"
 					>{track.artist_name || 'Unknown artist'}</a
 				>
+				{#if notes?.get(track.id)}
+					<p class="text-xs text-info">{notes.get(track.id)}</p>
+				{/if}
 			</div>
 			{#if track.format}<span class="hidden text-xs uppercase text-base-content/40 sm:block"
 					>{track.format}</span

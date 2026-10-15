@@ -285,11 +285,15 @@ const TAG_LABELS: Record<string, string> = {
 	musicbrainz_ids: 'MusicBrainz IDs'
 };
 
-/** One line of a retag preview: "Album: Night Shift -> Night Shift (Remaster)". */
-export function tagChangeLine(change: TagChange): string {
+/**
+ * One field of a retag preview: its label, the old value and the new one.
+ * The MusicBrainz IDs are one summary line, with no old value.
+ */
+export function tagChange(change: TagChange): { label: string; from: string | null; to: string } {
 	const label = TAG_LABELS[change.field] ?? change.field.replaceAll('_', ' ');
-	if (change.field === 'musicbrainz_ids') return `${label}: ${change.to ?? 'removed'}`;
-	return `${label}: ${change.from ?? 'none'} -> ${change.to ?? 'removed'}`;
+	const to = change.to ?? 'removed';
+	if (change.field === 'musicbrainz_ids') return { label, from: null, to };
+	return { label, from: change.from ?? 'none', to };
 }
 
 export function alreadyTaggedSentence(n: number): string {
