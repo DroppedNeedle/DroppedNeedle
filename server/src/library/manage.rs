@@ -1107,8 +1107,13 @@ impl LibrarySetup {
 
     /// Apply a sealed preview exactly once. The write guards span
     /// the refresh plus the publish, so no scan interleaves with
-    /// the commit. Blocking: handlers run this off the async runtime.
-    pub fn apply_preview(&self, token: &str) -> Result<AppliedBundle, ServiceError> {
+    /// the commit. `applied_by` is recorded so that account may undo
+    /// it. Blocking: handlers run this off the async runtime.
+    pub fn apply_preview(
+        &self,
+        token: &str,
+        applied_by: Option<&str>,
+    ) -> Result<AppliedBundle, ServiceError> {
         use super::publish::publisher::Catalog as _;
 
         let token_hash = sha256_hex(token.as_bytes());
@@ -1143,7 +1148,7 @@ impl LibrarySetup {
             .set_undo_retention_days(self.undo_retention_days());
         let outcome = open
             .publisher
-            .publish(&entry.sealed, &live, &entry.docs)
+            .publish_as(&entry.sealed, &live, &entry.docs, applied_by)
             .map_err(publish_error)?;
         Ok(AppliedBundle {
             bundle_id: entry.sealed.bundle.id.clone(),
@@ -1406,9 +1411,14 @@ impl LibrarySetup {
     /// identity drift, expired snapshots, occupied restores) 409 with
     /// per-file reasons; the bundle only writes when every sibling is
     /// eligible. The write guards span the refresh plus the
-    /// restoration publish. Blocking: handlers run this off the
-    /// async runtime.
-    pub fn undo_bundle(&self, bundle_id: &str) -> Result<AppliedBundle, ServiceError> {
+    /// restoration publish. With `only_by`, a bundle that account did
+    /// not apply is not found, so its existence does not leak.
+    /// Blocking: handlers run this off the async runtime.
+    pub fn undo_bundle(
+        &self,
+        bundle_id: &str,
+        only_by: Option<&str>,
+    ) -> Result<AppliedBundle, ServiceError> {
         let mut cell = self
             .publish
             .lock()
@@ -1418,6 +1428,14 @@ impl LibrarySetup {
         cell.refresh(&registry, &self.root_dirs)
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
+        if let Some(caller) = only_by {
+            let applied_by =
+                super::publish::operations::applied_by(open.publisher.connection(), bundle_id)
+                    .map_err(publish_error)?;
+            if applied_by.flatten().as_deref() != Some(caller) {
+                return Err(ServiceError::NotFound);
+            }
+        }
         let files = self.undo_files_in(open, bundle_id, &|_| PINNED_OVERRIDE)?;
         if !files.blocked.is_empty() || files.eligible.is_empty() {
             return Err(ServiceError::Conflict {

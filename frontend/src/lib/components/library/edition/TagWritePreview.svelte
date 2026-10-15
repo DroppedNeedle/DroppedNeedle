@@ -5,7 +5,6 @@
 -->
 <script lang="ts">
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
-	import { authStore } from '$lib/stores/authStore.svelte';
 	import {
 		previewEditionTags,
 		undoTagWrite,
@@ -90,9 +89,7 @@
 	{#if written}
 		<span class="flex flex-wrap items-center gap-2">
 			<span>Tags written.</span>
-			{#if authStore.isAdmin}
-				<AsyncButton class="btn btn-ghost btn-xs" onclick={undoWrite}>Undo</AsyncButton>
-			{/if}
+			<AsyncButton class="btn btn-ghost btn-xs" onclick={undoWrite}>Undo</AsyncButton>
 		</span>
 	{:else}
 		<span>{undone ? 'The old tags are back.' : tagsSentence('manual')}</span>

@@ -33228,14 +33228,14 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Admin role required */
+            /** @description Curator role required */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description Unknown bundle id */
+            /** @description Unknown bundle id, or one a curator did not apply */
             404: {
                 headers: {
                     [name: string]: unknown;

@@ -1386,6 +1386,71 @@ async fn artist_credits_gain_their_evidence() {
     }
 }
 
+/// Migration 0051 records who applied a published operation. Operations
+/// from before it keep no author, so only an admin may undo them, and
+/// deleting the author clears it again.
+#[tokio::test]
+async fn publish_operations_keep_their_rows_and_gain_an_author() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 51)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO library_publish_operations (bundle_id, bundle_json, created_day) \
+         VALUES ('old', '{}', 7); \
+         INSERT INTO auth_users (id, display_name, created_at) VALUES ('u1', 'T', 'now');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    sqlx::query(
+        "INSERT INTO library_publish_operations \
+         (bundle_id, bundle_json, created_day, applied_by_user_id) VALUES ('new', '{}', 8, 'u1')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let authors = || async {
+        sqlx::query_as::<_, (String, i64, Option<String>)>(
+            "SELECT bundle_id, created_day, applied_by_user_id FROM library_publish_operations \
+             ORDER BY bundle_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+    };
+    assert_eq!(
+        authors().await,
+        vec![
+            ("new".to_owned(), 8, Some("u1".to_owned())),
+            ("old".to_owned(), 7, None),
+        ]
+    );
+    sqlx::query("DELETE FROM auth_users WHERE id = 'u1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        authors().await,
+        vec![("new".to_owned(), 8, None), ("old".to_owned(), 7, None)]
+    );
+}
+
 /// The causes a takeover may carry in the database are exactly the ones
 /// the code names, in both directions.
 #[tokio::test]

@@ -14,7 +14,8 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
-	authStore: { user: { id: 'user-1' }, isAdmin: true, isTrusted: true },
+	// A curator, not an admin: whoever wrote the tags may undo them.
+	authStore: { user: { id: 'user-1' }, isAdmin: false, isTrusted: true },
 	LAST_USER_ID_KEY: 'test:last-user'
 }));
 vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
@@ -129,7 +130,7 @@ describe("writing the edition's tags in a folder the app does not write by itsel
 		await expect.element(page.getByRole('button', { name: 'Write tags to 1 file' })).toBeVisible();
 	});
 
-	it('writes with the preview token, then undoes that write by its bundle id', async () => {
+	it('writes with the preview token, then lets the curator undo that write by its bundle id', async () => {
 		show();
 		await page.getByRole('button', { name: 'Preview the new tags' }).click();
 		await page.getByRole('button', { name: 'Write tags to 1 file' }).click();

@@ -11,18 +11,21 @@ use rusqlite::{Connection, OptionalExtension};
 use super::PublishError;
 use super::planner::PlanBundle;
 
-/// Record one sealed bundle. Overwriting an existing row is refused:
-/// bundle ids are unique per operation.
+/// Record one sealed bundle, with the account that applied it when a
+/// person did. Overwriting an existing row is refused: bundle ids are
+/// unique per operation.
 pub fn record_operation(
     conn: &Connection,
     bundle: &PlanBundle,
     today_day: i64,
+    applied_by: Option<&str>,
 ) -> Result<(), PublishError> {
     let json = serde_json::to_string(bundle).map_err(PublishError::from)?;
     let changed = conn.execute(
-        "INSERT OR IGNORE INTO library_publish_operations (bundle_id, bundle_json, created_day)
-         VALUES (?1, ?2, ?3)",
-        rusqlite::params![bundle.id, json, today_day],
+        "INSERT OR IGNORE INTO library_publish_operations
+         (bundle_id, bundle_json, created_day, applied_by_user_id)
+         VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![bundle.id, json, today_day, applied_by],
     )?;
     if changed == 0 {
         return Err(PublishError::Journal(format!(
@@ -93,4 +96,19 @@ pub fn load_operation(
         .map_err(PublishError::from)?;
     row.map(|json: String| serde_json::from_str(&json).map_err(PublishError::from))
         .transpose()
+}
+
+/// The account that applied one recorded bundle: `None` when the id is
+/// unknown, `Some(None)` when no account is on record for it.
+pub fn applied_by(
+    conn: &Connection,
+    bundle_id: &str,
+) -> Result<Option<Option<String>>, PublishError> {
+    conn.query_row(
+        "SELECT applied_by_user_id FROM library_publish_operations WHERE bundle_id = ?1",
+        rusqlite::params![bundle_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(PublishError::from)
 }

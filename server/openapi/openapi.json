@@ -10085,10 +10085,10 @@
             "description": "Not authenticated"
           },
           "403": {
-            "description": "Admin role required"
+            "description": "Curator role required"
           },
           "404": {
-            "description": "Unknown bundle id"
+            "description": "Unknown bundle id, or one a curator did not apply"
           },
           "409": {
             "description": "Undo blocked for a file"

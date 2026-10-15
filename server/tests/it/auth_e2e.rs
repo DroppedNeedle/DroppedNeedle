@@ -2129,7 +2129,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("POST", "/api/v3/library/reviews/{id}/retry", Posture::Admin),
     ("POST", "/api/v3/library/manage/preview", Posture::Curator),
     ("POST", "/api/v3/library/manage/apply", Posture::Curator),
-    ("POST", "/api/v3/library/manage/undo", Posture::Admin),
+    ("POST", "/api/v3/library/manage/undo", Posture::Curator),
     (
         "POST",
         "/api/v3/library/manage/baseline/restore",

@@ -731,6 +731,18 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         live: &SealRecheck,
         docs: &BTreeMap<String, TagDocument>,
     ) -> Result<PublishOutcome, PublishError> {
+        self.publish_as(sealed, live, docs, None)
+    }
+
+    /// [`Self::publish`], recording the account that applied the bundle
+    /// so that account may undo it.
+    pub fn publish_as(
+        &mut self,
+        sealed: &SealedPreview,
+        live: &SealRecheck,
+        docs: &BTreeMap<String, TagDocument>,
+        applied_by: Option<&str>,
+    ) -> Result<PublishOutcome, PublishError> {
         let bundle = &sealed.bundle;
         self.today_day = (self.clock)();
         self.run_pregates(sealed, live)?;
@@ -738,7 +750,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         // pass, before the first byte stages. Rows for operations that
         // then fail linger harmlessly: undo of one compares the published
         // bytes, which never landed, so it stays put.
-        super::operations::record_operation(&self.conn, bundle, self.today_day)?;
+        super::operations::record_operation(&self.conn, bundle, self.today_day, applied_by)?;
         // A file that cannot be staged unwinds the ones staged before it,
         // so no part of the bundle is held or later finished by recovery.
         let staged = match self.prepare(bundle, docs) {

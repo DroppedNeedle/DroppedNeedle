@@ -458,7 +458,7 @@ pub async fn manage_apply(
         if let Some(plain) = state.preview_is_plain_retag(&body.preview_token) {
             check_plain_retag(&caller, plain)?;
         }
-        Ok::<_, LibraryError>(state.apply_preview(&body.preview_token)?)
+        Ok::<_, LibraryError>(state.apply_preview(&body.preview_token, Some(&caller.user_id))?)
     })
     .await??;
     Ok(Json(ManageApplyResponse {
@@ -485,14 +485,14 @@ pub async fn manage_apply(
         (status = 200, description = "Undo answer", body = ManageUndoResponse),
         (status = 400, description = "Missing bundle id"),
         (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Admin role required"),
-        (status = 404, description = "Unknown bundle id"),
+        (status = 403, description = "Curator role required"),
+        (status = 404, description = "Unknown bundle id, or one a curator did not apply"),
         (status = 409, description = "Undo blocked for a file"),
     )
 )]
 pub async fn manage_undo(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    RequireCurator(caller): RequireCurator,
     ValidJson(body): ValidJson<ManageUndoBody>,
 ) -> Result<Json<ManageUndoResponse>, LibraryError> {
     if body.bundle_id.is_empty() {
@@ -500,9 +500,12 @@ pub async fn manage_undo(
             message: "Bundle id must not be empty".to_owned(),
         });
     }
-    let applied = tokio::task::spawn_blocking(move || state.undo_bundle(&body.bundle_id))
-        .await
-        .map_err(|cause| LibraryError::internal(&cause))??;
+    // An admin undoes any bundle; a curator only one they applied.
+    let only_by = (!caller.role.is_admin()).then_some(caller.user_id);
+    let applied =
+        tokio::task::spawn_blocking(move || state.undo_bundle(&body.bundle_id, only_by.as_deref()))
+            .await
+            .map_err(|cause| LibraryError::internal(&cause))??;
     Ok(Json(ManageUndoResponse {
         bundle_id: applied.bundle_id,
         outcome: applied.outcome,

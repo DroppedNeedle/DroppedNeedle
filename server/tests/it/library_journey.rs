@@ -1076,8 +1076,9 @@ async fn an_artist_renamed_by_a_managed_run_keeps_its_row() {
 }
 
 /// A trusted user may write an album's edition tags into its files and
-/// nothing more: no destination, no tag values of their own, no undo and
-/// no restore. An admin's same calls go through.
+/// undo that write, nothing more: no destination, no tag values of their
+/// own, no undo of anyone else's write and no restore. An admin's same
+/// calls go through.
 #[tokio::test]
 async fn manage_routes_limit_a_trusted_user_to_a_plain_retag() {
     use droppedneedle::library::tags::{TagField, read_fields};
@@ -1087,40 +1088,24 @@ async fn manage_routes_limit_a_trusted_user_to_a_plain_retag() {
     let app = &rig.app;
     let admin_auth = app.login_admin().await;
     let admin_headers = [("authorization", admin_auth.as_str())];
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/admin/users",
-            &admin_headers,
-            Some(json!({"username": "tris", "password": "tris-password-1234"})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::CREATED, "{body}");
-    let tris_id = body["id"].as_str().expect("user id").to_owned();
-    let (status, body) = app
-        .call(
-            "PUT",
-            &format!("/api/v3/admin/users/{tris_id}/role"),
-            &admin_headers,
-            Some(json!({"role": "trusted"})),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let (status, body) = app
-        .call(
-            "POST",
-            "/api/v3/auth/login",
-            &[],
-            Some(json!({
-                "username": "tris",
-                "password": "tris-password-1234",
-                "transport": "bearer",
-            })),
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let tris_auth = format!("Bearer {}", body["token"].as_str().expect("user token"));
-    let tris_headers = [("authorization", tris_auth.as_str())];
+    let mut curators = Vec::new();
+    for name in ["tris", "kit"] {
+        let login = app.login_user(name).await;
+        let (status, body) = app
+            .call(
+                "PUT",
+                &format!("/api/v3/admin/users/{}/role", login.user_id),
+                &admin_headers,
+                Some(json!({"role": "trusted"})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        curators.push(login.authorization);
+    }
+    let tris_headers = [("authorization", curators[0].as_str())];
+    let kit_headers = [("authorization", curators[1].as_str())];
+    let molly = app.login_user("molly").await;
+    let molly_headers = [("authorization", molly.authorization.as_str())];
 
     let music = app.config.root_app_dir.join("music");
     let file = plant(&music, "album/01.flac", "management_full.flac");
@@ -1224,18 +1209,55 @@ async fn manage_routes_limit_a_trusted_user_to_a_plain_retag() {
         "the plain retag wrote the edition's tags"
     );
 
+    // Only the curator who wrote the tags, or an admin, may undo them.
+    // Another curator is told the write does not exist; a plain user is
+    // refused outright.
     let undo = json!({"bundle_id": bundle_id});
+    let undo_uri = "/api/v3/library/manage/undo";
+    let (status, body) = app
+        .call("POST", undo_uri, &kit_headers, Some(undo.clone()))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = app
+        .call("POST", undo_uri, &molly_headers, Some(undo.clone()))
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    let (status, body) = app.call("POST", undo_uri, &tris_headers, Some(undo)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(read_fields(&file).expect("fields read"), fields_before);
+
     let restore = json!({"track_ids": [track]});
-    for (uri, request) in [
-        ("/api/v3/library/manage/undo", &undo),
-        ("/api/v3/library/manage/baseline/restore", &restore),
-    ] {
-        let (status, body) = app
-            .call("POST", uri, &tris_headers, Some(request.clone()))
-            .await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{uri}: {body}");
-    }
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/baseline/restore",
+            &tris_headers,
+            Some(restore.clone()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     assert!(file.is_file(), "the retagged file stays where it was");
+
+    // An admin may undo a curator's write.
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/preview",
+            &tris_headers,
+            Some(preview(None, json!({}))),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/apply",
+            &tris_headers,
+            Some(json!({"preview_token": body["preview_token"]})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let undo = json!({"bundle_id": body["bundle_id"]});
 
     for (uri, request) in [
         ("/api/v3/library/manage/preview", &with_destination),
@@ -2090,7 +2112,7 @@ fn publish_one(
         )
         .expect("preview seals");
     library
-        .apply_preview(&sealed.token)
+        .apply_preview(&sealed.token, None)
         .expect("apply publishes")
         .bundle_id
 }
@@ -2134,7 +2156,7 @@ async fn undo_restores_values_no_new_edit_could_write() {
     assert_eq!(retagged[&TagField::Date], vec!["2001".to_owned()]);
     assert_ne!(retagged[&TagField::TrackNumber], vec!["3/12".to_owned()]);
 
-    library.undo_bundle(&bundle).expect("undo publishes");
+    library.undo_bundle(&bundle, None).expect("undo publishes");
     assert_eq!(read_fields(&file).expect("fields read"), before);
 }
 
@@ -7686,7 +7708,10 @@ async fn an_undone_bundle_is_not_done_again() {
         )
         .expect("the run's bundle");
 
-    managed.library.undo_bundle(&bundle).expect("bundle undone");
+    managed
+        .library
+        .undo_bundle(&bundle, None)
+        .expect("bundle undone");
     assert_eq!(managed.path(&tracks[0]), planted);
     let bytes = file_sha256(&planted);
     rescan(&managed.library).await;
@@ -8646,7 +8671,7 @@ async fn a_persons_write_over_a_hand_edit_leaves_it_the_users() {
     managed.edit_outside(track, title_edit("By Hand")).await;
     let file = managed.path(track);
     let bytes = file_sha256(&file);
-    assert!(managed.library.apply_preview(&sealed.token).is_err());
+    assert!(managed.library.apply_preview(&sealed.token, None).is_err());
     assert_eq!(managed.path(track), file);
     assert_eq!(file_sha256(&file), bytes, "the file untouched");
 }
