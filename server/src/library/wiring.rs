@@ -58,6 +58,22 @@ fn scratch_state() -> Result<(Arc<crate::db::scratch::ScratchDir>, Arc<ConfigSto
 /// Scan coordinator over the wired seams.
 pub type ScanCoordinator = LibraryScanCoordinator<LoftyTagReader>;
 
+/// Where the library reaches its outside services, and the provider ports a
+/// test may put in place of the live clients.
+#[derive(Clone)]
+pub struct Endpoints {
+    /// Discogs API origin (contributions).
+    pub discogs: String,
+    /// AcoustID API origin (identification and imports).
+    pub acoustid: String,
+    /// What identification asks MusicBrainz and AcoustID through; `None`
+    /// builds the live clients.
+    pub identify_providers: Option<Arc<dyn super::identify::providers::IdentifyProviders>>,
+    /// What contributions ask Discogs and MusicBrainz through; `None` builds
+    /// the live clients.
+    pub contribution_providers: Option<ContribProviders>,
+}
+
 /// Live root-registry source shared with the stream gateway.
 pub type RootSource = Arc<dyn Fn() -> RootRegistry + Send + Sync>;
 
@@ -226,7 +242,7 @@ impl LibrarySetup {
         mb_source: crate::providers::musicbrainz::SourceFn,
         db_path: &Path,
         config: Arc<ConfigStore>,
-        outbound: &crate::bootstrap::Outbound,
+        endpoints: Endpoints,
     ) -> Result<Self, String> {
         use crate::providers::RequestPriority;
         use crate::providers::acoustid::AcoustIdClient;
@@ -255,13 +271,12 @@ impl LibrarySetup {
         // Contributions read MusicBrainz on both lanes (the curator's page
         // and the verification worker) and Discogs through the shared GET
         // port.
-        let contrib = outbound
+        let contrib = endpoints
             .contribution_providers
-            .get()
             .unwrap_or_else(|| ContribProviders {
                 discogs: Arc::new(super::adapters::LiveDiscogsContrib::new(
                     crate::providers::ReqwestGet::shared(http),
-                    &outbound.discogs,
+                    &endpoints.discogs,
                 )),
                 musicbrainz: Arc::new(super::adapters::LiveMusicBrainzContrib::new(
                     mb_client(RequestPriority::UserInitiated),
@@ -272,17 +287,17 @@ impl LibrarySetup {
             .ok_or_else(|| "acoustid has no verified rate row".to_owned())?;
         let import_acoustid = AcoustIdClient::new(
             http.shared().clone(),
-            &outbound.acoustid,
+            &endpoints.acoustid,
             import_pacer,
             health.clone(),
         );
         let pacer = CorePacer::for_source(providers, "acoustid")
             .ok_or_else(|| "acoustid has no verified rate row".to_owned())?;
         let acoustid =
-            AcoustIdClient::new(http.shared().clone(), &outbound.acoustid, pacer, health);
-        // Identification asks the port `outbound` gives, or the live
+            AcoustIdClient::new(http.shared().clone(), &endpoints.acoustid, pacer, health);
+        // Identification asks the port `endpoints` gives, or the live
         // clients when it gives none.
-        let make: ProviderFactory = match outbound.identify_providers.get() {
+        let make: ProviderFactory = match endpoints.identify_providers {
             Some(given) => Box::new(move |_| given),
             None => Box::new(move |parts| {
                 let fingerprints = super::identify::sources::AcoustIdFingerprints::new(

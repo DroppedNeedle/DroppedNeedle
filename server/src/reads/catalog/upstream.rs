@@ -126,12 +126,6 @@ pub struct Endpoints {
     pub brainzmash: String,
 }
 
-impl Default for Endpoints {
-    fn default() -> Self {
-        crate::bootstrap::Outbound::live().catalog()
-    }
-}
-
 /// The MusicBrainz client type the catalog uses.
 pub type CatalogMusicBrainz = MusicBrainzClient<ReqwestMbTransport, HealthSink>;
 /// The ListenBrainz client type the catalog uses.
@@ -203,12 +197,14 @@ pub async fn user_lastfm(users: &UsersDeps, user_id: &str) -> UserLastFm {
 }
 
 impl Upstream {
-    /// Assemble from the shared HTTP clients and provider deps.
+    /// Assemble from the shared HTTP clients and provider deps, reaching
+    /// the upstreams at `endpoints`.
     pub fn new(
         http: &crate::http_client::HttpClientFactory,
         providers: Arc<Providers>,
         settings: Arc<dyn CatalogSettings>,
         users: UsersDeps,
+        endpoints: Endpoints,
     ) -> Self {
         Self::from_clients(
             http.shared().clone(),
@@ -216,6 +212,7 @@ impl Upstream {
             providers,
             settings,
             users,
+            endpoints,
         )
     }
 
@@ -227,6 +224,7 @@ impl Upstream {
         providers: Arc<Providers>,
         settings: Arc<dyn CatalogSettings>,
         users: UsersDeps,
+        endpoints: Endpoints,
     ) -> Self {
         Self {
             http,
@@ -234,7 +232,7 @@ impl Upstream {
             providers,
             settings,
             users,
-            endpoints: Endpoints::default(),
+            endpoints,
             instance_lastfm_key: Arc::new(|| None),
         }
     }
@@ -243,13 +241,6 @@ impl Upstream {
     #[must_use]
     pub fn with_instance_lastfm_key(mut self, key: InstanceLastFmKey) -> Self {
         self.instance_lastfm_key = key;
-        self
-    }
-
-    /// Point the upstreams elsewhere.
-    #[must_use]
-    pub fn with_endpoints(mut self, endpoints: Endpoints) -> Self {
-        self.endpoints = endpoints;
         self
     }
 

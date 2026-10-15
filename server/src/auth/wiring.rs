@@ -2,21 +2,23 @@
 //!
 //! The auth modules define ports and the adapters implement them. This
 //! module binds the live ones for serving traffic: the OIDC, Jellyfin,
-//! plex.tv and Last.fm clients over the shared HTTP client, the sign-in
-//! links into the per-user media connections, bridges from the config
-//! store to the live-read policy traits, and [`AuthSetup`], the single
-//! bundle `create_app` builds its routers from.
+//! plex.tv and Last.fm clients over the shared HTTP client, bridges from
+//! the config store to the live-read policy traits, and [`AuthSetup`], the
+//! single bundle `create_app` builds its routers from. The sign-in media
+//! links and the configured Plex server come in through the
+//! [`MediaLinks`] and [`PlexServerIdentity`] ports.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
-use super::federated::FederatedError;
 use super::federated::jellyfin_http::JellyfinHttp;
 use super::federated::oidc::{EXCHANGE_TTL_SECS, OidcExchangeStore, OidcLogin};
 use super::federated::oidc_http::OidcHttp;
+use super::federated::plex::PlexServerIdentity;
 use super::federated::plex_http::PlexTv;
 use super::federated::settings::InstallIds;
+use super::federated::{FederatedError, MediaLinks};
 use super::prod::{
     ProdAuth, SqliteFederatedStore, SqliteOidcStateStore, SqliteSessionIssuer, SqliteSessionStore,
 };
@@ -33,10 +35,6 @@ use super::users::{UsersDeps, admin_router, public_router, users_router};
 use crate::config::TrustedProxies;
 use crate::http_client::HttpClientFactory;
 use crate::ids::IdGenerator;
-use crate::remotes::connections::{
-    ConfigServers, ConnectionResolver, ConnectionStore, CredentialCoder, SignInLinks,
-    SqliteConnectionStore,
-};
 use crate::runtime_config::secret_sections::LastFmSettings;
 use crate::runtime_config::sections::SecuritySettings;
 use crate::runtime_config::{ConfigStore, Crypto};
@@ -177,12 +175,6 @@ pub struct Upstreams {
     pub pwned_passwords: String,
 }
 
-impl Default for Upstreams {
-    fn default() -> Self {
-        crate::bootstrap::Outbound::live().sign_in()
-    }
-}
-
 /// Production OIDC route state.
 pub type ProdOidcRoutes = OidcRouteState<
     SqliteFederatedStore,
@@ -194,10 +186,10 @@ pub type ProdOidcRoutes = OidcRouteState<
 >;
 /// Production Jellyfin route state.
 pub type ProdJellyfinRoutes =
-    JellyfinRouteState<SqliteFederatedStore, JellyfinHttp, SignInLinks, SqliteSessionIssuer>;
+    JellyfinRouteState<SqliteFederatedStore, JellyfinHttp, MediaLinks, SqliteSessionIssuer>;
 /// Production Plex route state.
 pub type ProdPlexRoutes =
-    PlexRouteState<SqliteFederatedStore, PlexTv, SignInLinks, SqliteSessionIssuer>;
+    PlexRouteState<SqliteFederatedStore, PlexTv, MediaLinks, SqliteSessionIssuer>;
 
 /// Everything `create_app` needs to mount `/api/v3`, built once at boot.
 #[derive(Clone)]
@@ -242,49 +234,14 @@ fn warn_on_public_http_oidc(store: &ConfigStore) {
     }
 }
 
-/// Saves the media link a Plex or Jellyfin sign-in hands back into the
-/// per-user connections table (the same rows the remotes routes read).
-fn sign_in_links(
-    rows: Arc<dyn ConnectionStore>,
-    crypto: Arc<Crypto>,
-    config_store: Arc<ConfigStore>,
-) -> SignInLinks {
-    SignInLinks::new(Arc::new(ConnectionResolver::new(
-        rows,
-        Arc::new(CredentialCoder::new(crypto)),
-        Arc::new(ConfigServers::new(config_store)),
-    )))
-}
-
 impl AuthSetup {
-    /// Build the bundle against the real plex.tv, Last.fm and breach
-    /// check. `http` is the outbound client factory:
-    /// the sign-in clients use its shared client, OIDC its no-redirect one;
-    /// `ids` mints row ids; `clock` drives management-side expiry.
-    #[allow(clippy::too_many_arguments)]
-    pub fn build(
-        auth: ProdAuth,
-        config_store: Arc<ConfigStore>,
-        crypto: Arc<Crypto>,
-        http: &HttpClientFactory,
-        ids: Arc<dyn IdGenerator>,
-        clock: Arc<dyn Clock>,
-        base_path: &str,
-    ) -> Result<Self, crate::runtime_config::ConfigError> {
-        Self::build_with_upstreams(
-            auth,
-            config_store,
-            crypto,
-            http,
-            ids,
-            clock,
-            base_path,
-            &Upstreams::default(),
-        )
-    }
-
-    /// [`AuthSetup::build`] with the plex.tv, Last.fm and breach-check
-    /// addresses given. Production builds through this.
+    /// Build the bundle. `http` is the outbound client factory: the
+    /// sign-in clients use its shared client, OIDC its no-redirect one;
+    /// `ids` mints row ids; `clock` drives management-side expiry;
+    /// `upstreams` gives the plex.tv, Last.fm and breach-check addresses;
+    /// `plex_server` reads the configured Plex server's machine id for the
+    /// membership gate; `links` saves the media link a Plex or Jellyfin
+    /// sign-in hands back.
     #[allow(clippy::too_many_arguments)]
     pub fn build_with_upstreams(
         auth: ProdAuth,
@@ -295,14 +252,21 @@ impl AuthSetup {
         clock: Arc<dyn Clock>,
         base_path: &str,
         upstreams: &Upstreams,
-    ) -> Result<Self, crate::runtime_config::ConfigError> {
+        plex_server: Arc<dyn PlexServerIdentity>,
+        links: MediaLinks,
+    ) -> Self {
         use super::users::hibp::{HibpScreen, PwnedPasswordsHttp};
 
         InstallIds::new(config_store.clone()).ensure();
         warn_on_public_http_oidc(&config_store);
         let no_redirect = http.no_redirect().clone();
         let http = http.shared().clone();
-        let plex_tv = PlexTv::with_base(http.clone(), config_store.clone(), &upstreams.plex_tv);
+        let plex_tv = PlexTv::with_base(
+            http.clone(),
+            config_store.clone(),
+            &upstreams.plex_tv,
+            plex_server,
+        );
         let jellyfin_http = JellyfinHttp::new(http.clone(), config_store.clone());
         let users = UsersDeps {
             users: Arc::new(auth.users.clone()),
@@ -326,17 +290,6 @@ impl AuthSetup {
             jellyfin_directory: Arc::new(jellyfin_http.clone()),
             plex_directory: Arc::new(plex_tv.clone()),
         };
-        let rows: Arc<dyn ConnectionStore> = match auth.db.handles() {
-            Some((pool, lane)) => Arc::new(SqliteConnectionStore::new(pool, lane)),
-            None => {
-                return Err(crate::runtime_config::ConfigError::Validation {
-                    section: "auth",
-                    field: "database",
-                    reason: "the production auth bundle needs a live database".to_owned(),
-                });
-            }
-        };
-        let links = sign_in_links(rows, crypto, config_store.clone());
         let limits = Arc::new(RateLimiter::new());
         // One handle for the gate and every sign-in route: they read the
         // same saved list and share its one warning.
@@ -382,7 +335,7 @@ impl AuthSetup {
             base_path,
         )
         .with_stated_addresses(stated.clone());
-        Ok(Self {
+        Self {
             users,
             session_auth: SessionAuth::new(auth.sessions.clone(), base_path)
                 .with_limits(limits.clone())
@@ -394,7 +347,7 @@ impl AuthSetup {
             plex,
             config_store,
             base_path: base_path.to_owned(),
-        })
+        }
     }
 
     /// Trust the given reverse proxies everywhere auth reads forwarded
@@ -458,7 +411,8 @@ impl AuthSetup {
     }
 
     /// Test bundle over unwired adapters. Nothing here touches a database:
-    /// every SQLite adapter fails closed until wired, which is exactly what
+    /// every SQLite adapter, the media links and the Plex server identity
+    /// fail closed until wired, which is exactly what
     /// non-auth tests need (the middleware passes non-v3 paths through;
     /// credential-less v3 requests 401 at the gate while any credentialed
     /// v3 request 500s on the unwired store lookup). Auth behavior tests
@@ -467,6 +421,7 @@ impl AuthSetup {
     pub fn for_tests() -> Result<Self, String> {
         use std::sync::atomic::{AtomicU64, Ordering};
 
+        use super::federated::plex::UnwiredPlexServer;
         use super::prod::{
             Argon2idHasher, AuthDb, FileAvatarStore, SqliteAppPasswordStore,
             SqliteCredentialLookup, SqliteLastFmStore, SqliteRecoveryStore, SqliteSessionManager,
@@ -475,7 +430,7 @@ impl AuthSetup {
         use super::users::hibp::{HibpScreen, PwnedPasswordsHttp};
         use super::users::stores::SystemClock;
         use crate::ids::UuidGenerator;
-        use crate::remotes::connections::MemoryConnectionStore;
+        use crate::providers::{lastfm, plextv::PLEX_TV_BASE};
 
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let tag = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -497,8 +452,17 @@ impl AuthSetup {
         let http = factory.shared().clone();
         let db = AuthDb::unwired();
         let hasher = Argon2idHasher::new();
-        let upstreams = Upstreams::default();
-        let plex_tv = PlexTv::with_base(http.clone(), store.clone(), &upstreams.plex_tv);
+        let upstreams = Upstreams {
+            plex_tv: PLEX_TV_BASE.to_owned(),
+            lastfm: lastfm::DEFAULT_BASE_URL.to_owned(),
+            pwned_passwords: super::users::hibp::RANGE_URL_PREFIX.to_owned(),
+        };
+        let plex_tv = PlexTv::with_base(
+            http.clone(),
+            store.clone(),
+            &upstreams.plex_tv,
+            Arc::new(UnwiredPlexServer),
+        );
         let jellyfin_http = JellyfinHttp::new(http.clone(), store.clone());
         let users = UsersDeps {
             users: Arc::new(SqliteUserStore::new(&db)),
@@ -522,11 +486,7 @@ impl AuthSetup {
             jellyfin_directory: Arc::new(jellyfin_http.clone()),
             plex_directory: Arc::new(plex_tv.clone()),
         };
-        let links = sign_in_links(
-            Arc::new(MemoryConnectionStore::new()),
-            crypto.clone(),
-            store.clone(),
-        );
+        let links = MediaLinks::unwired();
         let sessions = SqliteSessionStore::new(&db);
         let native = NativeAuthState::new(
             sessions.clone(),

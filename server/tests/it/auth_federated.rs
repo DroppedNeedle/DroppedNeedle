@@ -643,7 +643,7 @@ async fn plex_pins_are_bound_to_their_starter_and_gate_membership() {
     let mock = serve(plex_router).await;
     let e2e = E2e::open("plex").await.with_upstreams(Upstreams {
         plex_tv: mock.clone(),
-        ..Upstreams::default()
+        ..droppedneedle::bootstrap::Outbound::live().sign_in()
     });
     let mut settings = PlexConnection {
         plex_url: mock,
@@ -857,7 +857,7 @@ async fn lastfm_links_with_the_instance_key_and_binds_tokens_to_the_user() {
     let mock = serve(lastfm_router).await;
     let e2e = E2e::open("lastfm").await.with_upstreams(Upstreams {
         lastfm: format!("{mock}/2.0/"),
-        ..Upstreams::default()
+        ..droppedneedle::bootstrap::Outbound::live().sign_in()
     });
     // v2 model: the admin saves one app key pair for the whole instance.
     e2e.store

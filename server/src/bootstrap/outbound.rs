@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use crate::{
-    acquire::wiring::{SPOTIFY_ACCOUNTS_BASE, SPOTIFY_API_BASE},
+    acquire::wiring::{SPOTIFY_ACCOUNTS_BASE, SPOTIFY_API_BASE, SpotifyEndpoints},
     auth::{users::hibp::RANGE_URL_PREFIX, wiring::Upstreams},
     library::{contrib::ContribProviders, identify::providers::IdentifyProviders},
     plugins::install::GitHubHosts,
@@ -191,6 +191,24 @@ impl Outbound {
             plex_tv: self.plex_tv.clone(),
             lastfm: self.lastfm.clone(),
             pwned_passwords: self.pwned_passwords.clone(),
+        }
+    }
+
+    /// The addresses the Spotify import reaches.
+    pub fn spotify(&self) -> SpotifyEndpoints {
+        SpotifyEndpoints {
+            api: self.spotify_api.clone(),
+            accounts: self.spotify_accounts.clone(),
+        }
+    }
+
+    /// The addresses and provider ports the library uses.
+    pub fn library(&self) -> crate::library::wiring::Endpoints {
+        crate::library::wiring::Endpoints {
+            discogs: self.discogs.clone(),
+            acoustid: self.acoustid.clone(),
+            identify_providers: self.identify_providers.get(),
+            contribution_providers: self.contribution_providers.get(),
         }
     }
 

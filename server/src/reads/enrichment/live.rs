@@ -665,10 +665,28 @@ mod tests {
 
         let http = HttpClientFactory::new().unwrap();
         let providers = Arc::new(Providers::with_memory_cache());
+        // Nothing listens on the discard port.
+        let closed = || "http://127.0.0.1:9".to_owned();
+        let endpoints = crate::reads::catalog::upstream::Endpoints {
+            listenbrainz: closed(),
+            lastfm: closed(),
+            audiodb: closed(),
+            wikidata: closed(),
+            wikipedia: closed(),
+            commons: closed(),
+            itunes: closed(),
+            deezer: closed(),
+            cover_art_archive: closed(),
+            lrclib: closed(),
+            github_releases: closed(),
+            youtube: closed(),
+            musicbrainz: closed(),
+            brainzmash: closed(),
+        };
         let pair = production_enrichment(
             http.shared(),
             &providers,
-            &Default::default(),
+            &endpoints,
             Arc::new(|| false),
             Arc::new(|| false),
         );

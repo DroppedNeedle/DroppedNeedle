@@ -93,6 +93,15 @@ pub const SPOTIFY_API_BASE: &str = "https://api.spotify.com/v1";
 /// Spotify accounts origin (token exchange).
 pub const SPOTIFY_ACCOUNTS_BASE: &str = "https://accounts.spotify.com";
 
+/// Where the Spotify import reaches Spotify.
+#[derive(Debug, Clone)]
+pub struct SpotifyEndpoints {
+    /// Spotify Web API root.
+    pub api: String,
+    /// Spotify accounts origin (token exchange).
+    pub accounts: String,
+}
+
 /// Health-probe refresh cadence.
 const PROBE_INTERVAL: Duration = Duration::from_secs(300);
 
@@ -589,7 +598,7 @@ impl AcquireSetup {
         ids: Arc<dyn IdGenerator>,
         config_store: Arc<ConfigStore>,
         collections: &mut CollectionsState,
-        outbound: &crate::bootstrap::Outbound,
+        spotify: &SpotifyEndpoints,
     ) -> Result<Self, String> {
         let (http, no_redirect) = (http.shared().clone(), http.no_redirect().clone());
         let staging_root = config.imports_dir();
@@ -679,12 +688,8 @@ impl AcquireSetup {
         let playlists: Arc<dyn PlaylistIndex> = spotify_playlists.clone();
         let tracks: Arc<dyn PlaylistTrackSink> = spotify_playlists;
         let resolver = Arc::new(FixedMbidResolver::new());
-        let spotify_client = SpotifyClient::new(
-            http.clone(),
-            no_redirect,
-            &outbound.spotify_api,
-            &outbound.spotify_accounts,
-        );
+        let spotify_client =
+            SpotifyClient::new(http.clone(), no_redirect, &spotify.api, &spotify.accounts);
         let spotify_service = Arc::new(SpotifyImportService::new(
             spotify_client.clone(),
             spotify_settings.clone(),
@@ -936,12 +941,11 @@ impl AcquireSetup {
             clients.plugins().clone(),
             events.clone(),
         );
-        let outbound = crate::bootstrap::Outbound::live();
         let spotify_client = SpotifyClient::new(
             http.clone(),
             factory.no_redirect().clone(),
-            &outbound.spotify_api,
-            &outbound.spotify_accounts,
+            SPOTIFY_API_BASE,
+            SPOTIFY_ACCOUNTS_BASE,
         );
         let spotify_settings = Arc::new(MemorySpotifySettings::new());
         let spotify_links = Arc::new(MemorySpotifyConnections::new());

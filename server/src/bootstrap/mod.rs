@@ -29,7 +29,7 @@ use crate::{
     acquire::AcquireSetup,
     admin::{AdminDb, AdminSetup, quota::reload_overrides},
     app::create_app_with_web,
-    auth::{prod::ProdAuth, users::stores::SystemClock, wiring::AuthSetup},
+    auth::{federated::MediaLinks, prod::ProdAuth, users::stores::SystemClock, wiring::AuthSetup},
     compat::{
         CompatSetup, settings::LiveSettings, setup::CompatDeps, shared::address::ListenerConfig,
     },
@@ -44,6 +44,7 @@ use crate::{
     ids::UuidGenerator,
     library::wiring::LibrarySetup,
     media::MediaSetup,
+    playback::plugin_events::PluginPlayEvents,
     plugins::{scrobble::SqliteListenBrainzLinkStore, wiring::PluginsSetup},
     providers::{InMemoryProviderCache, Providers},
     reads::{
@@ -51,13 +52,19 @@ use crate::{
         catalog::{
             Catalog,
             library::LocalCatalog,
+            plugin_sources::{PluginDetailsSource, PluginPurchaseLinks},
             upstream::{Upstream, instance_lastfm_key},
         },
-        collections::db::CollectionsDb,
-        enrichment::live::production_enrichment,
+        collections::{db::CollectionsDb, remote_import::PlaylistImportSink},
+        enrichment::{library::LiveEnrichment, live::production_enrichment},
     },
-    remotes::adapter::PlaylistImportSink,
-    remotes::presence_feed::MediaJobs,
+    remotes::{
+        connections::{
+            ConfigServers, ConnectionResolver, CredentialCoder, SignInLinks, SqliteConnectionStore,
+        },
+        plex::ConfiguredPlexServer,
+        presence_feed::MediaJobs,
+    },
     runtime_config::{
         ConfigStore, Crypto, crypto::CryptoError, quota::QUOTA_FILE_NAME,
         secret_sections::ListenBrainzConnection, sections::LyricsSettings,
@@ -109,6 +116,24 @@ pub enum BootError {
 
 fn stage(stage: &'static str) -> impl FnOnce(String) -> BootError {
     move |message| BootError::Stage { stage, message }
+}
+
+/// The media links a Plex or Jellyfin sign-in saves, written to the
+/// per-user connections table (the rows the remotes routes read) over
+/// `pool` and `lane`.
+pub fn sign_in_links(
+    pool: sqlx::SqlitePool,
+    lane: crate::db::WriteLane,
+    crypto: Arc<Crypto>,
+    config_store: Arc<ConfigStore>,
+) -> MediaLinks {
+    MediaLinks::new(Arc::new(SignInLinks::new(Arc::new(
+        ConnectionResolver::new(
+            Arc::new(SqliteConnectionStore::new(pool, lane)),
+            Arc::new(CredentialCoder::new(crypto)),
+            Arc::new(ConfigServers::new(config_store)),
+        ),
+    ))))
 }
 
 /// What [`build_with`] hands back.
@@ -186,7 +211,17 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         clock,
         &config.base_path,
         &outbound.sign_in(),
-    )?
+        Arc::new(ConfiguredPlexServer::new(
+            http.shared().clone(),
+            config_store.clone(),
+        )),
+        sign_in_links(
+            runtime.pool().clone(),
+            runtime.lane().clone(),
+            crypto.clone(),
+            config_store.clone(),
+        ),
+    )
     .with_trusted_proxies(config.trusted_proxies.clone());
 
     // Shared provider deps first: the reads enrichment pair paces through
@@ -258,17 +293,13 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
                 providers.clone(),
                 config_store.clone(),
                 auth.users.clone(),
+                endpoints.clone(),
             )
-            .with_instance_lastfm_key(instance_lastfm_key(auth.users.lastfm_switch.clone()))
-            .with_endpoints(endpoints.clone()),
+            .with_instance_lastfm_key(instance_lastfm_key(auth.users.lastfm_switch.clone())),
             LocalCatalog::new(runtime.pool().clone()),
         )
-        .with_purchase_links(Arc::new(
-            crate::plugins::capabilities::purchase::PluginPurchaseLinks(plugin_host.clone()),
-        ))
-        .with_details(Arc::new(
-            crate::plugins::capabilities::metadata::PluginDetailsSource(plugin_host.clone()),
-        )),
+        .with_purchase_links(Arc::new(PluginPurchaseLinks(plugin_host.clone())))
+        .with_details(Arc::new(PluginDetailsSource(plugin_host.clone()))),
     );
     // Read per request, so a source switch in Settings reaches the
     // long-lived clients without a restart.
@@ -289,7 +320,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         mb_source.clone(),
         &config.library_db_path,
         config_store.clone(),
-        &outbound,
+        outbound.library(),
     )
     .map_err(stage("library setup"))?;
     // Plugin library writes hold the same root leases as the publisher.
@@ -314,12 +345,11 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         config_store.clone(),
         // Remote playlist imports land in the user's playlists.
         Arc::new(PlaylistImportSink::new(reads.collections.clone())),
-        &outbound,
+        outbound.plex_tv.clone(),
+        outbound.scrobbles(),
     )
     .map_err(stage("media setup"))?;
-    let media = media.with_play_events(Arc::new(
-        crate::plugins::capabilities::events::PluginPlayEvents(plugin_host.clone()),
-    ));
+    let media = media.with_play_events(Arc::new(PluginPlayEvents(plugin_host.clone())));
     media
         .stream
         .engine
@@ -332,7 +362,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         ids.clone(),
         config_store.clone(),
         &mut reads.collections,
-        &outbound,
+        &outbound.spotify(),
     )
     .map_err(stage("acquire setup"))?
     .with_plugins(plugin_host.clone())
@@ -508,7 +538,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         crate::providers::adapters::CorePacer::for_source(providers.clone(), "acoustid")
             .ok_or_else(|| "acoustid has no verified rate row".to_owned())
             .map_err(stage("library management"))?;
-    let enrichment = crate::library::management::enrich::LiveEnrichment {
+    let enrichment = LiveEnrichment {
         acoustid: crate::providers::acoustid::AcoustIdClient::new(
             http.shared().clone(),
             &outbound.acoustid,
@@ -521,9 +551,9 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             providers.clone(),
             config_store.clone(),
             auth.users.clone(),
+            endpoints,
         )
-        .with_instance_lastfm_key(instance_lastfm_key(auth.users.lastfm_switch.clone()))
-        .with_endpoints(endpoints),
+        .with_instance_lastfm_key(instance_lastfm_key(auth.users.lastfm_switch.clone())),
         http: http.shared().clone(),
         artwork: reads.artwork.clone(),
         lrclib: Default::default(),
@@ -593,7 +623,8 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         jobs.registry().clone(),
         runtime.pool().clone(),
         runtime.lane().clone(),
-        &outbound,
+        outbound.plugin_hosts(),
+        &outbound.listenbrainz,
     )
     .with_presence(Arc::new(media.playback.presence.clone()))
     .with_mix_grants(mix_hooks.clone(), mix_hooks);

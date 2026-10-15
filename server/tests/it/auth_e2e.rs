@@ -157,8 +157,17 @@ impl E2e {
             Arc::clone(&self.clock) as Arc<dyn droppedneedle::auth::users::stores::Clock>,
             "",
             &self.upstreams,
+            Arc::new(droppedneedle::remotes::plex::ConfiguredPlexServer::new(
+                self.http.shared().clone(),
+                Arc::clone(&self.store),
+            )),
+            droppedneedle::bootstrap::sign_in_links(
+                self.runtime.pool().clone(),
+                self.runtime.lane().clone(),
+                Arc::clone(&self.crypto),
+                Arc::clone(&self.store),
+            ),
         )
-        .expect("prod auth bundle builds")
     }
 
     /// A fresh router over the same database. Each build carries fresh rate
@@ -198,6 +207,7 @@ impl E2e {
                 Arc::new(Providers::unpaced()),
                 Arc::clone(&self.store) as Arc<dyn CatalogSettings>,
                 auth.users.clone(),
+                droppedneedle::bootstrap::Outbound::live().catalog(),
             ),
             LocalCatalog::new(self.runtime.pool().clone()),
         ));
@@ -223,10 +233,13 @@ impl E2e {
             self.runtime.pool().clone(),
             self.runtime.lane().clone(),
             Arc::clone(&self.store),
-            Arc::new(droppedneedle::remotes::adapter::PlaylistImportSink::new(
-                reads.collections.clone(),
-            )),
-            &droppedneedle::bootstrap::Outbound::live(),
+            Arc::new(
+                droppedneedle::reads::collections::remote_import::PlaylistImportSink::new(
+                    reads.collections.clone(),
+                ),
+            ),
+            droppedneedle::bootstrap::Outbound::live().plex_tv,
+            droppedneedle::bootstrap::Outbound::live().scrobbles(),
         )
         .expect("media bundle builds");
         let mut reads = reads;
@@ -238,7 +251,7 @@ impl E2e {
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             Arc::clone(&self.store),
             &mut reads.collections,
-            &droppedneedle::bootstrap::Outbound::live(),
+            &droppedneedle::bootstrap::Outbound::live().spotify(),
         )
         .expect("acquire bundle builds");
         let compat = droppedneedle::compat::CompatSetup::build(

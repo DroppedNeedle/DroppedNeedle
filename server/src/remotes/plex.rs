@@ -26,7 +26,7 @@
 //! a view needs without its `ratingKey` is an upstream error.
 
 use std::collections::HashSet;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use super::adapter::{
@@ -40,7 +40,12 @@ use super::models::{
     PlaylistSummary, SearchResults, SessionView, SessionsView, SourceName, StatsView, TrackView,
 };
 use super::plex_models::{Container, Envelope, Metadata};
+use crate::auth::federated::FederatedError;
+use crate::auth::federated::plex::PlexServerIdentity;
+use crate::auth::federated::settings::InstallIds;
 use crate::providers::plextv::Resource;
+use crate::runtime_config::ConfigStore;
+use crate::runtime_config::secret_sections::PlexConnection;
 
 /// Request timeout per upstream call, matching the v2 repository.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -1439,6 +1444,65 @@ impl PlexServerTokens for PlexTokenProbe {
                 return Ok(None);
             };
             probe.server_access_token(&self.plex_tv, &machine_id).await
+        })
+    }
+}
+
+/// The production [`PlexServerIdentity`]: the admin's saved Plex server,
+/// asked for its machine id. Settings are read per call.
+#[derive(Clone)]
+pub struct ConfiguredPlexServer {
+    http: reqwest::Client,
+    store: Arc<ConfigStore>,
+    ids: InstallIds,
+}
+
+impl ConfiguredPlexServer {
+    /// Read the server saved in `store` over `http`.
+    pub fn new(http: reqwest::Client, store: Arc<ConfigStore>) -> Self {
+        Self {
+            ids: InstallIds::new(store.clone()),
+            http,
+            store,
+        }
+    }
+}
+
+impl PlexServerIdentity for ConfiguredPlexServer {
+    fn machine_id(&self) -> super::adapter::BoxFuture<'_, Result<Option<String>, FederatedError>> {
+        Box::pin(async move {
+            let unreadable = || {
+                FederatedError::ProviderUnavailable(
+                    "Could not reach the configured Plex server".to_owned(),
+                )
+            };
+            let section = self.store.get_raw::<PlexConnection>().map_err(|error| {
+                tracing::warn!(%error, "cannot read plex settings");
+                unreadable()
+            })?;
+            // Only a missing server URL means "no server": a configured
+            // server that cannot be read must never skip the membership gate.
+            if section.plex_url.trim().is_empty() {
+                return Ok(None);
+            }
+            let server = PlexAdapter::new(
+                self.http.clone(),
+                section.plex_url,
+                section.plex_token.expose().to_owned(),
+                self.ids.plex_client_id(),
+                Vec::new(),
+            );
+            match server.machine_identifier().await {
+                Ok(Some(machine_id)) => Ok(Some(machine_id)),
+                Ok(None) => {
+                    tracing::warn!("the Plex server did not name its machine id");
+                    Err(unreadable())
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "could not read the Plex server machine id");
+                    Err(unreadable())
+                }
+            }
         })
     }
 }

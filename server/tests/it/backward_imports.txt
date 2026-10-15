@@ -1,18 +1,5 @@
 # Backward imports between the server's top-level areas, checked by
 # tests/it/backward_imports.rs (the layers are in LAYERS there).
 # Each line: <file under server/src> <area reached up to> <crate:: paths>.
-# Keep the counts exact: when an import goes, lower its count in the same
-# change. A new backward import fails the test.
-acquire/wiring.rs bootstrap 2
-auth/federated/plex_http.rs remotes 1
-auth/wiring.rs bootstrap 1
-auth/wiring.rs remotes 2
-library/management/enrich.rs reads 2
-library/wiring.rs bootstrap 1
-media.rs bootstrap 1
-plugins/capabilities/events.rs playback 2
-plugins/capabilities/metadata.rs reads 2
-plugins/capabilities/purchase.rs reads 2
-plugins/wiring.rs bootstrap 1
-reads/catalog/upstream.rs bootstrap 1
-remotes/adapter.rs reads 6
+# The list is empty: every area uses only its own layer or those below it.
+# A line here needs the owner's sign-off.

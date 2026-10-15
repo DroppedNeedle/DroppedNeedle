@@ -25,6 +25,7 @@ pub mod handlers;
 pub mod library;
 pub mod mapping;
 pub mod models;
+pub mod plugin_sources;
 pub mod ports;
 pub mod precache;
 pub mod search;

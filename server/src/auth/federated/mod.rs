@@ -45,7 +45,13 @@ pub mod settings;
 pub mod transport;
 pub mod users;
 
+use std::sync::Arc;
+
 use thiserror::Error;
+
+use self::jellyfin_login::{JellyfinConnectionLink, JellyfinProfile};
+use self::plex::{PlexConnectionLink, PlexProfile};
+use crate::auth::users::stores::BoxFuture;
 
 /// Failure of a federated login or import step. HTTP mapping lives in the
 /// handler layer: `Authentication` is 401 on login routes (403 on the Plex
@@ -87,6 +93,78 @@ pub trait SessionIssuer: Clone + Send + Sync + 'static {
         user_id: &str,
         user_agent: Option<&str>,
     ) -> impl Future<Output = Result<String, FederatedError>> + Send;
+}
+
+/// Saves the media link a Plex or Jellyfin sign-in hands back into the
+/// user's media connections. A port so auth need not reach into the
+/// media-server connection store for it.
+pub trait MediaLinkStore: Send + Sync {
+    /// Store the user's fresh Plex tokens for later playback.
+    fn link_plex<'a>(
+        &'a self,
+        user_id: &'a str,
+        profile: &'a PlexProfile,
+    ) -> BoxFuture<'a, Result<(), String>>;
+
+    /// Store the user's fresh Jellyfin token for later playback.
+    fn link_jellyfin<'a>(
+        &'a self,
+        user_id: &'a str,
+        profile: &'a JellyfinProfile,
+    ) -> BoxFuture<'a, Result<(), String>>;
+}
+
+/// The media links the Plex and Jellyfin sign-ins write through. Whether a
+/// failed link fails the request is the flow's call, not this type's.
+#[derive(Clone)]
+pub struct MediaLinks(Arc<dyn MediaLinkStore>);
+
+impl MediaLinks {
+    /// Write links through `store`.
+    pub fn new(store: Arc<dyn MediaLinkStore>) -> Self {
+        Self(store)
+    }
+
+    /// Links for test bundles: every write fails.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn unwired() -> Self {
+        Self(Arc::new(UnwiredLinks))
+    }
+}
+
+impl PlexConnectionLink for MediaLinks {
+    async fn link(&self, user_id: &str, profile: &PlexProfile) -> Result<(), String> {
+        self.0.link_plex(user_id, profile).await
+    }
+}
+
+impl JellyfinConnectionLink for MediaLinks {
+    async fn link(&self, user_id: &str, profile: &JellyfinProfile) -> Result<(), String> {
+        self.0.link_jellyfin(user_id, profile).await
+    }
+}
+
+/// The store behind [`MediaLinks::unwired`].
+#[cfg(any(test, feature = "test-support"))]
+struct UnwiredLinks;
+
+#[cfg(any(test, feature = "test-support"))]
+impl MediaLinkStore for UnwiredLinks {
+    fn link_plex<'a>(
+        &'a self,
+        _user_id: &'a str,
+        _profile: &'a PlexProfile,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async { Err("media links are not wired".to_owned()) })
+    }
+
+    fn link_jellyfin<'a>(
+        &'a self,
+        _user_id: &'a str,
+        _profile: &'a JellyfinProfile,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async { Err("media links are not wired".to_owned()) })
+    }
 }
 
 /// Append `value` as one JSON string literal (quotes included).

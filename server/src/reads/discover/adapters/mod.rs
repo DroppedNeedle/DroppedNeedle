@@ -192,9 +192,9 @@ fn live_upstream(inputs: &DiscoverInputs) -> Upstream {
         inputs.providers.clone(),
         inputs.config.clone(),
         inputs.users.clone(),
+        inputs.endpoints.clone(),
     )
     .with_instance_lastfm_key(inputs.lastfm_key.clone())
-    .with_endpoints(inputs.endpoints.clone())
 }
 
 /// The live provider reads the queue, the page and radio share.

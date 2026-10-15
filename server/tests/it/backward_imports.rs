@@ -1,8 +1,8 @@
-//! The layering ratchet for the crate split. An area may use areas in its
-//! own layer or in a layer below it. A `crate::` path into a higher layer is
-//! a backward import: the split cannot cut it into a crate. Today's list sits
-//! beside this file in `backward_imports.txt`. A new backward import fails
-//! the test, and so does a removed one until its count is lowered.
+//! The architecture test. An area may use areas in its own layer or in a
+//! layer below it. A `crate::` path into a higher layer is a backward
+//! import: the crate split cannot cut it into a crate. The allowed list sits
+//! beside this file in `backward_imports.txt` and is empty, so any backward
+//! import fails the test.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;

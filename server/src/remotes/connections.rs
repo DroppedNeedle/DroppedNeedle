@@ -1065,13 +1065,13 @@ impl SignInLinks {
     }
 }
 
-impl crate::auth::federated::plex::PlexConnectionLink for SignInLinks {
-    async fn link(
-        &self,
-        user_id: &str,
-        profile: &crate::auth::federated::plex::PlexProfile,
-    ) -> Result<(), String> {
-        self.store(
+impl crate::auth::federated::MediaLinkStore for SignInLinks {
+    fn link_plex<'a>(
+        &'a self,
+        user_id: &'a str,
+        profile: &'a crate::auth::federated::plex::PlexProfile,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(self.store(
             user_id,
             UserLink::Plex {
                 auth_token: profile.auth_token.clone(),
@@ -1079,26 +1079,22 @@ impl crate::auth::federated::plex::PlexConnectionLink for SignInLinks {
                 plex_user_id: profile.uuid.clone(),
                 username: profile.display_name.clone(),
             },
-        )
-        .await
+        ))
     }
-}
 
-impl crate::auth::federated::jellyfin_login::JellyfinConnectionLink for SignInLinks {
-    async fn link(
-        &self,
-        user_id: &str,
-        profile: &crate::auth::federated::jellyfin_login::JellyfinProfile,
-    ) -> Result<(), String> {
-        self.store(
+    fn link_jellyfin<'a>(
+        &'a self,
+        user_id: &'a str,
+        profile: &'a crate::auth::federated::jellyfin_login::JellyfinProfile,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(self.store(
             user_id,
             UserLink::Jellyfin {
                 access_token: profile.access_token.clone(),
                 jellyfin_user_id: profile.jellyfin_user_id.clone(),
                 username: profile.username.clone(),
             },
-        )
-        .await
+        ))
     }
 }
 

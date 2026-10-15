@@ -13,7 +13,6 @@
 //! Plugins are asked in name order under a 15 second budget each; one
 //! that fails or answers `null` ("not mine") adds nothing.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -22,8 +21,6 @@ use serde_json::json;
 use super::super::host::PluginHost;
 use super::super::protocol::methods;
 use super::{call, decode};
-use crate::reads::catalog::models::PluginDetails;
-use crate::reads::catalog::ports::{BoxFuture, DetailsSource};
 
 /// Budget per plugin.
 const METADATA_TIMEOUT: Duration = Duration::from_secs(15);
@@ -175,71 +172,6 @@ pub fn plain_text(text: &str) -> String {
         .collect();
     let lines: Vec<&str> = cleaned.lines().map(str::trim).collect();
     lines.join("\n").trim().to_owned()
-}
-
-/// Every plugin's answer merged by the gap rule, as the catalog shows it.
-/// Text is reduced to plain text, links to `http(s)` and the image to
-/// `https` only.
-fn merged(answers: &[PluginEnrichment]) -> PluginDetails {
-    let mut fields = EnrichmentFields::default();
-    for answer in answers {
-        let mut clean = answer.clone();
-        clean.biography = clean
-            .biography
-            .as_deref()
-            .map(plain_text)
-            .filter(|text| !text.is_empty());
-        clean.tags = clean
-            .tags
-            .iter()
-            .map(String::as_str)
-            .map(plain_text)
-            .filter(|tag| !tag.is_empty() && !tag.contains('\n'))
-            .collect();
-        clean.links.retain(|link| {
-            (link.starts_with("https://") || link.starts_with("http://"))
-                && !link
-                    .chars()
-                    .any(|c| c.is_whitespace() || c == '"' || c == '<')
-        });
-        clean.image_urls.retain(|url| {
-            url.starts_with("https://") && !url.chars().any(|c| c.is_whitespace() || c == '"')
-        });
-        fields.fill_gaps(&clean);
-    }
-    PluginDetails {
-        biography: fields.biography,
-        links: fields.links,
-        tags: fields.tags,
-        image_url: fields.image_url,
-    }
-}
-
-/// The artist and album pages' plugin details.
-pub struct PluginDetailsSource(pub Arc<PluginHost>);
-
-impl DetailsSource for PluginDetailsSource {
-    fn token(&self) -> String {
-        self.0
-            .serving("metadata_provider")
-            .iter()
-            .map(|plugin| plugin.manifest.name.as_str())
-            .collect::<Vec<_>>()
-            .join(",")
-    }
-
-    fn artist<'a>(&'a self, name: &'a str, mbid: &'a str) -> BoxFuture<'a, PluginDetails> {
-        Box::pin(async move { merged(&self.0.enrich_artist(name, Some(mbid)).await) })
-    }
-
-    fn album<'a>(
-        &'a self,
-        artist: &'a str,
-        title: &'a str,
-        mbid: &'a str,
-    ) -> BoxFuture<'a, PluginDetails> {
-        Box::pin(async move { merged(&self.0.enrich_album(artist, title, Some(mbid)).await) })
-    }
 }
 
 #[cfg(test)]

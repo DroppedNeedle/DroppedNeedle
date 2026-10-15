@@ -27,6 +27,7 @@
 //! clients (live where credentials and persistence allow, unconfigured
 //! stubs that report the gap elsewhere).
 
+pub mod library;
 pub mod live;
 
 use std::collections::HashMap;

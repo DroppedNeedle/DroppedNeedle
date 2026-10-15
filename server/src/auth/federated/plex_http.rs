@@ -1,7 +1,8 @@
 //! The live plex.tv client for the PIN sign-in and the admin user import.
 //!
 //! Account calls go to plex.tv with the user's own token; the machine id
-//! comes from the admin's configured server. Settings are read per call.
+//! comes from the admin's configured server, read through
+//! [`PlexServerIdentity`]. Settings are read per call.
 //! Tokens never reach a log line; transport errors are logged without
 //! their URL.
 
@@ -12,14 +13,13 @@ use std::time::Duration;
 use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
 
 use super::FederatedError;
-use super::plex::{PRODUCT, PlexAccount, PlexPin, PlexPinClient};
+use super::plex::{PRODUCT, PlexAccount, PlexPin, PlexPinClient, PlexServerIdentity};
 use super::plex_models::{AccountListWire, AccountWire, PinPollWire, PinWire};
 use super::settings::{InstallIds, plex_login_enabled};
 use super::users::PROVIDER_PLEX;
 use crate::auth::users::stores::{BoxFuture, DirectoryError, DirectoryUser, UserDirectory};
 use crate::http_client::{BodyError, read_capped};
 use crate::providers::plextv::Resource;
-use crate::remotes::plex::PlexAdapter;
 use crate::runtime_config::ConfigStore;
 use crate::runtime_config::secret_sections::PlexConnection;
 
@@ -37,16 +37,24 @@ pub struct PlexTv {
     store: Arc<ConfigStore>,
     ids: InstallIds,
     base: String,
+    server: Arc<dyn PlexServerIdentity>,
 }
 
 impl PlexTv {
-    /// Build against the given plex.tv root.
-    pub fn with_base(http: reqwest::Client, store: Arc<ConfigStore>, base: &str) -> Self {
+    /// Build against the given plex.tv root, reading the configured
+    /// server's machine id through `server`.
+    pub fn with_base(
+        http: reqwest::Client,
+        store: Arc<ConfigStore>,
+        base: &str,
+        server: Arc<dyn PlexServerIdentity>,
+    ) -> Self {
         Self {
             ids: InstallIds::new(store.clone()),
             http,
             store,
             base: base.trim_end_matches('/').to_owned(),
+            server,
         }
     }
 
@@ -241,38 +249,7 @@ impl PlexPinClient for PlexTv {
     }
 
     async fn server_machine_id(&self) -> Result<Option<String>, FederatedError> {
-        let unreadable = || {
-            FederatedError::ProviderUnavailable(
-                "Could not reach the configured Plex server".to_owned(),
-            )
-        };
-        let section = self.store.get_raw::<PlexConnection>().map_err(|error| {
-            tracing::warn!(%error, "cannot read plex settings");
-            unreadable()
-        })?;
-        // Only a missing server URL means "no server": a configured server
-        // that cannot be read must never skip the membership gate.
-        if section.plex_url.trim().is_empty() {
-            return Ok(None);
-        }
-        let server = PlexAdapter::new(
-            self.http.clone(),
-            section.plex_url,
-            section.plex_token.expose().to_owned(),
-            self.ids.plex_client_id(),
-            Vec::new(),
-        );
-        match server.machine_identifier().await {
-            Ok(Some(machine_id)) => Ok(Some(machine_id)),
-            Ok(None) => {
-                tracing::warn!("the Plex server did not name its machine id");
-                Err(unreadable())
-            }
-            Err(error) => {
-                tracing::warn!(%error, "could not read the Plex server machine id");
-                Err(unreadable())
-            }
-        }
+        self.server.machine_id().await
     }
 
     async fn account_server_ids(&self, auth_token: &str) -> Result<Vec<String>, FederatedError> {

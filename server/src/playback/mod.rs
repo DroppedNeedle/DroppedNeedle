@@ -52,6 +52,7 @@ pub mod fakes;
 pub mod forwarding;
 pub mod handlers;
 pub mod models;
+pub mod plugin_events;
 pub mod ports;
 pub mod reports;
 pub mod scrobble_models;

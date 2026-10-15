@@ -38,6 +38,7 @@ use super::users::{
 };
 use super::{FederatedError, SessionIssuer, json_string};
 use crate::auth::session::tokens::{constant_time_eq, hash_token, mint_token};
+use crate::auth::users::stores::BoxFuture;
 
 /// Product token in the `app.plex.tv` URL.
 pub const PRODUCT: &str = "DroppedNeedle";
@@ -135,6 +136,32 @@ pub trait PlexPinClient: Clone + Send + Sync + 'static {
         auth_token: &str,
         machine_id: &str,
     ) -> impl Future<Output = Result<Option<String>, FederatedError>> + Send;
+}
+
+/// Reads the admin's configured Plex server's machine id. A port so auth
+/// need not reach into the media-server adapters for it.
+pub trait PlexServerIdentity: Send + Sync {
+    /// `Ok(None)` only when no Plex server URL is saved; a configured
+    /// server that cannot be read is an error, so the membership gate
+    /// never fails open.
+    fn machine_id(&self) -> BoxFuture<'_, Result<Option<String>, FederatedError>>;
+}
+
+/// A server identity for test bundles: every read fails, as an unreadable
+/// configured server does.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UnwiredPlexServer;
+
+#[cfg(any(test, feature = "test-support"))]
+impl PlexServerIdentity for UnwiredPlexServer {
+    fn machine_id(&self) -> BoxFuture<'_, Result<Option<String>, FederatedError>> {
+        Box::pin(async {
+            Err(FederatedError::ProviderUnavailable(
+                "Could not reach the configured Plex server".to_owned(),
+            ))
+        })
+    }
 }
 
 /// Stores a user's Plex media link (the per-user connection used for

@@ -397,8 +397,8 @@ async fn app_with(fixtures: &Fixtures, mb_url: String) -> axum::Router {
         Arc::new(Providers::unpaced()),
         Arc::new(TestSettings { mb_url }),
         rig.deps.clone(),
-    )
-    .with_endpoints(fixtures.endpoints());
+        fixtures.endpoints(),
+    );
     let catalog = Catalog::new(upstream, LocalCatalog::new(pool.clone()));
     let ids: Arc<dyn droppedneedle::ids::IdGenerator> =
         Arc::new(common::FixedIdGenerator::new(common::FIXED_ID));
@@ -907,6 +907,7 @@ async fn clearing_a_pin_names_the_copy_and_never_calls_musicbrainz() {
             mb_url: "http://127.0.0.1:9/ws/2".to_owned(),
         }),
         rig.deps.clone(),
+        droppedneedle::bootstrap::Outbound::live().catalog(),
     );
     let pins = Arc::new(RecordedPins::default());
     let catalog =
@@ -939,6 +940,7 @@ async fn lastfm_reads_fall_back_to_the_instance_key() {
             mb_url: String::new(),
         }),
         rig.deps.clone(),
+        droppedneedle::bootstrap::Outbound::live().catalog(),
     );
     assert!(
         upstream.lastfm("no-key-user").await.is_none(),

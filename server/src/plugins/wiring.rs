@@ -18,7 +18,6 @@ use std::sync::Arc;
 use axum::Router;
 
 use crate::auth::users::{UsersDeps, roles::Role};
-use crate::bootstrap::Outbound;
 use crate::db::WriteLane;
 use crate::ids::IdGenerator;
 use crate::jobs::plugin_ticks::SqliteTickStore;
@@ -31,7 +30,7 @@ use super::handlers::{
     ExtRateLimiter, PluginsDeps, ScrobbleHttpDeps, UserRoles, plugins_router, scrobble_router,
 };
 use super::host::PluginHost;
-use super::install::{ReqwestFetcher, ZipUnpacker};
+use super::install::{GitHubHosts, ReqwestFetcher, ZipUnpacker};
 use super::process::ProcessLauncher;
 use super::runtime::PluginLauncher;
 use super::scrobble::{
@@ -168,13 +167,15 @@ impl PluginsSetup {
         registry: JobRegistry<StoreKind>,
         pool: sqlx::SqlitePool,
         lane: WriteLane,
-        outbound: &Outbound,
+        github: GitHubHosts,
+        listenbrainz: &str,
     ) -> Self {
         Self::assemble(
             host,
             users,
             http,
-            outbound,
+            github,
+            listenbrainz,
             ids,
             cache,
             registry,
@@ -228,7 +229,11 @@ impl PluginsSetup {
             host,
             users,
             http.shared().clone(),
-            &Outbound::live(),
+            GitHubHosts {
+                api: super::install::API_BASE.to_owned(),
+                codeload: super::install::CODELOAD_BASE.to_owned(),
+            },
+            crate::providers::listenbrainz::DEFAULT_BASE_URL,
             ids,
             cache,
             registry,
@@ -247,7 +252,8 @@ impl PluginsSetup {
         host: Arc<PluginHost>,
         users: UsersDeps,
         http: reqwest::Client,
-        outbound: &Outbound,
+        github: GitHubHosts,
+        listenbrainz: &str,
         ids: Arc<dyn IdGenerator>,
         cache: Arc<dyn ProviderCache>,
         registry: JobRegistry<StoreKind>,
@@ -266,7 +272,7 @@ impl PluginsSetup {
             config: Arc::clone(host.config()),
             roles: Arc::clone(&roles),
             ids: Arc::clone(&ids),
-            github: outbound.plugin_hosts(),
+            github,
             fetcher: Arc::new(ReqwestFetcher::new(http.clone())),
             unpacker: Arc::new(ZipUnpacker),
             tick_sync: Arc::clone(&ticks) as Arc<dyn TickLoopSync>,
@@ -276,7 +282,7 @@ impl PluginsSetup {
             deps: ScrobbleDeps::new(
                 prefs,
                 links,
-                Arc::new(HttpListenBrainzVerifier::new(http, &outbound.listenbrainz)),
+                Arc::new(HttpListenBrainzVerifier::new(http, listenbrainz)),
                 Arc::new(NoopMixApprovalHook),
                 Arc::new(ListenBrainzCacheHook { cache }),
             ),

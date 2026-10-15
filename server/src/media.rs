@@ -95,7 +95,8 @@ impl MediaSetup {
     /// and download ids (track ids) into files under the live library
     /// roots (`None` keeps the constructor fallback for unwired builds and
     /// serves no downloads); `imports` is where remote playlist imports
-    /// land.
+    /// land; `plex_tv` and `scrobbles` are the plex.tv root and the
+    /// scrobble forwarding addresses.
     #[allow(clippy::too_many_arguments)]
     pub fn build(
         db_path: &Path,
@@ -109,7 +110,8 @@ impl MediaSetup {
         lane: WriteLane,
         config: Arc<ConfigStore>,
         imports: Arc<dyn ImportSink>,
-        outbound: &crate::bootstrap::Outbound,
+        plex_tv: String,
+        scrobbles: crate::playback::forwarding::Endpoints,
     ) -> Result<(Self, MediaWorkers), String> {
         let http = http_factory.shared().clone();
         crate::stream::plugin_url::sweep_stale_spools();
@@ -128,7 +130,7 @@ impl MediaSetup {
             )
             .with_plex_tokens(Arc::new(PlexTokenProbe::with_plex_tv(
                 http.clone(),
-                outbound.plex_tv.clone(),
+                plex_tv,
             ))),
         );
         let credentials = Arc::new(StoredScrobbleCredentials::new(
@@ -179,8 +181,7 @@ impl MediaSetup {
         let (queue, rx) = ReportQueue::channel();
         let (forwarder, forwards) =
             ScrobbleForwarder::channel(db.clone(), remotes.auth.lastfm_switch.clone());
-        let forwards =
-            ForwardWorker::new(forwards, http.clone(), credentials, outbound.scrobbles());
+        let forwards = ForwardWorker::new(forwards, http.clone(), credentials, scrobbles);
         let playback = PlaybackDeps {
             catalog: db.clone(),
             sinks: Arc::new(forwarder),

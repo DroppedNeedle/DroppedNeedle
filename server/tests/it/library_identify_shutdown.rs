@@ -31,6 +31,7 @@ use droppedneedle::library::identify::models::{
 use droppedneedle::library::identify::providers::{IdentifyProviders, RecallOutcome};
 use droppedneedle::library::wiring::LibrarySetup;
 use droppedneedle::providers::musicbrainz::Criticality;
+use droppedneedle::remotes::plex::ConfiguredPlexServer;
 use droppedneedle::runtime_config::{ConfigStore, Crypto};
 use tokio::sync::{oneshot, watch};
 
@@ -150,7 +151,7 @@ impl Lib {
             &dir.join("avatars"),
         );
         let http = HttpClientFactory::new().expect("http factory builds");
-        let users = AuthSetup::build(
+        let users = AuthSetup::build_with_upstreams(
             bundle,
             Arc::clone(&store),
             Arc::clone(&crypto),
@@ -158,8 +159,18 @@ impl Lib {
             Arc::clone(&ids) as Arc<dyn IdGenerator>,
             Arc::clone(&clock) as Arc<dyn droppedneedle::auth::users::stores::Clock>,
             "",
+            &droppedneedle::bootstrap::Outbound::live().sign_in(),
+            Arc::new(ConfiguredPlexServer::new(
+                http.shared().clone(),
+                Arc::clone(&store),
+            )),
+            droppedneedle::bootstrap::sign_in_links(
+                runtime.pool().clone(),
+                runtime.lane().clone(),
+                Arc::clone(&crypto),
+                Arc::clone(&store),
+            ),
         )
-        .expect("prod auth bundle builds")
         .users;
         let library =
             LibrarySetup::for_tests_with_providers(users, ids as Arc<dyn IdGenerator>, providers)
