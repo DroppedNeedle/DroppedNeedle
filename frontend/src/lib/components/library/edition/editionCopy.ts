@@ -285,6 +285,33 @@ export function otherAlbumSentence(title: string, artist: string): string {
 export const MUSICBRAINZ_DOWN =
 	"MusicBrainz isn't answering, so this edition can't be compared with your files right now.";
 
+/** "Make your copy this edition": the download that fills its gaps. */
+export function getMissingLabel(n: number): string {
+	return `Get the ${count(n, 'missing track', 'missing tracks')}`;
+}
+
+export function replaceVersionsLabel(n: number): string {
+	return `Replace ${count(n, 'track', 'tracks')} you have in another version`;
+}
+
+export const GET_MISSING_HELP =
+	'One download for the album, checked against this edition. Tracks below your quality cutoff come along and are replaced only by a better file.';
+
+export const REPLACE_VERSIONS_HELP =
+	'Your version goes to the recycle bin. It is replaced only by a file of the same quality or better.';
+
+// A download for the edition always asks for its missing tracks, so a
+// replacement can only come along with them.
+export const REPLACE_NEEDS_MISSING_HELP =
+	'Your versions are replaced in the download of the missing tracks, so this needs that on.';
+
+export const REPLACE_ALSO_GETS_MISSING =
+	'Replacing your versions also gets the missing tracks, in the same download.';
+
+// A request made with no source waits for one, never refused.
+export const NO_SOURCE_SENTENCE =
+	'No download source is set up yet, so the download waits and starts by itself once Soulseek, Usenet or a plugin source is saved.';
+
 export const SHEET_DESCRIPTION = 'Pick the release your copy is, or the one you want it to become.';
 
 // The app stepped back from the album by itself; choosing an edition

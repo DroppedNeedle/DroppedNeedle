@@ -13,6 +13,7 @@
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import { integrationStore } from '$lib/stores/integration';
 	import type { LibraryAlbumSummary } from '$lib/types';
 	import { getLibraryAlbumDetailQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import { getReleaseEditionSearchQuery } from '$lib/queries/library/LibraryEditionQueries.svelte';
@@ -35,6 +36,7 @@
 	import EditionDetail from './EditionDetail.svelte';
 	import EditionNextSteps from './EditionNextSteps.svelte';
 	import EditionFind from './EditionFind.svelte';
+	import type { TracksOutcome } from './EditionTracks.svelte';
 	import { editionSheet } from './editionSheetState.svelte';
 	import {
 		LEFT_UNMANAGED_NOTE,
@@ -46,6 +48,7 @@
 		fitsNoFile,
 		planFit,
 		summarySentence,
+		trulyMissing,
 		type EditionFactsLike
 	} from './editionCopy';
 
@@ -69,7 +72,12 @@
 	let initialisedFor = $state('');
 	let step = $state<'list' | 'detail'>('list');
 	let view = $state<'compare' | 'next' | 'handedBack'>('compare');
-	let chosen = $state<{ name: string; release: string; choice: EditionChoice } | null>(null);
+	let chosen = $state<{
+		name: string;
+		release: string;
+		choice: EditionChoice;
+		gaps: { missing: number; versions: number };
+	} | null>(null);
 	let movedTo = $state<string | null>(null);
 	let filter = $state('');
 	let findTitle = $state('');
@@ -78,8 +86,14 @@
 	let actionError = $state<string | null>(null);
 	let lastRemoval = $state<{ actionId: string; count: number } | null>(null);
 	let fits = $state<Record<string, string>>({});
-	let missingRequested = $state<string | null>(null);
+	let tracks = $state<TracksOutcome | null>(null);
+	// "Make your copy this edition", for an edition that is not the current one.
+	// Without a download source the download is held until one is saved.
+	let getMissing = $state(true);
+	let replaceVersions = $state(true);
 	let tagsWritten = $state(false);
+	// "Any acquisition source is set up": slskd, Usenet or a plugin.
+	const sourceReady = $derived($integrationStore.download_client);
 
 	let wasOpen = false;
 	$effect(() => {
@@ -106,7 +120,7 @@
 		searchArgs = null;
 		actionError = null;
 		lastRemoval = null;
-		missingRequested = null;
+		tracks = null;
 		tagsWritten = false;
 	}
 
@@ -174,7 +188,7 @@
 			chosen = null;
 			actionError = null;
 			lastRemoval = null;
-			missingRequested = null;
+			tracks = null;
 		});
 	});
 
@@ -370,6 +384,8 @@
 	function select(release: string): void {
 		selected = release;
 		actionError = null;
+		getMissing = true;
+		replaceVersions = true;
 		view = 'compare';
 		step = 'detail';
 	}
@@ -378,7 +394,18 @@
 		const release = selected;
 		if (!release) return;
 		actionError = null;
-		const name = selectedPlan ? editionName(selectedPlan.edition) : 'the edition you chose';
+		const plan = selectedPlan;
+		const name = plan ? editionName(plan.edition) : 'the edition you chose';
+		const gaps = {
+			missing: plan ? trulyMissing(plan) : 0,
+			versions: plan?.other_version_count ?? 0
+		};
+		// The download always asks for the missing tracks, so the
+		// replacements need it on when there are any.
+		const fetchTracks =
+			(getMissing && gaps.missing > 0) ||
+			(replaceVersions && gaps.versions > 0 && (getMissing || gaps.missing === 0));
+		const replace = replaceVersions;
 		try {
 			const choice = await choose.mutateAsync({
 				userId: userId(),
@@ -386,8 +413,8 @@
 				rgMbid: group || undefined,
 				releaseMbid: release
 			});
-			chosen = { name, release, choice };
-			missingRequested = null;
+			chosen = { name, release, choice, gaps };
+			tracks = null;
 			tagsWritten = false;
 			if (groupMbid && choice.release_group_mbid !== groupMbid) {
 				movedTo = choice.release_group_mbid;
@@ -396,7 +423,9 @@
 			step = 'detail';
 		} catch (error) {
 			actionError = failure(error, "This edition couldn't be chosen.");
+			return;
 		}
+		if (fetchTracks) void acquireTracks(replace);
 	}
 
 	async function keepEdition(): Promise<void> {
@@ -461,17 +490,35 @@
 		}
 	}
 
-	// Until the sheet asks for them itself: one download for the album's
-	// missing tracks, checked against its edition.
-	async function getMissing(): Promise<void> {
-		const albumGroup = chosen?.choice.release_group_mbid ?? group;
+	// One download for the album's missing tracks (and, with
+	// `replaceVersions`, this edition's version of the tracks the files
+	// hold in another one), checked against its edition. A refusal leaves
+	// the choice as it is.
+	async function acquireTracks(replace: boolean): Promise<void> {
+		const albumGroup = tracksGroup;
 		if (!albumGroup) return;
-		actionError = null;
+		tracks = { pending: true, message: null, taskId: null, error: null, replaceVersions: replace };
 		try {
-			const answer = await acquire.mutateAsync({ mbid: albumGroup, copyId });
-			missingRequested = answer.message;
+			const answer = await acquire.mutateAsync({
+				mbid: albumGroup,
+				copyId,
+				replaceVersions: replace
+			});
+			tracks = {
+				pending: false,
+				message: answer.message,
+				taskId: answer.task_id ?? null,
+				error: null,
+				replaceVersions: replace
+			};
 		} catch (error) {
-			actionError = failure(error, "The missing tracks couldn't be requested.");
+			tracks = {
+				pending: false,
+				message: null,
+				taskId: null,
+				error: failure(error, "The missing tracks couldn't be requested."),
+				replaceVersions: replace
+			};
 		}
 	}
 
@@ -504,6 +551,7 @@
 				.join(' · ')
 		}))
 	);
+	const tracksGroup = $derived(chosen?.choice.release_group_mbid ?? group);
 	const pickedName = $derived(currentPlan ? editionName(currentPlan.edition) : null);
 </script>
 
@@ -604,8 +652,11 @@
 						onundo={undoChange}
 						onwritetags={writeTags}
 						{tagsWritten}
-						ongetmissing={getMissing}
-						{missingRequested}
+						group={tracksGroup}
+						gaps={chosen.gaps}
+						{sourceReady}
+						{tracks}
+						onacquire={acquireTracks}
 					/>
 				{:else if view === 'handedBack'}
 					<div class="flex flex-col items-start gap-3 text-sm" aria-live="polite">
@@ -641,8 +692,12 @@
 						putBackCount={lastRemoval?.count ?? null}
 						onremoveextras={moveExtras}
 						onputback={putBack}
-						ongetmissing={group ? getMissing : undefined}
-						{missingRequested}
+						{sourceReady}
+						bind:getMissing
+						bind:replaceVersions
+						group={tracksGroup}
+						{tracks}
+						onacquire={acquireTracks}
 					/>
 				{:else if status}
 					<p class="text-sm text-base-content/60">Pick an edition to compare it with your files.</p>

@@ -16,6 +16,8 @@ const h = vi.hoisted(() => ({
 	editions: [] as unknown[],
 	choose: vi.fn(),
 	confirm: vi.fn(),
+	acquire: vi.fn(),
+	downloads: [] as unknown[],
 	isTrusted: true,
 	url: new URL('http://localhost/album/group-1'),
 	goto: vi.fn()
@@ -82,10 +84,34 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	confirmAlbumEdition: () => mutation((...args: unknown[]) => h.confirm(...args)),
 	handBackAlbumEdition: () => mutation(),
 	undoAlbumEdition: () => mutation(),
-	acquireEdition: () => mutation(),
+	acquireEdition: () => mutation((...args: unknown[]) => h.acquire(...args)),
 	retagAfterChoice: () => mutation(),
 	removeEditionExtras: () => mutation(),
 	restoreEditionExtras: () => mutation()
+}));
+vi.mock('$lib/stores/integration', async () => {
+	const { writable } = await import('svelte/store');
+	return { integrationStore: writable({ download_client: true }) };
+});
+vi.mock('$lib/queries/downloads/DownloadQueries.svelte', () => ({
+	getAlbumDownloadsQuery: () => ({
+		get data() {
+			return { items: h.downloads };
+		}
+	})
+}));
+vi.mock('$lib/queries/downloads/DownloadMutations.svelte', () => ({
+	cancelDownload: () => ({ mutate: vi.fn(), isPending: false }),
+	retryDownload: () => ({ mutate: vi.fn(), isPending: false }),
+	stopAutoRetry: () => ({ mutate: vi.fn(), isPending: false }),
+	tryNextSource: () => ({ mutate: vi.fn(), isPending: false })
+}));
+vi.mock('$lib/queries/downloads/DownloadSSE.svelte', () => ({
+	createDownloadStream: () => ({
+		start: vi.fn(),
+		stop: vi.fn(),
+		state: { progress: null, status: null, source: null, done: false }
+	})
 }));
 vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 	getLibraryAlbumDetailQuery: () => ({ data: undefined })
@@ -100,6 +126,7 @@ vi.mock('$lib/components/AlbumImage.svelte', () => {
 });
 
 import '../../../../app.css';
+import { integrationStore } from '$lib/stores/integration';
 import EditionPlate from './EditionPlate.svelte';
 
 const copy = {
@@ -208,6 +235,27 @@ function remasterPlan(): EditionPlan {
 	} as EditionPlan;
 }
 
+// The remaster with one more track no file holds: 1 missing, 1 in another version.
+function gapPlan(): EditionPlan {
+	const plan = remasterPlan();
+	return {
+		...plan,
+		missing_count: 2,
+		tracks: [
+			...plan.tracks,
+			{
+				disc_number: 1,
+				position: 5,
+				length_ms: minutes(3, 2),
+				local_track_id: null,
+				recording_mbid: 'rec-bonus',
+				release_track_mbid: 're-bonus',
+				title: 'Harbour Lights'
+			}
+		]
+	} as EditionPlan;
+}
+
 function edition(release: string, date: string, extra: Record<string, unknown> = {}) {
 	return {
 		release_mbid: release,
@@ -245,6 +293,9 @@ beforeEach(async () => {
 		})
 	];
 	h.choose.mockReset();
+	h.acquire.mockReset();
+	h.downloads = [];
+	(integrationStore as unknown as { set: (value: unknown) => void }).set({ download_client: true });
 	h.isTrusted = true;
 	h.url = new URL('http://localhost/album/group-1');
 	h.goto.mockReset();
@@ -432,5 +483,140 @@ describe('the edition sheet', () => {
 			.toBeVisible();
 		await expect.element(sheet().getByRole('button', { name: 'Retry' })).toBeVisible();
 		await expect.element(sheet().getByRole('button', { name: 'Use this edition' })).toBeDisabled();
+	});
+});
+
+describe('making your copy the chosen edition', () => {
+	const chosenRemaster = {
+		album_id: 'local-1',
+		extra_track_ids: [],
+		missing_titles: ['Harbour Lights'],
+		release_group_mbid: 'group-1',
+		release_mbid: 'release-remaster',
+		retag_files: [],
+		status: status({ release_mbid: 'release-remaster', state: 'chosen' })
+	};
+
+	async function pickRemaster(): Promise<void> {
+		h.plans['release-remaster'] = gapPlan();
+		h.choose.mockResolvedValue(chosenRemaster);
+		await openSheet();
+		await sheet()
+			.getByRole('button', { name: /5th anniversary remaster/ })
+			.click();
+	}
+
+	it('gets the missing tracks and replaces your versions by itself, with the download live in Next steps', async () => {
+		h.acquire.mockResolvedValue({
+			status: 'started',
+			message: "Downloading the 1 missing track of this edition and 1 in this edition's version.",
+			task_id: 'task-1'
+		});
+		h.downloads = [
+			{
+				id: 'task-1',
+				status: 'downloading',
+				progress_percent: 40,
+				downloaded_bytes: 4_000_000,
+				total_size_bytes: 10_000_000,
+				files_completed: 1,
+				files_total: 2,
+				created_at: '2026-10-15T10:00:00Z'
+			}
+		];
+		await pickRemaster();
+		await expect
+			.element(sheet().getByRole('checkbox', { name: 'Get the 1 missing track' }))
+			.toBeChecked();
+		await expect
+			.element(
+				sheet().getByRole('checkbox', { name: 'Replace 1 track you have in another version' })
+			)
+			.toBeChecked();
+
+		await sheet().getByRole('button', { name: 'Use this edition' }).click();
+
+		await expect
+			.element(sheet().getByText(/Downloading the 1 missing track of this edition and 1/))
+			.toBeVisible();
+		expect(h.acquire).toHaveBeenCalledWith({
+			mbid: 'group-1',
+			copyId: 'local-1',
+			replaceVersions: true
+		});
+		await expect.element(sheet().getByRole('button', { name: 'Cancel download' })).toBeVisible();
+	});
+
+	it('leaves your versions alone with the second toggle off', async () => {
+		h.acquire.mockResolvedValue({ status: 'started', message: 'Downloading.', task_id: null });
+		await pickRemaster();
+		await sheet()
+			.getByRole('checkbox', { name: 'Replace 1 track you have in another version' })
+			.click();
+
+		await sheet().getByRole('button', { name: 'Use this edition' }).click();
+
+		await expect.element(sheet().getByText('Downloading.')).toBeVisible();
+		expect(h.acquire).toHaveBeenCalledWith(expect.objectContaining({ replaceVersions: false }));
+	});
+
+	it('with no download source still asks, and says the download waits for one', async () => {
+		(integrationStore as unknown as { set: (value: unknown) => void }).set({
+			download_client: false
+		});
+		h.acquire.mockResolvedValue({
+			status: 'started',
+			message:
+				'No download source is set up, so this edition waits. It starts by itself once Soulseek, Usenet or a plugin source is saved.',
+			task_id: null
+		});
+		await pickRemaster();
+		await expect
+			.element(sheet().getByRole('checkbox', { name: 'Get the 1 missing track' }))
+			.toBeChecked();
+
+		await sheet().getByRole('button', { name: 'Use this edition' }).click();
+
+		await expect.element(sheet().getByText(/so this edition waits/)).toBeVisible();
+		await expect.element(sheet().getByRole('link', { name: 'Download settings' })).toBeVisible();
+		expect(h.acquire).toHaveBeenCalledWith(expect.objectContaining({ replaceVersions: true }));
+	});
+
+	it("shows a refused download's reason with Try again, and the choice stands", async () => {
+		h.acquire.mockRejectedValueOnce(
+			new ApiError(400, 'There is not enough free disk space for these downloads.', 'BAD_REQUEST')
+		);
+		await pickRemaster();
+
+		await sheet().getByRole('button', { name: 'Use this edition' }).click();
+
+		await expect
+			.element(
+				sheet()
+					.getByRole('alert')
+					.getByText(/not enough free disk space/)
+			)
+			.toBeVisible();
+		await expect
+			.element(sheet().getByText('This is your edition now: 5th anniversary remaster'))
+			.toBeVisible();
+		h.acquire.mockResolvedValueOnce({ status: 'started', message: 'Downloading.', task_id: null });
+		await sheet().getByRole('button', { name: 'Try again' }).click();
+		await expect.element(sheet().getByText('Downloading.')).toBeVisible();
+		expect(h.acquire).toHaveBeenCalledTimes(2);
+	});
+
+	it('offers buttons, not toggles, on the current edition with gaps', async () => {
+		h.status = status({ release_mbid: 'release-remaster', state: 'chosen' });
+		h.plans.current = gapPlan();
+		await openSheet();
+
+		await expect
+			.element(sheet().getByRole('button', { name: 'Get the 1 missing track' }))
+			.toBeVisible();
+		await expect
+			.element(sheet().getByRole('button', { name: 'Replace 1 track you have in another version' }))
+			.toBeVisible();
+		await expect.element(sheet().getByRole('checkbox')).not.toBeInTheDocument();
 	});
 });

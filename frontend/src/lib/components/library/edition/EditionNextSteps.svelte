@@ -1,7 +1,8 @@
 <!--
 	What happens after "Use this edition", live: the files being placed on
 	it, then its tags and names, written by the app in a folder it manages
-	by itself and left for the person in any other.
+	by itself and left for the person in any other, and the download of
+	its missing tracks.
 -->
 <script lang="ts">
 	import { CircleCheck, Undo2 } from 'lucide-svelte';
@@ -11,7 +12,14 @@
 		EditionPlan,
 		EditionStatus
 	} from '$lib/queries/albums/EditionQueries.svelte';
-	import { filesPlacedSentence, placingSentence, tagsSentence, type TagsMode } from './editionCopy';
+	import EditionTracks, { type TracksOutcome } from './EditionTracks.svelte';
+	import {
+		filesPlacedSentence,
+		placingSentence,
+		tagsSentence,
+		trulyMissing,
+		type TagsMode
+	} from './editionCopy';
 
 	interface Props {
 		name: string;
@@ -26,9 +34,13 @@
 		/** Writes the edition's tags now, in a folder the app does not write by itself. */
 		onwritetags?: () => Promise<void>;
 		tagsWritten?: boolean;
-		/** Asks for the edition's missing tracks. */
-		ongetmissing?: () => Promise<void>;
-		missingRequested?: string | null;
+		/** The release group the edition's tracks are fetched under. */
+		group: string;
+		/** The edition's gaps as planned when it was chosen. */
+		gaps: { missing: number; versions: number };
+		sourceReady: boolean;
+		tracks: TracksOutcome | null;
+		onacquire: (replaceVersions: boolean) => Promise<void>;
 	}
 
 	let {
@@ -41,9 +53,15 @@
 		onundo,
 		onwritetags,
 		tagsWritten = false,
-		ongetmissing,
-		missingRequested = null
+		group,
+		gaps,
+		sourceReady,
+		tracks,
+		onacquire
 	}: Props = $props();
+
+	const missing = $derived(plan ? trulyMissing(plan) : gaps.missing);
+	const versions = $derived(plan ? plan.other_version_count : gaps.versions);
 
 	const placing = $derived(status?.placing ?? null);
 	const files = $derived(
@@ -97,16 +115,10 @@
 				{/if}
 			</span>
 		</dd>
-		{#if ongetmissing && choice.missing_titles.length}
+		{#if group && (tracks || missing > 0 || versions > 0)}
 			<dt class="font-semibold text-base-content/60">Tracks</dt>
-			<dd class="flex flex-col items-start gap-2">
-				{#if missingRequested}
-					<span>{missingRequested}</span>
-				{:else}
-					<AsyncButton class="btn btn-outline btn-sm" onclick={ongetmissing}
-						>Get the missing tracks</AsyncButton
-					>
-				{/if}
+			<dd>
+				<EditionTracks {group} {missing} {versions} {sourceReady} outcome={tracks} {onacquire} />
 			</dd>
 		{/if}
 	</dl>

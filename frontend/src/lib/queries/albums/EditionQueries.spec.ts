@@ -41,7 +41,10 @@ vi.mock('$lib/utils/albumDetailCache', () => ({
 }));
 
 vi.mock('$lib/queries/downloads/DownloadQueryKeyFactory', () => ({
-	DownloadQueryKeyFactory: { tasks: (userId: string | undefined) => ['downloads', 'tasks', userId] }
+	DownloadQueryKeyFactory: {
+		tasks: (userId: string | undefined) => ['downloads', 'tasks', userId, 'user', 0],
+		tasksPrefix: (userId: string | undefined) => ['downloads', 'tasks', userId]
+	}
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -169,7 +172,7 @@ it('marks the plans stale once the files are placed', async () => {
 	expect(plansInvalidated()).toBe(true);
 });
 
-it('keeps acquire invalidation scoped to the authenticated download queue', async () => {
+it('refreshes the download queue and the album after an acquire, for this user only', async () => {
 	const acquire = acquireEdition() as unknown as EditionMutationOptions;
 	await acquire.mutationFn({ mbid: 'release-group' });
 
@@ -179,6 +182,11 @@ it('keeps acquire invalidation scoped to the authenticated download queue', asyn
 	expect(h.v3.POST).toHaveBeenLastCalledWith(
 		'/api/v3/albums/release-group/edition/acquire?album_id=copy-1&replace_versions=true'
 	);
+
+	await acquire.onSuccess({}, { mbid: 'release-group' });
+	const keys = h.invalidate.mock.calls.map(([arg]) => JSON.stringify(arg.queryKey));
+	expect(keys).toContain(JSON.stringify(['downloads', 'tasks', 'user-a']));
+	expect(keys).toContain(JSON.stringify(['library', 'album', 'release-group']));
 });
 
 it('reads one copy edition by local id and scopes the key by user', () => {

@@ -13,18 +13,28 @@
 	import { outsideLink } from '$lib/components/outsideLink';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
+	import ToggleRow from '$lib/ui/ToggleRow.svelte';
+	import { withBasePath } from '$lib/utils/basePath';
 	import type { EditionPlan } from '$lib/queries/albums/EditionQueries.svelte';
 	import EditionCompare from './EditionCompare.svelte';
 	import EditionDetailSkeleton from './EditionDetailSkeleton.svelte';
+	import EditionTracks, { type TracksOutcome } from './EditionTracks.svelte';
 	import {
+		GET_MISSING_HELP,
 		MUSICBRAINZ_DOWN,
+		NO_SOURCE_SENTENCE,
+		REPLACE_NEEDS_MISSING_HELP,
+		REPLACE_VERSIONS_HELP,
 		editionName,
 		editionYear,
 		extrasButton,
 		formatsLabel,
+		getMissingLabel,
 		otherAlbumSentence,
 		putBackButton,
-		summarySentence
+		replaceVersionsLabel,
+		summarySentence,
+		trulyMissing
 	} from './editionCopy';
 
 	interface Props {
@@ -47,9 +57,17 @@
 		putBackCount: number | null;
 		onremoveextras: (trackIds: string[]) => Promise<void>;
 		onputback: () => Promise<void>;
-		/** Asks for the missing tracks of the current edition. */
-		ongetmissing?: () => Promise<void>;
-		missingRequested?: string | null;
+		/** A download source is set up. */
+		sourceReady: boolean;
+		/** Choosing another edition also gets its missing tracks. */
+		getMissing: boolean;
+		/** ...and replaces the tracks the files hold in another version. */
+		replaceVersions: boolean;
+		/** The release group the current edition's tracks are fetched under. */
+		group: string;
+		tracks: TracksOutcome | null;
+		/** Asks for the current edition's tracks. */
+		onacquire: (replaceVersions: boolean) => Promise<void>;
 	}
 
 	let {
@@ -64,8 +82,12 @@
 		putBackCount,
 		onremoveextras,
 		onputback,
-		ongetmissing,
-		missingRequested = null
+		sourceReady,
+		getMissing = $bindable(),
+		replaceVersions = $bindable(),
+		group,
+		tracks,
+		onacquire
 	}: Props = $props();
 
 	let confirmExtras = $state(false);
@@ -114,6 +136,8 @@
 			{/if}
 		{/snippet}
 		{#snippet children(plan)}
+			{@const missing = trulyMissing(plan)}
+			{@const versions = plan.other_version_count}
 			<header class="flex items-start gap-4">
 				<AlbumImage
 					customUrl={coverPath('release', plan.release_mbid, 250)}
@@ -161,6 +185,52 @@
 				</p>
 			{/if}
 
+			{#if canEdit && (missing > 0 || versions > 0) && (!isCurrent || group)}
+				<section
+					class="flex flex-col gap-3 rounded-box border border-base-content/10 p-4"
+					aria-labelledby="edition-make-copy-title"
+				>
+					<h4 id="edition-make-copy-title" class="text-sm font-semibold">
+						Make your copy this edition
+					</h4>
+					{#if isCurrent}
+						<EditionTracks
+							{group}
+							{missing}
+							{versions}
+							{sourceReady}
+							outcome={tracks}
+							{onacquire}
+						/>
+					{:else}
+						{#if missing > 0}
+							<ToggleRow
+								label={getMissingLabel(missing)}
+								description={GET_MISSING_HELP}
+								bind:checked={getMissing}
+							/>
+						{/if}
+						{#if versions > 0}
+							<ToggleRow
+								label={replaceVersionsLabel(versions)}
+								description={missing > 0 && !getMissing
+									? REPLACE_NEEDS_MISSING_HELP
+									: REPLACE_VERSIONS_HELP}
+								disabled={missing > 0 && !getMissing}
+								bind:checked={replaceVersions}
+							/>
+						{/if}
+						{#if !sourceReady}
+							<p class="text-sm text-base-content/70">
+								{NO_SOURCE_SENTENCE}
+								<a class="link" href={withBasePath('/settings?tab=download-client')}
+									>Download settings</a
+								>
+							</p>
+						{/if}
+					{/if}
+				</section>
+			{/if}
 			{#if primary}
 				<div class="hidden flex-wrap items-center gap-3 md:flex">
 					{@render primary()}
@@ -170,15 +240,6 @@
 				<p class="text-sm text-error" role="alert">{actionError}</p>
 			{/if}
 
-			{#if isCurrent && canEdit && ongetmissing && plan.missing_count > 0}
-				{#if missingRequested}
-					<p class="text-sm">{missingRequested}</p>
-				{:else}
-					<AsyncButton class="btn btn-outline btn-sm self-start" onclick={ongetmissing}
-						>Get the missing tracks</AsyncButton
-					>
-				{/if}
-			{/if}
 			{#if isCurrent && canEdit && (extras.length > 0 || putBackCount)}
 				<section class="flex flex-col gap-2 text-sm" aria-label="Files not on this edition">
 					{#if extras.length > 0 && !confirmExtras}

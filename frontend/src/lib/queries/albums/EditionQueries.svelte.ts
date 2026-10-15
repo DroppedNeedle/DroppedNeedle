@@ -54,12 +54,14 @@ export function acquireEdition() {
 			copyId?: string;
 			replaceVersions?: boolean;
 		}) => api.global.v3.POST(CATALOG_ENDPOINTS.acquireEdition(mbid, copyId, replaceVersions)),
-		// the acquire fans out into download tasks - surface them in the queue now,
-		// not on the next poll
-		onSuccess: () =>
-			invalidateQueriesWithPersister({
-				queryKey: DownloadQueryKeyFactory.tasks(authStore.user?.id)
-			})
+		// The acquire starts a download task: show it in the queue, the album's
+		// download strip and the album's library status now, not on the next poll.
+		onSuccess: (_data, { mbid }) => {
+			void invalidateQueriesWithPersister({
+				queryKey: DownloadQueryKeyFactory.tasksPrefix(authStore.user?.id)
+			});
+			void invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.album(mbid) });
+		}
 	}));
 }
 
