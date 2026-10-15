@@ -16617,6 +16617,13 @@ export interface components {
         };
         /** @description One planned file inside a preview. */
         ManageFileView: {
+            /**
+             * @description For a retag, the tags the write changes, in display order: album,
+             *     album artist, title, artist, track, disc, date, label, catalog
+             *     number, barcode, then `musicbrainz_ids`. Unchanged tags are left
+             *     out. Empty for a move.
+             */
+            changes: components["schemas"]["ManageTagChange"][];
             /** @description Destination `root/rel`. */
             dest: string;
             /** @description `same_path` or `move`. */
@@ -16679,6 +16686,25 @@ export interface components {
             files: components["schemas"]["ManageFileView"][];
             /** @description Single-use confirmation token. */
             preview_token: string;
+        };
+        /** @description One tag a retag would change. */
+        ManageTagChange: {
+            /**
+             * @description Tag field name (`album`, `track_number`, ...), or `musicbrainz_ids`
+             *     for every MusicBrainz id field together.
+             */
+            field: string;
+            /**
+             * @description The file's value now, several values joined with "; "; null when
+             *     absent. Always null for `musicbrainz_ids`.
+             */
+            from?: string | null;
+            /**
+             * @description The value after the write; null when the write removes the tag.
+             *     For `musicbrainz_ids`, how many id fields change and stay, such as
+             *     "4 changed, 2 kept".
+             */
+            to?: string | null;
         };
         /** @description Undo one published bundle as a new previewed operation. */
         ManageUndoBody: {

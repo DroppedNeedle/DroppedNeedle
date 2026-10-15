@@ -38410,9 +38410,17 @@
           "track_id",
           "source",
           "dest",
-          "kind"
+          "kind",
+          "changes"
         ],
         "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManageTagChange"
+            },
+            "description": "For a retag, the tags the write changes, in display order: album,\nalbum artist, title, artist, track, disc, date, label, catalog\nnumber, barcode, then `musicbrainz_ids`. Unchanged tags are left\nout. Empty for a move."
+          },
           "dest": {
             "type": "string",
             "description": "Destination `root/rel`."
@@ -38525,6 +38533,33 @@
           "preview_token": {
             "type": "string",
             "description": "Single-use confirmation token."
+          }
+        }
+      },
+      "ManageTagChange": {
+        "type": "object",
+        "description": "One tag a retag would change.",
+        "required": [
+          "field"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "Tag field name (`album`, `track_number`, ...), or `musicbrainz_ids`\nfor every MusicBrainz id field together."
+          },
+          "from": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file's value now, several values joined with \"; \"; null when\nabsent. Always null for `musicbrainz_ids`."
+          },
+          "to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The value after the write; null when the write removes the tag.\nFor `musicbrainz_ids`, how many id fields change and stay, such as\n\"4 changed, 2 kept\"."
           }
         }
       },

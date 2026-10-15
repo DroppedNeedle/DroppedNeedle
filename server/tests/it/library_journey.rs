@@ -792,6 +792,98 @@ async fn library_management_placement_read_never_probes() {
     rig.stop().await;
 }
 
+/// A retag preview lists, per file, the tags the write would change and
+/// nothing else: a file whose album and date differ from the chosen
+/// edition lists those two and its MusicBrainz ids; once written, the
+/// same file lists no changes.
+#[tokio::test]
+async fn retag_preview_lists_the_tags_that_change() {
+    let rig = Rig::start("lib-manage-changes").await;
+    rig.identify.recall_from(|facts| {
+        let mut recall = ambiguous_from(facts);
+        let artist = |name: &str, join: &str| CreditedArtist {
+            id: format!("{name}-id"),
+            name: name.to_owned(),
+            sort_name: None,
+            join: join.to_owned(),
+        };
+        for release in &mut recall.releases {
+            release.title = "Management Album (Deluxe)".to_owned();
+            release.date = Some("2025".to_owned());
+            for track in &mut release.tracks {
+                track.artists = vec![artist("Alpha", " feat. "), artist("Beta", "")];
+            }
+        }
+        recall
+    });
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    plant(&music, "album/01.flac", "management_full.flac");
+    app.add_library_folder("music", &music).await;
+    let track = rig
+        .scan_store
+        .track_at("music", "album/01.flac")
+        .expect("track indexed");
+    let album = rig.scan_store.album_for_track(&track).expect("album");
+    rig.identified(1).await;
+    rig.choose_first_edition(&album).await;
+    rig.edition_settled(&album).await;
+
+    let preview = json!({
+        "kind": "retag",
+        "album_id": album,
+        "items": [{"root_id": "music", "rel_path": "album/01.flac", "managed_updates": {}}],
+    });
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/preview",
+            &headers,
+            Some(preview.clone()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let changes = &body["files"][0]["changes"];
+    let fields: Vec<&str> = changes
+        .as_array()
+        .expect("changes listed")
+        .iter()
+        .map(|change| change["field"].as_str().expect("field"))
+        .collect();
+    assert_eq!(fields, ["album", "date", "musicbrainz_ids"], "{body}");
+    assert_eq!(
+        changes[0],
+        json!({"field": "album", "from": "Management Album", "to": "Management Album (Deluxe)"})
+    );
+    assert_eq!(
+        changes[1],
+        json!({"field": "date", "from": "2024-03-02", "to": "2025"})
+    );
+
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/apply",
+            &headers,
+            Some(json!({"preview_token": body["preview_token"]})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/library/manage/preview",
+            &headers,
+            Some(preview),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["files"][0]["changes"], json!([]), "{body}");
+    rig.stop().await;
+}
+
 /// A trusted user may write an album's edition tags into its files and
 /// nothing more: no destination, no tag values of their own, no undo and
 /// no restore. An admin's same calls go through.

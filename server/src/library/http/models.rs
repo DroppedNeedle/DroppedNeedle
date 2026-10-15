@@ -420,6 +420,26 @@ pub struct ManageFileView {
     pub dest: String,
     /// `same_path` or `move`.
     pub kind: String,
+    /// For a retag, the tags the write changes, in display order: album,
+    /// album artist, title, artist, track, disc, date, label, catalog
+    /// number, barcode, then `musicbrainz_ids`. Unchanged tags are left
+    /// out. Empty for a move.
+    pub changes: Vec<ManageTagChange>,
+}
+
+/// One tag a retag would change.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ManageTagChange {
+    /// Tag field name (`album`, `track_number`, ...), or `musicbrainz_ids`
+    /// for every MusicBrainz id field together.
+    pub field: String,
+    /// The file's value now, several values joined with "; "; null when
+    /// absent. Always null for `musicbrainz_ids`.
+    pub from: Option<String>,
+    /// The value after the write; null when the write removes the tag.
+    /// For `musicbrainz_ids`, how many id fields change and stay, such as
+    /// "4 changed, 2 kept".
+    pub to: Option<String>,
 }
 
 /// Sealed preview answer. The token is single-use and short-lived.

@@ -1208,6 +1208,7 @@ use crate::{
         ManageItemBody,
         ManagePreviewBody,
         ManageFileView,
+        crate::library::http::models::ManageTagChange,
         ManagePreviewResponse,
         ManageApplyBody,
         ManageAppliedFile,

@@ -15,8 +15,8 @@ use super::error::{LibraryError, ValidJson};
 use super::models::{
     AddRootBody, BaselineRestoreBody, BaselineRestoreResponse, IdentifyBody, IdentifyResponse,
     ManageAppliedFile, ManageApplyBody, ManageApplyResponse, ManageFileView, ManageItemBody,
-    ManagePreviewBody, ManagePreviewResponse, ManageUndoBody, ManageUndoResponse, RootView,
-    RootsResponse, RunDetailResponse, ScanBody, ScanFileView, ScanResponse, ScanRunView,
+    ManagePreviewBody, ManagePreviewResponse, ManageTagChange, ManageUndoBody, ManageUndoResponse,
+    RootView, RootsResponse, RunDetailResponse, ScanBody, ScanFileView, ScanResponse, ScanRunView,
     ScanRunsResponse, ScanScopeView, snake,
 };
 use crate::library::identify::models::{IdentifyKind, JobState};
@@ -414,6 +414,15 @@ pub async fn manage_preview(
                 source: file.source,
                 dest: file.dest,
                 kind: file.kind,
+                changes: file
+                    .changes
+                    .into_iter()
+                    .map(|change| ManageTagChange {
+                        field: change.field,
+                        from: change.from,
+                        to: change.to,
+                    })
+                    .collect(),
             })
             .collect(),
     }))

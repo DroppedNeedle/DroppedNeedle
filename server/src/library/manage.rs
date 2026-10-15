@@ -476,6 +476,87 @@ pub struct PreviewFile {
     pub dest: String,
     /// `same_path` or `move`.
     pub kind: String,
+    /// The tags a retag changes, in display order; empty for a move.
+    pub changes: Vec<TagChange>,
+}
+
+/// One tag a retag would change. Values are text; several values are
+/// joined with "; ". `None` means the tag is absent.
+pub struct TagChange {
+    /// Tag field name, or `musicbrainz_ids` for the ids summarised.
+    pub field: String,
+    /// Value the file holds now.
+    pub from: Option<String>,
+    /// Value the write leaves.
+    pub to: Option<String>,
+}
+
+/// The fields a retag preview names one by one, in display order.
+const SHOWN_CHANGES: [super::tags::TagField; 10] = {
+    use super::tags::TagField;
+    [
+        TagField::Album,
+        TagField::AlbumArtist,
+        TagField::Title,
+        TagField::Artist,
+        TagField::TrackNumber,
+        TagField::DiscNumber,
+        TagField::Date,
+        TagField::Label,
+        TagField::CatalogNumber,
+        TagField::Barcode,
+    ]
+};
+
+/// The shown fields `updates` changes against `before`, then one
+/// `musicbrainz_ids` entry counting the MusicBrainz id fields that change
+/// and stay, when any changes. Fields the write leaves alone are skipped.
+fn tag_changes(
+    before: &BTreeMap<String, Vec<String>>,
+    updates: &BTreeMap<String, Vec<String>>,
+) -> Vec<TagChange> {
+    let text = |values: Option<&Vec<String>>| {
+        values
+            .filter(|values| !values.is_empty())
+            .map(|values| values.join("; "))
+    };
+    let differs = |name: &str, to: &Vec<String>| {
+        before.get(name).map(Vec::as_slice).unwrap_or_default() != to.as_slice()
+    };
+    let mut changes: Vec<TagChange> = SHOWN_CHANGES
+        .iter()
+        .filter_map(|field| {
+            let name = field.name();
+            let to = updates.get(name)?;
+            differs(name, to).then(|| TagChange {
+                field: name.to_owned(),
+                from: text(before.get(name)),
+                to: text(Some(to)),
+            })
+        })
+        .collect();
+    let (changed, kept) = updates
+        .iter()
+        .filter(|(name, _)| name.starts_with("musicbrainz_"))
+        .fold((0, 0), |(changed, kept), (name, to)| {
+            if differs(name, to) {
+                (changed + 1, kept)
+            } else {
+                (changed, kept + 1)
+            }
+        });
+    if changed > 0 {
+        changes.push(TagChange {
+            field: "musicbrainz_ids".to_owned(),
+            from: None,
+            to: Some(if kept > 0 {
+                format!("{changed} changed, {kept} kept")
+            } else {
+                format!("{changed} changed")
+            }),
+        });
+    }
+    changes
 }
 
 /// Sealed preview awaiting apply.
@@ -946,15 +1027,19 @@ impl LibrarySetup {
                 outputs: Vec::new(),
                 removals: Vec::new(),
             });
-            docs.insert(
-                track_id.clone(),
-                Self::live_doc_for_write(
-                    &sandbox,
-                    &item.root_id,
-                    &item.rel_path,
-                    &managed_updates,
-                )?,
-            );
+            let doc = Self::live_doc_for_write(
+                &sandbox,
+                &item.root_id,
+                &item.rel_path,
+                &managed_updates,
+            )?;
+            // The before-state the seal keeps is the file's tags now, so
+            // the changes come from it with no extra read.
+            let changes = match item_kind {
+                PlanKind::SamePath => tag_changes(&doc.managed, &managed_updates),
+                PlanKind::Move => Vec::new(),
+            };
+            docs.insert(track_id.clone(), doc);
             files.push(PreviewFile {
                 track_id,
                 source: format!("{}/{}", item.root_id, item.rel_path),
@@ -963,6 +1048,7 @@ impl LibrarySetup {
                     PlanKind::SamePath => "same_path".to_owned(),
                     PlanKind::Move => "move".to_owned(),
                 },
+                changes,
             });
         }
         let bundle = PlanBundle {
