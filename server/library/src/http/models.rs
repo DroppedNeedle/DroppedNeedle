@@ -37,7 +37,8 @@ pub struct RootsResponse {
     pub roots: Vec<RootView>,
     /// Whether the local library is enabled.
     pub enabled: bool,
-    /// Opaque policy revision running scans checkpoint against.
+    /// Policy revision of the roots and rules, as the library settings
+    /// show it. Send it back as `expected_policy_revision`.
     pub policy_revision: String,
     /// Managed-write bundles not yet settled: cleanup still pending, or
     /// recovery could not finish (their root is gone or excluded, a file

@@ -24,6 +24,7 @@ use crate::operations::models::OperationJob;
 use crate::operations::store as ops;
 use crate::publish::publisher::Catalog as _;
 use crate::publish::{JournalStore, SqliteCatalog, snapshots::sha256_hex};
+use crate::scan::roots::RootRegistry;
 use crate::wiring::LibrarySetup;
 use droppedneedle_kernel::runtime_config::sections::{
     LibraryManagement, LibraryManagementRootOverrides,
@@ -148,24 +149,36 @@ impl Management {
     // -----------------------------------------------------------------
 
     /// Refuse when the settings or the library folders moved since the
-    /// page that asks loaded them.
+    /// page that asks loaded them. Returns the registry the job runs on.
     pub(super) fn check_revisions(
         &self,
         stored: &LibraryManagement,
         expected_settings: &str,
         expected_policy: &str,
-    ) -> Result<(), ManagementError> {
+    ) -> Result<RootRegistry, ManagementError> {
         if crate::management::settings::settings_revision(stored) != expected_settings {
             return Err(stale(
                 "Library Management settings changed since this page loaded. Reload the page and make the preview again.",
             ));
         }
-        if self.setup.live_registry().policy_revision() != expected_policy {
-            return Err(stale(
-                "The library folders or their rules changed since this page loaded. Reload the page and make the preview again.",
-            ));
-        }
-        Ok(())
+        self.registry_at(
+            expected_policy,
+            "The library folders or their rules changed since this page loaded. Reload the page and make the preview again.",
+        )
+    }
+
+    /// The live registry, refused with `message` unless the library
+    /// folders and rules still carry `expected`, the policy revision the
+    /// library settings page shows.
+    pub(super) fn registry_at(
+        &self,
+        expected: &str,
+        message: &str,
+    ) -> Result<RootRegistry, ManagementError> {
+        self.setup
+            .registry_at(expected)
+            .map_err(|error| ManagementError::Store(error.to_string()))?
+            .ok_or_else(|| stale(message))
     }
 
     /// Start a preview: pin the profile and revisions, and queue the
@@ -177,12 +190,11 @@ impl Management {
         actor: &str,
     ) -> Result<PreviewHandle, ManagementError> {
         let stored = self.settings()?;
-        self.check_revisions(
+        let registry = self.check_revisions(
             &stored,
             &request.expected_settings_revision,
             &request.expected_policy_revision,
         )?;
-        let registry = self.setup.live_registry();
         let selection = selection::normalize(request.selection)?;
         let pinned = profile::pin(&stored, &request.profile_id, request.overrides)?;
         if let Some(target) = request.target_root_id.as_deref() {

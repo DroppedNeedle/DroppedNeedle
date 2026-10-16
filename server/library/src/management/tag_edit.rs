@@ -314,7 +314,10 @@ impl Management {
             profile_id: pinned.profile.id.clone(),
             profile_name: pinned.profile.name.clone(),
             settings_revision: crate::management::settings::settings_revision(&stored),
-            policy_revision: self.setup.live_registry().policy_revision().to_owned(),
+            policy_revision: self
+                .setup
+                .policy_revision()
+                .map_err(|error| ManagementError::Store(error.to_string()))?,
             track_revision: subject.track_revision,
             album_revision: subject.album_revision,
             accepted_identity: identity_reason.is_none(),
@@ -383,7 +386,7 @@ impl Management {
             });
         }
         let stored = self.settings()?;
-        self.check_revisions(
+        let registry = self.check_revisions(
             &stored,
             &request.expected_settings_revision,
             &request.expected_policy_revision,
@@ -394,7 +397,6 @@ impl Management {
             ids: vec![subject.track_id.clone()],
             catalog_filter: None,
         };
-        let registry = self.setup.live_registry();
         self.start_job(JobSpec {
             mode: JobMode::Preview,
             origin: Origin::Manual,

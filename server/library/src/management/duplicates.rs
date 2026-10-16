@@ -138,7 +138,7 @@ impl Management {
             "That file is not in the preview.",
         ))?;
         let stored = self.settings()?;
-        self.check_revisions(
+        let registry = self.check_revisions(
             &stored,
             &request.expected_settings_revision,
             &request.expected_policy_revision,
@@ -154,7 +154,6 @@ impl Management {
             ids: vec![track_id],
             catalog_filter: None,
         };
-        let registry = self.setup.live_registry();
         self.start_job(JobSpec {
             mode: JobMode::DuplicateResolution,
             origin: Origin::Manual,

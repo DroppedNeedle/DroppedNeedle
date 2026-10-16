@@ -37,9 +37,11 @@ use super::scan::pool::BlockingPool;
 use super::scan::roots::RootRegistry;
 use super::scan::sqlite_store::SqliteScanStore;
 use super::scan::watcher::{DirtyScopes, WatcherState, WorkWakeups};
+use super::service::ServiceError;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 
 /// Scratch database (a copy of the migrated template) plus config store in a
 /// directory that goes away when the last bundle clone drops.
@@ -543,6 +545,35 @@ impl LibrarySetup {
     /// Live root registry: re-read from the settings, never cached.
     pub fn live_registry(&self) -> RootRegistry {
         self.refresh_registry()
+    }
+
+    /// The policy revision pages are shown and send back as
+    /// `expected_policy_revision`: the saved settings' revision of the
+    /// roots and rules, as `GET /settings/library` shows it. The
+    /// registry's own fingerprint is a different hash, kept internally.
+    pub fn policy_revision(&self) -> Result<String, ServiceError> {
+        let settings = self.library_settings()?;
+        Ok(crate::policy::resolve_stored(&settings).policy_revision)
+    }
+
+    /// The live registry, or `None` when the saved roots and rules no
+    /// longer carry `expected` as their policy revision (see
+    /// [`Self::policy_revision`]) or the registry does not match them.
+    pub fn registry_at(&self, expected: &str) -> Result<Option<RootRegistry>, ServiceError> {
+        let live = self.live_registry();
+        let settings = self.library_settings()?;
+        let current = crate::policy::resolve_stored(&settings).policy_revision == expected
+            && super::settings::registry_from(&settings).policy_revision()
+                == live.policy_revision();
+        Ok(current.then_some(live))
+    }
+
+    fn library_settings(&self) -> Result<TypedLibrary, ServiceError> {
+        Ok(self
+            .config
+            .get_masked::<TypedLibrary>()
+            .map_err(|error| ServiceError::internal(&error))?
+            .into_inner())
     }
 
     /// Re-read the roots from the settings and swap them in when they

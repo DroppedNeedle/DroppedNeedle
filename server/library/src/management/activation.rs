@@ -60,13 +60,9 @@ impl Management {
     /// The library policy revision activation pins compare against (the
     /// settings' own revision of the roots and rules, as in v2).
     pub(super) fn activation_policy_revision(&self) -> Result<String, ManagementError> {
-        let library = self
-            .setup
-            .config
-            .get_masked::<droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary>()
-            .map_err(|error| ManagementError::Store(error.to_string()))?
-            .into_inner();
-        Ok(crate::policy::revision(&library))
+        self.setup
+            .policy_revision()
+            .map_err(|error| ManagementError::Store(error.to_string()))
     }
 
     /// The settings page's service, or a private one in test bundles.
@@ -98,12 +94,10 @@ impl Management {
                 &request.expected_settings_revision,
             )
             .map_err(settings_error)?;
-        let registry = self.setup.live_registry();
-        if registry.policy_revision() != request.expected_policy_revision {
-            return Err(stale(
-                "The library folders or their rules changed since this page loaded. Reload the page and try again.",
-            ));
-        }
+        let registry = self.registry_at(
+            &request.expected_policy_revision,
+            "The library folders or their rules changed since this page loaded. Reload the page and try again.",
+        )?;
         let assignment = profile::root_assignment(&proposed, &request.root_id);
         let pinned = profile::pin_assignment(&proposed, &assignment)?;
         let mut revisions = profile::revisions(&proposed, &pinned, registry.policy_revision());

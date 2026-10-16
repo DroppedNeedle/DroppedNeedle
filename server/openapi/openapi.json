@@ -48306,7 +48306,7 @@
           },
           "policy_revision": {
             "type": "string",
-            "description": "Opaque policy revision running scans checkpoint against."
+            "description": "Policy revision of the roots and rules, as the library settings\nshow it. Send it back as `expected_policy_revision`."
           },
           "roots": {
             "type": "array",

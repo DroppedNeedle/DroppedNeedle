@@ -168,6 +168,10 @@ pub async fn list_roots(
         let state = state.clone();
         blocking(move || state.held_publish_bundles()).await??
     };
+    let policy_revision = {
+        let state = state.clone();
+        blocking(move || state.policy_revision()).await??
+    };
     let registry = state.live_registry();
     Ok(Json(RootsResponse {
         roots: registry
@@ -180,7 +184,7 @@ pub async fn list_roots(
             })
             .collect(),
         enabled: registry.enabled(),
-        policy_revision: registry.policy_revision().to_owned(),
+        policy_revision,
         held_publish_bundles: held,
     }))
 }

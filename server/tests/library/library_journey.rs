@@ -3863,6 +3863,113 @@ async fn edition_status_says_when_the_app_writes_the_files() {
     rig.stop().await;
 }
 
+/// A management preview and a dry run take the policy revision the
+/// library settings page shows, right after a folder is saved there. Once
+/// a rule changes, the old revision is refused.
+#[tokio::test]
+async fn management_previews_take_the_settings_policy_revision() {
+    let started = TestApp::start("lib-mgmt-revision").await;
+    let app = &started;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let music = app.config.root_app_dir.join("music");
+    std::fs::create_dir_all(&music).expect("music dir");
+
+    let library = "/api/v3/settings/library";
+    let save_library = |roots: Value| async move {
+        let (status, mut settings) = app.call("GET", library, &headers, None).await;
+        assert_eq!(status, StatusCode::OK, "{settings}");
+        let revision = settings["policy_revision"].clone();
+        settings["library_roots"] = roots;
+        let (status, body) = app
+            .call(
+                "PUT",
+                library,
+                &headers,
+                Some(json!({"settings": settings, "expected_policy_revision": revision})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["policy_revision"]
+            .as_str()
+            .expect("policy revision")
+            .to_owned()
+    };
+    let root = |rules: Value| {
+        json!([{
+            "id": "music",
+            "label": "Music",
+            "path": music.to_string_lossy(),
+            "policy": "automatic",
+            "rules": rules,
+        }])
+    };
+    let saved = save_library(root(json!([]))).await;
+    let (status, shown) = app.call("GET", library, &headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{shown}");
+    let policy = shown["policy_revision"].clone();
+    assert_eq!(policy, json!(saved));
+
+    let (status, mut management) = app
+        .call("GET", "/api/v3/settings/library-management", &headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{management}");
+    let settings_revision = management["settings_revision"].clone();
+    let preview = |policy: Value| {
+        let body = json!({
+            "selection": {"kind": "roots", "ids": ["music"]},
+            "profile_id": droppedneedle_library::management::settings::PICARD_ORGANIZER_PROFILE_ID,
+            "expected_settings_revision": settings_revision.clone(),
+            "expected_policy_revision": policy,
+        });
+        async move {
+            app.call(
+                "POST",
+                "/api/v3/library/management/previews",
+                &headers,
+                Some(body),
+            )
+            .await
+        }
+    };
+    let (status, body) = preview(policy.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    if let Some(fields) = management.as_object_mut() {
+        fields.remove("settings_revision");
+    }
+    management["root_assignments"] = json!([{
+        "root_id": "music",
+        "profile_id": droppedneedle_library::management::settings::PICARD_ORGANIZER_PROFILE_ID,
+        "enabled": true,
+        "automatic_scan_discovered": true,
+    }]);
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v3/settings/library-management/activation-previews",
+            &headers,
+            Some(json!({
+                "root_id": "music",
+                "settings": management,
+                "expected_settings_revision": settings_revision.clone(),
+                "expected_policy_revision": policy.clone(),
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    save_library(root(json!([
+        {"id": "live", "relative_path": "Live", "policy": "excluded"}
+    ])))
+    .await;
+    let (status, body) = preview(policy).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    let message = body["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("library folders"), "{body}");
+    started.stop().await;
+}
+
 /// Turn automatic management on for the `music` folder the way the
 /// settings page does: a dry run, then its confirmation. `custom_editions`
 /// lets it manage custom editions by itself too.
@@ -4695,7 +4802,7 @@ async fn library_management_preview_apply_undo() {
             },
             profile_id: profile.to_owned(),
             expected_settings_revision: lm::settings_revision(&settings),
-            expected_policy_revision: library.live_registry().policy_revision().to_owned(),
+            expected_policy_revision: library.policy_revision().expect("policy revision"),
             idempotency_key: Some(key.to_owned()),
             target_root_id: None,
             overrides: None,
@@ -5337,7 +5444,7 @@ async fn library_management_tools_journey() {
     let title =
         |path: &std::path::Path| read_fields(path).expect("tags read")[&TagField::Title].clone();
     let management = Management::new(&library);
-    let policy = library.live_registry().policy_revision().to_owned();
+    let policy = library.policy_revision().expect("policy revision");
     let revision = || {
         lm::settings_revision(
             &library
@@ -6104,7 +6211,7 @@ async fn library_management_custom_edition_journey() {
         },
         profile_id: lm::PICARD_ORGANIZER_PROFILE_ID.to_owned(),
         expected_settings_revision: revision.clone(),
-        expected_policy_revision: library.live_registry().policy_revision().to_owned(),
+        expected_policy_revision: library.policy_revision().expect("policy revision"),
         idempotency_key: Some(key.to_owned()),
         target_root_id: None,
         overrides: None,
@@ -6276,7 +6383,7 @@ async fn library_management_artwork_journey() {
                 .get::<LibraryManagement>()
                 .expect("settings read"),
         ),
-        expected_policy_revision: library.live_registry().policy_revision().to_owned(),
+        expected_policy_revision: library.policy_revision().expect("policy revision"),
         idempotency_key: Some(key.to_owned()),
         target_root_id: None,
         overrides: None,
@@ -6397,7 +6504,7 @@ async fn library_management_artwork_journey() {
                         .get::<LibraryManagement>()
                         .expect("settings read"),
                 ),
-                expected_policy_revision: library.live_registry().policy_revision().to_owned(),
+                expected_policy_revision: library.policy_revision().expect("policy revision"),
                 idempotency_key: "art-restore".to_owned(),
             },
             "admin",
@@ -6691,9 +6798,8 @@ impl ManagedLibrary {
                     expected_settings_revision: self.settings_revision(),
                     expected_policy_revision: self
                         .library
-                        .live_registry()
                         .policy_revision()
-                        .to_owned(),
+                        .expect("policy revision"),
                     idempotency_key: Some(key.to_owned()),
                 },
                 "admin",
@@ -6871,9 +6977,8 @@ impl ManagedLibrary {
                     expected_settings_revision: self.settings_revision(),
                     expected_policy_revision: self
                         .library
-                        .live_registry()
                         .policy_revision()
-                        .to_owned(),
+                        .expect("policy revision"),
                     idempotency_key: Some(key.to_owned()),
                     target_root_id: None,
                     overrides: None,
@@ -7107,9 +7212,8 @@ async fn unmanaged_changes_do_not_take_the_album_over() {
                 expected_settings_revision: managed.settings_revision(),
                 expected_policy_revision: managed
                     .library
-                    .live_registry()
                     .policy_revision()
-                    .to_owned(),
+                    .expect("policy revision"),
                 fields: vec![("title".to_owned(), serde_json::json!("Edited In App"))],
                 idempotency_key: Some("edit".to_owned()),
             },
@@ -7305,9 +7409,8 @@ async fn a_mixed_id3v23_file_is_saved_as_v24() {
                 expected_settings_revision: managed.settings_revision(),
                 expected_policy_revision: managed
                     .library
-                    .live_registry()
                     .policy_revision()
-                    .to_owned(),
+                    .expect("policy revision"),
                 idempotency_key: "restore".to_owned(),
             },
             "admin",
@@ -8611,7 +8714,7 @@ impl ManagedLibrary {
                     droppedneedle_library::management::settings::PICARD_ORGANIZER_PROFILE_ID
                         .to_owned(),
                 expected_settings_revision: self.settings_revision(),
-                expected_policy_revision: self.library.live_registry().policy_revision().to_owned(),
+                expected_policy_revision: self.library.policy_revision().expect("policy revision"),
                 idempotency_key: Some(key.to_owned()),
                 target_root_id: None,
                 overrides: None,
@@ -9145,9 +9248,8 @@ impl ManagedLibrary {
                     expected_settings_revision: self.settings_revision(),
                     expected_policy_revision: self
                         .library
-                        .live_registry()
                         .policy_revision()
-                        .to_owned(),
+                        .expect("policy revision"),
                     idempotency_key: key.to_owned(),
                 },
                 "admin",
@@ -9782,9 +9884,8 @@ async fn management_preview_blocks_an_album_whose_edition_is_being_placed() {
                 expected_settings_revision: managed.settings_revision(),
                 expected_policy_revision: managed
                     .library
-                    .live_registry()
                     .policy_revision()
-                    .to_owned(),
+                    .expect("policy revision"),
                 idempotency_key: Some("preview-remap".to_owned()),
                 target_root_id: None,
                 overrides: None,

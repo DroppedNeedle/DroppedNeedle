@@ -20982,7 +20982,10 @@ export interface components {
              *     tracks take no new managed writes until then.
              */
             held_publish_bundles: string[];
-            /** @description Opaque policy revision running scans checkpoint against. */
+            /**
+             * @description Policy revision of the roots and rules, as the library settings
+             *     show it. Send it back as `expected_policy_revision`.
+             */
             policy_revision: string;
             /** @description Configured roots. */
             roots: components["schemas"]["RootView"][];

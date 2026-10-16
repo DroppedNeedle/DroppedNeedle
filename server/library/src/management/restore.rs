@@ -108,7 +108,7 @@ impl Management {
             ));
         }
         let stored = self.settings()?;
-        self.check_revisions(
+        let registry = self.check_revisions(
             &stored,
             &request.expected_settings_revision,
             &request.expected_policy_revision,
@@ -117,7 +117,6 @@ impl Management {
         // The profile only labels the job: a restore writes the saved
         // originals, not anything a profile plans.
         let pinned = profile::pin(&stored, &stored.default_profile_id, None)?;
-        let registry = self.setup.live_registry();
         self.start_job(JobSpec {
             mode: JobMode::BaselineRestore,
             origin: Origin::Manual,
