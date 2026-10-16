@@ -60,7 +60,13 @@ pub struct CompatApp {
 
 impl CompatApp {
     pub async fn start(tag: &str) -> Self {
-        let app = TestApp::start(tag).await;
+        Self::start_with(tag, super::closed_outbound()).await
+    }
+
+    /// As [`CompatApp::start`], reaching the outside world as `outbound`
+    /// says.
+    pub async fn start_with(tag: &str, outbound: droppedneedle::bootstrap::Outbound) -> Self {
+        let app = TestApp::start_with(tag, outbound).await;
         let layout: Value = serde_json::from_slice(
             &std::fs::read(manifest_dir().join("tests/reference/compat/library.json"))
                 .expect("library layout reads"),
@@ -78,7 +84,19 @@ impl CompatApp {
             .expect("fixture copies");
         }
         app.add_library_folder("music", &music).await;
+        Self::signed_in(app, music, layout).await
+    }
 
+    /// The app with both protocols on and no library folder: the test
+    /// writes the catalog rows it reads.
+    pub async fn unscanned(tag: &str) -> Self {
+        let app = TestApp::start(tag).await;
+        let music = app.config.root_app_dir.join("music");
+        Self::signed_in(app, music, json!({ "tracks": [] })).await
+    }
+
+    /// Turn both protocols on and give the player an app password.
+    async fn signed_in(app: TestApp, music: PathBuf, layout: Value) -> Self {
         let admin = app.login_admin().await;
         let admin = [("authorization", admin.as_str())];
         let (status, mut apps) = app

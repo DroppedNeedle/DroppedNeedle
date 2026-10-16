@@ -193,6 +193,33 @@ impl TestApp {
         (status, headers, bytes.to_vec())
     }
 
+    /// One request with `body` sent as it is, under whatever content type
+    /// `headers` names. Answered as [`TestApp::raw`] answers.
+    pub async fn raw_bytes(
+        &self,
+        method: &str,
+        uri: &str,
+        headers: &[(&str, &str)],
+        body: Vec<u8>,
+    ) -> (StatusCode, HeaderMap, Vec<u8>) {
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("host", "test.local");
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        let response = self
+            .request(builder.body(Body::from(body)).expect("request builds"))
+            .await;
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024 * 1024)
+            .await
+            .expect("body reads");
+        (status, headers, bytes.to_vec())
+    }
+
     /// One JSON request. An empty answer reads as `Value::Null`.
     pub async fn call(
         &self,

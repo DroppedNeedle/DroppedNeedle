@@ -13,4 +13,5 @@ mod compat_library_journeys;
 mod compat_reference;
 mod compat_shared;
 mod compat_subsonic;
+mod compat_subsonic_library;
 mod compat_wiring;
