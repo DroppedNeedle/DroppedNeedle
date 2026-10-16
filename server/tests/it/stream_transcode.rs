@@ -4,7 +4,7 @@
 //! always scripted through the injected spawner seam: no test needs a real
 //! binary on `PATH`, and none touches the network.
 
-use droppedneedle::stream::transcode;
+use droppedneedle_media::stream::transcode;
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};

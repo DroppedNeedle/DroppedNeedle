@@ -29,7 +29,7 @@ use crate::acquire::requests::{
     error::RequestsError,
     http::{HttpError, ValidJson, ValidQuery},
 };
-use crate::stream::routes::{DirectSpan, content_type_for_extension, file_range};
+use droppedneedle_media::stream::routes::{DirectSpan, content_type_for_extension, file_range};
 
 /// One held file.
 #[derive(Debug, Clone, Serialize, ToSchema)]

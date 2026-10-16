@@ -1,5 +1,5 @@
 //! Compat streaming over the stream engine: both protocol seams call the
-//! same [`StreamEngine`](crate::stream::routes::StreamEngine) the native
+//! same [`StreamEngine`](droppedneedle_media::stream::routes::StreamEngine) the native
 //! routes use, so leases and transcode execution are shared.
 //!
 //! Each request opens the engine once with `open_stream`. A direct file is
@@ -20,8 +20,8 @@ use crate::compat::jellyfin::seams::{ByteOutcome, StreamEngine as JellyfinStream
 use crate::compat::subsonic::stream::{
     AudioBackend, AudioFacts, BackendError, OpenedAudio, StreamPlan,
 };
-use crate::stream::leases::OwnedDirectLease;
-use crate::stream::routes::{
+use droppedneedle_media::stream::leases::OwnedDirectLease;
+use droppedneedle_media::stream::routes::{
     AudioSource, MediaBody, StreamEngine, StreamFault, StreamMedia, StreamOpen, StreamParams,
     file_range,
 };
@@ -340,7 +340,7 @@ impl<E> GatewayStream<E> {
         let total = media.total_len;
         let span_asked = match range {
             None => None,
-            Some(header) => match crate::stream::routes::parse_range(header, total) {
+            Some(header) => match droppedneedle_media::stream::routes::parse_range(header, total) {
                 Some(resolved) => Some(resolved),
                 None => {
                     return status(

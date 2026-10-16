@@ -7,8 +7,8 @@ use super::CollectionsState;
 use super::models::PlaylistListItem;
 use super::service::CollectionsService;
 use super::store::playlists::NewEntry;
-use crate::remotes::adapter::{BoxFuture, ImportReceipt, ImportSink};
-use crate::remotes::models::{SourceName, TrackView};
+use droppedneedle_media::remotes::adapter::{BoxFuture, ImportReceipt, ImportSink};
+use droppedneedle_media::remotes::models::{SourceName, TrackView};
 
 /// Imports into the user's native playlists, so an imported Plex,
 /// Navidrome or Jellyfin playlist shows on the playlists page and in the

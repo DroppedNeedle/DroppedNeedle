@@ -207,8 +207,8 @@ fn test_acquire(
 fn test_media(
     auth: &droppedneedle_auth::wiring::AuthSetup,
     ids: Arc<dyn IdGenerator>,
-) -> droppedneedle::media::MediaSetup {
-    droppedneedle::media::MediaSetup::for_tests(auth.users.clone(), ids)
+) -> droppedneedle_media::MediaSetup {
+    droppedneedle_media::MediaSetup::for_tests(auth.users.clone(), ids)
         .expect("test media bundle builds")
 }
 

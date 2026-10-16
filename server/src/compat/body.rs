@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 
 use futures_util::StreamExt as _;
 
-use crate::stream::leases::OwnedDirectLease;
-use crate::stream::routes::ChunkStream;
+use droppedneedle_media::stream::leases::OwnedDirectLease;
+use droppedneedle_media::stream::routes::ChunkStream;
 
 /// A chunk stream that can sit in cloneable protocol values: it is taken
 /// out exactly once, by whoever builds the HTTP response.
@@ -102,7 +102,7 @@ impl AudioBody {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stream::leases::DirectGate;
+    use droppedneedle_media::stream::leases::DirectGate;
 
     #[tokio::test]
     async fn the_lease_lasts_until_the_stream_is_gone() {

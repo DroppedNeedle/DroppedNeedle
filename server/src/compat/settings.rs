@@ -37,7 +37,7 @@ impl LiveSettings {
     pub fn from_config(store: Arc<ConfigStore>) -> Self {
         Self(Arc::new(ConfigSettings {
             store,
-            ffmpeg_available: crate::stream::transcode::ffmpeg_available(),
+            ffmpeg_available: droppedneedle_media::stream::transcode::ffmpeg_available(),
         }))
     }
 

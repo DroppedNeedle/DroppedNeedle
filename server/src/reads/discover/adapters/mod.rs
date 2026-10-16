@@ -28,13 +28,13 @@ use crate::reads::discover::{
     ports::{ChartsSource, QueueStore, SystemClock, YouTubeSource},
     services::ReadsDeps,
 };
-use crate::remotes::connections::{
-    ConfigServers, ConnectionResolver, CredentialCoder, SqliteConnectionStore,
-};
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::db::WriteLane;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::{ConfigStore, secret_sections::AdvancedSettings};
+use droppedneedle_media::remotes::connections::{
+    ConfigServers, ConnectionResolver, CredentialCoder, SqliteConnectionStore,
+};
 use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
 use droppedneedle_providers::{
     Providers,

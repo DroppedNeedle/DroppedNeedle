@@ -189,7 +189,10 @@ impl ReadsSetup {
     /// Read file tags from the library catalog and roots, which are built
     /// after the reads bundle.
     #[must_use]
-    pub fn with_library_files(mut self, files: crate::stream::local_files::LibraryFiles) -> Self {
+    pub fn with_library_files(
+        mut self,
+        files: droppedneedle_media::stream::local_files::LibraryFiles,
+    ) -> Self {
         self.library.tags = Arc::new(library::tags::FileTagReader::new(files));
         self
     }

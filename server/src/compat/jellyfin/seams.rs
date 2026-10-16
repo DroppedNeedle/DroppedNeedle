@@ -528,7 +528,8 @@ pub fn decide(input: &DecideInput) -> StreamPlan {
     };
     // No client cap: the codec's default bitrate, not the server ceiling.
     let wanted = if ceiling == HUGE {
-        u32::try_from(crate::stream::transcode::default_bitrate_kbps(&out)).unwrap_or(HUGE)
+        u32::try_from(droppedneedle_media::stream::transcode::default_bitrate_kbps(&out))
+            .unwrap_or(HUGE)
     } else {
         ceiling
     };

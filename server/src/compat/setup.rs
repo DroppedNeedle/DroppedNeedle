@@ -26,13 +26,13 @@ use crate::compat::http::{CompatLimits, SubsonicState, cors_layer, limits_layer,
 use crate::compat::jellyfin::{JellyfinState, router as jellyfin_router};
 use crate::compat::settings::LiveSettings;
 use crate::compat::shared::address::ListenerConfig;
-use crate::media::MediaEngine;
-use crate::playback::services::PlaybackDeps;
 use crate::reads::ReadsSetup;
 use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::runtime_config::Crypto;
 use droppedneedle_library::wiring::LibrarySetup;
+use droppedneedle_media::MediaEngine;
+use droppedneedle_media::playback::services::PlaybackDeps;
 
 /// Subsonic verifier over the app-password store.
 pub type CompatVerifier = SubsonicVerifier<ProdCompatPasswords, UsersDeps>;
@@ -177,17 +177,21 @@ impl CompatSetup {
 
         use crate::compat::jellyfin::seams::JellyfinSettings;
         use crate::compat::subsonic::Settings;
-        use crate::playback::fakes::{FakeCatalog, FakeHistory, FakeNames, FakePrefs, FakeSinks};
-        use crate::playback::ports::SystemClock;
-        use crate::playback::reports::ReportQueue;
-        use crate::playback::services::{
+        use droppedneedle_media::playback::fakes::{
+            FakeCatalog, FakeHistory, FakeNames, FakePrefs, FakeSinks,
+        };
+        use droppedneedle_media::playback::ports::SystemClock;
+        use droppedneedle_media::playback::reports::ReportQueue;
+        use droppedneedle_media::playback::services::{
             MixedDedup, PresenceRegistry, ScrobbleDedup, SessionStore,
         };
-        use crate::remotes::connections::{CredentialCoder, MemoryConnectionStore};
-        use crate::remotes::reader::RemotesRemoteReader;
-        use crate::stream::gateway::Gateway;
-        use crate::stream::transcode::TranscodeSettings;
-        use crate::stream::transcode::{FfmpegTranscoder, LocalTranscodeGate, StdFfmpegSpawner};
+        use droppedneedle_media::remotes::connections::{CredentialCoder, MemoryConnectionStore};
+        use droppedneedle_media::remotes::reader::RemotesRemoteReader;
+        use droppedneedle_media::stream::gateway::Gateway;
+        use droppedneedle_media::stream::transcode::TranscodeSettings;
+        use droppedneedle_media::stream::transcode::{
+            FfmpegTranscoder, LocalTranscodeGate, StdFfmpegSpawner,
+        };
 
         let crypto = Arc::new(
             Crypto::from_key_bytes(&[7u8; 32]).map_err(|error| format!("test key: {error}"))?,
@@ -225,7 +229,7 @@ impl CompatSetup {
             mixed: MixedDedup::new(),
             clock: Arc::new(SystemClock),
             ids,
-            events: std::sync::Arc::new(crate::playback::ports::NoPlayEvents),
+            events: std::sync::Arc::new(droppedneedle_media::playback::ports::NoPlayEvents),
         };
         Ok(Self::build(CompatDeps::over_reads(
             users,

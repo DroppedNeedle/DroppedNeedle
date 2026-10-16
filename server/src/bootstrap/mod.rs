@@ -32,8 +32,6 @@ use crate::{
     compat::{
         CompatSetup, settings::LiveSettings, setup::CompatDeps, shared::address::ListenerConfig,
     },
-    media::MediaSetup,
-    playback::plugin_events::PluginPlayEvents,
     reads::{
         ReadsInputs, ReadsSetup,
         catalog::{
@@ -44,13 +42,6 @@ use crate::{
         },
         collections::{db::CollectionsDb, remote_import::PlaylistImportSink},
         enrichment::{library::LiveEnrichment, live::production_enrichment},
-    },
-    remotes::{
-        connections::{
-            ConfigServers, ConnectionResolver, CredentialCoder, SignInLinks, SqliteConnectionStore,
-        },
-        plex::ConfiguredPlexServer,
-        presence_feed::MediaJobs,
     },
     settings::{
         effects::{LiveSaveEffects, SaveEffects},
@@ -81,6 +72,17 @@ use droppedneedle_kernel::{
     },
 };
 use droppedneedle_library::wiring::LibrarySetup;
+use droppedneedle_media::{
+    MediaSetup,
+    playback::plugin_events::PluginPlayEvents,
+    remotes::{
+        connections::{
+            ConfigServers, ConnectionResolver, CredentialCoder, SignInLinks, SqliteConnectionStore,
+        },
+        plex::ConfiguredPlexServer,
+        presence_feed::MediaJobs,
+    },
+};
 use droppedneedle_plugins::{scrobble::SqliteListenBrainzLinkStore, wiring::PluginsSetup};
 use droppedneedle_providers::{InMemoryProviderCache, Providers};
 
@@ -332,7 +334,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     .map_err(stage("library setup"))?;
     // Plugin library writes hold the same root leases as the publisher.
     plugin_host.set_library_fs(library.fs.clone());
-    reads = reads.with_library_files(crate::stream::local_files::LibraryFiles::new(
+    reads = reads.with_library_files(droppedneedle_media::stream::local_files::LibraryFiles::new(
         runtime.pool().clone(),
         library.root_source(),
     ));

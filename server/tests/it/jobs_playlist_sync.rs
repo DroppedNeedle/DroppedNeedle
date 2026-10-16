@@ -12,7 +12,6 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use droppedneedle::remotes::playlist_sync::{self as playlist_route, PlaylistSyncState, SyncRoles};
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::users::roles::{Role, SessionKind};
@@ -21,6 +20,9 @@ use droppedneedle_kernel::jobs::playlist_sync::{
 };
 use droppedneedle_kernel::jobs::registry::{BoxFuture, JobRegistry, MemoryRegistryStore};
 use droppedneedle_kernel::jobs::schedule::Schedule;
+use droppedneedle_media::remotes::playlist_sync::{
+    self as playlist_route, PlaylistSyncState, SyncRoles,
+};
 use tower::ServiceExt as _;
 
 type TestRegistry = JobRegistry<MemoryRegistryStore>;

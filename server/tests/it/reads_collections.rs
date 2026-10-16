@@ -565,8 +565,8 @@ async fn edition_pin_reads_the_identity_and_needs_a_curator() {
 #[tokio::test]
 async fn remote_playlist_import_lands_in_the_users_playlists() {
     use droppedneedle::reads::collections::remote_import::PlaylistImportSink;
-    use droppedneedle::remotes::adapter::ImportSink as _;
-    use droppedneedle::remotes::models::{SourceName, TrackView};
+    use droppedneedle_media::remotes::adapter::ImportSink as _;
+    use droppedneedle_media::remotes::models::{SourceName, TrackView};
 
     let rig = Rig::open().await;
     let sink = PlaylistImportSink::new(rig.state());

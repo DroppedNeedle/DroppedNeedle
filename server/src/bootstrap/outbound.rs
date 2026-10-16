@@ -175,8 +175,8 @@ impl Outbound {
     }
 
     /// The addresses scrobbles are forwarded to.
-    pub fn scrobbles(&self) -> crate::playback::forwarding::Endpoints {
-        crate::playback::forwarding::Endpoints {
+    pub fn scrobbles(&self) -> droppedneedle_media::playback::forwarding::Endpoints {
+        droppedneedle_media::playback::forwarding::Endpoints {
             listenbrainz: self.listenbrainz.clone(),
             lastfm: self.lastfm.clone(),
         }

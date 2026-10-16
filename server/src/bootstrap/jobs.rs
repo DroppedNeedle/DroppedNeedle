@@ -23,8 +23,6 @@ use std::time::Duration;
 use axum::Router;
 
 use crate::concerts::ConcertsSweep;
-use crate::remotes::playlist_sync::{self as playlist_route, PlaylistSyncState, SyncRoles};
-use crate::remotes::presence_feed::{MediaJobs, RegistryFeed, RemoteSessionPollers};
 use droppedneedle_auth::users::{UsersDeps, roles::Role};
 use droppedneedle_kernel::db::{CheckpointService, DurableWorkWakeups, WriteLane};
 use droppedneedle_kernel::jobs::cache_sync::CacheSyncStatus;
@@ -45,6 +43,10 @@ use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     AdvancedSettings, EventsSettings, NavidromeConnection,
 };
+use droppedneedle_media::remotes::playlist_sync::{
+    self as playlist_route, PlaylistSyncState, SyncRoles,
+};
+use droppedneedle_media::remotes::presence_feed::{MediaJobs, RegistryFeed, RemoteSessionPollers};
 
 /// Grace per job at shutdown. Loops select on their stop signal next to
 /// every sleep, so this only binds a cycle that is mid-flight.

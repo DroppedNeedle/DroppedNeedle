@@ -23,15 +23,11 @@ pub mod docs;
 pub mod export;
 pub mod handlers;
 pub mod import;
-pub mod media;
 pub mod middleware;
-pub mod playback;
 pub mod reads;
-pub mod remotes;
 pub mod security_headers;
 pub mod settings;
 pub mod state;
-pub mod stream;
 pub mod tooling;
 pub mod web;
 

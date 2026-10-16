@@ -17,9 +17,9 @@ use crate::reads::discover::adapters::queue::sources::{
     AlbumRow, ArtistRow, QueueSources, SourceResult, StatsRange,
 };
 use crate::reads::discover::ports::BoxFuture;
-use crate::remotes::connections::ResolveError;
-use crate::remotes::jellyfin::JellyfinAdapter;
-use crate::remotes::models::SourceName;
+use droppedneedle_media::remotes::connections::ResolveError;
+use droppedneedle_media::remotes::jellyfin::JellyfinAdapter;
+use droppedneedle_media::remotes::models::SourceName;
 use droppedneedle_providers::RequestPriority;
 use droppedneedle_providers::musicbrainz::Criticality;
 

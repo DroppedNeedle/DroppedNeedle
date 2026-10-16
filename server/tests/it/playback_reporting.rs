@@ -4,7 +4,7 @@
 //! and the MBID warmup loop cadence. One journey runs the whole app on its
 //! own database: what a play from each kind of player leaves in history.
 
-use droppedneedle::playback;
+use droppedneedle_media::playback;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -80,7 +80,7 @@ fn rig_with_sinks(sinks: FakeSinks) -> Rig {
         mixed: MixedDedup::new(),
         clock: Arc::new(clock.clone()),
         ids: Arc::new(FixedIds),
-        events: std::sync::Arc::new(droppedneedle::playback::ports::NoPlayEvents),
+        events: std::sync::Arc::new(droppedneedle_media::playback::ports::NoPlayEvents),
     };
     Rig {
         deps,
@@ -611,15 +611,17 @@ impl playback::forwarding::ScrobbleCredentials for FixedToken {
     fn listenbrainz_token<'a>(
         &'a self,
         _user_id: &'a str,
-    ) -> droppedneedle::remotes::adapter::BoxFuture<'a, Option<String>> {
+    ) -> droppedneedle_media::remotes::adapter::BoxFuture<'a, Option<String>> {
         Box::pin(async { Some("lb-token".to_owned()) })
     }
 
     fn lastfm_session<'a>(
         &'a self,
         _user_id: &'a str,
-    ) -> droppedneedle::remotes::adapter::BoxFuture<'a, Option<playback::forwarding::LastFmSession>>
-    {
+    ) -> droppedneedle_media::remotes::adapter::BoxFuture<
+        'a,
+        Option<playback::forwarding::LastFmSession>,
+    > {
         Box::pin(async { None })
     }
 }

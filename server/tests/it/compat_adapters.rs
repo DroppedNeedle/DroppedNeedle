@@ -13,7 +13,7 @@ use droppedneedle::compat::jellyfin::seams::StreamEngine as JellyfinEngine;
 use droppedneedle::compat::subsonic::stream::{
     AudioBackend, ServeError, StreamPlan, serve_original,
 };
-use droppedneedle::stream::routes::{OpenMedia, StreamEngine, StreamFault, StreamOpen};
+use droppedneedle_media::stream::routes::{OpenMedia, StreamEngine, StreamFault, StreamOpen};
 
 /// Scripted engine: scripted files, recorded opens, scripted faults.
 #[derive(Clone)]
@@ -240,15 +240,15 @@ async fn jellyfin_adapter_serves_ranges_maps_faults_and_forwards_transcodes() {
 /// Remote reader for a local-only gateway.
 struct NoRemote;
 
-impl droppedneedle::stream::gateway::RemoteReader for NoRemote {
+impl droppedneedle_media::stream::gateway::RemoteReader for NoRemote {
     async fn open_stream(
         &self,
-        _source: droppedneedle::stream::routes::AudioSource,
+        _source: droppedneedle_media::stream::routes::AudioSource,
         _key: &str,
         _user_id: &str,
         _head_only: bool,
-    ) -> Result<droppedneedle::stream::routes::StreamMedia, StreamFault> {
-        let canned: Result<droppedneedle::stream::gateway::RemoteMedia, StreamFault> =
+    ) -> Result<droppedneedle_media::stream::routes::StreamMedia, StreamFault> {
+        let canned: Result<droppedneedle_media::stream::gateway::RemoteMedia, StreamFault> =
             async { Err(StreamFault::NotFound) }.await;
         canned.map(Into::into)
     }
@@ -256,8 +256,8 @@ impl droppedneedle::stream::gateway::RemoteReader for NoRemote {
 
 #[tokio::test]
 async fn real_gateway_streams_the_asked_span_from_the_file() {
-    use droppedneedle::stream::gateway::Gateway;
-    use droppedneedle::stream::transcode::{
+    use droppedneedle_media::stream::gateway::Gateway;
+    use droppedneedle_media::stream::transcode::{
         FfmpegTranscoder, LocalTranscodeGate, StdFfmpegSpawner, TranscodeSettings,
     };
 

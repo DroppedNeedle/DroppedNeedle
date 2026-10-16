@@ -117,7 +117,7 @@ pub fn decide(
     };
     // No client cap: the codec's default bitrate, not the server ceiling.
     let wanted = if client_ceiling == UNSET_BITRATE_KBPS {
-        crate::stream::transcode::default_bitrate_kbps(&out_format)
+        droppedneedle_media::stream::transcode::default_bitrate_kbps(&out_format)
     } else {
         client_ceiling
     };

@@ -19,7 +19,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::common::ScratchDir;
-use droppedneedle::remotes::plex::ConfiguredPlexServer;
 use droppedneedle_auth::prod::ProdAuth;
 use droppedneedle_auth::users::stores::SystemClock;
 use droppedneedle_auth::wiring::AuthSetup;
@@ -32,6 +31,7 @@ use droppedneedle_library::identify::models::{
 };
 use droppedneedle_library::identify::providers::{IdentifyProviders, RecallOutcome};
 use droppedneedle_library::wiring::LibrarySetup;
+use droppedneedle_media::remotes::plex::ConfiguredPlexServer;
 use droppedneedle_providers::musicbrainz::Criticality;
 use tokio::sync::{oneshot, watch};
 

@@ -901,7 +901,7 @@ pub async fn track_tags(
             "Could not read the audio file.".to_owned(),
         )),
         TagRead::Outside => Err(LibraryFailure::Forbidden(
-            crate::stream::gateway::OUTSIDE_MESSAGE.to_owned(),
+            droppedneedle_media::stream::gateway::OUTSIDE_MESSAGE.to_owned(),
         )),
     }
 }

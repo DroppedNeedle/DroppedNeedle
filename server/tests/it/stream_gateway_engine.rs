@@ -7,7 +7,7 @@
 //! the real one behind the stream routes: the estimated length of a
 //! transcode, and the per-user cap on concurrent direct streams.
 
-use droppedneedle::stream;
+use droppedneedle_media::stream;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -52,7 +52,7 @@ impl RemoteReader for FakeRemote {
         key: &str,
         _user_id: &str,
         _head_only: bool,
-    ) -> Result<droppedneedle::stream::routes::StreamMedia, StreamFault> {
+    ) -> Result<droppedneedle_media::stream::routes::StreamMedia, StreamFault> {
         let canned: Result<RemoteMedia, StreamFault> = async {
             if let Some(fault) = self.faults.get(key) {
                 return Err(fault.clone());
@@ -697,7 +697,7 @@ impl RemoteReader for CannedRemote {
         _key: &str,
         _user_id: &str,
         _head_only: bool,
-    ) -> Result<droppedneedle::stream::routes::StreamMedia, StreamFault> {
+    ) -> Result<droppedneedle_media::stream::routes::StreamMedia, StreamFault> {
         let canned: Result<RemoteMedia, StreamFault> = async { Ok(self.media.clone()) }.await;
         canned.map(Into::into)
     }
@@ -747,7 +747,7 @@ impl RemoteReader for BlockingRemote {
         _key: &str,
         _user_id: &str,
         _head_only: bool,
-    ) -> Result<droppedneedle::stream::routes::StreamMedia, StreamFault> {
+    ) -> Result<droppedneedle_media::stream::routes::StreamMedia, StreamFault> {
         let canned: Result<RemoteMedia, StreamFault> = async {
             self.inner.entries.send_modify(|entered| *entered += 1);
             self.inner.release.notified().await;

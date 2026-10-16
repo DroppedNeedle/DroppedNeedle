@@ -16,7 +16,7 @@
 //!   `resolve_token`/`authenticate_by_name` directly.
 //! - Streaming: [`GatewayAudio`](adapters::engines::GatewayAudio) and
 //!   [`GatewayStream`](adapters::engines::GatewayStream) over the
-//!   [`StreamEngine`](crate::stream::routes::StreamEngine). Range slicing
+//!   [`StreamEngine`](droppedneedle_media::stream::routes::StreamEngine). Range slicing
 //!   stays in each protocol layer (byte-identical rules); leases count
 //!   against the authenticated caller.
 //! - Library: [`CompatLibrary`](adapters::library::CompatLibrary) over the

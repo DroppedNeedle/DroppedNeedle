@@ -2075,8 +2075,8 @@ async fn fold_sql_function_matches_v2_casefold() {
 /// timeout is retried and recorded, never dropped.
 #[tokio::test]
 async fn a_play_outlasting_the_busy_timeout_is_still_recorded() {
-    use droppedneedle::playback::ports::{PlayHistory as _, PlayRecord};
-    use droppedneedle::playback::sqlite::PlaybackDb;
+    use droppedneedle_media::playback::ports::{PlayHistory as _, PlayRecord};
+    use droppedneedle_media::playback::sqlite::PlaybackDb;
 
     let (runtime, dir) = open_scratch("play-busy").await;
     let db_path = dir.join("library.db");

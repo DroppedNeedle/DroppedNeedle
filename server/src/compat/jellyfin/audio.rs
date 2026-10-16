@@ -232,7 +232,7 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
-    use crate::stream::transcode::{HLS_SEGMENT_FORMAT, out_bitrate_kbps};
+    use droppedneedle_media::stream::transcode::{HLS_SEGMENT_FORMAT, out_bitrate_kbps};
 
     let settings = state.settings.jellyfin();
     if !settings.transcoding_enabled || !settings.ffmpeg_available {

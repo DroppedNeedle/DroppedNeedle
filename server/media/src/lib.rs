@@ -9,6 +9,13 @@
 //! dedicated rusqlite handle. Remote attribution and scrobble forwarding
 //! drain through the [`MediaWorkers`] boot spawns beside the other loops.
 
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+
+pub mod playback;
+pub mod remotes;
+pub mod stream;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

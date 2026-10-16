@@ -5,7 +5,7 @@
 //! import fails the test.
 //!
 //! The crates split out of this one (kernel, providers, auth, library,
-//! plugins) sit below it, so they are not listed here: Cargo itself
+//! plugins, media) sit below it, so they are not listed here: Cargo itself
 //! refuses an import from them back up into this crate.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,7 +15,6 @@ use std::path::{Path, PathBuf};
 /// Areas from the bottom layer up. An area may use areas in its own layer or
 /// below it. Areas in one layer become one crate once the split lands.
 const LAYERS: &[&[&str]] = &[
-    &["media", "playback", "remotes", "stream"],
     // Catalog sits below acquire: acquire reads catalog, never the reverse.
     &["concerts", "reads"],
     &["acquire"],

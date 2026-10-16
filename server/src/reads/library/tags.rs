@@ -3,7 +3,7 @@
 //! downloads, read with the library's tag reader off the async workers.
 
 use super::stores::{BoxFuture, StoreError, TagRead, TrackTagReader};
-use crate::stream::local_files::{LibraryFiles, LocateError, PathRefusal};
+use droppedneedle_media::stream::local_files::{LibraryFiles, LocateError, PathRefusal};
 
 /// Reads tags from catalog files under the live library roots.
 #[derive(Clone)]

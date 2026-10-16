@@ -8,13 +8,14 @@ use std::sync::Arc;
 
 use crate::{
     acquire::AcquireSetup, admin::AdminSetup, bootstrap::jobs::JobsSetup, compat::CompatSetup,
-    concerts::ConcertsSetup, media::MediaSetup, reads::ReadsSetup, settings::wiring::SettingsSetup,
+    concerts::ConcertsSetup, reads::ReadsSetup, settings::wiring::SettingsSetup,
 };
 use droppedneedle_auth::wiring::AuthSetup;
 use droppedneedle_kernel::{
     config::AppConfig, events::EventHub, http_client::HttpClientFactory, ids::IdGenerator,
 };
 use droppedneedle_library::wiring::LibrarySetup;
+use droppedneedle_media::MediaSetup;
 use droppedneedle_plugins::wiring::PluginsSetup;
 use droppedneedle_providers::Providers;
 

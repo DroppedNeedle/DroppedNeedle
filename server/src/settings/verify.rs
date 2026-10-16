@@ -266,11 +266,11 @@ fn transport_kind(error: &reqwest::Error) -> &'static str {
 /// Map a media-adapter failure to a v2-shaped verdict message. The URL
 /// is never echoed.
 fn adapter_message(
-    error: &crate::remotes::adapter::AdapterError,
+    error: &droppedneedle_media::remotes::adapter::AdapterError,
     unconfigured: &str,
     auth: &str,
 ) -> String {
-    use crate::remotes::adapter::AdapterError as Source;
+    use droppedneedle_media::remotes::adapter::AdapterError as Source;
     match error {
         Source::NotConfigured => unconfigured.to_owned(),
         Source::Auth => auth.to_owned(),
@@ -293,7 +293,7 @@ fn adapter_message(
 impl VerifyProbes for LiveProbes {
     fn jellyfin<'a>(&'a self, url: &'a str, key: &'a str) -> BoxFuture<'a, JellyfinVerdict> {
         Box::pin(async move {
-            use crate::remotes::jellyfin::JellyfinAdapter;
+            use droppedneedle_media::remotes::jellyfin::JellyfinAdapter;
             if url.trim().is_empty() || key.is_empty() {
                 return JellyfinVerdict {
                     valid: false,
@@ -338,7 +338,7 @@ impl VerifyProbes for LiveProbes {
         password: &'a str,
     ) -> BoxFuture<'a, ProbeVerdict> {
         Box::pin(async move {
-            use crate::remotes::navidrome::NavidromeAdapter;
+            use droppedneedle_media::remotes::navidrome::NavidromeAdapter;
             let adapter = NavidromeAdapter::new(
                 self.http.clone(),
                 url.to_owned(),
@@ -358,7 +358,7 @@ impl VerifyProbes for LiveProbes {
 
     fn plex<'a>(&'a self, url: &'a str, token: &'a str) -> BoxFuture<'a, PlexVerdict> {
         Box::pin(async move {
-            use crate::remotes::plex::PlexAdapter;
+            use droppedneedle_media::remotes::plex::PlexAdapter;
             let adapter = PlexAdapter::new(
                 self.http.clone(),
                 url.to_owned(),
@@ -396,7 +396,7 @@ impl VerifyProbes for LiveProbes {
         token: &'a str,
     ) -> BoxFuture<'a, Result<Vec<(String, String)>, String>> {
         Box::pin(async move {
-            use crate::remotes::plex::PlexAdapter;
+            use droppedneedle_media::remotes::plex::PlexAdapter;
             if url.trim().is_empty() || token.is_empty() {
                 return Err("Plex is not configured.".to_owned());
             }

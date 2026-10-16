@@ -3,7 +3,7 @@
 //! shapes, auth mapping, folder and section scoping that fails closed,
 //! sealed credentials that never echo, and the per-source feature matrix.
 
-use droppedneedle::remotes;
+use droppedneedle_media::remotes;
 
 use std::sync::Arc;
 
@@ -1084,8 +1084,8 @@ async fn routes_manage_folder_preferences() {
 /// out of it.
 #[tokio::test]
 async fn presence_poll_merges_a_remote_session() {
-    use droppedneedle::playback::services::PresenceRegistry;
-    use droppedneedle::remotes::presence_feed::MediaJobs;
+    use droppedneedle_media::playback::services::PresenceRegistry;
+    use droppedneedle_media::remotes::presence_feed::MediaJobs;
 
     let plex = serve_plex().await.expect("mock serves");
     let resolver = Arc::new(ConnectionResolver::new(

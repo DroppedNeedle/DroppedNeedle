@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = [".", "auth", "kernel", "library", "plugins", "providers", "testkit"]
+members = [".", "auth", "kernel", "library", "media", "plugins", "providers", "testkit"]
 
 [workspace.package]
 version = "3.0.0"
@@ -12,6 +12,7 @@ license = "AGPL-3.0-or-later"
 droppedneedle-auth = { path = "auth", version = "3.0.0" }
 droppedneedle-kernel = { path = "kernel", version = "3.0.0" }
 droppedneedle-library = { path = "library", version = "3.0.0" }
+droppedneedle-media = { path = "media", version = "3.0.0" }
 droppedneedle-plugins = { path = "plugins", version = "3.0.0" }
 droppedneedle-providers = { path = "providers", version = "3.0.0" }
 argon2 = { version = "0.5", features = ["alloc"] }
@@ -76,15 +77,14 @@ license.workspace = true
 droppedneedle-auth.workspace = true
 droppedneedle-kernel.workspace = true
 droppedneedle-library.workspace = true
+droppedneedle-media.workspace = true
 droppedneedle-plugins.workspace = true
 droppedneedle-providers.workspace = true
 argon2.workspace = true
 axum.workspace = true
 base64.workspace = true
 bcrypt.workspace = true
-caseless.workspace = true
 chacha20poly1305.workspace = true
-flate2.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
 libc.workspace = true
@@ -121,12 +121,14 @@ test-support = [
     "droppedneedle-auth/test-support",
     "droppedneedle-library/test-support",
     "droppedneedle-plugins/test-support",
+    "droppedneedle-media/test-support",
 ]
 
 [dev-dependencies]
 droppedneedle = { path = ".", features = ["test-support"] }
 droppedneedle-testkit = { path = "testkit", version = "0.1.0" }
 tokio = { version = "1", features = ["test-util"] }
+flate2.workspace = true
 lofty.workspace = true
 regex.workspace = true
 ring.workspace = true

@@ -23,9 +23,9 @@ use super::sources::{
 use crate::reads::catalog::mapping::should_include_release;
 use crate::reads::catalog::upstream::{CatalogLastFm, Upstream, user_lastfm};
 use crate::reads::discover::ports::BoxFuture;
-use crate::remotes::connections::{ConnectionResolver, ResolveError};
-use crate::remotes::jellyfin::JellyfinAdapter;
-use crate::remotes::models::SourceName;
+use droppedneedle_media::remotes::connections::{ConnectionResolver, ResolveError};
+use droppedneedle_media::remotes::jellyfin::JellyfinAdapter;
+use droppedneedle_media::remotes::models::SourceName;
 use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
 use droppedneedle_providers::adapters::{CorePacer, CoreSink};
 use droppedneedle_providers::cache::cache_aside_json;

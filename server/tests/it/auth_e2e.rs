@@ -158,10 +158,12 @@ impl E2e {
             Arc::clone(&self.clock) as Arc<dyn droppedneedle_auth::users::stores::Clock>,
             "",
             &self.upstreams,
-            Arc::new(droppedneedle::remotes::plex::ConfiguredPlexServer::new(
-                self.http.shared().clone(),
-                Arc::clone(&self.store),
-            )),
+            Arc::new(
+                droppedneedle_media::remotes::plex::ConfiguredPlexServer::new(
+                    self.http.shared().clone(),
+                    Arc::clone(&self.store),
+                ),
+            ),
             droppedneedle::bootstrap::sign_in_links(
                 self.runtime.pool().clone(),
                 self.runtime.lane().clone(),
@@ -223,7 +225,7 @@ impl E2e {
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
         )
         .expect("library bundle builds");
-        let (media, _worker) = droppedneedle::media::MediaSetup::build(
+        let (media, _worker) = droppedneedle_media::MediaSetup::build(
             &self.db_path,
             &app_config,
             auth.users.clone(),
