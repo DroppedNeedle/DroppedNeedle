@@ -838,13 +838,13 @@ where
         let Some((kind, internal)) = state.ids.from_jf(&item_id).await else {
             return json(StatusCode::OK, &empty);
         };
-        let artist_mbid = match kind.as_str() {
+        let artist_id = match kind.as_str() {
             "artist" => Some(internal),
             "track" => state
                 .library
                 .track(&ctx.principal.id, &internal)
                 .await
-                .and_then(|t| t.artist_mbid),
+                .and_then(|t| t.artist_id),
             "album" => state
                 .library
                 .album(&ctx.principal.id, &internal)
@@ -852,11 +852,11 @@ where
                 .and_then(|a| a.artist_id),
             _ => None,
         };
-        let Some(artist_mbid) = artist_mbid else {
+        let Some(artist_id) = artist_id else {
             return json(StatusCode::OK, &empty);
         };
         let filter = TrackFilter {
-            artists: vec![artist_mbid],
+            artists: vec![artist_id],
             ..TrackFilter::default()
         };
         let (tracks, _) = state

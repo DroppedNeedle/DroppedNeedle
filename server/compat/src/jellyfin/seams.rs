@@ -169,11 +169,14 @@ pub struct TrackView {
     pub track_number: Option<i32>,
     pub disc_number: Option<i32>,
     pub album_title: Option<String>,
-    pub rg_mbid: Option<String>,
+    /// Local album id.
+    pub album_id: Option<String>,
     pub artist_name: Option<String>,
-    pub artist_mbid: Option<String>,
+    /// Local id of the track artist.
+    pub artist_id: Option<String>,
     pub album_artist_name: Option<String>,
-    pub album_artist_mbid: Option<String>,
+    /// Local id of the album artist.
+    pub album_artist_id: Option<String>,
     pub genre: Option<String>,
     pub file_format: Option<String>,
     /// Source bitrate in kbps (v2 `ViewTrack.bitrate`).

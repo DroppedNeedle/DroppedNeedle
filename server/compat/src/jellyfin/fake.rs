@@ -180,7 +180,7 @@ fn is_favorite(rows: &MemoryRows, user_id: &str, kind: &str, id: &str) -> bool {
 fn track_for(rows: &MemoryRows, user_id: &str, track: &TrackView) -> TrackView {
     let mut track = track.clone();
     track.starred = is_favorite(rows, user_id, "track", &track.file_id);
-    track.album_image_tag = track.rg_mbid.as_deref().and_then(|rg| cover_tag(rows, rg));
+    track.album_image_tag = track.album_id.as_deref().and_then(|rg| cover_tag(rows, rg));
     track
 }
 
@@ -298,13 +298,13 @@ impl LibraryRead for FakeLibrary {
                         filter
                             .album
                             .as_ref()
-                            .is_none_or(|album| t.rg_mbid.as_ref() == Some(album))
+                            .is_none_or(|album| t.album_id.as_ref() == Some(album))
                             && (filter.artists.is_empty()
-                                || t.artist_mbid
+                                || t.artist_id
                                     .as_ref()
                                     .is_some_and(|m| filter.artists.contains(m)))
                             && (filter.album_artists.is_empty()
-                                || t.album_artist_mbid
+                                || t.album_artist_id
                                     .as_ref()
                                     .is_some_and(|m| filter.album_artists.contains(m)))
                             && filter
@@ -378,14 +378,14 @@ impl LibraryRead for FakeLibrary {
                     .tracks
                     .iter()
                     .filter(|t| {
-                        t.artist_mbid
+                        t.artist_id
                             .as_ref()
                             .is_some_and(|m| filter.appears_on.contains(m))
-                            && t.album_artist_mbid
+                            && t.album_artist_id
                                 .as_ref()
                                 .is_none_or(|m| !filter.appears_on.contains(m))
                     })
-                    .filter_map(|t| t.rg_mbid.as_deref())
+                    .filter_map(|t| t.album_id.as_deref())
                     .collect();
                 rows.albums
                     .iter()

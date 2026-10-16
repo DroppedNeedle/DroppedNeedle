@@ -294,16 +294,16 @@ impl<'a, I: IdMap> Builder<'a, I> {
     /// Track → `Audio` DTO (v2 `JellyfinBuilder.audio`).
     pub async fn audio(&self, t: &TrackView) -> BaseItemDto {
         let track_id = self.ids.to_jf("track", &t.file_id).await;
-        let album_id = match t.rg_mbid.as_deref() {
+        let album_id = match t.album_id.as_deref() {
             Some(rg) => Some(self.ids.to_jf("album", rg).await),
             None => None,
         };
-        let album_artist_mbid = t.album_artist_mbid.as_deref().or(t.artist_mbid.as_deref());
-        let artist_jf = match t.artist_mbid.as_deref() {
+        let album_artist = t.album_artist_id.as_deref().or(t.artist_id.as_deref());
+        let artist_jf = match t.artist_id.as_deref() {
             Some(m) => Some(self.ids.to_jf("artist", m).await),
             None => None,
         };
-        let album_artist_jf = match album_artist_mbid {
+        let album_artist_jf = match album_artist {
             Some(m) => Some(self.ids.to_jf("artist", m).await),
             None => None,
         };

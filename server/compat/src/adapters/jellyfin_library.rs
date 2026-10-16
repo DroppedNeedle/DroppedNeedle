@@ -61,11 +61,11 @@ fn track_view(track: PlayerTrack) -> TrackView {
         track_number: i32::try_from(track.track_number).ok().filter(|n| *n > 0),
         disc_number: i32::try_from(track.disc_number).ok().filter(|n| *n > 0),
         album_title: Some(track.album_title),
-        rg_mbid: Some(track.album_id),
+        album_id: Some(track.album_id),
         artist_name: Some(track.artist_name).filter(|name| !name.is_empty()),
-        artist_mbid: track.artist_id,
+        artist_id: track.artist_id,
         album_artist_name: track.album_artist_name,
-        album_artist_mbid: Some(track.album_artist_id),
+        album_artist_id: Some(track.album_artist_id),
         genre: track.genres.first().cloned(),
         file_format: Some(track.format),
         bitrate: to_u32(track.bit_rate),
@@ -164,13 +164,13 @@ impl JellyfinLibrary {
         let player_ids = self
             .library
             .player_ids(
-                &distinct(views.iter().filter_map(|view| view.rg_mbid.as_ref())),
-                &distinct(views.iter().filter_map(|view| view.artist_mbid.as_ref())),
+                &distinct(views.iter().filter_map(|view| view.album_id.as_ref())),
+                &distinct(views.iter().filter_map(|view| view.artist_id.as_ref())),
             )
             .await?;
         for view in &mut views {
             if let Some(album) = view
-                .rg_mbid
+                .album_id
                 .as_ref()
                 .and_then(|id| player_ids.albums.get(id))
             {
@@ -178,7 +178,7 @@ impl JellyfinLibrary {
                 view.release_mbid = album.release_mbid.clone();
             }
             if let Some(mbid) = view
-                .artist_mbid
+                .artist_id
                 .as_ref()
                 .and_then(|id| player_ids.artists.get(id))
             {

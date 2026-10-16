@@ -1,8 +1,8 @@
 //! The library both compat protocols read: the v3 catalog, the shared
 //! collections (playlists, favorites), lyrics and cover art.
 //!
-//! Ids are local library ids. The view field names (`rg_mbid`,
-//! `artist_mbid`, `file_id`) are the protocol layers' names for "album id",
+//! Ids are local library ids. The Subsonic view field names (`rg_mbid`,
+//! `artist_mbid`, `file_id`) are that layer's names for "album id",
 //! "artist id" and "track id"; real MusicBrainz ids ride the
 //! `musicbrainz_*` fields with `provider_identity_projected` set, so no
 //! local id is ever advertised as an MBID. Those ids come from
