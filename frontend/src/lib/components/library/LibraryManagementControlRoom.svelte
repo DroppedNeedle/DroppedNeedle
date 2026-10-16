@@ -6,8 +6,6 @@
 	import {
 		TriangleAlert,
 		ArrowRight,
-		CirclePause,
-		CirclePlay,
 		History,
 		RotateCcw,
 		Settings2,
@@ -18,6 +16,7 @@
 	import LibraryManagementDiscardPreview from './LibraryManagementDiscardPreview.svelte';
 	import LibraryManagementIdentityReadiness from './LibraryManagementIdentityReadiness.svelte';
 	import LibraryRepairPanel from './LibraryRepairPanel.svelte';
+	import OperationJobStrip from './OperationJobStrip.svelte';
 	import RetagPairCard from './RetagPairCard.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { invalidateLibraryManagementSurfaces } from '$lib/queries/library-management/LibraryManagementInvalidation';
@@ -40,6 +39,7 @@
 		resolveLibraryManagementImportBundleMutation
 	} from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
+	import Button from '$lib/ui/Button.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import {
 		forgetLibraryManagementPreviewToken,
@@ -77,7 +77,7 @@
 	type RunnerMode = 'manage' | 'baseline_restore';
 
 	let runnerMode = $state<RunnerMode | null>(runnerModeFromUrl());
-	let runnerOpener = $state<HTMLButtonElement | null>(null);
+	let runnerOpener = $state<HTMLElement | null>(null);
 
 	const history = $derived(operationsQuery.data?.pages.flatMap((page) => page.items) ?? []);
 	const active = $derived(
@@ -178,7 +178,7 @@
 		replaceState(url, page.state);
 	}
 
-	function openRunner(mode: RunnerMode, opener: HTMLButtonElement): void {
+	function openRunner(mode: RunnerMode, opener: HTMLElement): void {
 		runnerOpener = opener;
 		runnerMode = mode;
 		updateRunnerUrl(mode);
@@ -310,20 +310,25 @@
 				</p>
 			</div>
 			<div class="flex flex-wrap items-center gap-2">
-				<button
-					class="btn management-btn"
+				<Button
+					variant="warning"
+					icon={Sparkles}
 					disabled={recoveryUnavailable || !settingsQuery.data || !policyQuery.data}
 					onclick={(event) => openRunner('manage', event.currentTarget)}
-					><Sparkles class="h-4 w-4" /> Preview organization...</button
+					>Preview organization...</Button
 				>
-				<button
-					class="btn btn-outline"
+				<Button
+					variant="outline"
+					icon={RotateCcw}
 					disabled={recoveryUnavailable || !settingsQuery.data || !policyQuery.data}
 					onclick={(event) => openRunner('baseline_restore', event.currentTarget)}
-					><RotateCcw class="h-4 w-4" /> Restore original state...</button
+					>Restore original state...</Button
 				>
-				<a href={withBasePath('/library/management?tab=automation')} class="btn btn-ghost btn-sm"
-					><Settings2 class="h-4 w-4" /> Automation</a
+				<Button
+					variant="ghost"
+					size="sm"
+					icon={Settings2}
+					href={withBasePath('/library/management?tab=automation')}>Automation</Button
 				>
 			</div>
 		</div>
@@ -383,37 +388,36 @@
 							</p>
 						</div>
 					</div>
-					<div class="flex flex-wrap gap-1">
-						{#if active.operation.state === 'paused'}<button
-								class="btn btn-outline btn-sm"
-								disabled={resumeOperation.isPending}
-								onclick={() =>
-									void resumeOperation
-										.mutateAsync({
-											jobId: active.operation.id,
-											expectedRevision: active.operation.row_revision
-										})
-										.catch(() => undefined)}><CirclePlay class="h-4 w-4" /> Resume</button
-							>{:else if active.operation.state === 'running'}<button
-								class="btn btn-outline btn-sm"
-								disabled={pauseOperation.isPending}
-								onclick={() =>
-									void pauseOperation
-										.mutateAsync({
-											jobId: active.operation.id,
-											expectedRevision: active.operation.row_revision
-										})
-										.catch(() => undefined)}><CirclePause class="h-4 w-4" /> Pause</button
-							>{/if}<a
-							class="btn btn-ghost btn-sm"
+					<OperationJobStrip
+						status={active.operation.state}
+						onpause={() =>
+							pauseOperation
+								.mutateAsync({
+									jobId: active.operation.id,
+									expectedRevision: active.operation.row_revision
+								})
+								.catch(() => undefined)}
+						onresume={() =>
+							resumeOperation
+								.mutateAsync({
+									jobId: active.operation.id,
+									expectedRevision: active.operation.row_revision
+								})
+								.catch(() => undefined)}
+					>
+						<Button
+							variant="ghost"
+							size="sm"
+							icon={ArrowRight}
+							iconPosition="end"
 							href={operationHref(
 								active.operation.id,
 								active.operation.state,
 								active.operation.terminal_code,
 								active.mode
-							)}>Open details <ArrowRight class="h-4 w-4" /></a
+							)}>Open details</Button
 						>
-					</div>
+					</OperationJobStrip>
 				</article>
 			{/if}
 
@@ -551,19 +555,19 @@
 										</ul>
 										{#if authStore.isAdmin && group.staleCount > 0}
 											<div class="mt-2 flex flex-wrap gap-2">
-												<button
-													type="button"
-													class="btn btn-outline btn-sm"
+												<Button
+													variant="outline"
+													size="sm"
 													disabled={bulkPending}
 													onclick={() => void bulkRetryStale(group.items)}
-													>Retry {group.staleCount} stale</button
+													>Retry {group.staleCount} stale</Button
 												>
-												<button
-													type="button"
-													class="btn btn-ghost btn-sm text-error"
+												<Button
+													variant="danger-ghost"
+													size="sm"
 													disabled={bulkPending}
 													onclick={() => void bulkDismissStale(group.items)}
-													>Dismiss {group.staleCount} stale</button
+													>Dismiss {group.staleCount} stale</Button
 												>
 											</div>
 										{/if}
@@ -641,13 +645,13 @@
 										>{bundle.file_count ?? 0} files{#if bundle.sample_paths?.length}: <span
 												class="font-mono text-xs break-all">{bundle.sample_paths.join(', ')}</span
 											>{/if}</span
-									><button
-										type="button"
-										class="btn btn-warning btn-sm"
+									><Button
+										variant="warning"
+										size="sm"
 										aria-label={`Mark ${bundle.bundle_id} as handled`}
 										disabled={resolvingBundleId !== null}
 										onclick={() => void resolveNeedsAttentionBundle(bundle.bundle_id)}
-										>Mark as handled</button
+										>Mark as handled</Button
 									>
 								</li>{/each}
 						</ul>{/if}
@@ -730,7 +734,8 @@
 							{#if takeovers.total > 1}
 								<div class="mt-3 flex flex-wrap items-center gap-3">
 									<AsyncButton
-										class="btn btn-outline btn-sm"
+										variant="outline"
+										size="sm"
 										pending={handBackAll.isPending}
 										onclick={() => handBackAll.mutateAsync().catch(() => undefined)}
 										>Manage all {takeovers.total} again</AsyncButton
@@ -761,7 +766,8 @@
 														role="status">{handBackRefusals[album.album_id]}</span
 													>{/if}</span
 											><AsyncButton
-												class="btn btn-ghost btn-sm"
+												variant="ghost"
+												size="sm"
 												onclick={() => handBackOne(album.album_id)}>Manage it again</AsyncButton
 											>
 										</li>{/each}

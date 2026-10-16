@@ -4,12 +4,9 @@
 	import {
 		TriangleAlert,
 		CircleCheckBig,
-		CirclePause,
-		CirclePlay,
 		Clock3,
 		FolderCog,
 		History,
-		OctagonX,
 		RotateCcw,
 		ServerCog,
 		ShieldAlert
@@ -28,6 +25,8 @@
 		getLibraryManagementOperationResultsQuery
 	} from '$lib/queries/library-management/LibraryManagementQueries.svelte';
 	import { rememberLibraryManagementPreviewToken } from '$lib/queries/library-management/LibraryManagementPreviewTokens';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { createUuid } from '$lib/utils/uuid';
 	import {
@@ -46,6 +45,7 @@
 	} from './LibraryManagementDisplay';
 	import LibraryManagementAuditDossiers from './LibraryManagementAuditDossiers.svelte';
 	import LibraryManagementResultInspector from './LibraryManagementResultInspector.svelte';
+	import OperationJobStrip from './OperationJobStrip.svelte';
 	import {
 		groupManagementAuditEntries,
 		type ManagementAuditEntry,
@@ -60,10 +60,10 @@
 	let { jobId }: Props = $props();
 	let stopDialog: HTMLDialogElement;
 	let stopHeading: HTMLHeadingElement;
-	let stopOpener: HTMLButtonElement | null = null;
+	let stopOpener: HTMLElement | null = null;
 	let undoDialog: HTMLDialogElement;
 	let undoHeading: HTMLHeadingElement;
-	let undoOpener: HTMLButtonElement | null = null;
+	let undoOpener: HTMLElement | null = null;
 	let undoError = $state('');
 	let nowSeconds = $state(Date.now() / 1000);
 	let redirectingReadyPreview = $state(false);
@@ -420,30 +420,18 @@
 						>
 					</div>
 				</div>
-				{#if ['queued', 'running', 'paused'].includes(operation.state)}<div
-						class="mt-4 flex flex-wrap gap-2"
-					>
-						{#if operation.state === 'paused'}<button
-								class="btn management-btn btn-sm"
-								disabled={resumeOperation.isPending}
-								onclick={() => void control('resume')}
-								>{#if resumeOperation.isPending}<span class="loading loading-spinner loading-sm"
-									></span>{/if}<CirclePlay class="h-4 w-4" /> Resume</button
-							>{:else if operation.state === 'running'}<button
-								class="btn btn-outline btn-sm"
-								disabled={pauseOperation.isPending}
-								onclick={() => void control('pause')}
-								>{#if pauseOperation.isPending}<span class="loading loading-spinner loading-sm"
-									></span>{/if}<CirclePause class="h-4 w-4" /> Pause</button
-							>{/if}<button
-							class="btn btn-ghost btn-sm text-error"
-							onclick={(event) => {
-								stopOpener = event.currentTarget;
-								stopDialog.showModal();
-								stopHeading.focus();
-							}}><OctagonX class="h-4 w-4" /> Stop...</button
-						>
-					</div>{/if}
+				<OperationJobStrip
+					class="mt-4"
+					status={operation.state}
+					onpause={() => control('pause')}
+					onresume={() => control('resume')}
+					onstop={(opener) => {
+						stopOpener = opener;
+						stopDialog.showModal();
+						stopHeading.focus();
+					}}
+					confirmStop
+				/>
 			</header>
 
 			{#if terminalPresentation}<div
@@ -457,7 +445,7 @@
 					>
 				</div>{/if}
 
-			{#if externalRefreshes.length}<section class="management-operation-panel">
+			{#if externalRefreshes.length}<Card as="section" variant="bordered" padding="md">
 					<div class="flex items-start gap-3">
 						<div class="mt-0.5 rounded-lg border border-base-content/10 bg-base-200/60 p-2">
 							<ServerCog class="h-4 w-4 text-library-manage" />
@@ -494,16 +482,19 @@
 								>
 							</div>{/each}
 					</div>
-				</section>{/if}
+				</Card>{/if}
 
-			<section class="management-operation-panel space-y-3">
+			<Card as="section" variant="bordered" padding="md">
 				<div class="flex flex-wrap items-end justify-between gap-2">
 					<div>
 						<p class="management-step">Audit trail</p>
 						<h2 class="font-display text-xl font-semibold">Per-file results</h2>
 					</div>
-					<a href={withBasePath('/library/management/history')} class="btn btn-ghost btn-sm"
-						><History class="h-4 w-4" /> All history</a
+					<Button
+						variant="ghost"
+						size="sm"
+						icon={History}
+						href={withBasePath('/library/management/history')}>All history</Button
 					>
 				</div>
 				{#if resultsQuery.isLoading}<div
@@ -525,17 +516,16 @@
 						detailLabel="Inspect result evidence"
 						incomplete={Boolean(resultsQuery.hasNextPage)}
 					/>
-					{#if resultsQuery.hasNextPage}<button
-							class="btn btn-outline w-full"
-							disabled={resultsQuery.isFetchingNextPage}
-							onclick={() => void resultsQuery.fetchNextPage()}
-							>{#if resultsQuery.isFetchingNextPage}<span class="loading loading-spinner loading-sm"
-								></span>{/if} Load more results</button
+					{#if resultsQuery.hasNextPage}<Button
+							variant="outline"
+							class="w-full"
+							loading={resultsQuery.isFetchingNextPage}
+							onclick={() => void resultsQuery.fetchNextPage()}>Load more results</Button
 						>{/if}{/if}
-			</section>
+			</Card>
 
 			<section class="grid gap-3 sm:grid-cols-2">
-				<div class="management-operation-panel">
+				<Card variant="bordered" padding="md">
 					<RotateCcw class="h-5 w-5 text-library-manage" />
 					<h2 class="mt-2 font-semibold">Undo this operation</h2>
 					<p class="mt-1 text-sm text-base-content/55">
@@ -543,22 +533,24 @@
 						again later are skipped.
 					</p>
 					<p class="mt-2 text-xs text-base-content/55">{undoStatus}</p>
-					<button
-						class="btn btn-outline btn-sm mt-3"
+					<Button
+						variant="outline"
+						size="sm"
+						class="mt-3 self-start"
 						disabled={!undoAvailable}
 						onclick={(event) => {
 							undoOpener = event.currentTarget;
 							undoError = '';
 							undoDialog.showModal();
 							undoHeading.focus();
-						}}>Preview Undo...</button
+						}}>Preview Undo...</Button
 					>{#if operation.undo_available_count > 0 && !undoAvailable && (operation.undo_expires_at === null || operation.undo_expires_at > nowSeconds)}<p
 							class="mt-2 text-xs text-base-content/45"
 						>
 							Undo becomes available when this operation reaches a successful or stopped state.
 						</p>{/if}
-				</div>
-				<div class="management-operation-panel">
+				</Card>
+				<Card variant="bordered" padding="md">
 					<Clock3 class="h-5 w-5 text-base-content/50" />
 					<h2 class="mt-2 font-semibold">Original baseline</h2>
 					<p class="mt-1 text-sm text-base-content/55">
@@ -568,11 +560,14 @@
 					{#if operation.baseline_available_count > 0}<p class="mt-2 text-xs text-base-content/55">
 							{baselineStatus}
 						</p>{/if}
-					<a
+					<Button
+						variant="ghost"
+						size="sm"
+						class="mt-3 self-start"
 						href={withBasePath('/library/management?runner=baseline_restore')}
-						class="btn btn-ghost btn-sm mt-3">Open baseline restore...</a
+						>Open baseline restore...</Button
 					>
-				</div>
+				</Card>
 			</section>
 		{/if}
 	</main>
@@ -601,13 +596,10 @@
 			or stops.
 		</p>
 		<div class="modal-action">
-			<button
-				class="btn btn-ghost"
-				disabled={stopOperation.isPending}
-				onclick={() => stopDialog.close()}>Keep working</button
-			><button class="btn btn-error" disabled={stopOperation.isPending} onclick={() => void stop()}
-				>{#if stopOperation.isPending}<span class="loading loading-spinner loading-sm"></span>{/if} Stop
-				operation</button
+			<Button variant="ghost" disabled={stopOperation.isPending} onclick={() => stopDialog.close()}
+				>Keep working</Button
+			><Button variant="danger" loading={stopOperation.isPending} onclick={() => void stop()}
+				>Stop operation</Button
 			>
 		</div>
 	</div>
@@ -649,16 +641,13 @@
 		</div>
 		{#if undoError}<div class="alert alert-error mt-3 text-sm" role="alert">{undoError}</div>{/if}
 		<div class="modal-action">
-			<button
-				class="btn btn-ghost"
-				disabled={createUndo.isPending}
-				onclick={() => undoDialog.close()}>Cancel</button
-			><button
-				class="btn management-btn"
-				disabled={createUndo.isPending || !undoAvailable}
-				onclick={() => void previewUndo()}
-				>{#if createUndo.isPending}<span class="loading loading-spinner loading-sm"></span>{/if} Generate
-				Undo preview</button
+			<Button variant="ghost" disabled={createUndo.isPending} onclick={() => undoDialog.close()}
+				>Cancel</Button
+			><Button
+				variant="warning"
+				loading={createUndo.isPending}
+				disabled={!undoAvailable}
+				onclick={() => void previewUndo()}>Generate Undo preview</Button
 			>
 		</div>
 	</div>

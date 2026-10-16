@@ -11,6 +11,7 @@
 		managementReasonLabel,
 		titleManagementValue
 	} from './LibraryManagementDisplay';
+	import Card from '$lib/ui/Card.svelte';
 	import LibraryManagementLyricsEvidence from './LibraryManagementLyricsEvidence.svelte';
 
 	interface Props {
@@ -114,7 +115,7 @@
 				</div>
 			</div>
 		{:else if item.result && Object.keys(item.result).length}
-			<div class="rounded-xl border border-base-content/10 bg-base-100/70 p-3">
+			<Card variant="bordered" padding="sm">
 				<div class="flex items-center gap-2">
 					<FileClock class="h-4 w-4 text-library-manage" /><strong class="text-sm"
 						>Result payload</strong
@@ -123,7 +124,7 @@
 				<p class="mt-2 break-words font-mono text-xs text-base-content/60">
 					{formatManagementValue(item.result)}
 				</p>
-			</div>
+			</Card>
 		{:else}
 			<p class="text-sm text-base-content/50">No additional result payload was required.</p>
 		{/if}

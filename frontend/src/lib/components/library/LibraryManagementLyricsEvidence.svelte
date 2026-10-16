@@ -2,6 +2,7 @@
 	import { FileText } from 'lucide-svelte';
 
 	import type { LibraryManagementPlanItem } from '$lib/queries/library-management/types';
+	import Card from '$lib/ui/Card.svelte';
 	import { managementFieldDiffs, managementLyricsProjection } from './LibraryManagementDisplay';
 
 	interface Props {
@@ -80,7 +81,7 @@
 			>
 		</div>
 		<div class="mt-3 grid gap-2 sm:grid-cols-2">
-			<div class="rounded-lg border border-base-content/10 bg-base-100/65 px-3 py-2">
+			<Card variant="bordered" padding="sm">
 				<small class="block text-base-content/45">Plain lyrics</small>
 				<strong class="text-sm"
 					>{writeLabel(
@@ -89,11 +90,11 @@
 						plainDiff?.operation ?? null
 					)}</strong
 				>
-			</div>
-			<div class="rounded-lg border border-base-content/10 bg-base-100/65 px-3 py-2">
+			</Card>
+			<Card variant="bordered" padding="sm">
 				<small class="block text-base-content/45">Synchronized lyrics</small>
 				<strong class="text-sm">{synchronizedWriteLabel()}</strong>
-			</div>
+			</Card>
 		</div>
 		{#if projection.status !== 'available'}
 			<p class="mt-3 text-xs font-medium text-base-content/65">

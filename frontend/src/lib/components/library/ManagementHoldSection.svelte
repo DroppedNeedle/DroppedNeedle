@@ -14,6 +14,7 @@
 		handBackRefusalMessage
 	} from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		album: LibraryAlbumDetail;
@@ -79,48 +80,49 @@
 </script>
 
 {#if hold && holdCopy}
-	<section
-		class="flex flex-wrap items-start gap-3 rounded-2xl border border-base-content/10 bg-base-200/50 px-4 py-3.5 sm:flex-nowrap"
-		aria-label="Left unmanaged"
-	>
-		<div
-			class="grid size-9 shrink-0 place-items-center rounded-xl bg-warning/10 text-warning"
-			aria-hidden="true"
-		>
-			<CirclePause class="h-5 w-5" />
-		</div>
-		<div class="min-w-0 flex-1">
-			<p class="text-[0.66rem] font-extrabold tracking-[0.12em] text-base-content/55 uppercase">
-				Left unmanaged
-			</p>
-			<h3 class="hero-title text-lg font-bold">{holdCopy.heading}</h3>
-			{#if holdCopy.body}<p class="text-xs text-base-content/60">{holdCopy.body}</p>{/if}
-			<div class="mt-3 flex flex-wrap items-center gap-3">
-				{#if hold.kind === 'your_choice'}
-					<AsyncButton
-						class="btn btn-outline btn-sm"
-						disabled={hold.exclusion_revision == null}
-						pending={reenableManagement.isPending}
-						onclick={() =>
-							hold.exclusion_revision != null &&
-							reenableManagement
-								.mutateAsync({ albumId: album.id, expectedRevision: hold.exclusion_revision })
-								.catch(() => undefined)}>Manage it again</AsyncButton
-					>
-				{:else}
-					<AsyncButton
-						class="btn btn-outline btn-sm"
-						disabled={hold.handing_back}
-						pending={handBack.isPending}
-						onclick={() => handBack.mutateAsync({ albumId: album.id }).catch(() => undefined)}
-						>{hold.handing_back ? 'Being handed back' : 'Manage it again'}</AsyncButton
-					>
-					<p class="max-w-xl flex-1 text-xs text-base-content/60">{handBackNote}</p>
-				{/if}
+	<Card as="section" variant="bordered" padding="md" aria-label="Left unmanaged">
+		<div class="flex flex-wrap items-start gap-3 sm:flex-nowrap">
+			<div
+				class="grid size-9 shrink-0 place-items-center rounded-xl bg-warning/10 text-warning"
+				aria-hidden="true"
+			>
+				<CirclePause class="h-5 w-5" />
 			</div>
-			{#if handBackRefusal}<div class="mt-2 text-sm text-warning" role="status">
-					{handBackRefusal}
-				</div>{/if}
+			<div class="min-w-0 flex-1">
+				<p class="text-[0.66rem] font-extrabold tracking-[0.12em] text-base-content/55 uppercase">
+					Left unmanaged
+				</p>
+				<h3 class="hero-title text-lg font-bold">{holdCopy.heading}</h3>
+				{#if holdCopy.body}<p class="text-xs text-base-content/60">{holdCopy.body}</p>{/if}
+				<div class="mt-3 flex flex-wrap items-center gap-3">
+					{#if hold.kind === 'your_choice'}
+						<AsyncButton
+							variant="outline"
+							size="sm"
+							disabled={hold.exclusion_revision == null}
+							pending={reenableManagement.isPending}
+							onclick={() =>
+								hold.exclusion_revision != null &&
+								reenableManagement
+									.mutateAsync({ albumId: album.id, expectedRevision: hold.exclusion_revision })
+									.catch(() => undefined)}>Manage it again</AsyncButton
+						>
+					{:else}
+						<AsyncButton
+							variant="outline"
+							size="sm"
+							disabled={hold.handing_back}
+							pending={handBack.isPending}
+							onclick={() => handBack.mutateAsync({ albumId: album.id }).catch(() => undefined)}
+							>{hold.handing_back ? 'Being handed back' : 'Manage it again'}</AsyncButton
+						>
+						<p class="max-w-xl flex-1 text-xs text-base-content/60">{handBackNote}</p>
+					{/if}
+				</div>
+				{#if handBackRefusal}<div class="mt-2 text-sm text-warning" role="status">
+						{handBackRefusal}
+					</div>{/if}
+			</div>
 		</div>
-	</section>
+	</Card>
 {/if}

@@ -21,6 +21,7 @@
 	import { getLibraryActivityQuery } from '$lib/queries/library/LibraryActivityQueries.svelte';
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import Button from '$lib/ui/Button.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 
 	const settingsQuery = getTargetLibrarySettingsQuery(() => authStore.isAdmin);
@@ -130,11 +131,17 @@
 	>
 		{#snippet title()}Library Management{/snippet}
 		{#snippet actions()}
-			<a href={withBasePath('/library')} class="btn btn-ghost btn-sm gap-2 rounded-full sm:btn-md">
-				<ArrowLeft class="h-4 w-4" />
+			<Button
+				variant="ghost"
+				size="sm"
+				pill
+				icon={ArrowLeft}
+				class="gap-2"
+				href={withBasePath('/library')}
+			>
 				<span class="hidden sm:inline">Back to Library</span>
 				<span class="sm:hidden">Library</span>
-			</a>
+			</Button>
 		{/snippet}
 	</PageHeader>
 

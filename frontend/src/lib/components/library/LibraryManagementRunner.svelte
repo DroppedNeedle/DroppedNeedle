@@ -28,6 +28,11 @@
 		LibraryManagementSettingsResponse,
 		ManagementSelectionKind
 	} from '$lib/queries/library-management/types';
+	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
+	import Input from '$lib/ui/Input.svelte';
+	import SelectField from '$lib/ui/SelectField.svelte';
+	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { createUuid } from '$lib/utils/uuid';
 
@@ -95,6 +100,12 @@
 			filterSearch.trim() || filterGenre.trim() || filterFromYear !== null || filterToYear !== null
 		)
 	);
+	const destinationOptions = $derived([
+		{ value: '', label: 'Keep organization within each source root' },
+		...roots
+			.filter((root) => selectionKind !== 'roots' || !selectedIds.includes(root.id))
+			.map((root) => ({ value: root.id, label: root.label }))
+	]);
 	const progressSteps = $derived(
 		mode === 'baseline_restore'
 			? [
@@ -354,12 +365,14 @@
 					This creates a saved read-only preview. No music file changes.
 				</p>
 			</div>
-			<button
-				class="btn btn-ghost btn-sm btn-square"
-				aria-label="Close manual management runner"
+			<IconButton
+				size="sm"
+				shape="square"
+				icon={X}
+				label="Close manual management runner"
 				disabled={pending}
-				onclick={() => dialog.close()}><X class="h-5 w-5" /></button
-			>
+				onclick={() => dialog.close()}
+			/>
 		</header>
 
 		<div class="management-runner-progress" aria-label="Runner progress">
@@ -418,9 +431,10 @@
 										{currentScopeItems().length === 1 ? 'item' : 'items'} in scope</small
 									>
 								</div>
-								{#if currentScopeItems().length > 0}<button
-										class="btn btn-ghost btn-xs"
-										onclick={clearSelection}>Clear all</button
+								{#if currentScopeItems().length > 0}<Button
+										variant="ghost"
+										size="xs"
+										onclick={clearSelection}>Clear all</Button
 									>{/if}
 							</div>
 							{#if currentScopeItems().length === 0}
@@ -453,11 +467,13 @@
 											<span class="min-w-0 flex-1"
 												><strong>{item.title}</strong><small>{item.subtitle}</small></span
 											>
-											<button
-												class="btn btn-ghost btn-xs btn-square"
-												aria-label={`Remove ${item.title} from scope`}
-												onclick={() => removeSelected(item.id)}><X class="h-3.5 w-3.5" /></button
-											>
+											<IconButton
+												size="xs"
+												shape="square"
+												icon={X}
+												label={`Remove ${item.title} from scope`}
+												onclick={() => removeSelected(item.id)}
+											/>
 										</div>
 									{/each}
 								</div>
@@ -482,43 +498,46 @@
 					{:else if selectionKind === 'filter'}
 						<div class="grid gap-3 sm:grid-cols-2">
 							<label class="grid gap-1 text-sm sm:col-span-2"
-								><span>Catalog search</span><input
-									class="input input-bordered bg-base-100"
+								><span>Catalog search</span><Input
+									label="Catalog search"
+									class="w-full"
 									bind:value={filterSearch}
 									placeholder="Artist, release, or title"
 								/></label
 							>
 							<label class="grid gap-1 text-sm"
-								><span>Genre</span><input
-									class="input input-bordered bg-base-100"
+								><span>Genre</span><Input
+									label="Genre"
+									class="w-full"
 									bind:value={filterGenre}
 								/></label
 							>
 							<div class="grid grid-cols-2 gap-2">
 								<label class="grid gap-1 text-sm"
-									><span>From year</span><input
+									><span>From year</span><Input
 										type="number"
-										class="input input-bordered bg-base-100"
+										label="From year"
+										class="w-full"
 										bind:value={filterFromYear}
 									/></label
 								><label class="grid gap-1 text-sm"
-									><span>To year</span><input
+									><span>To year</span><Input
 										type="number"
-										class="input input-bordered bg-base-100"
+										label="To year"
+										class="w-full"
 										bind:value={filterToYear}
 									/></label
 								>
 							</div>
 						</div>
 					{:else}
-						<label class="input input-bordered flex items-center gap-2 bg-base-100"
-							><Search class="h-4 w-4 text-base-content/40" /><input
-								class="grow"
-								bind:value={searchTerm}
-								placeholder={`Search library ${selectionNoun(selectionKind)}`}
-								aria-label={`Search library ${selectionNoun(selectionKind)}`}
-							/></label
-						>
+						<Input
+							icon={Search}
+							class="w-full"
+							label={`Search library ${selectionNoun(selectionKind)}`}
+							placeholder={`Search library ${selectionNoun(selectionKind)}`}
+							bind:value={searchTerm}
+						/>
 						{#if searchTerm.trim().length < 2}<p class="text-sm text-base-content/45">
 								Type at least two characters, then select one or more results.
 							</p>{:else if searchQuery.isLoading}<div
@@ -605,13 +624,11 @@
 							never edited.
 						</p>
 					</div>
-					<label class="management-master-toggle"
-						><input type="checkbox" class="toggle toggle-sm" bind:checked={customized} /><span
-							><strong>Customize this run</strong><small
-								>Temporary values are pinned only to this preview.</small
-							></span
-						></label
-					>{#if customized}<div class="grid gap-2 sm:grid-cols-2">
+					<ToggleRow
+						label="Customize this run"
+						description="Temporary values are pinned only to this preview."
+						bind:checked={customized}
+					/>{#if customized}<div class="grid gap-2 sm:grid-cols-2">
 							{#each [{ label: 'Metadata tags', get: () => metadataEnabled, set: (value: boolean) => (metadataEnabled = value) }, { label: 'Genres', get: () => genresEnabled, set: (value: boolean) => (genresEnabled = value) }, { label: 'Embedded artwork', get: () => embeddedArtworkEnabled, set: (value: boolean) => (embeddedArtworkEnabled = value) }, { label: 'External artwork', get: () => externalArtworkEnabled, set: (value: boolean) => (externalArtworkEnabled = value) }, { label: 'Rename files', get: () => renameEnabled, set: (value: boolean) => (renameEnabled = value) }, { label: 'Move within root', get: () => moveEnabled, set: (value: boolean) => (moveEnabled = value) }, { label: 'Move sidecars', get: () => sidecarsEnabled, set: (value: boolean) => (sidecarsEnabled = value) }] as option (option.label)}<label
 									class="management-trigger"
 									><input
@@ -621,20 +638,13 @@
 										onchange={(event) => option.set(event.currentTarget.checked)}
 									/><span><strong>{option.label}</strong><small>One run only</small></span></label
 								>{/each}
-						</div>{/if}<label class="grid gap-1 text-sm"
-						><span>Explicit cross-root destination</span><select
-							class="select select-bordered bg-base-100"
-							bind:value={targetRootId}
-							disabled={!moveEnabled}
-							><option value="">Keep organization within each source root</option
-							>{#each roots.filter((root) => selectionKind !== 'roots' || !selectedIds.includes(root.id)) as root (root.id)}<option
-									value={root.id}>{root.label}</option
-								>{/each}</select
-						><small class="text-base-content/45"
-							>Cross-root movement happens only in this manual preview and is never an automatic
-							setting.</small
-						></label
-					>
+						</div>{/if}<SelectField
+						label="Explicit cross-root destination"
+						help="Cross-root movement happens only in this manual preview and is never an automatic setting."
+						options={destinationOptions}
+						disabled={!moveEnabled}
+						bind:value={targetRootId}
+					/>
 				</section>
 			{:else if step === 4}
 				<section class="space-y-4">
@@ -693,21 +703,23 @@
 		</div>
 
 		<footer class="management-profile-editor__footer">
-			<button class="btn btn-ghost" disabled={step === 1 || pending} onclick={back}
-				><ArrowLeft class="h-4 w-4" /> Back</button
+			<Button variant="ghost" icon={ArrowLeft} disabled={step === 1 || pending} onclick={back}
+				>Back</Button
 			>
 			<div class="flex gap-2">
-				<button class="btn btn-ghost" disabled={pending} onclick={() => dialog.close()}
-					>Cancel</button
-				>{#if step < 4}<button class="btn management-btn" disabled={!selectionValid} onclick={next}
-						>Continue <ArrowRight class="h-4 w-4" /></button
-					>{:else}<button
-						class="btn management-btn"
-						disabled={!selectionValid || pending || (mode === 'manage' && !profile)}
-						onclick={() => void generate()}
-						>{#if pending}<span class="loading loading-spinner loading-sm"></span>{/if}<Sparkles
-							class="h-4 w-4"
-						/> Generate preview</button
+				<Button variant="ghost" disabled={pending} onclick={() => dialog.close()}>Cancel</Button
+				>{#if step < 4}<Button
+						variant="warning"
+						icon={ArrowRight}
+						iconPosition="end"
+						disabled={!selectionValid}
+						onclick={next}>Continue</Button
+					>{:else}<Button
+						variant="warning"
+						icon={Sparkles}
+						loading={pending}
+						disabled={!selectionValid || (mode === 'manage' && !profile)}
+						onclick={() => void generate()}>Generate preview</Button
 					>{/if}
 			</div>
 		</footer>

@@ -1,6 +1,7 @@
 import type {
 	DuplicateCollisionKind,
-	LibraryManagementPlanItem
+	LibraryManagementPlanItem,
+	LibraryManagementPreviewDetailResponse
 } from '$lib/queries/library-management/types';
 
 export interface ManagementFieldDiff {
@@ -508,4 +509,157 @@ export function managementReasonLabel(value: string): string {
 export function firstDeferredSource(item: LibraryManagementPlanItem): string | null {
 	const sources = item.diff.deferred_sources;
 	return Array.isArray(sources) && typeof sources[0] === 'string' ? sources[0] : null;
+}
+
+/** A reason label; deferred enrichment says the file still applies, and from where. */
+export function qualifiedManagementReasonLabel(
+	code: string,
+	deferredSource: string | null = null
+): string {
+	if (code !== 'OPTIONAL_ENRICHMENT_DEFERRED') return managementReasonLabel(code);
+	const base = 'Optional enrichment deferred · still applicable with warnings';
+	return deferredSource ? `${base} (${deferredSource})` : base;
+}
+
+export function managementPreviewHeading(mode: string): string {
+	return mode === 'preview' ? 'Organization preview' : `${titleManagementValue(mode)} preview`;
+}
+
+export function managementQuantity(value: number, singular: string, plural = `${singular}s`) {
+	return `${value.toLocaleString()} ${value === 1 ? singular : plural}`;
+}
+
+export function formatManagementBytes(value: number): string {
+	if (value < 1024) return `${value} B`;
+	if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KiB`;
+	if (value < 1024 ** 3) return `${(value / 1024 ** 2).toFixed(1)} MiB`;
+	return `${(value / 1024 ** 3).toFixed(1)} GiB`;
+}
+
+/** A server time in seconds; no time means the preview never expires. */
+export function formatManagementDate(value: number | null): string {
+	return value ? new Date(value * 1000).toLocaleString() : 'No expiry';
+}
+
+export function managementRootLabel(
+	roots: ReadonlyArray<{ id: string; label: string }>,
+	value: string | null
+): string {
+	return roots.find((root) => root.id === value)?.label ?? (value ? 'Unavailable root' : 'No root');
+}
+
+export function managementDisplayPath(
+	roots: ReadonlyArray<{ id: string; label: string }>,
+	root: string | null,
+	relative: string | null
+): string {
+	return `${managementRootLabel(roots, root)} · ${relative ?? 'No path'}`;
+}
+
+export function managementStaleBannerDetail(preview: LibraryManagementPreviewDetailResponse) {
+	const labels = preview.stale_reasons
+		.map((code) => qualifiedManagementReasonLabel(code))
+		.join(' · ');
+	// Persisted query-cache entries from before these keys existed lack them.
+	const staleInputCount = preview.stale_input_count ?? 0;
+	if (!preview.stale_reasons.includes('FILE_CHANGED') || staleInputCount <= 0) return labels;
+	// The server already caps the sample at five paths.
+	const samples = (preview.stale_sample_relative_paths ?? []).slice(0, 5);
+	const shown = samples.join(', ');
+	const remaining = staleInputCount - samples.length;
+	const sampleText = shown
+		? `${shown}${remaining > 0 ? ` (+${remaining.toLocaleString()} more)` : ''}`
+		: '';
+	const fileText = managementQuantity(staleInputCount, 'file');
+	return `${labels}. ${fileText} changed since planning${sampleText ? `: ${sampleText}` : ''}. Generate a fresh preview.`;
+}
+
+/**
+ * What the preview says about its metadata sources. A dead preview (stale,
+ * expired, not ready, finished or empty) claims nothing.
+ */
+export function managementProviderStatus(
+	preview: LibraryManagementPreviewDetailResponse | null
+): string {
+	if (
+		!preview ||
+		preview.stale ||
+		preview.expired ||
+		preview.state !== 'ready' ||
+		preview.terminal_code ||
+		preview.summary.item_count === 0
+	)
+		return 'Provider status unavailable';
+	if (preview.summary.reasons.METADATA_UNAVAILABLE) return 'Required metadata unavailable';
+	const deferred = Object.entries(preview.summary.deferred_sources ?? {}).sort(
+		(left, right) => right[1] - left[1]
+	)[0];
+	if (deferred) return `Deferred: ${deferred[0]} ×${deferred[1].toLocaleString()}`;
+	if (preview.summary.reasons.OPTIONAL_ENRICHMENT_DEFERRED)
+		return qualifiedManagementReasonLabel('OPTIONAL_ENRICHMENT_DEFERRED');
+	return 'Required metadata pinned';
+}
+
+export interface ManagementApplyCopy {
+	barTitle: string;
+	barDetail: string;
+	button: string;
+	kicker: string;
+	title: string;
+	detail: string;
+	confirmButton: string;
+}
+
+/** The apply bar and confirmation copy for each kind of preview. */
+export function managementApplyCopy(
+	preview: LibraryManagementPreviewDetailResponse | null
+): ManagementApplyCopy {
+	const eligible = preview?.summary.eligible_count ?? 0;
+	const warnings = preview?.summary.warning_count ?? 0;
+	const count = eligible + warnings;
+	const files = `${count} ${count === 1 ? 'file' : 'files'}`;
+	switch (preview?.mode) {
+		case 'undo':
+			return {
+				barTitle: 'Undo changes only after confirmation',
+				barDetail: 'Files changed again later, blocked rows, and expired snapshots are excluded.',
+				button: `Undo this operation for ${files}`,
+				kicker: 'Undo confirmation',
+				title: 'Undo this operation from this exact preview?',
+				detail: `DroppedNeedle will restore this operation's before-state for ${files}. Later edits are preserved and this does not restore the broader original baseline.`,
+				confirmButton: 'Undo operation'
+			};
+		case 'baseline_restore':
+			return {
+				barTitle: 'Baseline restore changes files only after confirmation',
+				barDetail:
+					'Restored files leave file organization and can be managed again only through a new preview.',
+				button: `Restore original state for ${files}`,
+				kicker: 'Original baseline confirmation',
+				title: 'Restore these original baselines?',
+				detail: `DroppedNeedle will restore ${files} to their earliest saved state from before it first managed them. This is broader than Undo and leaves those files unmanaged.`,
+				confirmButton: 'Restore original state'
+			};
+		case 'duplicate_resolution':
+			return {
+				barTitle: 'Collision resolution changes files only after confirmation',
+				barDetail:
+					'Only the explicitly selected resolution is included; no duplicate is deleted automatically.',
+				button: `Apply collision resolution for ${files}`,
+				kicker: 'Collision-resolution confirmation',
+				title: 'Apply this exact collision resolution?',
+				detail: `DroppedNeedle will carry out the explicitly previewed collision resolution for ${files}. No destination is overwritten and no duplicate is deleted automatically.`,
+				confirmButton: 'Apply collision resolution'
+			};
+		default:
+			return {
+				barTitle: 'Applying is the first write action',
+				barDetail: 'Blocked, stale, and no-change rows are excluded.',
+				button: `Write tags and organize ${files}`,
+				kicker: 'Write confirmation',
+				title: 'Apply this exact preview?',
+				detail: `DroppedNeedle will write tags and organize ${eligible} eligible files plus ${warnings} files with warnings. No destination is overwritten automatically.`,
+				confirmButton: 'Apply exact preview'
+			};
+	}
 }
