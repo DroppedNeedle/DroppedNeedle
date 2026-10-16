@@ -1115,7 +1115,7 @@ async fn covered_album(tag: &str) -> (CompatApp, [String; 3]) {
         album.join("01 Sleeve.flac"),
     )
     .expect("fixture copies");
-    image::RgbImage::from_pixel(8, 8, image::Rgb([200, 10, 10]))
+    image::RgbImage::from_pixel(600, 600, image::Rgb([200, 10, 10]))
         .save(album.join("cover.png"))
         .expect("cover writes");
     rig.app.add_library_folder("second", &second).await;
@@ -1671,11 +1671,11 @@ async fn picture(
 
 /// The Jellyfin picture address opens only for ids the server handed out.
 /// The album's and the artist's ids from a signed-in answer open with no
-/// credentials, as an image with `nosniff` and a sandbox policy. Their old
-/// unkeyed ids, which anyone can work out from public data, are an empty
-/// 404 with or without a valid token, and so is a track's id; the track
-/// points at its album's picture instead. None of these refusals counts
-/// as a failed sign-in.
+/// credentials, as an image with `nosniff` and a sandbox policy, sized by
+/// the width the app asks for. Their old unkeyed ids, which anyone can work
+/// out from public data, are an empty 404 with or without a valid token,
+/// and so is a track's id; the track points at its album's picture
+/// instead. None of these refusals counts as a failed sign-in.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn jellyfin_pictures_open_only_for_ids_the_server_handed_out() {
     let (rig, ids) = covered_jellyfin("compat-jellyfin-pictures").await;
@@ -1696,6 +1696,14 @@ async fn jellyfin_pictures_open_only_for_ids_the_server_handed_out() {
             "public, max-age=31536000, immutable"
         );
         assert!(!body.is_empty(), "{id}");
+    }
+    // The width asked picks the 250, 500 or 1200 picture, and the largest
+    // never enlarges the 600 pixel cover.
+    for (query, side) in [("", 500), ("?width=200", 250), ("?maxWidth=2000", 600)] {
+        let uri = format!("/jellyfin/Items/{}/Images/Primary{query}", ids.album);
+        let (_, _, body) = rig.app.raw("GET", &uri, &[], None).await;
+        let width = image::load_from_memory(&body).expect("a picture").width();
+        assert_eq!(width, side, "{uri}");
     }
 
     let token = rig.jellyfin_auth();
