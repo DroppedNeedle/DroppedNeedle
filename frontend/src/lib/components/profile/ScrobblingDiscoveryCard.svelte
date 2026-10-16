@@ -28,6 +28,10 @@
 	} from '$lib/queries/scrobble-preferences/types';
 	import type { MusicSource } from '$lib/stores/musicSource';
 	import { scrobbleManager } from '$lib/stores/scrobble.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import Input from '$lib/ui/Input.svelte';
+	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
 	interface Props {
 		navidromeEnabled: boolean;
@@ -78,6 +82,15 @@
 	let autoRequestPersonalMix = $state(false);
 	let mixRefreshMessage = $state<string | null>(null);
 	const autoRequestState = $derived(prefs?.auto_request_state ?? 'none');
+	const autoRequestNote = $derived.by(() => {
+		if (!lb) return 'Link ListenBrainz above to enable.';
+		if (autoRequestPersonalMix && autoRequestState === 'pending')
+			return 'Waiting for an admin to approve auto-requests.';
+		if (autoRequestState === 'rejected' || autoRequestState === 'revoked')
+			return 'An admin declined auto-requests for your mix.';
+		return undefined;
+	});
+	const visibilityId = $props.id();
 	$effect(() => {
 		if (prefs) {
 			scrobbleLastfm = prefs.scrobble_to_lastfm ?? false;
@@ -201,6 +214,31 @@
 	}
 </script>
 
+{#snippet serviceRow(
+	Icon: typeof Music,
+	tint: string,
+	name: string,
+	username: string | null | undefined,
+	linked: boolean
+)}
+	<div class="flex min-w-0 items-center gap-3">
+		<div class="flex h-10 w-10 items-center justify-center rounded-xl ring-1 {tint}">
+			<Icon class="h-[1.15rem] w-[1.15rem]" />
+		</div>
+		<div class="min-w-0">
+			<div class="flex items-center gap-2">
+				<span class="text-sm font-semibold">{name}</span>
+				<span class="status {linked ? 'status-success' : 'status-error'} status-sm"></span>
+			</div>
+			{#if linked}
+				<p class="truncate text-xs text-base-content/50">@{username || 'linked'}</p>
+			{:else}
+				<p class="text-xs text-base-content/30">Not connected</p>
+			{/if}
+		</div>
+	</div>
+{/snippet}
+
 <section>
 	<h2
 		class="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-base-content/50"
@@ -209,402 +247,347 @@
 		Scrobbling &amp; Discovery
 	</h2>
 
-	<div
-		class="glow-primary-soft space-y-3 rounded-2xl border border-base-300/50 bg-base-200/40 p-4 backdrop-blur-sm sm:p-5"
-	>
-		{#if loading}
-			<div class="flex items-center justify-center py-10">
-				<LoaderCircle class="h-5 w-5 animate-spin text-base-content/40" />
-			</div>
-		{:else}
-			<div>
-				<div
-					class="crate-card flex items-center justify-between gap-3 rounded-xl border border-base-300/40 bg-base-300/20 p-3"
-				>
-					<div class="flex min-w-0 items-center gap-3">
-						<div
-							class="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-500/10 text-orange-400 ring-1 ring-orange-500/20"
-						>
-							<Music class="h-[1.15rem] w-[1.15rem]" />
-						</div>
-						<div class="min-w-0">
-							<div class="flex items-center gap-2">
-								<span class="text-sm font-semibold">ListenBrainz</span>
-								<span class="status {lb ? 'status-success' : 'status-error'} status-sm"></span>
-							</div>
-							{#if lb}
-								<p class="truncate text-xs text-base-content/50">@{lb.username || 'linked'}</p>
-							{:else}
-								<p class="text-xs text-base-content/30">Not connected</p>
-							{/if}
-						</div>
-					</div>
-					<div class="shrink-0">
-						{#if lb}
-							<button
-								type="button"
-								class="btn btn-ghost btn-xs rounded-full"
-								onclick={() => disconnect('listenbrainz')}
-								disabled={disconnectMutation.isPending}
-							>
-								Disconnect
-							</button>
-						{:else}
-							<button
-								type="button"
-								class="btn btn-listenbrainz btn-xs gap-1 rounded-full px-3 shadow-sm transition-transform hover:scale-[1.03]"
-								onclick={() => (lbFormOpen = !lbFormOpen)}
-							>
-								Connect
-							</button>
-						{/if}
-					</div>
+	<Card variant="bordered" padding="md">
+		<div class="space-y-3">
+			{#if loading}
+				<div class="flex items-center justify-center py-10">
+					<LoaderCircle class="h-5 w-5 animate-spin text-base-content/40" />
 				</div>
-
-				{#if !lb && lbFormOpen}
-					<div
-						class="mt-2 space-y-2 rounded-xl border border-base-300/40 bg-base-100/40 p-3 animate-fade-in-up"
-					>
-						<p class="text-xs text-base-content/60">
-							Paste your ListenBrainz user token and username to link your account.
-						</p>
-						<input
-							type="password"
-							class="input input-sm input-soft w-full"
-							placeholder="User token"
-							bind:value={lbToken}
-							autocomplete="off"
-						/>
-						<input
-							type="text"
-							class="input input-sm input-soft w-full"
-							placeholder="ListenBrainz username"
-							bind:value={lbUsername}
-							autocomplete="off"
-						/>
-						{#if lbError}
-							<p class="text-xs text-error">{lbError}</p>
-						{/if}
-						<div class="flex justify-end gap-2">
-							<button
-								type="button"
-								class="btn btn-ghost btn-xs rounded-full"
-								onclick={() => {
-									lbFormOpen = false;
-									lbError = null;
-								}}
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								class="btn btn-primary btn-xs gap-1 rounded-full"
-								onclick={connectListenBrainz}
-								disabled={connectLbMutation.isPending || !lbToken.trim() || !lbUsername.trim()}
-							>
-								{#if connectLbMutation.isPending}
-									<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
-								{/if}
-								Link account
-							</button>
-						</div>
-					</div>
-				{/if}
-			</div>
-
-			<div>
-				<div
-					class="crate-card flex items-center justify-between gap-3 rounded-xl border border-base-300/40 bg-base-300/20 p-3"
-				>
-					<div class="flex min-w-0 items-center gap-3">
-						<div
-							class="flex h-10 w-10 items-center justify-center rounded-xl bg-red-500/10 text-red-400 ring-1 ring-red-500/20"
-						>
-							<Radio class="h-[1.15rem] w-[1.15rem]" />
-						</div>
-						<div class="min-w-0">
-							<div class="flex items-center gap-2">
-								<span class="text-sm font-semibold">Last.fm</span>
-								<span class="status {lfm ? 'status-success' : 'status-error'} status-sm"></span>
-							</div>
-							{#if lfm}
-								<p class="truncate text-xs text-base-content/50">@{lfm.username || 'linked'}</p>
-							{:else}
-								<p class="text-xs text-base-content/30">Not connected</p>
-							{/if}
-						</div>
-					</div>
-					<div class="shrink-0">
-						{#if lfm}
-							<button
-								type="button"
-								class="btn btn-ghost btn-xs rounded-full"
-								onclick={() => disconnect('lastfm')}
-								disabled={disconnectMutation.isPending}
-							>
-								Disconnect
-							</button>
-						{:else if lfmPendingToken}
-							<div class="flex items-center gap-2">
-								<button
-									type="button"
-									class="btn btn-ghost btn-xs rounded-full"
-									onclick={cancelLastFm}
-								>
-									Cancel
-								</button>
-								<button
-									type="button"
-									class="btn btn-primary btn-xs gap-1 rounded-full"
-									onclick={finishLastFm}
-									disabled={exchangeSessionMutation.isPending}
-								>
-									{#if exchangeSessionMutation.isPending}
-										<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
-									{:else}
-										<Check class="h-3.5 w-3.5" />
-									{/if}
-									Finish
-								</button>
-							</div>
-						{:else}
-							<button
-								type="button"
-								class="btn btn-lastfm btn-xs gap-1 rounded-full px-3 shadow-sm transition-transform hover:scale-[1.03]"
-								onclick={startLastFm}
-								disabled={requestTokenMutation.isPending}
-							>
-								{#if requestTokenMutation.isPending}
-									<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
+			{:else}
+				<div>
+					<Card variant="bordered" padding="sm">
+						<div class="flex items-center justify-between gap-3">
+							{@render serviceRow(
+								Music,
+								'bg-orange-500/10 text-orange-400 ring-orange-500/20',
+								'ListenBrainz',
+								lb?.username,
+								Boolean(lb)
+							)}
+							<div class="shrink-0">
+								{#if lb}
+									<Button
+										variant="ghost"
+										size="xs"
+										pill
+										onclick={() => disconnect('listenbrainz')}
+										disabled={disconnectMutation.isPending}
+									>
+										Disconnect
+									</Button>
 								{:else}
-									<ExternalLink class="h-3.5 w-3.5" />
+									<Button
+										variant="listenbrainz"
+										size="xs"
+										pill
+										onclick={() => (lbFormOpen = !lbFormOpen)}
+									>
+										Connect
+									</Button>
 								{/if}
-								Connect
-							</button>
-						{/if}
-					</div>
-				</div>
-				{#if !lfm && lfmCredentialsOpen}
-					<div
-						class="mt-2 space-y-2 rounded-xl border border-base-300/40 bg-base-100/40 p-3 animate-fade-in-up"
-					>
-						<p class="text-xs text-base-content/60">
-							Enter the API key and shared secret of your own
-							<a
-								href="https://www.last.fm/api/account/create"
-								target="_blank"
-								rel="noopener noreferrer"
-								class="link">Last.fm API account</a
-							>, then connect.
-						</p>
-						<input
-							type="text"
-							class="input input-sm input-soft w-full"
-							placeholder="API key"
-							bind:value={lfmApiKey}
-							autocomplete="off"
-						/>
-						<input
-							type="password"
-							class="input input-sm input-soft w-full"
-							placeholder="Shared secret"
-							bind:value={lfmSecret}
-							autocomplete="off"
-						/>
-						<div class="flex justify-end gap-2">
-							<button
-								type="button"
-								class="btn btn-ghost btn-xs rounded-full"
-								onclick={() => (lfmCredentialsOpen = false)}
-							>
-								Cancel
-							</button>
-							<button
-								type="button"
-								class="btn btn-primary btn-xs gap-1 rounded-full"
-								onclick={saveLastFmCredentials}
-								disabled={setLastFmCredentialsMutation.isPending ||
-									!lfmApiKey.trim() ||
-									!lfmSecret.trim()}
-							>
-								{#if setLastFmCredentialsMutation.isPending}
-									<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
+							</div>
+						</div>
+					</Card>
+
+					{#if !lb && lbFormOpen}
+						<Card variant="bordered" padding="sm" class="mt-2 animate-fade-in-up">
+							<div class="space-y-2">
+								<p class="text-xs text-base-content/60">
+									Paste your ListenBrainz user token and username to link your account.
+								</p>
+								<Input
+									type="password"
+									label="ListenBrainz user token"
+									size="sm"
+									class="w-full"
+									placeholder="User token"
+									autocomplete="off"
+									bind:value={lbToken}
+								/>
+								<Input
+									label="ListenBrainz username"
+									size="sm"
+									class="w-full"
+									placeholder="ListenBrainz username"
+									autocomplete="off"
+									bind:value={lbUsername}
+								/>
+								{#if lbError}
+									<p class="text-xs text-error">{lbError}</p>
 								{/if}
-								Save and connect
-							</button>
-						</div>
-					</div>
-				{/if}
-				{#if lfmPendingToken && !lfm}
-					<p class="mt-2 px-1 text-xs text-base-content/60 animate-fade-in-up">
-						Approve DroppedNeedle in the Last.fm window that opened, then choose Finish.
-					</p>
-				{/if}
-				{#if lfmError}
-					<p class="mt-2 px-1 text-xs text-error">{lfmError}</p>
-				{/if}
-			</div>
-
-			<div class="section-divider-glow my-1"></div>
-
-			<div class="space-y-1">
-				<label
-					class="flex cursor-pointer items-center justify-between gap-4 rounded-lg px-1 py-2 transition-colors hover:bg-base-300/20"
-				>
-					<div>
-						<span class="text-sm font-medium">Scrobble to Last.fm</span>
-						{#if !lfm}
-							<p class="text-xs text-base-content/40">Link Last.fm above to scrobble.</p>
-						{/if}
-					</div>
-					<input
-						type="checkbox"
-						class="toggle toggle-primary toggle-sm"
-						bind:checked={scrobbleLastfm}
-						disabled={!lfm || updatePrefsMutation.isPending}
-						onchange={() => savePrefs({ scrobble_to_lastfm: scrobbleLastfm })}
-					/>
-				</label>
-
-				<label
-					class="flex cursor-pointer items-center justify-between gap-4 rounded-lg px-1 py-2 transition-colors hover:bg-base-300/20"
-				>
-					<div>
-						<span class="text-sm font-medium">Scrobble to ListenBrainz</span>
-						{#if !lb}
-							<p class="text-xs text-base-content/40">Link ListenBrainz above to scrobble.</p>
-						{/if}
-					</div>
-					<input
-						type="checkbox"
-						class="toggle toggle-primary toggle-sm"
-						bind:checked={scrobbleListenbrainz}
-						disabled={!lb || updatePrefsMutation.isPending}
-						onchange={() => savePrefs({ scrobble_to_listenbrainz: scrobbleListenbrainz })}
-					/>
-				</label>
-
-				{#if navidromeEnabled}
-					<label
-						class="flex cursor-pointer items-center justify-between gap-4 rounded-lg px-1 py-2 transition-colors hover:bg-base-300/20"
-					>
-						<div>
-							<span class="text-sm font-medium">Let Navidrome handle Last.fm and ListenBrainz</span>
-							<p class="text-xs text-base-content/40">
-								Keep this on while Navidrome sends plays to those accounts. To use DroppedNeedle
-								instead, first disable external scrobbles for the DroppedNeedle player in Navidrome.
-								Listening history is recorded either way.
-							</p>
-						</div>
-						<input
-							type="checkbox"
-							class="toggle toggle-primary toggle-sm"
-							bind:checked={navidromeHandlesExternalScrobbles}
-							disabled={updatePrefsMutation.isPending}
-							onchange={() =>
-								savePrefs({
-									navidrome_handles_external_scrobbles: navidromeHandlesExternalScrobbles
-								})}
-						/>
-					</label>
-				{/if}
-			</div>
-
-			<div class="section-divider-glow my-1"></div>
-
-			<div class="flex flex-wrap items-center justify-between gap-3 px-1">
-				<div>
-					<span class="text-sm font-medium">Primary source</span>
-					<p class="text-xs text-base-content/40">Powers your Home &amp; Discover by default.</p>
-				</div>
-				<div class="inline-flex rounded-full bg-base-300/50 p-1">
-					{#each SOURCES as opt (opt.value)}
-						<button
-							type="button"
-							class="rounded-full px-3.5 py-1 text-xs font-semibold transition-all {primarySource ===
-							opt.value
-								? 'bg-primary text-primary-content shadow'
-								: 'text-base-content/55 hover:text-base-content'}"
-							disabled={updatePrefsMutation.isPending}
-							onclick={() => selectSource(opt.value)}
-						>
-							{opt.label}
-						</button>
-					{/each}
-				</div>
-			</div>
-
-			<div class="section-divider-glow my-1"></div>
-
-			<div class="flex flex-wrap items-center justify-between gap-3 px-1">
-				<div>
-					<span class="text-sm font-medium">Now Playing visibility</span>
-					<p class="text-xs text-base-content/40">
-						How your listening appears to others on the home page.
-					</p>
-				</div>
-				<select
-					class="select select-bordered select-sm w-full max-w-[16rem] text-xs"
-					bind:value={nowPlayingVisibility}
-					disabled={updatePrefsMutation.isPending}
-					onchange={() => savePrefs({ now_playing_visibility: nowPlayingVisibility })}
-				>
-					<option value="full">Show what I'm playing</option>
-					<option value="track_hidden">Show I'm listening, hide the track</option>
-					<option value="offline">Don't show my activity</option>
-				</select>
-			</div>
-
-			<div class="section-divider-glow my-1"></div>
-
-			<div class="space-y-2 px-1">
-				<div class="flex items-center gap-2">
-					<Sparkles class="h-4 w-4 text-accent" />
-					<span class="text-sm font-semibold">Your Weekly Mix</span>
-				</div>
-				<p class="text-xs text-base-content/40">
-					A playlist built from your ListenBrainz listening history, refreshed weekly.
-				</p>
-				<label
-					class="flex cursor-pointer items-center justify-between gap-4 rounded-lg py-2 transition-colors hover:bg-base-300/20"
-				>
-					<div>
-						<span class="text-sm font-medium">Auto-request missing music from Your Weekly Mix</span>
-						{#if !lb}
-							<p class="text-xs text-base-content/40">Link ListenBrainz above to enable.</p>
-						{:else if autoRequestPersonalMix && autoRequestState === 'pending'}
-							<p class="text-xs text-warning/80">Waiting for an admin to approve auto-requests.</p>
-						{:else if autoRequestState === 'rejected' || autoRequestState === 'revoked'}
-							<p class="text-xs text-base-content/40">
-								An admin declined auto-requests for your mix.
-							</p>
-						{/if}
-					</div>
-					<input
-						type="checkbox"
-						class="toggle toggle-primary toggle-sm"
-						bind:checked={autoRequestPersonalMix}
-						disabled={!lb || updatePrefsMutation.isPending}
-						onchange={() => savePrefs({ auto_request_personal_mix: autoRequestPersonalMix })}
-					/>
-				</label>
-				<div class="flex items-center gap-3">
-					<button
-						type="button"
-						class="btn btn-ghost btn-xs gap-1 rounded-full"
-						onclick={refreshPersonalMix}
-						disabled={!lb || refreshMixMutation.isPending}
-					>
-						{#if refreshMixMutation.isPending}
-							<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
-						{/if}
-						Refresh my mix
-					</button>
-					{#if mixRefreshMessage}
-						<p class="text-xs text-base-content/50">{mixRefreshMessage}</p>
+								<div class="flex justify-end gap-2">
+									<Button
+										variant="ghost"
+										size="xs"
+										pill
+										onclick={() => {
+											lbFormOpen = false;
+											lbError = null;
+										}}
+									>
+										Cancel
+									</Button>
+									<Button
+										variant="primary"
+										size="xs"
+										pill
+										loading={connectLbMutation.isPending}
+										disabled={!lbToken.trim() || !lbUsername.trim()}
+										onclick={connectListenBrainz}
+									>
+										Link account
+									</Button>
+								</div>
+							</div>
+						</Card>
 					{/if}
 				</div>
-			</div>
-		{/if}
-	</div>
+
+				<div>
+					<Card variant="bordered" padding="sm">
+						<div class="flex items-center justify-between gap-3">
+							{@render serviceRow(
+								Radio,
+								'bg-red-500/10 text-red-400 ring-red-500/20',
+								'Last.fm',
+								lfm?.username,
+								Boolean(lfm)
+							)}
+							<div class="shrink-0">
+								{#if lfm}
+									<Button
+										variant="ghost"
+										size="xs"
+										pill
+										onclick={() => disconnect('lastfm')}
+										disabled={disconnectMutation.isPending}
+									>
+										Disconnect
+									</Button>
+								{:else if lfmPendingToken}
+									<div class="flex items-center gap-2">
+										<Button variant="ghost" size="xs" pill onclick={cancelLastFm}>Cancel</Button>
+										<Button
+											variant="primary"
+											size="xs"
+											pill
+											icon={Check}
+											loading={exchangeSessionMutation.isPending}
+											onclick={finishLastFm}
+										>
+											Finish
+										</Button>
+									</div>
+								{:else}
+									<Button
+										variant="lastfm"
+										size="xs"
+										pill
+										icon={ExternalLink}
+										loading={requestTokenMutation.isPending}
+										onclick={startLastFm}
+									>
+										Connect
+									</Button>
+								{/if}
+							</div>
+						</div>
+					</Card>
+					{#if !lfm && lfmCredentialsOpen}
+						<Card variant="bordered" padding="sm" class="mt-2 animate-fade-in-up">
+							<div class="space-y-2">
+								<p class="text-xs text-base-content/60">
+									Enter the API key and shared secret of your own
+									<a
+										href="https://www.last.fm/api/account/create"
+										target="_blank"
+										rel="noopener noreferrer"
+										class="link">Last.fm API account</a
+									>, then connect.
+								</p>
+								<Input
+									label="Last.fm API key"
+									size="sm"
+									class="w-full"
+									placeholder="API key"
+									autocomplete="off"
+									bind:value={lfmApiKey}
+								/>
+								<Input
+									type="password"
+									label="Last.fm shared secret"
+									size="sm"
+									class="w-full"
+									placeholder="Shared secret"
+									autocomplete="off"
+									bind:value={lfmSecret}
+								/>
+								<div class="flex justify-end gap-2">
+									<Button
+										variant="ghost"
+										size="xs"
+										pill
+										onclick={() => (lfmCredentialsOpen = false)}
+									>
+										Cancel
+									</Button>
+									<Button
+										variant="primary"
+										size="xs"
+										pill
+										loading={setLastFmCredentialsMutation.isPending}
+										disabled={!lfmApiKey.trim() || !lfmSecret.trim()}
+										onclick={saveLastFmCredentials}
+									>
+										Save and connect
+									</Button>
+								</div>
+							</div>
+						</Card>
+					{/if}
+					{#if lfmPendingToken && !lfm}
+						<p class="mt-2 px-1 text-xs text-base-content/60 animate-fade-in-up">
+							Approve DroppedNeedle in the Last.fm window that opened, then choose Finish.
+						</p>
+					{/if}
+					{#if lfmError}
+						<p class="mt-2 px-1 text-xs text-error">{lfmError}</p>
+					{/if}
+				</div>
+
+				<div class="section-divider-glow my-1"></div>
+
+				<div class="space-y-3 px-1">
+					<ToggleRow
+						label="Scrobble to Last.fm"
+						description={lfm ? undefined : 'Link Last.fm above to scrobble.'}
+						disabled={!lfm || updatePrefsMutation.isPending}
+						bind:checked={
+							() => scrobbleLastfm,
+							(checked) => {
+								scrobbleLastfm = checked;
+								void savePrefs({ scrobble_to_lastfm: checked });
+							}
+						}
+					/>
+
+					<ToggleRow
+						label="Scrobble to ListenBrainz"
+						description={lb ? undefined : 'Link ListenBrainz above to scrobble.'}
+						disabled={!lb || updatePrefsMutation.isPending}
+						bind:checked={
+							() => scrobbleListenbrainz,
+							(checked) => {
+								scrobbleListenbrainz = checked;
+								void savePrefs({ scrobble_to_listenbrainz: checked });
+							}
+						}
+					/>
+
+					{#if navidromeEnabled}
+						<ToggleRow
+							label="Let Navidrome handle Last.fm and ListenBrainz"
+							description="Keep this on while Navidrome sends plays to those accounts. To use DroppedNeedle instead, first disable external scrobbles for the DroppedNeedle player in Navidrome. Listening history is recorded either way."
+							disabled={updatePrefsMutation.isPending}
+							bind:checked={
+								() => navidromeHandlesExternalScrobbles,
+								(checked) => {
+									navidromeHandlesExternalScrobbles = checked;
+									void savePrefs({ navidrome_handles_external_scrobbles: checked });
+								}
+							}
+						/>
+					{/if}
+				</div>
+
+				<div class="section-divider-glow my-1"></div>
+
+				<div class="flex flex-wrap items-center justify-between gap-3 px-1">
+					<div>
+						<span class="text-sm font-medium">Primary source</span>
+						<p class="text-xs text-base-content/40">Powers your Home &amp; Discover by default.</p>
+					</div>
+					<div
+						class="inline-flex gap-1 rounded-full bg-base-300/50 p-1"
+						role="group"
+						aria-label="Primary source"
+					>
+						{#each SOURCES as opt (opt.value)}
+							<Button
+								variant={primarySource === opt.value ? 'primary' : 'ghost'}
+								size="xs"
+								pill
+								aria-pressed={primarySource === opt.value}
+								disabled={updatePrefsMutation.isPending}
+								onclick={() => selectSource(opt.value)}
+							>
+								{opt.label}
+							</Button>
+						{/each}
+					</div>
+				</div>
+
+				<div class="section-divider-glow my-1"></div>
+
+				<div class="flex flex-wrap items-center justify-between gap-3 px-1">
+					<div>
+						<label for={visibilityId} class="text-sm font-medium">Now Playing visibility</label>
+						<p class="text-xs text-base-content/40">
+							How your listening appears to others on the home page.
+						</p>
+					</div>
+					<select
+						id={visibilityId}
+						class="select select-sm w-full max-w-[16rem] text-xs"
+						bind:value={nowPlayingVisibility}
+						disabled={updatePrefsMutation.isPending}
+						onchange={() => savePrefs({ now_playing_visibility: nowPlayingVisibility })}
+					>
+						<option value="full">Show what I'm playing</option>
+						<option value="track_hidden">Show I'm listening, hide the track</option>
+						<option value="offline">Don't show my activity</option>
+					</select>
+				</div>
+
+				<div class="section-divider-glow my-1"></div>
+
+				<div class="space-y-2 px-1">
+					<div class="flex items-center gap-2">
+						<Sparkles class="h-4 w-4 text-accent" />
+						<span class="text-sm font-semibold">Your Weekly Mix</span>
+					</div>
+					<p class="text-xs text-base-content/40">
+						A playlist built from your ListenBrainz listening history, refreshed weekly.
+					</p>
+					<ToggleRow
+						label="Auto-request missing music from Your Weekly Mix"
+						description={autoRequestNote}
+						disabled={!lb || updatePrefsMutation.isPending}
+						bind:checked={
+							() => autoRequestPersonalMix,
+							(checked) => {
+								autoRequestPersonalMix = checked;
+								void savePrefs({ auto_request_personal_mix: checked });
+							}
+						}
+					/>
+					<div class="flex items-center gap-3">
+						<Button
+							variant="ghost"
+							size="xs"
+							pill
+							loading={refreshMixMutation.isPending}
+							disabled={!lb}
+							onclick={refreshPersonalMix}
+						>
+							Refresh my mix
+						</Button>
+						{#if mixRefreshMessage}
+							<p class="grow-0 text-xs text-base-content/50">{mixRefreshMessage}</p>
+						{/if}
+					</div>
+				</div>
+			{/if}
+		</div>
+	</Card>
 </section>

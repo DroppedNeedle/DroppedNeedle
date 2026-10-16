@@ -3,6 +3,7 @@
 @source './routes/setup/+page.svelte';
 @source './routes/recover-password/+page.svelte';
 @source './routes/auth/callback/+page.svelte';
+@source './lib/ui';
 @plugin "daisyui" {
 	themes: dark --default;
 }
