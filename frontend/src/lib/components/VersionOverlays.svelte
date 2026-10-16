@@ -16,7 +16,7 @@
 
 	const currentVersion = $derived(versionQuery.data?.version ?? null);
 	const buildDate = $derived(versionQuery.data?.build_date ?? null);
-	const isDev = $derived(currentVersion === 'dev' || currentVersion === 'hosting-local');
+	const isDev = $derived(currentVersion === 'dev');
 
 	function getMinorPrefix(tag: string): string | null {
 		const m = tag.replace(/^v/, '').match(/^(\d+\.\d+)\./);

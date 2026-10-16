@@ -17,7 +17,7 @@
 
 	let dialogEl: HTMLDialogElement | undefined = $state();
 
-	const isDev = $derived(currentVersion === 'dev' || currentVersion === 'hosting-local');
+	const isDev = $derived(currentVersion === 'dev');
 	const latestRelease = $derived(releases.length > 0 ? releases[0] : null);
 
 	// In dev: key dismissal to build_date so modal shows once per rebuild, not every refresh

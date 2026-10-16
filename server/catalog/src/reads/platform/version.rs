@@ -6,9 +6,9 @@
 //! (cached for an hour, quiet on failure).
 //!
 //! Comparison rules, v2 kept: strip leading `v`s, compare numeric release
-//! cores; anything else fails closed as `comparison_failed`. Dev builds
-//! (`dev`, `hosting-local`) report an update as available when comparison
-//! fails so the full UI stays testable. `latest_release` ships only when an
+//! cores; anything else fails closed as `comparison_failed`. A `dev`
+//! build reports an update as available when comparison fails so the full
+//! UI stays testable. `latest_release` ships only when an
 //! update is available; a missing latest release answers with the current
 //! version alone.
 //!
@@ -22,8 +22,8 @@ use futures_util::future::BoxFuture;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-/// Current-version values for a dev checkout.
-const DEV_VERSIONS: &[&str] = &["dev", "hosting-local"];
+/// Current-version value for a dev checkout.
+const DEV_VERSION: &str = "dev";
 
 /// Running build identity.
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -267,7 +267,7 @@ fn build_update_response(
         };
     };
     let (mut update_available, comparison_failed) = is_newer(&latest.tag_name, &current.version);
-    let is_dev = DEV_VERSIONS.contains(&current.version.as_str());
+    let is_dev = current.version == DEV_VERSION;
     if comparison_failed && is_dev {
         update_available = true;
     }
@@ -389,11 +389,9 @@ mod tests {
 
     #[test]
     fn dev_build_with_failed_comparison_reports_update() {
-        for dev in ["dev", "hosting-local"] {
-            let answer = build_update_response(&current(dev), Some(&release("nightly")));
-            assert!(answer.update_available, "build {dev}");
-            assert!(answer.comparison_failed, "build {dev}");
-            assert!(answer.latest_release.is_some(), "build {dev}");
-        }
+        let answer = build_update_response(&current("dev"), Some(&release("nightly")));
+        assert!(answer.update_available);
+        assert!(answer.comparison_failed);
+        assert!(answer.latest_release.is_some());
     }
 }

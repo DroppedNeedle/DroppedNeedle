@@ -8,11 +8,7 @@
 	const versionQuery = getVersionQuery();
 	const version = $derived(versionQuery.data?.version ?? null);
 	const versionLabel = $derived(
-		version === null
-			? null
-			: version === 'dev' || version === 'hosting-local'
-				? 'Host Local'
-				: `v${version}`
+		version === null ? null : version === 'dev' ? 'dev' : `v${version}`
 	);
 </script>
 
