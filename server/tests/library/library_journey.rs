@@ -11907,7 +11907,8 @@ async fn a_retag_that_deleted_a_file_is_left_alone_while_its_folder_stays_held()
 /// `retag_followed`). An old album the app never wrote and nobody chose,
 /// one gone before the hold, another edition, a new album not matched yet
 /// and one with a file the app has a record of are left as they were. A
-/// held album waiting for its match keeps its folder held.
+/// held album matched after its folder is let go is judged at its first
+/// look.
 #[tokio::test]
 async fn a_held_album_is_left_alone_where_the_retag_join_would_leave_it() {
     use droppedneedle_library::mutations::Mutations;
@@ -12058,8 +12059,8 @@ async fn a_held_album_is_left_alone_where_the_retag_join_would_leave_it() {
             .into_iter()
             .map(|(_, path, _)| path)
             .collect::<Vec<_>>(),
-        vec!["p5".to_owned()],
-        "only the folder of the album waiting for its match stays held"
+        Vec::<String>::new(),
+        "every folder is let go, the album waiting for its match too"
     );
 
     let (waiting, _) = &news[5];
@@ -12069,9 +12070,300 @@ async fn a_held_album_is_left_alone_where_the_retag_join_would_leave_it() {
     )
     .expect("job due");
     managed.identify_as(waiting, &olds[5].0).await;
-    rescan(&managed.library).await;
+    managed.look(waiting).await;
     assert_eq!(managed.mark(waiting).as_deref(), Some("files_changed"));
+    assert_eq!(managed.runs_for(waiting), 0);
     assert_eq!(managed.held_scopes(), Vec::new());
+}
+
+/// A retag that deleted a file, whose new album is only a best guess while
+/// the folder is held: no scan's end can judge it. Removing the old album
+/// lets the folder go and writes nothing. When a person confirms the match,
+/// the first look leaves the album unmanaged as the person's retag before
+/// anything is written; "Manage it again" then writes it.
+#[tokio::test]
+async fn a_best_guess_confirmed_after_its_folder_is_let_go_is_left_alone() {
+    use droppedneedle_library::mutations::Mutations;
+
+    let managed = ManagedLibrary::start("lib-held-later", |_| {}).await;
+    let (album, old) = managed.add_album("first", 12).await;
+    managed.match_by_the_app(&album);
+    managed.activate().await;
+    managed.look(&album).await;
+    assert!(
+        managed.recorded(&old[0]).is_some(),
+        "the app wrote the files"
+    );
+
+    let mut paths = managed.retag_into(&old, "Retagged", "new");
+    let deleted = paths.pop().expect("twelve files");
+    std::fs::remove_file(managed.music.join(deleted)).expect("deleted for good");
+    rescan(&managed.library).await;
+    assert!(managed.latest_scan_held_back(), "12 gone of 23");
+    let new: Vec<String> = paths
+        .iter()
+        .map(|path| indexed_at(&managed.library, path))
+        .collect();
+    let replacement = managed.album_of(&new[0]);
+    assert_ne!(replacement, album);
+    managed.identify_as(&replacement, &album).await;
+    let state: String = managed
+        .db()
+        .query_row(
+            "SELECT state FROM library_album_match_state WHERE local_album_id = ?1",
+            [&replacement],
+            |row| row.get(0),
+        )
+        .expect("a best guess");
+    assert_eq!(state, "unconfirmed");
+    let before = managed.bytes(&new);
+
+    rescan(&managed.library).await;
+    assert!(managed.latest_scan_held_back(), "still 12 gone of 23");
+    assert_eq!(managed.mark(&replacement), None, "nothing to judge on yet");
+
+    Mutations::new(&managed.library)
+        .remove_album(&album, false, "admin")
+        .expect("removed in the app");
+    rescan(&managed.library).await;
+    assert!(!managed.latest_scan_held_back());
+    assert_eq!(managed.held_scopes(), Vec::new(), "the folder is let go");
+    assert_eq!(managed.mark(&replacement), None);
+    managed.look(&replacement).await;
+    assert_eq!(managed.runs_for(&replacement), 0);
+    assert_eq!(managed.bytes(&new), before, "nothing written");
+    assert!(
+        managed
+            .skipped_codes()
+            .contains(&(replacement.clone(), "UNCONFIRMED_MATCH".to_owned()))
+    );
+
+    droppedneedle_library::operations::service::Operations::new(&managed.library)
+        .confirm_match(&replacement, "admin")
+        .expect("match confirmed");
+    managed.worker_looks().await;
+    assert_eq!(
+        managed.mark(&replacement).as_deref(),
+        Some("files_changed"),
+        "left to the person at its first look"
+    );
+    assert_eq!(managed.runs_for(&replacement), 0);
+    assert_eq!(managed.bytes(&new), before, "still nothing written");
+
+    assert!(
+        Mutations::new(&managed.library)
+            .hand_back_management(&replacement, "admin")
+            .expect("handed back")
+    );
+    managed.worker_looks().await;
+    assert_eq!(managed.mark(&replacement), None);
+    assert_eq!(managed.runs_for(&replacement), 1, "written once");
+    assert_ne!(managed.bytes(&new), before, "written");
+}
+
+/// Which new albums from a held folder the first look leaves unmanaged when
+/// their match settled only after the folder was let go: the same ones a
+/// scan's end would, judged on the edition the look is about to write. The
+/// old album written by the app gives `files_changed`; one left unmanaged
+/// gives `retag_followed` unless the new album's match is a person's; a
+/// person's match on both, or another edition, is written. A best guess is
+/// judged once unconfirmed matches are managed, and an album in a folder
+/// managed by hand is judged too, so a preview of the whole folder leaves
+/// it out.
+#[tokio::test]
+async fn a_held_album_matched_after_its_folder_is_let_go_is_judged_at_its_look() {
+    use droppedneedle_kernel::runtime_config::sections::EditionPreferences;
+    use droppedneedle_library::management::models::{Eligibility, SelectionKind};
+    use droppedneedle_library::mutations::Mutations;
+
+    let managed = ManagedLibrary::start("lib-held-look", |_| {}).await;
+    // (case, the new album's mark, its runs)
+    let cases = [
+        ("written", Some("files_changed"), 0),
+        ("left unmanaged", Some("retag_followed"), 0),
+        ("left unmanaged, new chosen", None, 1),
+        ("both chosen", None, 1),
+        ("another edition", None, 1),
+        ("best guess", Some("files_changed"), 0),
+        ("folder by hand", Some("files_changed"), 0),
+    ];
+    let mut olds = Vec::new();
+    for index in 0..cases.len() {
+        olds.push(managed.add_album(&format!("p{index}"), 3).await);
+    }
+    let db = managed.db();
+    managed.activate().await;
+    for (album, tracks) in &olds {
+        managed.look(album).await;
+        assert!(managed.recorded(&tracks[0]).is_some(), "written");
+    }
+
+    // Each album retagged and renamed beside itself and removed in the
+    // app, then the new album scanned, its match still to come.
+    let mut news = Vec::new();
+    for (index, (album, tracks)) in olds.iter().enumerate() {
+        let paths = managed.retag_into(
+            tracks,
+            &format!("Retagged {index}"),
+            &format!("p{index}/new"),
+        );
+        Mutations::new(&managed.library)
+            .remove_album(album, false, "admin")
+            .expect("removed in the app");
+        rescan(&managed.library).await;
+        let new = indexed_at(&managed.library, &paths[0]);
+        let replacement = managed.album_of(&new);
+        db.execute(
+            "UPDATE library_identify_jobs SET not_before_ms = ?2 \
+             WHERE local_album_id = ?1 AND state IN ('queued', 'deferred')",
+            rusqlite::params![replacement, i64::MAX],
+        )
+        .expect("job left queued");
+        news.push(replacement);
+    }
+
+    // Each pair held from before the old album was removed, the first pair
+    // under two holds. One clean scan lets every folder go and has nothing
+    // to judge on.
+    for (index, (album, _)) in olds.iter().enumerate() {
+        let held_at: i64 = db
+            .query_row(
+                "SELECT CAST(MIN(missing_since) * 1000 AS INTEGER) - 1 FROM local_tracks \
+                 WHERE local_album_id = ?1",
+                [album],
+                |row| row.get(0),
+            )
+            .expect("missing since");
+        let mut folders = vec![format!("p{index}")];
+        if index == 0 {
+            folders.push("p0/new".to_owned());
+        }
+        for folder in folders {
+            db.execute(
+                "INSERT INTO library_scan_held_scopes (root_id, relative_path, held_at) \
+                 VALUES ('music', ?1, ?2)",
+                rusqlite::params![folder, held_at],
+            )
+            .expect("held");
+        }
+    }
+    rescan(&managed.library).await;
+    assert_eq!(managed.held_scopes(), Vec::new(), "every folder let go");
+    for replacement in &news {
+        assert_eq!(managed.mark(replacement), None, "nothing to judge on");
+    }
+
+    let clear_records = |album: &str| {
+        db.execute(
+            "UPDATE library_track_management_state SET written_sha256 = NULL \
+             WHERE local_track_id IN (SELECT id FROM local_tracks WHERE local_album_id = ?1)",
+            [album],
+        )
+        .expect("records cleared");
+    };
+    let leave_unmanaged = |album: &str| {
+        clear_records(album);
+        managed.match_by_the_app(album);
+        db.execute(
+            "INSERT INTO library_management_exclusions (local_album_id, reason, \
+             excluded_by_user_id, excluded_at) VALUES (?1, 'leave unmanaged', 'admin', 1)",
+            [album],
+        )
+        .expect("left unmanaged");
+    };
+    let chosen_by_a_person = |album: &str| {
+        db.execute(
+            "UPDATE local_album_external_identities SET decision_source = 'manual', \
+             selected_by_user_id = 'admin' WHERE local_album_id = ?1",
+            [album],
+        )
+        .expect("a person's match");
+    };
+    for (index, ((album, _), replacement)) in olds.iter().zip(&news).enumerate() {
+        let (case, mark, runs) = cases[index];
+        db.execute(
+            "UPDATE library_identify_jobs SET not_before_ms = 0 WHERE local_album_id = ?1",
+            [replacement],
+        )
+        .expect("job due");
+        match case {
+            "another edition" => {
+                let mut recall = fitting_release(&managed.library, replacement);
+                recall.releases[0].id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee".to_owned();
+                recall.releases[0].release_group_id = "rg-elsewhere".to_owned();
+                managed
+                    .library
+                    .test_providers
+                    .as_ref()
+                    .expect("scripted providers")
+                    .set_recall(recall);
+                while managed.library.identify_tick().await > 0 {}
+            }
+            "folder by hand" => {
+                managed.set_automatic(false, false);
+                managed.identify_as(replacement, album).await;
+            }
+            _ => managed.identify_as(replacement, album).await,
+        }
+        match case {
+            "left unmanaged" => leave_unmanaged(album),
+            "left unmanaged, new chosen" => {
+                leave_unmanaged(album);
+                chosen_by_a_person(replacement);
+            }
+            "both chosen" => {
+                clear_records(album);
+                chosen_by_a_person(replacement);
+            }
+            "best guess" => {
+                db.execute(
+                    "INSERT INTO library_album_match_state (local_album_id, state, \
+                     reason_code, updated_at) VALUES (?1, 'unconfirmed', 'LOW_CONFIDENCE', 0) \
+                     ON CONFLICT (local_album_id) DO UPDATE SET state = excluded.state",
+                    [replacement],
+                )
+                .expect("a best guess");
+                managed.look(replacement).await;
+                assert_eq!(managed.mark(replacement), None, "{case}");
+                assert_eq!(managed.runs_for(replacement), 0, "{case}");
+                assert!(
+                    managed
+                        .skipped_codes()
+                        .contains(&(replacement.clone(), "UNCONFIRMED_MATCH".to_owned())),
+                    "{case}"
+                );
+                let mut preferences = managed
+                    .library
+                    .config
+                    .get::<EditionPreferences>()
+                    .expect("preferences read");
+                preferences.manage_unconfirmed = true;
+                managed
+                    .library
+                    .config
+                    .save(preferences)
+                    .expect("preferences saved");
+            }
+            _ => {}
+        }
+        managed.look(replacement).await;
+        assert_eq!(managed.mark(replacement).as_deref(), mark, "{case}");
+        assert_eq!(managed.runs_for(replacement), runs, "{case}");
+    }
+
+    let by_hand = &news[6];
+    let (_, items) = managed
+        .preview(SelectionKind::Roots, &["music"], "whole folder")
+        .await;
+    let left_out: Vec<_> = items
+        .iter()
+        .filter(|item| &item.album_id == by_hand)
+        .collect();
+    assert!(!left_out.is_empty(), "in the preview");
+    for item in left_out {
+        assert_eq!(item.eligibility, Eligibility::Blocked);
+        assert_eq!(item.reason().expect("a reason").code, "TAKEN_OVER");
+    }
 }
 
 /// An album whose edition a person chose, never written by the app,

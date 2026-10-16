@@ -61,7 +61,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 154);
+    assert_eq!(table_names(&pool).await.len(), 155);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -2107,6 +2107,82 @@ async fn artist_proofs_and_states_go_with_their_album() {
         left(&pool).await,
         (1, 1),
         "the album's proof and state went with it"
+    );
+}
+
+/// Migration 0055 adds the files a lifted hold could not judge, empty and
+/// strict, a row going with its track. A hold that stands is kept as it
+/// was.
+#[tokio::test]
+async fn unjudged_tracks_arrive_empty_and_strict() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 55)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO library_scan_held_scopes (root_id, relative_path, held_at) \
+         VALUES ('r1', 'x', 100000)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(stamped >= 55 && stamped == latest_version(), "{stamped}");
+    let held: Vec<(String, String, i64)> =
+        sqlx::query_as("SELECT root_id, relative_path, held_at FROM library_scan_held_scopes")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(held, vec![("r1".to_owned(), "x".to_owned(), 100_000)]);
+    assert_eq!(
+        column_names(&pool, "library_scan_unjudged_tracks").await,
+        ["local_track_id", "held_at"]
+    );
+    let strict: i64 = sqlx::query_scalar(
+        "SELECT strict FROM pragma_table_list WHERE name = 'library_scan_unjudged_tracks'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(strict, 1);
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_scan_unjudged_tracks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+    let keys: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT \"from\", \"table\", \"to\", on_delete \
+         FROM pragma_foreign_key_list('library_scan_unjudged_tracks')",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        keys,
+        vec![(
+            "local_track_id".to_owned(),
+            "local_tracks".to_owned(),
+            "id".to_owned(),
+            "CASCADE".to_owned()
+        )]
     );
 }
 

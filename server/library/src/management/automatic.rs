@@ -25,7 +25,7 @@ use crate::management::settings::{activation_is_current, migration_carry_applies
 use crate::operations::status;
 use crate::publish::Sandbox;
 use crate::publish::snapshots::sha256_hex;
-use crate::scan::sqlite_store::holds_new_files;
+use crate::scan::sqlite_store::{holds_new_files, judge_remembered, remembered};
 use droppedneedle_kernel::runtime_config::sections::{
     LibraryManagement, LibraryManagementRootAssignment,
 };
@@ -68,6 +68,10 @@ enum Gate {
     Follow,
     /// Not ready yet; looked at again later.
     NotYet(Verdict),
+    /// A lifted hold let some of the album's files go before the album was
+    /// judged as a retag: it is judged now, then the gate is passed again.
+    /// `writes` says whether the folder writes the album by itself.
+    Judge { writes: bool },
     /// The rest of the look goes on.
     Open(Box<Opened>),
 }
@@ -368,7 +372,7 @@ impl Management {
     /// waiting on a blocked preview. Blocking.
     pub fn writes_by_itself(&self, album_id: &str) -> Result<AutomaticWrites, ManagementError> {
         let open = match self.automatic_gate(album_id, true)? {
-            Gate::Closed(_) | Gate::Follow => false,
+            Gate::Closed(_) | Gate::Follow | Gate::Judge { writes: false } => false,
             // A file with no track to map to stays so once the album's files
             // are placed and matched (a file the chosen edition has no track
             // for), and the look parks: only a placing or a matching still
@@ -377,7 +381,7 @@ impl Management {
                 Ok(status::placing_attempts(conn, album_id)?.is_some()
                     || status::identifying(conn, album_id)?)
             })?,
-            Gate::NotYet(_) | Gate::Open(_) => true,
+            Gate::NotYet(_) | Gate::Judge { writes: true } | Gate::Open(_) => true,
         };
         if !open {
             return Ok(AutomaticWrites::default());
@@ -565,6 +569,12 @@ impl Management {
             if writes_some && self.read(|conn| Ok(retag_followed(conn, album_id)?))? {
                 return Ok(Gate::Follow);
             }
+            // A held album let go before it was judged is judged here too,
+            // once its match would be written, so a preview of many albums
+            // cannot write it over a retag.
+            if self.judged_by_hand(album_id)? {
+                return Ok(Gate::Judge { writes: false });
+            }
             return Ok(Gate::Closed(Verdict::Done("NOT_AUTOMATIC")));
         };
         let policy = self.setup.live_registry().policy_revision().to_owned();
@@ -661,6 +671,11 @@ impl Management {
         if self.read(|conn| Ok(holds_new_files(conn, album_id)?))? {
             return Ok(Gate::NotYet(Verdict::Park(SCAN_HELD_BACK)));
         }
+        // A held album let go before it could be judged as a retag is
+        // judged on the edition about to be written, before the first write.
+        if self.read(|conn| Ok(remembered(conn, album_id)?))? {
+            return Ok(Gate::Judge { writes: true });
+        }
         Ok(Gate::Open(Box::new(Opened {
             files,
             stored,
@@ -673,13 +688,47 @@ impl Management {
         })))
     }
 
+    /// Whether an album in a folder that does not write it by itself is
+    /// judged as a retag at its look: a lifted hold let some of its files
+    /// go unjudged, and its match names a release the match gate lets
+    /// through.
+    fn judged_by_hand(&self, album_id: &str) -> Result<bool, ManagementError> {
+        if !self.read(|conn| Ok(remembered(conn, album_id)?))? {
+            return Ok(false);
+        }
+        let names_release = self
+            .setup
+            .identify_store
+            .album_identity(album_id)
+            .is_some_and(|identity| identity.release_mbid.is_some());
+        if !names_release {
+            return Ok(false);
+        }
+        let manage_unconfirmed = planner::manage_unconfirmed(&self.setup);
+        Ok(self
+            .read(|conn| Ok(planner::match_gate(conn, album_id, manage_unconfirmed)?))?
+            .is_none())
+    }
+
     fn automatic_verdict(&self, album_id: &str) -> Result<Verdict, ManagementError> {
-        let opened = match self.automatic_gate(album_id, false)? {
+        let mut gate = self.automatic_gate(album_id, false)?;
+        if let Gate::Judge { .. } = gate {
+            if self.write(|tx| Ok(judge_remembered(tx, album_id, now_unix())?))? {
+                return Ok(Verdict::Park(takeover::TAKEN_OVER));
+            }
+            // The album's remembered rows are gone, so the gate does not
+            // ask again.
+            gate = self.automatic_gate(album_id, false)?;
+        }
+        let opened = match gate {
             Gate::Closed(verdict) | Gate::NotYet(verdict) => return Ok(verdict),
             Gate::Follow => {
                 self.write(|tx| Ok(takeover::mark_followed(tx, album_id, now_unix())?))?;
                 return Ok(Verdict::Park(takeover::TAKEN_OVER));
             }
+            // Only a scan's end in between remembers rows again: looked at
+            // again shortly.
+            Gate::Judge { .. } => return Ok(Verdict::RetryAt(SCAN_HELD_BACK, 0.0)),
             Gate::Open(opened) => *opened,
         };
         let Opened {

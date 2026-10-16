@@ -567,4 +567,4 @@ pub(crate) use commit::{
     Adopted, RetagPair, adopt_file, adoptable_track_id, automatic_album_for, awaits_retag, holds,
     tried, waits_for_the_rest,
 };
-pub(crate) use held_scopes::holds_new_files;
+pub(crate) use held_scopes::{holds_new_files, judge_remembered, remembered};
