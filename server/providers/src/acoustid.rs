@@ -495,7 +495,7 @@ pub enum BatchOutcome {
 
 // The batch answer's shape, verified 2026-10-15 against a live
 // `/v2/lookup` (format=json, batch=1, meta="recordingids releaseids"),
-// recorded in `tests/fixtures/acoustid/`: `{"status": "ok",
+// recorded in `server/tests/fixtures/acoustid/`: `{"status": "ok",
 // "fingerprints": [{"index": 0, "results": [{"id", "score",
 // "recordings": [{"id", "releases": [{"id"}]}]}]}]}`. A bad key answers
 // HTTP 400 with `{"status": "error", "error": {"code": 4, "message"}}`.

@@ -19,14 +19,14 @@ use crate::common::library::ScriptedIdentify;
 use crate::common::{ScratchDir, TestApp, closed_outbound};
 use axum::http::StatusCode;
 use droppedneedle::bootstrap::Port;
-use droppedneedle::library::contrib::ContribProviders;
-use droppedneedle::library::identify::models::{LocalAlbumFacts, RecallResult};
-use droppedneedle::library::identify::sqlite::SqliteIdentifyStore;
-use droppedneedle::library::matching::{CreditedArtist, Release, ReleaseTrack};
-use droppedneedle::library::scan::SqliteScanStore;
-use droppedneedle::library::wiring::{LibrarySetup, TestContribProviders};
 use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
+use droppedneedle_library::contrib::ContribProviders;
+use droppedneedle_library::identify::models::{LocalAlbumFacts, RecallResult};
+use droppedneedle_library::identify::sqlite::SqliteIdentifyStore;
+use droppedneedle_library::matching::{CreditedArtist, Release, ReleaseTrack};
+use droppedneedle_library::scan::SqliteScanStore;
+use droppedneedle_library::wiring::{LibrarySetup, TestContribProviders};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -231,7 +231,7 @@ fn snapshot_tree(root: &Path) -> std::collections::BTreeMap<String, (u64, i64, S
             }
             let bytes = std::fs::read(&path).expect("read sandbox file");
             let meta = std::fs::metadata(&path).expect("stat sandbox file");
-            let mtime_ns = droppedneedle::library::scan::mtime_ns_from_metadata(&meta);
+            let mtime_ns = droppedneedle_library::scan::mtime_ns_from_metadata(&meta);
             let mut hasher = Sha256::new();
             hasher.update(&bytes);
             let hex: String = hasher
@@ -319,9 +319,9 @@ fn ambiguous_from(facts: &LocalAlbumFacts) -> RecallResult {
 }
 
 fn read_title(path: &Path) -> String {
-    droppedneedle::library::tags::read::read_tag_only(
+    droppedneedle_library::tags::read::read_tag_only(
         path,
-        droppedneedle::library::tags::AudioFormat::Flac,
+        droppedneedle_library::tags::AudioFormat::Flac,
     )
     .expect("tags read")
     .title
@@ -332,7 +332,7 @@ fn read_title(path: &Path) -> String {
 /// dropped editions are the candidates, keyed `group:release`.
 /// Identification itself never files one; it always picks a best guess.
 fn file_edition_review(store: &SqliteIdentifyStore, album_id: &str) -> String {
-    use droppedneedle::library::identify::models::CandidateEvidence;
+    use droppedneedle_library::identify::models::CandidateEvidence;
     let candidate = |group: &str, release: &str| CandidateEvidence {
         candidate_key: format!("{group}:{release}"),
         release_group_mbid: group.to_owned(),
@@ -346,7 +346,7 @@ fn file_edition_review(store: &SqliteIdentifyStore, album_id: &str) -> String {
         penalties: Vec::new(),
     };
     let id = format!("rev-{album_id}");
-    droppedneedle::library::identify::review::file_review(
+    droppedneedle_library::identify::review::file_review(
         store,
         &id,
         album_id,
@@ -590,7 +590,7 @@ async fn library_journey_retag_apply_baseline_restore() {
     let music = app.config.root_app_dir.join("music");
     let file = plant(&music, "album-b/01.flac", "management_full.flac");
     let original_title = read_title(&file);
-    let fields_before = droppedneedle::library::tags::read_fields(&file).expect("fields read");
+    let fields_before = droppedneedle_library::tags::read_fields(&file).expect("fields read");
     app.add_library_folder("music", &music).await;
     let track_id = {
         rig.scan_store
@@ -669,8 +669,8 @@ async fn library_journey_retag_apply_baseline_restore() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(read_title(&file), "Retagged Title");
     // The retag also wrote the approved release's tags.
-    let written = droppedneedle::library::tags::read_fields(&file).expect("fields read");
-    let release_field = droppedneedle::library::tags::TagField::MusicBrainzReleaseId;
+    let written = droppedneedle_library::tags::read_fields(&file).expect("fields read");
+    let release_field = droppedneedle_library::tags::TagField::MusicBrainzReleaseId;
     assert_eq!(written[&release_field], vec![REL_1.to_owned()]);
 
     // Baseline restore returns the pre-management tags.
@@ -686,7 +686,7 @@ async fn library_journey_retag_apply_baseline_restore() {
     assert_eq!(body["restored"], json!([track_id]));
     assert_eq!(read_title(&file), original_title);
     assert_eq!(
-        droppedneedle::library::tags::read_fields(&file).expect("fields read"),
+        droppedneedle_library::tags::read_fields(&file).expect("fields read"),
         fields_before,
         "every field the retag wrote is back"
     );
@@ -891,8 +891,8 @@ async fn retag_preview_lists_the_tags_that_change() {
 /// changes no artist row; undoing the run gives the row its old name back.
 #[tokio::test]
 async fn an_artist_renamed_by_a_managed_run_keeps_its_row() {
-    use droppedneedle::library::tags::save::{TagEdit, save_tags};
-    use droppedneedle::library::tags::{TagField, read_fields};
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+    use droppedneedle_library::tags::{TagField, read_fields};
 
     const ARTIST: &str = "10000000-0000-4000-8000-000000000005";
     let rig = Rig::start("lib-artist-rename").await;
@@ -1081,7 +1081,7 @@ async fn an_artist_renamed_by_a_managed_run_keeps_its_row() {
 /// calls go through.
 #[tokio::test]
 async fn manage_routes_limit_a_trusted_user_to_a_plain_retag() {
-    use droppedneedle::library::tags::{TagField, read_fields};
+    use droppedneedle_library::tags::{TagField, read_fields};
 
     let rig = Rig::start("lib-manage-roles").await;
     rig.identify.recall_from(ambiguous_from);
@@ -1576,7 +1576,7 @@ async fn add_music_root(library: &LibrarySetup, music: &Path) {
         .add_root(
             Some("music".to_owned()),
             music.to_string_lossy().into_owned(),
-            droppedneedle::library::scan::EffectivePolicy::Automatic,
+            droppedneedle_library::scan::EffectivePolicy::Automatic,
         )
         .expect("root adds");
     drain_scans(library).await;
@@ -1584,7 +1584,7 @@ async fn add_music_root(library: &LibrarySetup, music: &Path) {
 
 /// Scan every root again and wait for it.
 async fn rescan(library: &LibrarySetup) {
-    use droppedneedle::library::scan::{ScanKind, ScanRequest, ScanTrigger};
+    use droppedneedle_library::scan::{ScanKind, ScanRequest, ScanTrigger};
     let registry = library.live_registry();
     library
         .coordinator
@@ -1694,8 +1694,8 @@ async fn copies_stay_apart_and_keep_ids_when_moved() {
 /// release, and the old identity stays where it was.
 #[tokio::test]
 async fn long_missing_album_is_not_taken_over() {
-    use droppedneedle::library::tags::TagField;
-    use droppedneedle::library::tags::save::{TagEdit, save_tags};
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
 
     let rig = Rig::start("lib-no-takeover").await;
     let music = rig.app.config.root_app_dir.join("music");
@@ -1799,8 +1799,8 @@ async fn unmounted_share_keeps_its_tracks() {
 /// and with it the curator's identity.
 #[tokio::test]
 async fn retagged_album_keeps_its_identity() {
-    use droppedneedle::library::tags::TagField;
-    use droppedneedle::library::tags::save::{TagEdit, save_tags};
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
 
     let rig = Rig::start("lib-retag-album").await;
     let music = rig.app.config.root_app_dir.join("music");
@@ -1860,7 +1860,7 @@ async fn retagged_album_keeps_its_identity() {
 /// row, even when the caller's own check for one was skipped or failed.
 #[tokio::test]
 async fn automatic_write_keeps_a_manual_identity() {
-    use droppedneedle::library::identify::models::{AlbumIdentity, DecisionSource, TrackIdentity};
+    use droppedneedle_library::identify::models::{AlbumIdentity, DecisionSource, TrackIdentity};
 
     let (_scratch, library, music) = bare_library("lib-manual-identity");
     plant(&music, "album/01.flac", "flac_full_02.flac");
@@ -1935,7 +1935,7 @@ async fn automatic_write_keeps_a_manual_identity() {
 /// caller gets the error and the review stays pending.
 #[tokio::test]
 async fn failed_approval_leaves_the_review_pending() {
-    use droppedneedle::library::service::ServiceError;
+    use droppedneedle_library::service::ServiceError;
 
     let (_scratch, library, music) = bare_library("lib-approve-fail");
     plant(&music, "album/01.flac", "flac_full_01.flac");
@@ -2025,7 +2025,7 @@ async fn journal_on_a_removed_root_waits() {
 /// next one.
 #[tokio::test]
 async fn identification_survives_restarts() {
-    use droppedneedle::library::identify::models::DecisionSource;
+    use droppedneedle_library::identify::models::DecisionSource;
 
     let rig = Rig::start("lib-identify-restart").await;
     rig.identify.recall_from(ambiguous_from);
@@ -2080,7 +2080,7 @@ async fn approve_first_candidate(library: &LibrarySetup, album: &str) {
 
 /// A person chooses `rel-1` as the album's edition.
 async fn choose_first_edition(library: &LibrarySetup, album: &str) {
-    droppedneedle::library::operations::service::Operations::new(library)
+    droppedneedle_library::operations::service::Operations::new(library)
         .choose_edition(album, REL_1, Some("curator"))
         .await
         .expect("edition chosen");
@@ -2089,13 +2089,13 @@ async fn choose_first_edition(library: &LibrarySetup, album: &str) {
 /// Preview and apply one managed write; returns the bundle id.
 fn publish_one(
     library: &LibrarySetup,
-    kind: droppedneedle::library::publish::planner::PlanKind,
+    kind: droppedneedle_library::publish::planner::PlanKind,
     album: &str,
     rel_path: &str,
     dest_rel: Option<&str>,
     updates: &[(&str, &str)],
 ) -> String {
-    use droppedneedle::library::manage::PreviewItemInput;
+    use droppedneedle_library::manage::PreviewItemInput;
     let sealed = library
         .plan_preview(
             kind,
@@ -2121,9 +2121,9 @@ fn publish_one(
 /// free-text date) come back exactly when a retag is undone.
 #[tokio::test]
 async fn undo_restores_values_no_new_edit_could_write() {
-    use droppedneedle::library::publish::planner::PlanKind;
-    use droppedneedle::library::tags::save::{TagEdit, save_tags};
-    use droppedneedle::library::tags::{TagField, read_fields};
+    use droppedneedle_library::publish::planner::PlanKind;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+    use droppedneedle_library::tags::{TagField, read_fields};
 
     let (_scratch, library, music) = bare_library("lib-undo-raw");
     let file = plant(&music, "album/01.flac", "management_full.flac");
@@ -2165,8 +2165,8 @@ async fn undo_restores_values_no_new_edit_could_write() {
 /// (no tags written), retag second, restore last.
 #[tokio::test]
 async fn baseline_restore_removes_fields_added_later() {
-    use droppedneedle::library::publish::planner::PlanKind;
-    use droppedneedle::library::tags::{TagField, read_fields};
+    use droppedneedle_library::publish::planner::PlanKind;
+    use droppedneedle_library::tags::{TagField, read_fields};
 
     let (_scratch, library, music) = bare_library("lib-baseline-added");
     let file = plant(&music, "album/01.flac", "flac_full_02.flac");
@@ -2240,7 +2240,7 @@ fn release_documents_answer_to_merged_ids() {
 /// on the v1 callback path, verification, and the album linked.
 #[tokio::test]
 async fn library_contribution_seed_callback_verify_links_album() {
-    use droppedneedle::library::contrib::models::{
+    use droppedneedle_library::contrib::models::{
         MusicBrainzVerifiedRelease, MusicBrainzVerifiedTrack,
     };
 
@@ -2602,8 +2602,8 @@ fn track_row(db: &Path, track_id: &str) -> TrackRow {
 /// edition finder, all through the HTTP routes.
 #[tokio::test]
 async fn library_journey_undo_edition_then_reidentify() {
-    use droppedneedle::library::identify::sources::{Edition, EditionPage};
-    use droppedneedle::library::operations::decisions::live_automatic_edition_undo;
+    use droppedneedle_library::identify::sources::{Edition, EditionPage};
+    use droppedneedle_library::operations::decisions::live_automatic_edition_undo;
 
     let rig = Rig::start("lib-operations").await;
     let app = &rig.app;
@@ -2927,7 +2927,7 @@ async fn artist_duplicate_groups_list_open_and_dismiss() {
 /// covers the album's folder.
 #[tokio::test]
 async fn removal_recycles_files_and_rescan_targets_the_album() {
-    use droppedneedle::library::mutations::Mutations;
+    use droppedneedle_library::mutations::Mutations;
 
     let (scratch, library, music) = bare_library("lib-remove");
     let first = plant(&music, "Band/LP/01.flac", "flac_full_01.flac");
@@ -2999,7 +2999,7 @@ async fn removal_recycles_files_and_rescan_targets_the_album() {
 /// stays in the recycle bin, where a later "Put back" still finds it.
 #[tokio::test]
 async fn put_back_refuses_an_occupied_path() {
-    use droppedneedle::library::mutations::{MutationError, Mutations};
+    use droppedneedle_library::mutations::{MutationError, Mutations};
 
     let (scratch, library, music) = bare_library("lib-put-back");
     let original = plant(&music, "Band/LP/01.flac", "flac_full_01.flac");
@@ -3890,7 +3890,7 @@ async fn activate_automatic_folder(app: &TestApp, headers: &[(&str, &str)], cust
         }
         None => assignments.push(json!({
             "root_id": "music",
-            "profile_id": droppedneedle::library::management::settings::PICARD_ORGANIZER_PROFILE_ID,
+            "profile_id": droppedneedle_library::management::settings::PICARD_ORGANIZER_PROFILE_ID,
             "enabled": true,
             "automatic_scan_discovered": true,
             "automatic_custom_editions": custom_editions,
@@ -4559,7 +4559,7 @@ async fn library_journey_catalog_corrections() {
 /// One look by the automatic worker, on the blocking pool as in
 /// production (it may wait for MusicBrainz).
 async fn automatic_next(library: &LibrarySetup) -> bool {
-    let management = droppedneedle::library::management::service::Management::new(library);
+    let management = droppedneedle_library::management::service::Management::new(library);
     tokio::task::spawn_blocking(move || management.automatic_next())
         .await
         .expect("worker joins")
@@ -4567,7 +4567,7 @@ async fn automatic_next(library: &LibrarySetup) -> bool {
 }
 
 async fn management_step(library: &LibrarySetup) -> bool {
-    let management = droppedneedle::library::management::service::Management::new(library);
+    let management = droppedneedle_library::management::service::Management::new(library);
     tokio::task::spawn_blocking(move || management.run_next("test-worker"))
         .await
         .expect("worker joins")
@@ -4578,9 +4578,9 @@ async fn management_step(library: &LibrarySetup) -> bool {
 /// wrote it.
 async fn management_run(
     library: &LibrarySetup,
-    request: droppedneedle::library::management::service::PreviewRequest,
+    request: droppedneedle_library::management::service::PreviewRequest,
 ) -> String {
-    use droppedneedle::library::management::service::{ApplyRequest, Management};
+    use droppedneedle_library::management::service::{ApplyRequest, Management};
     let management = Management::new(library);
     let handle = management
         .create_preview(request, "admin")
@@ -4616,12 +4616,12 @@ async fn management_run(
 ///   tags, and a second undo is refused.
 #[tokio::test]
 async fn library_management_preview_apply_undo() {
-    use droppedneedle::library::management::models::{ItemFilter, Selection, SelectionKind};
-    use droppedneedle::library::management::service::{ApplyRequest, Management, PreviewRequest};
-    use droppedneedle::library::management::settings as lm;
-    use droppedneedle::library::tags::save::{TagEdit, save_tags};
-    use droppedneedle::library::tags::{TagField, read_fields};
     use droppedneedle_kernel::runtime_config::sections::NamingScript;
+    use droppedneedle_library::management::models::{ItemFilter, Selection, SelectionKind};
+    use droppedneedle_library::management::service::{ApplyRequest, Management, PreviewRequest};
+    use droppedneedle_library::management::settings as lm;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+    use droppedneedle_library::tags::{TagField, read_fields};
 
     let (_scratch, library, music) = bare_library("lib-management-jobs");
     let first = plant(
@@ -4718,7 +4718,7 @@ async fn library_management_preview_apply_undo() {
     let reason = page.items[0].facts.reason.clone().expect("a reason");
     assert_eq!(reason.code, "UNCONFIRMED_MATCH");
     assert!(!reason.action.is_empty());
-    droppedneedle::library::operations::service::Operations::new(&library)
+    droppedneedle_library::operations::service::Operations::new(&library)
         .confirm_match(&album, "admin")
         .expect("match confirmed");
 
@@ -5217,9 +5217,9 @@ async fn library_journey_identity_repair_and_preparation() {
 /// Apply a ready preview from its handle and run the worker once.
 async fn management_apply(
     library: &LibrarySetup,
-    handle: &droppedneedle::library::management::models::PreviewHandle,
-) -> droppedneedle::library::management::models::JobDetail {
-    use droppedneedle::library::management::service::{ApplyRequest, Management};
+    handle: &droppedneedle_library::management::models::PreviewHandle,
+) -> droppedneedle_library::management::models::JobDetail {
+    use droppedneedle_library::management::service::{ApplyRequest, Management};
     let management = Management::new(library);
     let detail = management.detail(&handle.job_id).expect("detail");
     assert!(detail.ready_for_confirmation, "{:?}", detail.stale_reasons);
@@ -5276,15 +5276,15 @@ async fn management_apply(
 ///   alone because it is already managed.
 #[tokio::test]
 async fn library_management_tools_journey() {
-    use droppedneedle::library::management::activation::{
+    use droppedneedle_library::management::activation::{
         ActivationConfirm, ActivationProof, ActivationRequest,
     };
-    use droppedneedle::library::management::models::{Selection, SelectionKind, TagEditMode};
-    use droppedneedle::library::management::restore::{PurgeRequest, RestoreRequest};
-    use droppedneedle::library::management::service::Management;
-    use droppedneedle::library::management::settings as lm;
-    use droppedneedle::library::management::tag_edit::TagEditRequest;
-    use droppedneedle::library::tags::{TagField, read_fields};
+    use droppedneedle_library::management::models::{Selection, SelectionKind, TagEditMode};
+    use droppedneedle_library::management::restore::{PurgeRequest, RestoreRequest};
+    use droppedneedle_library::management::service::Management;
+    use droppedneedle_library::management::settings as lm;
+    use droppedneedle_library::management::tag_edit::TagEditRequest;
+    use droppedneedle_library::tags::{TagField, read_fields};
 
     let (scratch, library, music) = bare_library("lib-management-tools");
     let file = plant(&music, "incoming/tool track.flac", "management_full.flac");
@@ -5307,14 +5307,14 @@ async fn library_management_tools_journey() {
              VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
         )
         .expect("admin row");
-    droppedneedle::library::operations::service::Operations::new(&library)
+    droppedneedle_library::operations::service::Operations::new(&library)
         .confirm_match(&album, "admin")
         .expect("match confirmed");
     // No MusicBrainz credits are scripted here, so the profile writes none.
     let mut settings = lm::initial_settings("");
     for profile in &mut settings.profiles {
         profile.metadata.fields.retain(|field| {
-            !droppedneedle::library::management::enrich::CREDIT_FIELDS
+            !droppedneedle_library::management::enrich::CREDIT_FIELDS
                 .iter()
                 .any(|(name, _)| *name == field.field)
         });
@@ -5355,9 +5355,9 @@ async fn library_management_tools_journey() {
     // Art, lyrics, ReplayGain and a scrub land through the publisher and
     // all come off again with the run's undo.
     {
-        use droppedneedle::library::management::enrich::{Cover, LyricsFound, ScriptedEnrichment};
-        use droppedneedle::library::tags::save::read_document;
         use droppedneedle_kernel::runtime_config::sections::{LibraryManagement, ReplayGainMode};
+        use droppedneedle_library::management::enrich::{Cover, LyricsFound, ScriptedEnrichment};
+        use droppedneedle_library::tags::save::read_document;
         let db = || {
             droppedneedle_kernel::db::open_connection(&scratch.to_path_buf().join("app.db"))
                 .expect("db")
@@ -5390,9 +5390,9 @@ async fn library_management_tools_journey() {
                 }))
                 .is_ok()
         );
-        droppedneedle::library::tags::save_tags(
+        droppedneedle_library::tags::save_tags(
             &file,
-            &[droppedneedle::library::tags::TagEdit::native(
+            &[droppedneedle_library::tags::TagEdit::native(
                 "vorbis:MOOD",
                 vec!["Calm".to_owned()],
             )],
@@ -5430,7 +5430,7 @@ async fn library_management_tools_journey() {
         normalize();
         let run = management
             .create_preview(
-                droppedneedle::library::management::service::PreviewRequest {
+                droppedneedle_library::management::service::PreviewRequest {
                     selection: Selection {
                         kind: SelectionKind::Albums,
                         ids: vec![album.clone()],
@@ -5707,7 +5707,7 @@ async fn library_management_tools_journey() {
     assert!(management.reissue(&dry_run.job_id, "admin").is_err());
     let refused = management.apply(
         &dry_run.job_id,
-        droppedneedle::library::management::service::ApplyRequest {
+        droppedneedle_library::management::service::ApplyRequest {
             preview_token: dry_run.preview_token.clone(),
             expected_row_revision: management
                 .detail(&dry_run.job_id)
@@ -5809,13 +5809,13 @@ async fn library_management_tools_journey() {
         .expect("scripted providers")
         .set_recall(ambiguous_recall(&library.identify_store, &second_album));
     library.identify_tick().await;
-    droppedneedle::library::operations::service::Operations::new(&library)
+    droppedneedle_library::operations::service::Operations::new(&library)
         .confirm_match(&second_album, "admin")
         .expect("second match confirmed");
     let settings_now = revision();
     let clash = management
         .create_preview(
-            droppedneedle::library::management::service::PreviewRequest {
+            droppedneedle_library::management::service::PreviewRequest {
                 selection: Selection {
                     kind: SelectionKind::Albums,
                     ids: vec![second_album.clone()],
@@ -5838,20 +5838,20 @@ async fn library_management_tools_journey() {
         .items
         .into_iter()
         .find(|item| {
-            item.eligibility == droppedneedle::library::management::models::Eligibility::Blocked
+            item.eligibility == droppedneedle_library::management::models::Eligibility::Blocked
         })
         .expect("the copy is blocked by the clash");
     let source = management.detail(&clash.job_id).expect("clash detail");
     let replace_request = |key: &str| {
-        droppedneedle::library::management::duplicates::DuplicateRequest {
-        intent: droppedneedle::library::management::models::DuplicateIntent {
+        droppedneedle_library::management::duplicates::DuplicateRequest {
+        intent: droppedneedle_library::management::models::DuplicateIntent {
             source_job_id: clash.job_id.clone(),
             source_plan_item_ordinal: blocked.ordinal,
             collision_kind: "same_path_different_content".to_owned(),
             existing_root_id: "music".to_owned(),
             existing_relative_path: managed_rel.clone(),
             existing_local_track_id: None,
-            action: droppedneedle::library::management::models::DuplicateAction::RecycleExistingKeepIncoming,
+            action: droppedneedle_library::management::models::DuplicateAction::RecycleExistingKeepIncoming,
             alternate_relative_path: None,
         },
         expected_source_row_revision: source.job.row_revision,
@@ -5860,8 +5860,8 @@ async fn library_management_tools_journey() {
         idempotency_key: key.to_owned(),
     }
     };
-    let apply_request = |handle: &droppedneedle::library::management::models::PreviewHandle| {
-        droppedneedle::library::management::service::ApplyRequest {
+    let apply_request = |handle: &droppedneedle_library::management::models::PreviewHandle| {
+        droppedneedle_library::management::service::ApplyRequest {
             preview_token: handle.preview_token.clone(),
             expected_row_revision: management
                 .detail(&handle.job_id)
@@ -5873,10 +5873,10 @@ async fn library_management_tools_journey() {
         }
     };
     let stop = |job_id: &str| {
-        droppedneedle::library::operations::service::Operations::new(&library)
+        droppedneedle_library::operations::service::Operations::new(&library)
             .control(
                 job_id,
-                droppedneedle::library::operations::models::Control::Stop,
+                droppedneedle_library::operations::models::Control::Stop,
                 management.detail(job_id).expect("detail").job.row_revision,
                 None,
             )
@@ -5926,7 +5926,7 @@ async fn library_management_tools_journey() {
         "duplicate planning runs again"
     );
     library.arm_publish_crash(Some(
-        droppedneedle::library::publish::CrashPoint::AfterFirstRename,
+        droppedneedle_library::publish::CrashPoint::AfterFirstRename,
     ));
     management
         .apply(&resolve.job_id, apply_request(&resolve))
@@ -6018,10 +6018,10 @@ async fn library_management_tools_journey() {
 /// files no longer match what was sealed.
 #[tokio::test]
 async fn library_management_custom_edition_journey() {
-    use droppedneedle::library::management::models::{Selection, SelectionKind};
-    use droppedneedle::library::management::service::{Management, PreviewRequest};
-    use droppedneedle::library::management::settings as lm;
-    use droppedneedle::library::tags::{TagField, read_fields};
+    use droppedneedle_library::management::models::{Selection, SelectionKind};
+    use droppedneedle_library::management::service::{Management, PreviewRequest};
+    use droppedneedle_library::management::settings as lm;
+    use droppedneedle_library::tags::{TagField, read_fields};
 
     let (scratch, library, music) = bare_library("lib-management-custom");
     let file = plant(&music, "custom/sealed track.flac", "management_full.flac");
@@ -6044,7 +6044,7 @@ async fn library_management_custom_edition_journey() {
              VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
         )
         .expect("admin row");
-    droppedneedle::library::operations::service::Operations::new(&library)
+    droppedneedle_library::operations::service::Operations::new(&library)
         .confirm_match(&album, "admin")
         .expect("match confirmed");
     library
@@ -6165,17 +6165,17 @@ async fn library_management_custom_edition_journey() {
 /// unmanaged tag.
 #[tokio::test]
 async fn library_management_artwork_journey() {
-    use droppedneedle::library::management::enrich::{Cover, ScriptedEnrichment};
-    use droppedneedle::library::management::models::{Selection, SelectionKind};
-    use droppedneedle::library::management::service::{Management, PreviewRequest};
-    use droppedneedle::library::management::settings as lm;
-    use droppedneedle::library::tags::save::read_document;
-    use droppedneedle::library::tags::{TagEdit, TagField};
     use droppedneedle_kernel::runtime_config::sections::LibraryManagement;
+    use droppedneedle_library::management::enrich::{Cover, ScriptedEnrichment};
+    use droppedneedle_library::management::models::{Selection, SelectionKind};
+    use droppedneedle_library::management::service::{Management, PreviewRequest};
+    use droppedneedle_library::management::settings as lm;
+    use droppedneedle_library::tags::save::read_document;
+    use droppedneedle_library::tags::{TagEdit, TagField};
 
     let (scratch, library, music) = bare_library("lib-management-artwork");
     let file = plant(&music, "art/cover track.m4a", "management_full.m4a");
-    droppedneedle::library::tags::save_tags(
+    droppedneedle_library::tags::save_tags(
         &file,
         &[
             TagEdit::native("mp4:\u{a9}wrt", vec!["Ada Composer".to_owned()]),
@@ -6207,7 +6207,7 @@ async fn library_management_artwork_journey() {
              VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
         )
         .expect("admin row");
-    droppedneedle::library::operations::service::Operations::new(&library)
+    droppedneedle_library::operations::service::Operations::new(&library)
         .confirm_match(&album, "admin")
         .expect("match confirmed");
     let mut settings = lm::initial_settings("");
@@ -6380,7 +6380,7 @@ async fn library_management_artwork_journey() {
     assert!(cover_file.exists(), "the cover file was written");
     let restore = management
         .create_restore_preview(
-            droppedneedle::library::management::restore::RestoreRequest {
+            droppedneedle_library::management::restore::RestoreRequest {
                 selection: Selection {
                     kind: SelectionKind::Albums,
                     ids: vec![album.clone()],
@@ -6443,7 +6443,7 @@ impl ManagedLibrary {
             &mut droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
         ),
     ) -> Self {
-        use droppedneedle::library::management::settings as lm;
+        use droppedneedle_library::management::settings as lm;
         let (scratch, library, music) = bare_library(tag);
         std::fs::create_dir_all(&music).expect("music folder");
         add_music_root(&library, &music).await;
@@ -6483,12 +6483,12 @@ impl ManagedLibrary {
             .expect("db opens")
     }
 
-    fn management(&self) -> droppedneedle::library::management::service::Management {
-        droppedneedle::library::management::service::Management::new(&self.library)
+    fn management(&self) -> droppedneedle_library::management::service::Management {
+        droppedneedle_library::management::service::Management::new(&self.library)
     }
 
     fn settings_revision(&self) -> String {
-        droppedneedle::library::management::settings::settings_revision(
+        droppedneedle_library::management::settings::settings_revision(
             &self
                 .library
                 .config
@@ -6513,8 +6513,8 @@ impl ManagedLibrary {
         fixtures: &[&str],
         edition: impl Fn(&mut Release),
     ) -> (String, Vec<String>) {
-        use droppedneedle::library::tags::TagField;
-        use droppedneedle::library::tags::save::{TagEdit, save_tags};
+        use droppedneedle_library::tags::TagField;
+        use droppedneedle_library::tags::save::{TagEdit, save_tags};
         let nth = self.albums.replace(self.albums.get() + 1);
         let mut relative = Vec::new();
         for (index, fixture) in fixtures.iter().enumerate() {
@@ -6605,7 +6605,7 @@ impl ManagedLibrary {
             .expect("scripted providers")
             .set_recall(recall);
         assert_eq!(self.library.identify_tick().await, 1);
-        droppedneedle::library::operations::service::Operations::new(&self.library)
+        droppedneedle_library::operations::service::Operations::new(&self.library)
             .confirm_match(&album, "admin")
             .expect("match confirmed");
         (album, ids)
@@ -6613,7 +6613,7 @@ impl ManagedLibrary {
 
     /// Turn automatic management on for the folder: a dry run, confirmed.
     async fn activate(&self) {
-        use droppedneedle::library::management::activation::{ActivationConfirm, ActivationProof};
+        use droppedneedle_library::management::activation::{ActivationConfirm, ActivationProof};
         let (dry_run, proposed) = self.dry_run("dry-run", |_| {}).await;
         self.management()
             .confirm_activation(
@@ -6639,13 +6639,13 @@ impl ManagedLibrary {
         key: &str,
         change: impl Fn(&mut droppedneedle_kernel::runtime_config::sections::LibraryManagement),
     ) -> (
-        droppedneedle::library::management::models::PreviewHandle,
+        droppedneedle_library::management::models::PreviewHandle,
         droppedneedle_kernel::runtime_config::sections::LibraryManagement,
     ) {
-        use droppedneedle::library::management::activation::ActivationRequest;
         use droppedneedle_kernel::runtime_config::sections::{
             LibraryManagement, LibraryManagementRootAssignment,
         };
+        use droppedneedle_library::management::activation::ActivationRequest;
         let management = self.management();
         // Identification queued the albums while nothing was automatic
         // yet; the worker looks and drops them.
@@ -6669,7 +6669,7 @@ impl ManagedLibrary {
                 .push(LibraryManagementRootAssignment {
                     root_id: "music".to_owned(),
                     profile_id: Some(
-                        droppedneedle::library::management::settings::PICARD_ORGANIZER_PROFILE_ID
+                        droppedneedle_library::management::settings::PICARD_ORGANIZER_PROFILE_ID
                             .to_owned(),
                     ),
                     enabled: true,
@@ -6775,7 +6775,7 @@ fn file_sha256(path: &Path) -> String {
 /// every album v2 managed would read as changed after an upgrade.
 #[test]
 fn v2_path_revision_matches_v2() {
-    use droppedneedle::library::publish::record::v2_path_revision;
+    use droppedneedle_library::publish::record::v2_path_revision;
     let cases = [
         (
             "music",
@@ -6833,8 +6833,8 @@ impl ManagedLibrary {
     }
 
     /// Change the track's file from outside the app, then scan.
-    async fn edit_outside(&self, track: &str, edit: droppedneedle::library::tags::TagEdit) {
-        droppedneedle::library::tags::save_tags(&self.path(track), &[edit])
+    async fn edit_outside(&self, track: &str, edit: droppedneedle_library::tags::TagEdit) {
+        droppedneedle_library::tags::save_tags(&self.path(track), &[edit])
             .expect("retagged outside the app");
         rescan(&self.library).await;
     }
@@ -6842,15 +6842,15 @@ impl ManagedLibrary {
     /// A person's preview with the folder's profile, planned.
     async fn preview(
         &self,
-        kind: droppedneedle::library::management::models::SelectionKind,
+        kind: droppedneedle_library::management::models::SelectionKind,
         ids: &[&str],
         key: &str,
     ) -> (
-        droppedneedle::library::management::models::PreviewHandle,
-        Vec<droppedneedle::library::management::models::PlannedItem>,
+        droppedneedle_library::management::models::PreviewHandle,
+        Vec<droppedneedle_library::management::models::PlannedItem>,
     ) {
-        use droppedneedle::library::management::models::Selection;
-        use droppedneedle::library::management::service::PreviewRequest;
+        use droppedneedle_library::management::models::Selection;
+        use droppedneedle_library::management::service::PreviewRequest;
         let management = self.management();
         let handle = management
             .create_preview(
@@ -6861,7 +6861,7 @@ impl ManagedLibrary {
                         catalog_filter: None,
                     },
                     profile_id:
-                        droppedneedle::library::management::settings::PICARD_ORGANIZER_PROFILE_ID
+                        droppedneedle_library::management::settings::PICARD_ORGANIZER_PROFILE_ID
                             .to_owned(),
                     expected_settings_revision: self.settings_revision(),
                     expected_policy_revision: self
@@ -6885,9 +6885,9 @@ impl ManagedLibrary {
     }
 }
 
-fn title_edit(value: &str) -> droppedneedle::library::tags::TagEdit {
-    droppedneedle::library::tags::TagEdit::verbatim(
-        droppedneedle::library::tags::TagField::Title,
+fn title_edit(value: &str) -> droppedneedle_library::tags::TagEdit {
+    droppedneedle_library::tags::TagEdit::verbatim(
+        droppedneedle_library::tags::TagField::Title,
         vec![value.to_owned()],
     )
 }
@@ -6900,8 +6900,8 @@ fn title_edit(value: &str) -> droppedneedle::library::tags::TagEdit {
 /// leaves the album alone, and a preview of the album itself warns.
 #[tokio::test]
 async fn a_hand_retag_takes_the_album_over() {
-    use droppedneedle::library::management::models::{Eligibility, SelectionKind};
-    use droppedneedle::library::tags::{TagField, read_fields};
+    use droppedneedle_library::management::models::{Eligibility, SelectionKind};
+    use droppedneedle_library::tags::{TagField, read_fields};
 
     let managed = ManagedLibrary::start("lib-takeover", |_| {}).await;
     let (album, tracks) = managed.add_album("first", 1).await;
@@ -7024,10 +7024,10 @@ async fn a_hand_retag_takes_the_album_over() {
 /// is the app's own write.
 #[tokio::test]
 async fn unmanaged_changes_do_not_take_the_album_over() {
-    use droppedneedle::library::management::models::TagEditMode;
-    use droppedneedle::library::management::tag_edit::TagEditRequest;
-    use droppedneedle::library::tags::TagEdit;
-    use droppedneedle::library::tags::save::read_document;
+    use droppedneedle_library::management::models::TagEditMode;
+    use droppedneedle_library::management::tag_edit::TagEditRequest;
+    use droppedneedle_library::tags::TagEdit;
+    use droppedneedle_library::tags::save::read_document;
 
     let managed = ManagedLibrary::start("lib-takeover-unmanaged", |_| {}).await;
     let (album, tracks) = managed.add_album("first", 1).await;
@@ -7067,7 +7067,7 @@ async fn unmanaged_changes_do_not_take_the_album_over() {
         )
         .expect("edition");
     let other = if chosen == REL_1 { REL_2 } else { REL_1 };
-    droppedneedle::library::operations::service::Operations::new(&managed.library)
+    droppedneedle_library::operations::service::Operations::new(&managed.library)
         .choose_edition(&album, other, Some("admin"))
         .await
         .expect("edition chosen");
@@ -7164,7 +7164,7 @@ fn clean_v23_mp3(path: &Path) -> String {
 /// An edition with every fact the split fields write: sort names, a disc
 /// title, a first release date, a type, and an ISRC per track.
 fn full_edition(release: &mut Release) {
-    use droppedneedle::library::matching::model::ReleaseMedium;
+    use droppedneedle_library::matching::model::ReleaseMedium;
     for artist in &mut release.artists {
         artist.sort_name = Some(format!("{}, Sorted", artist.name));
     }
@@ -7186,11 +7186,11 @@ fn isrc(index: usize) -> String {
 }
 
 /// A field's values read from the file's bytes, in its format's home.
-fn native_values(path: &Path, field: droppedneedle::library::tags::TagField) -> Vec<String> {
+fn native_values(path: &Path, field: droppedneedle_library::tags::TagField) -> Vec<String> {
     use crate::library_tags::{
         id3_comments, id3_text_values, id3_txxx_values, mp4_freeform, mp4_text, vorbis_key_values,
     };
-    use droppedneedle::library::tags::fields::{Id3Target, Mp4Target};
+    use droppedneedle_library::tags::fields::{Id3Target, Mp4Target};
     let extension = path
         .extension()
         .and_then(|extension| extension.to_str())
@@ -7227,9 +7227,9 @@ fn native_values(path: &Path, field: droppedneedle::library::tags::TagField) -> 
 #[tokio::test]
 async fn a_mixed_id3v23_file_is_saved_as_v24() {
     use crate::library_tags::{id3_frames, id3_txxx_values, mp3_audio_tail};
-    use droppedneedle::library::management::models::{Eligibility, Selection, SelectionKind};
-    use droppedneedle::library::management::restore::RestoreRequest;
-    use droppedneedle::library::tags::read_fields;
+    use droppedneedle_library::management::models::{Eligibility, Selection, SelectionKind};
+    use droppedneedle_library::management::restore::RestoreRequest;
+    use droppedneedle_library::tags::read_fields;
 
     let managed = ManagedLibrary::start("lib-mixed-v23", |_| {}).await;
     let (album, tracks) = managed
@@ -7335,10 +7335,10 @@ async fn a_mixed_id3v23_file_is_saved_as_v24() {
 #[tokio::test]
 async fn the_picard_profile_writes_its_fields_in_every_format() {
     use crate::library_tags::{id3_frames, id3_inject_frames};
-    use droppedneedle::library::management::models::SelectionKind;
-    use droppedneedle::library::tags::TagField;
-    use droppedneedle::library::tags::save::{TagEdit, save_tags};
     use droppedneedle_kernel::runtime_config::sections::{FieldMode, LibraryManagement};
+    use droppedneedle_library::management::models::SelectionKind;
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
 
     let managed = ManagedLibrary::start("lib-fields-formats", |profile| {
         for field in &mut profile.metadata.fields {
@@ -7481,7 +7481,7 @@ async fn the_picard_profile_writes_its_fields_in_every_format() {
 /// worker looks, marks the album and writes nothing.
 #[tokio::test]
 async fn a_hand_edited_isrc_takes_the_album_over() {
-    use droppedneedle::library::tags::{TagEdit, TagField, read_fields};
+    use droppedneedle_library::tags::{TagEdit, TagField, read_fields};
 
     let managed = ManagedLibrary::start("lib-takeover-isrc", |_| {}).await;
     let (album, tracks) = managed
@@ -7558,7 +7558,7 @@ async fn a_blocked_file_does_not_hide_a_hand_edit() {
 /// A v2 row that holds no file hash is no record at all.
 #[tokio::test]
 async fn a_file_v2_wrote_is_recognised() {
-    use droppedneedle::library::publish::record::v2_path_revision;
+    use droppedneedle_library::publish::record::v2_path_revision;
 
     let managed = ManagedLibrary::start("lib-takeover-v2", |_| {}).await;
     let (untouched, untouched_tracks) = managed.add_album("untouched", 1).await;
@@ -7629,7 +7629,7 @@ async fn a_file_v2_wrote_is_recognised() {
 /// worker would do the same thing again half a minute later.
 #[tokio::test]
 async fn an_undone_run_is_not_done_again() {
-    use droppedneedle::library::management::models::SelectionKind;
+    use droppedneedle_library::management::models::SelectionKind;
 
     let managed = ManagedLibrary::start("lib-takeover-undo", |_| {}).await;
     let (by_worker, worker_tracks) = managed.add_album("first", 1).await;
@@ -7738,8 +7738,8 @@ async fn an_undone_bundle_is_not_done_again() {
 /// manages pictures, and nowhere else.
 #[tokio::test]
 async fn a_replaced_picture_counts_only_where_pictures_are_managed() {
-    use droppedneedle::library::management::enrich::{Cover, ScriptedEnrichment};
-    use droppedneedle::library::tags::save::{PictureSpec, save_tags_with_pictures};
+    use droppedneedle_library::management::enrich::{Cover, ScriptedEnrichment};
+    use droppedneedle_library::tags::save::{PictureSpec, save_tags_with_pictures};
 
     let png = |colour: [u8; 3]| {
         let mut bytes = Vec::new();
@@ -7756,7 +7756,7 @@ async fn a_replaced_picture_counts_only_where_pictures_are_managed() {
             profile.artwork.embedded_enabled = artwork;
             // No credits are scripted here.
             profile.metadata.fields.retain(|field| {
-                !droppedneedle::library::management::enrich::CREDIT_FIELDS
+                !droppedneedle_library::management::enrich::CREDIT_FIELDS
                     .iter()
                     .any(|(name, _)| *name == field.field)
             });
@@ -7897,8 +7897,8 @@ async fn a_merge_and_a_split_carry_the_step_back() {
 /// is one made after the app wrote the album again.
 #[tokio::test]
 async fn handing_an_album_back_lets_the_app_write_again() {
-    use droppedneedle::library::mutations::Mutations;
-    use droppedneedle::library::tags::{TagField, read_fields};
+    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::tags::{TagField, read_fields};
 
     let managed = ManagedLibrary::start("lib-takeover-hand-back", |_| {}).await;
     let (album, tracks) = managed.add_album("first", 2).await;
@@ -7992,9 +7992,9 @@ async fn handing_an_album_back_lets_the_app_write_again() {
 /// restart in between loses none.
 #[tokio::test]
 async fn handing_every_album_back_takes_one_step_each() {
-    use droppedneedle::library::management::automatic::Settle;
-    use droppedneedle::library::management::service::Management;
-    use droppedneedle::library::mutations::Mutations;
+    use droppedneedle_library::management::automatic::Settle;
+    use droppedneedle_library::management::service::Management;
+    use droppedneedle_library::mutations::Mutations;
 
     let (scratch, library, music) = bare_library("lib-takeover-hand-back-all");
     for folder in ["a", "b", "c"] {
@@ -8188,9 +8188,9 @@ async fn left_unmanaged_albums_read_back_and_hand_back() {
 /// trying it on every step.
 #[tokio::test]
 async fn a_hand_back_that_cannot_read_the_files_keeps_the_mark() {
-    use droppedneedle::library::management::automatic::Settle;
-    use droppedneedle::library::management::service::Management;
-    use droppedneedle::library::mutations::{MutationError, Mutations};
+    use droppedneedle_library::management::automatic::Settle;
+    use droppedneedle_library::management::service::Management;
+    use droppedneedle_library::mutations::{MutationError, Mutations};
 
     let (scratch, library, music) = bare_library("lib-takeover-hand-back-fails");
     let file = plant(&music, "a/01.flac", "management_full.flac");
@@ -8251,7 +8251,7 @@ async fn a_hand_back_that_cannot_read_the_files_keeps_the_mark() {
 /// changed in the catalog since the first run.
 #[tokio::test]
 async fn a_handed_back_album_is_looked_at_afresh() {
-    use droppedneedle::library::mutations::Mutations;
+    use droppedneedle_library::mutations::Mutations;
 
     let managed = ManagedLibrary::start("lib-takeover-afresh", |_| {}).await;
     let (album, tracks) = managed.add_album("first", 1).await;
@@ -8293,7 +8293,7 @@ impl ManagedLibrary {
     /// Retag every one of `tracks` to the album `title` outside the app,
     /// then scan.
     async fn rename_outside(&self, tracks: &[String], title: &str) {
-        use droppedneedle::library::tags::{TagEdit, TagField, save_tags};
+        use droppedneedle_library::tags::{TagEdit, TagField, save_tags};
         for track in tracks {
             save_tags(
                 &self.path(track),
@@ -8332,7 +8332,7 @@ impl ManagedLibrary {
 
 /// The album tag in the file.
 fn album_tag(path: &Path) -> Vec<String> {
-    use droppedneedle::library::tags::{TagField, read_fields};
+    use droppedneedle_library::tags::{TagField, read_fields};
     read_fields(path).expect("tags read")[&TagField::Album].clone()
 }
 
@@ -8420,7 +8420,7 @@ async fn the_apps_own_regroup_of_a_mostly_missing_album_is_followed_unmarked() {
 /// the worker writes the edition and does not mark it again.
 #[tokio::test]
 async fn a_hand_renamed_album_with_a_chosen_edition_is_left_unmanaged() {
-    use droppedneedle::library::mutations::Mutations;
+    use droppedneedle_library::mutations::Mutations;
 
     let managed = ManagedLibrary::start("lib-takeover-renamed", |_| {}).await;
     managed.add_album("first", 1).await;
@@ -8481,7 +8481,7 @@ async fn a_hand_renamed_album_with_a_chosen_edition_is_left_unmanaged() {
 /// its files keep the hand retag's tags.
 #[tokio::test]
 async fn a_hand_renamed_album_is_marked_only_where_the_folder_is_managed() {
-    use droppedneedle::library::publish::planner::PlanKind;
+    use droppedneedle_library::publish::planner::PlanKind;
 
     let manual = ManagedLibrary::start("lib-takeover-renamed-manual", |_| {}).await;
     manual.add_album("first", 1).await;
@@ -8553,7 +8553,7 @@ impl ManagedLibrary {
     fn rename_in_app(&self, album: &str, track: &str, dest_rel: &str) {
         publish_one(
             &self.library,
-            droppedneedle::library::publish::planner::PlanKind::Move,
+            droppedneedle_library::publish::planner::PlanKind::Move,
             album,
             &self.relative(track),
             Some(dest_rel),
@@ -8584,12 +8584,12 @@ impl ManagedLibrary {
     /// A person's preview with the folder's profile, planned and applied.
     async fn apply(
         &self,
-        kind: droppedneedle::library::management::models::SelectionKind,
+        kind: droppedneedle_library::management::models::SelectionKind,
         ids: &[&str],
         key: &str,
     ) -> String {
-        use droppedneedle::library::management::models::Selection;
-        use droppedneedle::library::management::service::PreviewRequest;
+        use droppedneedle_library::management::models::Selection;
+        use droppedneedle_library::management::service::PreviewRequest;
         management_run(
             &self.library,
             PreviewRequest {
@@ -8599,7 +8599,7 @@ impl ManagedLibrary {
                     catalog_filter: None,
                 },
                 profile_id:
-                    droppedneedle::library::management::settings::PICARD_ORGANIZER_PROFILE_ID
+                    droppedneedle_library::management::settings::PICARD_ORGANIZER_PROFILE_ID
                         .to_owned(),
                 expected_settings_revision: self.settings_revision(),
                 expected_policy_revision: self.library.live_registry().policy_revision().to_owned(),
@@ -8618,9 +8618,9 @@ impl ManagedLibrary {
 /// preview made before the change is refused when applied after it.
 #[tokio::test]
 async fn a_persons_write_over_a_hand_edit_leaves_it_the_users() {
-    use droppedneedle::library::manage::PreviewItemInput;
-    use droppedneedle::library::publish::planner::PlanKind;
-    use droppedneedle::library::tags::{TagField, read_fields};
+    use droppedneedle_library::manage::PreviewItemInput;
+    use droppedneedle_library::publish::planner::PlanKind;
+    use droppedneedle_library::tags::{TagField, read_fields};
 
     let managed = ManagedLibrary::start("lib-takeover-own-write", |_| {}).await;
     let (renamed, renamed_tracks) = managed.add_album("first", 1).await;
@@ -8697,7 +8697,7 @@ async fn a_persons_write_over_a_hand_edit_leaves_it_the_users() {
 /// change of edition is the app's to write, and nothing marks the album.
 #[tokio::test]
 async fn a_persons_profile_run_takes_the_files_back() {
-    use droppedneedle::library::management::models::SelectionKind;
+    use droppedneedle_library::management::models::SelectionKind;
 
     let managed = ManagedLibrary::start("lib-takeover-own-apply", |_| {}).await;
     let (album, tracks) = managed.add_album("first", 1).await;
@@ -8718,7 +8718,7 @@ async fn a_persons_profile_run_takes_the_files_back() {
         )
         .expect("edition");
     let other = if chosen == REL_1 { REL_2 } else { REL_1 };
-    droppedneedle::library::operations::service::Operations::new(&managed.library)
+    droppedneedle_library::operations::service::Operations::new(&managed.library)
         .choose_edition(&album, other, Some("admin"))
         .await
         .expect("edition chosen");
@@ -8733,8 +8733,8 @@ async fn a_persons_profile_run_takes_the_files_back() {
 /// the record follows the bytes.
 #[tokio::test]
 async fn an_unmanaged_change_stays_accepted_through_every_write() {
-    use droppedneedle::library::tags::save::read_document;
-    use droppedneedle::library::tags::{TagEdit, save_tags};
+    use droppedneedle_library::tags::save::read_document;
+    use droppedneedle_library::tags::{TagEdit, save_tags};
 
     let managed = ManagedLibrary::start("lib-takeover-unmanaged-write", |_| {}).await;
     let (moved, moved_tracks) = managed.add_album("first", 1).await;
@@ -8781,7 +8781,7 @@ async fn an_unmanaged_change_stays_accepted_through_every_write() {
     } else {
         chosen.replacen("-0001-", "-0000-", 1)
     };
-    droppedneedle::library::operations::service::Operations::new(&managed.library)
+    droppedneedle_library::operations::service::Operations::new(&managed.library)
         .choose_edition(&album, &other, Some("admin"))
         .await
         .expect("edition chosen");
@@ -8819,8 +8819,8 @@ async fn an_unmanaged_change_stays_accepted_through_every_write() {
 /// away mark nothing.
 #[tokio::test]
 async fn a_file_retagged_and_renamed_together_is_still_the_users() {
-    use droppedneedle::library::mutations::Mutations;
-    use droppedneedle::library::tags::{TagEdit, TagField, save_tags};
+    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::tags::{TagEdit, TagField, save_tags};
 
     let managed = ManagedLibrary::start("lib-takeover-retag-rename", |_| {}).await;
     let (whole, whole_tracks) = managed.add_album("first", 2).await;
@@ -8987,7 +8987,7 @@ async fn a_file_retagged_and_renamed_together_is_still_the_users() {
 /// marks nothing: the app wrote the new file too.
 #[tokio::test]
 async fn an_import_in_place_of_a_missing_track_marks_nothing() {
-    use droppedneedle::library::import::{DownloadImport, ImportOrigin, ImportSource};
+    use droppedneedle_library::import::{DownloadImport, ImportOrigin, ImportSource};
 
     let managed = ManagedLibrary::start("lib-takeover-import-missing", |_| {}).await;
     let (album, tracks) = managed.add_album("first", 2).await;
@@ -9042,7 +9042,7 @@ async fn an_import_in_place_of_a_missing_track_marks_nothing() {
 /// user.
 #[tokio::test]
 async fn a_rename_in_the_app_keeps_v2s_record() {
-    use droppedneedle::library::publish::record::v2_path_revision;
+    use droppedneedle_library::publish::record::v2_path_revision;
 
     let managed = ManagedLibrary::start("lib-takeover-v2-renamed", |_| {}).await;
     let (album, tracks) = managed.add_album("first", 1).await;
@@ -9079,7 +9079,7 @@ async fn a_rename_in_the_app_keeps_v2s_record() {
 /// album previewed by itself plans.
 #[tokio::test]
 async fn a_wide_preview_never_writes_over_an_unnoticed_hand_edit() {
-    use droppedneedle::library::management::models::{Eligibility, SelectionKind};
+    use droppedneedle_library::management::models::{Eligibility, SelectionKind};
 
     let managed = ManagedLibrary::start("lib-takeover-wide-unnoticed", |_| {}).await;
     let (album, tracks) = managed.add_album("first", 1).await;
@@ -9121,9 +9121,9 @@ impl ManagedLibrary {
         &self,
         ids: &[&str],
         key: &str,
-    ) -> Vec<droppedneedle::library::management::models::PlannedItem> {
-        use droppedneedle::library::management::models::{Selection, SelectionKind};
-        use droppedneedle::library::management::restore::RestoreRequest;
+    ) -> Vec<droppedneedle_library::management::models::PlannedItem> {
+        use droppedneedle_library::management::models::{Selection, SelectionKind};
+        use droppedneedle_library::management::restore::RestoreRequest;
         let management = self.management();
         let handle = management
             .create_restore_preview(
@@ -9158,7 +9158,7 @@ impl ManagedLibrary {
 /// wide preview plans it again.
 #[tokio::test]
 async fn a_wide_preview_in_a_manual_folder_blocks_without_marking() {
-    use droppedneedle::library::management::models::{Eligibility, SelectionKind};
+    use droppedneedle_library::management::models::{Eligibility, SelectionKind};
 
     let managed = ManagedLibrary::start("lib-takeover-wide-manual", |_| {}).await;
     let (other, _) = managed.add_album("first", 1).await;
@@ -9202,7 +9202,7 @@ async fn a_wide_preview_in_a_manual_folder_blocks_without_marking() {
     } else {
         chosen.replacen("-0001-", "-0000-", 1)
     };
-    droppedneedle::library::operations::service::Operations::new(&managed.library)
+    droppedneedle_library::operations::service::Operations::new(&managed.library)
         .choose_edition(&album, &edition, Some("admin"))
         .await
         .expect("edition chosen");
@@ -9221,8 +9221,8 @@ async fn a_wide_preview_in_a_manual_folder_blocks_without_marking() {
 /// still leaves the album alone.
 #[tokio::test]
 async fn an_undone_profile_run_gives_the_hand_edit_back() {
-    use droppedneedle::library::management::models::{Eligibility, SelectionKind};
-    use droppedneedle::library::tags::{TagField, read_fields};
+    use droppedneedle_library::management::models::{Eligibility, SelectionKind};
+    use droppedneedle_library::tags::{TagField, read_fields};
 
     let managed = ManagedLibrary::start("lib-takeover-undo-hand-edit", |_| {}).await;
     let (other, _) = managed.add_album("first", 1).await;
@@ -9271,7 +9271,7 @@ async fn an_undone_profile_run_gives_the_hand_edit_back() {
     } else {
         chosen.replacen("-0001-", "-0000-", 1)
     };
-    droppedneedle::library::operations::service::Operations::new(&managed.library)
+    droppedneedle_library::operations::service::Operations::new(&managed.library)
         .choose_edition(&album, &edition, Some("admin"))
         .await
         .expect("edition chosen");
@@ -9290,7 +9290,7 @@ async fn an_undone_profile_run_gives_the_hand_edit_back() {
 /// itself goes ahead.
 #[tokio::test]
 async fn a_wide_restore_never_writes_over_an_unnoticed_hand_edit() {
-    use droppedneedle::library::management::models::Eligibility;
+    use droppedneedle_library::management::models::Eligibility;
 
     let managed = ManagedLibrary::start("lib-takeover-wide-restore", |_| {}).await;
     let (album, tracks) = managed.add_album("first", 1).await;
@@ -9744,9 +9744,9 @@ async fn manage_preview_waits_while_the_chosen_edition_is_placed() {
 /// with EDITION_REMAP_PENDING, and the other album of the preview plans.
 #[tokio::test]
 async fn management_preview_blocks_an_album_whose_edition_is_being_placed() {
-    use droppedneedle::library::management::models::{ItemFilter, Selection, SelectionKind};
-    use droppedneedle::library::management::service::PreviewRequest;
-    use droppedneedle::library::management::settings as lm;
+    use droppedneedle_library::management::models::{ItemFilter, Selection, SelectionKind};
+    use droppedneedle_library::management::service::PreviewRequest;
+    use droppedneedle_library::management::settings as lm;
 
     let managed = ManagedLibrary::start("lib-remap-management", |_| {}).await;
     let (waiting, _) = managed.add_album("waiting", 2).await;
@@ -9808,7 +9808,7 @@ async fn management_preview_blocks_an_album_whose_edition_is_being_placed() {
 /// goes ahead and no file carries EDITION_REMAP_PENDING.
 #[tokio::test]
 async fn automatic_run_is_not_held_by_an_edition_being_placed() {
-    use droppedneedle::library::management::models::ItemFilter;
+    use droppedneedle_library::management::models::ItemFilter;
 
     let managed = ManagedLibrary::start("lib-remap-automatic", |_| {}).await;
     let (album, _) = managed.add_album("automatic", 2).await;
@@ -9931,8 +9931,8 @@ fn placement(db: &rusqlite::Connection, track: &str) -> (Option<String>, Option<
 /// stays unplaced rather than take its release track.
 #[tokio::test]
 async fn a_merge_places_files_on_the_edition_the_album_has() {
-    use droppedneedle::library::tags::TagField;
-    use droppedneedle::library::tags::save::{TagEdit, save_tags};
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
 
     for source in ["manual", "legacy_import"] {
         let rig = Rig::start(&format!("lib-merge-place-{source}")).await;
@@ -10076,8 +10076,8 @@ async fn a_merge_places_files_on_the_edition_the_album_has() {
 async fn a_file_that_joins_while_musicbrainz_is_asked_is_placed_next() {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use droppedneedle::library::tags::TagField;
-    use droppedneedle::library::tags::save::{TagEdit, save_tags};
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
 
     let rig = Rig::start("lib-place-late-file").await;
     let app = &rig.app;
@@ -10213,7 +10213,7 @@ async fn remap_once(library: &LibrarySetup, recall: RecallResult) {
         .expect("scripted providers")
         .set_recall(recall);
     assert!(
-        droppedneedle::library::operations::service::Operations::new(library)
+        droppedneedle_library::operations::service::Operations::new(library)
             .remap_next()
             .await
             .expect("remap step"),
@@ -10274,7 +10274,7 @@ async fn placing_files_never_gives_the_edition_up() {
     for _ in 0..2 {
         let tx = db.transaction().expect("transaction opens");
         assert!(
-            droppedneedle::library::operations::choice::queue_placement(&tx, &album, 1.0)
+            droppedneedle_library::operations::choice::queue_placement(&tx, &album, 1.0)
                 .expect("files queued")
         );
         tx.commit().expect("queued for good");
@@ -10480,7 +10480,7 @@ async fn a_joined_album_gets_its_files_placed_and_stays_the_users() {
     assert_eq!(chosen.0, "manual");
 
     assert!(
-        droppedneedle::library::operations::service::Operations::new(&managed.library)
+        droppedneedle_library::operations::service::Operations::new(&managed.library)
             .remap_next()
             .await
             .expect("remap step"),
@@ -10582,8 +10582,8 @@ async fn album_at_rest(
     tag: &str,
     count: usize,
 ) -> (ScratchDir, LibrarySetup, PathBuf, String, Vec<String>) {
-    use droppedneedle::library::tags::TagField;
-    use droppedneedle::library::tags::save::{TagEdit, save_tags};
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
 
     let (scratch, library, music) = bare_library(tag);
     plant(&music, "album/01.flac", "flac_full_01.flac");
@@ -10625,8 +10625,8 @@ async fn album_at_rest(
 /// MusicBrainz ids, and when `rename` give it a new name in its folder.
 /// Returns where it is now.
 fn retag_outside(music: &Path, number: usize, title: &str, keep_ids: bool, rename: bool) -> String {
-    use droppedneedle::library::tags::TagField;
-    use droppedneedle::library::tags::save::{TagEdit, save_tags};
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
 
     let from = format!("album/{number:02}.flac");
     let mut edits = vec![TagEdit::verbatim(TagField::Album, vec![title.to_owned()])];
@@ -10998,8 +10998,8 @@ fn history_kinds(history: &Value) -> Vec<String> {
 
 /// An album's history as the route sends it to `caller`.
 fn album_history(library: &LibrarySetup, album: &str, caller: &str) -> Value {
-    use droppedneedle::library::http::history::album_history_view;
-    use droppedneedle::library::operations::service::Operations;
+    use droppedneedle_library::http::history::album_history_view;
+    use droppedneedle_library::operations::service::Operations;
     let view = album_history_view(&Operations::new(library), album, caller).expect("history reads");
     serde_json::to_value(view).expect("history serialises")
 }
@@ -11105,7 +11105,7 @@ fn retired_into(db: &rusqlite::Connection, album: &str) -> Option<String> {
 /// person's match.
 #[tokio::test]
 async fn a_persons_match_joins_an_album_retagged_without_its_ids() {
-    use droppedneedle::library::identify::models::{
+    use droppedneedle_library::identify::models::{
         CandidateEvidence, EvidenceClass, TrackEvidence,
     };
 
@@ -11125,7 +11125,7 @@ async fn a_persons_match_joins_an_album_retagged_without_its_ids() {
     assert_eq!(retired_into(&db, &album), None);
     exclude_by_hand(&db, &album);
     let key = format!("rg-1:{REL_1}");
-    droppedneedle::library::identify::review::file_review(
+    droppedneedle_library::identify::review::file_review(
         &library.identify_store,
         "rev-join",
         &own_row,
@@ -11193,7 +11193,7 @@ async fn a_persons_match_joins_an_album_retagged_without_its_ids() {
     assert_eq!(retired_into(&db, &album), None);
     both.releases.push(sibling);
     providers.set_recall(both);
-    droppedneedle::library::operations::service::Operations::new(&library)
+    droppedneedle_library::operations::service::Operations::new(&library)
         .choose_edition(&own_row, REL_1, Some("curator"))
         .await
         .expect("edition chosen");
@@ -11419,7 +11419,7 @@ impl ManagedLibrary {
     /// with its MusicBrainz ids removed, and rename each into `folder`.
     /// Returns the new paths, in order. Nothing is scanned.
     fn retag_into(&self, tracks: &[String], title: &str, folder: &str) -> Vec<String> {
-        use droppedneedle::library::tags::{TagEdit, TagField, save_tags};
+        use droppedneedle_library::tags::{TagEdit, TagField, save_tags};
         let mut moved = Vec::new();
         for (index, track) in tracks.iter().enumerate() {
             let from = self.path(track);
@@ -11608,7 +11608,7 @@ async fn new_files_wait_while_a_scan_holds_their_folder_back() {
         .iter()
         .find(|skipped| skipped.album_id == own_row)
         .expect("listed");
-    let reason = droppedneedle::library::management::automatic::skip_reason("SCAN_HELD_BACK");
+    let reason = droppedneedle_library::management::automatic::skip_reason("SCAN_HELD_BACK");
     assert_eq!(
         (held.reason.code.as_str(), held.reason.message.as_str()),
         ("SCAN_HELD_BACK", reason.message.as_str())
@@ -11875,7 +11875,7 @@ async fn a_deleted_copy_leaves_its_history_with_the_copy_that_stays() {
 /// without a scan.
 #[tokio::test]
 async fn an_imported_track_takes_the_history_of_the_one_it_replaces() {
-    use droppedneedle::library::import::{DownloadImport, ImportOrigin, ImportSource};
+    use droppedneedle_library::import::{DownloadImport, ImportOrigin, ImportSource};
 
     let (scratch, library, _, album, _) = album_at_rest("lib-continue-import", 3).await;
     let db = scratch_db(&scratch);
@@ -11961,7 +11961,7 @@ async fn an_imported_track_takes_the_history_of_the_one_it_replaces() {
 /// approval, with no scan. An approval records no release on its tracks.
 #[tokio::test]
 async fn an_approval_continues_a_track_at_once() {
-    use droppedneedle::library::identify::models::{
+    use droppedneedle_library::identify::models::{
         CandidateEvidence, EvidenceClass, TrackEvidence,
     };
 
@@ -11995,7 +11995,7 @@ async fn an_approval_continues_a_track_at_once() {
     .expect("starred");
 
     let key = format!("rg-1:{REL_1}");
-    droppedneedle::library::identify::review::file_review(
+    droppedneedle_library::identify::review::file_review(
         &library.identify_store,
         "rev-approve",
         &album,
@@ -12688,13 +12688,13 @@ async fn retag_pairs_list_join_and_dismiss() {
 fn probe_credits(
     fixture: &str,
     track_id: &str,
-) -> droppedneedle::library::matching::model::RecordingRelations {
+) -> droppedneedle_library::matching::model::RecordingRelations {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/musicbrainz")
         .join(fixture);
     let wire: droppedneedle_providers::musicbrainz::MbRelease =
         serde_json::from_slice(&std::fs::read(path).expect("probe reads")).expect("probe decodes");
-    droppedneedle::library::identify::sources::relations_from_wire(&wire, 0)
+    droppedneedle_library::identify::sources::relations_from_wire(&wire, 0)
         .tracks
         .remove(track_id)
         .expect("the probe has the track")
@@ -12702,7 +12702,7 @@ fn probe_credits(
 
 /// Gould's piano on Beethoven's concerto (composer, conductor, performer,
 /// work).
-fn concerto_credits() -> droppedneedle::library::matching::model::RecordingRelations {
+fn concerto_credits() -> droppedneedle_library::matching::model::RecordingRelations {
     probe_credits(
         "release_relations_classical.json",
         "ed4f20f0-61cf-439d-9c64-1d9acb043cbb",
@@ -12710,7 +12710,7 @@ fn concerto_credits() -> droppedneedle::library::matching::model::RecordingRelat
 }
 
 /// A remix of "Alejandro" (producer, remixer, composer, lyricist, work).
-fn remix_credits() -> droppedneedle::library::matching::model::RecordingRelations {
+fn remix_credits() -> droppedneedle_library::matching::model::RecordingRelations {
     probe_credits(
         "release_relations_pop.json",
         "aa235c36-5662-3709-ab97-06a1b4757d7e",
@@ -12724,11 +12724,11 @@ impl ManagedLibrary {
     fn scripted_credits(
         &self,
         tracks: &[String],
-        pick: impl Fn(usize) -> droppedneedle::library::matching::model::RecordingRelations,
-    ) -> droppedneedle::library::matching::model::ReleaseRelations {
+        pick: impl Fn(usize) -> droppedneedle_library::matching::model::RecordingRelations,
+    ) -> droppedneedle_library::matching::model::ReleaseRelations {
         let store = &self.library.identify_store;
-        let mut relations = droppedneedle::library::matching::model::ReleaseRelations {
-            version: droppedneedle::library::matching::model::RELATIONS_VERSION,
+        let mut relations = droppedneedle_library::matching::model::ReleaseRelations {
+            version: droppedneedle_library::matching::model::RELATIONS_VERSION,
             ..Default::default()
         };
         for (index, track) in tracks.iter().enumerate() {
@@ -12750,9 +12750,9 @@ impl ManagedLibrary {
 /// plan asks MusicBrainz nothing.
 #[tokio::test]
 async fn the_picard_profile_writes_musicbrainz_credits() {
-    use droppedneedle::library::management::enrich::ScriptedEnrichment;
-    use droppedneedle::library::management::models::SelectionKind;
-    use droppedneedle::library::tags::{TagField, read_fields};
+    use droppedneedle_library::management::enrich::ScriptedEnrichment;
+    use droppedneedle_library::management::models::SelectionKind;
+    use droppedneedle_library::tags::{TagField, read_fields};
 
     let managed = ManagedLibrary::start("lib-credits", |_| {}).await;
     let scripted = Arc::new(ScriptedEnrichment::default());
@@ -12891,8 +12891,8 @@ async fn the_picard_profile_writes_musicbrainz_credits() {
 /// worker marks the album and writes nothing.
 #[tokio::test]
 async fn automatic_credits_wait_for_musicbrainz_and_respect_a_hand_edit() {
-    use droppedneedle::library::management::enrich::ScriptedEnrichment;
-    use droppedneedle::library::tags::{TagEdit, TagField, read_fields};
+    use droppedneedle_library::management::enrich::ScriptedEnrichment;
+    use droppedneedle_library::tags::{TagEdit, TagField, read_fields};
 
     let managed = ManagedLibrary::start("lib-credits-auto", |_| {}).await;
     let scripted = Arc::new(ScriptedEnrichment::default());
@@ -12949,7 +12949,7 @@ async fn automatic_credits_wait_for_musicbrainz_and_respect_a_hand_edit() {
 
     *scripted.relations.lock().expect("script") =
         Some(managed.scripted_credits(&tracks, |_| concerto_credits()));
-    droppedneedle::library::management::automatic::wake(
+    droppedneedle_library::management::automatic::wake(
         &managed.db(),
         Some("METADATA_UNAVAILABLE"),
         std::time::SystemTime::now()
@@ -13032,7 +13032,7 @@ fn grafted_credits_keep_the_stored_edition() {
     let saved = times();
     assert_eq!(saved.len(), 2);
 
-    let mut fetched = droppedneedle::library::matching::model::ReleaseRelations {
+    let mut fetched = droppedneedle_library::matching::model::ReleaseRelations {
         fetched_at_ms: 42,
         ..Default::default()
     };
@@ -13042,11 +13042,11 @@ fn grafted_credits_keep_the_stored_edition() {
     fetched
         .tracks
         .insert("not-on-this-edition".to_owned(), remix_credits());
-    let artist = |name: &str| droppedneedle::library::matching::model::ArtistName {
+    let artist = |name: &str| droppedneedle_library::matching::model::ArtistName {
         name: name.to_owned(),
         ..Default::default()
     };
-    let names = droppedneedle::library::matching::model::ArtistNames {
+    let names = droppedneedle_library::matching::model::ArtistNames {
         fetched_at_ms: 43,
         artists: [
             ("gould".to_owned(), artist("Glenn Gould")),
@@ -13057,7 +13057,7 @@ fn grafted_credits_keep_the_stored_edition() {
     let grafted = store
         .graft_extras(
             "rel-new",
-            &droppedneedle::library::matching::model::ReleaseExtras {
+            &droppedneedle_library::matching::model::ReleaseExtras {
                 relations: Some(fetched),
                 names: Some(names),
             },
@@ -13131,8 +13131,8 @@ fn plant_edition(
     track_ids: &[String],
     recordings: bool,
 ) {
-    use droppedneedle::library::tags::TagField;
-    use droppedneedle::library::tags::save::{TagEdit, save_tags};
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
     for (index, track) in release.tracks.iter().enumerate() {
         let file = plant(
             music,
@@ -13184,10 +13184,10 @@ fn stray_second(release: &Release, other: &Release) -> Vec<String> {
 /// is not placed on R, and the plan says why.
 #[tokio::test]
 async fn a_track_id_from_another_edition_is_corrected() {
-    use droppedneedle::library::management::models::SelectionKind;
-    use droppedneedle::library::operations::plan::EditionPlan;
-    use droppedneedle::library::operations::service::Operations;
-    use droppedneedle::library::tags::TagField;
+    use droppedneedle_library::management::models::SelectionKind;
+    use droppedneedle_library::operations::plan::EditionPlan;
+    use droppedneedle_library::operations::service::Operations;
+    use droppedneedle_library::tags::TagField;
 
     let managed = ManagedLibrary::start("lib-stray-track-id", |_| {}).await;
     let library = &managed.library;
@@ -13318,7 +13318,7 @@ async fn a_track_id_from_another_edition_is_corrected() {
 /// are left alone. It happens once.
 #[tokio::test]
 async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
-    use droppedneedle::library::repairs::service::Repairs;
+    use droppedneedle_library::repairs::service::Repairs;
 
     let (scratch, library, music) = bare_library("lib-track-id-relook");
     let editions: Vec<(Release, Release)> = (1..=4)
@@ -13422,9 +13422,8 @@ async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
         albums.sort();
         albums
     };
-    let set = || {
-        droppedneedle::library::repairs::store::track_id_backfill_albums(&db).expect("set reads")
-    };
+    let set =
+        || droppedneedle_library::repairs::store::track_id_backfill_albums(&db).expect("set reads");
     assert_eq!(set(), sorted(vec![a.clone(), b.clone(), c.clone()]));
     on_r2(&b, &editions[1].1, "manual");
     db.execute(
@@ -13459,7 +13458,7 @@ async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
     assert!(queued().is_empty());
 
     let repairs = Repairs::new(&library);
-    droppedneedle::library::repairs::tick(&library, &repairs, "worker").await;
+    droppedneedle_library::repairs::tick(&library, &repairs, "worker").await;
     assert_eq!(queued(), vec![a.clone()]);
     assert_eq!(library.identify_tick().await, 1);
 
@@ -13496,7 +13495,7 @@ async fn albums_an_older_matcher_misplaced_are_looked_at_once() {
 
     // The next start looks no more.
     let restarted = Repairs::new(&library);
-    droppedneedle::library::repairs::tick(&library, &restarted, "worker").await;
+    droppedneedle_library::repairs::tick(&library, &restarted, "worker").await;
     assert!(queued().is_empty());
 }
 
@@ -13516,7 +13515,7 @@ fn raw_acoustid(path: &Path, kind: &str) -> Vec<String> {
 impl ManagedLibrary {
     /// Take both AcoustID tags off the tracks' files from outside the app.
     async fn strip_acoustid(&self, tracks: &[String]) {
-        use droppedneedle::library::tags::{TagEdit, TagField, save_tags};
+        use droppedneedle_library::tags::{TagEdit, TagField, save_tags};
         for track in tracks {
             save_tags(
                 &self.path(track),
@@ -13536,8 +13535,8 @@ impl ManagedLibrary {
 /// fixtures are shorter than a second, so no id is looked up.
 #[tokio::test]
 async fn acoustid_prints_are_written_from_the_audio() {
-    use droppedneedle::library::management::models::SelectionKind;
-    use droppedneedle::library::tags::generate_fingerprint;
+    use droppedneedle_library::management::models::SelectionKind;
+    use droppedneedle_library::tags::generate_fingerprint;
 
     let managed = ManagedLibrary::start("lib-acoustid-print", |_| {}).await;
     let v23 = clean_v23_mp3(&managed.scratch.to_path_buf().join("v23.mp3"));
@@ -13588,7 +13587,7 @@ const SEEDED_PRINT: &str = "AQADtEqyPIuWIMwP_Qjl5HA949FhVUdwB4cO40c8";
 
 impl ManagedLibrary {
     fn seed_print(&self, track: &str, revision: Option<&str>) {
-        use droppedneedle::library::scan::revision::{exact_stat_revision, mtime_ns_from_metadata};
+        use droppedneedle_library::scan::revision::{exact_stat_revision, mtime_ns_from_metadata};
         let meta = std::fs::symlink_metadata(self.path(track)).expect("file stat");
         let on_disk = exact_stat_revision(meta.len(), mtime_ns_from_metadata(&meta));
         self.library.identify_store.save_fingerprint(
@@ -13633,7 +13632,7 @@ fn acoustid_result(
 
 /// The value a planned file's AcoustID field gets, if it changes.
 fn planned_acoustid(
-    item: &droppedneedle::library::management::models::PlannedItem,
+    item: &droppedneedle_library::management::models::PlannedItem,
     field: &str,
 ) -> Option<Value> {
     item.diff
@@ -13653,9 +13652,9 @@ const ID_B: &str = "1d2a3b4c-0000-4000-8000-000000000002";
 /// is not used.
 #[tokio::test]
 async fn acoustid_ids_come_from_a_lookup_naming_the_files_recording() {
-    use droppedneedle::library::management::enrich::{ScriptedAcoustId, ScriptedEnrichment};
-    use droppedneedle::library::management::models::SelectionKind;
     use droppedneedle_kernel::runtime_config::sections::FieldMode;
+    use droppedneedle_library::management::enrich::{ScriptedAcoustId, ScriptedEnrichment};
+    use droppedneedle_library::management::models::SelectionKind;
 
     let managed = ManagedLibrary::start("lib-acoustid-id", |profile| {
         for field in &mut profile.metadata.fields {
@@ -13689,7 +13688,7 @@ async fn acoustid_ids_come_from_a_lookup_naming_the_files_recording() {
             (handle, items.into_iter().next().expect("one file"))
         }
     };
-    let warned = |item: &droppedneedle::library::management::models::PlannedItem, start: &str| {
+    let warned = |item: &droppedneedle_library::management::models::PlannedItem, start: &str| {
         item.facts
             .warnings
             .iter()
@@ -13776,7 +13775,7 @@ async fn acoustid_ids_come_from_a_lookup_naming_the_files_recording() {
 /// waits, never parked; once AcoustID answers, the id lands by itself.
 #[tokio::test]
 async fn automatic_acoustid_waits_while_acoustid_is_down() {
-    use droppedneedle::library::management::enrich::{ScriptedAcoustId, ScriptedEnrichment};
+    use droppedneedle_library::management::enrich::{ScriptedAcoustId, ScriptedEnrichment};
 
     let managed = ManagedLibrary::start("lib-acoustid-auto", |_| {}).await;
     let scripted = Arc::new(ScriptedEnrichment::default());
@@ -13831,7 +13830,7 @@ async fn automatic_acoustid_waits_while_acoustid_is_down() {
             0.9,
             &[&recording],
         )]));
-    droppedneedle::library::management::automatic::wake(
+    droppedneedle_library::management::automatic::wake(
         &managed.db(),
         Some("ACOUSTID_UNAVAILABLE"),
         std::time::SystemTime::now()
@@ -13849,7 +13848,7 @@ async fn automatic_acoustid_waits_while_acoustid_is_down() {
 /// not wait: the album is written with its print and no id.
 #[tokio::test]
 async fn automatic_acoustid_without_a_key_goes_ahead() {
-    use droppedneedle::library::management::enrich::ScriptedEnrichment;
+    use droppedneedle_library::management::enrich::ScriptedEnrichment;
     use rusqlite::OptionalExtension as _;
 
     let managed = ManagedLibrary::start("lib-acoustid-nokey", |_| {}).await;
@@ -13888,8 +13887,8 @@ async fn automatic_acoustid_without_a_key_goes_ahead() {
 /// looks up only the file beside it that holds neither.
 #[tokio::test]
 async fn fill_missing_acoustid_looks_up_only_the_file_without_values() {
-    use droppedneedle::library::management::enrich::{ScriptedAcoustId, ScriptedEnrichment};
-    use droppedneedle::library::management::models::SelectionKind;
+    use droppedneedle_library::management::enrich::{ScriptedAcoustId, ScriptedEnrichment};
+    use droppedneedle_library::management::models::SelectionKind;
 
     let managed = ManagedLibrary::start("lib-acoustid-fill", |_| {}).await;
     let scripted = Arc::new(ScriptedEnrichment::default());
@@ -13975,8 +13974,8 @@ fn chosen_release(count: u32) -> Release {
 }
 
 /// The edition's ids, as MusicBrainz tools write them, on track `n`.
-fn chosen_ids(n: usize) -> Vec<droppedneedle::library::tags::TagEdit> {
-    use droppedneedle::library::tags::{TagEdit, TagField};
+fn chosen_ids(n: usize) -> Vec<droppedneedle_library::tags::TagEdit> {
+    use droppedneedle_library::tags::{TagEdit, TagField};
     vec![
         TagEdit::verbatim(TagField::Title, vec![format!("Chosen {n}")]),
         TagEdit::verbatim(TagField::TrackNumber, vec![n.to_string()]),
@@ -14025,7 +14024,7 @@ impl ManagedLibrary {
     /// before, its tracks mapped and its document on file. The app has
     /// never written them. Returns the album and its tracks in order.
     async fn chosen_with_ids(&self, folder: &str, count: usize) -> (String, Vec<String>) {
-        use droppedneedle::library::tags::save_tags;
+        use droppedneedle_library::tags::save_tags;
         for n in 1..=count {
             let file = plant(
                 &self.music,
@@ -14071,7 +14070,7 @@ impl ManagedLibrary {
     /// and rename each into `retagged/`, in one go; scan. Returns the
     /// new paths.
     async fn retag_keeping_ids(&self, tracks: &[String]) -> Vec<PathBuf> {
-        use droppedneedle::library::tags::{TagEdit, TagField, save_tags};
+        use droppedneedle_library::tags::{TagEdit, TagField, save_tags};
         let paths: Vec<PathBuf> = tracks
             .iter()
             .enumerate()
@@ -14182,7 +14181,7 @@ async fn a_chosen_edition_retagged_with_its_ids_is_placed_and_left_to_the_person
 /// the warning.
 #[tokio::test]
 async fn a_retag_placed_where_management_is_by_hand_is_left_out_of_wide_previews() {
-    use droppedneedle::library::management::models::{Eligibility, SelectionKind};
+    use droppedneedle_library::management::models::{Eligibility, SelectionKind};
 
     let managed = ManagedLibrary::start("lib-place-retag-by-hand", |_| {}).await;
     let (other, _) = managed.add_album("other", 1).await;
@@ -14295,7 +14294,7 @@ async fn a_copy_takes_the_place_of_a_deleted_original_on_a_chosen_edition() {
 /// track as the app's own, revisable, and the original's star is on it.
 #[tokio::test]
 async fn a_copy_takes_the_place_of_a_deleted_original_on_an_automatic_edition() {
-    use droppedneedle::library::tags::save_tags;
+    use droppedneedle_library::tags::save_tags;
 
     let (scratch, library, music) = bare_library("lib-place-copy-automatic");
     for n in 1..=3 {
@@ -14353,12 +14352,12 @@ const TAKATANI: &str = "7493b80f-de18-4f9c-a7bd-08d1ea5adcff";
 
 /// The names MusicBrainz answers for _async surround_, through the
 /// production parser.
-fn recorded_names() -> droppedneedle::library::matching::model::ArtistNames {
+fn recorded_names() -> droppedneedle_library::matching::model::ArtistNames {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/musicbrainz/release_names_sakamoto.json");
     let wire: droppedneedle_providers::musicbrainz::MbRelease =
         serde_json::from_slice(&std::fs::read(path).expect("probe reads")).expect("probe decodes");
-    droppedneedle::library::identify::sources::names_from_wire(&wire, 0)
+    droppedneedle_library::identify::sources::names_from_wire(&wire, 0)
 }
 
 /// The edition credited as _async surround_ is: the album to Ryuichi
@@ -14389,8 +14388,8 @@ fn sakamoto_edition(release: &mut Release) {
 fn translating(
     profile: &mut droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
 ) {
-    use droppedneedle::library::management::enrich::ARTIST_FIELDS;
     use droppedneedle_kernel::runtime_config::sections::FieldMode;
+    use droppedneedle_library::management::enrich::ARTIST_FIELDS;
     profile.metadata.artist_credits.translate_names = true;
     profile.metadata.artist_credits.preferred_locales = vec!["en".to_owned()];
     for field in &mut profile.metadata.fields {
@@ -14421,10 +14420,10 @@ fn id3_user_values(path: &Path, description: &str) -> Vec<Vec<String>> {
 /// its artist are the same rows.
 #[tokio::test]
 async fn a_translating_profile_writes_english_artist_names() {
-    use droppedneedle::library::management::enrich::ScriptedEnrichment;
-    use droppedneedle::library::management::models::SelectionKind;
-    use droppedneedle::library::management::service::ApplyRequest;
-    use droppedneedle::library::tags::{TagField, read_fields};
+    use droppedneedle_library::management::enrich::ScriptedEnrichment;
+    use droppedneedle_library::management::models::SelectionKind;
+    use droppedneedle_library::management::service::ApplyRequest;
+    use droppedneedle_library::tags::{TagField, read_fields};
 
     let managed = ManagedLibrary::start("lib-names", translating).await;
     let scripted = Arc::new(ScriptedEnrichment::default());
@@ -14443,7 +14442,7 @@ async fn a_translating_profile_writes_english_artist_names() {
     // The files credit the edition's artists, with their MusicBrainz ids,
     // under the names as credited.
     for track in &tracks {
-        use droppedneedle::library::tags::{TagEdit, save_tags};
+        use droppedneedle_library::tags::{TagEdit, save_tags};
         let owned = |values: &[&str]| values.iter().map(|v| (*v).to_owned()).collect::<Vec<_>>();
         save_tags(
             &managed.path(track),
@@ -14639,9 +14638,9 @@ async fn a_translating_profile_writes_english_artist_names() {
 /// answers, waking the queue writes the translated names by itself.
 #[tokio::test]
 async fn translated_names_wait_for_musicbrainz() {
-    use droppedneedle::library::management::enrich::ScriptedEnrichment;
-    use droppedneedle::library::management::models::SelectionKind;
-    use droppedneedle::library::tags::{TagField, read_fields};
+    use droppedneedle_library::management::enrich::ScriptedEnrichment;
+    use droppedneedle_library::management::models::SelectionKind;
+    use droppedneedle_library::tags::{TagField, read_fields};
 
     let managed = ManagedLibrary::start("lib-names-down", translating).await;
     let scripted = Arc::new(ScriptedEnrichment::default());
@@ -14674,7 +14673,7 @@ async fn translated_names_wait_for_musicbrainz() {
         .map(|mutation| mutation.name.as_str())
         .collect();
     assert!(!changed.is_empty(), "the other fields are written");
-    for field in droppedneedle::library::management::enrich::ARTIST_FIELDS {
+    for field in droppedneedle_library::management::enrich::ARTIST_FIELDS {
         assert!(!changed.contains(&field), "{field} kept: {changed:?}");
     }
 
@@ -14698,7 +14697,7 @@ async fn translated_names_wait_for_musicbrainz() {
     assert_eq!(waiting, "METADATA_UNAVAILABLE");
 
     *scripted.names.lock().expect("script") = Some(recorded_names());
-    droppedneedle::library::management::automatic::wake(
+    droppedneedle_library::management::automatic::wake(
         &managed.db(),
         Some("METADATA_UNAVAILABLE"),
         std::time::SystemTime::now()
@@ -14723,8 +14722,8 @@ async fn translated_names_wait_for_musicbrainz() {
 /// per album, for both parts together.
 #[tokio::test]
 async fn credits_and_names_come_in_one_lookup() {
-    use droppedneedle::library::management::enrich::{ExtrasWanted, ScriptedEnrichment};
-    use droppedneedle::library::management::models::SelectionKind;
+    use droppedneedle_library::management::enrich::{ExtrasWanted, ScriptedEnrichment};
+    use droppedneedle_library::management::models::SelectionKind;
 
     let managed = ManagedLibrary::start("lib-names-once", translating).await;
     let scripted = Arc::new(ScriptedEnrichment::default());
@@ -14763,7 +14762,7 @@ impl ManagedLibrary {
     /// in its own folder, or in the folder `sibling` next to it. Scans, and
     /// returns the new rows in order.
     async fn retag_by_hand(&self, tracks: &[String], sibling: Option<&str>) -> Vec<String> {
-        use droppedneedle::library::tags::{TagEdit, TagField, save_tags};
+        use droppedneedle_library::tags::{TagEdit, TagField, save_tags};
         let mut moved = Vec::new();
         for (index, track) in tracks.iter().enumerate() {
             let from = self.path(track);
@@ -14831,7 +14830,7 @@ impl ManagedLibrary {
             .expect("scripted providers")
             .set_recall(recall);
         while self.library.identify_tick().await > 0 {}
-        droppedneedle::library::operations::service::Operations::new(&self.library)
+        droppedneedle_library::operations::service::Operations::new(&self.library)
             .confirm_match(album, "admin")
             .expect("match confirmed");
     }
@@ -14853,10 +14852,10 @@ impl ManagedLibrary {
 /// does not hold it again.
 #[tokio::test]
 async fn files_retagged_in_place_of_an_unmanaged_album_are_left_alone() {
-    use droppedneedle::library::corrections::Corrections;
-    use droppedneedle::library::corrections::models::PairReason;
-    use droppedneedle::library::mutations::Mutations;
-    use droppedneedle::library::operations::service::Operations;
+    use droppedneedle_library::corrections::Corrections;
+    use droppedneedle_library::corrections::models::PairReason;
+    use droppedneedle_library::mutations::Mutations;
+    use droppedneedle_library::operations::service::Operations;
 
     let managed = ManagedLibrary::start("lib-hands-off-replaced", |_| {}).await;
     let (album, old) = managed.add_album("first", 2).await;
@@ -14974,9 +14973,9 @@ async fn files_retagged_in_place_of_an_unmanaged_album_are_left_alone() {
 /// edition with a review on the new album, and leaves it held.
 #[tokio::test]
 async fn a_custom_edition_replaced_by_hand_is_merged_by_a_person() {
-    use droppedneedle::library::corrections::Corrections;
-    use droppedneedle::library::corrections::models::{PairJoinRequest, PairReason};
-    use droppedneedle::library::operations::service::Operations;
+    use droppedneedle_library::corrections::Corrections;
+    use droppedneedle_library::corrections::models::{PairJoinRequest, PairReason};
+    use droppedneedle_library::operations::service::Operations;
 
     let managed = ManagedLibrary::start("lib-hands-off-custom", |_| {}).await;
     // One file: the fixture's own track number would repeat on a second.

@@ -1892,8 +1892,8 @@ async fn merged_artists_and_album_aliases_open_in_player_apps() {
 /// `Id`, and with no token it is a 401.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_artist_merged_by_its_musicbrainz_id_opens_in_player_apps() {
-    use droppedneedle::library::tags::TagField;
-    use droppedneedle::library::tags::save::{TagEdit, save_tags};
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
 
     const ARTIST: &str = "aaaaaaaa-0000-4000-8000-000000000001";
     let rig = CompatApp::start("compat-converged-artist").await;

@@ -105,7 +105,7 @@ impl MediaSetup {
         crypto: Arc<Crypto>,
         http_factory: &droppedneedle_kernel::http_client::HttpClientFactory,
         ids: Arc<dyn IdGenerator>,
-        library_roots: Option<crate::library::wiring::RootSource>,
+        library_roots: Option<droppedneedle_library::wiring::RootSource>,
         pool: sqlx::SqlitePool,
         lane: WriteLane,
         config: Arc<ConfigStore>,

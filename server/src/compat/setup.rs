@@ -26,13 +26,13 @@ use crate::compat::http::{CompatLimits, SubsonicState, cors_layer, limits_layer,
 use crate::compat::jellyfin::{JellyfinState, router as jellyfin_router};
 use crate::compat::settings::LiveSettings;
 use crate::compat::shared::address::ListenerConfig;
-use crate::library::wiring::LibrarySetup;
 use crate::media::MediaEngine;
 use crate::playback::services::PlaybackDeps;
 use crate::reads::ReadsSetup;
 use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::runtime_config::Crypto;
+use droppedneedle_library::wiring::LibrarySetup;
 
 /// Subsonic verifier over the app-password store.
 pub type CompatVerifier = SubsonicVerifier<ProdCompatPasswords, UsersDeps>;

@@ -22,9 +22,6 @@ use crate::compat::subsonic::store::{
     Store, TranscodeDecisionData,
 };
 use crate::compat::subsonic::views::{ViewAlbum, ViewArtist, ViewGenre, ViewTrack};
-use crate::library::scan::counter_names;
-use crate::library::scan::models::{ScanKind, ScanRequest, ScanTrigger};
-use crate::library::wiring::LibrarySetup;
 use crate::reads::collections::service::Visible;
 use crate::reads::library::player::{
     AlbumOrder, AlbumQuery, PlayerAlbum, PlayerTrack, TrackOrder, TrackQuery,
@@ -32,6 +29,9 @@ use crate::reads::library::player::{
 use crate::reads::library::stores::ArtistRecord;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::runtime_config::Crypto;
+use droppedneedle_library::scan::counter_names;
+use droppedneedle_library::scan::models::{ScanKind, ScanRequest, ScanTrigger};
+use droppedneedle_library::wiring::LibrarySetup;
 
 /// Unix seconds to the `YYYY-MM-DDTHH:MM:SSZ` form Subsonic shows.
 fn iso_text(unix: u64) -> Option<String> {

@@ -16,16 +16,16 @@ use std::time::Duration;
 use droppedneedle::acquire::drop_import::Viewer;
 use droppedneedle::acquire::drop_import::store::JobRecord;
 use droppedneedle::acquire::landing::library::LibraryLanding;
-use droppedneedle::library::identify::sources::{
-    Edition, EditionPage, EditionQuery, ReleaseHit, ReleaseSource, SourceError,
-};
-use droppedneedle::library::matching::{CreditedArtist, Release, ReleaseMedium, ReleaseTrack};
-use droppedneedle::library::scan::EffectivePolicy;
-use droppedneedle::library::tags::TagField;
-use droppedneedle::library::tags::save::{TagEdit, save_tags};
-use droppedneedle::library::wiring::LibrarySetup;
 use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
+use droppedneedle_library::identify::sources::{
+    Edition, EditionPage, EditionQuery, ReleaseHit, ReleaseSource, SourceError,
+};
+use droppedneedle_library::matching::{CreditedArtist, Release, ReleaseMedium, ReleaseTrack};
+use droppedneedle_library::scan::EffectivePolicy;
+use droppedneedle_library::tags::TagField;
+use droppedneedle_library::tags::save::{TagEdit, save_tags};
+use droppedneedle_library::wiring::LibrarySetup;
 use futures_util::future::BoxFuture;
 
 const GROUP: &str = "7d0b7a1e-0000-4000-8000-000000000001";
@@ -138,9 +138,9 @@ fn release(titles: &[&str], lengths: &[Option<u64>]) -> Release {
 fn length_ms(bytes: &[u8], scratch: &Path) -> Option<u64> {
     let path = scratch.join("probe.flac");
     std::fs::write(&path, bytes).expect("probe copy");
-    let format = droppedneedle::library::tags::format_for_path(&path).expect("format");
+    let format = droppedneedle_library::tags::format_for_path(&path).expect("format");
     let (_, header) =
-        droppedneedle::library::tags::read::read_scan_metadata(&path, format).expect("header");
+        droppedneedle_library::tags::read::read_scan_metadata(&path, format).expect("header");
     header
         .duration_seconds
         .map(|seconds| (seconds * 1000.0) as u64)

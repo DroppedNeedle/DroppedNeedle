@@ -538,7 +538,7 @@ fn check_free_disk(dirs: &DataDirs) -> Result<(), UpgradeError> {
         .saturating_add(carried)
         .saturating_mul(2)
         .saturating_add(DISK_HEADROOM_BYTES);
-    let free = crate::library::adapters::free_bytes_for(&dirs.cache_dir)
+    let free = droppedneedle_library::adapters::free_bytes_for(&dirs.cache_dir)
         .map_err(|error| failed("measure free space in", &dirs.cache_dir, error))?;
     if free >= needed {
         return Ok(());

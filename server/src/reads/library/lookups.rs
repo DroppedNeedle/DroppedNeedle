@@ -14,8 +14,8 @@ use super::sqlite::{
     LibraryDb, TRACK_COLUMNS, TRACK_JOINS, in_placeholders, internal, map_track, unwired_store,
 };
 use super::stores::{AlbumMbids, BoxFuture, LibraryLookups, StatsExtras, StoreError, TrackRecord};
-use crate::library::corrections::continuation::CURRENT_TRACK;
 use crate::reads::catalog::library::LocalCatalog;
+use droppedneedle_library::corrections::continuation::CURRENT_TRACK;
 
 /// Most ids bound into one `IN (...)` list.
 const MAX_BINDS: usize = 500;

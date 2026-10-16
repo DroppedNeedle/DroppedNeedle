@@ -527,7 +527,7 @@ pub struct AlbumMbids {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TagRead {
     /// The file's tags.
-    Found(Box<crate::library::tags::AudioTag>),
+    Found(Box<droppedneedle_library::tags::AudioTag>),
     /// No streamable catalog track has this id.
     Unknown,
     /// The catalog knows the track, but its file is gone from disk.

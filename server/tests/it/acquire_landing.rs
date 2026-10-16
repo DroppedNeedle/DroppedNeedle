@@ -17,14 +17,14 @@ use droppedneedle::acquire::landing::{
 };
 use droppedneedle::acquire::wiring::settled_hook;
 use droppedneedle::acquire::worker::{DownloadWorker, FixedSource, Source, WorkerConfig};
-use droppedneedle::library::identify::sources::{ReleaseHit, ReleaseSource, SourceError};
-use droppedneedle::library::matching::{CreditedArtist, Release, ReleaseMedium, ReleaseTrack};
-use droppedneedle::library::scan::EffectivePolicy;
-use droppedneedle::library::tags::TagField;
-use droppedneedle::library::tags::save::{TagEdit, save_tags};
-use droppedneedle::library::wiring::LibrarySetup;
 use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
+use droppedneedle_library::identify::sources::{ReleaseHit, ReleaseSource, SourceError};
+use droppedneedle_library::matching::{CreditedArtist, Release, ReleaseMedium, ReleaseTrack};
+use droppedneedle_library::scan::EffectivePolicy;
+use droppedneedle_library::tags::TagField;
+use droppedneedle_library::tags::save::{TagEdit, save_tags};
+use droppedneedle_library::wiring::LibrarySetup;
 use futures_util::future::BoxFuture;
 
 const GOOD_GROUP: &str = "6d0b7a1e-0000-4000-8000-000000000001";
@@ -104,9 +104,9 @@ fn land_file(dir: &Path, name: &str, fixture_name: &str, title: &str, track: u32
 }
 
 fn length_ms(path: &Path) -> Option<u64> {
-    let format = droppedneedle::library::tags::format_for_path(path).expect("format");
+    let format = droppedneedle_library::tags::format_for_path(path).expect("format");
     let (_, header) =
-        droppedneedle::library::tags::read::read_scan_metadata(path, format).expect("header");
+        droppedneedle_library::tags::read::read_scan_metadata(path, format).expect("header");
     header
         .duration_seconds
         .map(|seconds| (seconds * 1000.0) as u64)
@@ -1272,7 +1272,7 @@ impl JoinRig {
     }
 
     async fn scan(&self) {
-        use droppedneedle::library::scan::{ScanKind, ScanRequest, ScanTrigger};
+        use droppedneedle_library::scan::{ScanKind, ScanRequest, ScanTrigger};
         let registry = self.library.live_registry();
         self.library
             .coordinator
@@ -2151,7 +2151,7 @@ async fn a_joined_import_recovers_joined() {
         )
         .await;
         rig.library.arm_publish_crash(Some(
-            droppedneedle::library::publish::CrashPoint::BeforeCatalogCommit,
+            droppedneedle_library::publish::CrashPoint::BeforeCatalogCommit,
         ));
         let landed = rig.landed(task, &eds.new, 1, FIXTURES[1]);
         let row = rig.task(task).await;
@@ -2247,7 +2247,7 @@ async fn a_held_release_track_is_not_given_away() {
         origin: ImportOrigin::Download,
         staging: None,
         release: e.new.clone(),
-        join: Some(droppedneedle::library::import::ImportJoin {
+        join: Some(droppedneedle_library::import::ImportJoin {
             album_id: album.clone(),
             release_mbid: e.new.id.clone(),
             replaced: Vec::new(),
@@ -2471,9 +2471,9 @@ async fn version_replaced(s: u16, other_recording: bool) {
     assert!(rig.held_reasons("t-version").await.is_empty());
     assert_eq!(rig.album_count().await, before, "no album rows change");
     let file = rig.music.join(copy_rel(s, SOUR_TIMES));
-    let format = droppedneedle::library::tags::format_for_path(&file).expect("format");
+    let format = droppedneedle_library::tags::format_for_path(&file).expect("format");
     let (tag, _) =
-        droppedneedle::library::tags::read::read_scan_metadata(&file, format).expect("tags");
+        droppedneedle_library::tags::read::read_scan_metadata(&file, format).expect("tags");
     assert_eq!(tag.title, "Sour Times", "not retagged with O's override");
 }
 
@@ -2546,7 +2546,7 @@ async fn a_version_replacement_recovers_after_a_crash() {
     let rig = &v.rig;
     v.ask("t-version").await;
     rig.library.arm_publish_crash(Some(
-        droppedneedle::library::publish::CrashPoint::BeforeCatalogCommit,
+        droppedneedle_library::publish::CrashPoint::BeforeCatalogCommit,
     ));
     v.land_directly("t-version", v.sour("t-version")).await;
     rig.library.arm_publish_crash(None);

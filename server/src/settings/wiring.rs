@@ -25,9 +25,6 @@ use axum::{
 };
 
 use crate::bootstrap::Outbound;
-use crate::library::management::settings::StructuralCompiler;
-use crate::library::management::settings::service::LibraryManagementService;
-use crate::library::policy::LibraryPolicyCatalog;
 use crate::settings::effects::SaveEffects;
 use crate::settings::library_policy_service::LibraryPolicyService;
 use crate::settings::musicbrainz::MusicBrainzLifecycle;
@@ -41,6 +38,9 @@ use droppedneedle_auth::{
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
+use droppedneedle_library::management::settings::StructuralCompiler;
+use droppedneedle_library::management::settings::service::LibraryManagementService;
+use droppedneedle_library::policy::LibraryPolicyCatalog;
 
 /// Section-prefs backends: the toggle store plus per-user link state.
 pub struct SectionPrefsDeps {

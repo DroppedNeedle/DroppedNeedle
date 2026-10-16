@@ -784,19 +784,19 @@ struct PlannedEdition {
     complete: bool,
 }
 
-impl droppedneedle::library::operations::port::EditionPlans for PlannedEdition {
+impl droppedneedle_library::operations::port::EditionPlans for PlannedEdition {
     fn group_plan<'a>(
         &'a self,
         _album_id: Option<&'a str>,
         _release_group_mbid: &'a str,
-    ) -> droppedneedle::library::operations::port::BoxFuture<
+    ) -> droppedneedle_library::operations::port::BoxFuture<
         'a,
         Result<
-            Option<droppedneedle::library::operations::plan::EditionPlan>,
-            droppedneedle::library::operations::models::OperationError,
+            Option<droppedneedle_library::operations::plan::EditionPlan>,
+            droppedneedle_library::operations::models::OperationError,
         >,
     > {
-        use droppedneedle::library::operations::plan::{
+        use droppedneedle_library::operations::plan::{
             EditionFacts, EditionPlan, FileFate, PlanFile, PlanTrack,
         };
         let track = |position: u32, file: Option<&str>| PlanTrack {
@@ -1008,21 +1008,21 @@ async fn edition_acquire_asks_once_for_missing_and_below_cutoff_tracks() {
 /// The library's plan, unavailable (MusicBrainz down).
 struct NoPlan;
 
-impl droppedneedle::library::operations::port::EditionPlans for NoPlan {
+impl droppedneedle_library::operations::port::EditionPlans for NoPlan {
     fn group_plan<'a>(
         &'a self,
         _album_id: Option<&'a str>,
         _release_group_mbid: &'a str,
-    ) -> droppedneedle::library::operations::port::BoxFuture<
+    ) -> droppedneedle_library::operations::port::BoxFuture<
         'a,
         Result<
-            Option<droppedneedle::library::operations::plan::EditionPlan>,
-            droppedneedle::library::operations::models::OperationError,
+            Option<droppedneedle_library::operations::plan::EditionPlan>,
+            droppedneedle_library::operations::models::OperationError,
         >,
     > {
         Box::pin(async {
             Err(
-                droppedneedle::library::operations::models::OperationError::Unavailable(
+                droppedneedle_library::operations::models::OperationError::Unavailable(
                     "MusicBrainz is down".into(),
                 ),
             )

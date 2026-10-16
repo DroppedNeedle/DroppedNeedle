@@ -32,7 +32,6 @@ use crate::{
     compat::{
         CompatSetup, settings::LiveSettings, setup::CompatDeps, shared::address::ListenerConfig,
     },
-    library::wiring::LibrarySetup,
     media::MediaSetup,
     playback::plugin_events::PluginPlayEvents,
     plugins::{scrobble::SqliteListenBrainzLinkStore, wiring::PluginsSetup},
@@ -82,6 +81,7 @@ use droppedneedle_kernel::{
         secret_sections::ListenBrainzConnection, sections::LyricsSettings,
     },
 };
+use droppedneedle_library::wiring::LibrarySetup;
 use droppedneedle_providers::{InMemoryProviderCache, Providers};
 
 /// Why the server could not boot.
@@ -336,7 +336,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         library.root_source(),
     ));
     reads = reads.with_edition_choices(Arc::new(
-        crate::library::operations::service::Operations::new(&library),
+        droppedneedle_library::operations::service::Operations::new(&library),
     ));
     let (media, media_workers) = MediaSetup::build(
         &config.library_db_path,
@@ -399,7 +399,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         .requests
         .edition_plans
         .set(Arc::new(
-            crate::library::operations::service::Operations::new(&library),
+            droppedneedle_library::operations::service::Operations::new(&library),
         ))
         .is_err()
     {

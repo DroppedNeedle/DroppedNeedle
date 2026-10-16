@@ -43,8 +43,8 @@ pub trait CatalogSettings: Send + Sync {
     /// Two-letter store region for purchase lookups.
     fn store_region(&self) -> String;
     /// How to pick an edition of an album the library does not hold.
-    fn edition_preferences(&self) -> crate::library::edition_prefs::Preferences {
-        crate::library::edition_prefs::Preferences::default()
+    fn edition_preferences(&self) -> droppedneedle_library::edition_prefs::Preferences {
+        droppedneedle_library::edition_prefs::Preferences::default()
     }
 }
 
@@ -86,12 +86,15 @@ impl CatalogSettings for ConfigStore {
         or_default("get_it", self.get::<GetIt>()).store_region
     }
 
-    fn edition_preferences(&self) -> crate::library::edition_prefs::Preferences {
+    fn edition_preferences(&self) -> droppedneedle_library::edition_prefs::Preferences {
         let saved = or_default(
             "edition_preferences",
             self.get::<droppedneedle_kernel::runtime_config::sections::EditionPreferences>(),
         );
-        crate::library::edition_prefs::Preferences::from_settings(&saved, &self.store_region())
+        droppedneedle_library::edition_prefs::Preferences::from_settings(
+            &saved,
+            &self.store_region(),
+        )
     }
 }
 

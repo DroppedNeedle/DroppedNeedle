@@ -7,15 +7,15 @@
 //! reading is open to any authenticated user.
 
 use super::CollectionsService;
-use crate::library::operations::models::OperationError;
 use crate::reads::collections::auth::Principal;
 use crate::reads::collections::error::CollectionsError;
 use crate::reads::collections::models::EditionPinResponse;
+use droppedneedle_library::operations::models::OperationError;
 
 /// An edition operation's refusal as a collections error, keeping its
 /// sentence and what to do about it.
 fn refused(error: OperationError) -> CollectionsError {
-    let said = |reason: crate::library::operations::reasons::Reason| {
+    let said = |reason: droppedneedle_library::operations::reasons::Reason| {
         format!("{} {}", reason.message, reason.action)
     };
     match error {

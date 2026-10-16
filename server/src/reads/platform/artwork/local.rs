@@ -142,7 +142,7 @@ pub async fn read_local_art(art: &LocalArt) -> Option<(Vec<u8>, &'static str)> {
     let embedded = art.source == "embedded";
     let read = tokio::task::spawn_blocking(move || -> Option<Vec<u8>> {
         if embedded {
-            match crate::library::tags::read_cover_art(&path) {
+            match droppedneedle_library::tags::read_cover_art(&path) {
                 Ok(bytes) => bytes.filter(|bytes| bytes.len() as u64 <= MAX_LOCAL_BYTES),
                 Err(error) => {
                     tracing::debug!(%error, path = %path.display(), "embedded art unreadable");

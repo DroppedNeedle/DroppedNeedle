@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = [".", "auth", "kernel", "providers", "testkit"]
+members = [".", "auth", "kernel", "library", "providers", "testkit"]
 
 [workspace.package]
 version = "3.0.0"
@@ -11,6 +11,7 @@ license = "AGPL-3.0-or-later"
 [workspace.dependencies]
 droppedneedle-auth = { path = "auth", version = "3.0.0" }
 droppedneedle-kernel = { path = "kernel", version = "3.0.0" }
+droppedneedle-library = { path = "library", version = "3.0.0" }
 droppedneedle-providers = { path = "providers", version = "3.0.0" }
 argon2 = { version = "0.5", features = ["alloc"] }
 axum = { version = "0.8", features = ["json", "query", "http1", "matched-path", "multipart"] }
@@ -73,6 +74,7 @@ license.workspace = true
 [dependencies]
 droppedneedle-auth.workspace = true
 droppedneedle-kernel.workspace = true
+droppedneedle-library.workspace = true
 droppedneedle-providers.workspace = true
 argon2.workspace = true
 axum.workspace = true
@@ -84,28 +86,20 @@ flate2.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
 libc.workspace = true
-lofty.workspace = true
 md5.workspace = true
 reqwest.workspace = true
-ring.workspace = true
-sha1.workspace = true
-rubato.workspace = true
 rusqlite.workspace = true
-rusty-chromaprint.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 socket2.workspace = true
 sha2.workspace = true
 sqlx.workspace = true
-symphonia.workspace = true
-symphonia-adapter-libopus.workspace = true
 thiserror.workspace = true
 unicode-normalization.workspace = true
 tokio.workspace = true
 tower.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 utoipa.workspace = true
 uuid.workspace = true
 zip.workspace = true
@@ -116,7 +110,6 @@ toml.workspace = true
 time.workspace = true
 image.workspace = true
 quick-xml.workspace = true
-regex.workspace = true
 
 [features]
 # Fakes, mocks, memory stores and test constructors for the test suite.
@@ -124,12 +117,17 @@ test-support = [
     "droppedneedle-kernel/test-support",
     "droppedneedle-providers/test-support",
     "droppedneedle-auth/test-support",
+    "droppedneedle-library/test-support",
 ]
 
 [dev-dependencies]
 droppedneedle = { path = ".", features = ["test-support"] }
 droppedneedle-testkit = { path = "testkit", version = "0.1.0" }
 tokio = { version = "1", features = ["test-util"] }
+lofty.workspace = true
+regex.workspace = true
+ring.workspace = true
+tracing-subscriber.workspace = true
 
 # Debug builds carry line tables for this crate and no debug info for
 # dependencies. Full debug info nearly doubled the time of a clean test

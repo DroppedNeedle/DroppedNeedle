@@ -27,7 +27,7 @@ use super::bundle::SCHEMA;
 use super::{CarryError, SectionResult};
 use crate::export::sections::library::{ALBUM_PINS, ALBUMS};
 use crate::export::sections::management::EDITION_ACTIVE;
-use crate::library::operations::choice::RemapOrigin;
+use droppedneedle_library::operations::choice::RemapOrigin;
 
 /// Report entity and section marker name.
 pub(crate) const ENTITY: &str = "sticky_edition";

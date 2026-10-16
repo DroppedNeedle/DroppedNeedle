@@ -27,8 +27,8 @@ use crate::acquire::requests::dispatch::{
 use crate::acquire::requests::error::RequestsError;
 use crate::acquire::requests::ledger::{EditionMark, now_epoch, validate_mbid};
 use crate::acquire::requests::models::EditionAcquireResponse;
-use crate::library::operations::models::OperationError;
-use crate::library::operations::plan::{EditionPlan, FileFate, PlanTrack};
+use droppedneedle_library::operations::models::OperationError;
+use droppedneedle_library::operations::plan::{EditionPlan, FileFate, PlanTrack};
 
 /// Bytes a track takes in staging, at least (v2's acquisition floor).
 const TRACK_FLOOR_BYTES: u64 = 8 * 1024 * 1024;
@@ -450,7 +450,7 @@ impl RequestsService {
         let root = readiness.staging_root.clone();
         let free = tokio::task::spawn_blocking(move || {
             std::fs::create_dir_all(&root).ok();
-            crate::library::adapters::free_bytes_for(&root)
+            droppedneedle_library::adapters::free_bytes_for(&root)
         })
         .await
         .map_err(|error| RequestsError::internal(&error))?;
@@ -484,7 +484,7 @@ impl RequestsService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::library::operations::plan::{EditionFacts, FileFate, PlanFile};
+    use droppedneedle_library::operations::plan::{EditionFacts, FileFate, PlanFile};
 
     fn track(position: u32, file: Option<&str>) -> PlanTrack {
         PlanTrack {

@@ -10,8 +10,8 @@ use std::path::PathBuf;
 
 use futures_util::future::BoxFuture;
 
-use crate::library::identify::sources::{ReleaseHit, SourceError};
-use crate::library::matching::Release;
+use droppedneedle_library::identify::sources::{ReleaseHit, SourceError};
+use droppedneedle_library::matching::Release;
 
 /// Tracks the library already holds for one release group.
 #[derive(Debug, Clone, Default)]
@@ -22,7 +22,7 @@ pub struct OwnedTracks {
     pub recordings: HashSet<String>,
 }
 
-pub use crate::library::import::ExtraSource as ExtraFile;
+pub use droppedneedle_library::import::ExtraSource as ExtraFile;
 
 /// One landed file to publish, and the release track it is.
 #[derive(Debug, Clone)]
@@ -32,7 +32,7 @@ pub struct ImportFile {
     pub track: usize,
 }
 
-pub use crate::library::import::ImportOrigin;
+pub use droppedneedle_library::import::ImportOrigin;
 
 /// A library file holding a track an upgrade may replace.
 #[derive(Debug, Clone)]
@@ -68,7 +68,7 @@ pub struct VersionRow {
 }
 
 /// Files moved into the recycle bin, as (where it was, where it is now).
-pub use crate::library::mutations::Recycled;
+pub use droppedneedle_library::mutations::Recycled;
 
 /// A verified download to publish into the library.
 #[derive(Debug, Clone)]
@@ -82,7 +82,7 @@ pub struct ImportRequest {
     /// The matched release; files are tagged from it.
     pub release: Release,
     /// The library album the files were fetched for, which they join.
-    pub join: Option<crate::library::import::ImportJoin>,
+    pub join: Option<droppedneedle_library::import::ImportJoin>,
     pub files: Vec<ImportFile>,
     /// Files filed with the album that are none of its tracks; their
     /// request indexes follow `files`.

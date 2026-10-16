@@ -13,9 +13,9 @@ use std::path::{Component, Path, PathBuf};
 
 use sqlx::{Row as _, SqlitePool};
 
-use crate::library::corrections::continuation::CURRENT_TRACK;
-use crate::library::scan::roots::RootRegistry;
-use crate::library::wiring::RootSource;
+use droppedneedle_library::corrections::continuation::CURRENT_TRACK;
+use droppedneedle_library::scan::roots::RootRegistry;
+use droppedneedle_library::wiring::RootSource;
 
 /// One catalog file playback or a download may serve.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -263,8 +263,8 @@ impl LibraryFiles {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::library::scan::models::EffectivePolicy;
-    use crate::library::scan::roots::LibraryRoot;
+    use droppedneedle_library::scan::models::EffectivePolicy;
+    use droppedneedle_library::scan::roots::LibraryRoot;
 
     fn file(root_id: &str, relative: &str, absolute: &str) -> CatalogFile {
         CatalogFile {

@@ -31,7 +31,7 @@ pub mod precache;
 pub mod search;
 pub mod upstream;
 
-use crate::library::operations::port::{EditionChoices, NoEditionChoices};
+use droppedneedle_library::operations::port::{EditionChoices, NoEditionChoices};
 use std::collections::HashSet;
 use std::future::Future;
 use std::sync::{Arc, Mutex};

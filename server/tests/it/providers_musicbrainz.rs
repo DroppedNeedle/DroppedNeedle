@@ -1436,8 +1436,8 @@ fn relations_probe(name: &str) -> serde_json::Value {
 
 async fn lookup_relations(
     body: &serde_json::Value,
-) -> droppedneedle::library::matching::model::ReleaseRelations {
-    use droppedneedle::library::identify::sources::{RELATION_INCLUDES, relations_from_wire};
+) -> droppedneedle_library::matching::model::ReleaseRelations {
+    use droppedneedle_library::identify::sources::{RELATION_INCLUDES, relations_from_wire};
     let (fake, sink) = fast_mb(vec![]);
     fake.script(
         &mb_url(&format!("/release/{CLASSICAL_MBID}")),
@@ -1559,7 +1559,7 @@ async fn credits_decode_from_the_recorded_answers() {
 /// same answer still parse, with the name each artist is credited as.
 #[test]
 fn names_decode_from_the_recorded_answers() {
-    use droppedneedle::library::identify::sources::{names_from_wire, relations_from_wire};
+    use droppedneedle_library::identify::sources::{names_from_wire, relations_from_wire};
     use droppedneedle_providers::musicbrainz::MbRelease;
     let decode = |name: &str| -> MbRelease {
         serde_json::from_value(relations_probe(name)).expect("probe decodes")

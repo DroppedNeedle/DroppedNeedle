@@ -11,18 +11,18 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::common::{ScratchDir, migrated_db};
-use droppedneedle::library::identify::models::RecallResult;
-use droppedneedle::library::identify::providers::FakeProviders;
-use droppedneedle::library::identify::service::{IdentifyDeps, IdentifyService};
-use droppedneedle::library::identify::sqlite::SqliteIdentifyStore;
-use droppedneedle::library::repairs::hygiene;
-use droppedneedle::library::scan::{
+use droppedneedle_library::identify::models::RecallResult;
+use droppedneedle_library::identify::providers::FakeProviders;
+use droppedneedle_library::identify::service::{IdentifyDeps, IdentifyService};
+use droppedneedle_library::identify::sqlite::SqliteIdentifyStore;
+use droppedneedle_library::repairs::hygiene;
+use droppedneedle_library::scan::{
     BlockingPool, EffectivePolicy, LibraryRoot, LibraryScanCoordinator, NullTagReader,
     RootRegistry, RootSeamError, ScanControl, ScanKind, ScanRequest, ScanRun, ScanScope, ScanState,
     ScanTrigger, ScannedTags, SqliteScanStore, StaticResolver, StreamRootSeam, TagReadError,
     TagReader, WorkWakeups, counter_names, failure_codes,
 };
-use droppedneedle::library::wiring::LibrarySetup;
+use droppedneedle_library::wiring::LibrarySetup;
 use sha2::{Digest, Sha256};
 use tokio::sync::watch;
 
@@ -64,7 +64,7 @@ fn snapshot(root: &Path) -> BTreeMap<String, (u64, i64, String)> {
                     .into_owned(),
                 (
                     bytes.len() as u64,
-                    droppedneedle::library::scan::mtime_ns_from_metadata(&meta),
+                    droppedneedle_library::scan::mtime_ns_from_metadata(&meta),
                     format!("{digest:x}"),
                 ),
             );
@@ -136,9 +136,9 @@ async fn scan_catalogs_tags_without_touching_files() {
     let run = scan(&library).await;
     assert_eq!(run.state, ScanState::Completed);
     assert_eq!(count(&run, counter_names::INDEXED), 3);
-    let tag = droppedneedle::library::tags::read::read_tag_only(
+    let tag = droppedneedle_library::tags::read::read_tag_only(
         &tagged,
-        droppedneedle::library::tags::AudioFormat::Flac,
+        droppedneedle_library::tags::AudioFormat::Flac,
     )
     .expect("tags read");
     assert_eq!(
@@ -1970,7 +1970,7 @@ async fn followed_album_with_a_chosen_edition_is_stamped() {
     assert!(rig.stamped(&album));
 
     let conn = droppedneedle_kernel::db::open_connection(&rig.db()).expect("side connection opens");
-    droppedneedle::library::management::automatic::queue(&conn, &album, 2.0e9)
+    droppedneedle_library::management::automatic::queue(&conn, &album, 2.0e9)
         .expect("queued again");
     assert!(rig.stamped(&album), "queueing again keeps the stamp");
 }
@@ -3423,8 +3423,8 @@ async fn returned_track_is_off_the_record() {
 /// of: there is nothing left to join.
 #[tokio::test]
 async fn hand_merge_removes_an_open_pair() {
-    use droppedneedle::library::corrections::Corrections;
-    use droppedneedle::library::corrections::models::{
+    use droppedneedle_library::corrections::Corrections;
+    use droppedneedle_library::corrections::models::{
         ApplyMeta, MembershipKind, MembershipRequest,
     };
 
@@ -3849,7 +3849,7 @@ async fn continued_tracks_follow_their_files_back_and_forth() {
 /// scan's end continues them.
 #[tokio::test]
 async fn a_store_error_holds_the_continuation_not_the_seal() {
-    use droppedneedle::library::identify::models::{AutomaticSeal, DecisionSource, TrackIdentity};
+    use droppedneedle_library::identify::models::{AutomaticSeal, DecisionSource, TrackIdentity};
 
     retag_warnings();
     let (rig, album, t) = continuation_album("scan-continue-store-error", 2).await;
@@ -3915,7 +3915,7 @@ async fn a_store_error_holds_the_continuation_not_the_seal() {
 /// continuation runs after the extras are cleared.
 #[tokio::test]
 async fn an_edition_choice_moves_nothing_onto_a_file_it_leaves_out() {
-    use droppedneedle::library::operations::models::ReidentificationCandidate;
+    use droppedneedle_library::operations::models::ReidentificationCandidate;
 
     let (rig, album, t) = continuation_album("scan-continue-choice-extra", 3).await;
     let (old, extra, placed) = (t[0].clone(), t[1].clone(), t[2].clone());
@@ -3956,7 +3956,7 @@ async fn an_edition_choice_moves_nothing_onto_a_file_it_leaves_out() {
     .expect("candidate");
     let mut db = droppedneedle_kernel::db::open_connection(&rig.db()).expect("db opens");
     let tx = db.transaction().expect("transaction");
-    let choice = droppedneedle::library::operations::choice::apply_choice(
+    let choice = droppedneedle_library::operations::choice::apply_choice(
         &tx, &album, &candidate, None, None, 1.0,
     )
     .expect("edition chosen");
@@ -4480,7 +4480,7 @@ async fn an_album_is_not_joined_without_proof_it_was_replaced() {
 /// stayed, the rest must have been gone a day, the replaced rows aside.
 #[tokio::test]
 async fn a_join_waits_for_the_rest_of_the_old_album() {
-    use droppedneedle::library::identify::models::{AutomaticSeal, DecisionSource, TrackIdentity};
+    use droppedneedle_library::identify::models::{AutomaticSeal, DecisionSource, TrackIdentity};
 
     let (mut rig, old, old_rows) = mapped_album("join-wait-held", 3).await;
     rig.run(&format!(
@@ -4544,9 +4544,9 @@ async fn a_join_waits_for_the_rest_of_the_old_album() {
 /// by the app: each pair is recorded once for a person, who merges one.
 #[tokio::test]
 async fn an_album_replaced_on_two_albums_is_left_to_a_person() {
-    use droppedneedle::library::corrections::Corrections;
-    use droppedneedle::library::corrections::models::PairJoinRequest;
     use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
+    use droppedneedle_library::corrections::Corrections;
+    use droppedneedle_library::corrections::models::PairJoinRequest;
 
     let (mut rig, old, old_rows) = mapped_album("join-split", 2).await;
     rig.tag(&["b/t000.flac".to_owned()], "join-split one");
@@ -4669,8 +4669,8 @@ fn on_p(n: u32) -> FileIds {
 /// [`REL_P`]'s document: `p-rt-1` and `p-rt-2` on disc 1, `p-rt-3` first
 /// on disc 2; recordings `rec-1` to `rec-3`. MusicBrainz merged
 /// [`REL_P_OLD`] into it.
-fn edition_p() -> droppedneedle::library::matching::Release {
-    use droppedneedle::library::matching::{Release, ReleaseTrack};
+fn edition_p() -> droppedneedle_library::matching::Release {
+    use droppedneedle_library::matching::{Release, ReleaseTrack};
     let track = |n: u32, disc: u32, position: u32| ReleaseTrack {
         id: format!("p-rt-{n}"),
         recording_id: format!("rec-{n}"),
@@ -4725,7 +4725,7 @@ impl RegroupRig {
         self.tag(&names, album);
     }
 
-    fn store_release(&self, release: &droppedneedle::library::matching::Release) {
+    fn store_release(&self, release: &droppedneedle_library::matching::Release) {
         SqliteIdentifyStore::open(&self.db())
             .expect("identify store opens")
             .save_release(release);
@@ -5157,7 +5157,7 @@ async fn a_placement_marks_only_a_hand_retag() {
 /// the run ends. The next run end places and marks it.
 #[tokio::test]
 async fn a_failed_placement_takes_its_mark_with_it() {
-    use droppedneedle::library::matching::{Release, ReleaseTrack};
+    use droppedneedle_library::matching::{Release, ReleaseTrack};
 
     retag_warnings();
     let (mut rig, album, _) = placed_album("scan-place-store-error", "manual", 0.0).await;
@@ -5261,7 +5261,7 @@ fn plain<'a>(names: &'a [&'a str]) -> Side<'a> {
 struct ArtistRig {
     scratch: ScratchDir,
     root: PathBuf,
-    coordinator: Arc<LibraryScanCoordinator<droppedneedle::library::adapters::LoftyTagReader>>,
+    coordinator: Arc<LibraryScanCoordinator<droppedneedle_library::adapters::LoftyTagReader>>,
     writes: AtomicU64,
 }
 
@@ -5285,7 +5285,7 @@ impl ArtistRig {
         let coordinator = LibraryScanCoordinator::new(
             store,
             BlockingPool::new(2),
-            Arc::new(droppedneedle::library::adapters::LoftyTagReader),
+            Arc::new(droppedneedle_library::adapters::LoftyTagReader),
             Arc::new(StaticResolver::new(registry)),
         )
         .with_wakeups(WorkWakeups::new());
@@ -5317,8 +5317,8 @@ impl ArtistRig {
         album_side: Side<'_>,
         track_side: Side<'_>,
     ) {
-        use droppedneedle::library::tags::TagField;
-        use droppedneedle::library::tags::save::{TagEdit, save_tags};
+        use droppedneedle_library::tags::TagField;
+        use droppedneedle_library::tags::save::{TagEdit, save_tags};
         let path = self.root.join(relative);
         if !path.exists() {
             plant(&self.root, relative, "management_full.flac");
@@ -5479,9 +5479,9 @@ impl ArtistRig {
 /// own, not the survivor.
 #[tokio::test]
 async fn rows_proven_to_be_one_artist_merge_at_the_run_end() {
-    use droppedneedle::library::reconcile::groups::build;
-    use droppedneedle::library::reconcile::models::GroupState;
-    use droppedneedle::library::reconcile::store::inputs;
+    use droppedneedle_library::reconcile::groups::build;
+    use droppedneedle_library::reconcile::models::GroupState;
+    use droppedneedle_library::reconcile::store::inputs;
 
     let rig = ArtistRig::new("artist-converge");
     rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));

@@ -11,15 +11,15 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use droppedneedle::library::identify::models::DecisionSource;
-use droppedneedle::library::tags::save::{TagEdit, save_tags};
-use droppedneedle::library::tags::{TagField, read_fields};
-use droppedneedle::library::wiring::LibrarySetup;
 use droppedneedle::tooling::fixture::{
     MUSIC_ROOT_ID, V2_ALBUM_ID, V2_TRACK_ID, V2_TRACK_REL, build_v2_fixture, delete_orphan_rows,
 };
 use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, Secret};
+use droppedneedle_library::identify::models::DecisionSource;
+use droppedneedle_library::tags::save::{TagEdit, save_tags};
+use droppedneedle_library::tags::{TagField, read_fields};
+use droppedneedle_library::wiring::LibrarySetup;
 use rusqlite::params;
 use sha2::{Digest as _, Sha256};
 
@@ -121,7 +121,7 @@ fn managed_album(v2_root: &Path, alice: &str) -> PathBuf {
     std::fs::write(&blob, &snapshot).expect("blob writes");
 
     let meta = std::fs::metadata(&first).expect("first stat");
-    let mtime = droppedneedle::library::scan::mtime_ns_from_metadata(&meta);
+    let mtime = droppedneedle_library::scan::mtime_ns_from_metadata(&meta);
     let db = rusqlite::Connection::open(v2_root.join("cache").join("library.db")).expect("v2 db");
     // The first file is unchanged since v2 indexed it; the second is not.
     db.execute(
@@ -130,7 +130,7 @@ fn managed_album(v2_root: &Path, alice: &str) -> PathBuf {
         params![
             meta.len() as i64,
             mtime,
-            droppedneedle::library::scan::exact_stat_revision(meta.len(), mtime),
+            droppedneedle_library::scan::exact_stat_revision(meta.len(), mtime),
             V2_TRACK_ID
         ],
     )
@@ -209,7 +209,7 @@ fn managed_album(v2_root: &Path, alice: &str) -> PathBuf {
 }
 
 async fn drain_scans(library: &LibrarySetup) {
-    use droppedneedle::library::scan::{ScanKind, ScanRequest, ScanTrigger};
+    use droppedneedle_library::scan::{ScanKind, ScanRequest, ScanTrigger};
     let registry = library.live_registry();
     library
         .coordinator

@@ -26,8 +26,6 @@ use super::models::{
 use super::quality;
 use super::verify::{VerifyProbes, check_hibp_file, require_service_url};
 use crate::bootstrap::Outbound;
-use crate::library::policy as library_policy;
-use crate::library::settings_models::LibrarySettingsResponse;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     AdvancedSettings, DownloadClients, EventsSettings, IdentificationPolicy, JellyfinConnection,
@@ -43,6 +41,8 @@ use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 use droppedneedle_kernel::runtime_config::{
     ConfigError, ConfigStore, Masked, SecretSection, Section, UpdateError,
 };
+use droppedneedle_library::policy as library_policy;
+use droppedneedle_library::settings_models::LibrarySettingsResponse;
 
 /// Settings reads, writes, and verify probes. Built once at boot; every
 /// call reads the store, so a save takes effect on the next call.

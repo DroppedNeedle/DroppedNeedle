@@ -23,7 +23,7 @@ use std::collections::{BTreeSet, HashMap};
 use super::policy::{DownloadPolicy, NOT_IMPORTABLE_EXTENSIONS};
 use super::repository::SearchResult;
 use crate::acquire::downloads::manifest::{ExpectedTrack, TrackPosition};
-use crate::library::matching::strings::{fold, string_dist};
+use droppedneedle_library::matching::strings::{fold, string_dist};
 
 /// Audio containers a folder is judged on (WMA is not supported).
 const AUDIO_EXTENSIONS: [&str; 12] = [

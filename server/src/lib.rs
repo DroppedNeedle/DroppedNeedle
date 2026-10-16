@@ -23,7 +23,6 @@ pub mod docs;
 pub mod export;
 pub mod handlers;
 pub mod import;
-pub mod library;
 pub mod media;
 pub mod middleware;
 pub mod playback;

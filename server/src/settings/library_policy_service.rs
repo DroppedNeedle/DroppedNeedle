@@ -19,14 +19,16 @@ use super::models::{
     LibraryRestoreRootsRequest, LibrarySettingsSaveRequest,
 };
 use super::services::SettingsService;
-use crate::library::policy::{self as library_policy, LibraryPolicyCatalog, ResolvedLibraryPolicy};
-use crate::library::settings_models::{
-    LibraryPathMappingReport, LibraryPolicyApplyPreviewResponse, LibraryPolicyImpactResponse,
-    LibraryPolicyTreeResponse, LibrarySettingsResponse,
-};
 use droppedneedle_kernel::runtime_config::Masked;
 use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
 use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
+use droppedneedle_library::policy::{
+    self as library_policy, LibraryPolicyCatalog, ResolvedLibraryPolicy,
+};
+use droppedneedle_library::settings_models::{
+    LibraryPathMappingReport, LibraryPolicyApplyPreviewResponse, LibraryPolicyImpactResponse,
+    LibraryPolicyTreeResponse, LibrarySettingsResponse,
+};
 
 /// Library policy reads, previews, and the guarded saves.
 pub struct LibraryPolicyService {

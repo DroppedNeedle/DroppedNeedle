@@ -26,8 +26,8 @@ use crate::acquire::landing::matching::{
 use crate::acquire::landing::ports::LandingLibrary;
 use crate::acquire::landing::probe::Landing;
 use crate::acquire::landing::specs::Target;
-use crate::library::matching::Release;
-use crate::library::matching::decide::ACCEPT_ALBUM;
+use droppedneedle_library::matching::Release;
+use droppedneedle_library::matching::decide::ACCEPT_ALBUM;
 
 /// Releases fetched from fingerprint or group lookups.
 const FETCH: usize = 3;

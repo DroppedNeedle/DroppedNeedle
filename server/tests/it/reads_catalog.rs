@@ -3,8 +3,8 @@
 //! loopback fixture server (tests/fixtures/catalog). One test per page,
 //! the MusicBrainz outage fallback, and the auth matrix rows.
 
-use droppedneedle::library::operations::models::{EditionChoice, OperationError};
-use droppedneedle::library::operations::port::{BoxFuture as PortFuture, EditionChoices};
+use droppedneedle_library::operations::models::{EditionChoice, OperationError};
+use droppedneedle_library::operations::port::{BoxFuture as PortFuture, EditionChoices};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 

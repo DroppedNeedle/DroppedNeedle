@@ -24,7 +24,7 @@ use crate::acquire::landing::ports::{ImportFailure, ImportFile, ImportRequest, L
 use crate::acquire::landing::reasons::explain;
 use crate::acquire::landing::{is_local_hold, probe, quality, specs};
 use crate::acquire::worker::DownloadWorker;
-use crate::library::matching::Release;
+use droppedneedle_library::matching::Release;
 
 /// Fingerprint checks one bulk re-check runs at most (v2
 /// `HELD_REVERIFY_BULK_LIMIT`). Skipped rows do not count.

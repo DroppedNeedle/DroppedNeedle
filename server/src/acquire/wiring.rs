@@ -1565,7 +1565,7 @@ fn worker_config(
         .into_iter()
         .collect();
     for root in library_roots {
-        let bin = root.join(crate::library::scan::fs::RECYCLE_BIN_DIRECTORY_NAME);
+        let bin = root.join(droppedneedle_library::scan::fs::RECYCLE_BIN_DIRECTORY_NAME);
         if !bin_roots.contains(&bin) {
             bin_roots.push(bin);
         }

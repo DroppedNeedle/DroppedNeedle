@@ -39,7 +39,7 @@ pub struct ArtistRef {
     /// Aliases, under the `aliases` include. Checked on 2026-10-15
     /// against release lookups from BrainzMash ws/2 with
     /// `inc=recordings+artist-credits+aliases` (and the relation
-    /// includes; `tests/fixtures/musicbrainz/release_names_*.json`): the
+    /// includes; `server/tests/fixtures/musicbrainz/release_names_*.json`): the
     /// artists of the release's and each release track's credit carry the
     /// key, `[]` when the artist has none; recording-level credits and
     /// relationship artists never carry it. A missing key means not
@@ -255,7 +255,7 @@ pub struct EntityRef {
 /// `target-credit`, `direction`, works' own `relations`) were checked on
 /// 2026-10-15 against two release lookups from BrainzMash ws/2 with
 /// `inc=recordings+artist-rels+recording-level-rels+work-rels+work-level-rels`
-/// (`tests/fixtures/musicbrainz/release_relations_*.json`): `target-credit`
+/// (`server/tests/fixtures/musicbrainz/release_relations_*.json`): `target-credit`
 /// is an empty string when the artist is credited under their own name,
 /// and `attributes` is always a list, empty when there are none.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

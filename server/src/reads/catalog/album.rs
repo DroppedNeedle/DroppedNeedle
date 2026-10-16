@@ -524,7 +524,7 @@ impl Catalog {
             .iter()
             .enumerate()
             .min_by_key(|(rank, release)| {
-                let facts = crate::library::edition_prefs::EditionFacts {
+                let facts = droppedneedle_library::edition_prefs::EditionFacts {
                     status: release.status.as_deref(),
                     formats: release.formats.iter().map(String::as_str).collect(),
                     country: release.country.as_deref(),
@@ -822,7 +822,9 @@ impl Catalog {
                             found
                                 .items
                                 .into_iter()
-                                .filter_map(crate::library::identify::sources::edition_from_hit)
+                                .filter_map(
+                                    droppedneedle_library::identify::sources::edition_from_hit,
+                                )
                                 .filter(|edition| {
                                     edition.release_group_mbid.eq_ignore_ascii_case(&group)
                                 })
@@ -1238,9 +1240,9 @@ fn bandcamp_album_search(term: &str) -> String {
 
 /// An edition operation's refusal as a catalog error, keeping its sentence
 /// and what to do about it.
-fn choice_error(error: crate::library::operations::models::OperationError) -> CatalogError {
-    use crate::library::operations::models::OperationError;
-    let said = |reason: crate::library::operations::reasons::Reason| {
+fn choice_error(error: droppedneedle_library::operations::models::OperationError) -> CatalogError {
+    use droppedneedle_library::operations::models::OperationError;
+    let said = |reason: droppedneedle_library::operations::reasons::Reason| {
         format!("{} {}", reason.message, reason.action)
     };
     match error {
@@ -1273,7 +1275,7 @@ fn listed_editions(group: &GroupDetail) -> Vec<AlbumEditionItem> {
 }
 
 /// One release from the release index as an edition row.
-fn edition_item(edition: crate::library::identify::sources::Edition) -> AlbumEditionItem {
+fn edition_item(edition: droppedneedle_library::identify::sources::Edition) -> AlbumEditionItem {
     AlbumEditionItem {
         release_mbid: edition.release_mbid,
         track_count: edition.track_count,

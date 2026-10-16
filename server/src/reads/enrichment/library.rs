@@ -6,14 +6,14 @@ use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
 
-use crate::library::management::enrich::{
+use crate::reads::catalog::upstream::Upstream;
+use crate::reads::platform::artwork::ArtworkService;
+use droppedneedle_library::management::enrich::{
     AcoustIdAnswer, AcoustIdPrint, Cover, EnrichmentPort, ExtrasWanted, LyricsFound, LyricsQuery,
     normalize_lrc,
 };
-use crate::library::management::genre::Candidate;
-use crate::library::matching::model::ReleaseExtras;
-use crate::reads::catalog::upstream::Upstream;
-use crate::reads::platform::artwork::ArtworkService;
+use droppedneedle_library::management::genre::Candidate;
+use droppedneedle_library::matching::model::ReleaseExtras;
 
 /// The production port: the catalog's ListenBrainz and Last.fm clients,
 /// LRCLIB, the shared artwork cache, and AcoustID on identification's
@@ -273,7 +273,7 @@ impl EnrichmentPort for LiveEnrichment {
         wants: ExtrasWanted,
         background: bool,
     ) -> BoxFuture<'a, Result<ReleaseExtras, String>> {
-        use crate::library::identify::sources::{
+        use droppedneedle_library::identify::sources::{
             NAME_INCLUDES, RELATION_INCLUDES, names_from_wire, relations_from_wire,
         };
         use droppedneedle_providers::RequestPriority;

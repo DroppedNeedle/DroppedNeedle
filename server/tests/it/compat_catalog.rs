@@ -83,11 +83,9 @@ impl Rig {
             runtime.pool().clone(),
             runtime.lane().clone(),
         ));
-        let library = droppedneedle::library::wiring::LibrarySetup::for_tests(
-            auth.users.clone(),
-            ids.clone(),
-        )
-        .unwrap();
+        let library =
+            droppedneedle_library::wiring::LibrarySetup::for_tests(auth.users.clone(), ids.clone())
+                .unwrap();
         let compat = CompatSetup::for_tests(auth.users.clone(), library, &reads, ids).unwrap();
         Self {
             _dir: dir,

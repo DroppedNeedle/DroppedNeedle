@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::db::CollectionsDb;
 use super::store::Stores;
-use crate::library::operations::port::{EditionChoices, NoEditionChoices};
+use droppedneedle_library::operations::port::{EditionChoices, NoEditionChoices};
 
 /// Auto-download state of one follow, as the routes show it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

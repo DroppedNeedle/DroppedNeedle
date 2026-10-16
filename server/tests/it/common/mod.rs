@@ -225,8 +225,8 @@ fn test_reads(
 fn test_library(
     auth: &droppedneedle_auth::wiring::AuthSetup,
     ids: Arc<dyn IdGenerator>,
-) -> droppedneedle::library::wiring::LibrarySetup {
-    droppedneedle::library::wiring::LibrarySetup::for_tests(auth.users.clone(), ids)
+) -> droppedneedle_library::wiring::LibrarySetup {
+    droppedneedle_library::wiring::LibrarySetup::for_tests(auth.users.clone(), ids)
         .expect("test library bundle builds")
 }
 

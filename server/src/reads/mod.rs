@@ -234,7 +234,7 @@ impl ReadsSetup {
     #[must_use]
     pub fn with_edition_choices(
         mut self,
-        editions: Arc<dyn crate::library::operations::port::EditionChoices>,
+        editions: Arc<dyn droppedneedle_library::operations::port::EditionChoices>,
     ) -> Self {
         self.collections.editions = editions.clone();
         if let Some(deps) = self.catalog.as_mut() {

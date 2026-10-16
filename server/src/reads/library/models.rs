@@ -567,8 +567,8 @@ pub struct TrackTags {
     pub musicbrainz_album_artist_ids: Vec<String>,
 }
 
-impl From<crate::library::tags::AudioArtistCredit> for TagArtistCredit {
-    fn from(credit: crate::library::tags::AudioArtistCredit) -> Self {
+impl From<droppedneedle_library::tags::AudioArtistCredit> for TagArtistCredit {
+    fn from(credit: droppedneedle_library::tags::AudioArtistCredit) -> Self {
         Self {
             name: credit.name,
             credited_name: credit.credited_name,
@@ -579,9 +579,9 @@ impl From<crate::library::tags::AudioArtistCredit> for TagArtistCredit {
     }
 }
 
-impl From<crate::library::tags::AudioTag> for TrackTags {
-    fn from(tag: crate::library::tags::AudioTag) -> Self {
-        let credits = |list: Vec<crate::library::tags::AudioArtistCredit>| {
+impl From<droppedneedle_library::tags::AudioTag> for TrackTags {
+    fn from(tag: droppedneedle_library::tags::AudioTag) -> Self {
+        let credits = |list: Vec<droppedneedle_library::tags::AudioArtistCredit>| {
             list.into_iter().map(TagArtistCredit::from).collect()
         };
         Self {

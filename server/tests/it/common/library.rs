@@ -5,9 +5,9 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use droppedneedle::library::identify::models::{LocalAlbumFacts, RecallResult};
-use droppedneedle::library::identify::providers::{IdentifyProviders, RecallOutcome};
-use droppedneedle::library::identify::sources::{EditionPage, EditionQuery, SourceError};
+use droppedneedle_library::identify::models::{LocalAlbumFacts, RecallResult};
+use droppedneedle_library::identify::providers::{IdentifyProviders, RecallOutcome};
+use droppedneedle_library::identify::sources::{EditionPage, EditionQuery, SourceError};
 use droppedneedle_providers::musicbrainz::Criticality;
 
 type Recall = Box<dyn Fn(&LocalAlbumFacts) -> RecallResult + Send>;

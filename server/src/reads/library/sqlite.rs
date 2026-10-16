@@ -38,7 +38,7 @@ use super::stores::{
     TrackFilter, TrackRecord, TrackSort,
 };
 use super::stores::{FavoriteReads, LibraryCatalog};
-use crate::library::corrections::continuation::CURRENT_TRACK;
+use droppedneedle_library::corrections::continuation::CURRENT_TRACK;
 
 /// Shared SQLite handle for the library adapters: the reader pool.
 /// `Clone` is cheap; clones share the pool.

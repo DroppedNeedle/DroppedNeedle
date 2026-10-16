@@ -14,12 +14,14 @@ use super::ports::{
     VersionRow,
 };
 use crate::acquire::downloads::manifest::PlannedAlbum;
-use crate::library::identify::sources::{ReleaseHit, ReleaseSource, SourceError, group_editions};
-use crate::library::import::{DownloadImport, ImportError, ImportSource};
-use crate::library::management::service::Management;
-use crate::library::matching::Release;
-use crate::library::mutations::{MutationError, Mutations};
-use crate::library::wiring::LibrarySetup;
+use droppedneedle_library::identify::sources::{
+    ReleaseHit, ReleaseSource, SourceError, group_editions,
+};
+use droppedneedle_library::import::{DownloadImport, ImportError, ImportSource};
+use droppedneedle_library::management::service::Management;
+use droppedneedle_library::matching::Release;
+use droppedneedle_library::mutations::{MutationError, Mutations};
+use droppedneedle_library::wiring::LibrarySetup;
 
 /// Indexed library tracks with their album's identity and their own,
 /// the one notion of "the library holds it" the landing and the wanted

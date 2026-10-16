@@ -13,8 +13,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use droppedneedle::library::identify;
-use droppedneedle::library::matching::decide::REVIEW_CEILING;
+use droppedneedle_library::identify;
+use droppedneedle_library::matching::decide::REVIEW_CEILING;
 use droppedneedle_providers::Providers;
 use droppedneedle_providers::musicbrainz::{
     MbPacing, MbRequest, MbTransport, MusicBrainzClient, RawResponse, TransportError,

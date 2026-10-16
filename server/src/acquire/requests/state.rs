@@ -55,7 +55,7 @@ pub struct RequestsState {
 
 /// The slot the library's edition plans go into.
 pub type EditionPlanSlot =
-    Arc<std::sync::OnceLock<Arc<dyn crate::library::operations::port::EditionPlans>>>;
+    Arc<std::sync::OnceLock<Arc<dyn droppedneedle_library::operations::port::EditionPlans>>>;
 
 /// The slot the upgrade policy reader goes into.
 pub type UpgradePolicySlot = Arc<

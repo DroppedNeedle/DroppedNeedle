@@ -34,9 +34,10 @@ impl TrackTagReader for FileTagReader {
                 }
                 Err(LocateError::Internal(cause)) => return Err(StoreError::Internal(cause)),
             };
-            let read = tokio::task::spawn_blocking(move || crate::library::tags::read_tags(&path))
-                .await
-                .map_err(|error| StoreError::Internal(error.to_string()))?;
+            let read =
+                tokio::task::spawn_blocking(move || droppedneedle_library::tags::read_tags(&path))
+                    .await
+                    .map_err(|error| StoreError::Internal(error.to_string()))?;
             Ok(match read {
                 Ok((tag, _)) => TagRead::Found(Box::new(tag)),
                 Err(error) => {

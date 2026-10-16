@@ -145,7 +145,7 @@ pub struct PluginHost {
     /// Library writes per plugin (`host.library.write`).
     pub(super) library_writes: super::capabilities::library_files::LibraryWrites,
     /// The library roots' lease table, set once the library is wired.
-    library_fs: std::sync::OnceLock<crate::library::scan::fs::FsCoordinator>,
+    library_fs: std::sync::OnceLock<droppedneedle_library::scan::fs::FsCoordinator>,
 }
 
 impl PluginHost {
@@ -181,14 +181,14 @@ impl PluginHost {
 
     /// Hold library roots through this lease table when a plugin writes a
     /// library file, and clear temp files a crash left from such writes.
-    pub fn set_library_fs(&self, fs: crate::library::scan::fs::FsCoordinator) {
+    pub fn set_library_fs(&self, fs: droppedneedle_library::scan::fs::FsCoordinator) {
         super::capabilities::library_files::sweep_ledger(&self.data_dir(""));
         if self.library_fs.set(fs).is_err() {
             tracing::warn!("plugin host library lease table was already set");
         }
     }
 
-    pub(super) fn library_fs(&self) -> Option<crate::library::scan::fs::FsCoordinator> {
+    pub(super) fn library_fs(&self) -> Option<droppedneedle_library::scan::fs::FsCoordinator> {
         self.library_fs.get().cloned()
     }
 

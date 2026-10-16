@@ -6,7 +6,7 @@
 
 use super::SearchTarget;
 use crate::acquire::usenet::newznab::IndexerResult;
-use crate::library::matching::strings::fold;
+use droppedneedle_library::matching::strings::fold;
 
 /// How well one release's title and file count fit the target. Lower
 /// is better on both counts.

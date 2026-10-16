@@ -1015,7 +1015,7 @@ impl DropImports {
     async fn after_import(
         &self,
         job: &JobRecord,
-        release: &crate::library::matching::Release,
+        release: &droppedneedle_library::matching::Release,
         imported: usize,
         fulfills: bool,
     ) {

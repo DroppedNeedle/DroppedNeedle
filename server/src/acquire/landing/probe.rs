@@ -8,8 +8,8 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::library::tags::read::{HeaderInfo, read_scan_metadata};
-use crate::library::tags::{AudioFormat, AudioTag, format_for_path};
+use droppedneedle_library::tags::read::{HeaderInfo, read_scan_metadata};
+use droppedneedle_library::tags::{AudioFormat, AudioTag, format_for_path};
 
 /// How deep the probe walks a job folder (`Album/CD1/track.flac` is 2).
 const MAX_DEPTH: usize = 4;

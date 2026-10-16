@@ -27,13 +27,6 @@ use super::models::{
     UsenetSearchBackend, VerifyConnectionResponse,
 };
 use super::wiring::{AdminUser, SettingsSetup};
-use crate::library::management::settings::{ActivationHealth, ChangeImpact, PresetDiff};
-use crate::library::settings_models::{
-    LibraryManagementProfileExportResponse, LibraryManagementProfileImportPreviewResponse,
-    LibraryManagementProfileImportResponse, LibraryManagementProfileMutationResponse,
-    LibraryManagementSettingsResponse, LibraryPathMappingReport, LibraryPolicyApplyPreviewResponse,
-    LibraryPolicyImpactResponse, LibraryPolicyTreeResponse, LibrarySettingsResponse,
-};
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_kernel::runtime_config::Masked;
 use droppedneedle_kernel::runtime_config::secret_sections::{
@@ -47,6 +40,13 @@ use droppedneedle_kernel::runtime_config::sections::{
     ScrobbleSettings, SecuritySettings, UserPreferences, WantedWatcher,
 };
 use droppedneedle_kernel::runtime_config::settings_error::{SettingsError, ValidJson, ValidQuery};
+use droppedneedle_library::management::settings::{ActivationHealth, ChangeImpact, PresetDiff};
+use droppedneedle_library::settings_models::{
+    LibraryManagementProfileExportResponse, LibraryManagementProfileImportPreviewResponse,
+    LibraryManagementProfileImportResponse, LibraryManagementProfileMutationResponse,
+    LibraryManagementSettingsResponse, LibraryPathMappingReport, LibraryPolicyApplyPreviewResponse,
+    LibraryPolicyImpactResponse, LibraryPolicyTreeResponse, LibrarySettingsResponse,
+};
 
 type JsonResult<T> = Result<Json<T>, SettingsError>;
 

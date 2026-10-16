@@ -10,7 +10,7 @@ use futures_util::future::BoxFuture;
 
 use super::dispatch::Journal;
 use super::requests::sqlite::WantedStore;
-use crate::library::mutations::AlbumRemovalHook;
+use droppedneedle_library::mutations::AlbumRemovalHook;
 
 /// Cleans up download and wanted state for removed albums.
 pub struct AcquireAlbumCleanup {

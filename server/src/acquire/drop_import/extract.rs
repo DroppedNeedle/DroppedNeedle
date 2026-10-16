@@ -28,7 +28,7 @@ pub struct Unit {
 
 /// Whether a file name is audio the library imports.
 pub fn is_audio(path: &Path) -> bool {
-    crate::library::tags::format_for_path(path).is_ok()
+    droppedneedle_library::tags::format_for_path(path).is_ok()
 }
 
 /// Whether an upload's file name is something a drop accepts: an archive
@@ -228,7 +228,8 @@ fn safe_extract(
         return Err(format!("Skipped {label}: the archive is too large."));
     }
     // Room to unpack it, with some to spare for the library copy step.
-    match crate::library::adapters::free_bytes_for(target_dir.parent().unwrap_or(target_dir)) {
+    match droppedneedle_library::adapters::free_bytes_for(target_dir.parent().unwrap_or(target_dir))
+    {
         Ok(free) if free < declared.saturating_add(FREE_SPACE_MARGIN) => {
             return Err(format!(
                 "Skipped {label}: there isn't enough free disk space to unpack it."

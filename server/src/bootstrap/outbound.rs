@@ -15,10 +15,10 @@ use std::sync::Arc;
 
 use crate::{
     acquire::wiring::{SPOTIFY_ACCOUNTS_BASE, SPOTIFY_API_BASE, SpotifyEndpoints},
-    library::{contrib::ContribProviders, identify::providers::IdentifyProviders},
     plugins::install::GitHubHosts,
 };
 use droppedneedle_auth::{users::hibp::RANGE_URL_PREFIX, wiring::Upstreams};
+use droppedneedle_library::{contrib::ContribProviders, identify::providers::IdentifyProviders};
 use droppedneedle_providers::{
     acoustid, audiodb, coverart, discogs, geocoding, github, itunes, lastfm, listenbrainz, lrclib,
     musicbrainz, plextv::PLEX_TV_BASE, preview, skiddle, ticketmaster, wikidata, youtube,
@@ -202,8 +202,8 @@ impl Outbound {
     }
 
     /// The addresses and provider ports the library uses.
-    pub fn library(&self) -> crate::library::wiring::Endpoints {
-        crate::library::wiring::Endpoints {
+    pub fn library(&self) -> droppedneedle_library::wiring::Endpoints {
+        droppedneedle_library::wiring::Endpoints {
             discogs: self.discogs.clone(),
             acoustid: self.acoustid.clone(),
             identify_providers: self.identify_providers.get(),

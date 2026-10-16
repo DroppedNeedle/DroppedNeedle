@@ -24,10 +24,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::common::ScratchDir;
-use droppedneedle::library::scan::{
+use droppedneedle_library::scan::{
     EffectivePolicy, ScanKind, ScanRequest, ScanState, ScanTrigger, counter_names,
 };
-use droppedneedle::library::wiring::LibrarySetup;
+use droppedneedle_library::wiring::LibrarySetup;
 
 const FILES_ENV: &str = "DN_SCAN_FILES";
 const ONE_ARTIST_ENV: &str = "DN_SCAN_ONE_ARTIST";
@@ -58,8 +58,8 @@ fn replace(bytes: &mut [u8], from: &str, to: &str) {
 /// on one artist), with MusicBrainz ids that differ per artist, album and
 /// track, and the artist lists that line up with the artist ids.
 fn generate(root: &Path, files: usize, one_artist: bool) -> u64 {
-    use droppedneedle::library::tags::TagField;
-    use droppedneedle::library::tags::save::{TagEdit, save_tags};
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
 
     let template = std::fs::read(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/library/flac_full_01.flac"),

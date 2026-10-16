@@ -122,14 +122,14 @@ async fn upgrade_from_0001_keeps_data() {
 async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() {
     use std::sync::Arc;
 
-    use droppedneedle::library::identify::models::RecallResult;
-    use droppedneedle::library::matching::{Release, ReleaseTrack};
-    use droppedneedle::library::wiring::LibrarySetup;
     use droppedneedle::tooling::fixture::{
         MUSIC_ROOT_ID, V2_ALBUM_ID, build_v2_fixture, delete_orphan_rows,
     };
     use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
     use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, Secret};
+    use droppedneedle_library::identify::models::RecallResult;
+    use droppedneedle_library::matching::{Release, ReleaseTrack};
+    use droppedneedle_library::wiring::LibrarySetup;
 
     const PASSPHRASE: &str = "operator-passphrase";
     const PINNED: &str = "rel-blue-jp";
@@ -334,7 +334,7 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
             ..RecallResult::default()
         });
     assert!(
-        droppedneedle::library::operations::service::Operations::new(&library)
+        droppedneedle_library::operations::service::Operations::new(&library)
             .remap_next()
             .await
             .expect("remap step")

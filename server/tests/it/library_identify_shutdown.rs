@@ -19,11 +19,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::common::ScratchDir;
-use droppedneedle::library::identify::models::{
-    IdentifyKind, JobState, LocalAlbumFacts, RecallResult,
-};
-use droppedneedle::library::identify::providers::{IdentifyProviders, RecallOutcome};
-use droppedneedle::library::wiring::LibrarySetup;
 use droppedneedle::remotes::plex::ConfiguredPlexServer;
 use droppedneedle_auth::prod::ProdAuth;
 use droppedneedle_auth::users::stores::SystemClock;
@@ -32,6 +27,11 @@ use droppedneedle_kernel::db::DbRuntime;
 use droppedneedle_kernel::http_client::HttpClientFactory;
 use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
+use droppedneedle_library::identify::models::{
+    IdentifyKind, JobState, LocalAlbumFacts, RecallResult,
+};
+use droppedneedle_library::identify::providers::{IdentifyProviders, RecallOutcome};
+use droppedneedle_library::wiring::LibrarySetup;
 use droppedneedle_providers::musicbrainz::Criticality;
 use tokio::sync::{oneshot, watch};
 

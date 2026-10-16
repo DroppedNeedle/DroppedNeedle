@@ -51,7 +51,7 @@ use droppedneedle_kernel::error::{ErrorBody, ErrorEnvelope};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::sections::SecuritySettings;
 
-use crate::library::scan::roots::RootRegistry;
+use droppedneedle_library::scan::roots::RootRegistry;
 
 use archive::{Entry, Layout};
 

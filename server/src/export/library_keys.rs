@@ -17,8 +17,8 @@ use rusqlite::{Connection, params};
 
 use crate::export::error::ExportError;
 use crate::export::sections::library::{ALBUMS, TRACKS};
-use crate::library::scan::naming::{album_grouping_key, grouping_directory};
 use droppedneedle_kernel::db::fold::fold_text;
+use droppedneedle_library::scan::naming::{album_grouping_key, grouping_directory};
 
 /// One carried track's naming facts, as the scan would see them.
 struct TrackNames {

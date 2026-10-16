@@ -25,8 +25,8 @@ use serde::Serialize;
 use super::matching::{MatchState, MatchSummary};
 use super::probe::Landing;
 use crate::acquire::downloads::quarantine::QuarantineReason;
-use crate::library::matching::decide::{ACCEPT_ALBUM, ACCEPT_TRACK};
-use crate::library::matching::strings::{fold, strip_edition_words};
+use droppedneedle_library::matching::decide::{ACCEPT_ALBUM, ACCEPT_TRACK};
+use droppedneedle_library::matching::strings::{fold, strip_edition_words};
 
 /// What a rejection means for retry and failover (v2 `Disposition`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

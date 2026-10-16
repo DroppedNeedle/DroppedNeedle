@@ -53,7 +53,7 @@ use super::dispatch::Journal;
 use super::downloads::landing_rows::{HeldFile, ImportDecisionRow};
 use super::downloads::manifest::DownloadManifest;
 use super::downloads::store::{TaskDetails, TaskRow};
-use crate::library::import::ImportJoin;
+use droppedneedle_library::import::ImportJoin;
 
 /// The library port, set once the library bundle exists.
 pub type LibrarySlot = Arc<OnceLock<Arc<dyn LandingLibrary>>>;

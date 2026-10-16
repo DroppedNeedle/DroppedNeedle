@@ -7,7 +7,7 @@
 //! freshness are rows a test seeds; attachments are decided by the library
 //! matcher.
 
-use droppedneedle::library::contrib;
+use droppedneedle_library::contrib;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -22,7 +22,7 @@ use contrib::sqlite::SqliteContributions;
 use contrib::worker::{
     VerificationWorker, VerificationWorkerConfig, shutdown_channel, spawn_verification_worker,
 };
-use droppedneedle::library::adapters::MatchingAttachmentEvidence;
+use droppedneedle_library::adapters::MatchingAttachmentEvidence;
 use droppedneedle_providers::slots::RequestPriority;
 use futures_util::future::BoxFuture;
 use rusqlite::{OptionalExtension as _, params};

@@ -646,8 +646,8 @@ fn note_unflagged_plugin_settings(plugins: &Value, report: &mut ReportBuilder) {
 /// spelling. A field list that does not decode is left for the settings
 /// reader to report.
 fn carry_v2_management_fields(section: &mut Value) {
-    use crate::library::management::settings::MANAGED_FIELDS;
     use droppedneedle_kernel::runtime_config::sections::{FieldMode, ManagedField};
+    use droppedneedle_library::management::settings::MANAGED_FIELDS;
     let Some(profiles) = section.get_mut("profiles").and_then(Value::as_array_mut) else {
         return;
     };

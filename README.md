@@ -267,7 +267,7 @@ Behind a reverse proxy, list the proxy in `TRUSTED_PROXY_IPS` and have it pass `
 | `HTTP_TIMEOUT` | `30` | Outbound request timeout, seconds |
 | `HTTP_CONNECT_TIMEOUT` | `10` | Outbound connect timeout, seconds |
 | `HTTP_MAX_KEEPALIVE` | `50` | Idle outbound connections kept per host |
-| `RUST_LOG` | unset | Full log filter (e.g. `info,droppedneedle::library=debug`, or `droppedneedle_auth=debug` for sign-in); wins over `LOG_LEVEL` |
+| `RUST_LOG` | unset | Full log filter (e.g. `info,droppedneedle_library=debug`, or `droppedneedle_auth=debug` for sign-in); wins over `LOG_LEVEL` |
 | `ROOT_APP_DIR` | `/app` | Base for the paths below and for `/app/plugins` and `/app/imports` |
 | `CACHE_DIR` | `/app/cache` | Database, backups, served web UI, caches |
 | `COVER_CACHE_MAX_SIZE_MB` | `500` | Size cap for downloaded and extracted cover art under `CACHE_DIR/covers`; the least recently shown covers go first |

@@ -6,11 +6,11 @@
 //! rows a test seeds. MusicBrainz is scripted (`FakeProviders`): nothing
 //! here touches the network.
 
-use droppedneedle::library::identify;
+use droppedneedle_library::identify;
 
 use std::sync::Arc;
 
-use droppedneedle::library::matching::{CreditedArtist, Release, ReleaseTrack};
+use droppedneedle_library::matching::{CreditedArtist, Release, ReleaseTrack};
 use identify::models::IdentifyJob;
 use identify::models::JobState;
 use identify::models::{

@@ -1377,7 +1377,7 @@ const FILING_CATALOG: &str = "
 /// counts every row it changed and every row it left.
 #[test]
 fn older_plays_are_filed_only_on_a_clear_match() {
-    use droppedneedle::library::repairs::plays;
+    use droppedneedle_library::repairs::plays;
 
     let recording = |n: u8| format!("00000000-0000-4000-8000-{n:012}");
     let (r1, r2, r3, r5, r8) = (

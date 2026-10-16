@@ -218,7 +218,7 @@ impl E2e {
             .parent()
             .map(|parent| parent.to_path_buf())
             .unwrap_or_else(std::env::temp_dir);
-        let library = droppedneedle::library::wiring::LibrarySetup::for_tests(
+        let library = droppedneedle_library::wiring::LibrarySetup::for_tests(
             auth.users.clone(),
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
         )

@@ -12,9 +12,9 @@
 //! wrapper (stage-8 integration); publish-path briefs plant real
 //! committed fixtures, never fake bytes with audio extensions.
 
-use droppedneedle::library::publish;
+use droppedneedle_library::publish;
 
-use droppedneedle::library::tags;
+use droppedneedle_library::tags;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -882,7 +882,7 @@ fn journal_connections_sync_every_commit() {
 /// cleanup is pending is finished and is not listed.
 #[test]
 fn a_write_counts_as_stuck_from_the_day_it_was_made() {
-    use droppedneedle::library::management::recovery::retrying_bundles;
+    use droppedneedle_library::management::recovery::retrying_bundles;
     use std::sync::atomic::{AtomicI64, Ordering};
 
     let fix = fixture("stuck-from-its-own-day");

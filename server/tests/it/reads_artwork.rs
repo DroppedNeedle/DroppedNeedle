@@ -9,12 +9,12 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use droppedneedle::library::scan::SqliteScanStore;
 use droppedneedle::reads::platform::artwork::{
     ArtworkService, cache::ArtworkCache, local::LocalArtwork, remote::cover_client,
 };
 use droppedneedle::reads::platform::covers::{self, CoversState};
 use droppedneedle_kernel::db::{DbRuntime, Lane, OpError};
+use droppedneedle_library::scan::SqliteScanStore;
 use droppedneedle_providers::coverart::{CaaRequest, CaaTransport, RawResponse, TransportError};
 use tower::ServiceExt as _;
 
@@ -181,7 +181,7 @@ async fn embedded_art_from_the_scan_beats_the_archive_when_preferred() {
     let files = ScratchDir::new("reads-artwork-files");
     let track = files.join("01.flac");
     std::fs::copy("tests/fixtures/library/management_full.flac", &track).unwrap();
-    let embedded = droppedneedle::library::tags::read_cover_art(&track)
+    let embedded = droppedneedle_library::tags::read_cover_art(&track)
         .unwrap()
         .expect("fixture carries art");
     let rig = rig(Some(&track)).await;

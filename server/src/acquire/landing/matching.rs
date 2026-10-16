@@ -14,12 +14,14 @@ use std::collections::{HashMap, HashSet};
 use super::ports::{LandingLibrary, OwnedTracks};
 use super::probe::{LandedFile, Landing};
 use super::specs::Target;
-use crate::library::identify::sources::ReleaseHit;
-use crate::library::matching::decide::{ACCEPT_TRACK, EDITION_COHORT};
-use crate::library::matching::match_release;
-use crate::library::matching::score::TrackPair;
-use crate::library::matching::strings::{fold, string_dist};
-use crate::library::matching::{LocalAlbum, LocalTrack, Release, ReleaseMatch, ReleaseTrack};
+use droppedneedle_library::identify::sources::ReleaseHit;
+use droppedneedle_library::matching::decide::{ACCEPT_TRACK, EDITION_COHORT};
+use droppedneedle_library::matching::match_release;
+use droppedneedle_library::matching::score::TrackPair;
+use droppedneedle_library::matching::strings::{fold, string_dist};
+use droppedneedle_library::matching::{
+    LocalAlbum, LocalTrack, Release, ReleaseMatch, ReleaseTrack,
+};
 
 /// Editions of the requested group fetched after a search.
 const PER_GROUP: usize = 3;
@@ -215,7 +217,7 @@ async fn recall(
     local: &LocalAlbum,
 ) -> Result<Vec<Release>, String> {
     let mut releases: Vec<Release> = Vec::new();
-    let error = |error: crate::library::identify::sources::SourceError| error.0;
+    let error = |error: droppedneedle_library::identify::sources::SourceError| error.0;
     if let Some(pinned) = target.release_mbid.as_deref() {
         fetch(library.release(pinned).await.map_err(error)?, &mut releases);
         return Ok(releases);

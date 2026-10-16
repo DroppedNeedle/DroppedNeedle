@@ -3,7 +3,7 @@
 //!
 //! It runs after the catalog, v2's baseline rows and the blob bytes have
 //! landed. Each baseline's tag snapshot is translated
-//! ([`crate::library::publish::v2_baseline`]) and stored the way v3's
+//! ([`droppedneedle_library::publish::v2_baseline`]) and stored the way v3's
 //! publisher stores its own: the before-state blob, the baseline row, and
 //! a blob reference. v2's own snapshot and the sidecar and artwork blobs
 //! it lists stay referenced too, so nothing a baseline held is ever swept.
@@ -20,8 +20,8 @@ use super::bundle::SCHEMA;
 use super::{CarryError, SectionResult};
 use crate::export::sections::library::TRACKS;
 use crate::export::sections::management::{BASELINES, BLOB_BYTES};
-use crate::library::publish::snapshots::sha256_hex;
-use crate::library::publish::v2_baseline::translate;
+use droppedneedle_library::publish::snapshots::sha256_hex;
+use droppedneedle_library::publish::v2_baseline::translate;
 
 /// Report entity and section marker name.
 pub(crate) const ENTITY: &str = "original_baseline";

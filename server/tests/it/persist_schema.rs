@@ -872,9 +872,7 @@ async fn retag_pairs_arrive_empty_and_go_with_their_albums() {
 /// exactly the ones the code names, in both directions.
 #[tokio::test]
 async fn retag_pair_checks_list_exactly_the_code_values() {
-    use droppedneedle::library::scan::sqlite_store::retag_pairs::{
-        RetagPairReason, RetagPairState,
-    };
+    use droppedneedle_library::scan::sqlite_store::retag_pairs::{RetagPairReason, RetagPairState};
 
     let pool = migrated_pool().await;
     let sql: String =
@@ -1455,7 +1453,7 @@ async fn publish_operations_keep_their_rows_and_gain_an_author() {
 /// the code names, in both directions.
 #[tokio::test]
 async fn takeover_check_lists_exactly_the_code_values() {
-    use droppedneedle::library::management::takeover::Cause;
+    use droppedneedle_library::management::takeover::Cause;
 
     let pool = migrated_pool().await;
     let sql: String =
@@ -1819,7 +1817,7 @@ async fn held_scopes_arrive_with_the_holds_that_stand() {
 /// code names, in both directions.
 #[tokio::test]
 async fn remap_origin_check_lists_exactly_the_code_values() {
-    use droppedneedle::library::operations::choice::RemapOrigin;
+    use droppedneedle_library::operations::choice::RemapOrigin;
 
     let pool = migrated_pool().await;
     let sql: String = sqlx::query_scalar(

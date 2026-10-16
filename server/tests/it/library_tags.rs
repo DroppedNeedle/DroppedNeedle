@@ -5,7 +5,7 @@
 //! its fixture into a scratch dir first; the committed files are never
 //! written. Nothing here touches the network.
 
-use droppedneedle::library::tags;
+use droppedneedle_library::tags;
 
 use crate::common::ScratchDir;
 use std::path::{Path, PathBuf};
@@ -1412,7 +1412,7 @@ fn vorbis_totals_update_every_spelling() {
 /// that document puts each spelling back to its own value.
 #[test]
 fn vorbis_spellings_restore_their_own_values() {
-    use droppedneedle::library::publish::staging;
+    use droppedneedle_library::publish::staging;
     let (_scratch, path) = temp_copy("management_full.flac", "spellings");
     flac_inject_pairs(&path, &[("TOTALTRACKS", "12"), ("TRACKTOTAL", "9")]);
     let baseline = staging::document_from_file(&path).unwrap();
@@ -1437,7 +1437,7 @@ fn vorbis_spellings_restore_their_own_values() {
 /// holds opaquely now; an older-shaped baseline removes nothing.
 #[test]
 fn restore_updates_spare_opaque_and_older_baselines() {
-    use droppedneedle::library::publish::{TagDocument, staging};
+    use droppedneedle_library::publish::{TagDocument, staging};
     let mut baseline = TagDocument::empty();
     baseline
         .managed
@@ -1459,7 +1459,7 @@ fn restore_updates_spare_opaque_and_older_baselines() {
 /// frames), and a version 2 document lists none.
 #[test]
 fn older_baselines_keep_the_credit_tags() {
-    use droppedneedle::library::publish::staging;
+    use droppedneedle_library::publish::staging;
     let (_scratch, path) = temp_copy("management_full.mp3", "old-baseline");
     id3_inject_frames(
         &path,
@@ -3141,7 +3141,7 @@ fn native_replays_restore_owned_tags() {
 /// v2.3 file keeps its musician credit beside the producer.
 #[test]
 fn v2_baseline_restore_keeps_v23_musician_credits() {
-    use droppedneedle::library::publish::{staging, v2_baseline};
+    use droppedneedle_library::publish::{staging, v2_baseline};
     let credits = [("guitar", "A"), ("producer", "P")];
     let ipls = utf16_people(&credits, false);
     let (_scratch, path) = v23_file(

@@ -1,0 +1,50 @@
+[package]
+name = "droppedneedle-library"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "DroppedNeedle library engine: scan, tags, identify, publish and contributions"
+publish = false
+
+[dependencies]
+droppedneedle-auth.workspace = true
+droppedneedle-kernel.workspace = true
+droppedneedle-providers.workspace = true
+axum.workspace = true
+base64.workspace = true
+caseless.workspace = true
+flate2.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
+image.workspace = true
+libc.workspace = true
+lofty.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+rubato.workspace = true
+rusqlite.workspace = true
+rusty-chromaprint.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+symphonia.workspace = true
+symphonia-adapter-libopus.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+unicode-normalization.workspace = true
+utoipa.workspace = true
+uuid.workspace = true
+
+[features]
+# Fakes, memory stores and test constructors for the test suites above.
+test-support = [
+    "droppedneedle-kernel/test-support",
+    "droppedneedle-providers/test-support",
+    "droppedneedle-auth/test-support",
+]
+
+[dev-dependencies]
+droppedneedle-kernel = { workspace = true, features = ["test-support"] }

@@ -26,10 +26,10 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use super::super::host::PluginHost;
-use crate::library::publish::HIDDEN_PREFIX;
-use crate::library::publish::paths::{Root, Sandbox};
-use crate::library::publish::plugin_files::{TEMP_TAG, write_new_file};
 use droppedneedle_kernel::runtime_config::secret_sections::TypedLibrary;
+use droppedneedle_library::publish::HIDDEN_PREFIX;
+use droppedneedle_library::publish::paths::{Root, Sandbox};
+use droppedneedle_library::publish::plugin_files::{TEMP_TAG, write_new_file};
 
 /// The capability a plugin declares to write library files.
 pub const CAPABILITY: &str = "library_writer";

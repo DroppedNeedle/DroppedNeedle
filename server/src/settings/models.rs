@@ -12,13 +12,13 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::library::settings_models::LibraryRestorableRoot;
 use droppedneedle_kernel::runtime_config::Masked;
 use droppedneedle_kernel::runtime_config::secret_sections::{AdvancedSettings, TypedLibrary};
 use droppedneedle_kernel::runtime_config::sections::{
     DownloadPolicy, LibraryManagement, LibraryManagementProfile, LibraryScanSchedule, MbSourceMode,
     MusicBrainzSettings, UsenetBackend,
 };
+use droppedneedle_library::settings_models::LibraryRestorableRoot;
 
 // --- views over one section ----------------------------------------------------
 
