@@ -1,5 +1,3 @@
-.Trash-1000
-
 # Runtime files
 /cache/
 /dev-data/
@@ -35,12 +33,3 @@ docker-compose.yml
 *.swp
 Thumbs.db
 ehthumbs.db
-
-# Private working files
-AGENTS.md
-AGENTS.md.bak
-CLAUDE.md
-.agents/
-.claude/
-.dev-notes/
-.github/instructions/

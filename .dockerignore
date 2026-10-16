@@ -18,12 +18,8 @@ examples/
 /dev-data/
 **/.env
 **/.env.*
-AGENTS.md
-CLAUDE.md
-.agents/
-.claude/
-.dev-notes/
-.Trash-1000
+# Top-level dotfiles and dot-folders (tool and editor state)
+.*
 
 # Build output and dependencies
 server/target/
