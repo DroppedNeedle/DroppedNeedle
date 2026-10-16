@@ -408,8 +408,8 @@ async fn preview_degradation_leg_errors() {
 // ---------------------------------------------------------------------------
 
 const LRCLIB_HIT: &str = r#"{
-    "id": 42, "name": "x", "trackName": "I Don't Want to Die Tonight",
-    "artistName": "Anthony Green", "albumName": "Boom. Done.",
+    "id": 42, "name": "x", "trackName": "Quiet Engine",
+    "artistName": "Northern Static", "albumName": "Paper Lanterns",
     "duration": 197.0, "instrumental": false,
     "plainLyrics": "line one\nline two", "syncedLyrics": null,
     "lyricsfile": null, "future": 1
@@ -420,12 +420,7 @@ async fn lrclib_contract_tolerates_unknown_fields() {
     let http = ScriptLrclib::scripted(vec![lreply(200, LRCLIB_HIT)]);
     let client = lrclib::LrclibClient::with_base(&http, "http://fake");
     let found = client
-        .get_exact_lyrics(
-            "I Don't Want to Die Tonight",
-            "Anthony Green",
-            "Boom. Done.",
-            197,
-        )
+        .get_exact_lyrics("Quiet Engine", "Northern Static", "Paper Lanterns", 197)
         .await
         .unwrap();
     assert!(found.found);

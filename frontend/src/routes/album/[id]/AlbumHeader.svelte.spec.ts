@@ -58,8 +58,8 @@ vi.mock('$lib/queries/library/LibraryMutations.svelte', () => ({
 
 const localAlbum: LibraryAlbumDetail = {
 	id: 'local-album-1',
-	title: 'Avalon',
-	artist_name: 'Anthony Green',
+	title: 'Glass Harbor',
+	artist_name: 'Northern Static',
 	artist_id: 'local-artist-1',
 	musicbrainz_release_group_id: '4b6276da-e7c7-36df-8771-34b92f774d3b',
 	musicbrainz_release_id: '0687c8a5-40a2-4a0c-bdc9-c1d80d94bef5',
@@ -187,7 +187,7 @@ vi.mock('$lib/utils/blobDownload', () => ({ downloadBlob: blob.download }));
 import AlbumHeader from './AlbumHeader.svelte';
 
 const album: AlbumBasicInfo = {
-	title: 'Avalon',
+	title: 'Glass Harbor',
 	musicbrainz_id: '4b6276da-e7c7-36df-8771-34b92f774d3b',
 	artist_name: 'Juliet',
 	artist_id: 'artist-1',
@@ -253,7 +253,7 @@ describe('AlbumHeader album download button', () => {
 		expect.assertions(2);
 		await renderHeader({ localCopies: [localAlbum], downloadAllowed: false });
 
-		await expect.element(page.getByRole('heading', { name: 'Avalon' })).toBeVisible();
+		await expect.element(page.getByRole('heading', { name: 'Glass Harbor' })).toBeVisible();
 		await expect
 			.element(page.getByRole('button', { name: /Download album/ }))
 			.not.toBeInTheDocument();

@@ -1,7 +1,7 @@
 //! SABnzbd download client: enqueue NZBs, track jobs, locate output.
 //!
 //! [`SabnzbdClient`] is the raw API wrapper (no business logic), ported
-//! from v2 `sabnzbd_client.py` and verified against the owner's SABnzbd
+//! from v2 `sabnzbd_client.py` and verified against SABnzbd
 //! 5.0.4: every call appends `output=json` + `apikey` as suffix query
 //! params (never headers; Lidarr `SabnzbdProxy`), adds go through
 //! `mode=addfile` (multipart POST of fetched + validated NZB bytes), and

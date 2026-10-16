@@ -182,7 +182,7 @@
 			{#if kind === 'naming'}
 				<div class="mt-3 rounded-lg border border-base-content/10 bg-base-100 p-3 text-xs">
 					<strong>Built-in Picard-style examples</strong>
-					<p class="mt-1 font-mono">Anthony Green/Avalon (2008)/03 - Drugdealer.flac</p>
+					<p class="mt-1 font-mono">Artist/Album (2008)/03 - Title.flac</p>
 					<p class="font-mono">Artist/Album (2023)/CD 01/01 - Track.flac</p>
 					<p class="font-mono">Artist/Album (2023)/Disc 01/01 - Track.flac</p>
 				</div>

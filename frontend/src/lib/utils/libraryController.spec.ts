@@ -12,8 +12,8 @@ import { createLibraryController } from './libraryController.svelte';
 
 const album: LocalAlbumSummary = {
 	musicbrainz_id: 'mbid-1',
-	name: 'Avalon',
-	artist_name: 'Roxy Music',
+	name: 'Glass Harbor',
+	artist_name: 'Northern Static',
 	track_count: 10,
 	total_size_bytes: 1000
 };

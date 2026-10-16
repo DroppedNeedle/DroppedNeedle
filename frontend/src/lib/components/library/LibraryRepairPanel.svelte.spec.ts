@@ -75,8 +75,8 @@ const h = vi.hoisted(() => ({
 							local_album_id: 'album-1',
 							evidence_id: 'evidence-1',
 							review_id: 'review-1',
-							album_title: 'Juturna',
-							album_artist_name: 'Circa Survive',
+							album_title: 'Low Tide',
+							album_artist_name: 'The Alphas',
 							finding_code: 'safe_detach',
 							reason_code: 'ZERO_SUPPORT',
 							reason: {
@@ -171,7 +171,7 @@ describe('LibraryRepairPanel', () => {
 		h.repairs = { data: { pages: [{ items: [repair()] }] }, isLoading: false };
 		await render(LibraryRepairPanel);
 		await page.getByRole('button', { name: 'View report' }).last().click();
-		await expect.element(page.getByText('Juturna · Circa Survive')).toBeVisible();
+		await expect.element(page.getByText('Low Tide · The Alphas')).toBeVisible();
 		await expect
 			.element(page.getByText('Not one file fits the release this album is linked to.'))
 			.toBeVisible();

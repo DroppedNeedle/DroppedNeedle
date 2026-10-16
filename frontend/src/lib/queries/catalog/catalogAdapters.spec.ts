@@ -6,7 +6,7 @@ type V3ArtistInfo = components['schemas']['ArtistInfo'];
 
 const header: V3ArtistInfo = {
 	musicbrainz_id: 'artist-1',
-	name: 'Grimes',
+	name: 'Lumen',
 	images: { banner_url: 'https://img/banner.jpg' },
 	tags: [],
 	aliases: [],

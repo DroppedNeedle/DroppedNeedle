@@ -11,10 +11,10 @@ import type {
 
 const memberOne = {
 	id: 'artist-1',
-	name: 'NIKI',
-	sort_name: 'NIKI',
+	name: 'KIRA',
+	sort_name: 'KIRA',
 	row_revision: 3,
-	provider_mbid: 'mbid-niki',
+	provider_mbid: 'mbid-kira',
 	album_credit_count: 2,
 	track_credit_count: 10,
 	primary_album_count: 2,
@@ -39,11 +39,11 @@ const memberTwo = {
 
 const group: ArtistDuplicateGroupSummary = {
 	id: 'group-1',
-	display_name: 'NIKI',
+	display_name: 'KIRA',
 	state: 'waiting_for_identity',
 	member_count: 2,
 	members: [memberOne, memberTwo],
-	provider_mbids: ['mbid-niki'],
+	provider_mbids: ['mbid-kira'],
 	recommended_survivor_id: 'artist-1',
 	affected_reference_count: 31,
 	reason_code: 'INCOMPLETE_PROVIDER_PROOF',
@@ -61,12 +61,12 @@ const detail: ArtistDuplicateGroupDetail = {
 		{
 			subject_kind: 'album',
 			subject_id: 'album-1',
-			subject_name: 'Moonchild',
+			subject_name: 'Night Garden',
 			source_local_artist_id: 'artist-1',
 			local_artist_id: 'artist-1',
-			artist_mbid: 'mbid-niki',
-			canonical_name: 'NIKI',
-			credited_name: 'NIKI',
+			artist_mbid: 'mbid-kira',
+			canonical_name: 'KIRA',
+			credited_name: 'KIRA',
 			join_phrase: '',
 			release_mbid: 'release-1',
 			release_track_mbid: null,
@@ -78,7 +78,7 @@ const detail: ArtistDuplicateGroupDetail = {
 	releases: [
 		{
 			id: 'album-1',
-			name: 'Moonchild',
+			name: 'Night Garden',
 			row_revision: 7,
 			identity_ready: true,
 			exact_track_mapping_ready: false
@@ -208,7 +208,7 @@ beforeEach(async () => {
 describe('ArtistIdentityDesk', () => {
 	it('previews and confirms the whole group while restoring focus', async () => {
 		await render(ArtistIdentityDesk);
-		await page.getByRole('button', { name: /NIKI/ }).click();
+		await page.getByRole('button', { name: /KIRA/ }).click();
 		const opener = page.getByRole('button', { name: 'Preview group merge' });
 		await opener.click();
 		await expect
@@ -238,7 +238,7 @@ describe('ArtistIdentityDesk', () => {
 	it('resets a prior detach choice before every new merge preview', async () => {
 		h.preview.mockResolvedValue({ ...previewResult, identity_conflicts: ['mbid-conflict'] });
 		await render(ArtistIdentityDesk);
-		await page.getByRole('button', { name: /NIKI/ }).first().click();
+		await page.getByRole('button', { name: /KIRA/ }).first().click();
 		const opener = page.getByRole('button', { name: 'Preview group merge' });
 		await opener.click();
 		await page.getByRole('radio', { name: 'Detach conflicting provider identities' }).click();
@@ -258,7 +258,7 @@ describe('ArtistIdentityDesk', () => {
 	it('keeps a stale preview safe and requires a new one', async () => {
 		h.apply.mockRejectedValue(new Error('stale'));
 		await render(ArtistIdentityDesk);
-		await page.getByRole('button', { name: /NIKI/ }).click();
+		await page.getByRole('button', { name: /KIRA/ }).click();
 		await page.getByRole('button', { name: 'Preview group merge' }).click();
 		await page.getByRole('checkbox', { name: /preserve retired IDs/ }).click();
 		await page.getByRole('button', { name: 'Merge artists' }).click();
@@ -268,7 +268,7 @@ describe('ArtistIdentityDesk', () => {
 
 	it('dismisses the exact member revisions after confirmation', async () => {
 		await render(ArtistIdentityDesk);
-		await page.getByRole('button', { name: /NIKI/ }).click();
+		await page.getByRole('button', { name: /KIRA/ }).click();
 		await page.getByRole('button', { name: 'Mark records as distinct' }).click();
 		await expect
 			.element(page.getByRole('heading', { name: 'Keep these artists distinct?' }))

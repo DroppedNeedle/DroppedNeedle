@@ -39,8 +39,8 @@ const h = vi.hoisted(() => ({
 						{
 							id: 'finding-1',
 							local_album_id: 'album-1',
-							album_title: 'Juturna',
-							album_artist_name: 'Circa Survive',
+							album_title: 'Low Tide',
+							album_artist_name: 'The Alphas',
 							album_year: 2005,
 							cover_available: false,
 							evidence_id: 'evidence-1',
@@ -166,8 +166,8 @@ beforeEach(() => {
 	h.findings.data.pages[0].items[0] = {
 		id: 'finding-1',
 		local_album_id: 'album-1',
-		album_title: 'Juturna',
-		album_artist_name: 'Circa Survive',
+		album_title: 'Low Tide',
+		album_artist_name: 'The Alphas',
 		album_year: 2005,
 		cover_available: false,
 		evidence_id: 'evidence-1',
@@ -198,8 +198,8 @@ describe('LibraryManagementIdentityReadiness', () => {
 		};
 		await render(LibraryManagementIdentityReadiness, { roots });
 
-		await expect.element(page.getByText('Juturna')).toBeVisible();
-		await expect.element(page.getByText('Circa Survive')).toBeVisible();
+		await expect.element(page.getByText('Low Tide')).toBeVisible();
+		await expect.element(page.getByText('The Alphas')).toBeVisible();
 		await expect.element(page.getByText('2005')).toBeVisible();
 		await expect.element(page.getByText(/not all of them are placed yet/)).toBeVisible();
 		await expect.element(page.getByText('Apply the report to place them.')).toBeVisible();
@@ -278,8 +278,8 @@ describe('LibraryManagementIdentityReadiness', () => {
 		h.findings.data.pages[0].items[0] = {
 			id: 'finding-auto',
 			local_album_id: 'album-auto',
-			album_title: 'Juturna',
-			album_artist_name: 'Circa Survive',
+			album_title: 'Low Tide',
+			album_artist_name: 'The Alphas',
 			album_year: 2005,
 			cover_available: false,
 			evidence_id: 'evidence-auto',

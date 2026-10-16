@@ -422,9 +422,9 @@ describe('album detail page track rendering', () => {
 		mockHydrateDetailCacheEntry.mockImplementation(({ cache, onHydrate }: HydrateOptions) => {
 			if (cache === mockAlbumBasicCache) {
 				onHydrate({
-					title: 'Visions',
+					title: 'Daylight Hours',
 					musicbrainz_id: albumId,
-					artist_name: 'Grimes',
+					artist_name: 'Lumen',
 					artist_id: 'artist-1',
 					in_library: true,
 					requested: false,
@@ -527,8 +527,8 @@ describe('album detail page track rendering', () => {
 					duration_seconds: 95,
 					codec: 'flac',
 					bitrate: 800,
-					album_name: 'Visions',
-					artist_name: 'Grimes'
+					album_name: 'Daylight Hours',
+					artist_name: 'Lumen'
 				},
 				{
 					navidrome_id: 'n2',
@@ -538,8 +538,8 @@ describe('album detail page track rendering', () => {
 					duration_seconds: 223,
 					codec: 'flac',
 					bitrate: 800,
-					album_name: 'Visions',
-					artist_name: 'Grimes'
+					album_name: 'Daylight Hours',
+					artist_name: 'Lumen'
 				},
 				{
 					navidrome_id: 'n3',
@@ -549,8 +549,8 @@ describe('album detail page track rendering', () => {
 					duration_seconds: 213,
 					codec: 'flac',
 					bitrate: 800,
-					album_name: 'Visions',
-					artist_name: 'Grimes'
+					album_name: 'Daylight Hours',
+					artist_name: 'Lumen'
 				},
 				{
 					navidrome_id: 'n4',
@@ -560,8 +560,8 @@ describe('album detail page track rendering', () => {
 					duration_seconds: 204,
 					codec: 'flac',
 					bitrate: 800,
-					album_name: 'Visions',
-					artist_name: 'Grimes'
+					album_name: 'Daylight Hours',
+					artist_name: 'Lumen'
 				}
 			]
 		});
@@ -571,9 +571,9 @@ describe('album detail page track rendering', () => {
 			if (url.endsWith(`/api/v3/albums/${albumId}/basic`)) {
 				return Promise.resolve(
 					jsonResponse({
-						title: 'Visions',
+						title: 'Daylight Hours',
 						musicbrainz_id: albumId,
-						artist_name: 'Grimes',
+						artist_name: 'Lumen',
 						artist_id: 'artist-1',
 						in_library: true,
 						requested: false,
@@ -607,7 +607,7 @@ describe('album detail page track rendering', () => {
 			}
 
 			if (url.includes(`/api/v3/albums/${albumId}/more-by-artist`)) {
-				return Promise.resolve(jsonResponse({ artist_name: 'Grimes', albums: [] }));
+				return Promise.resolve(jsonResponse({ artist_name: 'Lumen', albums: [] }));
 			}
 
 			if (url.includes(`/api/v3/albums/${albumId}/similar`)) {
@@ -632,12 +632,12 @@ describe('album detail page track rendering', () => {
 		authStore.setUser(
 			toAuthUser({
 				id: 'user-1',
-				display_name: 'AdminTest',
+				display_name: 'admin',
 				role: 'admin',
 				email: null,
 				avatar_url: null,
-				username: 'AdminTest',
-				username_display: 'AdminTest'
+				username: 'admin',
+				username_display: 'admin'
 			})
 		);
 	});
@@ -737,8 +737,8 @@ describe('album detail page track rendering', () => {
 			mockLocalDetailData.value = {
 				[localAlbumId]: {
 					id: localAlbumId,
-					title: 'Visions',
-					artist_name: 'Grimes',
+					title: 'Daylight Hours',
+					artist_name: 'Lumen',
 					musicbrainz_release_group_id: albumId
 				}
 			};
@@ -764,7 +764,9 @@ describe('album detail page track rendering', () => {
 			await render(AlbumPage, {
 				props: { data: { albumId } }
 			} as Parameters<typeof render<typeof AlbumPage>>[1]);
-			await expect.element(page.getByRole('heading', { name: 'Visions', level: 1 })).toBeVisible();
+			await expect
+				.element(page.getByRole('heading', { name: 'Daylight Hours', level: 1 }))
+				.toBeVisible();
 		}
 
 		beforeEach(() => {
@@ -827,7 +829,7 @@ describe('album detail page track rendering', () => {
 					disc_number: disc,
 					track_number: position,
 					format: 'flac',
-					artist_name: 'Grimes',
+					artist_name: 'Lumen',
 					musicbrainz_recording_id: null,
 					below_cutoff: false
 				}))
@@ -835,8 +837,8 @@ describe('album detail page track rendering', () => {
 			mockLocalDetailData.value = {
 				[localAlbumId]: {
 					id: localAlbumId,
-					title: 'Visions',
-					artist_name: 'Grimes',
+					title: 'Daylight Hours',
+					artist_name: 'Lumen',
 					musicbrainz_release_group_id: albumId
 				}
 			};
@@ -890,7 +892,9 @@ describe('album detail page track rendering', () => {
 			await render(AlbumPage, {
 				props: { data: { albumId } }
 			} as Parameters<typeof render<typeof AlbumPage>>[1]);
-			await expect.element(page.getByRole('heading', { name: 'Visions', level: 1 })).toBeVisible();
+			await expect
+				.element(page.getByRole('heading', { name: 'Daylight Hours', level: 1 }))
+				.toBeVisible();
 		}
 
 		const trackRow = (title: string) =>
@@ -974,7 +978,9 @@ describe('album detail page track rendering', () => {
 			await render(AlbumRoute, {
 				props: { data: { albumId } }
 			} as unknown as Parameters<typeof render<typeof AlbumRoute>>[1]);
-			await expect.element(page.getByRole('heading', { name: 'Visions', level: 1 })).toBeVisible();
+			await expect
+				.element(page.getByRole('heading', { name: 'Daylight Hours', level: 1 }))
+				.toBeVisible();
 
 			expect(mockDetailIdsRead.has(localAlbumId)).toBe(true);
 			expect(mockDetailIdsRead.has(albumId)).toBe(false);

@@ -13,7 +13,7 @@ const h = vi.hoisted(() => ({
 		unknown
 	>,
 	schedule: {
-		data: { scan_frequency: 'daily', daily_scan_time: '09:00', server_timezone: 'Europe/London' }
+		data: { scan_frequency: 'daily', daily_scan_time: '09:00', server_timezone: 'Etc/UTC' }
 	} as Record<string, unknown>,
 	detail: { data: undefined } as Record<string, unknown>,
 	settings: {
@@ -226,7 +226,7 @@ beforeEach(() => {
 	};
 	h.runs = { data: { active: null, queued: null }, isLoading: false, isError: false };
 	h.schedule = {
-		data: { scan_frequency: 'daily', daily_scan_time: '09:00', server_timezone: 'Europe/London' }
+		data: { scan_frequency: 'daily', daily_scan_time: '09:00', server_timezone: 'Etc/UTC' }
 	};
 	h.detail = { data: undefined };
 	h.reviews = { data: 12 };

@@ -32,8 +32,8 @@ function task(): DownloadTask {
 		release_mbid: null,
 		release_track_mbid: null,
 		recording_mbid: null,
-		artist_name: 'Poppy',
-		album_title: 'Flux - Sessions',
+		artist_name: 'Vela',
+		album_title: 'Drift - Sessions',
 		track_title: null,
 		year: 2021,
 		status: 'failed',
@@ -70,7 +70,7 @@ function task(): DownloadTask {
 		has_next_source: false,
 		held_for_review: true,
 		wrong_product_verdict_at: 4,
-		wrong_product_detail: '2021. Flux'
+		wrong_product_detail: '2021. Drift'
 	};
 }
 
@@ -84,8 +84,8 @@ function held(track: number): HeldImport {
 		track_number: track,
 		disc_number: 1,
 		track_title: `Track ${track}`,
-		artist_name: 'Poppy',
-		album_title: 'Flux - Sessions',
+		artist_name: 'Vela',
+		album_title: 'Drift - Sessions',
 		year: 2021,
 		original_filename: `${track}.flac`,
 		file_format: 'flac',
@@ -96,8 +96,8 @@ function held(track: number): HeldImport {
 		source: 'soulseek',
 		source_task_id: 'task-1',
 		created_at: track,
-		evidence_title: 'Flux',
-		evidence_artist: 'Poppy',
+		evidence_title: 'Drift',
+		evidence_artist: 'Vela',
 		evidence_score: null,
 		management_retry_count: 0,
 		management_next_retry_at: null,

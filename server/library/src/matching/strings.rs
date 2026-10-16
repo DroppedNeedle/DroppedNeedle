@@ -306,8 +306,8 @@ fn artist_tokens(credit: &str) -> std::collections::BTreeSet<String> {
         .collect()
 }
 
-/// True when one credit's artists contain the other's ("Bad Omens;
-/// Poppy" and "Bad Omens"), never for disjoint credits (a tribute band
+/// True when one credit's artists contain the other's ("Iron Coast;
+/// Vela" and "Iron Coast"), never for disjoint credits (a tribute band
 /// and the band it covers). v2's `_artist_subset_match`.
 pub fn artist_subset(left: &str, right: &str) -> bool {
     let left = artist_tokens(left);
@@ -352,7 +352,7 @@ mod tests {
             strip_edition_words("Songs (From the Basement)"),
             "songs from the basement"
         );
-        assert!(artist_subset("Bad Omens feat. Poppy", "Bad Omens"));
+        assert!(artist_subset("Iron Coast feat. Vela", "Iron Coast"));
         assert!(!artist_subset("The Tribute Band", "Michael Jackson"));
     }
 }

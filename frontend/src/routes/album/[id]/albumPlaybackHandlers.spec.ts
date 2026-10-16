@@ -26,9 +26,9 @@ vi.mock('$lib/stores/toast', () => ({ toastStore: { show: toast.show } }));
 import { buildLocalAlbumDownloadCallback, getTrackContextMenuItems } from './albumPlaybackHandlers';
 
 const album: AlbumBasicInfo = {
-	title: 'Avalon',
+	title: 'Glass Harbor',
 	musicbrainz_id: 'release-group-1',
-	artist_name: 'Anthony Green',
+	artist_name: 'Northern Static',
 	artist_id: 'artist-1',
 	in_library: true,
 	cover_url: null
