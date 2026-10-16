@@ -153,6 +153,7 @@ fn check_plain_retag(caller: &Principal, plain: bool) -> Result<(), LibraryError
 /// List library roots.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/roots",
     responses(
         (status = 200, description = "Root registry", body = RootsResponse),
@@ -187,6 +188,7 @@ pub async fn list_roots(
 /// Add a library root. Adding the first root enables the library.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/roots",
     request_body = AddRootBody,
     responses(
@@ -225,6 +227,7 @@ pub async fn add_root(
 /// Trigger a manual scan over one root or every scheduled root.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/scan",
     request_body = ScanBody,
     responses(
@@ -253,6 +256,7 @@ pub async fn trigger_scan(
 /// List current plus recent scan runs.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/scan/runs",
     responses(
         (status = 200, description = "Scan runs", body = ScanRunsResponse),
@@ -275,6 +279,7 @@ pub async fn list_runs(
 /// Get one scan run with its scopes and discovered files.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/scan/runs/{id}",
     params(("id" = String, Path, description = "Scan run id")),
     responses(
@@ -311,6 +316,7 @@ pub async fn get_run(
 /// Enqueue one album for identification.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/identify",
     request_body = IdentifyBody,
     responses(
@@ -352,6 +358,7 @@ pub async fn enqueue_identify(
 /// Build a sealed management preview (`retag` or `organize`).
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/manage/preview",
     request_body = ManagePreviewBody,
     responses(
@@ -431,6 +438,7 @@ pub async fn manage_preview(
 /// Apply a sealed preview exactly once.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/manage/apply",
     request_body = ManageApplyBody,
     responses(
@@ -479,6 +487,7 @@ pub async fn manage_apply(
 /// Undo one published bundle as a new operation.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/manage/undo",
     request_body = ManageUndoBody,
     responses(
@@ -520,6 +529,7 @@ pub async fn manage_undo(
 /// Restore tracks to their first-management baselines.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/manage/baseline/restore",
     request_body = BaselineRestoreBody,
     responses(

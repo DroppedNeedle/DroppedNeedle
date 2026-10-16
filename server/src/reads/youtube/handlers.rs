@@ -56,6 +56,7 @@ pub fn router(links: YouTubeLinks) -> Router {
 /// Find and save a full-album video. A saved one answers without a search.
 #[utoipa::path(
     post,
+    tag = "youtube",
     path = "/api/v3/youtube/generate",
     request_body = YouTubeLinkGenerateRequest,
     responses(
@@ -84,6 +85,7 @@ pub async fn generate_link(
 /// One album's saved link. 204 when there is none.
 #[utoipa::path(
     get,
+    tag = "youtube",
     path = "/api/v3/youtube/link/{album_id}",
     params(("album_id" = String, Path, description = "Album id")),
     responses(
@@ -110,6 +112,7 @@ pub async fn get_link(
 /// Every saved album link, newest first.
 #[utoipa::path(
     get,
+    tag = "youtube",
     path = "/api/v3/youtube/links",
     responses(
         (status = 200, description = "Saved links", body = Vec<YouTubeLink>),
@@ -130,6 +133,7 @@ pub async fn list_links(
 /// Remove an album link and its track links.
 #[utoipa::path(
     delete,
+    tag = "youtube",
     path = "/api/v3/youtube/link/{album_id}",
     params(("album_id" = String, Path, description = "Album id")),
     responses(
@@ -152,6 +156,7 @@ pub async fn delete_link(
 /// Edit a saved link: video, names or cover.
 #[utoipa::path(
     put,
+    tag = "youtube",
     path = "/api/v3/youtube/link/{album_id}",
     params(("album_id" = String, Path, description = "Album id")),
     request_body = YouTubeLinkUpdateRequest,
@@ -178,6 +183,7 @@ pub async fn update_link(
 /// Save a video a person pasted, for a known album or a made-up one.
 #[utoipa::path(
     post,
+    tag = "youtube",
     path = "/api/v3/youtube/manual",
     request_body = YouTubeManualLinkRequest,
     responses(
@@ -201,6 +207,7 @@ pub async fn save_manual_link(
 /// Find and save one track's video. A saved one answers without a search.
 #[utoipa::path(
     post,
+    tag = "youtube",
     path = "/api/v3/youtube/generate-track",
     request_body = YouTubeTrackLinkGenerateRequest,
     responses(
@@ -230,6 +237,7 @@ pub async fn generate_track_link(
 /// or that could not be searched, come back under `failed`.
 #[utoipa::path(
     post,
+    tag = "youtube",
     path = "/api/v3/youtube/generate-tracks",
     request_body = YouTubeTrackLinkBatchGenerateRequest,
     responses(
@@ -258,6 +266,7 @@ pub async fn generate_track_links(
 /// One album's track links, in disc then track order.
 #[utoipa::path(
     get,
+    tag = "youtube",
     path = "/api/v3/youtube/track-links/{album_id}",
     params(("album_id" = String, Path, description = "Album id")),
     responses(
@@ -280,6 +289,7 @@ pub async fn list_track_links(
 /// Remove one track link.
 #[utoipa::path(
     delete,
+    tag = "youtube",
     path = "/api/v3/youtube/track-link/{album_id}/{disc_number}/{track_number}",
     params(
         ("album_id" = String, Path, description = "Album id"),
@@ -315,6 +325,7 @@ pub async fn delete_track_link(
 /// Today's YouTube search budget. A zero budget while search is off.
 #[utoipa::path(
     get,
+    tag = "youtube",
     path = "/api/v3/youtube/quota",
     responses(
         (status = 200, description = "Today's budget", body = YouTubeQuotaStatus),

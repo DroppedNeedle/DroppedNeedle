@@ -89,6 +89,7 @@ fn count(
 /// The artist header.
 #[utoipa::path(
     get,
+    tag = "catalog",
     path = "/api/v3/artists/{artist_mbid}",
     params(("artist_mbid" = String, Path, description = "Artist MBID")),
     responses(
@@ -110,6 +111,7 @@ pub async fn artist(
 /// Biography, portrait and artist images.
 #[utoipa::path(
     get,
+    tag = "catalog",
     path = "/api/v3/artists/{artist_mbid}/extended",
     params(("artist_mbid" = String, Path, description = "Artist MBID")),
     responses(
@@ -128,6 +130,7 @@ pub async fn artist_extended(
 /// One page of the discography.
 #[utoipa::path(
     get,
+    tag = "catalog",
     path = "/api/v3/artists/{artist_mbid}/releases",
     params(("artist_mbid" = String, Path, description = "Artist MBID"), ReleasesQuery),
     responses(
@@ -154,6 +157,7 @@ pub async fn artist_releases(
 /// Similar artists.
 #[utoipa::path(
     get,
+    tag = "catalog",
     path = "/api/v3/artists/{artist_mbid}/similar",
     params(("artist_mbid" = String, Path, description = "Artist MBID"), DiscoveryQuery),
     responses(
@@ -180,6 +184,7 @@ pub async fn similar_artists(
 /// The artist's most played songs.
 #[utoipa::path(
     get,
+    tag = "catalog",
     path = "/api/v3/artists/{artist_mbid}/top-songs",
     params(("artist_mbid" = String, Path, description = "Artist MBID"), DiscoveryQuery),
     responses(
@@ -206,6 +211,7 @@ pub async fn top_songs(
 /// The artist's most played albums.
 #[utoipa::path(
     get,
+    tag = "catalog",
     path = "/api/v3/artists/{artist_mbid}/top-albums",
     params(("artist_mbid" = String, Path, description = "Artist MBID"), DiscoveryQuery),
     responses(
@@ -232,6 +238,7 @@ pub async fn top_albums(
 /// Last.fm biography, tags and similar artists.
 #[utoipa::path(
     get,
+    tag = "catalog",
     path = "/api/v3/artists/{artist_mbid}/lastfm",
     params(("artist_mbid" = String, Path, description = "Artist MBID"), ArtistLastFmQuery),
     responses(
@@ -257,6 +264,7 @@ pub async fn artist_lastfm(
 /// The artist's own store pages.
 #[utoipa::path(
     get,
+    tag = "catalog",
     path = "/api/v3/artists/{artist_mbid}/purchase-options",
     params(("artist_mbid" = String, Path, description = "Artist MBID"), ArtistPurchaseQuery),
     responses(
@@ -281,6 +289,7 @@ pub async fn artist_purchase_options(
 /// Header, tracklist and artwork in one call.
 #[utoipa::path(
     get,
+    tag = "catalog",
     path = "/api/v3/albums/{album_id}",
     params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
     responses(
@@ -298,6 +307,7 @@ pub async fn album(State(deps): State<CatalogDeps>, Path(id): Path<String>) -> A
 /// The album header.
 #[utoipa::path(
     get,
+    tag = "catalog",
     path = "/api/v3/albums/{album_id}/basic",
     params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
     responses(
@@ -318,6 +328,7 @@ pub async fn album_basic(
 /// The tracklist of the edition the page shows.
 #[utoipa::path(
     get,
+    tag = "catalog",
     path = "/api/v3/albums/{album_id}/tracks",
     params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
     responses(
@@ -338,6 +349,7 @@ pub async fn album_tracks(
 /// Every edition of the album.
 #[utoipa::path(
     get,
+    tag = "catalog",
     path = "/api/v3/albums/{album_id}/editions",
     params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
     responses(
@@ -359,6 +371,7 @@ pub async fn album_editions(
 /// by side before choosing one.
 #[utoipa::path(
     get,
+    tag = "catalog",
     path = "/api/v3/albums/{album_id}/editions/{release_mbid}/tracks",
     params(
         ("album_id" = String, Path, description = "Release-group MBID, or a library album id"),
@@ -382,6 +395,7 @@ pub async fn edition_tracks(
 /// Drop the album's cached upstream answers and rebuild the header.
 #[utoipa::path(
     post,
+    tag = "catalog",
     path = "/api/v3/albums/{album_id}/refresh",
     params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
     responses(
@@ -402,6 +416,7 @@ pub async fn album_refresh(
 /// Pin an edition by release group (v2's route). Curators only.
 #[utoipa::path(
     put,
+    tag = "catalog",
     path = "/api/v3/albums/{album_id}/edition",
     params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
     request_body = GroupEditionPinBody,
@@ -434,6 +449,7 @@ pub async fn set_album_edition(
 /// Clear the edition pin (v2's route). Curators only.
 #[utoipa::path(
     delete,
+    tag = "catalog",
     path = "/api/v3/albums/{album_id}/edition",
     params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
     responses(
@@ -459,6 +475,7 @@ pub async fn clear_album_edition(
 /// Albums by similar artists.
 #[utoipa::path(
     get,
+    tag = "catalog",
     path = "/api/v3/albums/{album_id}/similar",
     params(("album_id" = String, Path, description = "Release-group MBID"), AlbumArtistQuery),
     responses(
@@ -485,6 +502,7 @@ pub async fn similar_albums(
 /// The artist's other albums.
 #[utoipa::path(
     get,
+    tag = "catalog",
     path = "/api/v3/albums/{album_id}/more-by-artist",
     params(("album_id" = String, Path, description = "Release-group MBID"), AlbumArtistQuery),
     responses(
@@ -510,6 +528,7 @@ pub async fn more_by_artist(
 /// Last.fm summary and tags for the album.
 #[utoipa::path(
     get,
+    tag = "catalog",
     path = "/api/v3/albums/{album_id}/lastfm",
     params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one"), AlbumLastFmQuery),
     responses(
@@ -536,6 +555,7 @@ pub async fn album_lastfm(
 /// image. Empty when no plugin knows the album.
 #[utoipa::path(
     get,
+    tag = "catalog",
     path = "/api/v3/albums/{album_id}/plugin-details",
     params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
     responses(
@@ -555,6 +575,7 @@ pub async fn album_plugin_details(
 /// Where to buy the album.
 #[utoipa::path(
     get,
+    tag = "catalog",
     path = "/api/v3/albums/{album_id}/purchase-options",
     params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
     responses(

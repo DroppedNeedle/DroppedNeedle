@@ -160,6 +160,7 @@ async fn blocking<T: Send + 'static>(
 /// stops (or, with `stop_wanted=false`, looks for a replacement).
 #[utoipa::path(
     delete,
+    tag = "library management",
     path = "/api/v3/library/albums/{id}",
     params(
         ("id" = String, Path, description = "Local album id or release-group MBID"),
@@ -201,6 +202,7 @@ pub async fn remove_album(
 /// `delete_file=false`.
 #[utoipa::path(
     delete,
+    tag = "library management",
     path = "/api/v3/library/tracks/{id}",
     params(
         ("id" = String, Path, description = "Local track id"),
@@ -235,6 +237,7 @@ pub async fn remove_track(
 /// Rescan the folders holding one album's files.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/rescan",
     params(("album_id" = String, Path, description = "Local album id or release-group MBID")),
     responses(
@@ -266,6 +269,7 @@ pub async fn rescan_album(
 /// Let library management change an album again after it was excluded.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/management/re-enable",
     params(("album_id" = String, Path, description = "Local album id or release-group MBID")),
     request_body = ReenableBody,
@@ -300,6 +304,7 @@ pub async fn reenable_management(
 /// renamed from the album's edition, which overwrites those changes.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/management/hand-back",
     params(("album_id" = String, Path, description = "Local album id or release-group MBID")),
     responses(
@@ -326,6 +331,7 @@ pub async fn hand_back_management(
 /// its turn comes an album stays left unmanaged.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/management/hand-back",
     responses(
         (status = 200, description = "Albums waiting to be handed back", body = HandBackAllResponse),

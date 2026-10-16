@@ -115,6 +115,7 @@ pub fn album_history_view(
 /// is made of.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/history",
     params(("album_id" = String, Path, description = "Local album id")),
     responses(

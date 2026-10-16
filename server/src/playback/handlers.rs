@@ -103,6 +103,7 @@ fn map(error: services::ServiceError, deps: &PlaybackDeps) -> PlaybackError {
 /// Open a playback session for one catalog track.
 #[utoipa::path(
     post,
+    tag = "playback",
     path = "/api/v3/playback/start",
     request_body = PlaybackStartRequest,
     responses(
@@ -125,6 +126,7 @@ pub async fn start_playback(
 /// Record a heartbeat for a live session.
 #[utoipa::path(
     post,
+    tag = "playback",
     path = "/api/v3/playback/progress",
     request_body = PlaybackProgressRequest,
     responses(
@@ -147,6 +149,7 @@ pub async fn report_progress(
 /// Close a session, counting the play past threshold.
 #[utoipa::path(
     post,
+    tag = "playback",
     path = "/api/v3/playback/stop",
     request_body = PlaybackStopRequest,
     responses(
@@ -173,6 +176,7 @@ pub async fn stop_playback(
 /// Submit one native scrobble by name.
 #[utoipa::path(
     post,
+    tag = "playback",
     path = "/api/v3/scrobble/submit",
     request_body = ScrobbleSubmitRequest,
     responses(
@@ -194,6 +198,7 @@ pub async fn submit_scrobble(
 /// Forward one native now-playing report to the linked accounts.
 #[utoipa::path(
     post,
+    tag = "playback",
     path = "/api/v3/scrobble/now-playing",
     request_body = ScrobbleNowPlayingRequest,
     responses(
@@ -219,6 +224,7 @@ pub async fn forward_now_playing(
 /// The live now-playing snapshot across users.
 #[utoipa::path(
     get,
+    tag = "playback",
     path = "/api/v3/now-playing",
     responses(
         (status = 200, description = "Live snapshot", body = NowPlayingSnapshot),
@@ -235,6 +241,7 @@ pub async fn now_playing(
 /// Record a native heartbeat (upsert presence).
 #[utoipa::path(
     post,
+    tag = "playback",
     path = "/api/v3/now-playing",
     request_body = NowPlayingHeartbeat,
     responses(
@@ -255,6 +262,7 @@ pub async fn heartbeat(
 /// Clear one native device (stop presence).
 #[utoipa::path(
     delete,
+    tag = "playback",
     path = "/api/v3/now-playing",
     params(("device" = Option<String>, Query, description = "Device slug, `web` default")),
     responses(

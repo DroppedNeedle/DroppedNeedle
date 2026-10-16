@@ -37,6 +37,7 @@ fn resolve_kind(query: &KindQuery) -> Result<RequestKind, RequestsError> {
 /// Live asks. `GET /api/v3/requests/active`. Admins see every row.
 #[utoipa::path(
     get,
+    tag = "requests",
     path = "/api/v3/requests/active",
     responses((status = 200, body = ActiveRequestsResponse))
 )]
@@ -50,6 +51,7 @@ pub async fn active_handler(
 /// Live-ask count. `GET /api/v3/requests/active/count`.
 #[utoipa::path(
     get,
+    tag = "requests",
     path = "/api/v3/requests/active/count",
     responses((status = 200, body = ActiveCountResponse))
 )]
@@ -67,6 +69,7 @@ pub async fn active_count_handler(
 /// Paged history. `GET /api/v3/requests/history`. Admins see every row.
 #[utoipa::path(
     get,
+    tag = "requests",
     path = "/api/v3/requests/history",
     responses((status = 200, body = HistoryResponse))
 )]
@@ -85,6 +88,7 @@ pub async fn history_handler(
 /// Rows waiting for review. `GET /api/v3/requests/approvals`. Admin only.
 #[utoipa::path(
     get,
+    tag = "requests",
     path = "/api/v3/requests/approvals",
     responses((status = 200, body = ActiveRequestsResponse))
 )]
@@ -103,6 +107,7 @@ pub async fn approvals_handler(
 /// `GET /api/v3/requests/approvals/count`. Admin only.
 #[utoipa::path(
     get,
+    tag = "requests",
     path = "/api/v3/requests/approvals/count",
     responses((status = 200, body = ActiveCountResponse))
 )]
@@ -121,6 +126,7 @@ pub async fn approvals_count_handler(
 /// `POST /api/v3/requests/approvals/{musicbrainz_id}/approve`. Admin only.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/requests/approvals/{musicbrainz_id}/approve",
     params(("musicbrainz_id" = String, Path, description = "Album or recording MBID")),
     responses((status = 200, body = ActionResponse))
@@ -143,6 +149,7 @@ pub async fn approve_handler(
 /// `POST /api/v3/requests/approvals/{musicbrainz_id}/reject`. Admin only.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/requests/approvals/{musicbrainz_id}/reject",
     params(("musicbrainz_id" = String, Path, description = "Album or recording MBID")),
     responses((status = 200, body = ActionResponse))
@@ -165,6 +172,7 @@ pub async fn reject_handler(
 /// `GET /api/v3/requests/wanted`. Admins see every row.
 #[utoipa::path(
     get,
+    tag = "requests",
     path = "/api/v3/requests/wanted",
     responses((status = 200, body = WantedResponse))
 )]
@@ -178,6 +186,7 @@ pub async fn wanted_handler(
 /// Pause one wanted watch. `POST /api/v3/requests/wanted/{musicbrainz_id}/stop`.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/requests/wanted/{musicbrainz_id}/stop",
     params(("musicbrainz_id" = String, Path, description = "Release-group MBID")),
     responses((status = 200, body = WantedActionResponse))
@@ -198,6 +207,7 @@ pub async fn wanted_stop_handler(
 /// `POST /api/v3/requests/wanted/{musicbrainz_id}/resume`.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/requests/wanted/{musicbrainz_id}/resume",
     params(("musicbrainz_id" = String, Path, description = "Release-group MBID")),
     responses((status = 200, body = WantedActionResponse))
@@ -218,6 +228,7 @@ pub async fn wanted_resume_handler(
 /// `POST /api/v3/requests/wanted/{musicbrainz_id}/seen`.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/requests/wanted/{musicbrainz_id}/seen",
     params(("musicbrainz_id" = String, Path, description = "Release-group MBID")),
     responses((status = 200, body = WantedActionResponse))
@@ -238,6 +249,7 @@ pub async fn wanted_seen_handler(
 /// `GET /api/v3/requests/auto-download-approvals`. Admin only.
 #[utoipa::path(
     get,
+    tag = "requests",
     path = "/api/v3/requests/auto-download-approvals",
     responses((status = 200, body = AutoDownloadApprovalsResponse))
 )]
@@ -257,6 +269,7 @@ pub async fn auto_download_approvals_handler(
 /// Admin only.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/approve",
     params(
         ("user_id" = String, Path, description = "Requesting user id"),
@@ -281,6 +294,7 @@ pub async fn approve_auto_download_handler(
 /// Admin only.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/reject",
     params(
         ("user_id" = String, Path, description = "Requesting user id"),
@@ -305,6 +319,7 @@ pub async fn reject_auto_download_handler(
 /// Admin only.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/revoke",
     params(
         ("user_id" = String, Path, description = "Requesting user id"),
@@ -328,6 +343,7 @@ pub async fn revoke_auto_download_handler(
 /// `GET /api/v3/requests/auto-download-approval-batches`. Admin only.
 #[utoipa::path(
     get,
+    tag = "requests",
     path = "/api/v3/requests/auto-download-approval-batches",
     responses((status = 200, body = ApprovalBatchListResponse))
 )]
@@ -347,6 +363,7 @@ pub async fn auto_download_batches_handler(
 /// Admin only.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/requests/auto-download-approval-batches/{batch_id}/approve",
     params(("batch_id" = String, Path, description = "Batch id")),
     responses((status = 200, body = ActionResponse))
@@ -368,6 +385,7 @@ pub async fn approve_auto_download_batch_handler(
 /// Admin only.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/requests/auto-download-approval-batches/{batch_id}/reject",
     params(("batch_id" = String, Path, description = "Batch id")),
     responses((status = 200, body = ActionResponse))
@@ -388,6 +406,7 @@ pub async fn reject_auto_download_batch_handler(
 /// `GET /api/v3/requests/personal-mix-approvals`. Admin only.
 #[utoipa::path(
     get,
+    tag = "requests",
     path = "/api/v3/requests/personal-mix-approvals",
     responses((status = 200, body = PersonalMixApprovalsResponse))
 )]
@@ -407,6 +426,7 @@ pub async fn mix_approvals_handler(
 /// Admin only.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/requests/personal-mix-approvals/{user_id}/approve",
     params(("user_id" = String, Path, description = "Requesting user id")),
     responses((status = 200, body = ActionResponse))
@@ -428,6 +448,7 @@ pub async fn approve_mix_handler(
 /// Admin only.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/requests/personal-mix-approvals/{user_id}/reject",
     params(("user_id" = String, Path, description = "Requesting user id")),
     responses((status = 200, body = ActionResponse))
@@ -449,6 +470,7 @@ pub async fn reject_mix_handler(
 /// Admin only.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/requests/personal-mix-approvals/{user_id}/revoke",
     params(("user_id" = String, Path, description = "Requesting user id")),
     responses((status = 200, body = ActionResponse))
@@ -471,6 +493,7 @@ pub async fn revoke_mix_handler(
 /// without the mix builder 409.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/requests/personal-mix/refresh",
     responses(
         (status = 200, body = RefreshResponse),
@@ -493,6 +516,7 @@ pub async fn refresh_mix_handler(
 /// `POST /api/v3/requests/sync`. One bad row never stops the sweep.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/requests/sync",
     responses((status = 200, body = SyncResponse))
 )]

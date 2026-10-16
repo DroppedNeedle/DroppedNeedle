@@ -422,6 +422,7 @@ async fn apply_membership(
 /// Preview splitting selected tracks off an album.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/split-preview",
     params(("album_id" = String, Path, description = "Local album id")),
     request_body = MembershipPreviewBody,
@@ -447,6 +448,7 @@ pub async fn preview_album_split(
 /// Split selected tracks off an album into a new album (or into the target).
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/split",
     params(("album_id" = String, Path, description = "Local album id")),
     request_body = MembershipApplyBody,
@@ -477,6 +479,7 @@ pub async fn apply_album_split(
 /// Preview folding whole albums into the target album.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/albums/merge-preview",
     request_body = MembershipPreviewBody,
     responses(
@@ -500,6 +503,7 @@ pub async fn preview_album_merge(
 /// Fold whole albums into the target album.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/albums/merge",
     request_body = MembershipApplyBody,
     responses(
@@ -523,6 +527,7 @@ pub async fn apply_album_merge(
 /// Preview moving selected tracks onto the target album.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/tracks/move-preview",
     request_body = MembershipPreviewBody,
     responses(
@@ -546,6 +551,7 @@ pub async fn preview_track_move(
 /// Move selected tracks onto the target album.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/tracks/move",
     request_body = MembershipApplyBody,
     responses(
@@ -569,6 +575,7 @@ pub async fn apply_track_move(
 /// Preview handing an album's tracks back to automatic grouping.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/reset-grouping-preview",
     params(("album_id" = String, Path, description = "Local album id")),
     request_body = MembershipPreviewBody,
@@ -594,6 +601,7 @@ pub async fn preview_grouping_reset(
 /// Hand an album's tracks back to automatic grouping.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/reset-grouping",
     params(("album_id" = String, Path, description = "Local album id")),
     request_body = MembershipApplyBody,
@@ -638,6 +646,7 @@ fn artist_request(
 /// Preview folding duplicate artists into one survivor.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/artists/merge-preview",
     request_body = ArtistMergePreviewBody,
     responses(
@@ -669,6 +678,7 @@ pub async fn preview_artist_merge(
 /// Fold duplicate artists into one survivor.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/artists/merge",
     request_body = ArtistMergeApplyBody,
     responses(
@@ -835,6 +845,7 @@ fn pair_view(pair: RetagPair) -> RetagPairView {
 /// person to join or dismiss them.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/retag-pairs",
     responses(
         (status = 200, description = "Open pairs, newest first", body = RetagPairListResponse),
@@ -860,6 +871,7 @@ pub async fn list_retag_pairs(
 /// the album that stays. No file is written.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/retag-pairs/{old_album_id}/{new_album_id}/join",
     params(
         ("old_album_id" = String, Path, description = "The pair's old album"),
@@ -896,6 +908,7 @@ pub async fn join_retag_pair(
 /// Mark a retag pair as two different albums. A scan never joins it then.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/retag-pairs/{old_album_id}/{new_album_id}/dismiss",
     params(
         ("old_album_id" = String, Path, description = "The pair's old album"),

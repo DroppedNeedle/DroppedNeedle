@@ -25,6 +25,7 @@ pub struct HealthResponse {
 /// Liveness probe. Public, unauthenticated, cheap.
 #[utoipa::path(
     get,
+    tag = "health",
     path = "/health",
     responses((status = 200, description = "Server is running", body = HealthResponse))
 )]

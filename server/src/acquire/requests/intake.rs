@@ -38,6 +38,7 @@ fn resolve_kind(query: &KindQuery) -> Result<RequestKind, RequestsError> {
 /// row and report its status. Answers 202.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/requests/albums",
     request_body = AlbumIntake,
     responses((status = 202, body = IntakeResponse))
@@ -57,6 +58,7 @@ pub async fn request_album_handler(
 /// approval gate as albums. Answers 202.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/requests/tracks",
     request_body = TrackIntake,
     responses((status = 202, body = TrackIntakeResponse))
@@ -76,6 +78,7 @@ pub async fn request_track_handler(
 /// rows; dupes, live rows, and unresolvable rows skip. Answers 202.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/requests/batches",
     request_body = BatchIntake,
     responses((status = 202, body = BatchIntakeResponse))
@@ -96,6 +99,7 @@ pub async fn request_batch_handler(
 /// anything live.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/requests/batches/cancel",
     request_body = BatchCancelBody,
     responses((status = 200, body = BatchCancelResponse))
@@ -121,6 +125,7 @@ pub async fn cancel_batch_handler(
 /// Co-requesters detach with the shared row continuing; owners cancel.
 #[utoipa::path(
     delete,
+    tag = "requests",
     path = "/api/v3/requests/active/{musicbrainz_id}",
     params(("musicbrainz_id" = String, Path, description = "Album or recording MBID")),
     responses((status = 200, body = ActionResponse))
@@ -143,6 +148,7 @@ pub async fn cancel_one_handler(
 /// approval provenance.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/requests/retry/{musicbrainz_id}",
     params(("musicbrainz_id" = String, Path, description = "Album or recording MBID")),
     responses((status = 200, body = ActionResponse))
@@ -164,6 +170,7 @@ pub async fn retry_one_handler(
 /// Admins delete the row; users dismiss it from their own view.
 #[utoipa::path(
     delete,
+    tag = "requests",
     path = "/api/v3/requests/history/{musicbrainz_id}",
     params(("musicbrainz_id" = String, Path, description = "Album or recording MBID")),
     responses((status = 200, body = ClearHistoryResponse))
@@ -188,6 +195,7 @@ pub async fn clear_history_handler(
 /// retags existing files.
 #[utoipa::path(
     post,
+    tag = "requests",
     path = "/api/v3/albums/{album_id}/edition/acquire",
     params(("album_id" = String, Path, description = "Release-group MBID"), EditionAcquireQuery),
     responses(

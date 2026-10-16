@@ -465,6 +465,7 @@ async fn status_of(
 /// Where the album's edition stands, and why.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/edition",
     params(("album_id" = String, Path, description = "Local album id")),
     responses(
@@ -486,6 +487,7 @@ pub async fn get_edition(
 /// recording; nothing automatic changes the choice afterwards.
 #[utoipa::path(
     put,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/edition",
     params(("album_id" = String, Path, description = "Local album id")),
     request_body = ChooseEditionBody,
@@ -532,6 +534,7 @@ pub async fn choose_edition(
 /// fit for the files again.
 #[utoipa::path(
     delete,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/edition",
     params(("album_id" = String, Path, description = "Local album id")),
     responses(
@@ -555,6 +558,7 @@ pub async fn hand_back_edition(
 /// "Looks right": confirm the album's unconfirmed best guess.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/edition/confirm",
     params(("album_id" = String, Path, description = "Local album id")),
     responses(
@@ -579,6 +583,7 @@ pub async fn confirm_edition(
 /// Take back the album's last edition change.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/edition/undo",
     params(("album_id" = String, Path, description = "Local album id")),
     responses(
@@ -622,6 +627,7 @@ pub struct LeaveUnmanagedBody {
 /// Undo with `.../edition/undo`.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/edition/custom",
     params(("album_id" = String, Path, description = "Local album id")),
     request_body = CustomEditionBody,
@@ -657,6 +663,7 @@ pub async fn seal_custom_edition(
 /// alone until "Manage it again". Undo with `.../edition/undo`.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/edition/leave-unmanaged",
     params(("album_id" = String, Path, description = "Local album id")),
     request_body = LeaveUnmanagedBody,
@@ -687,6 +694,7 @@ pub async fn leave_unmanaged(
 /// release is for curators, who can choose it.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/edition/plan",
     params(("album_id" = String, Path, description = "Local album id"), EditionPlanQuery),
     responses(
@@ -751,6 +759,7 @@ pub struct RestoreExtrasView {
 /// `.../edition/extras/restore`.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/edition/extras/remove",
     params(("album_id" = String, Path, description = "Local album id")),
     request_body = RemoveExtrasBody,
@@ -804,6 +813,7 @@ pub async fn remove_extras(
 /// Put back the files one removal of extras moved to the recycle bin.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/edition/extras/restore",
     params(("album_id" = String, Path, description = "Local album id")),
     request_body = RestoreExtrasBody,
@@ -835,6 +845,7 @@ pub async fn restore_extras(
 /// `state=unmatched`, albums nothing fits). Newest first.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/unconfirmed",
     params(UnconfirmedQuery),
     responses(

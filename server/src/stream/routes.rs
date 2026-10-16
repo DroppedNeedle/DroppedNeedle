@@ -659,6 +659,7 @@ where
 /// Full or ranged audio bytes.
 #[utoipa::path(
     get,
+    tag = "stream",
     path = "/api/v3/stream/{source}/{*key}",
     params(
         ("source" = String, Path, description = "Audio source: local, jellyfin, navidrome, plex, or plugin"),
@@ -692,6 +693,7 @@ pub(crate) async fn stream_get<E: StreamEngine>(
 /// Same headers as GET, no body.
 #[utoipa::path(
     head,
+    tag = "stream",
     path = "/api/v3/stream/{source}/{*key}",
     params(
         ("source" = String, Path, description = "Audio source: local, jellyfin, navidrome, plex, or plugin"),

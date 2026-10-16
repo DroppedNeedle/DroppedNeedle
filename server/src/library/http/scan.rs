@@ -269,6 +269,7 @@ pub struct IdentificationControlResponse {
 /// Request a scan by kind over chosen roots and path rules.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/scan/runs",
     request_body = ScanRunRequestBody,
     responses(
@@ -310,6 +311,7 @@ pub async fn request_scan_run(
 /// The run holding the scan worker and the next queued one.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/scan/runs/current",
     responses(
         (status = 200, description = "Current runs", body = ScanRunCurrentResponse),
@@ -331,6 +333,7 @@ pub async fn current_scan_runs(
 /// Finished runs, newest first, a page at a time.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/scan/runs/history",
     params(
         ("limit" = Option<usize>, Query, description = "Runs per page, 1 to 50"),
@@ -360,6 +363,7 @@ pub async fn scan_run_history(
 /// Roughly how many files a scan over the chosen scopes would read.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/scan/runs/estimate",
     params(
         ("scope_ids" = Option<Vec<String>>, Query, explode, description = "Root and path-rule ids; none means every root"),
@@ -392,6 +396,7 @@ pub async fn estimate_scan_run(
 /// Paths one run could not read or index, oldest first.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/scan/runs/{id}/failures",
     params(
         ("id" = String, Path, description = "Scan run id"),
@@ -456,6 +461,7 @@ async fn control(
 /// Pause a running scan at its next checkpoint.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/scan/runs/{id}/pause",
     params(("id" = String, Path, description = "Scan run id")),
     request_body = ScanControlBody,
@@ -479,6 +485,7 @@ pub async fn pause_scan_run(
 /// Resume a paused scan where it stopped.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/scan/runs/{id}/resume",
     params(("id" = String, Path, description = "Scan run id")),
     request_body = ScanControlBody,
@@ -502,6 +509,7 @@ pub async fn resume_scan_run(
 /// Stop a scan. What it already indexed stays.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/scan/runs/{id}/stop",
     params(("id" = String, Path, description = "Scan run id")),
     request_body = ScanControlBody,
@@ -530,6 +538,7 @@ pub async fn stop_scan_run(
 /// stack.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/activity",
     responses(
         (status = 200, description = "Activity feed", body = LibraryActivity),
@@ -569,6 +578,7 @@ async fn identification_control(
 /// Pause identification. A job already running finishes first.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/identification/pause",
     request_body = IdentificationControlBody,
     responses(
@@ -589,6 +599,7 @@ pub async fn pause_identification(
 /// Resume identification.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/identification/resume",
     request_body = IdentificationControlBody,
     responses(

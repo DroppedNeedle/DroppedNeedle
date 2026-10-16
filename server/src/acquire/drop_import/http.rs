@@ -167,6 +167,7 @@ fn curator(principal: &Principal) -> Result<Viewer, HttpError> {
 /// `POST /api/v3/import/uploads`.
 #[utoipa::path(
     post,
+    tag = "imports",
     path = "/api/v3/import/uploads",
     request_body(content = DropUploadForm, content_type = "multipart/form-data"),
     responses((status = 202, body = DropImportJobResponse))
@@ -285,6 +286,7 @@ async fn receive(
 /// `GET /api/v3/import/jobs`.
 #[utoipa::path(
     get,
+    tag = "imports",
     path = "/api/v3/import/jobs",
     params(DropImportJobsQuery),
     responses((status = 200, body = DropImportJobsResponse))
@@ -304,6 +306,7 @@ pub async fn list_jobs_handler(
 /// One import job. `GET /api/v3/import/jobs/{job_id}`.
 #[utoipa::path(
     get,
+    tag = "imports",
     path = "/api/v3/import/jobs/{job_id}",
     params(("job_id" = String, Path, description = "Import job id")),
     responses((status = 200, body = DropImportJobResponse))
@@ -321,6 +324,7 @@ pub async fn get_job_handler(
 /// `POST /api/v3/import/items/{item_id}/match`.
 #[utoipa::path(
     post,
+    tag = "imports",
     path = "/api/v3/import/items/{item_id}/match",
     params(("item_id" = i64, Path, description = "Import item id")),
     request_body = DropImportMatchRequest,
@@ -344,6 +348,7 @@ pub async fn match_item_handler(
 /// `POST /api/v3/import/items/{item_id}/discard`.
 #[utoipa::path(
     post,
+    tag = "imports",
     path = "/api/v3/import/items/{item_id}/discard",
     params(("item_id" = i64, Path, description = "Import item id")),
     responses((status = 200, body = DropImportItemResponse))

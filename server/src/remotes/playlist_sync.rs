@@ -127,7 +127,7 @@ where
 #[utoipa::path(
     post,
     path = "/api/v3/settings/navidrome/playlist-sync",
-    tag = "crate::jobs::playlist_sync",
+    tag = "remotes",
     responses(
         (status = 200, description = "Sync report", body = PlaylistSyncResult),
         (status = 401, description = "Not authenticated"),

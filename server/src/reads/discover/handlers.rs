@@ -193,6 +193,7 @@ pub struct RemoveBatchQuery {
 /// Cached discover shelves for the caller.
 #[utoipa::path(
     get,
+    tag = "discover",
     path = "/api/v3/discover",
     responses(
         (status = 200, description = "Discover shelves", body = DiscoverResponse),
@@ -212,6 +213,7 @@ pub async fn get_discover(
 /// Trigger a background discover rebuild for the caller.
 #[utoipa::path(
     post,
+    tag = "discover",
     path = "/api/v3/discover/refresh",
     responses(
         (status = 202, description = "Refresh triggered", body = RefreshResponse),
@@ -231,6 +233,7 @@ pub async fn refresh_discover(
 /// Record one discover interaction for personalization.
 #[utoipa::path(
     post,
+    tag = "discover",
     path = "/api/v3/discover/activity",
     request_body = DiscoverActivityRequest,
     responses(
@@ -253,6 +256,7 @@ pub async fn record_activity(
 /// Generate one radio shelf from a seed.
 #[utoipa::path(
     post,
+    tag = "discover",
     path = "/api/v3/discover/radio",
     request_body = RadioRequest,
     responses(
@@ -277,6 +281,7 @@ pub async fn discover_radio(
 /// Build a complete track-level radio plan.
 #[utoipa::path(
     post,
+    tag = "discover",
     path = "/api/v3/discover/radio/plan",
     request_body = RadioPlanRequest,
     responses(
@@ -301,6 +306,7 @@ pub async fn radio_plan(
 /// Suggest rows extending one playlist.
 #[utoipa::path(
     post,
+    tag = "discover",
     path = "/api/v3/discover/playlist-suggestions",
     request_body = PlaylistSuggestionsRequest,
     responses(
@@ -329,6 +335,7 @@ pub async fn playlist_suggestions(
 /// The queue deck: the caller's last built deck, else one built now.
 #[utoipa::path(
     get,
+    tag = "discover",
     path = "/api/v3/discover/queue",
     params(("count" = Option<i64>, Query, description = "Wanted card count, max 20")),
     responses(
@@ -353,6 +360,7 @@ pub async fn get_queue(
 /// `ready` (with the deck's id, size, age and staleness) or `error`.
 #[utoipa::path(
     get,
+    tag = "discover",
     path = "/api/v3/discover/queue/status",
     responses(
         (status = 200, description = "Queue build status", body = DiscoverQueueStatusResponse),
@@ -371,6 +379,7 @@ pub async fn queue_status(
 /// and `force` was not set).
 #[utoipa::path(
     post,
+    tag = "discover",
     path = "/api/v3/discover/queue/generate",
     request_body = QueueGenerateRequest,
     responses(
@@ -391,6 +400,7 @@ pub async fn queue_generate(
 /// bio, listen count and a video link when one is known.
 #[utoipa::path(
     get,
+    tag = "discover",
     path = "/api/v3/discover/queue/enrich/{release_group_mbid}",
     params(("release_group_mbid" = String, Path, description = "Release-group id")),
     responses(
@@ -414,6 +424,7 @@ pub async fn enrich_queue_item(
 /// one exists, else a YouTube search when an API key is set.
 #[utoipa::path(
     post,
+    tag = "discover",
     path = "/api/v3/discover/queue/preview/{release_group_mbid}",
     params(("release_group_mbid" = String, Path, description = "Release-group id")),
     responses(
@@ -438,6 +449,7 @@ pub async fn preview_queue_item(
 /// building at once.
 #[utoipa::path(
     post,
+    tag = "discover",
     path = "/api/v3/discover/queue/ignore",
     request_body = QueueIgnoreRequest,
     responses(
@@ -461,6 +473,7 @@ pub async fn ignore_queue_item(
 /// The caller's ignore ledger, newest first.
 #[utoipa::path(
     get,
+    tag = "discover",
     path = "/api/v3/discover/queue/ignored",
     responses(
         (status = 200, description = "Ignore ledger", body = IgnoredReleasesResponse),
@@ -481,6 +494,7 @@ pub async fn ignored_releases(
 /// The given cards whose albums the library already holds.
 #[utoipa::path(
     post,
+    tag = "discover",
     path = "/api/v3/discover/queue/validate",
     request_body = QueueValidateRequest,
     responses(
@@ -504,6 +518,7 @@ pub async fn validate_queue(
 /// Album video lookup with the cached flag.
 #[utoipa::path(
     get,
+    tag = "discover",
     path = "/api/v3/discover/queue/youtube-search",
     params(
         ("artist" = String, Query, description = "Artist name"),
@@ -531,6 +546,7 @@ pub async fn youtube_search(
 /// Track video lookup with the cached flag.
 #[utoipa::path(
     get,
+    tag = "discover",
     path = "/api/v3/discover/queue/youtube-track-search",
     params(
         ("artist" = String, Query, description = "Artist name"),
@@ -558,6 +574,7 @@ pub async fn youtube_track_search(
 /// YouTube data-API quota state. 404 when YouTube is unconfigured.
 #[utoipa::path(
     get,
+    tag = "discover",
     path = "/api/v3/discover/queue/youtube-quota",
     responses(
         (status = 200, description = "Quota state", body = YouTubeQuotaResponse),
@@ -578,6 +595,7 @@ pub async fn youtube_quota(
 /// Bulk YouTube cache membership. Unconfigured YouTube answers empty.
 #[utoipa::path(
     post,
+    tag = "discover",
     path = "/api/v3/discover/queue/youtube-cache-check",
     request_body = TrackCacheCheckRequest,
     responses(
@@ -599,6 +617,7 @@ pub async fn youtube_cache_check(
 /// A 30-second track preview. Empty means no provider had one.
 #[utoipa::path(
     get,
+    tag = "discover",
     path = "/api/v3/discover/track-preview",
     params(
         ("artist" = String, Query, description = "Artist name"),
@@ -625,6 +644,7 @@ pub async fn track_preview(
 /// Ordered 30-second samples of an album's first tracks.
 #[utoipa::path(
     get,
+    tag = "discover",
     path = "/api/v3/discover/album-preview",
     params(
         ("artist" = String, Query, description = "Artist name"),
@@ -658,6 +678,7 @@ pub async fn album_preview(
 /// quota and approval rules.
 #[utoipa::path(
     post,
+    tag = "discover",
     path = "/api/v3/discover/batches",
     request_body = DiscoveryBatchCreate,
     responses(
@@ -683,6 +704,7 @@ pub async fn create_batch(
 /// The caller's batches, newest first.
 #[utoipa::path(
     get,
+    tag = "discover",
     path = "/api/v3/discover/batches",
     responses(
         (status = 200, description = "Batch list", body = DiscoveryBatchListResponse),
@@ -704,6 +726,7 @@ pub async fn list_batches(
 /// anyone else's reads as missing.
 #[utoipa::path(
     get,
+    tag = "discover",
     path = "/api/v3/discover/batches/{batch_id}",
     params(("batch_id" = String, Path, description = "Batch id")),
     responses(
@@ -728,6 +751,7 @@ pub async fn get_batch(
 /// bin; albums that were already owned or requested are never touched.
 #[utoipa::path(
     delete,
+    tag = "discover",
     path = "/api/v3/discover/batches/{batch_id}",
     params(
         ("batch_id" = String, Path, description = "Batch id"),
@@ -764,6 +788,7 @@ pub async fn remove_batch(
 /// Cached home shelves for the caller.
 #[utoipa::path(
     get,
+    tag = "discover",
     path = "/api/v3/home",
     responses(
         (status = 200, description = "Home shelves", body = HomeResponse),
@@ -783,6 +808,7 @@ pub async fn get_home(
 /// Integration availability behind the shelves.
 #[utoipa::path(
     get,
+    tag = "discover",
     path = "/api/v3/home/integration-status",
     responses(
         (status = 200, description = "Integration availability", body = IntegrationStatus),
@@ -803,6 +829,7 @@ pub async fn integration_status(
 /// Genre detail with owned and popular rows.
 #[utoipa::path(
     get,
+    tag = "discover",
     path = "/api/v3/home/genre/{genre_name}",
     params(
         ("genre_name" = String, Path, description = "Genre name"),
@@ -838,6 +865,7 @@ pub async fn genre_detail(
 /// route replaces the v2 base plus `/{range_key}` pair).
 #[utoipa::path(
     get,
+    tag = "discover",
     path = "/api/v3/home/trending/artists",
     params(
         ("range" = Option<String>, Query, description = "Range key, this_week default"),
@@ -872,6 +900,7 @@ pub async fn trending_artists(
 /// One popular-albums page (same range-param redesign).
 #[utoipa::path(
     get,
+    tag = "discover",
     path = "/api/v3/home/popular/albums",
     params(
         ("range" = Option<String>, Query, description = "Range key, this_week default"),
@@ -906,6 +935,7 @@ pub async fn popular_albums(
 /// One your-top-albums page for the caller (same redesign, per-user).
 #[utoipa::path(
     get,
+    tag = "discover",
     path = "/api/v3/home/your-top/albums",
     params(
         ("range" = Option<String>, Query, description = "Range key, this_week default"),
@@ -946,6 +976,7 @@ pub async fn your_top_albums(
 /// live in `playback`; this only reads.
 #[utoipa::path(
     get,
+    tag = "discover",
     path = "/api/v3/now-playing",
     responses(
         (status = 200, description = "Live snapshot", body = NowPlayingSnapshot),

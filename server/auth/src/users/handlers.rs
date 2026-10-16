@@ -129,6 +129,7 @@ impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidJson<T> {
 /// Profile of the caller.
 #[utoipa::path(
     get,
+    tag = "users",
     path = "/api/v3/me",
     responses((status = 200, description = "Own profile", body = ProfileResponse))
 )]
@@ -145,6 +146,7 @@ pub async fn get_profile(
 /// Change the caller's display name.
 #[utoipa::path(
     patch,
+    tag = "users",
     path = "/api/v3/me",
     request_body = DisplayNameUpdate,
     responses((status = 200, description = "Updated account", body = UserResponse))
@@ -163,6 +165,7 @@ pub async fn patch_profile(
 /// Rename the caller.
 #[utoipa::path(
     put,
+    tag = "users",
     path = "/api/v3/me/username",
     request_body = UsernameUpdate,
     responses((status = 200, description = "Updated account", body = UserResponse))
@@ -181,6 +184,7 @@ pub async fn put_username(
 /// Set or clear the caller's email.
 #[utoipa::path(
     put,
+    tag = "users",
     path = "/api/v3/me/email",
     request_body = EmailUpdate,
     responses((status = 200, description = "Updated account", body = UserResponse))
@@ -199,6 +203,7 @@ pub async fn put_email(
 /// Change the caller's password.
 #[utoipa::path(
     post,
+    tag = "users",
     path = "/api/v3/me/password",
     request_body = PasswordChange,
     responses((status = 200, description = "Updated account", body = UserResponse))
@@ -217,6 +222,7 @@ pub async fn post_password(
 /// Set the first local password on an account without one.
 #[utoipa::path(
     post,
+    tag = "users",
     path = "/api/v3/me/local-password",
     request_body = LocalPasswordSet,
     responses((status = 200, description = "Updated account", body = UserResponse))
@@ -244,6 +250,7 @@ struct AvatarUploadBody {
 /// Upload a new avatar from base64 bytes.
 #[utoipa::path(
     post,
+    tag = "users",
     path = "/api/v3/me/avatar",
     request_body = AvatarUploadBody,
     responses((status = 200, description = "Updated account", body = UserResponse))
@@ -269,6 +276,7 @@ pub async fn post_avatar(
 /// Serve one user's avatar. Self-or-admin; the `v` query is ignored.
 #[utoipa::path(
     get,
+    tag = "users",
     path = "/api/v3/users/{id}/avatar",
     params(("id" = String, Path, description = "User id")),
     responses((status = 200, description = "Avatar bytes"))
@@ -302,6 +310,7 @@ pub async fn get_avatar(
 /// List the caller's sessions for the session-list UI.
 #[utoipa::path(
     get,
+    tag = "users",
     path = "/api/v3/auth/sessions",
     responses((status = 200, description = "Own sessions", body = SessionListResponse))
 )]
@@ -318,6 +327,7 @@ pub async fn list_sessions(
 /// Mint a named companion Bearer token. Standard sessions only.
 #[utoipa::path(
     post,
+    tag = "users",
     path = "/api/v3/auth/device-sessions",
     request_body = DeviceSessionMint,
     responses((status = 201, description = "Minted token (raw value shown once)", body = DeviceSessionResponse))
@@ -336,6 +346,7 @@ pub async fn mint_device_session(
 /// Revoke one own session.
 #[utoipa::path(
     delete,
+    tag = "users",
     path = "/api/v3/auth/sessions/{id}",
     params(("id" = String, Path, description = "Session id")),
     responses((status = 204, description = "Revoked"))
@@ -354,6 +365,7 @@ pub async fn revoke_session(
 /// Revoke every own session.
 #[utoipa::path(
     post,
+    tag = "users",
     path = "/api/v3/auth/logout-all",
     responses((status = 204, description = "All own sessions revoked"))
 )]
@@ -371,6 +383,7 @@ pub async fn logout_all(
 /// no session.
 #[utoipa::path(
     post,
+    tag = "users",
     path = "/api/v3/auth/password-recovery/reset",
     request_body = PasswordReset,
     responses((status = 204, description = "Password reset"))
@@ -388,6 +401,7 @@ pub async fn reset_password(
 /// Caller's app passwords.
 #[utoipa::path(
     get,
+    tag = "users",
     path = "/api/v3/me/app-passwords",
     responses((status = 200, description = "Own app passwords", body = super::models::AppPasswordListResponse))
 )]
@@ -404,6 +418,7 @@ pub async fn list_app_passwords(
 /// Create an app password. The secret returns once.
 #[utoipa::path(
     post,
+    tag = "users",
     path = "/api/v3/me/app-passwords",
     request_body = AppPasswordCreate,
     responses((status = 201, description = "Created (secret shown once)", body = AppPasswordCreatedResponse))
@@ -422,6 +437,7 @@ pub async fn create_app_password(
 /// Revoke one own app password.
 #[utoipa::path(
     delete,
+    tag = "users",
     path = "/api/v3/me/app-passwords/{id}",
     params(("id" = String, Path, description = "App-password id")),
     responses((status = 204, description = "Revoked"))
@@ -440,6 +456,7 @@ pub async fn revoke_app_password(
 /// Per-user Last.fm link status.
 #[utoipa::path(
     get,
+    tag = "users",
     path = "/api/v3/me/connections/lastfm",
     responses((status = 200, description = "Link status", body = LastFmStatusResponse))
 )]
@@ -456,6 +473,7 @@ pub async fn lastfm_status(
 /// Store the caller's own Last.fm API credentials.
 #[utoipa::path(
     put,
+    tag = "users",
     path = "/api/v3/me/connections/lastfm",
     request_body = LastFmCredentialsSet,
     responses((status = 200, description = "Stored", body = LastFmConfiguredResponse))
@@ -479,6 +497,7 @@ pub async fn lastfm_set_credentials(
 /// Fetch a Last.fm sign-in token plus approval URL.
 #[utoipa::path(
     post,
+    tag = "users",
     path = "/api/v3/me/connections/lastfm/token",
     responses((status = 200, description = "Token and approval URL", body = LastFmTokenResponse))
 )]
@@ -495,6 +514,7 @@ pub async fn lastfm_token(
 /// Exchange an approved token for a linked session.
 #[utoipa::path(
     post,
+    tag = "users",
     path = "/api/v3/me/connections/lastfm/session",
     request_body = LastFmSessionExchange,
     responses((status = 200, description = "Linked session", body = LastFmSessionResponse))
@@ -513,6 +533,7 @@ pub async fn lastfm_session(
 /// Unlink Last.fm (drops credentials and session).
 #[utoipa::path(
     delete,
+    tag = "users",
     path = "/api/v3/me/connections/lastfm",
     responses((status = 204, description = "Unlinked"))
 )]
@@ -529,6 +550,7 @@ pub async fn lastfm_unlink(
 /// Admin user listing, paged.
 #[utoipa::path(
     get,
+    tag = "users",
     path = "/api/v3/admin/users",
     responses((status = 200, description = "User page", body = AdminUserListResponse))
 )]
@@ -553,6 +575,7 @@ pub async fn admin_list_users(
 /// Create a local account.
 #[utoipa::path(
     post,
+    tag = "users",
     path = "/api/v3/admin/users",
     request_body = AdminUserCreate,
     responses((status = 201, description = "Created account", body = UserResponse))
@@ -578,6 +601,7 @@ pub async fn admin_create_user(
 /// Fetch one user.
 #[utoipa::path(
     get,
+    tag = "users",
     path = "/api/v3/admin/users/{id}",
     params(("id" = String, Path, description = "User id")),
     responses((status = 200, description = "The account", body = UserResponse))
@@ -596,6 +620,7 @@ pub async fn admin_get_user(
 /// Change one user's role.
 #[utoipa::path(
     put,
+    tag = "users",
     path = "/api/v3/admin/users/{id}/role",
     request_body = RoleUpdate,
     params(("id" = String, Path, description = "User id")),
@@ -616,6 +641,7 @@ pub async fn admin_set_role(
 /// Delete one user.
 #[utoipa::path(
     delete,
+    tag = "users",
     path = "/api/v3/admin/users/{id}",
     params(("id" = String, Path, description = "User id")),
     responses((status = 204, description = "Deleted"))
@@ -634,6 +660,7 @@ pub async fn admin_delete_user(
 /// Revoke every session of one user.
 #[utoipa::path(
     delete,
+    tag = "users",
     path = "/api/v3/admin/users/{id}/sessions",
     params(("id" = String, Path, description = "User id")),
     responses((status = 204, description = "Sessions revoked"))
@@ -652,6 +679,7 @@ pub async fn admin_revoke_sessions(
 /// Mint a recovery code for one user. The code returns once.
 #[utoipa::path(
     post,
+    tag = "users",
     path = "/api/v3/admin/users/{id}/recovery-code",
     params(("id" = String, Path, description = "User id")),
     responses((status = 201, description = "Minted code (shown once)", body = RecoveryCodeResponse))
@@ -670,6 +698,7 @@ pub async fn admin_mint_recovery_code(
 /// Every live app password across users, with owners.
 #[utoipa::path(
     get,
+    tag = "users",
     path = "/api/v3/admin/app-passwords",
     responses((status = 200, description = "All live app passwords", body = super::models::AdminAppPasswordListResponse))
 )]
@@ -690,6 +719,7 @@ pub async fn admin_list_app_passwords(
 /// Revoke any user's app password.
 #[utoipa::path(
     delete,
+    tag = "users",
     path = "/api/v3/admin/app-passwords/{id}",
     params(("id" = String, Path, description = "App-password id")),
     responses((status = 204, description = "Revoked"))
@@ -709,6 +739,7 @@ pub async fn admin_revoke_app_password(
 /// has no API key, or cannot be reached.
 #[utoipa::path(
     get,
+    tag = "users",
     path = "/api/v3/admin/import/jellyfin",
     responses(
         (status = 200, description = "Importable accounts", body = ImportCandidateListResponse),
@@ -729,6 +760,7 @@ pub async fn admin_import_list_jellyfin(
 /// 503 when no Plex token is set up or plex.tv cannot be reached.
 #[utoipa::path(
     get,
+    tag = "users",
     path = "/api/v3/admin/import/plex",
     responses(
         (status = 200, description = "Importable accounts", body = ImportCandidateListResponse),
@@ -749,6 +781,7 @@ pub async fn admin_import_list_plex(
 /// server-side; unknown, already-bound, and failed uids land in `skipped`.
 #[utoipa::path(
     post,
+    tag = "users",
     path = "/api/v3/admin/import",
     request_body = ImportUsersRequest,
     responses((status = 200, description = "Finished batch", body = ImportUsersResponse))

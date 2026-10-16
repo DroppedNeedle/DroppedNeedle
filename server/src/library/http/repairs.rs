@@ -461,6 +461,7 @@ fn created(job: &OperationJob) -> Json<OperationView> {
 
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/identity-repairs",
     request_body = RepairCreateBody,
     responses(
@@ -494,6 +495,7 @@ pub async fn create_repair(
 
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/identity-repairs",
     params(HistoryQuery),
     responses(
@@ -513,6 +515,7 @@ pub async fn list_repairs(
 
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/identity-repairs/estimate",
     params(("root_id" = Option<Vec<String>>, Query, explode, description = "Library roots; none means every root")),
     responses(
@@ -539,6 +542,7 @@ pub async fn estimate_repair(
 
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/identity-repairs/{job_id}",
     params(("job_id" = String, Path, description = "Repair job id")),
     responses(
@@ -558,6 +562,7 @@ pub async fn get_repair(
 
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/identity-repairs/{job_id}/findings",
     params(("job_id" = String, Path, description = "Repair job id"), FindingsQuery),
     responses(
@@ -579,6 +584,7 @@ pub async fn repair_findings(
 
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/identity-repairs/{job_id}/apply",
     params(("job_id" = String, Path, description = "Repair job id")),
     request_body = RepairApplyBody,
@@ -602,6 +608,7 @@ pub async fn apply_repair(
 
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/identity-repairs/{job_id}/pause",
     params(("job_id" = String, Path, description = "Repair job id")),
     request_body = OperationControlBody,
@@ -624,6 +631,7 @@ pub async fn pause_repair(
 
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/identity-repairs/{job_id}/resume",
     params(("job_id" = String, Path, description = "Repair job id")),
     request_body = OperationControlBody,
@@ -646,6 +654,7 @@ pub async fn resume_repair(
 
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/identity-repairs/{job_id}/stop",
     params(("job_id" = String, Path, description = "Repair job id")),
     request_body = OperationControlBody,
@@ -672,6 +681,7 @@ pub async fn stop_repair(
 
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/management/identity-preparations",
     request_body = PreparationCreateBody,
     responses(
@@ -705,6 +715,7 @@ pub async fn create_preparation(
 
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/management/identity-preparations",
     params(HistoryQuery),
     responses(
@@ -724,6 +735,7 @@ pub async fn list_preparations(
 
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/management/identity-preparations/estimate",
     params(("root_id" = Option<Vec<String>>, Query, explode, description = "Library roots; none means every root")),
     responses(
@@ -753,6 +765,7 @@ pub async fn estimate_preparation(
 
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/management/identity-preparations/{job_id}",
     params(("job_id" = String, Path, description = "Preparation job id")),
     responses(
@@ -772,6 +785,7 @@ pub async fn get_preparation(
 
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/management/identity-preparations/{job_id}/findings",
     params(("job_id" = String, Path, description = "Preparation job id"), FindingsQuery),
     responses(
@@ -793,6 +807,7 @@ pub async fn preparation_findings(
 
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/management/identity-preparations/{job_id}/apply",
     params(("job_id" = String, Path, description = "Preparation job id")),
     request_body = RepairApplyBody,
@@ -816,6 +831,7 @@ pub async fn apply_preparation(
 
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/management/identity-preparations/{job_id}/discard",
     params(("job_id" = String, Path, description = "Preparation job id")),
     request_body = OperationControlBody,
@@ -844,6 +860,7 @@ pub async fn discard_preparation(
 
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/scan/runs/{id}/diagnostics",
     params(("id" = String, Path, description = "Scan run id")),
     responses(

@@ -106,6 +106,7 @@ fn failed(failure: LibraryFailure, deps: &LibraryDeps) -> LibraryError {
 /// One page of catalog albums.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/library/albums",
     params(AlbumQuery),
     responses(
@@ -128,6 +129,7 @@ pub async fn list_albums(
 /// One catalog album.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/library/albums/{id}",
     params(("id" = String, Path, description = "Local album id")),
     responses(
@@ -150,6 +152,7 @@ pub async fn get_album(
 /// One page of an album's streamable tracks.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/library/albums/{id}/tracks",
     params(("id" = String, Path, description = "Local album id"), PageQuery),
     responses(
@@ -174,6 +177,7 @@ pub async fn list_album_tracks(
 /// Other local albums sharing the album's release group.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/library/albums/{id}/copies",
     params(("id" = String, Path, description = "Local album id")),
     responses(
@@ -196,6 +200,7 @@ pub async fn list_album_copies(
 /// One page of catalog artists.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/library/artists",
     params(ArtistQuery),
     responses(
@@ -218,6 +223,7 @@ pub async fn list_artists(
 /// One catalog artist.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/library/artists/{id}",
     params(("id" = String, Path, description = "Local artist id")),
     responses(
@@ -240,6 +246,7 @@ pub async fn get_artist(
 /// One page of albums led by the artist.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/library/artists/{id}/albums",
     params(("id" = String, Path, description = "Local artist id"), PageQuery),
     responses(
@@ -264,6 +271,7 @@ pub async fn list_artist_albums(
 /// One page of albums where the artist appears without leading.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/library/artists/{id}/appearances",
     params(("id" = String, Path, description = "Local artist id"), PageQuery),
     responses(
@@ -288,6 +296,7 @@ pub async fn list_artist_appearances(
 /// One page of streamable tracks.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/library/tracks",
     params(TrackQuery),
     responses(
@@ -310,6 +319,7 @@ pub async fn list_tracks(
 /// One streamable track.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/library/tracks/{id}",
     params(("id" = String, Path, description = "Local track id")),
     responses(
@@ -332,6 +342,7 @@ pub async fn get_track(
 /// Stored lyrics for one track.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/library/tracks/{id}/lyrics",
     params(("id" = String, Path, description = "Local track id")),
     responses(
@@ -355,6 +366,7 @@ pub async fn get_lyrics(
 /// Library totals plus the caller's favorite counts.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/library/stats",
     responses(
         (status = 200, description = "Library totals", body = StatsView),
@@ -374,6 +386,7 @@ pub async fn get_stats(
 /// Newest albums first, capped.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/library/recently-added",
     params(RecentQuery),
     responses(
@@ -396,6 +409,7 @@ pub async fn list_recently_added(
 /// Full genre listing.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/library/genres",
     responses(
         (status = 200, description = "Genres", body = GenreList),
@@ -415,6 +429,7 @@ pub async fn list_genres(
 /// One page of a genre's streamable tracks.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/library/genres/{name}/tracks",
     params(("name" = String, Path, description = "Genre name"), PageQuery),
     responses(
@@ -438,6 +453,7 @@ pub async fn list_genre_tracks(
 /// Album-card browse for the local library.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/local-library/albums",
     params(BrowseQuery),
     responses(
@@ -460,6 +476,7 @@ pub async fn browse_albums(
 /// Album plus track search.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/local-library/search",
     params(SearchQuery),
     responses(
@@ -482,6 +499,7 @@ pub async fn search_library(
 /// Newest album cards first, capped.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/local-library/recent",
     params(RecentQuery),
     responses(
@@ -504,6 +522,7 @@ pub async fn recent_albums(
 /// Decade shelves, oldest first.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/local-library/decades",
     responses(
         (status = 200, description = "Decades", body = DecadesResponse),
@@ -524,6 +543,7 @@ pub async fn list_decades(
 /// local album id.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/local-library/albums/match/{mbid}",
     params(
         ("mbid" = String, Path, description = "Release-group mbid or local album id"),
@@ -551,6 +571,7 @@ pub async fn match_album(
 /// Reason-tagged track suggestions.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/local-library/suggestions",
     params(SuggestionsQuery),
     responses(
@@ -589,6 +610,7 @@ impl<T: DeserializeOwned, S: Send + Sync> axum::extract::FromRequest<S> for Vali
 /// The tags in one track's file on disk (admins only).
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/library/tracks/{id}/tags",
     params(("id" = String, Path, description = "Local track id")),
     responses(
@@ -614,6 +636,7 @@ pub async fn track_tags(
 /// with an open request.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/library/mbids",
     responses(
         (status = 200, description = "Held and requested album ids", body = LibraryMbids),
@@ -633,6 +656,7 @@ pub async fn album_mbids(
 /// Which MusicBrainz album ids the library holds or has requested.
 #[utoipa::path(
     post,
+    tag = "library",
     path = "/api/v3/library/membership",
     request_body = LibraryMembershipRequest,
     responses(
@@ -656,6 +680,7 @@ pub async fn membership(
 /// with each track's quality tier against the upgrade cutoff.
 #[utoipa::path(
     get,
+    tag = "library",
     path = "/api/v3/library/albums/{id}/status",
     params(("id" = String, Path, description = "Local album id, or a release-group or release mbid")),
     responses(
@@ -677,6 +702,7 @@ pub async fn album_status(
 /// Resolve track positions to playable local files.
 #[utoipa::path(
     post,
+    tag = "library",
     path = "/api/v3/library/resolve-tracks",
     request_body = ResolveTracksRequest,
     responses(

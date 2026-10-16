@@ -287,6 +287,7 @@ fn build_update_response(
 /// Running version.
 #[utoipa::path(
     get,
+    tag = "platform",
     path = "/api/v3/version",
     responses(
         (status = 200, description = "Running build identity", body = VersionInfo),
@@ -300,6 +301,7 @@ pub async fn get_version(State(state): State<VersionState>) -> Json<VersionInfo>
 /// Update check against the latest known release.
 #[utoipa::path(
     get,
+    tag = "platform",
     path = "/api/v3/version/check-update",
     responses(
         (status = 200, description = "Update check result", body = UpdateCheckResponse),
@@ -315,6 +317,7 @@ pub async fn check_update(State(state): State<VersionState>) -> Json<UpdateCheck
 /// Release history, newest first.
 #[utoipa::path(
     get,
+    tag = "platform",
     path = "/api/v3/version/releases",
     responses(
         (status = 200, description = "Release history", body = Vec<GitHubRelease>),

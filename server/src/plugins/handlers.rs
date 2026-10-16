@@ -317,6 +317,7 @@ fn plugin_info(
 /// List every discovered plugin, secrets masked.
 #[utoipa::path(
     get,
+    tag = "plugins",
     path = "/api/v3/plugins",
     responses(
         (status = 200, description = "Plugin listing", body = PluginListResponse),
@@ -377,6 +378,7 @@ async fn install_staged(deps: &PluginsDeps, staged: StagedPlugin) -> Result<Stri
 /// Downloads and validates; writes nothing.
 #[utoipa::path(
     post,
+    tag = "plugins",
     path = "/api/v3/plugins/install/preview",
     request_body = PluginInstallRequest,
     responses(
@@ -427,6 +429,7 @@ pub async fn preview_plugin_install(
 /// its code and keeps its settings.
 #[utoipa::path(
     post,
+    tag = "plugins",
     path = "/api/v3/plugins/install",
     request_body = PluginInstallRequest,
     responses(
@@ -471,6 +474,7 @@ pub async fn install_plugin(
 /// one moves only when a new ref is given. Settings and data stay.
 #[utoipa::path(
     post,
+    tag = "plugins",
     path = "/api/v3/plugins/{name}/update",
     request_body = PluginSourceUpdateRequest,
     params(("name" = String, Path, description = "Plugin name")),
@@ -548,6 +552,7 @@ pub async fn update_plugin_from_source(
 /// Save one plugin's enable switch plus its settings.
 #[utoipa::path(
     put,
+    tag = "plugins",
     path = "/api/v3/plugins/{name}",
     request_body = PluginUpdateRequest,
     params(("name" = String, Path, description = "Plugin name")),
@@ -592,6 +597,7 @@ pub async fn update_plugin(
 /// reinstall picks them back up.
 #[utoipa::path(
     delete,
+    tag = "plugins",
     path = "/api/v3/plugins/{name}",
     params(("name" = String, Path, description = "Plugin name")),
     responses(
@@ -629,6 +635,7 @@ pub async fn uninstall_plugin(
 /// read this; only admins manage plugins.
 #[utoipa::path(
     get,
+    tag = "plugins",
     path = "/api/v3/plugins/sources",
     responses(
         (status = 200, description = "Plugin sources", body = PluginSourcesResponse),
@@ -837,6 +844,7 @@ fn percent_decode(part: &str) -> Option<String> {
 /// Serve one declared plugin GET route.
 #[utoipa::path(
     get,
+    tag = "plugins",
     path = "/api/v3/plugins/ext/{name}/{subpath}",
     params(
         ("name" = String, Path, description = "Plugin name"),
@@ -862,6 +870,7 @@ pub async fn plugin_ext_get(
 /// Serve one declared plugin POST route.
 #[utoipa::path(
     post,
+    tag = "plugins",
     path = "/api/v3/plugins/ext/{name}/{subpath}",
     params(
         ("name" = String, Path, description = "Plugin name"),
@@ -888,6 +897,7 @@ pub async fn plugin_ext_post(
 /// Serve one declared plugin DELETE route.
 #[utoipa::path(
     delete,
+    tag = "plugins",
     path = "/api/v3/plugins/ext/{name}/{subpath}",
     params(
         ("name" = String, Path, description = "Plugin name"),
@@ -1007,6 +1017,7 @@ fn http_date(when: SystemTime) -> String {
 /// escaping it reads as missing.
 #[utoipa::path(
     get,
+    tag = "plugins",
     path = "/api/v3/plugins/{name}/ui/panel",
     params(("name" = String, Path, description = "Plugin name")),
     responses(
@@ -1179,6 +1190,7 @@ async fn prefs_response(deps: &ScrobbleHttpDeps, user_id: &str, role: Role) -> S
 /// Read the caller's scrobble preferences.
 #[utoipa::path(
     get,
+    tag = "plugins",
     path = "/api/v3/me/scrobble-preferences",
     responses(
         (status = 200, description = "Scrobble preferences", body = ScrobblePreferences),
@@ -1196,6 +1208,7 @@ pub async fn get_scrobble_preferences(
 /// stored values.
 #[utoipa::path(
     put,
+    tag = "plugins",
     path = "/api/v3/me/scrobble-preferences",
     request_body = ScrobblePreferencesUpdate,
     responses(
@@ -1229,6 +1242,7 @@ pub async fn update_scrobble_preferences(
 /// only a verified pair stores.
 #[utoipa::path(
     put,
+    tag = "plugins",
     path = "/api/v3/me/connections/listenbrainz",
     request_body = ListenBrainzConnectRequest,
     responses(
@@ -1270,6 +1284,7 @@ pub async fn connect_listenbrainz_route(
 /// Read the caller's ListenBrainz link status. Unlinked reads as missing.
 #[utoipa::path(
     get,
+    tag = "plugins",
     path = "/api/v3/me/connections/listenbrainz",
     responses(
         (status = 200, description = "Link status", body = ConnectionStatus),
@@ -1294,6 +1309,7 @@ pub async fn listenbrainz_status(
 /// Remove the caller's ListenBrainz link.
 #[utoipa::path(
     delete,
+    tag = "plugins",
     path = "/api/v3/me/connections/listenbrainz",
     responses(
         (status = 200, description = "Disconnect receipt", body = StatusMessage),

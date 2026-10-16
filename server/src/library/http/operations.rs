@@ -531,6 +531,7 @@ pub(super) fn detail_view(detail: &OperationDetail) -> OperationView {
 /// Get one operation job with its results and candidates.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/operations/{job_id}",
     params(("job_id" = String, Path, description = "Operation job id")),
     responses(
@@ -582,6 +583,7 @@ async fn control(
 /// Pause a job. A running job pauses at its next checkpoint.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/operations/{job_id}/pause",
     params(("job_id" = String, Path, description = "Operation job id")),
     request_body = OperationControlBody,
@@ -607,6 +609,7 @@ pub async fn pause_operation(
 /// was down.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/operations/{job_id}/resume",
     params(("job_id" = String, Path, description = "Operation job id")),
     request_body = OperationControlBody,
@@ -631,6 +634,7 @@ pub async fn resume_operation(
 /// Stop a job. A running job stops at its next checkpoint.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/operations/{job_id}/stop",
     params(("job_id" = String, Path, description = "Operation job id")),
     request_body = OperationControlBody,
@@ -656,6 +660,7 @@ pub async fn stop_operation(
 /// custom edition, or leave the album unmanaged.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/operations/{job_id}/candidate",
     params(("job_id" = String, Path, description = "Re-identification job id")),
     request_body = CandidateChoiceBody,
@@ -699,6 +704,7 @@ pub async fn select_reidentification_candidate(
 /// its own.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/reidentify",
     params(("album_id" = String, Path, description = "Local album id")),
     request_body = ReidentifyBody,
@@ -733,6 +739,7 @@ pub async fn reidentify_album(
 /// Search MusicBrainz releases for an album's edition finder.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/reidentification/releases",
     params(("album_id" = String, Path, description = "Local album id"), ReleaseSearchQuery),
     responses(
@@ -818,6 +825,7 @@ pub async fn search_reidentification_releases(
 /// back, or the album goes to review when there was none. Pins stay.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/albums/{album_id}/undo-automatic-edition",
     params(("album_id" = String, Path, description = "Local album id")),
     request_body = AutomaticEditionUndoBody,

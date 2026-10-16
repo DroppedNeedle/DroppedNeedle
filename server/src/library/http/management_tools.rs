@@ -223,6 +223,7 @@ pub struct ManagementTagEditPreviewBody {
 /// The tag editor for one file.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/management/tracks/{track_id}/tag-editor",
     params(("track_id" = String, Path, description = "Library track id")),
     responses(
@@ -246,6 +247,7 @@ pub async fn get_management_tag_editor(
 /// Preview a tag edit; apply it like any preview.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/management/tag-edit-previews",
     request_body = ManagementTagEditPreviewBody,
     responses(
@@ -358,6 +360,7 @@ impl From<PurgeOutcome> for ManagementPurgeView {
 /// Preview putting the selected albums back to their originals.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/management/baselines/restore-previews",
     request_body = ManagementRestorePreviewBody,
     responses(
@@ -388,6 +391,7 @@ pub async fn create_management_restore_preview(
 /// What a purge of the saved originals would remove.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/management/baselines/purge-impact",
     responses(
         (status = 200, description = "Purge impact", body = ManagementPurgeImpactView),
@@ -407,6 +411,7 @@ pub async fn get_management_purge_impact(
 /// Delete every saved original for good.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/management/baselines/purge",
     request_body = ManagementPurgeBody,
     responses(
@@ -470,6 +475,7 @@ pub struct ManagementDuplicateBody {
 /// Preview settling one file whose destination is taken.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/management/duplicate-resolution-previews",
     request_body = ManagementDuplicateBody,
     responses(
@@ -633,6 +639,7 @@ impl From<Resolved> for ManagementResolveView {
 /// What the publish journal holds, and the writes that need you.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/management/recovery/diagnostics",
     responses(
         (status = 200, description = "Journal diagnostics", body = ManagementRecoveryView),
@@ -653,6 +660,7 @@ pub async fn get_management_recovery_diagnostics(
 /// on disk changes.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/management/recovery/import-bundles/{bundle_id}/resolve",
     params(("bundle_id" = String, Path, description = "Publish bundle id")),
     responses(
@@ -732,6 +740,7 @@ pub struct ManagementPlacementView {
 /// Reading this checks nothing.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/settings/library-management/placement",
     responses(
         (status = 200, description = "Placement mode of each library folder", body = ManagementPlacementView),
@@ -760,6 +769,7 @@ pub async fn get_management_placement(
 /// and removes it again.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/settings/library-management/placement/{root_id}/check",
     params(("root_id" = String, Path, description = "Library root id")),
     responses(
@@ -810,6 +820,7 @@ pub struct ManagementSkippedPage {
 /// Albums automatic management skipped, newest first, each with why.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/management/automatic/skipped",
     responses(
         (status = 200, description = "Skipped albums", body = ManagementSkippedPage),
@@ -866,6 +877,7 @@ pub struct ManagementTakeoverPage {
 /// DroppedNeedle and that nobody has handed back yet, newest first.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/management/takeovers",
     responses(
         (status = 200, description = "Albums left unmanaged", body = ManagementTakeoverPage),
@@ -932,6 +944,7 @@ pub struct ManagementActivationConfirmBody {
 /// Dry-run a library folder under proposed settings. Nothing changes.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/settings/library-management/activation-previews",
     request_body = ManagementActivationPreviewBody,
     responses(
@@ -962,6 +975,7 @@ pub async fn create_management_activation_preview(
 /// One dry run.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/settings/library-management/activation-previews/{job_id}",
     params(("job_id" = String, Path, description = "Dry run job id")),
     responses(
@@ -985,6 +999,7 @@ pub async fn get_management_activation_preview(
 /// Save settings that turn automatic management on, with their dry runs.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/settings/library-management/activation-confirmations",
     request_body = ManagementActivationConfirmBody,
     responses(

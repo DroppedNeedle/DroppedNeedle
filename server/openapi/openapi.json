@@ -13,7 +13,7 @@
     "/api/v3/acquire/health": {
       "get": {
         "tags": [
-          "crate::acquire::imports::handlers"
+          "imports"
         ],
         "summary": "Acquisition health smoke: slskd or Usenet readiness plus the\nindependent per-source release gates.",
         "operationId": "get_health",
@@ -34,7 +34,7 @@
     "/api/v3/acquire/lidarr-import/artists": {
       "get": {
         "tags": [
-          "crate::acquire::imports::handlers"
+          "imports"
         ],
         "summary": "Monitored Lidarr artists annotated for the caller.",
         "operationId": "list_lidarr_artists",
@@ -55,7 +55,7 @@
     "/api/v3/acquire/lidarr-import/config": {
       "get": {
         "tags": [
-          "crate::acquire::imports::handlers"
+          "imports"
         ],
         "summary": "Masked Lidarr connection settings.",
         "operationId": "get_lidarr_config",
@@ -74,7 +74,7 @@
       },
       "put": {
         "tags": [
-          "crate::acquire::imports::handlers"
+          "imports"
         ],
         "summary": "Save the Lidarr connection. A masked key preserves the stored one.",
         "operationId": "put_lidarr_config",
@@ -105,7 +105,7 @@
     "/api/v3/acquire/lidarr-import/import": {
       "post": {
         "tags": [
-          "crate::acquire::imports::handlers"
+          "imports"
         ],
         "summary": "Import selected Lidarr artists into the caller's follows.",
         "operationId": "import_lidarr",
@@ -136,7 +136,7 @@
     "/api/v3/acquire/lidarr-import/test": {
       "post": {
         "tags": [
-          "crate::acquire::imports::handlers"
+          "imports"
         ],
         "summary": "Test submitted Lidarr credentials against `system/status` (v2 Test\nroute): the submitted url/key are probed so Test works before the first\nsave, a masked key resolves to the stored one, and reachable/bad-key\nverdicts travel in the body, never as a leaked 5xx, never echoing the\nURL or host.",
         "operationId": "test_lidarr",
@@ -167,7 +167,7 @@
     "/api/v3/acquire/sabnzbd/status": {
       "get": {
         "tags": [
-          "crate::acquire::imports::handlers"
+          "imports"
         ],
         "summary": "Live SABnzbd status against the saved config (v2: admin-only).",
         "operationId": "get_sabnzbd_status",
@@ -188,7 +188,7 @@
     "/api/v3/acquire/slskd/status": {
       "get": {
         "tags": [
-          "crate::acquire::imports::handlers"
+          "imports"
         ],
         "summary": "Live slskd client status (v2: any authenticated user may read it).",
         "operationId": "get_slskd_status",
@@ -209,7 +209,7 @@
     "/api/v3/acquire/spotify/auth/callback": {
       "get": {
         "tags": [
-          "crate::acquire::imports::handlers"
+          "imports"
         ],
         "summary": "Spotify OAuth callback (v2 `spotify_auth_callback`). State-identified,\nso it sits outside the session gate like v2's ungated route: every\noutcome redirects to the profile page with the v2 query contract\n(`spotify=connected`, or `spotify=error` with an optional `reason`).",
         "operationId": "spotify_callback",
@@ -252,7 +252,7 @@
     "/api/v3/acquire/spotify/auth/url": {
       "get": {
         "tags": [
-          "crate::acquire::imports::handlers"
+          "imports"
         ],
         "summary": "Authorize URL for the caller's Spotify link flow. Requires the admin\napp to be enabled and complete (v2 400 text kept).",
         "operationId": "get_spotify_auth_url",
@@ -276,7 +276,7 @@
     "/api/v3/acquire/spotify/jobs/{id}": {
       "get": {
         "tags": [
-          "crate::acquire::imports::handlers"
+          "imports"
         ],
         "summary": "Latest known state of one `spotify:import` job.",
         "operationId": "get_spotify_job",
@@ -308,7 +308,7 @@
     "/api/v3/acquire/spotify/playlists": {
       "get": {
         "tags": [
-          "crate::acquire::imports::handlers"
+          "imports"
         ],
         "summary": "The caller's owned Spotify playlists. Unlinked reads as the v2 400;\nupstream failures as the v2 502.",
         "operationId": "list_spotify_playlists",
@@ -329,7 +329,7 @@
     "/api/v3/acquire/spotify/playlists/{id}/import": {
       "post": {
         "tags": [
-          "crate::acquire::imports::handlers"
+          "imports"
         ],
         "summary": "Start a Spotify playlist import: ensure the internal record, queue the\n`spotify:import` durable job unless it already runs, and answer the id\nimmediately (v2 answer-fast shape).",
         "operationId": "import_spotify_playlist",
@@ -371,7 +371,7 @@
     "/api/v3/acquire/spotify/redirect-uri": {
       "get": {
         "tags": [
-          "crate::acquire::imports::handlers"
+          "imports"
         ],
         "summary": "The computed OAuth redirect URI (v2 admin display endpoint).",
         "operationId": "get_spotify_redirect_uri",
@@ -395,7 +395,7 @@
     "/api/v3/acquire/spotify/settings": {
       "get": {
         "tags": [
-          "crate::acquire::imports::handlers"
+          "imports"
         ],
         "summary": "Masked Spotify app settings.",
         "operationId": "get_spotify_settings",
@@ -414,7 +414,7 @@
       },
       "put": {
         "tags": [
-          "crate::acquire::imports::handlers"
+          "imports"
         ],
         "summary": "Save the Spotify app settings. A masked secret preserves the stored\none; a non-absolute redirect origin is a 400 (v2 text kept).",
         "operationId": "put_spotify_settings",
@@ -445,7 +445,7 @@
     "/api/v3/admin/app-passwords": {
       "get": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Every live app password across users, with owners.",
         "operationId": "admin_list_app_passwords",
@@ -466,7 +466,7 @@
     "/api/v3/admin/app-passwords/{id}": {
       "delete": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Revoke any user's app password.",
         "operationId": "admin_revoke_app_password",
@@ -491,7 +491,7 @@
     "/api/v3/admin/backups": {
       "get": {
         "tags": [
-          "crate::admin::handlers"
+          "admin"
         ],
         "summary": "Backup listing, oldest first.",
         "operationId": "list_backups",
@@ -510,7 +510,7 @@
       },
       "post": {
         "tags": [
-          "crate::admin::handlers"
+          "admin"
         ],
         "summary": "Run one backup now.",
         "operationId": "run_backup",
@@ -531,7 +531,7 @@
     "/api/v3/admin/backups/{name}/restore-report": {
       "get": {
         "tags": [
-          "crate::admin::handlers"
+          "admin"
         ],
         "summary": "Pre-restore verification report for one backup. Read-only.",
         "operationId": "restore_report",
@@ -563,7 +563,7 @@
     "/api/v3/admin/cache/clear": {
       "post": {
         "tags": [
-          "crate::admin::handlers"
+          "admin"
         ],
         "summary": "Clear the provider cache: everything, or one source's keys.",
         "operationId": "clear_cache",
@@ -594,7 +594,7 @@
     "/api/v3/admin/cache/stats": {
       "get": {
         "tags": [
-          "crate::admin::handlers"
+          "admin"
         ],
         "summary": "Provider-cache counters.",
         "operationId": "cache_stats",
@@ -615,7 +615,7 @@
     "/api/v3/admin/import": {
       "post": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Import a batch of accounts from one provider. The catalog is re-read\nserver-side; unknown, already-bound, and failed uids land in `skipped`.",
         "operationId": "admin_import_users",
@@ -646,7 +646,7 @@
     "/api/v3/admin/import/jellyfin": {
       "get": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "List Jellyfin accounts available for import. 503 when Jellyfin is off,\nhas no API key, or cannot be reached.",
         "operationId": "admin_import_list_jellyfin",
@@ -670,7 +670,7 @@
     "/api/v3/admin/import/plex": {
       "get": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "List Plex accounts (Plex Home users and friends) available for import.\n503 when no Plex token is set up or plex.tv cannot be reached.",
         "operationId": "admin_import_list_plex",
@@ -694,7 +694,7 @@
     "/api/v3/admin/precache/run": {
       "post": {
         "tags": [
-          "crate::admin::handlers"
+          "admin"
         ],
         "summary": "Start one supervised precache run. The run continues in the background\nunder the `precache-library` job name.",
         "operationId": "run_precache",
@@ -718,7 +718,7 @@
     "/api/v3/admin/provider-stats": {
       "get": {
         "tags": [
-          "crate::admin::handlers"
+          "admin"
         ],
         "summary": "Provider limiter posture plus slot lanes.",
         "operationId": "provider_stats",
@@ -739,7 +739,7 @@
     "/api/v3/admin/queue-stats": {
       "get": {
         "tags": [
-          "crate::admin::handlers"
+          "admin"
         ],
         "summary": "Queue demand plus the job registry.",
         "operationId": "queue_stats",
@@ -760,7 +760,7 @@
     "/api/v3/admin/users": {
       "get": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Admin user listing, paged.",
         "operationId": "admin_list_users",
@@ -779,7 +779,7 @@
       },
       "post": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Create a local account.",
         "operationId": "admin_create_user",
@@ -810,7 +810,7 @@
     "/api/v3/admin/users/{id}": {
       "get": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Fetch one user.",
         "operationId": "admin_get_user",
@@ -840,7 +840,7 @@
       },
       "delete": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Delete one user.",
         "operationId": "admin_delete_user",
@@ -865,7 +865,7 @@
     "/api/v3/admin/users/{id}/quota": {
       "get": {
         "tags": [
-          "crate::admin::handlers"
+          "admin"
         ],
         "summary": "One user's quota standing.",
         "operationId": "get_quota",
@@ -895,7 +895,7 @@
       },
       "put": {
         "tags": [
-          "crate::admin::handlers"
+          "admin"
         ],
         "summary": "Set (or, with all-`None`, clear) one user's quota overrides.",
         "operationId": "set_quota",
@@ -937,7 +937,7 @@
     "/api/v3/admin/users/{id}/recovery-code": {
       "post": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Mint a recovery code for one user. The code returns once.",
         "operationId": "admin_mint_recovery_code",
@@ -969,7 +969,7 @@
     "/api/v3/admin/users/{id}/role": {
       "put": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Change one user's role.",
         "operationId": "admin_set_role",
@@ -1011,7 +1011,7 @@
     "/api/v3/admin/users/{id}/sessions": {
       "delete": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Revoke every session of one user.",
         "operationId": "admin_revoke_sessions",
@@ -1036,7 +1036,7 @@
     "/api/v3/albums/{album_id}": {
       "get": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "Header, tracklist and artwork in one call.",
         "operationId": "album",
@@ -1080,7 +1080,7 @@
     "/api/v3/albums/{album_id}/basic": {
       "get": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "The album header.",
         "operationId": "album_basic",
@@ -1124,7 +1124,7 @@
     "/api/v3/albums/{album_id}/edition": {
       "put": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "Pin an edition by release group (v2's route). Curators only.",
         "operationId": "set_album_edition",
@@ -1179,7 +1179,7 @@
       },
       "delete": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "Clear the edition pin (v2's route). Curators only.",
         "operationId": "clear_album_edition",
@@ -1226,7 +1226,7 @@
     "/api/v3/albums/{album_id}/edition/acquire": {
       "post": {
         "tags": [
-          "crate::acquire::requests::intake"
+          "requests"
         ],
         "summary": "Fill the selected edition's missing tracks and upgrade its below-cutoff\nowned tracks, in one download; with `replace_versions`, also fetch this\nedition's version of each track the copy holds in another version.\n`POST /api/v3/albums/{album_id}/edition/acquire`. Curator only. Never\nretags existing files.",
         "operationId": "acquire_edition_handler",
@@ -1279,7 +1279,7 @@
     "/api/v3/albums/{album_id}/editions": {
       "get": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "Every edition of the album.",
         "operationId": "album_editions",
@@ -1323,7 +1323,7 @@
     "/api/v3/albums/{album_id}/editions/{release_mbid}/tracks": {
       "get": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "The tracklist of one edition, any release, for comparing editions side\nby side before choosing one.",
         "operationId": "edition_tracks",
@@ -1376,7 +1376,7 @@
     "/api/v3/albums/{album_id}/lastfm": {
       "get": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "Last.fm summary and tags for the album.",
         "operationId": "album_lastfm",
@@ -1432,7 +1432,7 @@
     "/api/v3/albums/{album_id}/more-by-artist": {
       "get": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "The artist's other albums.",
         "operationId": "more_by_artist",
@@ -1490,7 +1490,7 @@
     "/api/v3/albums/{album_id}/plugin-details": {
       "get": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "What metadata plugins add about the album: notes, tags, links and an\nimage. Empty when no plugin knows the album.",
         "operationId": "album_plugin_details",
@@ -1531,7 +1531,7 @@
     "/api/v3/albums/{album_id}/purchase-options": {
       "get": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "Where to buy the album.",
         "operationId": "album_purchase_options",
@@ -1572,7 +1572,7 @@
     "/api/v3/albums/{album_id}/refresh": {
       "post": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "Drop the album's cached upstream answers and rebuild the header.",
         "operationId": "album_refresh",
@@ -1616,7 +1616,7 @@
     "/api/v3/albums/{album_id}/similar": {
       "get": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "Albums by similar artists.",
         "operationId": "similar_albums",
@@ -1674,7 +1674,7 @@
     "/api/v3/albums/{album_id}/tracks": {
       "get": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "The tracklist of the edition the page shows.",
         "operationId": "album_tracks",
@@ -1718,7 +1718,7 @@
     "/api/v3/artists/{artist_mbid}": {
       "get": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "The artist header.",
         "operationId": "artist",
@@ -1816,7 +1816,7 @@
     "/api/v3/artists/{artist_mbid}/extended": {
       "get": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "Biography, portrait and artist images.",
         "operationId": "artist_extended",
@@ -1937,7 +1937,7 @@
     "/api/v3/artists/{artist_mbid}/lastfm": {
       "get": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "Last.fm biography, tags and similar artists.",
         "operationId": "artist_lastfm",
@@ -1984,7 +1984,7 @@
     "/api/v3/artists/{artist_mbid}/purchase-options": {
       "get": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "The artist's own store pages.",
         "operationId": "artist_purchase_options",
@@ -2031,7 +2031,7 @@
     "/api/v3/artists/{artist_mbid}/releases": {
       "get": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "One page of the discography.",
         "operationId": "artist_releases",
@@ -2094,7 +2094,7 @@
     "/api/v3/artists/{artist_mbid}/similar": {
       "get": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "Similar artists.",
         "operationId": "similar_artists",
@@ -2152,7 +2152,7 @@
     "/api/v3/artists/{artist_mbid}/top-albums": {
       "get": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "The artist's most played albums.",
         "operationId": "top_albums",
@@ -2210,7 +2210,7 @@
     "/api/v3/artists/{artist_mbid}/top-songs": {
       "get": {
         "tags": [
-          "crate::reads::catalog::handlers"
+          "catalog"
         ],
         "summary": "The artist's most played songs.",
         "operationId": "top_songs",
@@ -2268,7 +2268,7 @@
     "/api/v3/auth/device-sessions": {
       "post": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Mint a named companion Bearer token. Standard sessions only.",
         "operationId": "mint_device_session",
@@ -2299,7 +2299,7 @@
     "/api/v3/auth/jellyfin/login": {
       "post": {
         "tags": [
-          "droppedneedle_auth::routes::federated"
+          "auth"
         ],
         "summary": "Jellyfin login: checks credentials against the configured server, imports\nthe user, and mints a session. Transport rule matches local login.",
         "operationId": "jellyfin_login_handler",
@@ -2332,7 +2332,7 @@
     "/api/v3/auth/login": {
       "post": {
         "tags": [
-          "droppedneedle_auth::routes::native"
+          "auth"
         ],
         "summary": "Local login. Cookie mode (default) sets the session cookie and the body\ncarries no token; Bearer mode returns the raw token once and sets no\ncookie. Failures are one uniform 401 with a dummy-hash verify behind it.",
         "operationId": "login_handler",
@@ -2386,7 +2386,7 @@
     "/api/v3/auth/logout": {
       "post": {
         "tags": [
-          "droppedneedle_auth::routes::native"
+          "auth"
         ],
         "summary": "Logout. Public so a stale client can always clear its cookie: revokes the\npresented token when it resolves, always clears the cookie, always 204.",
         "operationId": "logout_handler",
@@ -2400,7 +2400,7 @@
     "/api/v3/auth/logout-all": {
       "post": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Revoke every own session.",
         "operationId": "logout_all",
@@ -2414,7 +2414,7 @@
     "/api/v3/auth/oidc/authorize": {
       "post": {
         "tags": [
-          "droppedneedle_auth::routes::federated"
+          "auth"
         ],
         "summary": "Start an OIDC login: returns the browser URL (PKCE, state and nonce\nbaked in) and sets a short-lived cookie tying the state to this browser.",
         "operationId": "oidc_authorize_handler",
@@ -2438,7 +2438,7 @@
     "/api/v3/auth/oidc/callback": {
       "get": {
         "tags": [
-          "droppedneedle_auth::routes::federated"
+          "auth"
         ],
         "summary": "OIDC callback: consumes the IdP code/state and redirects (relative\nLocation, same-site hand-off, v2 parity) to the SPA callback carrying the\none-time exchange code. Always `no-store`.",
         "operationId": "oidc_callback_handler",
@@ -2478,7 +2478,7 @@
     "/api/v3/auth/oidc/exchange": {
       "post": {
         "tags": [
-          "droppedneedle_auth::routes::federated"
+          "auth"
         ],
         "summary": "OIDC exchange: swaps the one-time callback code for a session. Cookie\nmode (default) sets the session cookie and the body carries no token;\nBearer mode returns the raw token once.",
         "operationId": "oidc_exchange_handler",
@@ -2505,7 +2505,7 @@
     "/api/v3/auth/password-recovery/reset": {
       "post": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Reset a password with a recovery code. Public: a locked-out user holds\nno session.",
         "operationId": "reset_password",
@@ -2529,7 +2529,7 @@
     "/api/v3/auth/plex/poll/connect": {
       "post": {
         "tags": [
-          "droppedneedle_auth::routes::federated"
+          "auth"
         ],
         "summary": "Plex settings completion: polls the PIN and returns the raw auth token\nuntouched. Requires a session (the token is an account credential).",
         "operationId": "plex_poll_connect_handler",
@@ -2569,7 +2569,7 @@
     "/api/v3/auth/plex/poll/link": {
       "post": {
         "tags": [
-          "droppedneedle_auth::routes::federated"
+          "auth"
         ],
         "summary": "Plex link completion: polls the PIN and, once authorized, stores the\nverified account as the caller's Plex media link (v2 parity). Requires\na session; the answer carries the Plex user name, never its tokens.",
         "operationId": "plex_poll_link_handler",
@@ -2609,7 +2609,7 @@
     "/api/v3/auth/plex/poll/login": {
       "post": {
         "tags": [
-          "droppedneedle_auth::routes::federated"
+          "auth"
         ],
         "summary": "Plex login completion: polls the PIN, and once authorized imports the\nuser and mints a session. Pending polls carry only the flag.",
         "operationId": "plex_poll_login_handler",
@@ -2646,7 +2646,7 @@
     "/api/v3/auth/plex/start": {
       "post": {
         "tags": [
-          "droppedneedle_auth::routes::federated"
+          "auth"
         ],
         "summary": "Start a Plex sign-in: mints a PIN, its browser URL, and the secret\nevery poll must present. 503 while Plex login is switched off.",
         "operationId": "plex_start_handler",
@@ -2670,7 +2670,7 @@
     "/api/v3/auth/plex/start/connect": {
       "post": {
         "tags": [
-          "droppedneedle_auth::routes::federated"
+          "auth"
         ],
         "summary": "Start the settings sign-in that hands an admin their Plex token for\nthe server settings. Admin only.",
         "operationId": "plex_start_connect_handler",
@@ -2700,7 +2700,7 @@
     "/api/v3/auth/plex/start/link": {
       "post": {
         "tags": [
-          "droppedneedle_auth::routes::federated"
+          "auth"
         ],
         "summary": "Start linking the caller's Plex account. 400 without a configured Plex\nserver.",
         "operationId": "plex_start_link_handler",
@@ -2730,7 +2730,7 @@
     "/api/v3/auth/providers": {
       "get": {
         "tags": [
-          "droppedneedle_auth::routes::federated"
+          "auth"
         ],
         "summary": "Which sign-in methods are switched on (v2 `GET /auth/providers`).",
         "operationId": "providers_handler",
@@ -2751,7 +2751,7 @@
     "/api/v3/auth/sessions": {
       "get": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "List the caller's sessions for the session-list UI.",
         "operationId": "list_sessions",
@@ -2772,7 +2772,7 @@
     "/api/v3/auth/sessions/{id}": {
       "delete": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Revoke one own session.",
         "operationId": "revoke_session",
@@ -2797,7 +2797,7 @@
     "/api/v3/auth/setup": {
       "post": {
         "tags": [
-          "droppedneedle_auth::routes::native"
+          "auth"
         ],
         "summary": "First-admin setup. Creates the admin and logs them in (201 + session,\nv2 parity) iff no users exist; otherwise 409. The emptiness check runs\ninside the insert transaction, so concurrent setups, or a setup racing\na first federated login (whose role is also decided in its insert),\nleave exactly one admin. The early probe only skips the password hash.",
         "operationId": "setup_handler",
@@ -2851,7 +2851,7 @@
     "/api/v3/auth/setup/status": {
       "get": {
         "tags": [
-          "droppedneedle_auth::routes::native"
+          "auth"
         ],
         "summary": "Setup-required probe for the SPA first-run gate.",
         "operationId": "setup_status_handler",
@@ -2872,7 +2872,7 @@
     "/api/v3/cache/sync/cancel": {
       "post": {
         "tags": [
-          "crate::admin::handlers"
+          "admin"
         ],
         "summary": "Stop the running library image precache. Images already fetched stay\ncached, so the next run continues from there. Succeeds when nothing is\nrunning too.",
         "operationId": "cancel_cache_sync",
@@ -2893,7 +2893,7 @@
     "/api/v3/cache/sync/status": {
       "get": {
         "tags": [
-          "crate::admin::handlers"
+          "admin"
         ],
         "summary": "Where the library image precache stands. The same shape streams live\nas the `cache.sync` event.",
         "operationId": "cache_sync_status",
@@ -2914,7 +2914,7 @@
     "/api/v3/covers/artist/{artist_id}": {
       "get": {
         "tags": [
-          "crate::reads::platform::covers"
+          "platform"
         ],
         "summary": "Artist image.",
         "operationId": "artist_cover",
@@ -2962,7 +2962,7 @@
     "/api/v3/covers/release-group/{release_group_id}": {
       "get": {
         "tags": [
-          "crate::reads::platform::covers"
+          "platform"
         ],
         "summary": "Release-group cover art.",
         "operationId": "cover_from_release_group",
@@ -3008,7 +3008,7 @@
     "/api/v3/covers/release/{release_id}": {
       "get": {
         "tags": [
-          "crate::reads::platform::covers"
+          "platform"
         ],
         "summary": "Release cover art.",
         "operationId": "cover_from_release",
@@ -3054,7 +3054,7 @@
     "/api/v3/discover": {
       "get": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "Cached discover shelves for the caller.",
         "operationId": "get_discover",
@@ -3078,7 +3078,7 @@
     "/api/v3/discover/activity": {
       "post": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "Record one discover interaction for personalization.",
         "operationId": "record_activity",
@@ -3115,7 +3115,7 @@
     "/api/v3/discover/album-preview": {
       "get": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "Ordered 30-second samples of an album's first tracks.",
         "operationId": "album_preview",
@@ -3182,7 +3182,7 @@
     "/api/v3/discover/batches": {
       "get": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "The caller's batches, newest first.",
         "operationId": "list_batches",
@@ -3214,7 +3214,7 @@
       },
       "post": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "Create a discovery batch: every album the library lacks and nobody\nhas requested yet is filed as an album request, under the caller's\nquota and approval rules.",
         "operationId": "create_batch",
@@ -3281,7 +3281,7 @@
     "/api/v3/discover/batches/{batch_id}": {
       "get": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "One batch with each album's current state. Admins may open any batch;\nanyone else's reads as missing.",
         "operationId": "get_batch",
@@ -3317,7 +3317,7 @@
       },
       "delete": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "Remove one batch. With `remove_albums` (the default) its pending\nrequests are cancelled and the albums it brought in go to the recycle\nbin; albums that were already owned or requested are never touched.",
         "operationId": "remove_batch",
@@ -3367,7 +3367,7 @@
     "/api/v3/discover/playlist-suggestions": {
       "post": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "Suggest rows extending one playlist.",
         "operationId": "playlist_suggestions",
@@ -3417,7 +3417,7 @@
     "/api/v3/discover/queue": {
       "get": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "The queue deck: the caller's last built deck, else one built now.",
         "operationId": "get_queue",
@@ -3466,7 +3466,7 @@
     "/api/v3/discover/queue/enrich/{release_group_mbid}": {
       "get": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "Details behind one queue card: tags, release date, country, artist\nbio, listen count and a video link when one is known.",
         "operationId": "enrich_queue_item",
@@ -3504,7 +3504,7 @@
     "/api/v3/discover/queue/generate": {
       "post": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "Start a background queue build. `action` says what happened:\n`started`, `already_building`, or `already_ready` (a fresh deck exists\nand `force` was not set).",
         "operationId": "queue_generate",
@@ -3541,7 +3541,7 @@
     "/api/v3/discover/queue/ignore": {
       "post": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "Ignore one release: later decks skip it, and a new deck starts\nbuilding at once.",
         "operationId": "ignore_queue_item",
@@ -3581,7 +3581,7 @@
     "/api/v3/discover/queue/ignored": {
       "get": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "The caller's ignore ledger, newest first.",
         "operationId": "ignored_releases",
@@ -3615,7 +3615,7 @@
     "/api/v3/discover/queue/preview/{release_group_mbid}": {
       "post": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "A video preview behind one queue card: a MusicBrainz video link when\none exists, else a YouTube search when an API key is set.",
         "operationId": "preview_queue_item",
@@ -3663,7 +3663,7 @@
     "/api/v3/discover/queue/status": {
       "get": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "Where the caller's background queue build stands: `idle`, `building`,\n`ready` (with the deck's id, size, age and staleness) or `error`.",
         "operationId": "queue_status",
@@ -3687,7 +3687,7 @@
     "/api/v3/discover/queue/validate": {
       "post": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "The given cards whose albums the library already holds.",
         "operationId": "validate_queue",
@@ -3734,7 +3734,7 @@
     "/api/v3/discover/queue/youtube-cache-check": {
       "post": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "Bulk YouTube cache membership. Unconfigured YouTube answers empty.",
         "operationId": "youtube_cache_check",
@@ -3771,7 +3771,7 @@
     "/api/v3/discover/queue/youtube-quota": {
       "get": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "YouTube data-API quota state. 404 when YouTube is unconfigured.",
         "operationId": "youtube_quota",
@@ -3798,7 +3798,7 @@
     "/api/v3/discover/queue/youtube-search": {
       "get": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "Album video lookup with the cached flag.",
         "operationId": "youtube_search",
@@ -3865,7 +3865,7 @@
     "/api/v3/discover/queue/youtube-track-search": {
       "get": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "Track video lookup with the cached flag.",
         "operationId": "youtube_track_search",
@@ -3932,7 +3932,7 @@
     "/api/v3/discover/radio": {
       "post": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "Generate one radio shelf from a seed.",
         "operationId": "discover_radio",
@@ -3982,7 +3982,7 @@
     "/api/v3/discover/radio/plan": {
       "post": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "Build a complete track-level radio plan.",
         "operationId": "radio_plan",
@@ -4032,7 +4032,7 @@
     "/api/v3/discover/refresh": {
       "post": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "Trigger a background discover rebuild for the caller.",
         "operationId": "refresh_discover",
@@ -4056,7 +4056,7 @@
     "/api/v3/discover/track-preview": {
       "get": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "A 30-second track preview. Empty means no provider had one.",
         "operationId": "track_preview",
@@ -4113,7 +4113,7 @@
     "/api/v3/download/access": {
       "get": {
         "tags": [
-          "crate::stream::download"
+          "stream"
         ],
         "summary": "Whether the caller may download library files (for download buttons\nshown before any album is open).",
         "operationId": "download_access",
@@ -4137,7 +4137,7 @@
     "/api/v3/download/local/album/mbid/{mbid}": {
       "get": {
         "tags": [
-          "crate::stream::download"
+          "stream"
         ],
         "summary": "An album's streamable files as a ZIP, by MusicBrainz release-group (or\nrelease) id; the oldest local copy answers when several exist.",
         "operationId": "download_album_by_mbid",
@@ -4174,7 +4174,7 @@
     "/api/v3/download/local/album/{id}": {
       "get": {
         "tags": [
-          "crate::stream::download"
+          "stream"
         ],
         "summary": "An album's streamable files as a ZIP, by local album id.",
         "operationId": "download_album",
@@ -4211,7 +4211,7 @@
     "/api/v3/download/local/track/{id}": {
       "get": {
         "tags": [
-          "crate::stream::download"
+          "stream"
         ],
         "summary": "One track file, unchanged, as an attachment. A single `Range` is\nanswered with 206, as v2's file response did, so download managers can\nresume.",
         "operationId": "download_track",
@@ -4257,7 +4257,7 @@
     "/api/v3/downloads/activity-summary": {
       "get": {
         "tags": [
-          "crate::acquire::downloads::http"
+          "downloads"
         ],
         "summary": "Queue counters and the revision that tells the page to refetch.\n`GET /api/v3/downloads/activity-summary`.",
         "operationId": "activity_summary_handler",
@@ -4278,7 +4278,7 @@
     "/api/v3/downloads/clear": {
       "post": {
         "tags": [
-          "crate::acquire::downloads::http"
+          "downloads"
         ],
         "summary": "Remove finished (completed and cancelled) downloads from the queue.\nAdmins clear every user's. `POST /api/v3/downloads/clear`.",
         "operationId": "clear_handler",
@@ -4299,7 +4299,7 @@
     "/api/v3/downloads/cutoff-unmet": {
       "get": {
         "tags": [
-          "crate::acquire::downloads::held_http"
+          "downloads"
         ],
         "summary": "Albums below the quality cutoff, worst first; empty while upgrades are\noff. Admins and trusted users. `GET /api/v3/downloads/cutoff-unmet`.",
         "operationId": "cutoff_unmet_handler",
@@ -4320,7 +4320,7 @@
     "/api/v3/downloads/held": {
       "get": {
         "tags": [
-          "crate::acquire::downloads::held_http"
+          "downloads"
         ],
         "summary": "Held files the viewer may act on, newest first; one album's with\n`release_group_mbid`. `GET /api/v3/downloads/held`.",
         "operationId": "list_held_handler",
@@ -4352,7 +4352,7 @@
     "/api/v3/downloads/held/management/{source_task_id}/discard": {
       "post": {
         "tags": [
-          "crate::acquire::downloads::held_http"
+          "downloads"
         ],
         "summary": "Delete every file of a download that waits on the library. Admin only.\n`POST /api/v3/downloads/held/management/{source_task_id}/discard`.",
         "operationId": "discard_local_handler",
@@ -4384,7 +4384,7 @@
     "/api/v3/downloads/held/management/{source_task_id}/retry": {
       "post": {
         "tags": [
-          "crate::acquire::downloads::held_http"
+          "downloads"
         ],
         "summary": "Import every file of a download that waits on the library (a taken\ndestination, an old copy that could not be recycled). Admin only.\n`POST /api/v3/downloads/held/management/{source_task_id}/retry`.",
         "operationId": "retry_local_handler",
@@ -4416,7 +4416,7 @@
     "/api/v3/downloads/held/reverify": {
       "post": {
         "tags": [
-          "crate::acquire::downloads::held_http"
+          "downloads"
         ],
         "summary": "Re-check AcoustID holds in bulk (at most 25 checks a call; other holds\nanswer `skipped`). `POST /api/v3/downloads/held/reverify`.",
         "operationId": "reverify_bulk_handler",
@@ -4447,7 +4447,7 @@
     "/api/v3/downloads/held/verdict/{source_task_id}/discard": {
       "post": {
         "tags": [
-          "crate::acquire::downloads::held_http"
+          "downloads"
         ],
         "summary": "Delete every file a download's checks held and clear its wrong-product\nverdict. `POST /api/v3/downloads/held/verdict/{source_task_id}/discard`.",
         "operationId": "discard_verdict_handler",
@@ -4479,7 +4479,7 @@
     "/api/v3/downloads/held/{held_id}/audio": {
       "get": {
         "tags": [
-          "crate::acquire::downloads::held_http"
+          "downloads"
         ],
         "summary": "Play a held file for the review, with byte ranges so the player can\nseek. `GET /api/v3/downloads/held/{held_id}/audio`.",
         "operationId": "held_audio_handler",
@@ -4517,7 +4517,7 @@
     "/api/v3/downloads/held/{held_id}/discard": {
       "post": {
         "tags": [
-          "crate::acquire::downloads::held_http"
+          "downloads"
         ],
         "summary": "Delete a held file; the album's automatic retry resumes.\n`POST /api/v3/downloads/held/{held_id}/discard`.",
         "operationId": "discard_held_handler",
@@ -4550,7 +4550,7 @@
     "/api/v3/downloads/held/{held_id}/import": {
       "post": {
         "tags": [
-          "crate::acquire::downloads::held_http"
+          "downloads"
         ],
         "summary": "Import a held file as it is, into the album's chosen edition. For an\nupgrade, the library's copy is replaced only by a better file and goes\nto the recycle bin. `POST /api/v3/downloads/held/{held_id}/import`.",
         "operationId": "import_held_handler",
@@ -4583,7 +4583,7 @@
     "/api/v3/downloads/held/{held_id}/reverify": {
       "post": {
         "tags": [
-          "crate::acquire::downloads::held_http"
+          "downloads"
         ],
         "summary": "Fingerprint an AcoustID-held file again and import it when AcoustID\nnow agrees. `POST /api/v3/downloads/held/{held_id}/reverify`.",
         "operationId": "reverify_held_handler",
@@ -4616,7 +4616,7 @@
     "/api/v3/downloads/quarantine": {
       "get": {
         "tags": [
-          "crate::acquire::downloads::http"
+          "downloads"
         ],
         "summary": "The release blocklist, newest first. Admin only.\n`GET /api/v3/downloads/quarantine`.",
         "operationId": "list_quarantine_handler",
@@ -4659,7 +4659,7 @@
     "/api/v3/downloads/quarantine/{quarantine_id}": {
       "delete": {
         "tags": [
-          "crate::acquire::downloads::http"
+          "downloads"
         ],
         "summary": "Remove one blocklist entry so its release may be tried again. Admin\nonly. `DELETE /api/v3/downloads/quarantine/{quarantine_id}`.",
         "operationId": "delete_quarantine_handler",
@@ -4692,7 +4692,7 @@
     "/api/v3/downloads/retry-all-failed": {
       "post": {
         "tags": [
-          "crate::acquire::downloads::http"
+          "downloads"
         ],
         "summary": "Retry every failed download that will not retry by itself, once per\nalbum or track. `POST /api/v3/downloads/retry-all-failed`.",
         "operationId": "retry_all_failed_handler",
@@ -4713,7 +4713,7 @@
     "/api/v3/downloads/search/album": {
       "post": {
         "tags": [
-          "crate::acquire::downloads::http"
+          "downloads"
         ],
         "summary": "Search every download source for one album. The search runs in the\nbackground; follow it with `search_job_updated` events or by reading\nthe job. `POST /api/v3/downloads/search/album`.",
         "operationId": "search_album_handler",
@@ -4744,7 +4744,7 @@
     "/api/v3/downloads/search/{job_id}": {
       "get": {
         "tags": [
-          "crate::acquire::downloads::http"
+          "downloads"
         ],
         "summary": "One of your manual searches and its candidates.\n`GET /api/v3/downloads/search/{job_id}`.",
         "operationId": "search_job_handler",
@@ -4776,7 +4776,7 @@
     "/api/v3/downloads/search/{job_id}/cancel": {
       "post": {
         "tags": [
-          "crate::acquire::downloads::http"
+          "downloads"
         ],
         "summary": "Close a search without downloading anything.\n`POST /api/v3/downloads/search/{job_id}/cancel`.",
         "operationId": "cancel_search_handler",
@@ -4808,7 +4808,7 @@
     "/api/v3/downloads/search/{job_id}/dismiss": {
       "post": {
         "tags": [
-          "crate::acquire::downloads::http"
+          "downloads"
         ],
         "summary": "\"None of these, keep watching\": close the search and put the album on\nthe wanted watchlist. `POST /api/v3/downloads/search/{job_id}/dismiss`.",
         "operationId": "dismiss_search_handler",
@@ -4840,7 +4840,7 @@
     "/api/v3/downloads/search/{job_id}/pick": {
       "post": {
         "tags": [
-          "crate::acquire::downloads::http"
+          "downloads"
         ],
         "summary": "Download one candidate. The download fetches exactly that candidate\nfirst. `POST /api/v3/downloads/search/{job_id}/pick`.",
         "operationId": "pick_candidate_handler",
@@ -4882,7 +4882,7 @@
     "/api/v3/downloads/stop-all-retries": {
       "post": {
         "tags": [
-          "crate::acquire::downloads::http"
+          "downloads"
         ],
         "summary": "Stop every scheduled automatic retry.\n`POST /api/v3/downloads/stop-all-retries`.",
         "operationId": "stop_all_retries_handler",
@@ -4903,7 +4903,7 @@
     "/api/v3/downloads/tasks": {
       "get": {
         "tags": [
-          "crate::acquire::downloads::http"
+          "downloads"
         ],
         "summary": "The viewer's download queue, newest first. Admins see every user's\ntasks. `GET /api/v3/downloads/tasks`.",
         "operationId": "list_tasks_handler",
@@ -4964,7 +4964,7 @@
     "/api/v3/downloads/tasks/{task_id}": {
       "get": {
         "tags": [
-          "crate::acquire::downloads::http"
+          "downloads"
         ],
         "summary": "One download task. `GET /api/v3/downloads/tasks/{task_id}`.",
         "operationId": "get_task_handler",
@@ -4996,7 +4996,7 @@
     "/api/v3/downloads/tasks/{task_id}/cancel": {
       "post": {
         "tags": [
-          "crate::acquire::downloads::http"
+          "downloads"
         ],
         "summary": "Stop a download: a live one is cancelled and its transfer aborted; a\nfailed one stops retrying. The owner's wanted watch on the album stops\ntoo. `POST /api/v3/downloads/tasks/{task_id}/cancel`.",
         "operationId": "cancel_task_handler",
@@ -5028,7 +5028,7 @@
     "/api/v3/downloads/tasks/{task_id}/files": {
       "get": {
         "tags": [
-          "crate::acquire::downloads::http"
+          "downloads"
         ],
         "summary": "The files of a task's current source.\n`GET /api/v3/downloads/tasks/{task_id}/files`.",
         "operationId": "task_files_handler",
@@ -5060,7 +5060,7 @@
     "/api/v3/downloads/tasks/{task_id}/next-source": {
       "post": {
         "tags": [
-          "crate::acquire::downloads::http"
+          "downloads"
         ],
         "summary": "Move a transfer that waits in a Soulseek peer's queue (no bytes yet)\nto the next ranked source.\n`POST /api/v3/downloads/tasks/{task_id}/next-source`.",
         "operationId": "next_source_handler",
@@ -5102,7 +5102,7 @@
     "/api/v3/downloads/tasks/{task_id}/reimport": {
       "post": {
         "tags": [
-          "crate::acquire::downloads::http"
+          "downloads"
         ],
         "summary": "Import a failed or short-landed task's files again, right away, from\nthe files its last download left on disk (no new search or download).\n`POST /api/v3/downloads/tasks/{task_id}/reimport`. Admin only. Missing\ntasks and tasks with no files to reimport answer 404; a download client\nthat is no longer configured answers 409.",
         "operationId": "reimport_task_handler",
@@ -5134,7 +5134,7 @@
     "/api/v3/downloads/tasks/{task_id}/retry": {
       "post": {
         "tags": [
-          "crate::acquire::downloads::http"
+          "downloads"
         ],
         "summary": "Retry a failed, cancelled or partial download now. Answers the new\ntask. An album retry clears the album's blocklist first.\n`POST /api/v3/downloads/tasks/{task_id}/retry`.",
         "operationId": "retry_task_handler",
@@ -5166,7 +5166,7 @@
     "/api/v3/downloads/upgrade/album": {
       "post": {
         "tags": [
-          "crate::acquire::downloads::held_http"
+          "downloads"
         ],
         "summary": "Fetch a better copy of an album below the cutoff. Admins and trusted\nusers. `POST /api/v3/downloads/upgrade/album`.",
         "operationId": "upgrade_album_handler",
@@ -5197,7 +5197,7 @@
     "/api/v3/downloads/upgrade/track": {
       "post": {
         "tags": [
-          "crate::acquire::downloads::held_http"
+          "downloads"
         ],
         "summary": "Fetch a better copy of one track below the cutoff. Admins and trusted\nusers. `POST /api/v3/downloads/upgrade/track`.",
         "operationId": "upgrade_track_handler",
@@ -5700,7 +5700,7 @@
     "/api/v3/home": {
       "get": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "Cached home shelves for the caller.",
         "operationId": "get_home",
@@ -5724,7 +5724,7 @@
     "/api/v3/home/genre/{genre_name}": {
       "get": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "Genre detail with owned and popular rows.",
         "operationId": "genre_detail",
@@ -5792,7 +5792,7 @@
     "/api/v3/home/integration-status": {
       "get": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "Integration availability behind the shelves.",
         "operationId": "integration_status",
@@ -5826,7 +5826,7 @@
     "/api/v3/home/popular/albums": {
       "get": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "One popular-albums page (same range-param redesign).",
         "operationId": "popular_albums",
@@ -5903,7 +5903,7 @@
     "/api/v3/home/trending/artists": {
       "get": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "One trending-artists page. Range rides the `range` query param (one\nroute replaces the v2 base plus `/{range_key}` pair).",
         "operationId": "trending_artists",
@@ -5980,7 +5980,7 @@
     "/api/v3/home/your-top/albums": {
       "get": {
         "tags": [
-          "crate::reads::discover::handlers"
+          "discover"
         ],
         "summary": "One your-top-albums page for the caller (same redesign, per-user).",
         "operationId": "your_top_albums",
@@ -6057,7 +6057,7 @@
     "/api/v3/import/items/{item_id}/discard": {
       "post": {
         "tags": [
-          "crate::acquire::drop_import::http"
+          "imports"
         ],
         "summary": "Throw a review item's files away.\n`POST /api/v3/import/items/{item_id}/discard`.",
         "operationId": "discard_item_handler",
@@ -6090,7 +6090,7 @@
     "/api/v3/import/items/{item_id}/match": {
       "post": {
         "tags": [
-          "crate::acquire::drop_import::http"
+          "imports"
         ],
         "summary": "Import a review item as the album you picked.\n`POST /api/v3/import/items/{item_id}/match`.",
         "operationId": "match_item_handler",
@@ -6133,7 +6133,7 @@
     "/api/v3/import/jobs": {
       "get": {
         "tags": [
-          "crate::acquire::drop_import::http"
+          "imports"
         ],
         "summary": "Your recent import jobs; admins may pass `all=true` for everyone's.\n`GET /api/v3/import/jobs`.",
         "operationId": "list_jobs_handler",
@@ -6165,7 +6165,7 @@
     "/api/v3/import/jobs/{job_id}": {
       "get": {
         "tags": [
-          "crate::acquire::drop_import::http"
+          "imports"
         ],
         "summary": "One import job. `GET /api/v3/import/jobs/{job_id}`.",
         "operationId": "get_job_handler",
@@ -6197,7 +6197,7 @@
     "/api/v3/import/uploads": {
       "post": {
         "tags": [
-          "crate::acquire::drop_import::http"
+          "imports"
         ],
         "summary": "Upload files to import: audio files or `.zip` archives, at most 25\nper drop. Returns the new job; it keeps working in the background.\n`POST /api/v3/import/uploads`.",
         "operationId": "upload_handler",
@@ -6228,7 +6228,7 @@
     "/api/v3/library/activity": {
       "get": {
         "tags": [
-          "crate::library::http::scan"
+          "library management"
         ],
         "summary": "What the library is doing now: scans, identification, and the work\nstack.",
         "operationId": "library_activity",
@@ -6252,7 +6252,7 @@
     "/api/v3/library/albums": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "One page of catalog albums.",
         "operationId": "list_albums",
@@ -6356,7 +6356,7 @@
     "/api/v3/library/albums/merge": {
       "post": {
         "tags": [
-          "crate::library::http::corrections"
+          "library management"
         ],
         "summary": "Fold whole albums into the target album.",
         "operationId": "apply_album_merge",
@@ -6402,7 +6402,7 @@
     "/api/v3/library/albums/merge-preview": {
       "post": {
         "tags": [
-          "crate::library::http::corrections"
+          "library management"
         ],
         "summary": "Preview folding whole albums into the target album.",
         "operationId": "preview_album_merge",
@@ -6448,7 +6448,7 @@
     "/api/v3/library/albums/{album_id}/edition": {
       "get": {
         "tags": [
-          "crate::library::http::edition"
+          "library management"
         ],
         "summary": "Where the album's edition stands, and why.",
         "operationId": "get_edition",
@@ -6484,7 +6484,7 @@
       },
       "put": {
         "tags": [
-          "crate::library::http::edition"
+          "library management"
         ],
         "summary": "Choose the album's edition: any release, from this album's release\ngroup or another. Files the edition has no track for keep their\nrecording; nothing automatic changes the choice afterwards.",
         "operationId": "choose_edition",
@@ -6539,7 +6539,7 @@
       },
       "delete": {
         "tags": [
-          "crate::library::http::edition"
+          "library management"
         ],
         "summary": "\"Let DroppedNeedle choose\": drop the person's choice and pick the best\nfit for the files again.",
         "operationId": "hand_back_edition",
@@ -6709,7 +6709,7 @@
     "/api/v3/library/albums/{album_id}/edition/confirm": {
       "post": {
         "tags": [
-          "crate::library::http::edition"
+          "library management"
         ],
         "summary": "\"Looks right\": confirm the album's unconfirmed best guess.",
         "operationId": "confirm_edition",
@@ -6753,7 +6753,7 @@
     "/api/v3/library/albums/{album_id}/edition/custom": {
       "post": {
         "tags": [
-          "crate::library::http::edition"
+          "library management"
         ],
         "summary": "Keep the album's files as they are, as a custom edition of the\nrelease's group: the tags, positions and file list are frozen as they\nare now, and the release group becomes the album's chosen match.\nUndo with `.../edition/undo`.",
         "operationId": "seal_custom_edition",
@@ -6813,7 +6813,7 @@
     "/api/v3/library/albums/{album_id}/edition/extras/remove": {
       "post": {
         "tags": [
-          "crate::library::http::edition"
+          "library management"
         ],
         "summary": "Move files the album's edition has no place for (second copies, other\nversions and files not on it) to the recycle bin: every fate but\n`keep`. Only files the current plan marks that way are accepted;\nnothing runs on its own. Undo with\n`.../edition/extras/restore`.",
         "operationId": "remove_extras",
@@ -6876,7 +6876,7 @@
     "/api/v3/library/albums/{album_id}/edition/extras/restore": {
       "post": {
         "tags": [
-          "crate::library::http::edition"
+          "library management"
         ],
         "summary": "Put back the files one removal of extras moved to the recycle bin.",
         "operationId": "restore_extras",
@@ -6930,7 +6930,7 @@
     "/api/v3/library/albums/{album_id}/edition/leave-unmanaged": {
       "post": {
         "tags": [
-          "crate::library::http::edition"
+          "library management"
         ],
         "summary": "Leave the album unmanaged: its exact edition goes (the release group\nstays as the person's choice) and Library Management leaves its files\nalone until \"Manage it again\". Undo with `.../edition/undo`.",
         "operationId": "leave_unmanaged",
@@ -6984,7 +6984,7 @@
     "/api/v3/library/albums/{album_id}/edition/plan": {
       "get": {
         "tags": [
-          "crate::library::http::edition"
+          "library management"
         ],
         "summary": "What taking an edition would do: which files keep their place, which\nare second copies, other versions or extras, and which edition tracks\nare missing. Asks MusicBrainz for the release; changes nothing. The\nalbum's own edition is open to every signed-in user; planning another\nrelease is for curators, who can choose it.",
         "operationId": "plan_edition",
@@ -7040,7 +7040,7 @@
     "/api/v3/library/albums/{album_id}/edition/undo": {
       "post": {
         "tags": [
-          "crate::library::http::edition"
+          "library management"
         ],
         "summary": "Take back the album's last edition change.",
         "operationId": "undo_edition",
@@ -7084,7 +7084,7 @@
     "/api/v3/library/albums/{album_id}/history": {
       "get": {
         "tags": [
-          "crate::library::http::history"
+          "library management"
         ],
         "summary": "What the app did by itself to the album's tracks and to the albums it\nis made of.",
         "operationId": "get_album_history",
@@ -7122,7 +7122,7 @@
     "/api/v3/library/albums/{album_id}/management/hand-back": {
       "post": {
         "tags": [
-          "crate::library::http::mutations"
+          "library management"
         ],
         "summary": "Have DroppedNeedle manage an album again after it stepped back from it\nbecause the files were changed outside. The files are then retagged and\nrenamed from the album's edition, which overwrites those changes.",
         "operationId": "hand_back_management",
@@ -7166,7 +7166,7 @@
     "/api/v3/library/albums/{album_id}/management/re-enable": {
       "post": {
         "tags": [
-          "crate::library::http::mutations"
+          "library management"
         ],
         "summary": "Let library management change an album again after it was excluded.",
         "operationId": "reenable_management",
@@ -7220,7 +7220,7 @@
     "/api/v3/library/albums/{album_id}/reidentification/releases": {
       "get": {
         "tags": [
-          "crate::library::http::operations"
+          "library management"
         ],
         "summary": "Search MusicBrainz releases for an album's edition finder.",
         "operationId": "search_reidentification_releases",
@@ -7316,7 +7316,7 @@
     "/api/v3/library/albums/{album_id}/reidentify": {
       "post": {
         "tags": [
-          "crate::library::http::operations"
+          "library management"
         ],
         "summary": "Start an explicit re-identification of one album. The job scores every\ncandidate and waits for an administrator's choice; nothing seals on\nits own.",
         "operationId": "reidentify_album",
@@ -7373,7 +7373,7 @@
     "/api/v3/library/albums/{album_id}/rescan": {
       "post": {
         "tags": [
-          "crate::library::http::mutations"
+          "library management"
         ],
         "summary": "Rescan the folders holding one album's files.",
         "operationId": "rescan_album",
@@ -7417,7 +7417,7 @@
     "/api/v3/library/albums/{album_id}/reset-grouping": {
       "post": {
         "tags": [
-          "crate::library::http::corrections"
+          "library management"
         ],
         "summary": "Hand an album's tracks back to automatic grouping.",
         "operationId": "apply_grouping_reset",
@@ -7474,7 +7474,7 @@
     "/api/v3/library/albums/{album_id}/reset-grouping-preview": {
       "post": {
         "tags": [
-          "crate::library::http::corrections"
+          "library management"
         ],
         "summary": "Preview handing an album's tracks back to automatic grouping.",
         "operationId": "preview_grouping_reset",
@@ -7531,7 +7531,7 @@
     "/api/v3/library/albums/{album_id}/split": {
       "post": {
         "tags": [
-          "crate::library::http::corrections"
+          "library management"
         ],
         "summary": "Split selected tracks off an album into a new album (or into the target).",
         "operationId": "apply_album_split",
@@ -7588,7 +7588,7 @@
     "/api/v3/library/albums/{album_id}/split-preview": {
       "post": {
         "tags": [
-          "crate::library::http::corrections"
+          "library management"
         ],
         "summary": "Preview splitting selected tracks off an album.",
         "operationId": "preview_album_split",
@@ -7645,7 +7645,7 @@
     "/api/v3/library/albums/{album_id}/undo-automatic-edition": {
       "post": {
         "tags": [
-          "crate::library::http::operations"
+          "library management"
         ],
         "summary": "Undo the album's last automatic edition: the identity it replaced comes\nback, or the album goes to review when there was none. Pins stay.",
         "operationId": "undo_automatic_edition",
@@ -7702,7 +7702,7 @@
     "/api/v3/library/albums/{id}": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "One catalog album.",
         "operationId": "get_album",
@@ -7738,7 +7738,7 @@
       },
       "delete": {
         "tags": [
-          "crate::library::http::mutations"
+          "library management"
         ],
         "summary": "Remove an album from the library. With `delete_files` its files move\ninto the recycle bin; nothing is deleted outright. Its pending download\nretries, held files and blocklist entries go, and its wanted watch\nstops (or, with `stop_wanted=false`, looks for a replacement).",
         "operationId": "remove_album",
@@ -7803,7 +7803,7 @@
     "/api/v3/library/albums/{id}/artwork": {
       "get": {
         "tags": [
-          "crate::reads::platform::covers"
+          "platform"
         ],
         "summary": "An album's own art: the folder image or embedded picture the library\nscan found. Never reaches out to the network. Pass the album's\n`cover_version` as `v`: a matching version is cached for good, an older\none revalidates.",
         "operationId": "album_artwork",
@@ -7859,7 +7859,7 @@
     "/api/v3/library/albums/{id}/contributions": {
       "post": {
         "tags": [
-          "crate::library::http::contrib"
+          "library management"
         ],
         "summary": "Start (or reopen) the contribution for one local album.",
         "operationId": "create_contribution",
@@ -7903,7 +7903,7 @@
     "/api/v3/library/albums/{id}/copies": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "Other local albums sharing the album's release group.",
         "operationId": "list_album_copies",
@@ -7941,7 +7941,7 @@
     "/api/v3/library/albums/{id}/status": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "What the library holds for one album, by local id or MusicBrainz id,\nwith each track's quality tier against the upgrade cutoff.",
         "operationId": "album_status",
@@ -7976,7 +7976,7 @@
     "/api/v3/library/albums/{id}/tracks": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "One page of an album's streamable tracks.",
         "operationId": "list_album_tracks",
@@ -8037,7 +8037,7 @@
     "/api/v3/library/artists": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "One page of catalog artists.",
         "operationId": "list_artists",
@@ -8122,7 +8122,7 @@
     "/api/v3/library/artists/duplicate-groups": {
       "get": {
         "tags": [
-          "crate::library::http::reconcile"
+          "library management"
         ],
         "summary": "List duplicate artist groups, sorted by name.",
         "operationId": "list_artist_duplicate_groups",
@@ -8190,7 +8190,7 @@
     "/api/v3/library/artists/duplicate-groups/{group_id}": {
       "get": {
         "tags": [
-          "crate::library::http::reconcile"
+          "library management"
         ],
         "summary": "One duplicate artist group with its evidence, albums, and tracks.",
         "operationId": "get_artist_duplicate_group",
@@ -8231,7 +8231,7 @@
     "/api/v3/library/artists/duplicate-groups/{group_id}/dismiss": {
       "post": {
         "tags": [
-          "crate::library::http::reconcile"
+          "library management"
         ],
         "summary": "Mark a group's records as distinct people. The group comes back if any\nmember changes or another record with the name appears.",
         "operationId": "dismiss_artist_duplicate_group",
@@ -8288,7 +8288,7 @@
     "/api/v3/library/artists/merge": {
       "post": {
         "tags": [
-          "crate::library::http::corrections"
+          "library management"
         ],
         "summary": "Fold duplicate artists into one survivor.",
         "operationId": "apply_artist_merge",
@@ -8334,7 +8334,7 @@
     "/api/v3/library/artists/merge-preview": {
       "post": {
         "tags": [
-          "crate::library::http::corrections"
+          "library management"
         ],
         "summary": "Preview folding duplicate artists into one survivor.",
         "operationId": "preview_artist_merge",
@@ -8380,7 +8380,7 @@
     "/api/v3/library/artists/reconciliation": {
       "get": {
         "tags": [
-          "crate::library::http::reconcile"
+          "library management"
         ],
         "summary": "Artist reconciliation progress and open group counts.",
         "operationId": "artist_reconciliation",
@@ -8407,7 +8407,7 @@
     "/api/v3/library/artists/{id}": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "One catalog artist.",
         "operationId": "get_artist",
@@ -8445,7 +8445,7 @@
     "/api/v3/library/artists/{id}/albums": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "One page of albums led by the artist.",
         "operationId": "list_artist_albums",
@@ -8506,7 +8506,7 @@
     "/api/v3/library/artists/{id}/appearances": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "One page of albums where the artist appears without leading.",
         "operationId": "list_artist_appearances",
@@ -8567,7 +8567,7 @@
     "/api/v3/library/contributions/musicbrainz/callback": {
       "get": {
         "tags": [
-          "crate::library::http::contrib"
+          "library management"
         ],
         "summary": "Where the MusicBrainz release editor sends the curator back. Public:\nthe one-time token identifies the contribution. Every outcome is a 303\nto the web app: the contribution page on success, the library page\nwith `musicbrainz=callback-error` otherwise (v2's contract).",
         "operationId": "musicbrainz_callback",
@@ -8601,7 +8601,7 @@
     "/api/v3/library/contributions/{id}": {
       "get": {
         "tags": [
-          "crate::library::http::contrib"
+          "library management"
         ],
         "summary": "Read one contribution.",
         "operationId": "get_contribution",
@@ -8639,7 +8639,7 @@
     "/api/v3/library/contributions/{id}/cancel": {
       "post": {
         "tags": [
-          "crate::library::http::contrib"
+          "library management"
         ],
         "summary": "Cancel a contribution.",
         "operationId": "cancel",
@@ -8693,7 +8693,7 @@
     "/api/v3/library/contributions/{id}/discogs/remove": {
       "post": {
         "tags": [
-          "crate::library::http::contrib"
+          "library management"
         ],
         "summary": "Drop the Discogs source and its values.",
         "operationId": "remove_discogs",
@@ -8747,7 +8747,7 @@
     "/api/v3/library/contributions/{id}/discogs/search": {
       "post": {
         "tags": [
-          "crate::library::http::contrib"
+          "library management"
         ],
         "summary": "Search Discogs releases for this contribution.",
         "operationId": "search_discogs",
@@ -8807,7 +8807,7 @@
     "/api/v3/library/contributions/{id}/discogs/select": {
       "post": {
         "tags": [
-          "crate::library::http::contrib"
+          "library management"
         ],
         "summary": "Use a Discogs release as the source.",
         "operationId": "select_discogs",
@@ -8867,7 +8867,7 @@
     "/api/v3/library/contributions/{id}/draft": {
       "put": {
         "tags": [
-          "crate::library::http::contrib"
+          "library management"
         ],
         "summary": "Save the edited draft.",
         "operationId": "update_draft",
@@ -8924,7 +8924,7 @@
     "/api/v3/library/contributions/{id}/musicbrainz/attach": {
       "post": {
         "tags": [
-          "crate::library::http::contrib"
+          "library management"
         ],
         "summary": "Link the album to a release already on MusicBrainz.",
         "operationId": "attach_existing",
@@ -8981,7 +8981,7 @@
     "/api/v3/library/contributions/{id}/musicbrainz/duplicates": {
       "post": {
         "tags": [
-          "crate::library::http::contrib"
+          "library management"
         ],
         "summary": "Check MusicBrainz for releases this would duplicate.",
         "operationId": "check_duplicates",
@@ -9038,7 +9038,7 @@
     "/api/v3/library/contributions/{id}/musicbrainz/result": {
       "put": {
         "tags": [
-          "crate::library::http::contrib"
+          "library management"
         ],
         "summary": "Record the release MusicBrainz created, by hand.",
         "operationId": "record_result",
@@ -9095,7 +9095,7 @@
     "/api/v3/library/contributions/{id}/musicbrainz/seed": {
       "post": {
         "tags": [
-          "crate::library::http::contrib"
+          "library management"
         ],
         "summary": "Build the form that opens the seeded MusicBrainz release editor. The\nbrowser POSTs it; MusicBrainz sends the curator back to the callback.",
         "operationId": "create_seed",
@@ -9155,7 +9155,7 @@
     "/api/v3/library/contributions/{id}/musicbrainz/verify": {
       "post": {
         "tags": [
-          "crate::library::http::contrib"
+          "library management"
         ],
         "summary": "Queue the recorded release for verification again.",
         "operationId": "retry_verification",
@@ -9209,7 +9209,7 @@
     "/api/v3/library/contributions/{id}/rebuild": {
       "post": {
         "tags": [
-          "crate::library::http::contrib"
+          "library management"
         ],
         "summary": "Rebuild a stale contribution from the album's current files.",
         "operationId": "rebuild",
@@ -9263,7 +9263,7 @@
     "/api/v3/library/genres": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "Full genre listing.",
         "operationId": "list_genres",
@@ -9287,7 +9287,7 @@
     "/api/v3/library/genres/{name}/tracks": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "One page of a genre's streamable tracks.",
         "operationId": "list_genre_tracks",
@@ -9345,7 +9345,7 @@
     "/api/v3/library/identification/pause": {
       "post": {
         "tags": [
-          "crate::library::http::scan"
+          "library management"
         ],
         "summary": "Pause identification. A job already running finishes first.",
         "operationId": "pause_identification",
@@ -9385,7 +9385,7 @@
     "/api/v3/library/identification/resume": {
       "post": {
         "tags": [
-          "crate::library::http::scan"
+          "library management"
         ],
         "summary": "Resume identification.",
         "operationId": "resume_identification",
@@ -9425,7 +9425,7 @@
     "/api/v3/library/identify": {
       "post": {
         "tags": [
-          "crate::library::http::handlers"
+          "library management"
         ],
         "summary": "Enqueue one album for identification.",
         "operationId": "enqueue_identify",
@@ -9468,7 +9468,7 @@
     "/api/v3/library/identity-repairs": {
       "get": {
         "tags": [
-          "crate::library::http::repairs"
+          "library management"
         ],
         "operationId": "list_repairs",
         "parameters": [
@@ -9514,7 +9514,7 @@
       },
       "post": {
         "tags": [
-          "crate::library::http::repairs"
+          "library management"
         ],
         "operationId": "create_repair",
         "requestBody": {
@@ -9556,7 +9556,7 @@
     "/api/v3/library/identity-repairs/estimate": {
       "get": {
         "tags": [
-          "crate::library::http::repairs"
+          "library management"
         ],
         "operationId": "estimate_repair",
         "parameters": [
@@ -9597,7 +9597,7 @@
     "/api/v3/library/identity-repairs/{job_id}": {
       "get": {
         "tags": [
-          "crate::library::http::repairs"
+          "library management"
         ],
         "operationId": "get_repair",
         "parameters": [
@@ -9637,7 +9637,7 @@
     "/api/v3/library/identity-repairs/{job_id}/apply": {
       "post": {
         "tags": [
-          "crate::library::http::repairs"
+          "library management"
         ],
         "operationId": "apply_repair",
         "parameters": [
@@ -9693,7 +9693,7 @@
     "/api/v3/library/identity-repairs/{job_id}/findings": {
       "get": {
         "tags": [
-          "crate::library::http::repairs"
+          "library management"
         ],
         "operationId": "repair_findings",
         "parameters": [
@@ -9762,7 +9762,7 @@
     "/api/v3/library/identity-repairs/{job_id}/pause": {
       "post": {
         "tags": [
-          "crate::library::http::repairs"
+          "library management"
         ],
         "operationId": "pause_repair",
         "parameters": [
@@ -9815,7 +9815,7 @@
     "/api/v3/library/identity-repairs/{job_id}/resume": {
       "post": {
         "tags": [
-          "crate::library::http::repairs"
+          "library management"
         ],
         "operationId": "resume_repair",
         "parameters": [
@@ -9868,7 +9868,7 @@
     "/api/v3/library/identity-repairs/{job_id}/stop": {
       "post": {
         "tags": [
-          "crate::library::http::repairs"
+          "library management"
         ],
         "operationId": "stop_repair",
         "parameters": [
@@ -9921,7 +9921,7 @@
     "/api/v3/library/manage/apply": {
       "post": {
         "tags": [
-          "crate::library::http::handlers"
+          "library management"
         ],
         "summary": "Apply a sealed preview exactly once.",
         "operationId": "manage_apply",
@@ -9967,7 +9967,7 @@
     "/api/v3/library/manage/baseline/restore": {
       "post": {
         "tags": [
-          "crate::library::http::handlers"
+          "library management"
         ],
         "summary": "Restore tracks to their first-management baselines.",
         "operationId": "baseline_restore",
@@ -10010,7 +10010,7 @@
     "/api/v3/library/manage/preview": {
       "post": {
         "tags": [
-          "crate::library::http::handlers"
+          "library management"
         ],
         "summary": "Build a sealed management preview (`retag` or `organize`).",
         "operationId": "manage_preview",
@@ -10053,7 +10053,7 @@
     "/api/v3/library/manage/undo": {
       "post": {
         "tags": [
-          "crate::library::http::handlers"
+          "library management"
         ],
         "summary": "Undo one published bundle as a new operation.",
         "operationId": "manage_undo",
@@ -10099,7 +10099,7 @@
     "/api/v3/library/management/automatic/skipped": {
       "get": {
         "tags": [
-          "crate::library::http::management_tools"
+          "library management"
         ],
         "summary": "Albums automatic management skipped, newest first, each with why.",
         "operationId": "list_management_automatic_skipped",
@@ -10126,7 +10126,7 @@
     "/api/v3/library/management/baselines/purge": {
       "post": {
         "tags": [
-          "crate::library::http::management_tools"
+          "library management"
         ],
         "summary": "Delete every saved original for good.",
         "operationId": "purge_management_baselines",
@@ -10169,7 +10169,7 @@
     "/api/v3/library/management/baselines/purge-impact": {
       "post": {
         "tags": [
-          "crate::library::http::management_tools"
+          "library management"
         ],
         "summary": "What a purge of the saved originals would remove.",
         "operationId": "get_management_purge_impact",
@@ -10196,7 +10196,7 @@
     "/api/v3/library/management/baselines/restore-previews": {
       "post": {
         "tags": [
-          "crate::library::http::management_tools"
+          "library management"
         ],
         "summary": "Preview putting the selected albums back to their originals.",
         "operationId": "create_management_restore_preview",
@@ -10239,7 +10239,7 @@
     "/api/v3/library/management/duplicate-resolution-previews": {
       "post": {
         "tags": [
-          "crate::library::http::management_tools"
+          "library management"
         ],
         "summary": "Preview settling one file whose destination is taken.",
         "operationId": "create_management_duplicate_preview",
@@ -10285,7 +10285,7 @@
     "/api/v3/library/management/hand-back": {
       "post": {
         "tags": [
-          "crate::library::http::mutations"
+          "library management"
         ],
         "summary": "Have DroppedNeedle manage every album again that it stepped back from.\nThe albums are handed back one after another in the background; until\nits turn comes an album stays left unmanaged.",
         "operationId": "hand_back_all",
@@ -10312,7 +10312,7 @@
     "/api/v3/library/management/identity-preparations": {
       "get": {
         "tags": [
-          "crate::library::http::repairs"
+          "library management"
         ],
         "operationId": "list_preparations",
         "parameters": [
@@ -10358,7 +10358,7 @@
       },
       "post": {
         "tags": [
-          "crate::library::http::repairs"
+          "library management"
         ],
         "operationId": "create_preparation",
         "requestBody": {
@@ -10400,7 +10400,7 @@
     "/api/v3/library/management/identity-preparations/estimate": {
       "get": {
         "tags": [
-          "crate::library::http::repairs"
+          "library management"
         ],
         "operationId": "estimate_preparation",
         "parameters": [
@@ -10441,7 +10441,7 @@
     "/api/v3/library/management/identity-preparations/{job_id}": {
       "get": {
         "tags": [
-          "crate::library::http::repairs"
+          "library management"
         ],
         "operationId": "get_preparation",
         "parameters": [
@@ -10481,7 +10481,7 @@
     "/api/v3/library/management/identity-preparations/{job_id}/apply": {
       "post": {
         "tags": [
-          "crate::library::http::repairs"
+          "library management"
         ],
         "operationId": "apply_preparation",
         "parameters": [
@@ -10537,7 +10537,7 @@
     "/api/v3/library/management/identity-preparations/{job_id}/discard": {
       "post": {
         "tags": [
-          "crate::library::http::repairs"
+          "library management"
         ],
         "operationId": "discard_preparation",
         "parameters": [
@@ -10590,7 +10590,7 @@
     "/api/v3/library/management/identity-preparations/{job_id}/findings": {
       "get": {
         "tags": [
-          "crate::library::http::repairs"
+          "library management"
         ],
         "operationId": "preparation_findings",
         "parameters": [
@@ -10659,7 +10659,7 @@
     "/api/v3/library/management/operations": {
       "get": {
         "tags": [
-          "crate::library::http::management"
+          "library management"
         ],
         "summary": "Management history, newest first.",
         "operationId": "list_management_operations",
@@ -10768,7 +10768,7 @@
     "/api/v3/library/management/operations/{job_id}": {
       "get": {
         "tags": [
-          "crate::library::http::management"
+          "library management"
         ],
         "summary": "One management operation.",
         "operationId": "get_management_operation",
@@ -10809,7 +10809,7 @@
     "/api/v3/library/management/operations/{job_id}/results": {
       "get": {
         "tags": [
-          "crate::library::http::management"
+          "library management"
         ],
         "summary": "A page of an applied operation's files with their outcome.",
         "operationId": "list_management_operation_results",
@@ -10868,7 +10868,7 @@
     "/api/v3/library/management/operations/{job_id}/undo-preview": {
       "post": {
         "tags": [
-          "crate::library::http::management"
+          "library management"
         ],
         "summary": "Preview undoing an applied operation. Apply the undo preview like any\nother.",
         "operationId": "create_management_undo_preview",
@@ -10925,7 +10925,7 @@
     "/api/v3/library/management/previews": {
       "post": {
         "tags": [
-          "crate::library::http::management"
+          "library management"
         ],
         "summary": "Make a management preview. Planning runs in the background; poll the\npreview until it is ready.",
         "operationId": "create_management_preview",
@@ -10968,7 +10968,7 @@
     "/api/v3/library/management/previews/{job_id}": {
       "get": {
         "tags": [
-          "crate::library::http::management"
+          "library management"
         ],
         "summary": "One preview with its summary.",
         "operationId": "get_management_preview",
@@ -11009,7 +11009,7 @@
     "/api/v3/library/management/previews/{job_id}/apply": {
       "post": {
         "tags": [
-          "crate::library::http::management"
+          "library management"
         ],
         "summary": "Apply a ready preview: its albums are written one at a time in the\nbackground. Watch the operation for progress.",
         "operationId": "apply_management_preview",
@@ -11066,7 +11066,7 @@
     "/api/v3/library/management/previews/{job_id}/discard": {
       "post": {
         "tags": [
-          "crate::library::http::management"
+          "library management"
         ],
         "summary": "Set a preview aside without changing any file.",
         "operationId": "discard_management_preview",
@@ -11123,7 +11123,7 @@
     "/api/v3/library/management/previews/{job_id}/items": {
       "get": {
         "tags": [
-          "crate::library::http::management"
+          "library management"
         ],
         "summary": "A page of the files a preview planned.",
         "operationId": "list_management_preview_items",
@@ -11237,7 +11237,7 @@
     "/api/v3/library/management/previews/{job_id}/items/{ordinal}/artwork/{sha256}": {
       "get": {
         "tags": [
-          "crate::library::http::management"
+          "library management"
         ],
         "summary": "The cover art one planned file embeds or writes, as the preview lists\nit by hash.",
         "operationId": "get_management_preview_artwork",
@@ -11293,7 +11293,7 @@
     "/api/v3/library/management/previews/{job_id}/reissue": {
       "post": {
         "tags": [
-          "crate::library::http::management"
+          "library management"
         ],
         "summary": "A new confirmation token for your own ready preview (the old one\nstops working).",
         "operationId": "reissue_management_preview",
@@ -11337,7 +11337,7 @@
     "/api/v3/library/management/recovery/diagnostics": {
       "get": {
         "tags": [
-          "crate::library::http::management_tools"
+          "library management"
         ],
         "summary": "What the publish journal holds, and the writes that need you.",
         "operationId": "get_management_recovery_diagnostics",
@@ -11364,7 +11364,7 @@
     "/api/v3/library/management/recovery/import-bundles/{bundle_id}/resolve": {
       "post": {
         "tags": [
-          "crate::library::http::management_tools"
+          "library management"
         ],
         "summary": "Close a write that needs attention once its files check out. Nothing\non disk changes.",
         "operationId": "resolve_management_bundle",
@@ -11408,7 +11408,7 @@
     "/api/v3/library/management/tag-edit-previews": {
       "post": {
         "tags": [
-          "crate::library::http::management_tools"
+          "library management"
         ],
         "summary": "Preview a tag edit; apply it like any preview.",
         "operationId": "create_management_tag_edit_preview",
@@ -11454,7 +11454,7 @@
     "/api/v3/library/management/takeovers": {
       "get": {
         "tags": [
-          "crate::library::http::management_tools"
+          "library management"
         ],
         "summary": "Albums left unmanaged because their files were changed outside\nDroppedNeedle and that nobody has handed back yet, newest first.",
         "operationId": "list_management_takeovers",
@@ -11481,7 +11481,7 @@
     "/api/v3/library/management/tracks/{track_id}/tag-editor": {
       "get": {
         "tags": [
-          "crate::library::http::management_tools"
+          "library management"
         ],
         "summary": "The tag editor for one file.",
         "operationId": "get_management_tag_editor",
@@ -11525,7 +11525,7 @@
     "/api/v3/library/mbids": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "Every MusicBrainz release group the library holds, and every album\nwith an open request.",
         "operationId": "album_mbids",
@@ -11549,7 +11549,7 @@
     "/api/v3/library/membership": {
       "post": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "Which MusicBrainz album ids the library holds or has requested.",
         "operationId": "membership",
@@ -11586,7 +11586,7 @@
     "/api/v3/library/operations/{job_id}": {
       "get": {
         "tags": [
-          "crate::library::http::operations"
+          "library management"
         ],
         "summary": "Get one operation job with its results and candidates.",
         "operationId": "get_operation",
@@ -11627,7 +11627,7 @@
     "/api/v3/library/operations/{job_id}/candidate": {
       "post": {
         "tags": [
-          "crate::library::http::operations"
+          "library management"
         ],
         "summary": "Settle a re-identification: seal a candidate's exact release, seal a\ncustom edition, or leave the album unmanaged.",
         "operationId": "select_reidentification_candidate",
@@ -11684,7 +11684,7 @@
     "/api/v3/library/operations/{job_id}/pause": {
       "post": {
         "tags": [
-          "crate::library::http::operations"
+          "library management"
         ],
         "summary": "Pause a job. A running job pauses at its next checkpoint.",
         "operationId": "pause_operation",
@@ -11741,7 +11741,7 @@
     "/api/v3/library/operations/{job_id}/resume": {
       "post": {
         "tags": [
-          "crate::library::http::operations"
+          "library management"
         ],
         "summary": "Resume a paused or stopped job, or one that failed while MusicBrainz\nwas down.",
         "operationId": "resume_operation",
@@ -11798,7 +11798,7 @@
     "/api/v3/library/operations/{job_id}/stop": {
       "post": {
         "tags": [
-          "crate::library::http::operations"
+          "library management"
         ],
         "summary": "Stop a job. A running job stops at its next checkpoint.",
         "operationId": "stop_operation",
@@ -11855,7 +11855,7 @@
     "/api/v3/library/recently-added": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "Newest albums first, capped.",
         "operationId": "list_recently_added",
@@ -11894,7 +11894,7 @@
     "/api/v3/library/resolve-tracks": {
       "post": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "Resolve track positions to playable local files.",
         "operationId": "resolve_tracks",
@@ -11931,7 +11931,7 @@
     "/api/v3/library/retag-pairs": {
       "get": {
         "tags": [
-          "crate::library::http::corrections"
+          "library management"
         ],
         "summary": "List album rows that look like one retagged album and wait for a\nperson to join or dismiss them.",
         "operationId": "list_retag_pairs",
@@ -11958,7 +11958,7 @@
     "/api/v3/library/retag-pairs/{old_album_id}/{new_album_id}/dismiss": {
       "post": {
         "tags": [
-          "crate::library::http::corrections"
+          "library management"
         ],
         "summary": "Mark a retag pair as two different albums. A scan never joins it then.",
         "operationId": "dismiss_retag_pair",
@@ -12008,7 +12008,7 @@
     "/api/v3/library/retag-pairs/{old_album_id}/{new_album_id}/join": {
       "post": {
         "tags": [
-          "crate::library::http::corrections"
+          "library management"
         ],
         "summary": "Join a retag pair: the old album is merged into the new one. A custom\nedition on the old album is dropped, and so is the edition not kept\nwhen the two hold different chosen editions; each leaves a review on\nthe album that stays. No file is written.",
         "operationId": "join_retag_pair",
@@ -12074,7 +12074,7 @@
     "/api/v3/library/reviews": {
       "get": {
         "tags": [
-          "crate::library::http::reviews"
+          "library management"
         ],
         "summary": "Identification reviews, most recently changed first.",
         "operationId": "list_reviews",
@@ -12254,7 +12254,7 @@
     "/api/v3/library/reviews/bulk-apply": {
       "post": {
         "tags": [
-          "crate::library::http::reviews"
+          "library management"
         ],
         "summary": "Apply a previewed bulk change. Refused when the selection changed\nsince the preview.",
         "operationId": "apply_bulk_reviews",
@@ -12297,7 +12297,7 @@
     "/api/v3/library/reviews/bulk-preview": {
       "post": {
         "tags": [
-          "crate::library::http::reviews"
+          "library management"
         ],
         "summary": "Preview a bulk change: how many reviews it changes, which it skips and\nwhy, and the token that applies exactly this change.",
         "operationId": "preview_bulk_reviews",
@@ -12337,7 +12337,7 @@
     "/api/v3/library/reviews/retry-pending": {
       "post": {
         "tags": [
-          "crate::library::http::reviews"
+          "library management"
         ],
         "summary": "Start identification again for every pending review a filter selects\n(all of them by default), or with `preview` count what would start.\nReviews whose album cannot start stay open and are counted by reason.",
         "operationId": "retry_pending_reviews",
@@ -12374,7 +12374,7 @@
     "/api/v3/library/reviews/{id}": {
       "get": {
         "tags": [
-          "crate::library::http::reviews"
+          "library management"
         ],
         "summary": "One review with its candidates.",
         "operationId": "get_review",
@@ -12412,7 +12412,7 @@
     "/api/v3/library/reviews/{id}/approve": {
       "post": {
         "tags": [
-          "crate::library::http::reviews"
+          "library management"
         ],
         "summary": "Approve a review with the curator's chosen candidate.",
         "operationId": "approve_review",
@@ -12469,7 +12469,7 @@
     "/api/v3/library/reviews/{id}/detach": {
       "post": {
         "tags": [
-          "crate::library::http::reviews"
+          "library management"
         ],
         "summary": "Take the album's MusicBrainz match off and keep its own tags. The\nalbum shows as unmatched, and the change can be undone from the album\nlike an edition choice.",
         "operationId": "detach_review",
@@ -12513,7 +12513,7 @@
     "/api/v3/library/reviews/{id}/dismiss": {
       "post": {
         "tags": [
-          "crate::library::http::reviews"
+          "library management"
         ],
         "summary": "Close a review without a decision. The album stays as it is.",
         "operationId": "dismiss_review",
@@ -12557,7 +12557,7 @@
     "/api/v3/library/reviews/{id}/exclude": {
       "post": {
         "tags": [
-          "crate::library::http::reviews"
+          "library management"
         ],
         "summary": "Take the album's files out of the library. Nothing is deleted; scans\nkeep the files out until the review is restored.",
         "operationId": "exclude_review",
@@ -12601,7 +12601,7 @@
     "/api/v3/library/reviews/{id}/reject": {
       "post": {
         "tags": [
-          "crate::library::http::reviews"
+          "library management"
         ],
         "summary": "Reject a review: the album keeps its tags, nothing seals.",
         "operationId": "reject_review",
@@ -12645,7 +12645,7 @@
     "/api/v3/library/reviews/{id}/restore": {
       "post": {
         "tags": [
-          "crate::library::http::reviews"
+          "library management"
         ],
         "summary": "Put an excluded album's files back into the library.",
         "operationId": "restore_review",
@@ -12689,7 +12689,7 @@
     "/api/v3/library/reviews/{id}/retry": {
       "post": {
         "tags": [
-          "crate::library::http::reviews"
+          "library management"
         ],
         "summary": "Start identification again for the review's album. The new job\ncarries the decision, so the review is dismissed.",
         "operationId": "retry_review",
@@ -12743,7 +12743,7 @@
     "/api/v3/library/roots": {
       "get": {
         "tags": [
-          "crate::library::http::handlers"
+          "library management"
         ],
         "summary": "List library roots.",
         "operationId": "list_roots",
@@ -12765,7 +12765,7 @@
       },
       "post": {
         "tags": [
-          "crate::library::http::handlers"
+          "library management"
         ],
         "summary": "Add a library root. Adding the first root enables the library.",
         "operationId": "add_root",
@@ -12808,7 +12808,7 @@
     "/api/v3/library/scan": {
       "post": {
         "tags": [
-          "crate::library::http::handlers"
+          "library management"
         ],
         "summary": "Trigger a manual scan over one root or every scheduled root.",
         "operationId": "trigger_scan",
@@ -12854,7 +12854,7 @@
     "/api/v3/library/scan/runs": {
       "get": {
         "tags": [
-          "crate::library::http::handlers"
+          "library management"
         ],
         "summary": "List current plus recent scan runs.",
         "operationId": "list_runs",
@@ -12876,7 +12876,7 @@
       },
       "post": {
         "tags": [
-          "crate::library::http::scan"
+          "library management"
         ],
         "summary": "Request a scan by kind over chosen roots and path rules.",
         "operationId": "request_scan_run",
@@ -12919,7 +12919,7 @@
     "/api/v3/library/scan/runs/current": {
       "get": {
         "tags": [
-          "crate::library::http::scan"
+          "library management"
         ],
         "summary": "The run holding the scan worker and the next queued one.",
         "operationId": "current_scan_runs",
@@ -12946,7 +12946,7 @@
     "/api/v3/library/scan/runs/estimate": {
       "get": {
         "tags": [
-          "crate::library::http::scan"
+          "library management"
         ],
         "summary": "Roughly how many files a scan over the chosen scopes would read.",
         "operationId": "estimate_scan_run",
@@ -12991,7 +12991,7 @@
     "/api/v3/library/scan/runs/history": {
       "get": {
         "tags": [
-          "crate::library::http::scan"
+          "library management"
         ],
         "summary": "Finished runs, newest first, a page at a time.",
         "operationId": "scan_run_history",
@@ -13042,7 +13042,7 @@
     "/api/v3/library/scan/runs/{id}": {
       "get": {
         "tags": [
-          "crate::library::http::handlers"
+          "library management"
         ],
         "summary": "Get one scan run with its scopes and discovered files.",
         "operationId": "get_run",
@@ -13080,7 +13080,7 @@
     "/api/v3/library/scan/runs/{id}/diagnostics": {
       "get": {
         "tags": [
-          "crate::library::http::repairs"
+          "library management"
         ],
         "operationId": "scan_diagnostics",
         "parameters": [
@@ -13123,7 +13123,7 @@
     "/api/v3/library/scan/runs/{id}/failures": {
       "get": {
         "tags": [
-          "crate::library::http::scan"
+          "library management"
         ],
         "summary": "Paths one run could not read or index, oldest first.",
         "operationId": "scan_run_failures",
@@ -13184,7 +13184,7 @@
     "/api/v3/library/scan/runs/{id}/pause": {
       "post": {
         "tags": [
-          "crate::library::http::scan"
+          "library management"
         ],
         "summary": "Pause a running scan at its next checkpoint.",
         "operationId": "pause_scan_run",
@@ -13238,7 +13238,7 @@
     "/api/v3/library/scan/runs/{id}/resume": {
       "post": {
         "tags": [
-          "crate::library::http::scan"
+          "library management"
         ],
         "summary": "Resume a paused scan where it stopped.",
         "operationId": "resume_scan_run",
@@ -13292,7 +13292,7 @@
     "/api/v3/library/scan/runs/{id}/stop": {
       "post": {
         "tags": [
-          "crate::library::http::scan"
+          "library management"
         ],
         "summary": "Stop a scan. What it already indexed stays.",
         "operationId": "stop_scan_run",
@@ -13346,7 +13346,7 @@
     "/api/v3/library/stats": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "Library totals plus the caller's favorite counts.",
         "operationId": "get_stats",
@@ -13370,7 +13370,7 @@
     "/api/v3/library/tracks": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "One page of streamable tracks.",
         "operationId": "list_tracks",
@@ -13473,7 +13473,7 @@
     "/api/v3/library/tracks/move": {
       "post": {
         "tags": [
-          "crate::library::http::corrections"
+          "library management"
         ],
         "summary": "Move selected tracks onto the target album.",
         "operationId": "apply_track_move",
@@ -13519,7 +13519,7 @@
     "/api/v3/library/tracks/move-preview": {
       "post": {
         "tags": [
-          "crate::library::http::corrections"
+          "library management"
         ],
         "summary": "Preview moving selected tracks onto the target album.",
         "operationId": "preview_track_move",
@@ -13565,7 +13565,7 @@
     "/api/v3/library/tracks/{id}": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "One streamable track.",
         "operationId": "get_track",
@@ -13601,7 +13601,7 @@
       },
       "delete": {
         "tags": [
-          "crate::library::http::mutations"
+          "library management"
         ],
         "summary": "Remove one track. Its file moves into the recycle bin unless\n`delete_file=false`.",
         "operationId": "remove_track",
@@ -13657,7 +13657,7 @@
     "/api/v3/library/tracks/{id}/lyrics": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "Stored lyrics for one track.",
         "operationId": "get_lyrics",
@@ -13695,7 +13695,7 @@
     "/api/v3/library/tracks/{id}/tags": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "The tags in one track's file on disk (admins only).",
         "operationId": "track_tags",
@@ -13739,7 +13739,7 @@
     "/api/v3/library/unconfirmed": {
       "get": {
         "tags": [
-          "crate::library::http::edition"
+          "library management"
         ],
         "summary": "Albums whose match is a best guess waiting for a look (or, with\n`state=unmatched`, albums nothing fits). Newest first.",
         "operationId": "list_unconfirmed",
@@ -13797,7 +13797,7 @@
     "/api/v3/local-library/albums": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "Album-card browse for the local library.",
         "operationId": "browse_albums",
@@ -13883,7 +13883,7 @@
     "/api/v3/local-library/albums/match/{mbid}": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "One page of an album's streamable tracks by release-group mbid or\nlocal album id.",
         "operationId": "match_album",
@@ -13944,7 +13944,7 @@
     "/api/v3/local-library/decades": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "Decade shelves, oldest first.",
         "operationId": "list_decades",
@@ -13968,7 +13968,7 @@
     "/api/v3/local-library/recent": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "Newest album cards first, capped.",
         "operationId": "recent_albums",
@@ -14010,7 +14010,7 @@
     "/api/v3/local-library/search": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "Album plus track search.",
         "operationId": "search_library",
@@ -14058,7 +14058,7 @@
     "/api/v3/local-library/suggestions": {
       "get": {
         "tags": [
-          "crate::reads::library::handlers"
+          "library"
         ],
         "summary": "Reason-tagged track suggestions.",
         "operationId": "list_suggestions",
@@ -14107,7 +14107,7 @@
     "/api/v3/me": {
       "get": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Profile of the caller.",
         "operationId": "get_profile",
@@ -14126,7 +14126,7 @@
       },
       "patch": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Change the caller's display name.",
         "operationId": "patch_profile",
@@ -14157,7 +14157,7 @@
     "/api/v3/me/app-passwords": {
       "get": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Caller's app passwords.",
         "operationId": "list_app_passwords",
@@ -14176,7 +14176,7 @@
       },
       "post": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Create an app password. The secret returns once.",
         "operationId": "create_app_password",
@@ -14207,7 +14207,7 @@
     "/api/v3/me/app-passwords/{id}": {
       "delete": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Revoke one own app password.",
         "operationId": "revoke_app_password",
@@ -14232,7 +14232,7 @@
     "/api/v3/me/avatar": {
       "post": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Upload a new avatar from base64 bytes.",
         "operationId": "post_avatar",
@@ -14263,7 +14263,7 @@
     "/api/v3/me/connections": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "The caller's linked accounts across every service.",
         "operationId": "me_list_connections",
@@ -14284,7 +14284,7 @@
     "/api/v3/me/connections/lastfm": {
       "get": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Per-user Last.fm link status.",
         "operationId": "lastfm_status",
@@ -14303,7 +14303,7 @@
       },
       "put": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Store the caller's own Last.fm API credentials.",
         "operationId": "lastfm_set_credentials",
@@ -14332,7 +14332,7 @@
       },
       "delete": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Unlink Last.fm (drops credentials and session).",
         "operationId": "lastfm_unlink",
@@ -14346,7 +14346,7 @@
     "/api/v3/me/connections/lastfm/session": {
       "post": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Exchange an approved token for a linked session.",
         "operationId": "lastfm_session",
@@ -14377,7 +14377,7 @@
     "/api/v3/me/connections/lastfm/token": {
       "post": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Fetch a Last.fm sign-in token plus approval URL.",
         "operationId": "lastfm_token",
@@ -14398,7 +14398,7 @@
     "/api/v3/me/connections/listenbrainz": {
       "get": {
         "tags": [
-          "crate::plugins::handlers"
+          "plugins"
         ],
         "summary": "Read the caller's ListenBrainz link status. Unlinked reads as missing.",
         "operationId": "listenbrainz_status",
@@ -14423,7 +14423,7 @@
       },
       "put": {
         "tags": [
-          "crate::plugins::handlers"
+          "plugins"
         ],
         "summary": "Link the caller's ListenBrainz account. The credential verifies first;\nonly a verified pair stores.",
         "operationId": "connect_listenbrainz_route",
@@ -14461,7 +14461,7 @@
       },
       "delete": {
         "tags": [
-          "crate::plugins::handlers"
+          "plugins"
         ],
         "summary": "Remove the caller's ListenBrainz link.",
         "operationId": "disconnect_listenbrainz_route",
@@ -14488,7 +14488,7 @@
     "/api/v3/me/connections/spotify": {
       "delete": {
         "tags": [
-          "crate::acquire::imports::handlers"
+          "imports"
         ],
         "summary": "Unlink the caller's Spotify account (v2 `DELETE /me/connections/spotify`).\nIdempotent: no link reads as done too.",
         "operationId": "disconnect_spotify",
@@ -14505,7 +14505,7 @@
     "/api/v3/me/email": {
       "put": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Set or clear the caller's email.",
         "operationId": "put_email",
@@ -14536,7 +14536,7 @@
     "/api/v3/me/local-password": {
       "post": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Set the first local password on an account without one.",
         "operationId": "post_local_password",
@@ -14567,7 +14567,7 @@
     "/api/v3/me/password": {
       "post": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Change the caller's password.",
         "operationId": "post_password",
@@ -14598,7 +14598,7 @@
     "/api/v3/me/scrobble-preferences": {
       "get": {
         "tags": [
-          "crate::plugins::handlers"
+          "plugins"
         ],
         "summary": "Read the caller's scrobble preferences.",
         "operationId": "get_scrobble_preferences",
@@ -14620,7 +14620,7 @@
       },
       "put": {
         "tags": [
-          "crate::plugins::handlers"
+          "plugins"
         ],
         "summary": "Update the caller's scrobble preferences. Absent fields keep their\nstored values.",
         "operationId": "update_scrobble_preferences",
@@ -14657,7 +14657,7 @@
     "/api/v3/me/section-prefs": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the caller's section visibility prefs (all three pages).",
         "operationId": "get_section_prefs",
@@ -14676,7 +14676,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Replace one page of the caller's section prefs. Unknown pages and\nunknown keys are a 400; only the updated page is returned.",
         "operationId": "put_section_prefs",
@@ -14710,7 +14710,7 @@
     "/api/v3/me/username": {
       "put": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Rename the caller.",
         "operationId": "put_username",
@@ -14741,7 +14741,7 @@
     "/api/v3/now-playing": {
       "get": {
         "tags": [
-          "crate::playback::handlers"
+          "playback"
         ],
         "summary": "The live now-playing snapshot across users.",
         "operationId": "now_playing",
@@ -14763,7 +14763,7 @@
       },
       "post": {
         "tags": [
-          "crate::playback::handlers"
+          "playback"
         ],
         "summary": "Record a native heartbeat (upsert presence).",
         "operationId": "heartbeat",
@@ -14791,7 +14791,7 @@
       },
       "delete": {
         "tags": [
-          "crate::playback::handlers"
+          "playback"
         ],
         "summary": "Clear one native device (stop presence).",
         "operationId": "clear_now_playing",
@@ -14822,7 +14822,7 @@
     "/api/v3/playback/progress": {
       "post": {
         "tags": [
-          "crate::playback::handlers"
+          "playback"
         ],
         "summary": "Record a heartbeat for a live session.",
         "operationId": "report_progress",
@@ -14862,7 +14862,7 @@
     "/api/v3/playback/start": {
       "post": {
         "tags": [
-          "crate::playback::handlers"
+          "playback"
         ],
         "summary": "Open a playback session for one catalog track.",
         "operationId": "start_playback",
@@ -14902,7 +14902,7 @@
     "/api/v3/playback/stop": {
       "post": {
         "tags": [
-          "crate::playback::handlers"
+          "playback"
         ],
         "summary": "Close a session, counting the play past threshold.",
         "operationId": "stop_playback",
@@ -15654,7 +15654,7 @@
     "/api/v3/plugins": {
       "get": {
         "tags": [
-          "crate::plugins::handlers"
+          "plugins"
         ],
         "summary": "List every discovered plugin, secrets masked.",
         "operationId": "list_plugins",
@@ -15681,7 +15681,7 @@
     "/api/v3/plugins/ext/{name}/{subpath}": {
       "get": {
         "tags": [
-          "crate::plugins::handlers"
+          "plugins"
         ],
         "summary": "Serve one declared plugin GET route.",
         "operationId": "plugin_ext_get",
@@ -15725,7 +15725,7 @@
       },
       "post": {
         "tags": [
-          "crate::plugins::handlers"
+          "plugins"
         ],
         "summary": "Serve one declared plugin POST route.",
         "operationId": "plugin_ext_post",
@@ -15772,7 +15772,7 @@
       },
       "delete": {
         "tags": [
-          "crate::plugins::handlers"
+          "plugins"
         ],
         "summary": "Serve one declared plugin DELETE route.",
         "operationId": "plugin_ext_delete",
@@ -15818,7 +15818,7 @@
     "/api/v3/plugins/install": {
       "post": {
         "tags": [
-          "crate::plugins::handlers"
+          "plugins"
         ],
         "summary": "Install a plugin from a public GitHub repository, pinned to an exact\ncommit. The code is stored, never run: the plugin arrives disabled and\nan admin must enable it. Reinstalling over an installed plugin replaces\nits code and keeps its settings.",
         "operationId": "install_plugin",
@@ -15867,7 +15867,7 @@
     "/api/v3/plugins/install/preview": {
       "post": {
         "tags": [
-          "crate::plugins::handlers"
+          "plugins"
         ],
         "summary": "Show what installing a repository would bring in: the manifest, the\npermissions it asks for, the exact commit, and the trust warning.\nDownloads and validates; writes nothing.",
         "operationId": "preview_plugin_install",
@@ -15913,7 +15913,7 @@
     "/api/v3/plugins/sources": {
       "get": {
         "tags": [
-          "crate::plugins::handlers"
+          "plugins"
         ],
         "summary": "List enabled plugin acquisition sources. Any authenticated user may\nread this; only admins manage plugins.",
         "operationId": "list_plugin_sources",
@@ -15937,7 +15937,7 @@
     "/api/v3/plugins/{name}": {
       "put": {
         "tags": [
-          "crate::plugins::handlers"
+          "plugins"
         ],
         "summary": "Save one plugin's enable switch plus its settings.",
         "operationId": "update_plugin",
@@ -15989,7 +15989,7 @@
       },
       "delete": {
         "tags": [
-          "crate::plugins::handlers"
+          "plugins"
         ],
         "summary": "Remove one plugin's folder. Its saved settings stay in config, so a\nreinstall picks them back up.",
         "operationId": "uninstall_plugin",
@@ -16030,7 +16030,7 @@
     "/api/v3/plugins/{name}/ui/panel": {
       "get": {
         "tags": [
-          "crate::plugins::handlers"
+          "plugins"
         ],
         "summary": "Serve one enabled plugin's settings panel as a page for the admin UI to\nframe: a fixed wrapper with the plugin's panel script inlined. Admin-only.\nThe entry path resolves inside the plugin's own directory; anything\nescaping it reads as missing.",
         "operationId": "plugin_panel_page",
@@ -16070,7 +16070,7 @@
     "/api/v3/plugins/{name}/update": {
       "post": {
         "tags": [
-          "crate::plugins::handlers"
+          "plugins"
         ],
         "summary": "Update one installed plugin from the GitHub repository it came from.\nA plugin installed from releases moves to the latest release; a pinned\none moves only when a new ref is given. Settings and data stay.",
         "operationId": "update_plugin_from_source",
@@ -16133,7 +16133,7 @@
     "/api/v3/remotes/navidrome/folders": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Navidrome folder preference resolution for the caller.",
         "operationId": "remotes_get_navidrome_folders",
@@ -16152,7 +16152,7 @@
       },
       "put": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Save the Navidrome folder preference.",
         "operationId": "remotes_put_navidrome_folders",
@@ -16183,7 +16183,7 @@
     "/api/v3/remotes/{source}/albums": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "One page of albums.",
         "operationId": "remotes_list_albums",
@@ -16308,7 +16308,7 @@
     "/api/v3/remotes/{source}/albums/{id}": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "One album by id.",
         "operationId": "remotes_get_album",
@@ -16349,7 +16349,7 @@
     "/api/v3/remotes/{source}/albums/{id}/tracks": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Tracks of one album.",
         "operationId": "remotes_list_album_tracks",
@@ -16390,7 +16390,7 @@
     "/api/v3/remotes/{source}/analytics": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Listening analytics over the history (Plex).",
         "operationId": "remotes_get_analytics",
@@ -16422,7 +16422,7 @@
     "/api/v3/remotes/{source}/artists": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "One page of artists.",
         "operationId": "remotes_list_artists",
@@ -16501,7 +16501,7 @@
     "/api/v3/remotes/{source}/artists/index": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Full alphabetic artist index.",
         "operationId": "remotes_get_artist_index",
@@ -16533,7 +16533,7 @@
     "/api/v3/remotes/{source}/artists/{id}": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "One artist by id.",
         "operationId": "remotes_get_artist",
@@ -16574,7 +16574,7 @@
     "/api/v3/remotes/{source}/connection": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Connection status for one source. Never carries credential material.",
         "operationId": "remotes_get_connection",
@@ -16604,7 +16604,7 @@
       },
       "put": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Link the caller's own Navidrome or Jellyfin account. The password is\nchecked against the server first and never echoed.",
         "operationId": "remotes_put_connection",
@@ -16644,7 +16644,7 @@
       },
       "delete": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Remove the caller's own link for one source.",
         "operationId": "remotes_delete_connection",
@@ -16676,7 +16676,7 @@
     "/api/v3/remotes/{source}/covers/playlists/{id}": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Playlist cover bytes. Never cached: playlist art follows membership.",
         "operationId": "remotes_get_playlist_cover",
@@ -16720,7 +16720,7 @@
     "/api/v3/remotes/{source}/discovery": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Discovery shelves (Plex).",
         "operationId": "remotes_get_discovery",
@@ -16762,7 +16762,7 @@
     "/api/v3/remotes/{source}/favorites": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Favorite artists, albums, and tracks.",
         "operationId": "remotes_get_favorites",
@@ -16804,7 +16804,7 @@
     "/api/v3/remotes/{source}/filters": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Album filter facets (Jellyfin).",
         "operationId": "remotes_get_filters",
@@ -16836,7 +16836,7 @@
     "/api/v3/remotes/{source}/genres": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Genre labels.",
         "operationId": "remotes_list_genres",
@@ -16871,7 +16871,7 @@
     "/api/v3/remotes/{source}/genres/songs": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Tracks carrying one genre label.",
         "operationId": "remotes_list_genre_songs",
@@ -16941,7 +16941,7 @@
     "/api/v3/remotes/{source}/history": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Listening history, newest first.",
         "operationId": "remotes_list_history",
@@ -16993,7 +16993,7 @@
     "/api/v3/remotes/{source}/hub": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Hub highlights for one source.",
         "operationId": "remotes_get_hub",
@@ -17025,7 +17025,7 @@
     "/api/v3/remotes/{source}/images/{id}": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Item image bytes. Immutable and cacheable for a year: image URLs carry\nthe upstream tag, so a new tag is a new URL.",
         "operationId": "remotes_get_image",
@@ -17069,7 +17069,7 @@
     "/api/v3/remotes/{source}/info/albums/{id}": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Album info passthrough.",
         "operationId": "remotes_get_album_info",
@@ -17110,7 +17110,7 @@
     "/api/v3/remotes/{source}/info/artists/{id}": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Artist info passthrough.",
         "operationId": "remotes_get_artist_info",
@@ -17151,7 +17151,7 @@
     "/api/v3/remotes/{source}/lyrics/{id}": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Lyrics for one track.",
         "operationId": "remotes_get_lyrics",
@@ -17210,7 +17210,7 @@
     "/api/v3/remotes/{source}/match": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "The remote album behind a MusicBrainz id.",
         "operationId": "remotes_match_album",
@@ -17251,7 +17251,7 @@
     "/api/v3/remotes/{source}/mix/{id}": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Instant mix for an item, artist, or genre id (Jellyfin).",
         "operationId": "remotes_get_mix",
@@ -17311,7 +17311,7 @@
     "/api/v3/remotes/{source}/moods": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Mood labels (Plex).",
         "operationId": "remotes_list_moods",
@@ -17346,7 +17346,7 @@
     "/api/v3/remotes/{source}/most-played/albums": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Most-played albums (Jellyfin).",
         "operationId": "remotes_list_most_played_albums",
@@ -17391,7 +17391,7 @@
     "/api/v3/remotes/{source}/most-played/artists": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Most-played artists (Jellyfin).",
         "operationId": "remotes_list_most_played_artists",
@@ -17436,7 +17436,7 @@
     "/api/v3/remotes/{source}/playlists": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "The caller's playlists on the server.",
         "operationId": "remotes_list_playlists",
@@ -17468,7 +17468,7 @@
     "/api/v3/remotes/{source}/playlists/{id}": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "One playlist with its tracks.",
         "operationId": "remotes_get_playlist",
@@ -17509,7 +17509,7 @@
     "/api/v3/remotes/{source}/playlists/{id}/import": {
       "post": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Import one remote playlist into the caller's playlists.",
         "operationId": "remotes_import_playlist",
@@ -17550,7 +17550,7 @@
     "/api/v3/remotes/{source}/random": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Random tracks, optionally filtered by genre. Limits mirror the v2\nNavidrome route (default 20, max 50); Plex answers unsupported.",
         "operationId": "remotes_list_random",
@@ -17601,7 +17601,7 @@
     "/api/v3/remotes/{source}/recent": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Recently played albums.",
         "operationId": "remotes_list_recent",
@@ -17656,7 +17656,7 @@
     "/api/v3/remotes/{source}/recently-added": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Recently added albums.",
         "operationId": "remotes_list_recently_added",
@@ -17711,7 +17711,7 @@
     "/api/v3/remotes/{source}/search": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Unified search across artists, albums, and tracks.",
         "operationId": "remotes_search",
@@ -17762,7 +17762,7 @@
     "/api/v3/remotes/{source}/sessions": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Active audio sessions.",
         "operationId": "remotes_list_sessions",
@@ -17794,7 +17794,7 @@
     "/api/v3/remotes/{source}/similar/{id}": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Tracks similar to one track.",
         "operationId": "remotes_list_similar",
@@ -17855,7 +17855,7 @@
     "/api/v3/remotes/{source}/stats": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Library totals for one source.",
         "operationId": "remotes_get_stats",
@@ -17887,7 +17887,7 @@
     "/api/v3/remotes/{source}/top/{artist}": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "Top songs for one artist name.",
         "operationId": "remotes_list_top_songs",
@@ -17948,7 +17948,7 @@
     "/api/v3/remotes/{source}/tracks": {
       "get": {
         "tags": [
-          "crate::remotes::handlers"
+          "remotes"
         ],
         "summary": "One page of tracks.",
         "operationId": "remotes_list_tracks",
@@ -18036,7 +18036,7 @@
     "/api/v3/requests/active": {
       "get": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Live asks. `GET /api/v3/requests/active`. Admins see every row.",
         "operationId": "active_handler",
@@ -18057,7 +18057,7 @@
     "/api/v3/requests/active/count": {
       "get": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Live-ask count. `GET /api/v3/requests/active/count`.",
         "operationId": "active_count_handler",
@@ -18078,7 +18078,7 @@
     "/api/v3/requests/active/{musicbrainz_id}": {
       "delete": {
         "tags": [
-          "crate::acquire::requests::intake"
+          "requests"
         ],
         "summary": "Cancel one ask. `DELETE /api/v3/requests/active/{musicbrainz_id}`.\nCo-requesters detach with the shared row continuing; owners cancel.",
         "operationId": "cancel_one_handler",
@@ -18110,7 +18110,7 @@
     "/api/v3/requests/albums": {
       "post": {
         "tags": [
-          "crate::acquire::requests::intake"
+          "requests"
         ],
         "summary": "Ask for one album. `POST /api/v3/requests/albums`. Users wait for\napproval; curators dispatch at once. Duplicate asks attach to the live\nrow and report its status. Answers 202.",
         "operationId": "request_album_handler",
@@ -18141,7 +18141,7 @@
     "/api/v3/requests/approvals": {
       "get": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Rows waiting for review. `GET /api/v3/requests/approvals`. Admin only.",
         "operationId": "approvals_handler",
@@ -18162,7 +18162,7 @@
     "/api/v3/requests/approvals/count": {
       "get": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Pending-review badge count across all three queues.\n`GET /api/v3/requests/approvals/count`. Admin only.",
         "operationId": "approvals_count_handler",
@@ -18183,7 +18183,7 @@
     "/api/v3/requests/approvals/{musicbrainz_id}/approve": {
       "post": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Approve one waiting ask and dispatch it.\n`POST /api/v3/requests/approvals/{musicbrainz_id}/approve`. Admin only.",
         "operationId": "approve_handler",
@@ -18215,7 +18215,7 @@
     "/api/v3/requests/approvals/{musicbrainz_id}/reject": {
       "post": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Reject one waiting ask.\n`POST /api/v3/requests/approvals/{musicbrainz_id}/reject`. Admin only.",
         "operationId": "reject_handler",
@@ -18274,7 +18274,7 @@
     "/api/v3/requests/auto-download-approval-batches/{batch_id}/approve": {
       "post": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Approve one bulk batch.\n`POST /api/v3/requests/auto-download-approval-batches/{batch_id}/approve`.\nAdmin only.",
         "operationId": "approve_auto_download_batch_handler",
@@ -18306,7 +18306,7 @@
     "/api/v3/requests/auto-download-approval-batches/{batch_id}/reject": {
       "post": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Reject one bulk batch.\n`POST /api/v3/requests/auto-download-approval-batches/{batch_id}/reject`.\nAdmin only.",
         "operationId": "reject_auto_download_batch_handler",
@@ -18365,7 +18365,7 @@
     "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/approve": {
       "post": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Approve one auto-download grant.\n`POST /api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/approve`.\nAdmin only.",
         "operationId": "approve_auto_download_handler",
@@ -18406,7 +18406,7 @@
     "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/reject": {
       "post": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Reject one auto-download ask, keeping the follow.\n`POST /api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/reject`.\nAdmin only.",
         "operationId": "reject_auto_download_handler",
@@ -18447,7 +18447,7 @@
     "/api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/revoke": {
       "post": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Revoke one auto-download grant, keeping the follow.\n`POST /api/v3/requests/auto-download-approvals/{user_id}/{artist_mbid}/revoke`.\nAdmin only.",
         "operationId": "revoke_auto_download_handler",
@@ -18488,7 +18488,7 @@
     "/api/v3/requests/batches": {
       "post": {
         "tags": [
-          "crate::acquire::requests::intake"
+          "requests"
         ],
         "summary": "Ask for a batch of albums. `POST /api/v3/requests/batches`. At most 500\nrows; dupes, live rows, and unresolvable rows skip. Answers 202.",
         "operationId": "request_batch_handler",
@@ -18519,7 +18519,7 @@
     "/api/v3/requests/batches/cancel": {
       "post": {
         "tags": [
-          "crate::acquire::requests::intake"
+          "requests"
         ],
         "summary": "Cancel a batch of asks. `POST /api/v3/requests/batches/cancel`.\nNon-admins detach from shared rows and cancel their own; admins cancel\nanything live.",
         "operationId": "cancel_batch_handler",
@@ -18550,7 +18550,7 @@
     "/api/v3/requests/history": {
       "get": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Paged history. `GET /api/v3/requests/history`. Admins see every row.",
         "operationId": "history_handler",
@@ -18571,7 +18571,7 @@
     "/api/v3/requests/history/{musicbrainz_id}": {
       "delete": {
         "tags": [
-          "crate::acquire::requests::intake"
+          "requests"
         ],
         "summary": "Clear one history row. `DELETE /api/v3/requests/history/{musicbrainz_id}`.\nAdmins delete the row; users dismiss it from their own view.",
         "operationId": "clear_history_handler",
@@ -18603,7 +18603,7 @@
     "/api/v3/requests/personal-mix-approvals": {
       "get": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Pending personal-mix approvals.\n`GET /api/v3/requests/personal-mix-approvals`. Admin only.",
         "operationId": "mix_approvals_handler",
@@ -18624,7 +18624,7 @@
     "/api/v3/requests/personal-mix-approvals/{user_id}/approve": {
       "post": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Approve one mix auto-request grant.\n`POST /api/v3/requests/personal-mix-approvals/{user_id}/approve`.\nAdmin only.",
         "operationId": "approve_mix_handler",
@@ -18656,7 +18656,7 @@
     "/api/v3/requests/personal-mix-approvals/{user_id}/reject": {
       "post": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Reject one mix auto-request ask.\n`POST /api/v3/requests/personal-mix-approvals/{user_id}/reject`.\nAdmin only.",
         "operationId": "reject_mix_handler",
@@ -18688,7 +18688,7 @@
     "/api/v3/requests/personal-mix-approvals/{user_id}/revoke": {
       "post": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Revoke one mix auto-request grant.\n`POST /api/v3/requests/personal-mix-approvals/{user_id}/revoke`.\nAdmin only.",
         "operationId": "revoke_mix_handler",
@@ -18720,7 +18720,7 @@
     "/api/v3/requests/personal-mix/refresh": {
       "post": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Refresh one user's personal mix.\n`POST /api/v3/requests/personal-mix/refresh`. Repeat calls while a build\nruns answer `already_running`; unlinked users get 400, and a server\nwithout the mix builder 409.",
         "operationId": "refresh_mix_handler",
@@ -18747,7 +18747,7 @@
     "/api/v3/requests/retry/{musicbrainz_id}": {
       "post": {
         "tags": [
-          "crate::acquire::requests::intake"
+          "requests"
         ],
         "summary": "Retry one terminal ask. `POST /api/v3/requests/retry/{musicbrainz_id}`.\nPlain users rejoin the queue unless the generation already carries\napproval provenance.",
         "operationId": "retry_one_handler",
@@ -18779,7 +18779,7 @@
     "/api/v3/requests/sync": {
       "post": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Reconcile live rows with their linked tasks.\n`POST /api/v3/requests/sync`. One bad row never stops the sweep.",
         "operationId": "sync_handler",
@@ -18800,7 +18800,7 @@
     "/api/v3/requests/tracks": {
       "post": {
         "tags": [
-          "crate::acquire::requests::intake"
+          "requests"
         ],
         "summary": "Ask for one exact recording. `POST /api/v3/requests/tracks`. Same\napproval gate as albums. Answers 202.",
         "operationId": "request_track_handler",
@@ -18831,7 +18831,7 @@
     "/api/v3/requests/wanted": {
       "get": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Wanted watches plus the still-retrying set.\n`GET /api/v3/requests/wanted`. Admins see every row.",
         "operationId": "wanted_handler",
@@ -18852,7 +18852,7 @@
     "/api/v3/requests/wanted/{musicbrainz_id}/resume": {
       "post": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Resume one wanted watch.\n`POST /api/v3/requests/wanted/{musicbrainz_id}/resume`.",
         "operationId": "wanted_resume_handler",
@@ -18884,7 +18884,7 @@
     "/api/v3/requests/wanted/{musicbrainz_id}/seen": {
       "post": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Clear one watch's unseen candidates.\n`POST /api/v3/requests/wanted/{musicbrainz_id}/seen`.",
         "operationId": "wanted_seen_handler",
@@ -18916,7 +18916,7 @@
     "/api/v3/requests/wanted/{musicbrainz_id}/stop": {
       "post": {
         "tags": [
-          "crate::acquire::requests::views"
+          "requests"
         ],
         "summary": "Pause one wanted watch. `POST /api/v3/requests/wanted/{musicbrainz_id}/stop`.",
         "operationId": "wanted_stop_handler",
@@ -18948,7 +18948,7 @@
     "/api/v3/scrobble/now-playing": {
       "post": {
         "tags": [
-          "crate::playback::handlers"
+          "playback"
         ],
         "summary": "Forward one native now-playing report to the linked accounts.",
         "operationId": "forward_now_playing",
@@ -18985,7 +18985,7 @@
     "/api/v3/scrobble/submit": {
       "post": {
         "tags": [
-          "crate::playback::handlers"
+          "playback"
         ],
         "summary": "Submit one native scrobble by name.",
         "operationId": "submit_scrobble",
@@ -19022,7 +19022,7 @@
     "/api/v3/search": {
       "get": {
         "tags": [
-          "crate::reads::search::handlers"
+          "search"
         ],
         "summary": "Ranked hits across the selected buckets plus each bucket's standout.",
         "operationId": "unified_search",
@@ -19102,7 +19102,7 @@
     "/api/v3/search/enrich/batch": {
       "post": {
         "tags": [
-          "crate::reads::search::handlers"
+          "search"
         ],
         "summary": "The single enrich-batch method: one POST enriches a mixed batch of\nartists and albums. v2's duplicate GET form is gone; GET on this path\nis a 405. Provider failures degrade into typed notes, never a 5xx.",
         "operationId": "enrich_batch",
@@ -19139,7 +19139,7 @@
     "/api/v3/search/suggest": {
       "get": {
         "tags": [
-          "crate::reads::search::handlers"
+          "search"
         ],
         "summary": "Merged typeahead across buckets. Queries under two characters return\nan empty 200, kept from v2 so typing never errors.",
         "operationId": "suggest",
@@ -19188,7 +19188,7 @@
     "/api/v3/search/{bucket}": {
       "get": {
         "tags": [
-          "crate::reads::search::handlers"
+          "search"
         ],
         "summary": "One page of one bucket for drill-down views.",
         "operationId": "search_bucket",
@@ -19260,7 +19260,7 @@
     "/api/v3/settings/advanced": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the advanced tunables in form units.",
         "operationId": "get_advanced",
@@ -19279,7 +19279,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the advanced tunables. Unknown fields are a 400: the shape is a\nclosed allowlist.",
         "operationId": "put_advanced",
@@ -19310,7 +19310,7 @@
     "/api/v3/settings/cache-ttls": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the frontend cache TTLs in stored units (milliseconds).",
         "operationId": "get_cache_ttls",
@@ -19331,7 +19331,7 @@
     "/api/v3/settings/connect-apps": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the inbound Connect Apps config.",
         "operationId": "get_connect_apps",
@@ -19350,7 +19350,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the inbound Connect Apps config.",
         "operationId": "put_connect_apps",
@@ -19381,7 +19381,7 @@
     "/api/v3/settings/download-client/config": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the slskd connection (key masked unless unset).",
         "operationId": "get_slskd",
@@ -19400,7 +19400,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the slskd connection (a masked key keeps the stored one).",
         "operationId": "put_slskd",
@@ -19431,7 +19431,7 @@
     "/api/v3/settings/download-client/test": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Test the submitted slskd values (a masked key tests the stored one).",
         "operationId": "test_slskd",
@@ -19462,7 +19462,7 @@
     "/api/v3/settings/download-clients/policy": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the acquisition policy plus its recipe verdict.",
         "operationId": "get_policy",
@@ -19481,7 +19481,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the acquisition policy. Read-only verdict fields in the body are\nignored.",
         "operationId": "put_policy",
@@ -19512,7 +19512,7 @@
     "/api/v3/settings/download-clients/policy-summary": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Safe policy summary for the settings page: the contract sentence\nplus the source-mode label only.",
         "operationId": "get_policy_summary",
@@ -19533,7 +19533,7 @@
     "/api/v3/settings/download-clients/policy/impact": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Impact preview of an unsaved policy body against persisted rows.\nNeeds the database; unwired states answer 503.",
         "operationId": "post_policy_impact",
@@ -19567,7 +19567,7 @@
     "/api/v3/settings/download-clients/sabnzbd": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the SABnzbd connection (key masked unless unset).",
         "operationId": "get_sabnzbd",
@@ -19586,7 +19586,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the SABnzbd connection (a masked key keeps the stored one).",
         "operationId": "put_sabnzbd",
@@ -19617,7 +19617,7 @@
     "/api/v3/settings/download-clients/sabnzbd/test": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Test the submitted SABnzbd values (a masked key tests the stored\none). The submitted downloads mount is diagnosed, not the stored one.",
         "operationId": "test_sabnzbd",
@@ -19648,7 +19648,7 @@
     "/api/v3/settings/download-clients/source-priority": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the acquisition source try-order.",
         "operationId": "get_source_priority",
@@ -19667,7 +19667,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the acquisition source try-order.",
         "operationId": "put_source_priority",
@@ -19698,7 +19698,7 @@
     "/api/v3/settings/download-clients/wanted": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the wanted watcher toggles.",
         "operationId": "get_wanted",
@@ -19717,7 +19717,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the wanted watcher toggles.",
         "operationId": "put_wanted",
@@ -19748,7 +19748,7 @@
     "/api/v3/settings/edition-preferences": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the edition preferences.",
         "operationId": "get_edition_preferences",
@@ -19767,7 +19767,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the edition preferences.",
         "operationId": "put_edition_preferences",
@@ -19798,7 +19798,7 @@
     "/api/v3/settings/events": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the events sources (keys masked unless unset).",
         "operationId": "get_events",
@@ -19817,7 +19817,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the events sources (masked keys keep the stored ones) and kick\nthe sweep.",
         "operationId": "put_events",
@@ -19848,7 +19848,7 @@
     "/api/v3/settings/events/test-skiddle": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Test the submitted Skiddle key (a masked key tests the stored one).",
         "operationId": "test_skiddle",
@@ -19879,7 +19879,7 @@
     "/api/v3/settings/events/test-ticketmaster": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Test the submitted Ticketmaster key (a masked key tests the stored one).",
         "operationId": "test_ticketmaster",
@@ -19910,7 +19910,7 @@
     "/api/v3/settings/get-it": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the store-region settings.",
         "operationId": "get_get_it",
@@ -19929,7 +19929,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the store-region settings.",
         "operationId": "put_get_it",
@@ -19960,7 +19960,7 @@
     "/api/v3/settings/home": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the home page settings.",
         "operationId": "get_home_settings",
@@ -19979,7 +19979,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the home page settings. The save clears the cached home rows.",
         "operationId": "put_home",
@@ -20013,7 +20013,7 @@
     "/api/v3/settings/indexers": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "List the configured Newznab indexers (keys masked unless unset).",
         "operationId": "list_indexers",
@@ -20035,7 +20035,7 @@
       },
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save one indexer (create when the id is blank, else update).",
         "operationId": "create_indexer",
@@ -20066,7 +20066,7 @@
     "/api/v3/settings/indexers/reorder": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Persist a dragged-card priority order.",
         "operationId": "reorder_indexers",
@@ -20097,7 +20097,7 @@
     "/api/v3/settings/indexers/search-backend": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the active Usenet search backend.",
         "operationId": "get_search_backend",
@@ -20116,7 +20116,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the active Usenet search backend. Unknown values are a 400.",
         "operationId": "put_search_backend",
@@ -20147,7 +20147,7 @@
     "/api/v3/settings/indexers/test": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Test one indexer's caps with the submitted URL and key (a masked key\ntests the stored one).",
         "operationId": "test_indexer",
@@ -20178,7 +20178,7 @@
     "/api/v3/settings/indexers/{id}": {
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save one indexer; the path id wins over the body id.",
         "operationId": "update_indexer",
@@ -20218,7 +20218,7 @@
       },
       "delete": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Delete one indexer. Unknown ids are a silent no-op.",
         "operationId": "delete_indexer",
@@ -20250,7 +20250,7 @@
     "/api/v3/settings/jellyfin": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the Jellyfin connection (key masked unless unset).",
         "operationId": "get_jellyfin",
@@ -20269,7 +20269,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the Jellyfin connection (a masked key keeps the stored one).",
         "operationId": "put_jellyfin",
@@ -20300,7 +20300,7 @@
     "/api/v3/settings/jellyfin/verify": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Test the submitted Jellyfin values (a masked key tests the stored\none). The user list rides along on success for the admin picker.",
         "operationId": "verify_jellyfin",
@@ -20331,7 +20331,7 @@
     "/api/v3/settings/lastfm": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the Last.fm switch and the instance app key pair (masked unless\nunset).",
         "operationId": "get_lastfm",
@@ -20350,7 +20350,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the Last.fm switch and the instance app key pair (a masked value\nkeeps the stored one).",
         "operationId": "put_lastfm",
@@ -20381,7 +20381,7 @@
     "/api/v3/settings/library": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the typed library settings with the policy revision.",
         "operationId": "get_library",
@@ -20400,7 +20400,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the typed library settings. The expected revision must match\nthe stored one or the save is a 409. Dropping every root while the\ncatalog holds tracks is a 400.",
         "operationId": "put_library",
@@ -20437,7 +20437,7 @@
     "/api/v3/settings/library-management": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the Library Management settings with their revision.",
         "operationId": "get_library_management",
@@ -20456,7 +20456,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the Library Management settings under CAS. Giving an automatic\nroot new write scope needs a current confirmed dry run.",
         "operationId": "put_library_management",
@@ -20493,7 +20493,7 @@
     "/api/v3/settings/library-management/activation-confirmations": {
       "post": {
         "tags": [
-          "crate::library::http::management_tools"
+          "library management"
         ],
         "summary": "Save settings that turn automatic management on, with their dry runs.",
         "operationId": "confirm_management_activation",
@@ -20539,7 +20539,7 @@
     "/api/v3/settings/library-management/activation-health": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Dry-run activation health for the active automatic roots.",
         "operationId": "get_library_management_activation_health",
@@ -20560,7 +20560,7 @@
     "/api/v3/settings/library-management/activation-previews": {
       "post": {
         "tags": [
-          "crate::library::http::management_tools"
+          "library management"
         ],
         "summary": "Dry-run a library folder under proposed settings. Nothing changes.",
         "operationId": "create_management_activation_preview",
@@ -20603,7 +20603,7 @@
     "/api/v3/settings/library-management/activation-previews/{job_id}": {
       "get": {
         "tags": [
-          "crate::library::http::management_tools"
+          "library management"
         ],
         "summary": "One dry run.",
         "operationId": "get_management_activation_preview",
@@ -20647,7 +20647,7 @@
     "/api/v3/settings/library-management/impact": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Classify a candidate without saving it.",
         "operationId": "preview_library_management_impact",
@@ -20678,7 +20678,7 @@
     "/api/v3/settings/library-management/placement": {
       "get": {
         "tags": [
-          "crate::library::http::management_tools"
+          "library management"
         ],
         "summary": "How safely each library folder can be written to, as last checked.\nReading this checks nothing.",
         "operationId": "get_management_placement",
@@ -20705,7 +20705,7 @@
     "/api/v3/settings/library-management/placement/{root_id}/check": {
       "post": {
         "tags": [
-          "crate::library::http::management_tools"
+          "library management"
         ],
         "summary": "Check one library folder now. The check creates a folder named\n`.droppedneedle-management-probe` at the top of the library folder\nand removes it again.",
         "operationId": "check_management_placement",
@@ -20749,7 +20749,7 @@
     "/api/v3/settings/library-management/profile-imports": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Import a reviewed shared profile.",
         "operationId": "import_library_management_profile",
@@ -20783,7 +20783,7 @@
     "/api/v3/settings/library-management/profile-imports/preview": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Preview importing a shared profile (document or share code).",
         "operationId": "preview_library_management_profile_import",
@@ -20814,7 +20814,7 @@
     "/api/v3/settings/library-management/profiles": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Create a profile as a copy of the default profile.",
         "operationId": "create_library_management_profile",
@@ -20845,7 +20845,7 @@
     "/api/v3/settings/library-management/profiles/{profile_id}": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read one profile.",
         "operationId": "get_library_management_profile",
@@ -20875,7 +20875,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Replace one profile. The body id must match the path id.",
         "operationId": "update_library_management_profile",
@@ -20915,7 +20915,7 @@
       },
       "delete": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Delete one custom profile that is neither the default nor assigned.",
         "operationId": "delete_library_management_profile",
@@ -20957,7 +20957,7 @@
     "/api/v3/settings/library-management/profiles/{profile_id}/copy": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Copy one profile under a new name.",
         "operationId": "copy_library_management_profile",
@@ -20999,7 +20999,7 @@
     "/api/v3/settings/library-management/profiles/{profile_id}/export": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Export one profile as a share bundle.",
         "operationId": "export_library_management_profile",
@@ -21041,7 +21041,7 @@
     "/api/v3/settings/library-management/profiles/{profile_id}/preset-diff": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Which groups of a preset-tracking profile differ from the preset.",
         "operationId": "get_library_management_preset_diff",
@@ -21073,7 +21073,7 @@
     "/api/v3/settings/library-management/validate": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Validate a candidate: the same check and verdict as the impact\npreview (v2 serves both paths).",
         "operationId": "validate_library_management",
@@ -21104,7 +21104,7 @@
     "/api/v3/settings/library/path-mapping": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Dry run: map every catalog file path to a saved root.",
         "operationId": "get_library_path_mapping",
@@ -21128,7 +21128,7 @@
     "/api/v3/settings/library/paths": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Add one library root path. The path must be a directory on this\nmachine; re-adding is a silent no-op.",
         "operationId": "add_library_path",
@@ -21157,7 +21157,7 @@
       },
       "delete": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Remove every library root at one path. Unknown paths are a silent\nno-op; removing the last root while the catalog holds tracks is a 400.",
         "operationId": "remove_library_path",
@@ -21192,7 +21192,7 @@
     "/api/v3/settings/library/policy-apply-preview": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Preview a reconcile of saved policy scopes: how many catalog files\nit would revisit.",
         "operationId": "preview_library_policy_apply",
@@ -21232,7 +21232,7 @@
     "/api/v3/settings/library/policy-impact": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Preview what saving candidate library settings would change. Nothing\nis saved; a stale expected revision only sets `stale`.",
         "operationId": "preview_library_policy_impact",
@@ -21266,7 +21266,7 @@
     "/api/v3/settings/library/policy-tree": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "The saved roots and their path rules as a tree, with catalog file\ncounts per node.",
         "operationId": "get_library_policy_tree",
@@ -21287,7 +21287,7 @@
     "/api/v3/settings/library/restorable-roots": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Roots the catalog still holds tracks for that the settings no longer\nlist.",
         "operationId": "get_restorable_library_roots",
@@ -21311,7 +21311,7 @@
     "/api/v3/settings/library/restore-roots": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Put every removed root back into the settings.",
         "operationId": "restore_library_roots",
@@ -21351,7 +21351,7 @@
     "/api/v3/settings/library/schedule": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the scan schedule plus the server timezone label.",
         "operationId": "get_schedule",
@@ -21370,7 +21370,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the scan schedule.",
         "operationId": "put_schedule",
@@ -21401,7 +21401,7 @@
     "/api/v3/settings/library/sync": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "The legacy catalog-sync section is gone (one-shot import only now).",
         "operationId": "dropped_library_sync",
@@ -21413,7 +21413,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "PUT twin of the dropped catalog-sync route: gone, not moved.",
         "operationId": "dropped_library_sync_put",
@@ -21427,7 +21427,7 @@
     "/api/v3/settings/library/watcher": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the filesystem poller knobs.",
         "operationId": "get_watcher",
@@ -21446,7 +21446,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the filesystem poller knobs.",
         "operationId": "put_watcher",
@@ -21477,7 +21477,7 @@
     "/api/v3/settings/listenbrainz": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the ListenBrainz connection (token masked unless unset).",
         "operationId": "get_listenbrainz",
@@ -21496,7 +21496,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the ListenBrainz connection (a masked token keeps the stored one).",
         "operationId": "put_listenbrainz",
@@ -21527,7 +21527,7 @@
     "/api/v3/settings/listenbrainz/verify": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Test the submitted ListenBrainz values (a masked token tests the\nstored one). Rate limiting answers 429.",
         "operationId": "verify_listenbrainz",
@@ -21561,7 +21561,7 @@
     "/api/v3/settings/musicbrainz": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the settled MusicBrainz connection plus the transient pending echo.",
         "operationId": "get_musicbrainz",
@@ -21580,7 +21580,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Persist one normalized source change (BrainzMash moves through the\nconsent-bound flow, never a direct update).",
         "operationId": "put_musicbrainz",
@@ -21611,7 +21611,7 @@
     "/api/v3/settings/musicbrainz/activate": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Promote the exact verified proposal to the active binding.",
         "operationId": "activate_brainzmash",
@@ -21645,7 +21645,7 @@
     "/api/v3/settings/musicbrainz/brainzmash/consent": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Record consent for the exact staged proposal. A stale proposal or\nan outdated disclosure is a 409.",
         "operationId": "consent_brainzmash",
@@ -21679,7 +21679,7 @@
     "/api/v3/settings/musicbrainz/brainzmash/stage": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Stage a BrainzMash proposal without probing upstream.",
         "operationId": "stage_brainzmash",
@@ -21700,7 +21700,7 @@
     "/api/v3/settings/musicbrainz/verify": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Verify a BrainzMash binding or probe a plain tier. A failed probe is\na 502; alternative probes are a 409 while BrainzMash is active.",
         "operationId": "verify_musicbrainz",
@@ -21737,7 +21737,7 @@
     "/api/v3/settings/navidrome": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the Navidrome connection (password masked unless unset).",
         "operationId": "get_navidrome",
@@ -21756,7 +21756,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the Navidrome connection (a masked password keeps the stored one).",
         "operationId": "put_navidrome",
@@ -21787,7 +21787,7 @@
     "/api/v3/settings/navidrome/playlist-sync": {
       "post": {
         "tags": [
-          "crate::jobs::playlist_sync"
+          "remotes"
         ],
         "summary": "Run one Navidrome playlist sync now.",
         "operationId": "sync_now",
@@ -21814,7 +21814,7 @@
     "/api/v3/settings/navidrome/verify": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Test the submitted Navidrome values (a masked password tests the\nstored one).",
         "operationId": "verify_navidrome",
@@ -21845,7 +21845,7 @@
     "/api/v3/settings/oidc": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the OIDC connection (secret masked unless unset).",
         "operationId": "get_oidc",
@@ -21864,7 +21864,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the OIDC connection (a masked secret keeps the stored one).",
         "operationId": "put_oidc",
@@ -21895,7 +21895,7 @@
     "/api/v3/settings/oidc/verify": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Test the submitted OIDC issuer (fetches its discovery document).",
         "operationId": "verify_oidc",
@@ -21926,7 +21926,7 @@
     "/api/v3/settings/plex": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the Plex connection (token masked unless unset).",
         "operationId": "get_plex",
@@ -21945,7 +21945,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the Plex connection (a masked token keeps the stored one).",
         "operationId": "put_plex",
@@ -21976,7 +21976,7 @@
     "/api/v3/settings/plex/libraries": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "List Plex music libraries over the stored connection. Unconfigured\nis a 400; an unreachable Plex is a 502.",
         "operationId": "get_plex_libraries",
@@ -22006,7 +22006,7 @@
     "/api/v3/settings/plex/verify": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Test the submitted Plex values (a masked token tests the stored\none). Music libraries ride along on success.",
         "operationId": "verify_plex",
@@ -22037,7 +22037,7 @@
     "/api/v3/settings/preferences": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the release-type filters.",
         "operationId": "get_preferences",
@@ -22056,7 +22056,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the release-type filters.",
         "operationId": "put_preferences",
@@ -22087,7 +22087,7 @@
     "/api/v3/settings/primary-source": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the primary music source.",
         "operationId": "get_primary_source",
@@ -22106,7 +22106,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the primary music source.",
         "operationId": "put_primary_source",
@@ -22137,7 +22137,7 @@
     "/api/v3/settings/prowlarr/config": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the Prowlarr connection (key masked unless unset).",
         "operationId": "get_prowlarr",
@@ -22156,7 +22156,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the Prowlarr connection (a masked key keeps the stored one).",
         "operationId": "put_prowlarr",
@@ -22187,7 +22187,7 @@
     "/api/v3/settings/prowlarr/test": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Test the submitted Prowlarr values (a masked key tests the stored one).",
         "operationId": "test_prowlarr",
@@ -22218,7 +22218,7 @@
     "/api/v3/settings/public-address": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the addresses stated as this server's own.",
         "operationId": "get_public_address",
@@ -22237,7 +22237,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Replace the addresses stated as this server's own. The session origin\ncheck accepts a change from a page at one of them.",
         "operationId": "put_public_address",
@@ -22271,7 +22271,7 @@
     "/api/v3/settings/scrobble": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the scrobble targets.",
         "operationId": "get_scrobble",
@@ -22290,7 +22290,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the scrobble targets.",
         "operationId": "put_scrobble",
@@ -22321,7 +22321,7 @@
     "/api/v3/settings/security": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the security posture settings.",
         "operationId": "get_security",
@@ -22340,7 +22340,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the security posture settings.",
         "operationId": "put_security",
@@ -22371,7 +22371,7 @@
     "/api/v3/settings/security/verify-hibp": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Check the submitted HIBP hash-list path (must exist and start with\na `40-char-SHA1:count` line).",
         "operationId": "verify_hibp",
@@ -22402,7 +22402,7 @@
     "/api/v3/settings/wrapped": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the wrapped settings (key masked unless unset).",
         "operationId": "get_wrapped",
@@ -22421,7 +22421,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the wrapped settings (a masked key keeps the stored one).",
         "operationId": "put_wrapped",
@@ -22452,7 +22452,7 @@
     "/api/v3/settings/youtube": {
       "get": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Read the YouTube connection (key masked unless unset).",
         "operationId": "get_youtube",
@@ -22471,7 +22471,7 @@
       },
       "put": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Save the YouTube connection (a masked key keeps the stored one).",
         "operationId": "put_youtube",
@@ -22502,7 +22502,7 @@
     "/api/v3/settings/youtube/verify": {
       "post": {
         "tags": [
-          "crate::settings::handlers"
+          "settings"
         ],
         "summary": "Test the submitted YouTube key (a masked key tests the stored one).",
         "operationId": "verify_youtube",
@@ -22533,7 +22533,7 @@
     "/api/v3/stream/{source}/{*key}": {
       "get": {
         "tags": [
-          "crate::stream::routes"
+          "stream"
         ],
         "summary": "Full or ranged audio bytes.",
         "operationId": "stream_get",
@@ -22617,7 +22617,7 @@
       },
       "head": {
         "tags": [
-          "crate::stream::routes"
+          "stream"
         ],
         "summary": "Same headers as GET, no body.",
         "operationId": "stream_head",
@@ -22669,7 +22669,7 @@
     "/api/v3/system/health": {
       "get": {
         "tags": [
-          "crate::admin::system"
+          "admin"
         ],
         "summary": "Which external services are degraded right now.",
         "operationId": "system_health",
@@ -22693,7 +22693,7 @@
     "/api/v3/users/{id}/avatar": {
       "get": {
         "tags": [
-          "droppedneedle_auth::users::handlers"
+          "users"
         ],
         "summary": "Serve one user's avatar. Self-or-admin; the `v` query is ignored.",
         "operationId": "get_avatar",
@@ -22718,7 +22718,7 @@
     "/api/v3/version": {
       "get": {
         "tags": [
-          "crate::reads::platform::version"
+          "platform"
         ],
         "summary": "Running version.",
         "operationId": "get_version",
@@ -22742,7 +22742,7 @@
     "/api/v3/version/check-update": {
       "get": {
         "tags": [
-          "crate::reads::platform::version"
+          "platform"
         ],
         "summary": "Update check against the latest known release.",
         "operationId": "check_update",
@@ -22766,7 +22766,7 @@
     "/api/v3/version/releases": {
       "get": {
         "tags": [
-          "crate::reads::platform::version"
+          "platform"
         ],
         "summary": "Release history, newest first.",
         "operationId": "get_releases",
@@ -22793,7 +22793,7 @@
     "/api/v3/wrapped/server": {
       "get": {
         "tags": [
-          "crate::reads::platform::wrapped"
+          "platform"
         ],
         "summary": "Server-wide year-in-review summary.",
         "operationId": "get_wrapped_server",
@@ -22817,7 +22817,7 @@
     "/api/v3/wrapped/user/{user_id}": {
       "get": {
         "tags": [
-          "crate::reads::platform::wrapped"
+          "platform"
         ],
         "summary": "Per-user year-in-review summary.",
         "operationId": "get_wrapped_user",
@@ -22852,7 +22852,7 @@
     "/api/v3/wrapped/users": {
       "get": {
         "tags": [
-          "crate::reads::platform::wrapped"
+          "platform"
         ],
         "summary": "Every user with its ListenBrainz link status. Callers match users by\nemail and request `/user/{user_id}` only for `has_listenbrainz` ones.",
         "operationId": "get_wrapped_users",
@@ -22876,7 +22876,7 @@
     "/api/v3/youtube/generate": {
       "post": {
         "tags": [
-          "crate::reads::youtube::handlers"
+          "youtube"
         ],
         "summary": "Find and save a full-album video. A saved one answers without a search.",
         "operationId": "generate_link",
@@ -22960,7 +22960,7 @@
     "/api/v3/youtube/generate-track": {
       "post": {
         "tags": [
-          "crate::reads::youtube::handlers"
+          "youtube"
         ],
         "summary": "Find and save one track's video. A saved one answers without a search.",
         "operationId": "generate_track_link",
@@ -23044,7 +23044,7 @@
     "/api/v3/youtube/generate-tracks": {
       "post": {
         "tags": [
-          "crate::reads::youtube::handlers"
+          "youtube"
         ],
         "summary": "Find and save videos for many tracks. Tracks YouTube has nothing for,\nor that could not be searched, come back under `failed`.",
         "operationId": "generate_track_links",
@@ -23088,7 +23088,7 @@
     "/api/v3/youtube/link/{album_id}": {
       "get": {
         "tags": [
-          "crate::reads::youtube::handlers"
+          "youtube"
         ],
         "summary": "One album's saved link. 204 when there is none.",
         "operationId": "get_link",
@@ -23124,7 +23124,7 @@
       },
       "put": {
         "tags": [
-          "crate::reads::youtube::handlers"
+          "youtube"
         ],
         "summary": "Edit a saved link: video, names or cover.",
         "operationId": "update_link",
@@ -23187,7 +23187,7 @@
       },
       "delete": {
         "tags": [
-          "crate::reads::youtube::handlers"
+          "youtube"
         ],
         "summary": "Remove an album link and its track links.",
         "operationId": "delete_link",
@@ -23215,7 +23215,7 @@
     "/api/v3/youtube/links": {
       "get": {
         "tags": [
-          "crate::reads::youtube::handlers"
+          "youtube"
         ],
         "summary": "Every saved album link, newest first.",
         "operationId": "list_links",
@@ -23242,7 +23242,7 @@
     "/api/v3/youtube/manual": {
       "post": {
         "tags": [
-          "crate::reads::youtube::handlers"
+          "youtube"
         ],
         "summary": "Save a video a person pasted, for a known album or a made-up one.",
         "operationId": "save_manual_link",
@@ -23286,7 +23286,7 @@
     "/api/v3/youtube/quota": {
       "get": {
         "tags": [
-          "crate::reads::youtube::handlers"
+          "youtube"
         ],
         "summary": "Today's YouTube search budget. A zero budget while search is off.",
         "operationId": "get_quota",
@@ -23310,7 +23310,7 @@
     "/api/v3/youtube/track-link/{album_id}/{disc_number}/{track_number}": {
       "delete": {
         "tags": [
-          "crate::reads::youtube::handlers"
+          "youtube"
         ],
         "summary": "Remove one track link.",
         "operationId": "delete_track_link",
@@ -23368,7 +23368,7 @@
     "/api/v3/youtube/track-links/{album_id}": {
       "get": {
         "tags": [
-          "crate::reads::youtube::handlers"
+          "youtube"
         ],
         "summary": "One album's track links, in disc then track order.",
         "operationId": "list_track_links",
@@ -23406,7 +23406,7 @@
     "/health": {
       "get": {
         "tags": [
-          "crate::handlers"
+          "health"
         ],
         "summary": "Liveness probe. Public, unauthenticated, cheap.",
         "operationId": "health",

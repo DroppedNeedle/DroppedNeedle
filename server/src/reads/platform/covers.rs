@@ -457,6 +457,7 @@ fn lookup_response(
 /// Release-group cover art.
 #[utoipa::path(
     get,
+    tag = "platform",
     path = "/api/v3/covers/release-group/{release_group_id}",
     params(
         ("release_group_id" = String, Path, description = "MusicBrainz release group id"),
@@ -490,6 +491,7 @@ pub async fn cover_from_release_group(
 /// Release cover art.
 #[utoipa::path(
     get,
+    tag = "platform",
     path = "/api/v3/covers/release/{release_id}",
     params(
         ("release_id" = String, Path, description = "MusicBrainz release id"),
@@ -523,6 +525,7 @@ pub async fn cover_from_release(
 /// Artist image.
 #[utoipa::path(
     get,
+    tag = "platform",
     path = "/api/v3/covers/artist/{artist_id}",
     params(
         ("artist_id" = String, Path, description = "MusicBrainz artist id"),
@@ -552,6 +555,7 @@ pub async fn artist_cover(
 /// one revalidates.
 #[utoipa::path(
     get,
+    tag = "platform",
     path = "/api/v3/library/albums/{id}/artwork",
     params(
         ("id" = String, Path, description = "Local album id"),

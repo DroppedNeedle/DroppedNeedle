@@ -112,6 +112,7 @@ pub fn providers_router(store: Arc<ConfigStore>) -> Router {
 /// Which sign-in methods are switched on (v2 `GET /auth/providers`).
 #[utoipa::path(
     get,
+    tag = "auth",
     path = "/api/v3/auth/providers",
     responses((status = 200, description = "Enabled sign-in methods", body = AuthProvidersBody))
 )]
@@ -238,6 +239,7 @@ fn read_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
 /// baked in) and sets a short-lived cookie tying the state to this browser.
 #[utoipa::path(
     post,
+    tag = "auth",
     path = "/api/v3/auth/oidc/authorize",
     responses(
         (status = 200, description = "Browser URL for this login", body = OidcAuthorizeBody),
@@ -289,6 +291,7 @@ where
 /// one-time exchange code. Always `no-store`.
 #[utoipa::path(
     get,
+    tag = "auth",
     path = "/api/v3/auth/oidc/callback",
     params(
         ("code" = String, Query, description = "Authorization code from the IdP"),
@@ -358,6 +361,7 @@ where
 /// Bearer mode returns the raw token once.
 #[utoipa::path(
     post,
+    tag = "auth",
     path = "/api/v3/auth/oidc/exchange",
     request_body = OidcExchangeBody,
     responses(
@@ -490,6 +494,7 @@ where
 /// the user, and mints a session. Transport rule matches local login.
 #[utoipa::path(
     post,
+    tag = "auth",
     path = "/api/v3/auth/jellyfin/login",
     request_body = JellyfinLoginBody,
     responses(
@@ -666,6 +671,7 @@ where
 /// every poll must present. 503 while Plex login is switched off.
 #[utoipa::path(
     post,
+    tag = "auth",
     path = "/api/v3/auth/plex/start",
     responses(
         (status = 200, description = "Fresh PIN, browser URL and poll secret", body = PlexStartBody),
@@ -688,6 +694,7 @@ where
 /// server.
 #[utoipa::path(
     post,
+    tag = "auth",
     path = "/api/v3/auth/plex/start/link",
     responses(
         (status = 200, description = "Fresh PIN, browser URL and poll secret", body = PlexStartBody),
@@ -713,6 +720,7 @@ where
 /// the server settings. Admin only.
 #[utoipa::path(
     post,
+    tag = "auth",
     path = "/api/v3/auth/plex/start/connect",
     responses(
         (status = 200, description = "Fresh PIN, browser URL and poll secret", body = PlexStartBody),
@@ -738,6 +746,7 @@ where
 /// user and mints a session. Pending polls carry only the flag.
 #[utoipa::path(
     post,
+    tag = "auth",
     path = "/api/v3/auth/plex/poll/login",
     request_body = PlexLoginPollBody,
     responses(
@@ -811,6 +820,7 @@ where
 /// a session; the answer carries the Plex user name, never its tokens.
 #[utoipa::path(
     post,
+    tag = "auth",
     path = "/api/v3/auth/plex/poll/link",
     request_body = PlexPinBody,
     responses(
@@ -859,6 +869,7 @@ where
 /// untouched. Requires a session (the token is an account credential).
 #[utoipa::path(
     post,
+    tag = "auth",
     path = "/api/v3/auth/plex/poll/connect",
     request_body = PlexPinBody,
     responses(

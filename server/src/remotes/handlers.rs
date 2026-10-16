@@ -205,7 +205,7 @@ fn reply<T>(
 }
 
 /// The caller's linked accounts across every service.
-#[utoipa::path(get, path = "/api/v3/me/connections", operation_id = "me_list_connections",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/me/connections", operation_id = "me_list_connections",
     responses((status = 200, description = "Linked accounts", body = LinkedAccounts)))]
 pub async fn list_links(
     State(deps): State<RemotesDeps>,
@@ -225,7 +225,7 @@ pub async fn list_links(
 }
 
 /// Hub highlights for one source.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/hub", operation_id = "remotes_get_hub",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/hub", operation_id = "remotes_get_hub",
     params(("source" = SourceName, Path, description = "Remote source")),
     responses((status = 200, description = "Hub highlights", body = HubView)))]
 pub async fn get_hub(
@@ -238,7 +238,7 @@ pub async fn get_hub(
 }
 
 /// Library totals for one source.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/stats", operation_id = "remotes_get_stats",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/stats", operation_id = "remotes_get_stats",
     params(("source" = SourceName, Path, description = "Remote source")),
     responses((status = 200, description = "Library totals", body = StatsView)))]
 pub async fn get_stats(
@@ -251,7 +251,7 @@ pub async fn get_stats(
 }
 
 /// One page of albums.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/albums", operation_id = "remotes_list_albums",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/albums", operation_id = "remotes_list_albums",
     params(("source" = SourceName, Path, description = "Remote source"), AlbumBrowseQuery),
     responses((status = 200, description = "Album page", body = AlbumPage)))]
 pub async fn list_albums(
@@ -277,7 +277,7 @@ pub async fn list_albums(
 }
 
 /// One album by id.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/albums/{id}", operation_id = "remotes_get_album",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/albums/{id}", operation_id = "remotes_get_album",
     params(("source" = SourceName, Path, description = "Remote source"),
         ("id" = String, Path, description = "Remote album id")),
     responses((status = 200, description = "Album detail", body = AlbumView)))]
@@ -291,7 +291,7 @@ pub async fn get_album(
 }
 
 /// Tracks of one album.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/albums/{id}/tracks",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/albums/{id}/tracks",
     operation_id = "remotes_list_album_tracks",
     params(("source" = SourceName, Path, description = "Remote source"),
         ("id" = String, Path, description = "Remote album id")),
@@ -306,7 +306,7 @@ pub async fn list_album_tracks(
 }
 
 /// One page of artists.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/artists", operation_id = "remotes_list_artists",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/artists", operation_id = "remotes_list_artists",
     params(("source" = SourceName, Path, description = "Remote source"), ArtistBrowseQuery),
     responses((status = 200, description = "Artist page", body = ArtistPage)))]
 pub async fn list_artists(
@@ -327,7 +327,7 @@ pub async fn list_artists(
 }
 
 /// Full alphabetic artist index.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/artists/index",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/artists/index",
     operation_id = "remotes_get_artist_index",
     params(("source" = SourceName, Path, description = "Remote source")),
     responses((status = 200, description = "Artist index", body = ArtistIndex)))]
@@ -346,7 +346,7 @@ pub async fn get_artist_index(
 }
 
 /// One artist by id.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/artists/{id}", operation_id = "remotes_get_artist",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/artists/{id}", operation_id = "remotes_get_artist",
     params(("source" = SourceName, Path, description = "Remote source"),
         ("id" = String, Path, description = "Remote artist id")),
     responses((status = 200, description = "Artist detail", body = ArtistView)))]
@@ -360,7 +360,7 @@ pub async fn get_artist(
 }
 
 /// One page of tracks.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/tracks", operation_id = "remotes_list_tracks",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/tracks", operation_id = "remotes_list_tracks",
     params(("source" = SourceName, Path, description = "Remote source"), TrackBrowseQuery),
     responses((status = 200, description = "Track page", body = TrackPage)))]
 pub async fn list_tracks(
@@ -382,7 +382,7 @@ pub async fn list_tracks(
 }
 
 /// Unified search across artists, albums, and tracks.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/search", operation_id = "remotes_search",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/search", operation_id = "remotes_search",
     params(("source" = SourceName, Path, description = "Remote source"), SearchQuery),
     responses((status = 200, description = "Search results", body = SearchResults)))]
 pub async fn search(
@@ -400,7 +400,7 @@ pub async fn search(
 }
 
 /// Recently played albums.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/recent", operation_id = "remotes_list_recent",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/recent", operation_id = "remotes_list_recent",
     params(("source" = SourceName, Path, description = "Remote source"), PageQuery),
     responses((status = 200, description = "Recently played", body = Vec<AlbumView>)))]
 pub async fn get_recent(
@@ -415,7 +415,7 @@ pub async fn get_recent(
 }
 
 /// Recently added albums.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/recently-added",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/recently-added",
     operation_id = "remotes_list_recently_added",
     params(("source" = SourceName, Path, description = "Remote source"), PageQuery),
     responses((status = 200, description = "Recently added", body = Vec<AlbumView>)))]
@@ -434,7 +434,7 @@ pub async fn get_recently_added(
 }
 
 /// Favorite artists, albums, and tracks.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/favorites", operation_id = "remotes_get_favorites",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/favorites", operation_id = "remotes_get_favorites",
     params(("source" = SourceName, Path, description = "Remote source"), FavoritesQuery),
     responses((status = 200, description = "Favorites", body = FavoritesView)))]
 pub async fn get_favorites(
@@ -451,7 +451,7 @@ pub async fn get_favorites(
 }
 
 /// Genre labels.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/genres", operation_id = "remotes_list_genres",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/genres", operation_id = "remotes_list_genres",
     params(("source" = SourceName, Path, description = "Remote source")),
     responses((status = 200, description = "Genre labels", body = Vec<String>)))]
 pub async fn list_genres(
@@ -464,7 +464,7 @@ pub async fn list_genres(
 }
 
 /// Tracks carrying one genre label.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/genres/songs",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/genres/songs",
     operation_id = "remotes_list_genre_songs",
     params(("source" = SourceName, Path, description = "Remote source"), GenreSongsQuery),
     responses((status = 200, description = "Genre tracks", body = TrackPage)))]
@@ -495,7 +495,7 @@ pub async fn list_genre_songs(
 }
 
 /// Mood labels (Plex).
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/moods", operation_id = "remotes_list_moods",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/moods", operation_id = "remotes_list_moods",
     params(("source" = SourceName, Path, description = "Remote source")),
     responses((status = 200, description = "Mood labels", body = Vec<String>)))]
 pub async fn list_moods(
@@ -508,7 +508,7 @@ pub async fn list_moods(
 }
 
 /// Album filter facets (Jellyfin).
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/filters", operation_id = "remotes_get_filters",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/filters", operation_id = "remotes_get_filters",
     params(("source" = SourceName, Path, description = "Remote source")),
     responses((status = 200, description = "Filter facets", body = FilterFacetsView)))]
 pub async fn get_filters(
@@ -521,7 +521,7 @@ pub async fn get_filters(
 }
 
 /// Most-played albums (Jellyfin).
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/most-played/albums",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/most-played/albums",
     operation_id = "remotes_list_most_played_albums",
     params(("source" = SourceName, Path, description = "Remote source"), MostPlayedQuery),
     responses((status = 200, description = "Most-played albums", body = Vec<AlbumView>)))]
@@ -541,7 +541,7 @@ pub async fn list_most_played_albums(
 }
 
 /// Most-played artists (Jellyfin).
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/most-played/artists",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/most-played/artists",
     operation_id = "remotes_list_most_played_artists",
     params(("source" = SourceName, Path, description = "Remote source"), MostPlayedQuery),
     responses((status = 200, description = "Most-played artists", body = Vec<ArtistView>)))]
@@ -561,7 +561,7 @@ pub async fn list_most_played_artists(
 }
 
 /// The caller's playlists on the server.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/playlists", operation_id = "remotes_list_playlists",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/playlists", operation_id = "remotes_list_playlists",
     params(("source" = SourceName, Path, description = "Remote source")),
     responses((status = 200, description = "Playlists", body = PlaylistCollection)))]
 pub async fn list_playlists(
@@ -574,7 +574,7 @@ pub async fn list_playlists(
 }
 
 /// One playlist with its tracks.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/playlists/{id}",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/playlists/{id}",
     operation_id = "remotes_get_playlist",
     params(("source" = SourceName, Path, description = "Remote source"),
         ("id" = String, Path, description = "Remote playlist id")),
@@ -589,7 +589,7 @@ pub async fn get_playlist(
 }
 
 /// Import one remote playlist into the caller's playlists.
-#[utoipa::path(post, path = "/api/v3/remotes/{source}/playlists/{id}/import",
+#[utoipa::path(post, tag = "remotes", path = "/api/v3/remotes/{source}/playlists/{id}/import",
     operation_id = "remotes_import_playlist",
     params(("source" = SourceName, Path, description = "Remote source"),
         ("id" = String, Path, description = "Remote playlist id")),
@@ -604,7 +604,7 @@ pub async fn import_playlist(
 }
 
 /// Artist info passthrough.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/info/artists/{id}",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/info/artists/{id}",
     operation_id = "remotes_get_artist_info",
     params(("source" = SourceName, Path, description = "Remote source"),
         ("id" = String, Path, description = "Remote artist id")),
@@ -619,7 +619,7 @@ pub async fn get_artist_info(
 }
 
 /// Album info passthrough.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/info/albums/{id}",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/info/albums/{id}",
     operation_id = "remotes_get_album_info",
     params(("source" = SourceName, Path, description = "Remote source"),
         ("id" = String, Path, description = "Remote album id")),
@@ -634,7 +634,7 @@ pub async fn get_album_info(
 }
 
 /// Lyrics for one track.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/lyrics/{id}", operation_id = "remotes_get_lyrics",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/lyrics/{id}", operation_id = "remotes_get_lyrics",
     params(("source" = SourceName, Path, description = "Remote source"),
         ("id" = String, Path, description = "Remote track id"), LyricsQuery),
     responses((status = 200, description = "Lyrics", body = LyricsView)))]
@@ -654,7 +654,7 @@ pub async fn get_lyrics(
 }
 
 /// Top songs for one artist name.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/top/{artist}", operation_id = "remotes_list_top_songs",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/top/{artist}", operation_id = "remotes_list_top_songs",
     params(("source" = SourceName, Path, description = "Remote source"),
         ("artist" = String, Path, description = "Artist name"), PageQuery),
     responses((status = 200, description = "Top songs", body = TrackPage)))]
@@ -673,7 +673,7 @@ pub async fn get_top_songs(
 }
 
 /// Tracks similar to one track.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/similar/{id}", operation_id = "remotes_list_similar",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/similar/{id}", operation_id = "remotes_list_similar",
     params(("source" = SourceName, Path, description = "Remote source"),
         ("id" = String, Path, description = "Remote track id"), PageQuery),
     responses((status = 200, description = "Similar tracks", body = TrackPage)))]
@@ -690,7 +690,7 @@ pub async fn get_similar(
 
 /// Random tracks, optionally filtered by genre. Limits mirror the v2
 /// Navidrome route (default 20, max 50); Plex answers unsupported.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/random", operation_id = "remotes_list_random",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/random", operation_id = "remotes_list_random",
     params(("source" = SourceName, Path, description = "Remote source"), RandomQuery),
     responses((status = 200, description = "Random tracks", body = TrackPage)))]
 pub async fn get_random(
@@ -710,7 +710,7 @@ pub async fn get_random(
 }
 
 /// Discovery shelves (Plex).
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/discovery", operation_id = "remotes_get_discovery",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/discovery", operation_id = "remotes_get_discovery",
     params(("source" = SourceName, Path, description = "Remote source"), DiscoveryQuery),
     responses((status = 200, description = "Discovery shelves", body = DiscoveryView)))]
 pub async fn get_discovery(
@@ -725,7 +725,7 @@ pub async fn get_discovery(
 }
 
 /// Instant mix for an item, artist, or genre id (Jellyfin).
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/mix/{id}", operation_id = "remotes_get_mix",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/mix/{id}", operation_id = "remotes_get_mix",
     params(("source" = SourceName, Path, description = "Remote source"),
         ("id" = String, Path, description = "Seed id or genre name"), MixQuery),
     responses((status = 200, description = "Instant mix", body = TrackPage)))]
@@ -751,7 +751,7 @@ pub async fn get_mix(
 }
 
 /// Active audio sessions.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/sessions", operation_id = "remotes_list_sessions",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/sessions", operation_id = "remotes_list_sessions",
     params(("source" = SourceName, Path, description = "Remote source")),
     responses((status = 200, description = "Sessions", body = SessionsView)))]
 pub async fn list_sessions(
@@ -764,7 +764,7 @@ pub async fn list_sessions(
 }
 
 /// Listening history, newest first.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/history", operation_id = "remotes_list_history",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/history", operation_id = "remotes_list_history",
     params(("source" = SourceName, Path, description = "Remote source"), HistoryQuery),
     responses((status = 200, description = "History page", body = HistoryPage)))]
 pub async fn list_history(
@@ -782,7 +782,7 @@ pub async fn list_history(
 }
 
 /// Listening analytics over the history (Plex).
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/analytics", operation_id = "remotes_get_analytics",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/analytics", operation_id = "remotes_get_analytics",
     params(("source" = SourceName, Path, description = "Remote source")),
     responses((status = 200, description = "Listening analytics", body = AnalyticsView)))]
 pub async fn get_analytics(
@@ -796,7 +796,7 @@ pub async fn get_analytics(
 
 /// Item image bytes. Immutable and cacheable for a year: image URLs carry
 /// the upstream tag, so a new tag is a new URL.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/images/{id}", operation_id = "remotes_get_image",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/images/{id}", operation_id = "remotes_get_image",
     params(("source" = SourceName, Path, description = "Remote source"),
         ("id" = String, Path, description = "Remote image id"), ImageQuery),
     responses((status = 200, description = "Image bytes")))]
@@ -821,7 +821,7 @@ pub async fn get_image(
 }
 
 /// Playlist cover bytes. Never cached: playlist art follows membership.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/covers/playlists/{id}",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/covers/playlists/{id}",
     operation_id = "remotes_get_playlist_cover",
     params(("source" = SourceName, Path, description = "Remote source"),
         ("id" = String, Path, description = "Remote playlist id"), ImageQuery),
@@ -901,7 +901,7 @@ fn bytes_response(
 }
 
 /// The remote album behind a MusicBrainz id.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/match", operation_id = "remotes_match_album",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/match", operation_id = "remotes_match_album",
     params(("source" = SourceName, Path, description = "Remote source"), MatchQuery),
     responses((status = 200, description = "Match result", body = MatchView)))]
 pub async fn match_album(
@@ -918,7 +918,7 @@ pub async fn match_album(
 }
 
 /// Connection status for one source. Never carries credential material.
-#[utoipa::path(get, path = "/api/v3/remotes/{source}/connection",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/{source}/connection",
     operation_id = "remotes_get_connection",
     params(("source" = SourceName, Path, description = "Remote source")),
     responses((status = 200, description = "Connection status", body = ConnectionStatus)))]
@@ -933,7 +933,7 @@ pub async fn get_connection(
 
 /// Link the caller's own Navidrome or Jellyfin account. The password is
 /// checked against the server first and never echoed.
-#[utoipa::path(put, path = "/api/v3/remotes/{source}/connection",
+#[utoipa::path(put, tag = "remotes", path = "/api/v3/remotes/{source}/connection",
     operation_id = "remotes_put_connection",
     params(("source" = SourceName, Path, description = "Remote source")),
     request_body = ConnectionSave,
@@ -953,7 +953,7 @@ pub async fn put_connection(
 }
 
 /// Remove the caller's own link for one source.
-#[utoipa::path(delete, path = "/api/v3/remotes/{source}/connection",
+#[utoipa::path(delete, tag = "remotes", path = "/api/v3/remotes/{source}/connection",
     operation_id = "remotes_delete_connection",
     params(("source" = SourceName, Path, description = "Remote source")),
     responses((status = 200, description = "Connection status", body = ConnectionStatus)))]
@@ -967,7 +967,7 @@ pub async fn delete_connection(
 }
 
 /// Navidrome folder preference resolution for the caller.
-#[utoipa::path(get, path = "/api/v3/remotes/navidrome/folders",
+#[utoipa::path(get, tag = "remotes", path = "/api/v3/remotes/navidrome/folders",
     operation_id = "remotes_get_navidrome_folders",
     responses((status = 200, description = "Folder resolution", body = FolderResolutionView)))]
 pub async fn get_folders(
@@ -978,7 +978,7 @@ pub async fn get_folders(
 }
 
 /// Save the Navidrome folder preference.
-#[utoipa::path(put, path = "/api/v3/remotes/navidrome/folders",
+#[utoipa::path(put, tag = "remotes", path = "/api/v3/remotes/navidrome/folders",
     operation_id = "remotes_put_navidrome_folders",
     request_body = FolderSave,
     responses((status = 200, description = "Folder resolution", body = FolderResolutionView)))]

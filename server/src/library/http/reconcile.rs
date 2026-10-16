@@ -420,6 +420,7 @@ pub struct ArtistDuplicateGroupDismissResponse {
 /// Artist reconciliation progress and open group counts.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/artists/reconciliation",
     responses(
         (status = 200, description = "Progress", body = ArtistReconciliationProgress),
@@ -450,6 +451,7 @@ pub async fn artist_reconciliation(
 /// List duplicate artist groups, sorted by name.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/artists/duplicate-groups",
     params(ArtistGroupListQuery),
     responses(
@@ -490,6 +492,7 @@ pub async fn list_artist_duplicate_groups(
 /// One duplicate artist group with its evidence, albums, and tracks.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/artists/duplicate-groups/{group_id}",
     params(("group_id" = String, Path, description = "Group id")),
     responses(
@@ -513,6 +516,7 @@ pub async fn get_artist_duplicate_group(
 /// member changes or another record with the name appears.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/artists/duplicate-groups/{group_id}/dismiss",
     params(("group_id" = String, Path, description = "Group id")),
     request_body = ArtistDuplicateGroupDismissRequest,

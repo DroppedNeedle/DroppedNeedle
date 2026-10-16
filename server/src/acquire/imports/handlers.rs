@@ -286,7 +286,7 @@ fn lidarr_failed(
 }
 
 /// Masked Lidarr connection settings.
-#[utoipa::path(get, path = "/api/v3/acquire/lidarr-import/config",
+#[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/lidarr-import/config",
     responses((status = 200, description = "Masked Lidarr settings", body = LidarrConnectionSettings)))]
 pub async fn get_lidarr_config(
     State(deps): State<ImportsDeps>,
@@ -296,7 +296,7 @@ pub async fn get_lidarr_config(
 }
 
 /// Save the Lidarr connection. A masked key preserves the stored one.
-#[utoipa::path(put, path = "/api/v3/acquire/lidarr-import/config",
+#[utoipa::path(put, tag = "imports", path = "/api/v3/acquire/lidarr-import/config",
     request_body = LidarrConnectionSettings,
     responses((status = 200, description = "Saved Lidarr settings", body = LidarrConnectionSettings)))]
 pub async fn put_lidarr_config(
@@ -313,7 +313,7 @@ pub async fn put_lidarr_config(
 /// save, a masked key resolves to the stored one, and reachable/bad-key
 /// verdicts travel in the body, never as a leaked 5xx, never echoing the
 /// URL or host.
-#[utoipa::path(post, path = "/api/v3/acquire/lidarr-import/test",
+#[utoipa::path(post, tag = "imports", path = "/api/v3/acquire/lidarr-import/test",
     request_body = LidarrConnectionSettings,
     responses((status = 200, description = "Lidarr probe verdict", body = LidarrTestResponse)))]
 pub async fn test_lidarr(
@@ -353,7 +353,7 @@ pub async fn test_lidarr(
 }
 
 /// Monitored Lidarr artists annotated for the caller.
-#[utoipa::path(get, path = "/api/v3/acquire/lidarr-import/artists",
+#[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/lidarr-import/artists",
     responses((status = 200, description = "Import candidates", body = LidarrArtistListResponse)))]
 pub async fn list_lidarr_artists(
     State(deps): State<ImportsDeps>,
@@ -367,7 +367,7 @@ pub async fn list_lidarr_artists(
 }
 
 /// Import selected Lidarr artists into the caller's follows.
-#[utoipa::path(post, path = "/api/v3/acquire/lidarr-import/import",
+#[utoipa::path(post, tag = "imports", path = "/api/v3/acquire/lidarr-import/import",
     request_body = LidarrImportRequest,
     responses((status = 200, description = "Import summary", body = LidarrImportResponse)))]
 pub async fn import_lidarr(
@@ -386,7 +386,7 @@ pub async fn import_lidarr(
 }
 
 /// Masked Spotify app settings.
-#[utoipa::path(get, path = "/api/v3/acquire/spotify/settings",
+#[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/spotify/settings",
     responses((status = 200, description = "Masked Spotify settings", body = SpotifySettings)))]
 pub async fn get_spotify_settings(
     State(deps): State<ImportsDeps>,
@@ -397,7 +397,7 @@ pub async fn get_spotify_settings(
 
 /// Save the Spotify app settings. A masked secret preserves the stored
 /// one; a non-absolute redirect origin is a 400 (v2 text kept).
-#[utoipa::path(put, path = "/api/v3/acquire/spotify/settings",
+#[utoipa::path(put, tag = "imports", path = "/api/v3/acquire/spotify/settings",
     request_body = SpotifySettings,
     responses((status = 200, description = "Saved Spotify settings", body = SpotifySettings)))]
 pub async fn put_spotify_settings(
@@ -412,7 +412,7 @@ pub async fn put_spotify_settings(
 }
 
 /// The computed OAuth redirect URI (v2 admin display endpoint).
-#[utoipa::path(get, path = "/api/v3/acquire/spotify/redirect-uri",
+#[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/spotify/redirect-uri",
     responses(
         (status = 200, description = "OAuth redirect URI", body = SpotifyRedirectUri),
         (status = 400, description = "No Redirect Origin is set and the request names no address to build one from"),
@@ -458,7 +458,7 @@ fn callback_uri(deps: &ImportsDeps, request: &Request) -> Result<String, Imports
 
 /// Authorize URL for the caller's Spotify link flow. Requires the admin
 /// app to be enabled and complete (v2 400 text kept).
-#[utoipa::path(get, path = "/api/v3/acquire/spotify/auth/url",
+#[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/spotify/auth/url",
     responses(
         (status = 200, description = "Authorize URL", body = SpotifyAuthUrlResponse),
         (status = 400, description = "Spotify is not set up, or no Redirect Origin is set and the request names no address to build one from"),
@@ -501,7 +501,7 @@ pub struct SpotifyCallbackQuery {
 /// so it sits outside the session gate like v2's ungated route: every
 /// outcome redirects to the profile page with the v2 query contract
 /// (`spotify=connected`, or `spotify=error` with an optional `reason`).
-#[utoipa::path(get, path = "/api/v3/acquire/spotify/auth/callback",
+#[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/spotify/auth/callback",
     params(SpotifyCallbackQuery),
     responses((status = 307, description = "Redirect to the profile page")))]
 pub async fn spotify_callback(
@@ -606,7 +606,7 @@ async fn finish_spotify_link(deps: &ImportsDeps, query: SpotifyCallbackQuery) ->
 
 /// Unlink the caller's Spotify account (v2 `DELETE /me/connections/spotify`).
 /// Idempotent: no link reads as done too.
-#[utoipa::path(delete, path = "/api/v3/me/connections/spotify",
+#[utoipa::path(delete, tag = "imports", path = "/api/v3/me/connections/spotify",
     responses(
         (status = 204, description = "Unlinked"),
         (status = 401, description = "Not authenticated"),
@@ -628,7 +628,7 @@ pub async fn disconnect_spotify(
 
 /// The caller's owned Spotify playlists. Unlinked reads as the v2 400;
 /// upstream failures as the v2 502.
-#[utoipa::path(get, path = "/api/v3/acquire/spotify/playlists",
+#[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/spotify/playlists",
     responses((status = 200, description = "Owned playlists", body = SpotifyPlaylistListResponse)))]
 pub async fn list_spotify_playlists(
     State(deps): State<ImportsDeps>,
@@ -661,7 +661,7 @@ fn spotify_failed(error: SpotifyError, ids: &dyn IdGenerator) -> ImportsError {
 /// Start a Spotify playlist import: ensure the internal record, queue the
 /// `spotify:import` durable job unless it already runs, and answer the id
 /// immediately (v2 answer-fast shape).
-#[utoipa::path(post, path = "/api/v3/acquire/spotify/playlists/{id}/import",
+#[utoipa::path(post, tag = "imports", path = "/api/v3/acquire/spotify/playlists/{id}/import",
     params(("id" = String, Path, description = "Spotify playlist id")),
     request_body = SpotifyImportRequest,
     responses((status = 200, description = "Import acknowledgement", body = SpotifyImportResponse)))]
@@ -694,7 +694,7 @@ pub async fn import_spotify_playlist(
 }
 
 /// Latest known state of one `spotify:import` job.
-#[utoipa::path(get, path = "/api/v3/acquire/spotify/jobs/{id}",
+#[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/spotify/jobs/{id}",
     params(("id" = String, Path, description = "Spotify playlist id the import runs for")),
     responses((status = 200, description = "Job state", body = SpotifyJobStatus)))]
 pub async fn get_spotify_job(
@@ -734,7 +734,7 @@ pub async fn get_spotify_job(
 
 /// Acquisition health smoke: slskd or Usenet readiness plus the
 /// independent per-source release gates.
-#[utoipa::path(get, path = "/api/v3/acquire/health",
+#[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/health",
     responses((status = 200, description = "Acquisition health", body = AcquireHealth)))]
 pub async fn get_health(
     State(deps): State<ImportsDeps>,
@@ -744,7 +744,7 @@ pub async fn get_health(
 }
 
 /// Live slskd client status (v2: any authenticated user may read it).
-#[utoipa::path(get, path = "/api/v3/acquire/slskd/status",
+#[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/slskd/status",
     responses((status = 200, description = "slskd status", body = SlskdStatusResponse)))]
 pub async fn get_slskd_status(
     State(deps): State<ImportsDeps>,
@@ -754,7 +754,7 @@ pub async fn get_slskd_status(
 }
 
 /// Live SABnzbd status against the saved config (v2: admin-only).
-#[utoipa::path(get, path = "/api/v3/acquire/sabnzbd/status",
+#[utoipa::path(get, tag = "imports", path = "/api/v3/acquire/sabnzbd/status",
     responses((status = 200, description = "SABnzbd status", body = SabnzbdStatusResponse)))]
 pub async fn get_sabnzbd_status(
     State(deps): State<ImportsDeps>,

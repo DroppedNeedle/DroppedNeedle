@@ -140,6 +140,7 @@ where
 /// cookie. Failures are one uniform 401 with a dummy-hash verify behind it.
 #[utoipa::path(
     post,
+    tag = "auth",
     path = "/api/v3/auth/login",
     request_body = LoginBody,
     responses(
@@ -211,6 +212,7 @@ where
 /// presented token when it resolves, always clears the cookie, always 204.
 #[utoipa::path(
     post,
+    tag = "auth",
     path = "/api/v3/auth/logout",
     responses((status = 204, description = "Logged out; cookie cleared"))
 )]
@@ -258,6 +260,7 @@ where
 /// leave exactly one admin. The early probe only skips the password hash.
 #[utoipa::path(
     post,
+    tag = "auth",
     path = "/api/v3/auth/setup",
     request_body = SetupBody,
     responses(
@@ -338,6 +341,7 @@ where
 /// Setup-required probe for the SPA first-run gate.
 #[utoipa::path(
     get,
+    tag = "auth",
     path = "/api/v3/auth/setup/status",
     responses((status = 200, description = "Whether setup must run", body = SetupStatusBody))
 )]

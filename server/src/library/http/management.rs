@@ -640,6 +640,7 @@ pub struct ManagementUndoPreviewBody {
 /// preview until it is ready.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/management/previews",
     request_body = ManagementPreviewCreateBody,
     responses(
@@ -672,6 +673,7 @@ pub async fn create_management_preview(
 /// One preview with its summary.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/management/previews/{job_id}",
     params(("job_id" = String, Path, description = "Management job id")),
     responses(
@@ -724,6 +726,7 @@ fn item_filter(query: &ManagementItemsQuery) -> Result<ItemFilter, LibraryError>
 /// A page of the files a preview planned.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/management/previews/{job_id}/items",
     params(("job_id" = String, Path, description = "Management job id"), ManagementItemsQuery),
     responses(
@@ -756,6 +759,7 @@ pub async fn list_management_preview_items(
 /// it by hash.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/management/previews/{job_id}/items/{ordinal}/artwork/{sha256}",
     params(
         ("job_id" = String, Path, description = "Management job id"),
@@ -804,6 +808,7 @@ pub async fn get_management_preview_artwork(
 /// Set a preview aside without changing any file.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/management/previews/{job_id}/discard",
     params(("job_id" = String, Path, description = "Management job id")),
     request_body = ManagementDiscardBody,
@@ -832,6 +837,7 @@ pub async fn discard_management_preview(
 /// background. Watch the operation for progress.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/management/previews/{job_id}/apply",
     params(("job_id" = String, Path, description = "Management job id")),
     request_body = ManagementApplyBody,
@@ -865,6 +871,7 @@ pub async fn apply_management_preview(
 /// stops working).
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/management/previews/{job_id}/reissue",
     params(("job_id" = String, Path, description = "Management job id")),
     responses(
@@ -905,6 +912,7 @@ fn history_cursor(raw: Option<&str>) -> Result<Option<(f64, String)>, LibraryErr
 /// Management history, newest first.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/management/operations",
     params(ManagementHistoryQuery),
     responses(
@@ -941,6 +949,7 @@ pub async fn list_management_operations(
 /// One management operation.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/management/operations/{job_id}",
     params(("job_id" = String, Path, description = "Management job id")),
     responses(
@@ -961,6 +970,7 @@ pub async fn get_management_operation(
 /// A page of an applied operation's files with their outcome.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/management/operations/{job_id}/results",
     params(("job_id" = String, Path, description = "Management job id"), ManagementResultsQuery),
     responses(
@@ -991,6 +1001,7 @@ pub async fn list_management_operation_results(
 /// other.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/management/operations/{job_id}/undo-preview",
     params(("job_id" = String, Path, description = "Management job id")),
     request_body = ManagementUndoPreviewBody,

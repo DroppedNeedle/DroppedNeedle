@@ -417,6 +417,7 @@ fn empty_user_wrapped(user_id: &str, year: i32) -> UserWrappedResponse {
 /// email and request `/user/{user_id}` only for `has_listenbrainz` ones.
 #[utoipa::path(
     get,
+    tag = "platform",
     path = "/api/v3/wrapped/users",
     responses(
         (status = 200, description = "User listing", body = WrappedUsersResponse),
@@ -437,6 +438,7 @@ pub async fn get_wrapped_users(
 /// Per-user year-in-review summary.
 #[utoipa::path(
     get,
+    tag = "platform",
     path = "/api/v3/wrapped/user/{user_id}",
     params(("user_id" = String, Path, description = "User id")),
     responses(
@@ -459,6 +461,7 @@ pub async fn get_wrapped_user(
 /// Server-wide year-in-review summary.
 #[utoipa::path(
     get,
+    tag = "platform",
     path = "/api/v3/wrapped/server",
     responses(
         (status = 200, description = "Server summary", body = ServerWrappedResponse),

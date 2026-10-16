@@ -266,6 +266,7 @@ fn require_allowed(state: &DownloadState, role: Role) -> Result<(), DownloadErro
 /// shown before any album is open).
 #[utoipa::path(
     get,
+    tag = "stream",
     path = "/api/v3/download/access",
     responses(
         (status = 200, description = "Download capability", body = LibraryDownloadAccess),
@@ -286,6 +287,7 @@ pub async fn download_access(
 /// resume.
 #[utoipa::path(
     get,
+    tag = "stream",
     path = "/api/v3/download/local/track/{id}",
     params(("id" = String, Path, description = "Local track id")),
     responses(
@@ -354,6 +356,7 @@ pub async fn download_track(
 /// An album's streamable files as a ZIP, by local album id.
 #[utoipa::path(
     get,
+    tag = "stream",
     path = "/api/v3/download/local/album/{id}",
     params(("id" = String, Path, description = "Local album id")),
     responses(
@@ -380,6 +383,7 @@ pub async fn download_album(
 /// release) id; the oldest local copy answers when several exist.
 #[utoipa::path(
     get,
+    tag = "stream",
     path = "/api/v3/download/local/album/mbid/{mbid}",
     params(("mbid" = String, Path, description = "Release-group or release mbid")),
     responses(

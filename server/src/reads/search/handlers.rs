@@ -62,6 +62,7 @@ fn service_response<T: serde::Serialize>(
 /// Ranked hits across the selected buckets plus each bucket's standout.
 #[utoipa::path(
     get,
+    tag = "search",
     path = "/api/v3/search",
     operation_id = "unified_search",
     params(SearchQuery),
@@ -92,6 +93,7 @@ pub async fn search(
 /// One page of one bucket for drill-down views.
 #[utoipa::path(
     get,
+    tag = "search",
     path = "/api/v3/search/{bucket}",
     params(
         ("bucket" = String, Path, description = "Bucket name: artists, albums or tracks"),
@@ -129,6 +131,7 @@ pub async fn search_bucket(
 /// an empty 200, kept from v2 so typing never errors.
 #[utoipa::path(
     get,
+    tag = "search",
     path = "/api/v3/search/suggest",
     params(SuggestQuery),
     responses(
@@ -156,6 +159,7 @@ pub async fn suggest(
 /// is a 405. Provider failures degrade into typed notes, never a 5xx.
 #[utoipa::path(
     post,
+    tag = "search",
     path = "/api/v3/search/enrich/batch",
     request_body = EnrichmentBatchRequest,
     responses(

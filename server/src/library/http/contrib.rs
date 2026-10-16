@@ -237,6 +237,7 @@ impl LibrarySetup {
 /// Start (or reopen) the contribution for one local album.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/albums/{id}/contributions",
     params(("id" = String, Path, description = "Local album id")),
     responses(
@@ -260,6 +261,7 @@ pub async fn create_contribution(
 /// Read one contribution.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/contributions/{id}",
     params(("id" = String, Path, description = "Contribution id")),
     responses(
@@ -279,6 +281,7 @@ pub async fn get_contribution(
 /// Save the edited draft.
 #[utoipa::path(
     put,
+    tag = "library management",
     path = "/api/v3/library/contributions/{id}/draft",
     params(("id" = String, Path, description = "Contribution id")),
     request_body = ContributionDraftBody,
@@ -313,6 +316,7 @@ pub async fn update_draft(
 /// Rebuild a stale contribution from the album's current files.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/contributions/{id}/rebuild",
     params(("id" = String, Path, description = "Contribution id")),
     request_body = ContributionRevisionBody,
@@ -341,6 +345,7 @@ pub async fn rebuild(
 /// Cancel a contribution.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/contributions/{id}/cancel",
     params(("id" = String, Path, description = "Contribution id")),
     request_body = ContributionRevisionBody,
@@ -369,6 +374,7 @@ pub async fn cancel(
 /// Search Discogs releases for this contribution.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/contributions/{id}/discogs/search",
     params(("id" = String, Path, description = "Contribution id")),
     request_body = DiscogsSearchBody,
@@ -398,6 +404,7 @@ pub async fn search_discogs(
 /// Use a Discogs release as the source.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/contributions/{id}/discogs/select",
     params(("id" = String, Path, description = "Contribution id")),
     request_body = DiscogsSelectBody,
@@ -433,6 +440,7 @@ pub async fn select_discogs(
 /// Drop the Discogs source and its values.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/contributions/{id}/discogs/remove",
     params(("id" = String, Path, description = "Contribution id")),
     request_body = ContributionRevisionBody,
@@ -461,6 +469,7 @@ pub async fn remove_discogs(
 /// Check MusicBrainz for releases this would duplicate.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/contributions/{id}/musicbrainz/duplicates",
     params(("id" = String, Path, description = "Contribution id")),
     request_body = DuplicateCheckBody,
@@ -495,6 +504,7 @@ pub async fn check_duplicates(
 /// Link the album to a release already on MusicBrainz.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/contributions/{id}/musicbrainz/attach",
     params(("id" = String, Path, description = "Contribution id")),
     request_body = AttachExistingBody,
@@ -530,6 +540,7 @@ pub async fn attach_existing(
 /// browser POSTs it; MusicBrainz sends the curator back to the callback.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/contributions/{id}/musicbrainz/seed",
     params(("id" = String, Path, description = "Contribution id")),
     request_body = ContributionRevisionBody,
@@ -567,6 +578,7 @@ pub async fn create_seed(
 /// Record the release MusicBrainz created, by hand.
 #[utoipa::path(
     put,
+    tag = "library management",
     path = "/api/v3/library/contributions/{id}/musicbrainz/result",
     params(("id" = String, Path, description = "Contribution id")),
     request_body = MusicBrainzResultBody,
@@ -602,6 +614,7 @@ pub async fn record_result(
 /// Queue the recorded release for verification again.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/contributions/{id}/musicbrainz/verify",
     params(("id" = String, Path, description = "Contribution id")),
     request_body = ContributionRevisionBody,
@@ -633,6 +646,7 @@ pub async fn retry_verification(
 /// with `musicbrainz=callback-error` otherwise (v2's contract).
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/contributions/musicbrainz/callback",
     params(MusicBrainzCallbackQuery),
     responses((status = 303, description = "Redirect to the contribution or library page"))

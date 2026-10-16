@@ -280,6 +280,7 @@ const KEPT_EXISTING: &str =
 /// `release_group_mbid`. `GET /api/v3/downloads/held`.
 #[utoipa::path(
     get,
+    tag = "downloads",
     path = "/api/v3/downloads/held",
     params(HeldListQuery),
     responses((status = 200, body = HeldListResponse))
@@ -304,6 +305,7 @@ pub async fn list_held_handler(
 /// to the recycle bin. `POST /api/v3/downloads/held/{held_id}/import`.
 #[utoipa::path(
     post,
+    tag = "downloads",
     path = "/api/v3/downloads/held/{held_id}/import",
     params(("held_id" = i64, Path, description = "Held file id")),
     responses((status = 200, body = HeldActionResponse))
@@ -328,6 +330,7 @@ pub async fn import_held_handler(
 /// `POST /api/v3/downloads/held/{held_id}/discard`.
 #[utoipa::path(
     post,
+    tag = "downloads",
     path = "/api/v3/downloads/held/{held_id}/discard",
     params(("held_id" = i64, Path, description = "Held file id")),
     responses((status = 200, body = HeldActionResponse))
@@ -352,6 +355,7 @@ pub async fn discard_held_handler(
 /// now agrees. `POST /api/v3/downloads/held/{held_id}/reverify`.
 #[utoipa::path(
     post,
+    tag = "downloads",
     path = "/api/v3/downloads/held/{held_id}/reverify",
     params(("held_id" = i64, Path, description = "Held file id")),
     responses((status = 200, body = HeldReverifyResponse))
@@ -381,6 +385,7 @@ pub async fn reverify_held_handler(
 /// answer `skipped`). `POST /api/v3/downloads/held/reverify`.
 #[utoipa::path(
     post,
+    tag = "downloads",
     path = "/api/v3/downloads/held/reverify",
     request_body = HeldBulkReverifyRequest,
     responses((status = 200, body = HeldBulkReverifyResponse))
@@ -427,6 +432,7 @@ pub async fn reverify_bulk_handler(
 /// seek. `GET /api/v3/downloads/held/{held_id}/audio`.
 #[utoipa::path(
     get,
+    tag = "downloads",
     path = "/api/v3/downloads/held/{held_id}/audio",
     params(("held_id" = i64, Path, description = "Held file id")),
     responses(
@@ -472,6 +478,7 @@ pub async fn held_audio_handler(
 /// `POST /api/v3/downloads/held/management/{source_task_id}/retry`.
 #[utoipa::path(
     post,
+    tag = "downloads",
     path = "/api/v3/downloads/held/management/{source_task_id}/retry",
     params(("source_task_id" = String, Path, description = "Download task id")),
     responses((status = 200, body = HeldUnitResponse))
@@ -496,6 +503,7 @@ pub async fn retry_local_handler(
 /// `POST /api/v3/downloads/held/management/{source_task_id}/discard`.
 #[utoipa::path(
     post,
+    tag = "downloads",
     path = "/api/v3/downloads/held/management/{source_task_id}/discard",
     params(("source_task_id" = String, Path, description = "Download task id")),
     responses((status = 200, body = HeldUnitResponse))
@@ -520,6 +528,7 @@ pub async fn discard_local_handler(
 /// verdict. `POST /api/v3/downloads/held/verdict/{source_task_id}/discard`.
 #[utoipa::path(
     post,
+    tag = "downloads",
     path = "/api/v3/downloads/held/verdict/{source_task_id}/discard",
     params(("source_task_id" = String, Path, description = "Download task id")),
     responses((status = 200, body = HeldUnitResponse))
@@ -543,6 +552,7 @@ pub async fn discard_verdict_handler(
 /// off. Admins and trusted users. `GET /api/v3/downloads/cutoff-unmet`.
 #[utoipa::path(
     get,
+    tag = "downloads",
     path = "/api/v3/downloads/cutoff-unmet",
     responses((status = 200, body = CutoffUnmetResponse))
 )]
@@ -606,6 +616,7 @@ fn required(value: &str, name: &str) -> Result<String, HttpError> {
 /// users. `POST /api/v3/downloads/upgrade/album`.
 #[utoipa::path(
     post,
+    tag = "downloads",
     path = "/api/v3/downloads/upgrade/album",
     request_body = UpgradeAlbumRequest,
     responses((status = 200, body = UpgradeRequestResponse))
@@ -636,6 +647,7 @@ pub async fn upgrade_album_handler(
 /// users. `POST /api/v3/downloads/upgrade/track`.
 #[utoipa::path(
     post,
+    tag = "downloads",
     path = "/api/v3/downloads/upgrade/track",
     request_body = UpgradeTrackRequest,
     responses((status = 200, body = UpgradeRequestResponse))

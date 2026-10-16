@@ -56,6 +56,7 @@ pub struct SystemHealthResponse {
 /// Which external services are degraded right now.
 #[utoipa::path(
     get,
+    tag = "admin",
     path = "/api/v3/system/health",
     responses(
         (status = 200, description = "Degraded services", body = SystemHealthResponse),

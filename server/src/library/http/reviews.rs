@@ -185,6 +185,7 @@ async fn settled(state: LibrarySetup, id: String) -> Result<ReviewView, Operatio
 /// Identification reviews, most recently changed first.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/reviews",
     params(ReviewsQuery),
     responses(
@@ -281,6 +282,7 @@ fn review_filter(
 /// One review with its candidates.
 #[utoipa::path(
     get,
+    tag = "library management",
     path = "/api/v3/library/reviews/{id}",
     params(("id" = String, Path, description = "Review id")),
     responses(
@@ -300,6 +302,7 @@ pub async fn get_review(
 /// Approve a review with the curator's chosen candidate.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/reviews/{id}/approve",
     params(("id" = String, Path, description = "Review id")),
     request_body = ApproveBody,
@@ -342,6 +345,7 @@ pub async fn approve_review(
 /// Reject a review: the album keeps its tags, nothing seals.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/reviews/{id}/reject",
     params(("id" = String, Path, description = "Review id")),
     responses(
@@ -384,6 +388,7 @@ async fn act(
 /// Close a review without a decision. The album stays as it is.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/reviews/{id}/dismiss",
     params(("id" = String, Path, description = "Review id")),
     responses(
@@ -407,6 +412,7 @@ pub async fn dismiss_review(
 /// like an edition choice.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/reviews/{id}/detach",
     params(("id" = String, Path, description = "Review id")),
     responses(
@@ -429,6 +435,7 @@ pub async fn detach_review(
 /// keep the files out until the review is restored.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/reviews/{id}/exclude",
     params(("id" = String, Path, description = "Review id")),
     responses(
@@ -450,6 +457,7 @@ pub async fn exclude_review(
 /// Put an excluded album's files back into the library.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/reviews/{id}/restore",
     params(("id" = String, Path, description = "Review id")),
     responses(
@@ -472,6 +480,7 @@ pub async fn restore_review(
 /// carries the decision, so the review is dismissed.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/reviews/{id}/retry",
     params(("id" = String, Path, description = "Review id")),
     request_body = ReviewRetryBody,
@@ -502,6 +511,7 @@ pub async fn retry_review(
 /// Reviews whose album cannot start stay open and are counted by reason.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/reviews/retry-pending",
     request_body = ReviewRetryAllBody,
     responses(
@@ -617,6 +627,7 @@ fn bulk_request(
 /// why, and the token that applies exactly this change.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/reviews/bulk-preview",
     request_body = ReviewBulkBody,
     responses(
@@ -646,6 +657,7 @@ pub async fn preview_bulk_reviews(
 /// since the preview.
 #[utoipa::path(
     post,
+    tag = "library management",
     path = "/api/v3/library/reviews/bulk-apply",
     request_body = ReviewBulkBody,
     responses(

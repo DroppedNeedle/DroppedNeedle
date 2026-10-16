@@ -464,6 +464,7 @@ fn page_of(value: Option<i64>, default: i64, max: i64, name: &str) -> Result<i64
 /// tasks. `GET /api/v3/downloads/tasks`.
 #[utoipa::path(
     get,
+    tag = "downloads",
     path = "/api/v3/downloads/tasks",
     params(DownloadListQuery),
     responses((status = 200, body = DownloadListResponse))
@@ -498,6 +499,7 @@ pub async fn list_tasks_handler(
 /// One download task. `GET /api/v3/downloads/tasks/{task_id}`.
 #[utoipa::path(
     get,
+    tag = "downloads",
     path = "/api/v3/downloads/tasks/{task_id}",
     params(("task_id" = String, Path, description = "Download task id")),
     responses((status = 200, body = DownloadTaskResponse))
@@ -515,6 +517,7 @@ pub async fn get_task_handler(
 /// `GET /api/v3/downloads/tasks/{task_id}/files`.
 #[utoipa::path(
     get,
+    tag = "downloads",
     path = "/api/v3/downloads/tasks/{task_id}/files",
     params(("task_id" = String, Path, description = "Download task id")),
     responses((status = 200, body = DownloadFilesResponse))
@@ -548,6 +551,7 @@ pub async fn task_files_handler(
 /// too. `POST /api/v3/downloads/tasks/{task_id}/cancel`.
 #[utoipa::path(
     post,
+    tag = "downloads",
     path = "/api/v3/downloads/tasks/{task_id}/cancel",
     params(("task_id" = String, Path, description = "Download task id")),
     responses((status = 200, body = DownloadActionResponse))
@@ -566,6 +570,7 @@ pub async fn cancel_task_handler(
 /// `POST /api/v3/downloads/tasks/{task_id}/next-source`.
 #[utoipa::path(
     post,
+    tag = "downloads",
     path = "/api/v3/downloads/tasks/{task_id}/next-source",
     params(("task_id" = String, Path, description = "Download task id")),
     request_body = NextSourceRequest,
@@ -593,6 +598,7 @@ pub async fn next_source_handler(
 /// `POST /api/v3/downloads/tasks/{task_id}/retry`.
 #[utoipa::path(
     post,
+    tag = "downloads",
     path = "/api/v3/downloads/tasks/{task_id}/retry",
     params(("task_id" = String, Path, description = "Download task id")),
     responses((status = 200, body = RetryDownloadResponse))
@@ -613,6 +619,7 @@ pub async fn retry_task_handler(
 /// Admins clear every user's. `POST /api/v3/downloads/clear`.
 #[utoipa::path(
     post,
+    tag = "downloads",
     path = "/api/v3/downloads/clear",
     responses((status = 200, body = ClearDownloadsResponse))
 )]
@@ -628,6 +635,7 @@ pub async fn clear_handler(
 /// `POST /api/v3/downloads/stop-all-retries`.
 #[utoipa::path(
     post,
+    tag = "downloads",
     path = "/api/v3/downloads/stop-all-retries",
     responses((status = 200, body = StopRetriesResponse))
 )]
@@ -643,6 +651,7 @@ pub async fn stop_all_retries_handler(
 /// album or track. `POST /api/v3/downloads/retry-all-failed`.
 #[utoipa::path(
     post,
+    tag = "downloads",
     path = "/api/v3/downloads/retry-all-failed",
     responses((status = 200, body = RetryAllResponse))
 )]
@@ -658,6 +667,7 @@ pub async fn retry_all_failed_handler(
 /// `GET /api/v3/downloads/activity-summary`.
 #[utoipa::path(
     get,
+    tag = "downloads",
     path = "/api/v3/downloads/activity-summary",
     responses((status = 200, body = DownloadActivitySummaryResponse))
 )]
@@ -679,6 +689,7 @@ pub async fn activity_summary_handler(
 /// `GET /api/v3/downloads/quarantine`.
 #[utoipa::path(
     get,
+    tag = "downloads",
     path = "/api/v3/downloads/quarantine",
     params(QuarantineQuery),
     responses((status = 200, body = QuarantineListResponse))
@@ -702,6 +713,7 @@ pub async fn list_quarantine_handler(
 /// only. `DELETE /api/v3/downloads/quarantine/{quarantine_id}`.
 #[utoipa::path(
     delete,
+    tag = "downloads",
     path = "/api/v3/downloads/quarantine/{quarantine_id}",
     params(("quarantine_id" = i64, Path, description = "Quarantine entry id")),
     responses((status = 200, body = DownloadActionResponse))
@@ -728,6 +740,7 @@ pub async fn delete_quarantine_handler(
 /// that is no longer configured answers 409.
 #[utoipa::path(
     post,
+    tag = "downloads",
     path = "/api/v3/downloads/tasks/{task_id}/reimport",
     params(("task_id" = String, Path, description = "Download task id")),
     responses((status = 200, body = ReimportResponse))
@@ -1003,6 +1016,7 @@ impl From<JobView> for SearchJobResponse {
 /// the job. `POST /api/v3/downloads/search/album`.
 #[utoipa::path(
     post,
+    tag = "downloads",
     path = "/api/v3/downloads/search/album",
     request_body = SearchAlbumRequest,
     responses((status = 200, body = SearchAlbumResponse))
@@ -1035,6 +1049,7 @@ pub async fn search_album_handler(
 /// `GET /api/v3/downloads/search/{job_id}`.
 #[utoipa::path(
     get,
+    tag = "downloads",
     path = "/api/v3/downloads/search/{job_id}",
     params(("job_id" = String, Path, description = "Search job id")),
     responses((status = 200, body = SearchJobResponse))
@@ -1051,6 +1066,7 @@ pub async fn search_job_handler(
 /// first. `POST /api/v3/downloads/search/{job_id}/pick`.
 #[utoipa::path(
     post,
+    tag = "downloads",
     path = "/api/v3/downloads/search/{job_id}/pick",
     params(("job_id" = String, Path, description = "Search job id")),
     request_body = PickRequest,
@@ -1072,6 +1088,7 @@ pub async fn pick_candidate_handler(
 /// the wanted watchlist. `POST /api/v3/downloads/search/{job_id}/dismiss`.
 #[utoipa::path(
     post,
+    tag = "downloads",
     path = "/api/v3/downloads/search/{job_id}/dismiss",
     params(("job_id" = String, Path, description = "Search job id")),
     responses((status = 200, body = DismissSearchResponse))
@@ -1092,6 +1109,7 @@ pub async fn dismiss_search_handler(
 /// `POST /api/v3/downloads/search/{job_id}/cancel`.
 #[utoipa::path(
     post,
+    tag = "downloads",
     path = "/api/v3/downloads/search/{job_id}/cancel",
     params(("job_id" = String, Path, description = "Search job id")),
     responses((status = 200, body = DownloadActionResponse))

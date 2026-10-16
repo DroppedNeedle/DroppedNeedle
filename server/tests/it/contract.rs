@@ -107,3 +107,35 @@ fn every_public_path_is_a_mounted_route() {
         );
     }
 }
+
+/// A tag left unset defaults to the module path of its handler, so moving a
+/// handler between crates would rename the tag and change the document.
+/// Every operation names exactly one tag, and no tag is a module path.
+#[test]
+fn every_operation_has_one_named_tag() {
+    let doc = serde_json::to_value(ApiDoc::openapi()).unwrap();
+    let mut wrong = Vec::new();
+    for (path, item) in doc["paths"].as_object().unwrap() {
+        let operations = item.as_object().unwrap().iter().filter(|(key, _)| {
+            matches!(
+                key.as_str(),
+                "get" | "put" | "post" | "delete" | "options" | "head" | "patch" | "trace"
+            )
+        });
+        for (method, operation) in operations {
+            let tags: Vec<&str> = operation["tags"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|tag| tag.as_str())
+                .collect();
+            if !matches!(tags.as_slice(), [tag] if !tag.contains("::")) {
+                wrong.push(format!("{method} {path}: tags {tags:?}"));
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "operations without exactly one named tag: {wrong:#?}"
+    );
+}
