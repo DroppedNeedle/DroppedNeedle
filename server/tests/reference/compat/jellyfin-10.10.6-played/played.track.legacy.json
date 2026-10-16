@@ -1,0 +1,17 @@
+{
+  "request": "POST /Users/00000000000000000000000000000001/PlayedItems/00000000000000000000000000000008",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "PlaybackPositionTicks": 0,
+    "PlayCount": 1,
+    "IsFavorite": false,
+    "LastPlayedDate": "0000-00-00T00:00:00.0000000Z",
+    "Played": true,
+    "Key": "Radiohead-OK Computer-0001-0001Airbag",
+    "ItemId": "00000000000000000000000000000021"
+  }
+}

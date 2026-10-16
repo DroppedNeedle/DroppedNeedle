@@ -1,0 +1,16 @@
+{
+  "request": "DELETE /UserPlayedItems/00000000000000000000000000000008?userId=00000000000000000000000000000001",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "PlaybackPositionTicks": 0,
+    "PlayCount": 0,
+    "IsFavorite": false,
+    "Played": false,
+    "Key": "Radiohead-OK Computer-0001-0001Airbag",
+    "ItemId": "00000000000000000000000000000021"
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "request": "GET /Items?userId=00000000000000000000000000000001&Recursive=true&IncludeItemTypes=Audio&ArtistIds=00000000000000000000000000000005",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "Items": [
+      {
+        "Name": "Teardrop",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000011",
+        "HasLyrics": false,
+        "Container": "mov,mp4,m4a,3gp,3g2,mj2",
+        "PremiereDate": "1998-01-01T00:00:00.0000000Z",
+        "ChannelId": null,
+        "RunTimeTicks": 3000000,
+        "ProductionYear": 1998,
+        "IndexNumber": 4,
+        "ParentIndexNumber": 1,
+        "IsFolder": false,
+        "Type": "Audio",
+        "UserData": {
+          "PlaybackPositionTicks": 0,
+          "PlayCount": 1,
+          "IsFavorite": false,
+          "LastPlayedDate": "0000-00-00T00:00:00.0000000Z",
+          "Played": true,
+          "Key": "Massive Attack-Mezzanine-0001-0004Teardrop",
+          "ItemId": "00000000000000000000000000000021"
+        },
+        "Artists": [
+          "Massive Attack"
+        ],
+        "ArtistItems": [
+          {
+            "Name": "Massive Attack",
+            "Id": "00000000000000000000000000000005"
+          }
+        ],
+        "Album": "Mezzanine",
+        "AlbumId": "00000000000000000000000000000016",
+        "AlbumArtist": "Massive Attack",
+        "AlbumArtists": [
+          {
+            "Name": "Massive Attack",
+            "Id": "00000000000000000000000000000005"
+          }
+        ],
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Audio"
+      }
+    ],
+    "TotalRecordCount": 1,
+    "StartIndex": 0
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "request": "GET /Items/00000000000000000000000000000014?userId=00000000000000000000000000000001",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "Name": "OK Computer",
+    "ServerId": "00000000000000000000000000000019",
+    "Id": "00000000000000000000000000000014",
+    "Etag": "00000000000000000000000000000026",
+    "DateCreated": "0000-00-00T00:00:00.0000000Z",
+    "CanDelete": true,
+    "CanDownload": false,
+    "SortName": "ok computer",
+    "PremiereDate": "1997-01-01T00:00:00.0000000Z",
+    "ExternalUrls": [
+      {
+        "Name": "MusicBrainz",
+        "Url": "http://reference.invalid/release/0da3b3e3-1111-4444-8888-aaaaaaaaaaaa"
+      },
+      {
+        "Name": "MusicBrainz",
+        "Url": "http://reference.invalid/release-group/b1392450-e666-3926-a536-22c65f834433"
+      }
+    ],
+    "Path": "/media/music/Radiohead/OK Computer",
+    "EnableMediaSourceDisplay": true,
+    "ChannelId": null,
+    "Taglines": [],
+    "Genres": [
+      "Alternative Rock"
+    ],
+    "CumulativeRunTimeTicks": 6000000,
+    "RunTimeTicks": 6000000,
+    "PlayAccess": "Full",
+    "ProductionYear": 1997,
+    "RemoteTrailers": [],
+    "ProviderIds": {
+      "MusicBrainzAlbum": "0da3b3e3-1111-4444-8888-aaaaaaaaaaaa",
+      "MusicBrainzReleaseGroup": "b1392450-e666-3926-a536-22c65f834433"
+    },
+    "IsFolder": true,
+    "ParentId": "00000000000000000000000000000003",
+    "Type": "MusicAlbum",
+    "People": [],
+    "Studios": [],
+    "GenreItems": [
+      {
+        "Name": "Alternative Rock",
+        "Id": "00000000000000000000000000000024"
+      }
+    ],
+    "LocalTrailerCount": 0,
+    "UserData": {
+      "PlaybackPositionTicks": 0,
+      "PlayCount": 0,
+      "IsFavorite": false,
+      "Played": false,
+      "Key": "MusicAlbum-MusicBrainzReleaseGroup-b1392450-e666-3926-a536-22c65f834433",
+      "ItemId": "00000000000000000000000000000021"
+    },
+    "RecursiveItemCount": 2,
+    "ChildCount": 2,
+    "SpecialFeatureCount": 0,
+    "DisplayPreferencesId": "00000000000000000000000000000027",
+    "Tags": [],
+    "Artists": [
+      "Radiohead"
+    ],
+    "ArtistItems": [
+      {
+        "Name": "Radiohead",
+        "Id": "00000000000000000000000000000003"
+      }
+    ],
+    "AlbumArtist": "Radiohead",
+    "AlbumArtists": [
+      {
+        "Name": "Radiohead",
+        "Id": "00000000000000000000000000000003"
+      }
+    ],
+    "ImageTags": {},
+    "BackdropImageTags": [],
+    "ImageBlurHashes": {},
+    "LocationType": "FileSystem",
+    "MediaType": "Unknown",
+    "LockedFields": [],
+    "LockData": false
+  }
+}

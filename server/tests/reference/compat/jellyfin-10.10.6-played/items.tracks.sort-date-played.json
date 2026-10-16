@@ -1,0 +1,292 @@
+{
+  "request": "GET /Items?userId=00000000000000000000000000000001&Recursive=true&IncludeItemTypes=Audio&SortBy=DatePlayed&SortOrder=Descending",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "Items": [
+      {
+        "Name": "Paranoid Android",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000009",
+        "HasLyrics": false,
+        "Container": "flac",
+        "PremiereDate": "1997-01-01T00:00:00.0000000Z",
+        "ChannelId": null,
+        "RunTimeTicks": 3000000,
+        "ProductionYear": 1997,
+        "IndexNumber": 2,
+        "ParentIndexNumber": 1,
+        "IsFolder": false,
+        "Type": "Audio",
+        "UserData": {
+          "PlaybackPositionTicks": 0,
+          "PlayCount": 1,
+          "IsFavorite": false,
+          "LastPlayedDate": "0000-00-00T00:00:00.0000000Z",
+          "Played": true,
+          "Key": "Radiohead-OK Computer-0001-0002Paranoid Android",
+          "ItemId": "00000000000000000000000000000021"
+        },
+        "Artists": [
+          "Radiohead"
+        ],
+        "ArtistItems": [
+          {
+            "Name": "Radiohead",
+            "Id": "00000000000000000000000000000003"
+          }
+        ],
+        "Album": "OK Computer",
+        "AlbumId": "00000000000000000000000000000014",
+        "AlbumArtist": "Radiohead",
+        "AlbumArtists": [
+          {
+            "Name": "Radiohead",
+            "Id": "00000000000000000000000000000003"
+          }
+        ],
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Audio"
+      },
+      {
+        "Name": "Airbag",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000008",
+        "HasLyrics": false,
+        "Container": "flac",
+        "PremiereDate": "1997-01-01T00:00:00.0000000Z",
+        "ChannelId": null,
+        "RunTimeTicks": 3000000,
+        "ProductionYear": 1997,
+        "IndexNumber": 1,
+        "ParentIndexNumber": 1,
+        "IsFolder": false,
+        "Type": "Audio",
+        "UserData": {
+          "PlaybackPositionTicks": 0,
+          "PlayCount": 1,
+          "IsFavorite": false,
+          "LastPlayedDate": "0000-00-00T00:00:00.0000000Z",
+          "Played": true,
+          "Key": "Radiohead-OK Computer-0001-0001Airbag",
+          "ItemId": "00000000000000000000000000000021"
+        },
+        "Artists": [
+          "Radiohead"
+        ],
+        "ArtistItems": [
+          {
+            "Name": "Radiohead",
+            "Id": "00000000000000000000000000000003"
+          }
+        ],
+        "Album": "OK Computer",
+        "AlbumId": "00000000000000000000000000000014",
+        "AlbumArtist": "Radiohead",
+        "AlbumArtists": [
+          {
+            "Name": "Radiohead",
+            "Id": "00000000000000000000000000000003"
+          }
+        ],
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Audio"
+      },
+      {
+        "Name": "One",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000010",
+        "HasLyrics": false,
+        "Container": "mp3",
+        "PremiereDate": "1991-01-01T00:00:00.0000000Z",
+        "ChannelId": null,
+        "RunTimeTicks": 3395920,
+        "ProductionYear": 1991,
+        "IndexNumber": 3,
+        "ParentIndexNumber": 1,
+        "IsFolder": false,
+        "Type": "Audio",
+        "UserData": {
+          "PlaybackPositionTicks": 0,
+          "PlayCount": 0,
+          "IsFavorite": false,
+          "Played": false,
+          "Key": "U2-Achtung Baby-0001-0003One",
+          "ItemId": "00000000000000000000000000000021"
+        },
+        "Artists": [
+          "U2"
+        ],
+        "ArtistItems": [
+          {
+            "Name": "U2",
+            "Id": "00000000000000000000000000000004"
+          }
+        ],
+        "Album": "Achtung Baby",
+        "AlbumId": "00000000000000000000000000000015",
+        "AlbumArtist": "U2",
+        "AlbumArtists": [
+          {
+            "Name": "U2",
+            "Id": "00000000000000000000000000000004"
+          }
+        ],
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Audio"
+      },
+      {
+        "Name": "Song A",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000012",
+        "HasLyrics": false,
+        "Container": "flac",
+        "PremiereDate": "2001-01-01T00:00:00.0000000Z",
+        "ChannelId": null,
+        "RunTimeTicks": 3000000,
+        "ProductionYear": 2001,
+        "IndexNumber": 1,
+        "ParentIndexNumber": 1,
+        "IsFolder": false,
+        "Type": "Audio",
+        "UserData": {
+          "PlaybackPositionTicks": 0,
+          "PlayCount": 0,
+          "IsFavorite": false,
+          "Played": false,
+          "Key": "Various Artists-Now Thats Music-0001-0001Song A",
+          "ItemId": "00000000000000000000000000000021"
+        },
+        "Artists": [
+          "Artist One"
+        ],
+        "ArtistItems": [
+          {
+            "Name": "Artist One",
+            "Id": "00000000000000000000000000000028"
+          }
+        ],
+        "Album": "Now Thats Music",
+        "AlbumId": "00000000000000000000000000000017",
+        "AlbumArtist": "Various Artists",
+        "AlbumArtists": [
+          {
+            "Name": "Various Artists",
+            "Id": "00000000000000000000000000000006"
+          }
+        ],
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Audio"
+      },
+      {
+        "Name": "Teardrop",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000011",
+        "HasLyrics": false,
+        "Container": "mov,mp4,m4a,3gp,3g2,mj2",
+        "PremiereDate": "1998-01-01T00:00:00.0000000Z",
+        "ChannelId": null,
+        "RunTimeTicks": 3000000,
+        "ProductionYear": 1998,
+        "IndexNumber": 4,
+        "ParentIndexNumber": 1,
+        "IsFolder": false,
+        "Type": "Audio",
+        "UserData": {
+          "PlaybackPositionTicks": 0,
+          "PlayCount": 0,
+          "IsFavorite": false,
+          "Played": false,
+          "Key": "Massive Attack-Mezzanine-0001-0004Teardrop",
+          "ItemId": "00000000000000000000000000000021"
+        },
+        "Artists": [
+          "Massive Attack"
+        ],
+        "ArtistItems": [
+          {
+            "Name": "Massive Attack",
+            "Id": "00000000000000000000000000000005"
+          }
+        ],
+        "Album": "Mezzanine",
+        "AlbumId": "00000000000000000000000000000016",
+        "AlbumArtist": "Massive Attack",
+        "AlbumArtists": [
+          {
+            "Name": "Massive Attack",
+            "Id": "00000000000000000000000000000005"
+          }
+        ],
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Audio"
+      },
+      {
+        "Name": "桃源へ",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000013",
+        "HasLyrics": false,
+        "Container": "flac",
+        "PremiereDate": "2015-01-01T00:00:00.0000000Z",
+        "ChannelId": null,
+        "RunTimeTicks": 3000000,
+        "ProductionYear": 2015,
+        "IndexNumber": 1,
+        "ParentIndexNumber": 1,
+        "IsFolder": false,
+        "Type": "Audio",
+        "UserData": {
+          "PlaybackPositionTicks": 0,
+          "PlayCount": 0,
+          "IsFavorite": false,
+          "Played": false,
+          "Key": "ユキ-望厚-0001-0001桃源へ",
+          "ItemId": "00000000000000000000000000000021"
+        },
+        "Artists": [
+          "ユキ"
+        ],
+        "ArtistItems": [
+          {
+            "Name": "ユキ",
+            "Id": "00000000000000000000000000000007"
+          }
+        ],
+        "Album": "望厚",
+        "AlbumId": "00000000000000000000000000000018",
+        "AlbumArtist": "ユキ",
+        "AlbumArtists": [
+          {
+            "Name": "ユキ",
+            "Id": "00000000000000000000000000000007"
+          }
+        ],
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Audio"
+      }
+    ],
+    "TotalRecordCount": 6,
+    "StartIndex": 0
+  }
+}

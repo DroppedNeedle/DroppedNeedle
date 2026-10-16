@@ -1,0 +1,14 @@
+{
+  "request": "POST /UserPlayedItems/ffffffffffffffffffffffffffffffff?userId=00000000000000000000000000000001",
+  "status": 404,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "type": "http://reference.invalid/html/rfc9110#section-15.5.5",
+    "title": "Not Found",
+    "status": 404,
+    "traceId": "00-00000000000000000000000000000033-0000000000000034-00"
+  }
+}

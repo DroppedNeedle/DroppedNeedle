@@ -20,6 +20,7 @@ run, and no file is ever edited by hand.
 | `jellyfin-10.10.6/` | Jellyfin 10.10.6, requests that only read |
 | `jellyfin-10.10.6-writes/` | The same server after one favourite, one playlist and one play report |
 | `jellyfin-10.10.6-lyrics/` | Jellyfin 10.10.6 again, fresh, with a `.lrc` file beside Airbag: the two OK Computer tracks, their album, PlaybackInfo and the lyrics address |
+| `jellyfin-10.10.6-played/` | Jellyfin 10.10.6 again, fresh, after marking a track, an album and two artists played, then the track and the album unplayed |
 
 Each folder has:
 
@@ -46,6 +47,8 @@ track's rating and read the track again.
 `-lyrics` is a fresh server whose library also holds
 `fixtures/library/lyrics_airbag.lrc` as `Radiohead/OK Computer/01 Airbag.lrc`;
 its `capture.json` names that file under `extra_files`.
+`-played` is a fresh server: each mark is followed by the reads that show
+it, and its last request marks an unknown id.
 
 ## What was removed
 
@@ -102,8 +105,8 @@ refuses to run in CI. The steps, one server at a time:
    scrubbing checks.
 5. Stop the container, then `clean <checkout>/dn-ref-tmp`.
 
-A request set of its own (`arpeggi`, `ratings` for Navidrome, `lyrics` for
-Jellyfin) is recorded the same way on a fresh container, with
+A request set of its own (`arpeggi`, `ratings` for Navidrome, `lyrics` and
+`played` for Jellyfin) is recorded the same way on a fresh container, with
 `navidrome <this folder> --image-id <id> --set <set>` or
 `jellyfin <this folder> --image-id <id> --set <set>`. It writes only
 `<server>-<version>-<set>/` and refuses if that folder exists. The

@@ -1,0 +1,13 @@
+{
+  "request": "GET /Items?userId=00000000000000000000000000000001&Recursive=true&IncludeItemTypes=MusicAlbum&Filters=IsPlayed",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "Items": [],
+    "TotalRecordCount": 0,
+    "StartIndex": 0
+  }
+}

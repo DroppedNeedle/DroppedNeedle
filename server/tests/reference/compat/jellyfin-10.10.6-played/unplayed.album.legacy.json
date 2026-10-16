@@ -1,0 +1,16 @@
+{
+  "request": "DELETE /Users/00000000000000000000000000000001/PlayedItems/00000000000000000000000000000014",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "PlaybackPositionTicks": 0,
+    "PlayCount": 0,
+    "IsFavorite": false,
+    "Played": false,
+    "Key": "MusicAlbum-MusicBrainzReleaseGroup-b1392450-e666-3926-a536-22c65f834433",
+    "ItemId": "00000000000000000000000000000021"
+  }
+}

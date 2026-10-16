@@ -1,0 +1,108 @@
+{
+  "request": "GET /Items?userId=00000000000000000000000000000001&ParentId=00000000000000000000000000000014",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "Items": [
+      {
+        "Name": "Airbag",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000008",
+        "HasLyrics": false,
+        "Container": "flac",
+        "PremiereDate": "1997-01-01T00:00:00.0000000Z",
+        "ChannelId": null,
+        "RunTimeTicks": 3000000,
+        "ProductionYear": 1997,
+        "IndexNumber": 1,
+        "ParentIndexNumber": 1,
+        "IsFolder": false,
+        "Type": "Audio",
+        "UserData": {
+          "PlaybackPositionTicks": 0,
+          "PlayCount": 1,
+          "IsFavorite": false,
+          "LastPlayedDate": "0000-00-00T00:00:00.0000000Z",
+          "Played": true,
+          "Key": "Radiohead-OK Computer-0001-0001Airbag",
+          "ItemId": "00000000000000000000000000000021"
+        },
+        "Artists": [
+          "Radiohead"
+        ],
+        "ArtistItems": [
+          {
+            "Name": "Radiohead",
+            "Id": "00000000000000000000000000000003"
+          }
+        ],
+        "Album": "OK Computer",
+        "AlbumId": "00000000000000000000000000000014",
+        "AlbumArtist": "Radiohead",
+        "AlbumArtists": [
+          {
+            "Name": "Radiohead",
+            "Id": "00000000000000000000000000000003"
+          }
+        ],
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Audio"
+      },
+      {
+        "Name": "Paranoid Android",
+        "ServerId": "00000000000000000000000000000019",
+        "Id": "00000000000000000000000000000009",
+        "HasLyrics": false,
+        "Container": "flac",
+        "PremiereDate": "1997-01-01T00:00:00.0000000Z",
+        "ChannelId": null,
+        "RunTimeTicks": 3000000,
+        "ProductionYear": 1997,
+        "IndexNumber": 2,
+        "ParentIndexNumber": 1,
+        "IsFolder": false,
+        "Type": "Audio",
+        "UserData": {
+          "PlaybackPositionTicks": 0,
+          "PlayCount": 1,
+          "IsFavorite": false,
+          "LastPlayedDate": "0000-00-00T00:00:00.0000000Z",
+          "Played": true,
+          "Key": "Radiohead-OK Computer-0001-0002Paranoid Android",
+          "ItemId": "00000000000000000000000000000021"
+        },
+        "Artists": [
+          "Radiohead"
+        ],
+        "ArtistItems": [
+          {
+            "Name": "Radiohead",
+            "Id": "00000000000000000000000000000003"
+          }
+        ],
+        "Album": "OK Computer",
+        "AlbumId": "00000000000000000000000000000014",
+        "AlbumArtist": "Radiohead",
+        "AlbumArtists": [
+          {
+            "Name": "Radiohead",
+            "Id": "00000000000000000000000000000003"
+          }
+        ],
+        "ImageTags": {},
+        "BackdropImageTags": [],
+        "ImageBlurHashes": {},
+        "LocationType": "FileSystem",
+        "MediaType": "Audio"
+      }
+    ],
+    "TotalRecordCount": 2,
+    "StartIndex": 0
+  }
+}

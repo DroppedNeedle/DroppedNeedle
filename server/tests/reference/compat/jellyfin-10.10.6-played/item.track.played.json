@@ -1,0 +1,192 @@
+{
+  "request": "GET /Items/00000000000000000000000000000008?userId=00000000000000000000000000000001",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "Name": "Airbag",
+    "ServerId": "00000000000000000000000000000019",
+    "Id": "00000000000000000000000000000008",
+    "Etag": "00000000000000000000000000000022",
+    "DateCreated": "0000-00-00T00:00:00.0000000Z",
+    "CanDelete": true,
+    "CanDownload": true,
+    "HasLyrics": false,
+    "Container": "flac",
+    "SortName": "0001 - 0001 - Airbag",
+    "PremiereDate": "1997-01-01T00:00:00.0000000Z",
+    "ExternalUrls": [
+      {
+        "Name": "MusicBrainz",
+        "Url": "http://reference.invalid/release/0da3b3e3-1111-4444-8888-aaaaaaaaaaaa"
+      },
+      {
+        "Name": "MusicBrainz",
+        "Url": "http://reference.invalid/artist/a74b1b7f-71a5-4011-9441-d0b5e4122711"
+      },
+      {
+        "Name": "MusicBrainz",
+        "Url": "http://reference.invalid/release-group/b1392450-e666-3926-a536-22c65f834433"
+      }
+    ],
+    "MediaSources": [
+      {
+        "Protocol": "File",
+        "Id": "00000000000000000000000000000008",
+        "Path": "/media/music/Radiohead/OK Computer/01 Airbag.flac",
+        "Type": "Default",
+        "Container": "flac",
+        "Size": 1567,
+        "Name": "01 Airbag",
+        "IsRemote": false,
+        "ETag": "00000000000000000000000000000023",
+        "RunTimeTicks": 3000000,
+        "ReadAtNativeFramerate": false,
+        "IgnoreDts": false,
+        "IgnoreIndex": false,
+        "GenPtsInput": false,
+        "SupportsTranscoding": true,
+        "SupportsDirectStream": true,
+        "SupportsDirectPlay": true,
+        "IsInfiniteStream": false,
+        "UseMostCompatibleTranscodingProfile": false,
+        "RequiresOpening": false,
+        "RequiresClosing": false,
+        "RequiresLooping": false,
+        "SupportsProbing": true,
+        "MediaStreams": [
+          {
+            "Codec": "flac",
+            "TimeBase": "1/44100",
+            "VideoRange": "Unknown",
+            "VideoRangeType": "Unknown",
+            "AudioSpatialFormat": "None",
+            "LocalizedDefault": "Default",
+            "LocalizedExternal": "External",
+            "DisplayTitle": "FLAC - Stereo",
+            "IsInterlaced": false,
+            "IsAVC": false,
+            "ChannelLayout": "stereo",
+            "BitRate": 41786,
+            "BitDepth": 16,
+            "Channels": 2,
+            "SampleRate": 44100,
+            "IsDefault": false,
+            "IsForced": false,
+            "IsHearingImpaired": false,
+            "Type": "Audio",
+            "Index": 0,
+            "IsExternal": false,
+            "IsTextSubtitleStream": false,
+            "SupportsExternalStream": false,
+            "Level": 0
+          }
+        ],
+        "MediaAttachments": [],
+        "Formats": [],
+        "Bitrate": 41786,
+        "RequiredHttpHeaders": {},
+        "TranscodingSubProtocol": "http",
+        "DefaultAudioStreamIndex": 0,
+        "HasSegments": false
+      }
+    ],
+    "Path": "/media/music/Radiohead/OK Computer/01 Airbag.flac",
+    "EnableMediaSourceDisplay": true,
+    "ChannelId": null,
+    "Taglines": [],
+    "Genres": [
+      "Alternative Rock"
+    ],
+    "RunTimeTicks": 3000000,
+    "PlayAccess": "Full",
+    "ProductionYear": 1997,
+    "IndexNumber": 1,
+    "ParentIndexNumber": 1,
+    "RemoteTrailers": [],
+    "ProviderIds": {
+      "MusicBrainzArtist": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+      "MusicBrainzAlbum": "0da3b3e3-1111-4444-8888-aaaaaaaaaaaa",
+      "MusicBrainzReleaseGroup": "b1392450-e666-3926-a536-22c65f834433"
+    },
+    "IsFolder": false,
+    "ParentId": "00000000000000000000000000000014",
+    "Type": "Audio",
+    "People": [],
+    "Studios": [],
+    "GenreItems": [
+      {
+        "Name": "Alternative Rock",
+        "Id": "00000000000000000000000000000024"
+      }
+    ],
+    "LocalTrailerCount": 0,
+    "UserData": {
+      "PlaybackPositionTicks": 0,
+      "PlayCount": 1,
+      "IsFavorite": false,
+      "LastPlayedDate": "0000-00-00T00:00:00.0000000Z",
+      "Played": true,
+      "Key": "Radiohead-OK Computer-0001-0001Airbag",
+      "ItemId": "00000000000000000000000000000021"
+    },
+    "SpecialFeatureCount": 0,
+    "DisplayPreferencesId": "00000000000000000000000000000025",
+    "Tags": [],
+    "Artists": [
+      "Radiohead"
+    ],
+    "ArtistItems": [
+      {
+        "Name": "Radiohead",
+        "Id": "00000000000000000000000000000003"
+      }
+    ],
+    "Album": "OK Computer",
+    "AlbumId": "00000000000000000000000000000014",
+    "AlbumArtist": "Radiohead",
+    "AlbumArtists": [
+      {
+        "Name": "Radiohead",
+        "Id": "00000000000000000000000000000003"
+      }
+    ],
+    "MediaStreams": [
+      {
+        "Codec": "flac",
+        "TimeBase": "1/44100",
+        "VideoRange": "Unknown",
+        "VideoRangeType": "Unknown",
+        "AudioSpatialFormat": "None",
+        "LocalizedDefault": "Default",
+        "LocalizedExternal": "External",
+        "DisplayTitle": "FLAC - Stereo",
+        "IsInterlaced": false,
+        "IsAVC": false,
+        "ChannelLayout": "stereo",
+        "BitRate": 41786,
+        "BitDepth": 16,
+        "Channels": 2,
+        "SampleRate": 44100,
+        "IsDefault": false,
+        "IsForced": false,
+        "IsHearingImpaired": false,
+        "Type": "Audio",
+        "Index": 0,
+        "IsExternal": false,
+        "IsTextSubtitleStream": false,
+        "SupportsExternalStream": false,
+        "Level": 0
+      }
+    ],
+    "ImageTags": {},
+    "BackdropImageTags": [],
+    "ImageBlurHashes": {},
+    "LocationType": "FileSystem",
+    "MediaType": "Audio",
+    "LockedFields": [],
+    "LockData": false
+  }
+}

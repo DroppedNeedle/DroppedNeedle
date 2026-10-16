@@ -6,7 +6,7 @@
 //
 //   plant <reference dir> <tmp dir> [--set lyrics]   copy the fixture tracks into <tmp dir>/music
 //   navidrome <reference dir> --image-id <id> [--port 14533] [--set arpeggi|ratings]
-//   jellyfin <reference dir> --image-id <id> [--port 18096] [--set lyrics]
+//   jellyfin <reference dir> --image-id <id> [--port 18096] [--set lyrics|played]
 //   check <reference dir>                verify the checksums and the scrubbing
 //   clean <tmp dir>                      remove the planted tracks
 //
@@ -26,7 +26,7 @@ const SERVERS = {
 	jellyfin: { image: 'jellyfin/jellyfin:10.10.6', version: '10.10.6', port: 18096 }
 };
 // Request sets recorded on their own, each into `<server>-<version>-<set>`.
-const SETS = { navidrome: ['arpeggi', 'ratings'], jellyfin: ['lyrics'] };
+const SETS = { navidrome: ['arpeggi', 'ratings'], jellyfin: ['lyrics', 'played'] };
 // Files a set plants beside the tracks, from the fixtures folder.
 const EXTRA_FILES = {
 	lyrics: [{ fixture: 'lyrics_airbag.lrc', path: 'Radiohead/OK Computer/01 Airbag.lrc' }]
@@ -793,6 +793,8 @@ async function navidrome(refDir, args) {
 //   and one MusicBrainz artist lookup failed for that reason, so nothing
 //   was fetched.
 // - All six tracks are accepted, in five albums.
+// - /Artists lists the credited artists only. Various Artists, the
+//   compilation's album artist, is in /Artists/AlbumArtists.
 // - With --set lyrics, the .lrc planted beside Airbag was picked up by the
 //   first scan with the library options below as they are: no option was
 //   added, and LrcLib stays disabled. Airbag then has HasLyrics true and a
@@ -1011,6 +1013,65 @@ function jellyfinLyrics() {
 	];
 }
 
+// Played marks: a track marked on the legacy path, its album marked on the
+// modern one, the played filter and the DatePlayed sort, a mark on each of
+// two artists with their tracks by credit and by album artist, both marks
+// taken off again, then an unknown id.
+function jellyfinPlayed() {
+	const user = ['userId', '{user}'];
+	const recursive = ['Recursive', 'true'];
+	const tracks = ['IncludeItemTypes', 'Audio'];
+	const albums = ['IncludeItemTypes', 'MusicAlbum'];
+	const post = { method: 'POST', write: true };
+	const remove = { method: 'DELETE', write: true };
+	const track = '{track.airbag}';
+	const album = '{album.ok_computer}';
+	const artist = (key) => {
+		const id = `{artist.${key}}`;
+		return [
+			jf(`played.artist.${key}`, `/UserPlayedItems/${id}`, [user], post),
+			jf(`item.artist.${key}`, `/Items/${id}`, [user]),
+			jf(`items.artist-ids.${key}`, '/Items', [user, recursive, tracks, ['ArtistIds', id]]),
+			jf(`items.album-artist-ids.${key}`, '/Items', [
+				user,
+				recursive,
+				tracks,
+				['AlbumArtistIds', id]
+			])
+		];
+	};
+	return [
+		jf('played.track.legacy', `/Users/{user}/PlayedItems/${track}`, [], post),
+		jf('item.track.played', `/Items/${track}`, [user]),
+		jf('item.album.one-track-played', `/Items/${album}`, [user]),
+		jf('played.album', `/UserPlayedItems/${album}`, [user], post),
+		jf('item.album.played', `/Items/${album}`, [user]),
+		jf('items.parent-album.played', '/Items', [user, ['ParentId', album]]),
+		jf('items.albums.filter-played', '/Items', [user, recursive, albums, ['Filters', 'IsPlayed']]),
+		jf('items.albums.filter-unplayed', '/Items', [
+			user,
+			recursive,
+			albums,
+			['Filters', 'IsUnplayed']
+		]),
+		jf('items.tracks.sort-date-played', '/Items', [
+			user,
+			recursive,
+			tracks,
+			['SortBy', 'DatePlayed'],
+			['SortOrder', 'Descending']
+		]),
+		...artist('massive_attack'),
+		...artist('various_artists'),
+		jf('unplayed.track', `/UserPlayedItems/${track}`, [user], remove),
+		jf('unplayed.album.legacy', `/Users/{user}/PlayedItems/${album}`, [], remove),
+		jf('item.track.unplayed', `/Items/${track}`, [user]),
+		jf('item.album.unplayed', `/Items/${album}`, [user]),
+		jf('items.tracks.filter-played', '/Items', [user, recursive, tracks, ['Filters', 'IsPlayed']]),
+		jf('error.played-unknown', `/UserPlayedItems/${UNKNOWN_HEX_ID}`, [user], post)
+	];
+}
+
 async function jellyfin(refDir, args) {
 	const { pinned, library, folders, set, capture, recorder } = prepare('jellyfin', refDir, args);
 	const { scrub, refs } = recorder;
@@ -1114,6 +1175,11 @@ async function jellyfin(refDir, args) {
 		})
 	);
 	const artists = named(await recorder.ok({ path: '/Artists', query: [['userId', '{user}']] }));
+	const albumArtists = named(
+		await recorder.ok({ path: '/Artists/AlbumArtists', query: [['userId', '{user}']] })
+	);
+	for (const albumArtist of albumArtists)
+		if (!artists.some((known) => known.id === albumArtist.id)) artists.push(albumArtist);
 	resolveByName(recorder, 'artist', library.artists, artists);
 	console.log(
 		`albums on the server: ${items
@@ -1129,6 +1195,8 @@ async function jellyfin(refDir, args) {
 
 	if (set === 'lyrics') {
 		await recorder.recordAll(jellyfinLyrics());
+	} else if (set === 'played') {
+		await recorder.recordAll(jellyfinPlayed());
 	} else {
 		await recorder.recordAll(jellyfinReads());
 		recorder.into(folders[1]);
