@@ -9,18 +9,18 @@
 
 use std::path::{Path, PathBuf};
 
-use droppedneedle::tooling::fixture::{UNKNOWN_USER_ID, build_v2_fixture, delete_orphan_rows};
 use droppedneedle_kernel::db::WriteLane;
 use droppedneedle_kernel::runtime_config::{Crypto, Secret};
+use droppedneedle_tool::tooling::fixture::{UNKNOWN_USER_ID, build_v2_fixture, delete_orphan_rows};
 
 /// Scratch directory per brief, removed on drop.
 fn scratch_dir(tag: &str) -> crate::common::ScratchDir {
     crate::common::ScratchDir::new(&format!("pipeline-{tag}"))
 }
 
-fn export_request(v2_root: &Path, passphrase: &str) -> droppedneedle::export::ExportRequest {
-    droppedneedle::export::ExportRequest {
-        v2: droppedneedle::export::v2dir::V2Dirs::under_root(v2_root),
+fn export_request(v2_root: &Path, passphrase: &str) -> droppedneedle_tool::export::ExportRequest {
+    droppedneedle_tool::export::ExportRequest {
+        v2: droppedneedle_tool::export::v2dir::V2Dirs::under_root(v2_root),
         db_path: None,
         passphrase: Secret::new(passphrase.to_owned()),
         exported_at: None,
@@ -28,7 +28,7 @@ fn export_request(v2_root: &Path, passphrase: &str) -> droppedneedle::export::Ex
     }
 }
 
-fn issue_codes(report: &droppedneedle::r#import::ValidationReport) -> (Vec<&str>, Vec<&str>) {
+fn issue_codes(report: &droppedneedle_tool::r#import::ValidationReport) -> (Vec<&str>, Vec<&str>) {
     (
         report.errors.iter().map(|issue| issue.code).collect(),
         report.warnings.iter().map(|issue| issue.code).collect(),
@@ -38,26 +38,29 @@ fn issue_codes(report: &droppedneedle::r#import::ValidationReport) -> (Vec<&str>
 const PASSPHRASE: &str = "operator-passphrase";
 
 /// A fixture plus its first export, orphans included.
-fn orphaned_export(root: &Path) -> (droppedneedle::tooling::fixture::V2Fixture, String) {
+fn orphaned_export(root: &Path) -> (droppedneedle_tool::tooling::fixture::V2Fixture, String) {
     let v2_root = root.join("v2");
     let fixture = build_v2_fixture(&v2_root).expect("fixture builds");
     let export_path = root.join("export.json");
-    droppedneedle::export::export_v2_to_file(&export_request(&v2_root, PASSPHRASE), &export_path)
-        .expect("export writes");
+    droppedneedle_tool::export::export_v2_to_file(
+        &export_request(&v2_root, PASSPHRASE),
+        &export_path,
+    )
+    .expect("export writes");
     let text = std::fs::read_to_string(&export_path).expect("export reads back");
     (fixture, text)
 }
 
 /// A fixture plus its export after the operator repair: the orphan rows
 /// are dropped from v2 and the file is re-exported clean.
-fn repaired_export(root: &Path) -> (droppedneedle::tooling::fixture::V2Fixture, String) {
+fn repaired_export(root: &Path) -> (droppedneedle_tool::tooling::fixture::V2Fixture, String) {
     let (fixture, _) = orphaned_export(root);
     let export_path = root.join("export.json");
     assert_eq!(
         delete_orphan_rows(&root.join("v2").join("cache").join("library.db")).expect("repair runs"),
         2
     );
-    droppedneedle::export::export_v2_to_file(
+    droppedneedle_tool::export::export_v2_to_file(
         &export_request(&root.join("v2"), PASSPHRASE),
         &export_path,
     )
@@ -87,13 +90,13 @@ async fn seeded_target(root: &Path) -> (PathBuf, sqlx::SqlitePool) {
 async fn orphaned_export_refuses_with_zero_writes() {
     let root = scratch_dir("refuses");
     let (_fixture, text) = orphaned_export(&root);
-    let parsed = droppedneedle::export::parse_export(&text).expect("envelope parses");
+    let parsed = droppedneedle_tool::export::parse_export(&text).expect("envelope parses");
     assert_eq!(parsed.doc.users.len(), 2);
     assert_eq!(parsed.doc.follows.len(), 4);
     assert_eq!(parsed.doc.approvals.len(), 4);
 
     let root_value: serde_json::Value = serde_json::from_str(&text).expect("json parses");
-    let validation = droppedneedle::r#import::validate_export(&root_value);
+    let validation = droppedneedle_tool::r#import::validate_export(&root_value);
     assert!(!validation.valid());
     let (errors, warnings) = issue_codes(&validation);
     assert!(errors.contains(&"DANGLING_USER_REF"), "errors: {errors:?}");
@@ -112,7 +115,7 @@ async fn orphaned_export_refuses_with_zero_writes() {
         let report = run_pipeline(&text, PASSPHRASE, &v3_root, &pool, dry_run).await;
         assert_eq!(
             report.exit.code,
-            droppedneedle::r#import::ExitCode::FailedValidation,
+            droppedneedle_tool::r#import::ExitCode::FailedValidation,
             "dry_run={dry_run}"
         );
     }
@@ -125,7 +128,7 @@ async fn operator_repair_converges_to_clean_import() {
     let root = scratch_dir("repair");
     let (_fixture, text) = repaired_export(&root);
     let root_value: serde_json::Value = serde_json::from_str(&text).expect("json parses");
-    let validation = droppedneedle::r#import::validate_export(&root_value);
+    let validation = droppedneedle_tool::r#import::validate_export(&root_value);
     assert!(validation.valid(), "errors: {:?}", validation.errors);
     let (_, warnings) = issue_codes(&validation);
     assert!(warnings.contains(&"DANGLING_REVIEWER"));
@@ -135,14 +138,14 @@ async fn operator_repair_converges_to_clean_import() {
     let dry_report = run_pipeline(&text, PASSPHRASE, &v3_root, &pool, true).await;
     assert_eq!(
         dry_report.exit.code,
-        droppedneedle::r#import::ExitCode::OkWithDrops
+        droppedneedle_tool::r#import::ExitCode::OkWithDrops
     );
     assert_eq!(table_counts(&pool).await, counts_before);
     assert!(!v3_root.join("config").join("config.json").exists());
     let report = run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
     assert_eq!(
         report.exit.code,
-        droppedneedle::r#import::ExitCode::OkWithDrops
+        droppedneedle_tool::r#import::ExitCode::OkWithDrops
     );
     assert_eq!(report.entities, dry_report.entities, "dry-run parity");
     assert_eq!(
@@ -163,7 +166,7 @@ async fn imported_counts_match_the_fixture() {
     let report = run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
     assert_eq!(
         report.exit.code,
-        droppedneedle::r#import::ExitCode::OkWithDrops
+        droppedneedle_tool::r#import::ExitCode::OkWithDrops
     );
     let count = |entity: &str| report.entities.get(entity).expect("entity counted").clone();
     assert_eq!(count("user").imported, 2);
@@ -356,7 +359,7 @@ async fn reimport_writes_nothing() {
 /// writes nothing at all and brings back nothing the user deleted.
 #[tokio::test]
 async fn user_data_carries_resumes_and_repeats_as_noop() {
-    use droppedneedle::tooling::fixture::{AVATAR_BYTES, COVER_BYTES, PLAYLIST_ID};
+    use droppedneedle_tool::tooling::fixture::{AVATAR_BYTES, COVER_BYTES, PLAYLIST_ID};
 
     let root = scratch_dir("carry");
     let (fixture, text) = repaired_export(&root);
@@ -377,7 +380,7 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
     let crashed = run_pipeline_with(&text, PASSPHRASE, &v3_root, &pool, false, Some(3)).await;
     assert_eq!(
         crashed.exit.code,
-        droppedneedle::r#import::ExitCode::FailedInternal
+        droppedneedle_tool::r#import::ExitCode::FailedInternal
     );
     assert_eq!(rows("user_connections").await, 4);
     assert_eq!(rows("playlists").await, 2);
@@ -403,7 +406,7 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
     let resumed = run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
     assert_eq!(
         resumed.exit.code,
-        droppedneedle::r#import::ExitCode::OkWithDrops,
+        droppedneedle_tool::r#import::ExitCode::OkWithDrops,
         "{:?}",
         resumed.exit
     );
@@ -453,7 +456,7 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
             .expect("history reads");
     assert_eq!(
         history.as_deref(),
-        Some(droppedneedle::tooling::fixture::V2_TRACK_ID)
+        Some(droppedneedle_tool::tooling::fixture::V2_TRACK_ID)
     );
     let cover: Vec<u8> =
         sqlx::query_scalar("SELECT image FROM playlist_covers WHERE playlist_id = ?")
@@ -635,7 +638,7 @@ async fn run_pipeline(
     v3_root: &Path,
     pool: &sqlx::SqlitePool,
     dry_run: bool,
-) -> droppedneedle::r#import::ImportReport {
+) -> droppedneedle_tool::r#import::ImportReport {
     run_pipeline_with(export_text, passphrase, v3_root, pool, dry_run, None).await
 }
 
@@ -647,14 +650,14 @@ async fn run_pipeline_with(
     pool: &sqlx::SqlitePool,
     dry_run: bool,
     fault_after_sections: Option<usize>,
-) -> droppedneedle::r#import::ImportReport {
+) -> droppedneedle_tool::r#import::ImportReport {
     let config_dir = v3_root.join("config");
     let crypto = if dry_run {
         Crypto::from_key_bytes(&[9u8; 32]).expect("dry key builds")
     } else {
         Crypto::load_or_generate(&config_dir).expect("v3 key loads")
     };
-    droppedneedle::r#import::run_import(droppedneedle::r#import::ImportRequest {
+    droppedneedle_tool::r#import::run_import(droppedneedle_tool::r#import::ImportRequest {
         export_bytes: export_text.as_bytes().to_vec(),
         passphrase: passphrase.to_owned(),
         pool: pool.clone(),
@@ -752,7 +755,7 @@ async fn login_rehashes(
 /// Every imported follow reads back with its v2 values.
 async fn assert_follows_intact(
     pool: &sqlx::SqlitePool,
-    fixture: &droppedneedle::tooling::fixture::V2Fixture,
+    fixture: &droppedneedle_tool::tooling::fixture::V2Fixture,
 ) {
     let rows: Vec<(String, String, String, i64, f64, f64)> = sqlx::query_as(
         "SELECT user_id, artist_mbid, artist_name, auto_download, followed_at, updated_at
@@ -784,7 +787,7 @@ async fn assert_compat_reauth(
     pool: &sqlx::SqlitePool,
     lane: &droppedneedle_kernel::db::WriteLane,
     v3_root: &Path,
-    fixture: &droppedneedle::tooling::fixture::V2Fixture,
+    fixture: &droppedneedle_tool::tooling::fixture::V2Fixture,
 ) {
     use droppedneedle_auth::session::tokens::hash_token;
     use droppedneedle_auth::sqlite::{AuthDb, SqliteAppPasswordStore};
@@ -834,7 +837,10 @@ async fn assert_compat_reauth(
 
 /// Settings assertions: R8 carried the legacy frequency, secrets decrypt
 /// under the v3 key, dropped fields stayed behind, order and ids survived.
-fn assert_settings_landed(v3_root: &Path, fixture: &droppedneedle::tooling::fixture::V2Fixture) {
+fn assert_settings_landed(
+    v3_root: &Path,
+    fixture: &droppedneedle_tool::tooling::fixture::V2Fixture,
+) {
     let text = std::fs::read_to_string(v3_root.join("config").join("config.json"))
         .expect("v3 config reads");
     let config: serde_json::Value = serde_json::from_str(&text).expect("v3 config parses");

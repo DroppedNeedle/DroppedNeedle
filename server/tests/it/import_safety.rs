@@ -10,7 +10,7 @@ use support::{
     Fixture, MBID, PASSPHRASE, count, import_request, migrated_pool, scratch_config, test_crypto,
 };
 
-use droppedneedle::import::{ExitCode, run_import};
+use droppedneedle_tool::import::{ExitCode, run_import};
 
 async fn entity_counts(pool: &sqlx::SqlitePool) -> Vec<i64> {
     let mut out = Vec::new();

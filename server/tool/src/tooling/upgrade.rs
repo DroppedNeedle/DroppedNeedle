@@ -20,7 +20,7 @@
 //! and the v2 entries are renamed back. A killed run leaves the marker, and
 //! the next run rolls back before it starts again. The server boots only
 //! on an empty or v3 layout
-//! ([`check_bootable`](crate::bootstrap::data_dirs::check_bootable)), so it
+//! ([`check_bootable`](droppedneedle::bootstrap::data_dirs::check_bootable)), so it
 //! never migrates over a v2 database and never serves a half-imported one.
 //!
 //! The marker records one fact: whether anything outside the backup may be
@@ -44,14 +44,14 @@ use rusqlite::{Connection, OpenFlags};
 use sqlx::SqlitePool;
 use thiserror::Error;
 
-use crate::bootstrap::data_dirs::{
-    BACKUP_DIR_NAME, DataDirs, Layout, MARKER_FILE_NAME, UnknownLayout, detect, wal_bytes, wal_path,
-};
 use crate::export::v2dir::{self, V2Dirs};
 use crate::export::{ExportError, ExportRequest, export_v2_to_file};
 use crate::import::{
     ExitCode, ExportFile, ImportReport, ImportRequest, ValidationIssue, check_attachments,
     run_import, validate_export,
+};
+use droppedneedle::bootstrap::data_dirs::{
+    BACKUP_DIR_NAME, DataDirs, Layout, MARKER_FILE_NAME, UnknownLayout, detect, wal_bytes, wal_path,
 };
 use droppedneedle_kernel::db::datalock::{DataLock, DataLockError, lock_path};
 use droppedneedle_kernel::runtime_config::crypto::CryptoError;
@@ -187,7 +187,7 @@ pub enum Upgraded {
 #[derive(Debug)]
 pub struct Summary {
     /// The import report, also saved as
-    /// [`REPORT_FILE_NAME`](crate::bootstrap::data_dirs::REPORT_FILE_NAME).
+    /// [`REPORT_FILE_NAME`](droppedneedle::bootstrap::data_dirs::REPORT_FILE_NAME).
     pub report: ImportReport,
     /// Follows and approvals of deleted users removed from the v2 database.
     pub orphans_removed: usize,

@@ -1,7 +1,7 @@
 //! Seal tests: each secret seals under a passphrase-derived key with a
 //! fresh nonce, and only the same passphrase opens the envelope again.
 
-use droppedneedle::export::{SealError, Sealer, secret_envelope_params, unseal};
+use droppedneedle_tool::export::{SealError, Sealer, secret_envelope_params, unseal};
 
 #[test]
 fn seal_round_trip() {

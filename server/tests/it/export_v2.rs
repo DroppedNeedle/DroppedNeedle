@@ -5,11 +5,11 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use droppedneedle::export::{
+use droppedneedle_kernel::runtime_config::Secret;
+use droppedneedle_tool::export::{
     ExportError, ExportRequest, HashScheme, Opener, SealError, export_v2, export_v2_to_file,
     fernet::FernetKey, parse_export, unseal,
 };
-use droppedneedle_kernel::runtime_config::Secret;
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 
@@ -26,7 +26,7 @@ fn scratch_dir(name: &str) -> crate::common::ScratchDir {
 
 fn request(v2_root: &Path) -> ExportRequest {
     ExportRequest {
-        v2: droppedneedle::export::v2dir::V2Dirs::under_root(v2_root),
+        v2: droppedneedle_tool::export::v2dir::V2Dirs::under_root(v2_root),
         db_path: None,
         passphrase: Secret::new(PASSPHRASE),
         exported_at: Some("2026-09-28T12:00:00Z".to_owned()),
@@ -339,7 +339,7 @@ fn sealed(value: &Value) -> &str {
 }
 
 /// A full export, serialized and re-parsed the way the importer sees it.
-fn exported() -> (String, droppedneedle::export::ParsedExport) {
+fn exported() -> (String, droppedneedle_tool::export::ParsedExport) {
     let (dir, _key) = fixture_v2_root();
     let doc = export_v2(&request(&dir), &dir.join("export.bundle.sqlite")).unwrap();
     let text = doc.to_json_string().unwrap();
@@ -348,7 +348,7 @@ fn exported() -> (String, droppedneedle::export::ParsedExport) {
     (text, parsed)
 }
 
-fn open(parsed: &droppedneedle::export::ParsedExport, value: &Value) -> String {
+fn open(parsed: &droppedneedle_tool::export::ParsedExport, value: &Value) -> String {
     unseal(PASSPHRASE, &parsed.doc.secret_envelope, sealed(value)).unwrap()
 }
 
@@ -542,7 +542,7 @@ fn export_to_file_writes_a_parseable_envelope() {
         use std::os::unix::fs::PermissionsExt as _;
         let mode = std::fs::metadata(&out).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600, "the export holds password hashes");
-        let bundle = droppedneedle::export::bundle_path_for(&out);
+        let bundle = droppedneedle_tool::export::bundle_path_for(&out);
         let mode = std::fs::metadata(&bundle).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600, "the bundle holds listening history");
     }

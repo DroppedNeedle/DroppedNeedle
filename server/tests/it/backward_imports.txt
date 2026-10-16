@@ -1,5 +1,0 @@
-# Backward imports between the server's top-level areas, checked by
-# tests/it/backward_imports.rs (the layers are in LAYERS there).
-# Each line: <file under server/src> <area reached up to> <crate:: paths>.
-# The list is empty: every area uses only its own layer or those below it.
-# A line here needs the owner's sign-off.

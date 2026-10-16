@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use crate::bootstrap::data_dirs::{BootRefusal, DataDirs, check_bootable};
+use droppedneedle::bootstrap::data_dirs::{BootRefusal, DataDirs, check_bootable};
 use droppedneedle_auth::prod::{AuthDb, SqliteRecoveryStore, SqliteUserStore};
 use droppedneedle_auth::session::store::now_unix;
 use droppedneedle_auth::users::roles::Role;

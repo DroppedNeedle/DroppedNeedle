@@ -16,7 +16,7 @@ use std::path::Path;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::admin::backups::restore_report;
+use droppedneedle::admin::backups::restore_report;
 use droppedneedle_kernel::db::BackupService;
 
 /// Restore failures. Messages name the fix, never file contents.

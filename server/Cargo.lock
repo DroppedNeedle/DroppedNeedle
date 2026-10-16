@@ -566,13 +566,8 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 name = "droppedneedle"
 version = "3.0.0"
 dependencies = [
- "aes",
- "argon2",
  "axum",
  "base64 0.22.1",
- "bcrypt",
- "cbc",
- "chacha20poly1305",
  "droppedneedle",
  "droppedneedle-acquire",
  "droppedneedle-auth",
@@ -584,10 +579,9 @@ dependencies = [
  "droppedneedle-plugins",
  "droppedneedle-providers",
  "droppedneedle-testkit",
+ "droppedneedle-tool",
  "flate2",
  "futures-util",
- "getrandom 0.3.4",
- "hmac",
  "image",
  "libc",
  "lofty",
@@ -874,6 +868,35 @@ dependencies = [
  "axum",
  "serde_json",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "droppedneedle-tool"
+version = "3.0.0"
+dependencies = [
+ "aes",
+ "argon2",
+ "base64 0.22.1",
+ "bcrypt",
+ "cbc",
+ "chacha20poly1305",
+ "droppedneedle",
+ "droppedneedle-auth",
+ "droppedneedle-kernel",
+ "droppedneedle-library",
+ "getrandom 0.3.4",
+ "hmac",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror",
+ "time",
+ "tokio",
+ "toml",
+ "tracing",
  "uuid",
 ]
 

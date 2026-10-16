@@ -8,13 +8,13 @@ use crate::import_support as support;
 use serde_json::json;
 use support::Fixture;
 
-use droppedneedle::import::validate_export;
+use droppedneedle_tool::import::validate_export;
 
-fn codes(report: &droppedneedle::import::ValidationReport) -> Vec<&str> {
+fn codes(report: &droppedneedle_tool::import::ValidationReport) -> Vec<&str> {
     report.errors.iter().map(|issue| issue.code).collect()
 }
 
-fn warning_codes(report: &droppedneedle::import::ValidationReport) -> Vec<&str> {
+fn warning_codes(report: &droppedneedle_tool::import::ValidationReport) -> Vec<&str> {
     report.warnings.iter().map(|issue| issue.code).collect()
 }
 

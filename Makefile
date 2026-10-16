@@ -28,7 +28,7 @@ server-run: ## Run the server against ./dev-data (PORT defaults to 8688)
 	cd "$(SERVER_DIR)" && ROOT_APP_DIR="$(ROOT_DIR)/dev-data" $(CARGO) run --bin droppedneedle
 
 server-test: ## Run the full Rust test suite
-	cd "$(SERVER_DIR)" && $(CARGO) test --workspace
+	cd "$(SERVER_DIR)" && $(CARGO) build --workspace --all-targets && $(CARGO) test --workspace
 
 server-lint: ## Run clippy with warnings as errors
 	cd "$(SERVER_DIR)" && $(CARGO) clippy --workspace --all-targets -- -D warnings

@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use crate::bootstrap::data_dirs::{BootRefusal, DataDirs, check_bootable};
+use droppedneedle::bootstrap::data_dirs::{BootRefusal, DataDirs, check_bootable};
 use droppedneedle_kernel::db::datalock::{DataLock, DataLockError};
 use droppedneedle_kernel::runtime_config::crypto::CryptoError;
 use droppedneedle_kernel::runtime_config::sections::{

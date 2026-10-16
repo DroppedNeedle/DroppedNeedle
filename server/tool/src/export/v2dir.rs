@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
-use crate::bootstrap::data_dirs::{DATA_ENC_KEY_VAR, key_file_path, parse_dotenv};
 use crate::export::error::ExportError;
 use crate::export::fernet::FernetKey;
+use droppedneedle::bootstrap::data_dirs::{DATA_ENC_KEY_VAR, key_file_path, parse_dotenv};
 
 /// v2 config-file name inside the v2 config dir.
 const CONFIG_FILE_NAME: &str = "config.json";

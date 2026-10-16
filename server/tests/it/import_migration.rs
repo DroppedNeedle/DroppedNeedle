@@ -122,14 +122,14 @@ async fn upgrade_from_0001_keeps_data() {
 async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() {
     use std::sync::Arc;
 
-    use droppedneedle::tooling::fixture::{
-        MUSIC_ROOT_ID, V2_ALBUM_ID, build_v2_fixture, delete_orphan_rows,
-    };
     use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
     use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, Secret};
     use droppedneedle_library::identify::models::RecallResult;
     use droppedneedle_library::matching::{Release, ReleaseTrack};
     use droppedneedle_library::wiring::LibrarySetup;
+    use droppedneedle_tool::tooling::fixture::{
+        MUSIC_ROOT_ID, V2_ALBUM_ID, build_v2_fixture, delete_orphan_rows,
+    };
 
     const PASSPHRASE: &str = "operator-passphrase";
     const PINNED: &str = "rel-blue-jp";
@@ -192,9 +192,9 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
         .expect("v2 pins, exclusion and custom edition");
 
     let export_path = root.join("export.json");
-    droppedneedle::export::export_v2_to_file(
-        &droppedneedle::export::ExportRequest {
-            v2: droppedneedle::export::v2dir::V2Dirs::under_root(&v2_root),
+    droppedneedle_tool::export::export_v2_to_file(
+        &droppedneedle_tool::export::ExportRequest {
+            v2: droppedneedle_tool::export::v2dir::V2Dirs::under_root(&v2_root),
             db_path: None,
             passphrase: Secret::new(PASSPHRASE.to_owned()),
             exported_at: None,
@@ -214,25 +214,27 @@ async fn pinned_album_left_unmanaged_in_v2_stays_so_once_its_files_are_placed() 
         .await
         .expect("pool opens");
     apply_migrations(&pool).await.expect("schema migrates");
-    let report = droppedneedle::r#import::run_import(droppedneedle::r#import::ImportRequest {
-        export_bytes: std::fs::read(&export_path).expect("export reads"),
-        passphrase: PASSPHRASE.to_owned(),
-        pool: pool.clone(),
-        config_path: config_dir.join("config.json"),
-        crypto: Crypto::load_or_generate(&config_dir).expect("v3 key"),
-        v2_config_path: None,
-        attachments_dir: Some(root.clone()),
-        cache_dir: Some(v3.join("cache")),
-        dry_run: false,
-        fault_before_commit: false,
-        fault_after_commit: false,
-        fault_after_sections: None,
-    })
-    .await;
+    let report =
+        droppedneedle_tool::r#import::run_import(droppedneedle_tool::r#import::ImportRequest {
+            export_bytes: std::fs::read(&export_path).expect("export reads"),
+            passphrase: PASSPHRASE.to_owned(),
+            pool: pool.clone(),
+            config_path: config_dir.join("config.json"),
+            crypto: Crypto::load_or_generate(&config_dir).expect("v3 key"),
+            v2_config_path: None,
+            attachments_dir: Some(root.clone()),
+            cache_dir: Some(v3.join("cache")),
+            dry_run: false,
+            fault_before_commit: false,
+            fault_after_commit: false,
+            fault_after_sections: None,
+        })
+        .await;
     assert!(
         matches!(
             report.exit.code,
-            droppedneedle::r#import::ExitCode::Ok | droppedneedle::r#import::ExitCode::OkWithDrops
+            droppedneedle_tool::r#import::ExitCode::Ok
+                | droppedneedle_tool::r#import::ExitCode::OkWithDrops
         ),
         "{:?}",
         report.exit

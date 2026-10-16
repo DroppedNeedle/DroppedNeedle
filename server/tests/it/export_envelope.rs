@@ -2,7 +2,7 @@
 //! `droppedneedle-export` at `format_version` 1, requires every top-level
 //! key, and ignores reserved sections with a warning instead of failing.
 
-use droppedneedle::export::{EnvelopeWarning, ExportError, parse_export};
+use droppedneedle_tool::export::{EnvelopeWarning, ExportError, parse_export};
 use serde_json::{Value, json};
 
 fn minimal_envelope() -> Value {
@@ -23,7 +23,7 @@ fn minimal_envelope() -> Value {
     })
 }
 
-fn parse(value: &Value) -> Result<droppedneedle::export::ParsedExport, ExportError> {
+fn parse(value: &Value) -> Result<droppedneedle_tool::export::ParsedExport, ExportError> {
     parse_export(&serde_json::to_string(value).unwrap())
 }
 

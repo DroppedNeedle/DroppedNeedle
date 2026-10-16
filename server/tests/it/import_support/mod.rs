@@ -2,15 +2,15 @@
 //! databases, and scratch config dirs.
 //!
 //! Fixtures seal through the real exporter sealer
-//! (`droppedneedle::export::seal::Sealer`), so every test also proves the
+//! (`droppedneedle_tool::export::seal::Sealer`), so every test also proves the
 //! exporter and importer agree on the wire format. Databases are in-memory
 //! pools; config files live in a `ScratchDir` that is removed on drop.
 
 use crate::common::ScratchDir;
 use std::path::PathBuf;
 
-use droppedneedle::export::seal::{DIGEST_KEY, Opener, Sealer};
 use droppedneedle_kernel::runtime_config::Crypto;
+use droppedneedle_tool::export::seal::{DIGEST_KEY, Opener, Sealer};
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -182,8 +182,8 @@ pub fn import_request(
     pool: SqlitePool,
     config_path: PathBuf,
     crypto: Crypto,
-) -> droppedneedle::import::ImportRequest {
-    droppedneedle::import::ImportRequest {
+) -> droppedneedle_tool::import::ImportRequest {
+    droppedneedle_tool::import::ImportRequest {
         export_bytes: signed(export),
         passphrase: PASSPHRASE.to_owned(),
         pool,

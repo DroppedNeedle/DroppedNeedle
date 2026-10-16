@@ -2,15 +2,15 @@
 //! recovery-code, public-address, content-security-policy.
 //!
 //! Thin operator surface over the migration engines:
-//! [`upgrade`](droppedneedle::tooling::upgrade) turns a v2 data directory
-//! into a v3 one in place, [`export`](droppedneedle::export) builds sealed
-//! envelopes from a v2 instance, [`import`](droppedneedle::import)
+//! [`upgrade`](droppedneedle_tool::tooling::upgrade) turns a v2 data directory
+//! into a v3 one in place, [`export`](droppedneedle_tool::export) builds sealed
+//! envelopes from a v2 instance, [`import`](droppedneedle_tool::import)
 //! validates and applies them, and
-//! [`restore`](droppedneedle::tooling::restore) revives server backups.
-//! [`recovery-code`](droppedneedle::tooling::recovery_code) lets a
+//! [`restore`](droppedneedle_tool::tooling::restore) revives server backups.
+//! [`recovery-code`](droppedneedle_tool::tooling::recovery_code) lets a
 //! locked-out admin reset a password; its stdout is the code and nothing
 //! else.
-//! [`public-address`](droppedneedle::tooling::host_settings) states the
+//! [`public-address`](droppedneedle_tool::tooling::host_settings) states the
 //! address the web UI is opened at, for an admin whose saves are refused,
 //! and `content-security-policy` chooses how that policy is sent, for an
 //! admin whose browser shows a blank page under it.
@@ -32,18 +32,18 @@
 use std::path::PathBuf;
 
 use droppedneedle::bootstrap::data_dirs::{DataDirs, Layout};
-use droppedneedle::export::v2dir::V2Dirs;
-use droppedneedle::export::{ExportRequest, export_v2_to_file};
-use droppedneedle::r#import::ExitCode;
-use droppedneedle::tooling::host_settings;
-use droppedneedle::tooling::recovery_code;
-use droppedneedle::tooling::upgrade::{
-    self, OfflineImport, Step, Summary, UpgradeError, UpgradeRequest, Upgraded,
-};
 use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::db::datalock::DataLock;
 use droppedneedle_kernel::runtime_config::Secret;
 use droppedneedle_kernel::runtime_config::sections::ContentSecurityPolicyMode;
+use droppedneedle_tool::export::v2dir::V2Dirs;
+use droppedneedle_tool::export::{ExportRequest, export_v2_to_file};
+use droppedneedle_tool::r#import::ExitCode;
+use droppedneedle_tool::tooling::host_settings;
+use droppedneedle_tool::tooling::recovery_code;
+use droppedneedle_tool::tooling::upgrade::{
+    self, OfflineImport, Step, Summary, UpgradeError, UpgradeRequest, Upgraded,
+};
 
 /// Usage text, printed for `help` and on bad invocations.
 const USAGE: &str = "\
@@ -315,11 +315,11 @@ fn run_validate(args: &[String]) -> Result<(), String> {
     // and import agree by construction, and each finding prints once under
     // its stable validator code.
     let bytes = std::fs::read(&file).map_err(|_| format!("cannot read {file}"))?;
-    let parsed =
-        droppedneedle::r#import::ExportFile::parse(&bytes).map_err(|error| error.to_string())?;
+    let parsed = droppedneedle_tool::r#import::ExportFile::parse(&bytes)
+        .map_err(|error| error.to_string())?;
     if flag_value(args, "--passphrase-file")?.is_some() {
         let passphrase = read_passphrase(args)?;
-        droppedneedle::r#import::verify_content_digest(
+        droppedneedle_tool::r#import::verify_content_digest(
             &parsed.root,
             &parsed.envelope,
             passphrase.expose(),
@@ -331,12 +331,12 @@ fn run_validate(args: &[String]) -> Result<(), String> {
             )
         })?;
     }
-    let mut report = droppedneedle::r#import::validate_export(&parsed.root);
+    let mut report = droppedneedle_tool::r#import::validate_export(&parsed.root);
     if report.valid() {
         let folder = folder_of(std::path::Path::new(&file));
         report
             .errors
-            .extend(droppedneedle::r#import::check_attachments(
+            .extend(droppedneedle_tool::r#import::check_attachments(
                 &parsed.root,
                 &folder,
             ));
@@ -400,7 +400,7 @@ fn print_left_behind(root: &serde_json::Value) {
 /// exported from.
 fn check_instance_match(export_instance: &str, v2_root: &str) -> Result<(), String> {
     let dirs = V2Dirs::under_root(std::path::Path::new(v2_root));
-    let config = droppedneedle::export::v2dir::read_config(&dirs.config_dir)
+    let config = droppedneedle_tool::export::v2dir::read_config(&dirs.config_dir)
         .map_err(|error| format!("{}: {error}", error.code()))?;
     let v2_instance = config
         .get("instance_id")
@@ -689,7 +689,7 @@ fn run_restore(args: &[String]) -> Result<(), String> {
     )?;
     let backup = required_flag(args, "--backup")?;
     let target = required_flag(args, "--target-dir")?;
-    let summary = droppedneedle::tooling::restore::restore_backup(
+    let summary = droppedneedle_tool::tooling::restore::restore_backup(
         PathBuf::from(&backup).as_path(),
         PathBuf::from(&target).as_path(),
         has_flag(args, "--allow-downgrade"),

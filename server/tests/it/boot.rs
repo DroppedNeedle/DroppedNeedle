@@ -182,7 +182,7 @@ async fn boot_refuses_while_the_offline_tool_holds_the_database() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn boot_refuses_a_v2_data_directory_and_leaves_it_alone() {
     let dir = scratch("v2-dir");
-    droppedneedle::tooling::fixture::build_v2_fixture(&dir).expect("fixture builds");
+    droppedneedle_tool::tooling::fixture::build_v2_fixture(&dir).expect("fixture builds");
     let db_path = dir.join("cache").join("library.db");
     let config_path = dir.join("config").join("config.json");
     let database = std::fs::read(&db_path).unwrap();
@@ -728,8 +728,10 @@ async fn the_page_policy_follows_the_saved_mode_and_framing_list() {
 /// mode from the host, with the server stopped.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_policy_mode_set_from_the_host_is_served_at_the_next_boot() {
-    use droppedneedle::tooling::host_settings::{HostSettingsError, set_content_security_policy};
     use droppedneedle_kernel::runtime_config::sections::ContentSecurityPolicyMode as Mode;
+    use droppedneedle_tool::tooling::host_settings::{
+        HostSettingsError, set_content_security_policy,
+    };
 
     let dir = scratch("page-policy-host");
     let config = config_in(&dir);
@@ -975,7 +977,7 @@ fn a_stored_public_address_without_origins_is_unreadable_not_empty() {
 /// from the host, with the server stopped.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn public_address_set_from_the_host_is_honoured_at_the_next_boot() {
-    use droppedneedle::tooling::host_settings::{
+    use droppedneedle_tool::tooling::host_settings::{
         HostSettingsError, public_address as stored, set_public_address,
     };
     const PAGE: &str = "https://music.test";

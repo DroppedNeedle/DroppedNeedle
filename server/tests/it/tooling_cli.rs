@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use droppedneedle::bootstrap::data_dirs;
-use droppedneedle::tooling::upgrade;
+use droppedneedle_tool::tooling::upgrade;
 
 use crate::common;
 
@@ -47,29 +47,29 @@ fn passphrase_file(dir: &std::path::Path, passphrase: &str) -> PathBuf {
 /// A repaired (orphan-free) export file plus its fixture, via the library.
 fn repaired_export(
     root: &std::path::Path,
-) -> (droppedneedle::tooling::fixture::V2Fixture, PathBuf) {
-    let fixture = droppedneedle::tooling::fixture::build_v2_fixture(&root.join("v2"))
+) -> (droppedneedle_tool::tooling::fixture::V2Fixture, PathBuf) {
+    let fixture = droppedneedle_tool::tooling::fixture::build_v2_fixture(&root.join("v2"))
         .expect("fixture builds");
-    droppedneedle::tooling::fixture::delete_orphan_rows(
+    droppedneedle_tool::tooling::fixture::delete_orphan_rows(
         &fixture.root.join("cache").join("library.db"),
     )
     .expect("repair runs");
-    let request = droppedneedle::export::ExportRequest {
-        v2: droppedneedle::export::v2dir::V2Dirs::under_root(&fixture.root),
+    let request = droppedneedle_tool::export::ExportRequest {
+        v2: droppedneedle_tool::export::v2dir::V2Dirs::under_root(&fixture.root),
         db_path: None,
         passphrase: droppedneedle_kernel::runtime_config::Secret::new("operator-passphrase"),
         exported_at: None,
         v2_commit: None,
     };
     let path = root.join("export.json");
-    droppedneedle::export::export_v2_to_file(&request, &path).expect("export writes");
+    droppedneedle_tool::export::export_v2_to_file(&request, &path).expect("export writes");
     (fixture, path)
 }
 
 #[test]
 fn export_writes_then_refuses_a_keyless_instance() {
     let root = scratch_dir("export");
-    let fixture = droppedneedle::tooling::fixture::build_v2_fixture(&root.join("v2"))
+    let fixture = droppedneedle_tool::tooling::fixture::build_v2_fixture(&root.join("v2"))
         .expect("fixture builds");
     let out = root.join("out.json");
 
@@ -212,7 +212,7 @@ fn validate_accepts_rejects_and_cross_checks() {
     }
 
     // The optional --v2-root cross-check catches an instance mismatch.
-    let other = droppedneedle::tooling::fixture::build_v2_fixture(&root.join("other-v2"))
+    let other = droppedneedle_tool::tooling::fixture::build_v2_fixture(&root.join("other-v2"))
         .expect("second fixture builds");
     let status = Command::new(tool())
         .args(["validate"])
@@ -527,9 +527,11 @@ fn stderr_of(output: &std::process::Output) -> String {
 /// A v2 data directory without orphan rows. Upgrading it never changes
 /// the v2 database, so its files can be compared byte for byte.
 fn clean_v2(root: &Path) {
-    droppedneedle::tooling::fixture::build_v2_fixture(root).expect("fixture builds");
-    droppedneedle::tooling::fixture::delete_orphan_rows(&root.join("cache").join("library.db"))
-        .expect("repair runs");
+    droppedneedle_tool::tooling::fixture::build_v2_fixture(root).expect("fixture builds");
+    droppedneedle_tool::tooling::fixture::delete_orphan_rows(
+        &root.join("cache").join("library.db"),
+    )
+    .expect("repair runs");
 }
 
 /// Folders (`None`) and files (their bytes) by relative path.
@@ -620,7 +622,8 @@ async fn upgrade_with_fault(
 fn upgrade_turns_a_v2_directory_into_v3_in_place() {
     let scratch = scratch_dir("upgrade");
     let root = scratch.join("data");
-    let fixture = droppedneedle::tooling::fixture::build_v2_fixture(&root).expect("fixture builds");
+    let fixture =
+        droppedneedle_tool::tooling::fixture::build_v2_fixture(&root).expect("fixture builds");
 
     let run = tool_in(&root, &["upgrade"]);
     assert!(run.status.success(), "stderr: {}", stderr_of(&run));
@@ -723,7 +726,7 @@ async fn recovery_code_from_the_host_gives_a_locked_out_admin_a_password() {
     const NEW_PASSWORD: &str = "a brand new password 99";
     let scratch = scratch_dir("recovery-code");
     let root = scratch.join("data");
-    droppedneedle::tooling::fixture::build_v2_fixture(&root).expect("fixture builds");
+    droppedneedle_tool::tooling::fixture::build_v2_fixture(&root).expect("fixture builds");
     let upgraded = tool_in(&root, &["upgrade"]);
     assert!(
         upgraded.status.success(),
@@ -952,7 +955,8 @@ async fn a_failed_upgrade_leaves_the_v2_directory_as_it_was() {
 
     // A key that does not open the stored secrets: the export fails after
     // the files moved aside, and they are moved back.
-    let other_key = droppedneedle::export::fernet::FernetKey::generate().expect("key generates");
+    let other_key =
+        droppedneedle_tool::export::fernet::FernetKey::generate().expect("key generates");
     std::fs::write(
         &key_file,
         format!("DATA_ENC_KEY={}\n", other_key.to_base64()),
@@ -1136,7 +1140,7 @@ fn undo_returns_the_v2_files_and_no_backup_keeps_none() {
 async fn merge_target(
     tag: &str,
 ) -> (
-    droppedneedle::tooling::fixture::V2Fixture,
+    droppedneedle_tool::tooling::fixture::V2Fixture,
     PathBuf,
     sqlx::SqlitePool,
     PathBuf,
@@ -1162,10 +1166,10 @@ async fn run_merge(
     export: &std::path::Path,
     pool: &sqlx::SqlitePool,
     config_dir: &std::path::Path,
-) -> droppedneedle::r#import::ImportReport {
+) -> droppedneedle_tool::r#import::ImportReport {
     let crypto = droppedneedle_kernel::runtime_config::Crypto::load_or_generate(config_dir)
         .expect("v3 key loads");
-    droppedneedle::r#import::run_import(droppedneedle::r#import::ImportRequest {
+    droppedneedle_tool::r#import::run_import(droppedneedle_tool::r#import::ImportRequest {
         export_bytes: std::fs::read(export).expect("export reads"),
         passphrase: "operator-passphrase".to_owned(),
         pool: pool.clone(),
@@ -1199,7 +1203,7 @@ async fn same_id_user_conflict_keeps_existing_row() {
     let report = run_merge(&export, &pool, &config_dir).await;
     assert_eq!(
         report.exit.code,
-        droppedneedle::r#import::ExitCode::OkWithDrops
+        droppedneedle_tool::r#import::ExitCode::OkWithDrops
     );
     assert_eq!(
         report
@@ -1375,11 +1379,12 @@ async fn restore_round_trips_and_refuses() {
     let occupied = root.join("occupied");
     std::fs::create_dir_all(&occupied).expect("occupied dir");
     std::fs::write(occupied.join("something.db"), b"junk").expect("junk writes");
-    let refused = droppedneedle::tooling::restore::restore_backup(&taken.path, &occupied, false);
+    let refused =
+        droppedneedle_tool::tooling::restore::restore_backup(&taken.path, &occupied, false);
     assert!(
         matches!(
             refused,
-            Err(droppedneedle::tooling::restore::RestoreError::TargetNotEmpty(_))
+            Err(droppedneedle_tool::tooling::restore::RestoreError::TargetNotEmpty(_))
         ),
         "occupied target refuses: {refused:?}"
     );
@@ -1398,19 +1403,19 @@ async fn restore_round_trips_and_refuses() {
         .expect("stamp writes");
     stamp.close().await;
     let too_new =
-        droppedneedle::tooling::restore::restore_backup(&future, &root.join("new1"), false);
+        droppedneedle_tool::tooling::restore::restore_backup(&future, &root.join("new1"), false);
     assert!(
         matches!(
             too_new,
             Err(
-                droppedneedle::tooling::restore::RestoreError::BackupTooNew { .. }
-                    | droppedneedle::tooling::restore::RestoreError::Refused(_)
+                droppedneedle_tool::tooling::restore::RestoreError::BackupTooNew { .. }
+                    | droppedneedle_tool::tooling::restore::RestoreError::Refused(_)
             )
         ),
         "newer backup refuses: {too_new:?}"
     );
     let allowed =
-        droppedneedle::tooling::restore::restore_backup(&future, &root.join("new2"), true)
+        droppedneedle_tool::tooling::restore::restore_backup(&future, &root.join("new2"), true)
             .expect("allow-downgrade restores");
     assert_eq!(allowed.user_version, 9999);
 }

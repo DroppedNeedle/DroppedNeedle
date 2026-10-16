@@ -11,9 +11,9 @@ use support::{
     BCRYPT_HASH, Fixture, MBID, count, import_request, migrated_pool, scratch_config, test_crypto,
 };
 
-use droppedneedle::import::{ExitCode, run_import};
+use droppedneedle_tool::import::{ExitCode, run_import};
 
-fn counts(report: &droppedneedle::import::ImportReport, entity: &str) -> (u64, u64, u64, u64) {
+fn counts(report: &droppedneedle_tool::import::ImportReport, entity: &str) -> (u64, u64, u64, u64) {
     let found = &report.entities[entity];
     (
         found.imported,
@@ -693,13 +693,13 @@ async fn r8_carries_sync_frequency_once() {
 #[tokio::test]
 async fn r8_ignores_unknown_values() {
     assert_eq!(
-        droppedneedle::import::r8::read_sync_frequency(&json!({
+        droppedneedle_tool::import::r8::read_sync_frequency(&json!({
             "library_sync_settings": {"sync_frequency": "fortnightly"}
         })),
         None
     );
     assert_eq!(
-        droppedneedle::import::r8::read_sync_frequency(&json!({
+        droppedneedle_tool::import::r8::read_sync_frequency(&json!({
             "library_sync_settings": {"sync_frequency": "12hr"}
         })),
         Some("12hr".to_owned())
@@ -976,7 +976,7 @@ fn r8_missing_file_skips_silently() {
     let (dir, _, _) = scratch_config("r8-missing");
     let missing = dir.join("no-such-config.json");
     assert_eq!(
-        droppedneedle::import::r8::carry_frequency(&missing, false, "instance-1"),
+        droppedneedle_tool::import::r8::carry_frequency(&missing, false, "instance-1"),
         Ok(None)
     );
 }
@@ -986,10 +986,11 @@ fn r8_corrupt_file_fails() {
     let (dir, _, _) = scratch_config("r8-corrupt");
     let path = dir.join("v2-config.json");
     std::fs::write(&path, "{not json").unwrap();
-    let error = droppedneedle::import::r8::carry_frequency(&path, false, "instance-1").unwrap_err();
+    let error =
+        droppedneedle_tool::import::r8::carry_frequency(&path, false, "instance-1").unwrap_err();
     assert!(matches!(
         error,
-        droppedneedle::import::r8::R8Error::InvalidJson { .. }
+        droppedneedle_tool::import::r8::R8Error::InvalidJson { .. }
     ));
 }
 
