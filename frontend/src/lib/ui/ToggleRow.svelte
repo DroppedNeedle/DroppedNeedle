@@ -28,7 +28,7 @@
 	<input
 		{id}
 		type="checkbox"
-		class="toggle toggle-primary shrink-0"
+		class="toggle toggle-sm toggle-primary shrink-0"
 		aria-describedby={description ? `${id}-description` : undefined}
 		{disabled}
 		bind:checked

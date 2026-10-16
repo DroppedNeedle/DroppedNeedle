@@ -6,6 +6,7 @@
 <script lang="ts">
 	import type { FullAutoFill } from 'svelte/elements';
 	import Field from './Field.svelte';
+	import Input from './Input.svelte';
 
 	interface Props {
 		label: string;
@@ -37,10 +38,13 @@
 
 <Field {label} {help} {error}>
 	{#snippet children(control)}
-		<input
+		<Input
 			{...control}
+			{label}
 			{type}
-			class="input w-full {mono ? 'font-mono text-sm' : ''} {error ? 'input-error' : ''}"
+			{mono}
+			error={Boolean(error)}
+			class="w-full"
 			{placeholder}
 			{disabled}
 			{required}

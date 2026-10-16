@@ -17,6 +17,7 @@
 		/** Shown after the number, e.g. "hrs". */
 		unit?: string;
 		disabled?: boolean;
+		size?: 'sm' | 'md';
 	}
 
 	let {
@@ -28,13 +29,16 @@
 		max,
 		step = 1,
 		unit,
-		disabled = false
+		disabled = false,
+		size = 'md'
 	}: Props = $props();
+
+	const sizes = { sm: 'input input-sm', md: 'input' };
 </script>
 
 <Field {label} {help} {error}>
 	{#snippet children(control)}
-		<div class="input w-full {error ? 'input-error' : ''}">
+		<div class="{sizes[size]} w-full {error ? 'input-error' : ''}">
 			<input {...control} type="number" class="grow" {min} {max} {step} {disabled} bind:value />
 			{#if unit}
 				<span class="label">{unit}</span>
