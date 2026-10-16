@@ -1,0 +1,114 @@
+{
+  "request": "GET /rest/getAlbum?u=reference&p=***&v=1.16.1&c=dn-ref&f=json&id=0000000000000000000013",
+  "status": 200,
+  "headers": {
+    "content-length": "1818",
+    "content-type": "application/json"
+  },
+  "body": {
+    "subsonic-response": {
+      "status": "ok",
+      "version": "1.16.1",
+      "type": "navidrome",
+      "serverVersion": "0.62.0 (1b46b977)",
+      "openSubsonic": true,
+      "album": {
+        "id": "0000000000000000000013",
+        "name": "OK Computer",
+        "artist": "Radiohead",
+        "artistId": "0000000000000000000002",
+        "coverArt": "al-0000000000000000000013_00000000",
+        "songCount": 1,
+        "duration": 0,
+        "created": "0000-00-00T00:00:00.000000000Z",
+        "year": 1997,
+        "genre": "Alternative Rock",
+        "userRating": 3,
+        "averageRating": 3,
+        "genres": [
+          {
+            "name": "Alternative Rock"
+          }
+        ],
+        "musicBrainzId": "0da3b3e3-1111-4444-8888-aaaaaaaaaaaa",
+        "isCompilation": false,
+        "sortName": "ok computer",
+        "discTitles": [],
+        "originalReleaseDate": {},
+        "releaseDate": {},
+        "releaseTypes": [],
+        "recordLabels": [],
+        "moods": [],
+        "artists": [
+          {
+            "id": "0000000000000000000002",
+            "name": "Radiohead"
+          }
+        ],
+        "displayArtist": "Radiohead",
+        "explicitStatus": "",
+        "version": "",
+        "song": [
+          {
+            "id": "0000000000000000000007",
+            "parent": "0000000000000000000013",
+            "isDir": false,
+            "title": "Airbag",
+            "album": "OK Computer",
+            "artist": "Radiohead",
+            "track": 1,
+            "year": 1997,
+            "genre": "Alternative Rock",
+            "coverArt": "dc-0000000000000000000013:1_0",
+            "size": 1567,
+            "contentType": "audio/flac",
+            "suffix": "flac",
+            "bitRate": 1,
+            "path": "Radiohead/OK Computer/01-01 - Airbag.flac",
+            "discNumber": 1,
+            "created": "0000-00-00T00:00:00.000000000Z",
+            "albumId": "0000000000000000000013",
+            "artistId": "0000000000000000000002",
+            "type": "music",
+            "userRating": 4,
+            "averageRating": 4,
+            "bpm": 0,
+            "comment": "",
+            "sortName": "airbag",
+            "mediaType": "song",
+            "musicBrainzId": "",
+            "isrc": [],
+            "genres": [
+              {
+                "name": "Alternative Rock"
+              }
+            ],
+            "replayGain": {},
+            "channelCount": 2,
+            "samplingRate": 44100,
+            "bitDepth": 16,
+            "moods": [],
+            "artists": [
+              {
+                "id": "0000000000000000000002",
+                "name": "Radiohead"
+              }
+            ],
+            "displayArtist": "Radiohead",
+            "albumArtists": [
+              {
+                "id": "0000000000000000000002",
+                "name": "Radiohead"
+              }
+            ],
+            "displayAlbumArtist": "Radiohead",
+            "contributors": [],
+            "displayComposer": "",
+            "explicitStatus": "",
+            "groupings": []
+          }
+        ]
+      }
+    }
+  }
+}

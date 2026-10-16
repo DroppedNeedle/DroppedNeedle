@@ -1,0 +1,626 @@
+{
+  "request": "GET /rest/search3?u=reference&p=***&v=1.16.1&c=dn-ref&f=json",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "subsonic-response": {
+      "status": "ok",
+      "version": "1.16.1",
+      "type": "navidrome",
+      "serverVersion": "0.62.0 (1b46b977)",
+      "openSubsonic": true,
+      "searchResult3": {
+        "artist": [
+          {
+            "id": "0000000000000000000003",
+            "name": "U2",
+            "coverArt": "ar-0000000000000000000003_0",
+            "albumCount": 1,
+            "artistImageUrl": "http://reference.invalid/share/img/<token>?size=600",
+            "musicBrainzId": "",
+            "sortName": "u2",
+            "roles": [
+              "albumartist",
+              "artist",
+              "maincredit"
+            ]
+          },
+          {
+            "id": "0000000000000000000004",
+            "name": "Massive Attack",
+            "coverArt": "ar-0000000000000000000004_0",
+            "albumCount": 1,
+            "artistImageUrl": "http://reference.invalid/share/img/<token>?size=600",
+            "musicBrainzId": "",
+            "sortName": "massive attack",
+            "roles": [
+              "maincredit",
+              "albumartist",
+              "artist"
+            ]
+          },
+          {
+            "id": "0000000000000000000019",
+            "name": "Artist One",
+            "coverArt": "ar-0000000000000000000019_0",
+            "albumCount": 0,
+            "artistImageUrl": "http://reference.invalid/share/img/<token>?size=600",
+            "musicBrainzId": "",
+            "sortName": "artist one",
+            "roles": [
+              "artist",
+              "maincredit"
+            ]
+          },
+          {
+            "id": "0000000000000000000002",
+            "name": "Radiohead",
+            "coverArt": "ar-0000000000000000000002_0",
+            "albumCount": 2,
+            "userRating": 5,
+            "averageRating": 5,
+            "artistImageUrl": "http://reference.invalid/share/img/<token>?size=600",
+            "musicBrainzId": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "sortName": "radiohead",
+            "roles": [
+              "albumartist",
+              "artist",
+              "maincredit"
+            ]
+          },
+          {
+            "id": "0000000000000000000005",
+            "name": "Various Artists",
+            "coverArt": "ar-0000000000000000000005_0",
+            "albumCount": 1,
+            "artistImageUrl": "http://reference.invalid/share/img/<token>?size=600",
+            "musicBrainzId": "",
+            "sortName": "various artists",
+            "roles": [
+              "albumartist",
+              "maincredit"
+            ]
+          },
+          {
+            "id": "0000000000000000000006",
+            "name": "ユキ",
+            "coverArt": "ar-0000000000000000000006_0",
+            "albumCount": 1,
+            "artistImageUrl": "http://reference.invalid/share/img/<token>?size=600",
+            "musicBrainzId": "",
+            "sortName": "ユキ",
+            "roles": [
+              "artist",
+              "maincredit",
+              "albumartist"
+            ]
+          }
+        ],
+        "album": [
+          {
+            "id": "0000000000000000000016",
+            "name": "Now Thats Music",
+            "artist": "Various Artists",
+            "artistId": "0000000000000000000005",
+            "coverArt": "al-0000000000000000000016_00000000",
+            "songCount": 1,
+            "duration": 0,
+            "created": "0000-00-00T00:00:00.000000000Z",
+            "year": 2001,
+            "userRating": 0,
+            "genres": [],
+            "musicBrainzId": "",
+            "isCompilation": true,
+            "sortName": "now thats music",
+            "discTitles": [],
+            "originalReleaseDate": {},
+            "releaseDate": {},
+            "releaseTypes": [],
+            "recordLabels": [],
+            "moods": [],
+            "artists": [
+              {
+                "id": "0000000000000000000005",
+                "name": "Various Artists"
+              }
+            ],
+            "displayArtist": "Various Artists",
+            "explicitStatus": "",
+            "version": ""
+          },
+          {
+            "id": "0000000000000000000014",
+            "name": "Achtung Baby",
+            "artist": "U2",
+            "artistId": "0000000000000000000003",
+            "coverArt": "al-0000000000000000000014_00000000",
+            "songCount": 1,
+            "duration": 0,
+            "created": "0000-00-00T00:00:00.000000000Z",
+            "year": 1991,
+            "genre": "Rock",
+            "userRating": 0,
+            "genres": [
+              {
+                "name": "Rock"
+              }
+            ],
+            "musicBrainzId": "",
+            "isCompilation": false,
+            "sortName": "achtung baby",
+            "discTitles": [],
+            "originalReleaseDate": {},
+            "releaseDate": {},
+            "releaseTypes": [],
+            "recordLabels": [],
+            "moods": [],
+            "artists": [
+              {
+                "id": "0000000000000000000003",
+                "name": "U2"
+              }
+            ],
+            "displayArtist": "U2",
+            "explicitStatus": "",
+            "version": ""
+          },
+          {
+            "id": "0000000000000000000013",
+            "name": "OK Computer",
+            "artist": "Radiohead",
+            "artistId": "0000000000000000000002",
+            "coverArt": "al-0000000000000000000013_00000000",
+            "songCount": 1,
+            "duration": 0,
+            "created": "0000-00-00T00:00:00.000000000Z",
+            "year": 1997,
+            "genre": "Alternative Rock",
+            "userRating": 3,
+            "averageRating": 3,
+            "genres": [
+              {
+                "name": "Alternative Rock"
+              }
+            ],
+            "musicBrainzId": "0da3b3e3-1111-4444-8888-aaaaaaaaaaaa",
+            "isCompilation": false,
+            "sortName": "ok computer",
+            "discTitles": [],
+            "originalReleaseDate": {},
+            "releaseDate": {},
+            "releaseTypes": [],
+            "recordLabels": [],
+            "moods": [],
+            "artists": [
+              {
+                "id": "0000000000000000000002",
+                "name": "Radiohead"
+              }
+            ],
+            "displayArtist": "Radiohead",
+            "explicitStatus": "",
+            "version": ""
+          },
+          {
+            "id": "0000000000000000000018",
+            "name": "OK Computer",
+            "artist": "Radiohead",
+            "artistId": "0000000000000000000002",
+            "coverArt": "al-0000000000000000000018_00000000",
+            "songCount": 1,
+            "duration": 0,
+            "created": "0000-00-00T00:00:00.0000000Z",
+            "year": 1997,
+            "userRating": 0,
+            "genres": [],
+            "musicBrainzId": "",
+            "isCompilation": false,
+            "sortName": "ok computer",
+            "discTitles": [],
+            "originalReleaseDate": {},
+            "releaseDate": {},
+            "releaseTypes": [],
+            "recordLabels": [],
+            "moods": [],
+            "artists": [
+              {
+                "id": "0000000000000000000002",
+                "name": "Radiohead"
+              }
+            ],
+            "displayArtist": "Radiohead",
+            "explicitStatus": "",
+            "version": ""
+          },
+          {
+            "id": "0000000000000000000017",
+            "name": "望厚",
+            "artist": "ユキ",
+            "artistId": "0000000000000000000006",
+            "coverArt": "al-0000000000000000000017_00000000",
+            "songCount": 1,
+            "duration": 0,
+            "created": "0000-00-00T00:00:00.00000000Z",
+            "year": 2015,
+            "userRating": 0,
+            "genres": [],
+            "musicBrainzId": "",
+            "isCompilation": false,
+            "sortName": "望厚",
+            "discTitles": [],
+            "originalReleaseDate": {},
+            "releaseDate": {},
+            "releaseTypes": [],
+            "recordLabels": [],
+            "moods": [],
+            "artists": [
+              {
+                "id": "0000000000000000000006",
+                "name": "ユキ"
+              }
+            ],
+            "displayArtist": "ユキ",
+            "explicitStatus": "",
+            "version": ""
+          },
+          {
+            "id": "0000000000000000000015",
+            "name": "Mezzanine",
+            "artist": "Massive Attack",
+            "artistId": "0000000000000000000004",
+            "coverArt": "al-0000000000000000000015_00000000",
+            "songCount": 1,
+            "duration": 0,
+            "created": "0000-00-00T00:00:00.000000000Z",
+            "year": 1998,
+            "userRating": 0,
+            "genres": [],
+            "musicBrainzId": "",
+            "isCompilation": false,
+            "sortName": "mezzanine",
+            "discTitles": [],
+            "originalReleaseDate": {},
+            "releaseDate": {
+              "year": 1998
+            },
+            "releaseTypes": [],
+            "recordLabels": [],
+            "moods": [],
+            "artists": [
+              {
+                "id": "0000000000000000000004",
+                "name": "Massive Attack"
+              }
+            ],
+            "displayArtist": "Massive Attack",
+            "explicitStatus": "",
+            "version": ""
+          }
+        ],
+        "song": [
+          {
+            "id": "0000000000000000000011",
+            "parent": "0000000000000000000016",
+            "isDir": false,
+            "title": "Song A",
+            "album": "Now Thats Music",
+            "artist": "Artist One",
+            "track": 1,
+            "year": 2001,
+            "coverArt": "dc-0000000000000000000016:1_0",
+            "size": 1413,
+            "contentType": "audio/flac",
+            "suffix": "flac",
+            "bitRate": 1,
+            "path": "Various Artists/Now Thats Music/01-01 - Song A.flac",
+            "discNumber": 1,
+            "created": "0000-00-00T00:00:00.000000000Z",
+            "albumId": "0000000000000000000016",
+            "artistId": "0000000000000000000019",
+            "type": "music",
+            "bpm": 0,
+            "comment": "",
+            "sortName": "song a",
+            "mediaType": "song",
+            "musicBrainzId": "",
+            "isrc": [],
+            "genres": [],
+            "replayGain": {},
+            "channelCount": 2,
+            "samplingRate": 44100,
+            "bitDepth": 16,
+            "moods": [],
+            "artists": [
+              {
+                "id": "0000000000000000000019",
+                "name": "Artist One"
+              }
+            ],
+            "displayArtist": "Artist One",
+            "albumArtists": [
+              {
+                "id": "0000000000000000000005",
+                "name": "Various Artists"
+              }
+            ],
+            "displayAlbumArtist": "Various Artists",
+            "contributors": [],
+            "displayComposer": "",
+            "explicitStatus": "",
+            "groupings": []
+          },
+          {
+            "id": "0000000000000000000009",
+            "parent": "0000000000000000000014",
+            "isDir": false,
+            "title": "One",
+            "album": "Achtung Baby",
+            "artist": "U2",
+            "track": 3,
+            "year": 1991,
+            "genre": "Rock",
+            "coverArt": "dc-0000000000000000000014:1_0",
+            "size": 16008,
+            "contentType": "audio/mpeg",
+            "suffix": "mp3",
+            "bitRate": 345,
+            "path": "U2/Achtung Baby/01-03 - One.mp3",
+            "discNumber": 1,
+            "created": "0000-00-00T00:00:00.000000000Z",
+            "albumId": "0000000000000000000014",
+            "artistId": "0000000000000000000003",
+            "type": "music",
+            "bpm": 0,
+            "comment": "",
+            "sortName": "one",
+            "mediaType": "song",
+            "musicBrainzId": "",
+            "isrc": [],
+            "genres": [
+              {
+                "name": "Rock"
+              }
+            ],
+            "replayGain": {},
+            "channelCount": 2,
+            "samplingRate": 44100,
+            "bitDepth": 0,
+            "moods": [],
+            "artists": [
+              {
+                "id": "0000000000000000000003",
+                "name": "U2"
+              }
+            ],
+            "displayArtist": "U2",
+            "albumArtists": [
+              {
+                "id": "0000000000000000000003",
+                "name": "U2"
+              }
+            ],
+            "displayAlbumArtist": "U2",
+            "contributors": [],
+            "displayComposer": "",
+            "explicitStatus": "",
+            "groupings": []
+          },
+          {
+            "id": "0000000000000000000008",
+            "parent": "0000000000000000000018",
+            "isDir": false,
+            "title": "Paranoid Android",
+            "album": "OK Computer",
+            "artist": "Radiohead",
+            "track": 2,
+            "year": 1997,
+            "coverArt": "dc-0000000000000000000018:1_0",
+            "size": 1463,
+            "contentType": "audio/flac",
+            "suffix": "flac",
+            "bitRate": 1,
+            "path": "Radiohead/OK Computer/01-02 - Paranoid Android.flac",
+            "discNumber": 1,
+            "created": "0000-00-00T00:00:00.0000000Z",
+            "albumId": "0000000000000000000018",
+            "artistId": "0000000000000000000002",
+            "type": "music",
+            "bpm": 0,
+            "comment": "",
+            "sortName": "paranoid android",
+            "mediaType": "song",
+            "musicBrainzId": "",
+            "isrc": [],
+            "genres": [],
+            "replayGain": {},
+            "channelCount": 2,
+            "samplingRate": 44100,
+            "bitDepth": 16,
+            "moods": [],
+            "artists": [
+              {
+                "id": "0000000000000000000002",
+                "name": "Radiohead"
+              }
+            ],
+            "displayArtist": "Radiohead",
+            "albumArtists": [
+              {
+                "id": "0000000000000000000002",
+                "name": "Radiohead"
+              }
+            ],
+            "displayAlbumArtist": "Radiohead",
+            "contributors": [],
+            "displayComposer": "",
+            "explicitStatus": "",
+            "groupings": []
+          },
+          {
+            "id": "0000000000000000000007",
+            "parent": "0000000000000000000013",
+            "isDir": false,
+            "title": "Airbag",
+            "album": "OK Computer",
+            "artist": "Radiohead",
+            "track": 1,
+            "year": 1997,
+            "genre": "Alternative Rock",
+            "coverArt": "dc-0000000000000000000013:1_0",
+            "size": 1567,
+            "contentType": "audio/flac",
+            "suffix": "flac",
+            "bitRate": 1,
+            "path": "Radiohead/OK Computer/01-01 - Airbag.flac",
+            "discNumber": 1,
+            "created": "0000-00-00T00:00:00.000000000Z",
+            "albumId": "0000000000000000000013",
+            "artistId": "0000000000000000000002",
+            "type": "music",
+            "userRating": 4,
+            "averageRating": 4,
+            "bpm": 0,
+            "comment": "",
+            "sortName": "airbag",
+            "mediaType": "song",
+            "musicBrainzId": "",
+            "isrc": [],
+            "genres": [
+              {
+                "name": "Alternative Rock"
+              }
+            ],
+            "replayGain": {},
+            "channelCount": 2,
+            "samplingRate": 44100,
+            "bitDepth": 16,
+            "moods": [],
+            "artists": [
+              {
+                "id": "0000000000000000000002",
+                "name": "Radiohead"
+              }
+            ],
+            "displayArtist": "Radiohead",
+            "albumArtists": [
+              {
+                "id": "0000000000000000000002",
+                "name": "Radiohead"
+              }
+            ],
+            "displayAlbumArtist": "Radiohead",
+            "contributors": [],
+            "displayComposer": "",
+            "explicitStatus": "",
+            "groupings": []
+          },
+          {
+            "id": "0000000000000000000012",
+            "parent": "0000000000000000000017",
+            "isDir": false,
+            "title": "桃源へ",
+            "album": "望厚",
+            "artist": "ユキ",
+            "track": 1,
+            "year": 2015,
+            "coverArt": "dc-0000000000000000000017:1_0",
+            "size": 1354,
+            "contentType": "audio/flac",
+            "suffix": "flac",
+            "bitRate": 1,
+            "path": "ユキ/望厚/01-01 - 桃源へ.flac",
+            "discNumber": 1,
+            "created": "0000-00-00T00:00:00.00000000Z",
+            "albumId": "0000000000000000000017",
+            "artistId": "0000000000000000000006",
+            "type": "music",
+            "bpm": 0,
+            "comment": "",
+            "sortName": "桃源へ",
+            "mediaType": "song",
+            "musicBrainzId": "",
+            "isrc": [],
+            "genres": [],
+            "replayGain": {},
+            "channelCount": 2,
+            "samplingRate": 44100,
+            "bitDepth": 16,
+            "moods": [],
+            "artists": [
+              {
+                "id": "0000000000000000000006",
+                "name": "ユキ"
+              }
+            ],
+            "displayArtist": "ユキ",
+            "albumArtists": [
+              {
+                "id": "0000000000000000000006",
+                "name": "ユキ"
+              }
+            ],
+            "displayAlbumArtist": "ユキ",
+            "contributors": [],
+            "displayComposer": "",
+            "explicitStatus": "",
+            "groupings": []
+          },
+          {
+            "id": "0000000000000000000010",
+            "parent": "0000000000000000000015",
+            "isDir": false,
+            "title": "Teardrop",
+            "album": "Mezzanine",
+            "artist": "Massive Attack",
+            "track": 4,
+            "year": 1998,
+            "coverArt": "dc-0000000000000000000015:1_0",
+            "size": 2563,
+            "contentType": "audio/mp4",
+            "suffix": "m4a",
+            "bitRate": 2,
+            "path": "Massive Attack/Mezzanine/01-04 - Teardrop.m4a",
+            "discNumber": 1,
+            "created": "0000-00-00T00:00:00.000000000Z",
+            "albumId": "0000000000000000000015",
+            "artistId": "0000000000000000000004",
+            "type": "music",
+            "bpm": 0,
+            "comment": "",
+            "sortName": "teardrop",
+            "mediaType": "song",
+            "musicBrainzId": "",
+            "isrc": [],
+            "genres": [],
+            "replayGain": {},
+            "channelCount": 2,
+            "samplingRate": 44100,
+            "bitDepth": 16,
+            "moods": [],
+            "artists": [
+              {
+                "id": "0000000000000000000004",
+                "name": "Massive Attack"
+              }
+            ],
+            "displayArtist": "Massive Attack",
+            "albumArtists": [
+              {
+                "id": "0000000000000000000004",
+                "name": "Massive Attack"
+              }
+            ],
+            "displayAlbumArtist": "Massive Attack",
+            "contributors": [],
+            "displayComposer": "",
+            "explicitStatus": "",
+            "groupings": []
+          }
+        ]
+      }
+    }
+  }
+}

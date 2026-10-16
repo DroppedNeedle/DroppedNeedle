@@ -1,0 +1,59 @@
+{
+  "request": "GET /rest/getAlbumList2?u=reference&p=***&v=1.16.1&c=dn-ref&f=json&type=highest",
+  "status": 200,
+  "headers": {
+    "content-length": "826",
+    "content-type": "application/json",
+    "x-total-count": "1"
+  },
+  "body": {
+    "subsonic-response": {
+      "status": "ok",
+      "version": "1.16.1",
+      "type": "navidrome",
+      "serverVersion": "0.62.0 (1b46b977)",
+      "openSubsonic": true,
+      "albumList2": {
+        "album": [
+          {
+            "id": "0000000000000000000013",
+            "name": "OK Computer",
+            "artist": "Radiohead",
+            "artistId": "0000000000000000000002",
+            "coverArt": "al-0000000000000000000013_00000000",
+            "songCount": 1,
+            "duration": 0,
+            "created": "0000-00-00T00:00:00.000000000Z",
+            "year": 1997,
+            "genre": "Alternative Rock",
+            "userRating": 3,
+            "averageRating": 3,
+            "genres": [
+              {
+                "name": "Alternative Rock"
+              }
+            ],
+            "musicBrainzId": "0da3b3e3-1111-4444-8888-aaaaaaaaaaaa",
+            "isCompilation": false,
+            "sortName": "ok computer",
+            "discTitles": [],
+            "originalReleaseDate": {},
+            "releaseDate": {},
+            "releaseTypes": [],
+            "recordLabels": [],
+            "moods": [],
+            "artists": [
+              {
+                "id": "0000000000000000000002",
+                "name": "Radiohead"
+              }
+            ],
+            "displayArtist": "Radiohead",
+            "explicitStatus": "",
+            "version": ""
+          }
+        ]
+      }
+    }
+  }
+}

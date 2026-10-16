@@ -5,7 +5,7 @@
 // there says how to run this.
 //
 //   plant <reference dir> <tmp dir>      copy the fixture tracks into <tmp dir>/music
-//   navidrome <reference dir> --image-id <id> [--port 14533] [--set arpeggi]
+//   navidrome <reference dir> --image-id <id> [--port 14533] [--set arpeggi|ratings]
 //   jellyfin <reference dir> --image-id <id> [--port 18096]
 //   check <reference dir>                verify the checksums and the scrubbing
 //   clean <tmp dir>                      remove the planted tracks
@@ -26,7 +26,7 @@ const SERVERS = {
 	jellyfin: { image: 'jellyfin/jellyfin:10.10.6', version: '10.10.6', port: 18096 }
 };
 // Request sets recorded on their own, each into `<server>-<version>-<set>`.
-const SETS = { navidrome: ['arpeggi'] };
+const SETS = { navidrome: ['arpeggi', 'ratings'] };
 const USER = 'reference';
 const CLIENT = 'dn-ref';
 const UNKNOWN_HEX_ID = 'ffffffffffffffffffffffffffffffff';
@@ -662,6 +662,39 @@ function navidromeArpeggi() {
 	];
 }
 
+// One rating each on a track, an album and an artist, then what shows them,
+// then the track's rating cleared.
+function navidromeRatings() {
+	const track = '{track.airbag}';
+	const album = '{album.ok_computer}';
+	const artist = '{artist.radiohead}';
+	const write = { write: true };
+	const rate = (name, id, rating) =>
+		rest(
+			name,
+			'setRating',
+			[
+				['id', id],
+				['rating', rating]
+			],
+			write
+		);
+	return [
+		rate('setRating.track', track, '4'),
+		rate('setRating.album', album, '3'),
+		rate('setRating.artist', artist, '5'),
+		rest('getSong', 'getSong', [['id', track]]),
+		rest('getAlbum', 'getAlbum', [['id', album]]),
+		rest('getArtist', 'getArtist', [['id', artist]]),
+		rest('getArtists', 'getArtists'),
+		rest('search3', 'search3'),
+		rest('getStarred2', 'getStarred2'),
+		rest('getAlbumList2.highest', 'getAlbumList2', [['type', 'highest']]),
+		rate('setRating.track-cleared', track, '0'),
+		rest('getSong.cleared', 'getSong', [['id', track]])
+	];
+}
+
 async function navidrome(refDir, args) {
 	const { pinned, library, folders, set, capture, recorder } = prepare('navidrome', refDir, args);
 	const { scrub, refs } = recorder;
@@ -719,6 +752,8 @@ async function navidrome(refDir, args) {
 	recorder.into(folders[0]);
 	if (set === 'arpeggi') {
 		await recorder.recordAll(navidromeArpeggi());
+	} else if (set === 'ratings') {
+		await recorder.recordAll(navidromeRatings());
 	} else {
 		await recorder.recordAll(navidromeReads());
 		recorder.into(folders[1]);

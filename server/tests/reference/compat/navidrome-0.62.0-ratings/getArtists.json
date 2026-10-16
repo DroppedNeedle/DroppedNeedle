@@ -1,0 +1,119 @@
+{
+  "request": "GET /rest/getArtists?u=reference&p=***&v=1.16.1&c=dn-ref&f=json",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "subsonic-response": {
+      "status": "ok",
+      "version": "1.16.1",
+      "type": "navidrome",
+      "serverVersion": "0.62.0 (1b46b977)",
+      "openSubsonic": true,
+      "artists": {
+        "index": [
+          {
+            "name": "#",
+            "artist": [
+              {
+                "id": "0000000000000000000006",
+                "name": "ユキ",
+                "coverArt": "ar-0000000000000000000006_0",
+                "albumCount": 1,
+                "artistImageUrl": "http://reference.invalid/share/img/<token>?size=600",
+                "musicBrainzId": "",
+                "sortName": "ユキ",
+                "roles": [
+                  "artist",
+                  "maincredit",
+                  "albumartist"
+                ]
+              }
+            ]
+          },
+          {
+            "name": "M",
+            "artist": [
+              {
+                "id": "0000000000000000000004",
+                "name": "Massive Attack",
+                "coverArt": "ar-0000000000000000000004_0",
+                "albumCount": 1,
+                "artistImageUrl": "http://reference.invalid/share/img/<token>?size=600",
+                "musicBrainzId": "",
+                "sortName": "massive attack",
+                "roles": [
+                  "albumartist",
+                  "artist",
+                  "maincredit"
+                ]
+              }
+            ]
+          },
+          {
+            "name": "R",
+            "artist": [
+              {
+                "id": "0000000000000000000002",
+                "name": "Radiohead",
+                "coverArt": "ar-0000000000000000000002_0",
+                "albumCount": 2,
+                "userRating": 5,
+                "averageRating": 5,
+                "artistImageUrl": "http://reference.invalid/share/img/<token>?size=600",
+                "musicBrainzId": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+                "sortName": "radiohead",
+                "roles": [
+                  "artist",
+                  "maincredit",
+                  "albumartist"
+                ]
+              }
+            ]
+          },
+          {
+            "name": "U",
+            "artist": [
+              {
+                "id": "0000000000000000000003",
+                "name": "U2",
+                "coverArt": "ar-0000000000000000000003_0",
+                "albumCount": 1,
+                "artistImageUrl": "http://reference.invalid/share/img/<token>?size=600",
+                "musicBrainzId": "",
+                "sortName": "u2",
+                "roles": [
+                  "maincredit",
+                  "albumartist",
+                  "artist"
+                ]
+              }
+            ]
+          },
+          {
+            "name": "V",
+            "artist": [
+              {
+                "id": "0000000000000000000005",
+                "name": "Various Artists",
+                "coverArt": "ar-0000000000000000000005_0",
+                "albumCount": 1,
+                "artistImageUrl": "http://reference.invalid/share/img/<token>?size=600",
+                "musicBrainzId": "",
+                "sortName": "various artists",
+                "roles": [
+                  "albumartist",
+                  "maincredit"
+                ]
+              }
+            ]
+          }
+        ],
+        "lastModified": 0,
+        "ignoredArticles": "The El La Los Las Le Les Os As O A"
+      }
+    }
+  }
+}
