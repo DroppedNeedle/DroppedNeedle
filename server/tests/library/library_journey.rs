@@ -16587,9 +16587,10 @@ async fn a_file_matched_by_hand_counts_as_its_track() {
         (
             &file["fate"],
             &file["edition_position"],
-            &file["matched_by_hand"]
+            &file["matched_by_hand"],
+            &file["match_written"]
         ),
-        (&json!("keep"), &json!(3), &json!(true)),
+        (&json!("keep"), &json!(3), &json!(true), &json!(false)),
         "{after}"
     );
     assert_eq!(after["missing_count"], json!(0), "{after}");
@@ -16691,6 +16692,10 @@ async fn a_file_matched_by_hand_counts_as_its_track() {
     assert_eq!(status, StatusCode::OK, "{edit}");
     let edit_job = edit["job_id"].as_str().expect("edit job").to_owned();
     run_management_job(app, &headers, &edit_job, &edit["preview_token"]).await;
+    assert_eq!(
+        plan_file(&plan(plan_uri.clone()).await, &h.odd)["match_written"],
+        json!(true)
+    );
     let (status, body) = app.call("DELETE", &file_uri, &headers, None).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert_eq!(body["error"]["code"], json!("HAND_MATCH_WRITTEN"));

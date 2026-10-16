@@ -106,11 +106,14 @@ export const getAlbumEditionStatusQuery = (
 			queryFn: async ({ signal }: { signal: AbortSignal }): Promise<EditionStatus> => {
 				const before = queryClient.getQueryData<EditionStatus>(queryKey);
 				const status = await api.global.v3.GET(LibraryV3Api.edition(localId), { signal });
-				// The plans line the files up as they were placed: once placing
-				// ends, or the edition itself changed, they are stale.
+				// The plans line the files up as they were placed, and say which
+				// hand matches were written since: once placing or writing ends,
+				// or the edition itself changed, they are stale.
 				if (
 					before &&
-					((before.placing && !status.placing) || before.release_mbid !== status.release_mbid)
+					((before.placing && !status.placing) ||
+						(before.writing && !status.writing) ||
+						before.release_mbid !== status.release_mbid)
 				) {
 					void invalidateQueriesWithPersister({
 						queryKey: LibraryQueryKeyFactory.catalog.editionPlanPrefix(userId, localId)
@@ -166,7 +169,8 @@ export function restoreEditionExtras() {
 
 // Match one file to a track of the album's edition by hand, and undo it.
 // A match can carry a missing track's plays, stars and playlist entries
-// to the file, for every listener, so those lists refresh too.
+// to the file, for every listener, so those lists refresh too. A refusal
+// means the plan on screen was stale, so it is read again either way.
 function invalidateHandMatchScope(localId: string): void {
 	const userId = authStore.user?.id;
 	invalidateEditionScope({ userId, localId });
@@ -196,7 +200,7 @@ export function matchEditionFile() {
 				release_track_mbid: releaseTrackMbid,
 				expected_identity_revision: identityRevision
 			}),
-		onSuccess: (_data, { localId }) => invalidateHandMatchScope(localId)
+		onSettled: (_data, _error, { localId }) => invalidateHandMatchScope(localId)
 	}));
 }
 
@@ -204,7 +208,7 @@ export function unmatchEditionFile() {
 	return createMutation(() => ({
 		mutationFn: ({ localId, trackId }: { localId: string; trackId: string }) =>
 			api.global.v3.DELETE(LibraryV3Api.editionFile(localId, trackId)),
-		onSuccess: (_data, { localId }) => invalidateHandMatchScope(localId)
+		onSettled: (_data, _error, { localId }) => invalidateHandMatchScope(localId)
 	}));
 }
 

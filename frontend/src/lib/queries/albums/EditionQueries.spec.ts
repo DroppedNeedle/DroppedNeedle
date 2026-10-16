@@ -72,6 +72,7 @@ type EditionQueryOptions = {
 type EditionMutationOptions = {
 	mutationFn: (variables: Record<string, unknown>) => Promise<unknown>;
 	onSuccess: (data: unknown, variables: Record<string, unknown>) => Promise<unknown>;
+	onSettled: (data: unknown, error: unknown, variables: Record<string, unknown>) => unknown;
 };
 
 beforeEach(() => {
@@ -211,7 +212,7 @@ it('reads one copy edition by local id and scopes the key by user', () => {
 	);
 });
 
-it('matches a file by hand and undoes it, refreshing what the carry can move', async () => {
+it('matches a file by hand and undoes it, refreshing what the carry can move, refused or not', async () => {
 	const match = matchEditionFile() as unknown as EditionMutationOptions;
 	const unmatch = unmatchEditionFile() as unknown as EditionMutationOptions;
 	const variables = {
@@ -229,9 +230,14 @@ it('matches a file by hand and undoes it, refreshing what the carry can move', a
 	await unmatch.mutationFn(variables);
 	expect(h.v3.DELETE).toHaveBeenCalledWith('/api/v3/library/albums/local-1/edition/files/file-9');
 
-	for (const done of [match, unmatch]) {
+	for (const [done, error] of [
+		[match, null],
+		[unmatch, null],
+		[match, new Error('refused')],
+		[unmatch, new Error('refused')]
+	] as const) {
 		h.invalidate.mockClear();
-		await done.onSuccess({}, variables);
+		await done.onSettled(error ? undefined : {}, error, variables);
 		const invalidated = h.invalidate.mock.calls.map(([arg]) => arg.queryKey);
 		expect(invalidated).toEqual(
 			expect.arrayContaining([

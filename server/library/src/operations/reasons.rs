@@ -196,13 +196,13 @@ pub const TRACK_NOT_ON_EDITION: Reason = reason(
 );
 pub const FILE_ALREADY_PLACED: Reason = reason(
     "FILE_ALREADY_PLACED",
-    "This file already sits on a track of this edition.",
-    "If it is on the wrong track and you matched it by hand, undo that match first.",
+    "This file is already on a track.",
+    "To move a file you matched, undo its match first.",
 );
 pub const EDITION_TRACK_TAKEN: Reason = reason(
     "EDITION_TRACK_TAKEN",
-    "Another of this album's files already sits on that track.",
-    "Pick a track no file holds.",
+    "Another file is on that track now.",
+    "Pick another track.",
 );
 pub const CUSTOM_EDITION_KEEPS_FILES: Reason = reason(
     "CUSTOM_EDITION_KEEPS_FILES",
@@ -216,13 +216,13 @@ pub const NO_HAND_MATCH: Reason = reason(
 );
 pub const HAND_MATCH_STALE: Reason = reason(
     STALE,
-    "This file's match changed after you made it, so undoing it would bring back an outdated match.",
-    "Reload the album.",
+    "This match was changed after you made it, so it can't be undone.",
+    "Nothing to do.",
 );
 pub const HAND_MATCH_WRITTEN: Reason = reason(
     "HAND_MATCH_WRITTEN",
-    "DroppedNeedle has written this track's tags to the file since you matched it, so a scan would put it back on the track.",
-    "Undo that tag write first, then undo the match.",
+    "DroppedNeedle has written this file's tags since the match.",
+    "Undo that write in History first.",
 );
 
 // Notes on one planned file.

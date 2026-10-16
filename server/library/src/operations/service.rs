@@ -566,17 +566,27 @@ impl Operations {
         album_id: &str,
         raw_release: Option<&str>,
     ) -> Result<PlanReading, OperationError> {
-        let (identity, revision, indexed, stored) = {
+        let (identity, revision, indexed, stored, written) = {
             let ops = self.clone();
             let album = album_id.to_owned();
             tokio::task::spawn_blocking(move || {
                 ops.read(|conn| {
                     let identity = album_identity_row(conn, &album)?;
+                    let stored = hand_match::stored_placements(conn, &album)?;
+                    let mut written = Vec::new();
+                    for row in &stored {
+                        if let Some(matched_at) = row.matched_at
+                            && hand_match::written_since(conn, &row.local_track_id, matched_at)?
+                        {
+                            written.push(row.local_track_id.clone());
+                        }
+                    }
                     Ok((
                         identity.map(|row| (row.release_mbid, row.release_group_mbid)),
                         choice::identity_revision(conn, &album)?,
                         indexed_track_ids(conn, &album)?,
-                        hand_match::stored_placements(conn, &album)?,
+                        stored,
+                        written,
                     ))
                 })
             })
@@ -608,10 +618,15 @@ impl Operations {
             &stored,
             (current.as_deref(), group.as_deref()),
         );
+        let match_written = written
+            .into_iter()
+            .filter(|file| matched_by_hand.contains(file))
+            .collect();
         Ok(PlanReading {
             plan,
             identity_revision: revision,
             matched_by_hand,
+            match_written,
         })
     }
 

@@ -138,15 +138,19 @@ pub struct StoredPlacement {
     /// A person matched the file to this track by hand, and the match
     /// stands.
     pub by_hand: bool,
+    /// When that match was made, in milliseconds; set only with `by_hand`.
+    pub matched_at: Option<i64>,
 }
 
 /// The plan as a person reads it: the plan, the album identity revision
-/// it was read at, and the files a person matched by hand.
+/// it was read at, the files a person matched by hand, and those of them
+/// the app has written since the match (their "Undo match" waits).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlanReading {
     pub plan: EditionPlan,
     pub identity_revision: i64,
     pub matched_by_hand: Vec<String>,
+    pub match_written: Vec<String>,
 }
 
 /// One file on one edition track: the index into `release.tracks`, the

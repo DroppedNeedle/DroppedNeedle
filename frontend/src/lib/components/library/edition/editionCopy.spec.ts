@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { components } from '$lib/api/v3/openapi';
 import {
 	MATCH_MAKES_IT_YOURS,
+	MATCH_WRITTEN,
 	filesPlacedSentence,
 	fitLine,
 	formatsLabel,
@@ -206,9 +207,8 @@ describe('edition sentences', () => {
 		expect(freeTrackLabel({ disc_number: 2, position: 1, title: 'Coda', length_ms: null })).toBe(
 			'2.1 Coda'
 		);
-		expect(MATCH_MAKES_IT_YOURS).toBe(
-			'Matching a file makes this edition your choice, as Keep this edition does.'
-		);
+		expect(MATCH_MAKES_IT_YOURS).toBe('Matching a file makes this edition your choice.');
+		expect(MATCH_WRITTEN).toBe('Tags written. Undo that in History first.');
 	});
 
 	it('folds repeated formats', () => {

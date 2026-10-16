@@ -13764,6 +13764,12 @@ export interface components {
             length_ms?: number | null;
             local_track_id: string;
             /**
+             * @description DroppedNeedle has written this file since a person matched it by
+             *     hand, so "Undo match" is refused until that write is undone from
+             *     History. False whenever `matched_by_hand` is false.
+             */
+            match_written: boolean;
+            /**
              * @description A person matched this file to its edition track by hand, and the
              *     match stands: "Undo match" can take it back.
              */

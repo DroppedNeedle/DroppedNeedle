@@ -2,6 +2,7 @@ import { page } from 'vitest/browser';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
+import { ApiError } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 
 type EditionPlan = components['schemas']['EditionPlanView'];
@@ -36,7 +37,8 @@ const file = (
 	edition_disc_number: at === null ? null : 1,
 	edition_position: at,
 	note: null,
-	matched_by_hand: matchedByHand
+	matched_by_hand: matchedByHand,
+	match_written: false
 });
 
 // 1.1 fits; 1.2 is held in another version; 1.3 is missing; 1.4 holds a
@@ -80,18 +82,31 @@ const plan = {
 	]
 } as unknown as EditionPlan;
 
-const h = vi.hoisted(() => ({ match: vi.fn(), unmatch: vi.fn() }));
+const h = vi.hoisted(() => ({ match: vi.fn(), unmatch: vi.fn(), isAdmin: false }));
+
+vi.mock('$lib/stores/authStore.svelte', () => ({
+	authStore: {
+		user: { id: 'user-1' },
+		get isAdmin() {
+			return h.isAdmin;
+		}
+	},
+	LAST_USER_ID_KEY: 'test:last-user'
+}));
 
 const row = (text: string) => page.getByRole('row').filter({ hasText: text });
+// The picker's Match button, whatever else its name says.
+const matchButton = () => page.getByRole('button', { name: /^Match(,|$)/ });
 
 beforeEach(() => {
 	h.match.mockReset().mockResolvedValue(undefined);
 	h.unmatch.mockReset().mockResolvedValue(undefined);
+	h.isAdmin = false;
 });
 
-function compare(appPicked = false) {
+function compare(appPicked = false, shown: EditionPlan = plan) {
 	return render(EditionCompare, {
-		plan,
+		plan: shown,
 		canMatch: true,
 		appPicked,
 		onmatch: h.match,
@@ -110,7 +125,7 @@ describe('matching a file by hand', () => {
 		await expect.element(options.nth(1)).toHaveTextContent('1.3 Night Shift (4:05)');
 		expect(options.all()).toHaveLength(2);
 		await picker.selectOptions('track-3');
-		await page.getByRole('button', { name: 'Match', exact: true }).click();
+		await matchButton().click();
 		expect(h.match).toHaveBeenCalledWith('file-x', 'track-3', 7);
 		await expect.element(page.getByLabelText('Track on this edition')).not.toBeInTheDocument();
 	});
@@ -131,7 +146,7 @@ describe('matching a file by hand', () => {
 	it('shows a match by hand with its undo', async () => {
 		await compare();
 		const coda = row('Coda');
-		await expect.element(coda.getByText('Matched by you')).toBeVisible();
+		await expect.element(coda.getByText('Matched by hand')).toBeVisible();
 		await coda.getByRole('button', { name: 'Undo match' }).click();
 		expect(h.unmatch).toHaveBeenCalledWith('file-4');
 		await expect
@@ -140,24 +155,95 @@ describe('matching a file by hand', () => {
 	});
 
 	it("shows a refusal on the file's row and keeps the picker open", async () => {
-		h.match.mockRejectedValue(
-			new Error("Another of this album's files already sits on that track.")
-		);
+		h.match.mockRejectedValue(new Error('Another file is on that track now.'));
 		await compare();
 		await row('Untitled Take').getByRole('button', { name: 'Match to a track' }).click();
-		await page.getByRole('button', { name: 'Match', exact: true }).click();
+		await matchButton().click();
 		await expect
 			.element(row('Untitled Take').getByRole('alert'))
-			.toHaveTextContent("Another of this album's files already sits on that track.");
+			.toHaveTextContent('Another file is on that track now.');
 		await expect.element(page.getByLabelText('Track on this edition')).toBeVisible();
 	});
 
-	it('says a match makes the edition yours only when the app picked it', async () => {
-		const line = 'Matching a file makes this edition your choice, as Keep this edition does.';
-		const { unmount } = await compare(true);
-		await expect.element(row('Blue Hour (live)').getByText(line)).toBeVisible();
+	it('keeps a refusal and the picker when the plan is read again, and the retry works', async () => {
+		h.match.mockRejectedValueOnce(new ApiError(409, 'The album changed.', 'STALE_REVISION'));
+		const view = await compare();
 		await row('Untitled Take').getByRole('button', { name: 'Match to a track' }).click();
-		await expect.element(row('Untitled Take').getByText(line)).toBeVisible();
+		await page.getByLabelText('Track on this edition').selectOptions('track-3');
+		await matchButton().click();
+		const alert = row('Untitled Take').getByRole('alert');
+		await expect.element(alert).toHaveTextContent('This album just changed. Try again.');
+
+		// Meanwhile another file was matched to 1.3.
+		await view.rerender({
+			plan: {
+				...plan,
+				identity_revision: 8,
+				tracks: plan.tracks.map((track) =>
+					track.position === 3 ? { ...track, local_track_id: 'file-y' } : track
+				),
+				files: [...plan.files, file('file-y', 'Night Shift (take 2)', 'keep', 3, true)]
+			} as EditionPlan
+		});
+		await expect.element(alert).toHaveTextContent('This album just changed. Try again.');
+		const picker = page.getByLabelText('Track on this edition');
+		await expect.element(picker).toHaveValue('track-2');
+		expect(picker.getByRole('option').all()).toHaveLength(1);
+		await matchButton().click();
+		expect(h.match).toHaveBeenLastCalledWith('file-x', 'track-2', 8);
+	});
+
+	it('starts the picker on the closest length no other version sits beside', async () => {
+		await compare(false, {
+			...plan,
+			tracks: [...plan.tracks, track(5, 'Harbour Lights', 150_000, null)],
+			files: plan.files.map((one) =>
+				one.local_track_id === 'file-x' ? { ...one, length_ms: 181_000 } : one
+			)
+		} as EditionPlan);
+		await row('Untitled Take').getByRole('button', { name: 'Match to a track' }).click();
+		await expect.element(page.getByLabelText('Track on this edition')).toHaveValue('track-5');
+	});
+
+	it('moves focus to the picker, and back to the row on Cancel', async () => {
+		await compare();
+		await row('Untitled Take')
+			.getByRole('button', { name: 'Match to a track, Untitled Take', exact: true })
+			.click();
+		await expect.element(page.getByLabelText('Track on this edition')).toHaveFocus();
+		await page.getByRole('button', { name: 'Cancel' }).click();
+		await expect
+			.element(row('Untitled Take').getByRole('button', { name: 'Match to a track' }))
+			.toHaveFocus();
+	});
+
+	it('holds back the undo once the file is written, linking History for admins', async () => {
+		const written = {
+			...plan,
+			files: plan.files.map((one) =>
+				one.local_track_id === 'file-4' ? { ...one, match_written: true } : one
+			)
+		} as EditionPlan;
+		const view = await compare(false, written);
+		const coda = row('Coda');
+		await expect.element(coda.getByText('Matched by hand')).toBeVisible();
+		await expect.element(coda.getByText('Tags written. Undo that in History first.')).toBeVisible();
+		await expect.element(coda.getByRole('button', { name: /Undo match/ })).not.toBeInTheDocument();
+		await expect.element(coda.getByRole('link', { name: 'History' })).not.toBeInTheDocument();
+		view.unmount();
+
+		h.isAdmin = true;
+		await compare(false, written);
+		await expect.element(row('Coda').getByRole('link', { name: 'History' })).toBeVisible();
+	});
+
+	it('says once, above the table, that a match makes the edition yours when the app picked it', async () => {
+		const line = 'Matching a file makes this edition your choice.';
+		const { unmount } = await compare(true);
+		await row('Untitled Take').getByRole('button', { name: 'Match to a track' }).click();
+		await expect.element(page.getByText(line)).toBeVisible();
+		expect(page.getByText(line).all()).toHaveLength(1);
+		expect(page.getByRole('row').filter({ hasText: line }).all()).toHaveLength(0);
 		unmount();
 
 		await compare(false);
@@ -219,7 +305,7 @@ describe('who may match', () => {
 			await expect
 				.element(page.getByRole('button', { name: "It's this track" }))
 				.not.toBeInTheDocument();
-			await expect.element(page.getByText('Matched by you')).not.toBeInTheDocument();
+			await expect.element(page.getByText('Matched by hand')).not.toBeInTheDocument();
 			await expect
 				.element(page.getByRole('button', { name: 'Undo match' }))
 				.not.toBeInTheDocument();

@@ -32523,7 +32523,8 @@
           "disc_number",
           "track_number",
           "fate",
-          "matched_by_hand"
+          "matched_by_hand",
+          "match_written"
         ],
         "properties": {
           "disc_number": {
@@ -32563,6 +32564,10 @@
           },
           "local_track_id": {
             "type": "string"
+          },
+          "match_written": {
+            "type": "boolean",
+            "description": "DroppedNeedle has written this file since a person matched it by\nhand, so \"Undo match\" is refused until that write is undone from\nHistory. False whenever `matched_by_hand` is false."
           },
           "matched_by_hand": {
             "type": "boolean",

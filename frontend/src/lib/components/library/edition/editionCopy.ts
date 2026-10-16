@@ -377,12 +377,23 @@ export const MATCH_TO_TRACK = 'Match to a track';
 export const MATCH_PICKER_LABEL = 'Track on this edition';
 export const MATCH = 'Match';
 export const ITS_THIS_TRACK = "It's this track";
-export const MATCHED_BY_YOU = 'Matched by you';
+export const MATCHED_BY_HAND = 'Matched by hand';
 export const UNDO_MATCH = 'Undo match';
-export const MATCH_MAKES_IT_YOURS =
-	'Matching a file makes this edition your choice, as Keep this edition does.';
+export const MATCH_MAKES_IT_YOURS = 'Matching a file makes this edition your choice.';
 export const MATCH_FAILED = "This file couldn't be matched.";
 export const UNMATCH_FAILED = "The match couldn't be undone.";
+// A match refused because the album changed under a stale plan; the plan
+// is read again, so trying again works.
+export const MATCH_STALE = 'This album just changed. Try again.';
+// A match the app has written since: its undo waits for that write's undo.
+// "History" is a link for admins.
+export const MATCH_WRITTEN_PARTS = ['Tags written. Undo that in ', 'History', ' first.'] as const;
+export const MATCH_WRITTEN = MATCH_WRITTEN_PARTS.join('');
+
+/** A row's button, named with the file it acts on. */
+export function forFile(label: string, title: string): string {
+	return `${label}, ${title}`;
+}
 
 /** A free edition track in the picker: `1.3 Title (4:05)`. */
 export function freeTrackLabel(track: {

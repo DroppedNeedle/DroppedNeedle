@@ -18,14 +18,29 @@
 		help?: string;
 		error?: string | null;
 		disabled?: boolean;
+		ref?: HTMLSelectElement | null;
 	}
 
-	let { label, value = $bindable(), options, help, error, disabled = false }: Props = $props();
+	let {
+		label,
+		value = $bindable(),
+		options,
+		help,
+		error,
+		disabled = false,
+		ref = $bindable(null)
+	}: Props = $props();
 </script>
 
 <Field {label} {help} {error}>
 	{#snippet children(control)}
-		<select {...control} class="select w-full {error ? 'select-error' : ''}" {disabled} bind:value>
+		<select
+			{...control}
+			class="select w-full {error ? 'select-error' : ''}"
+			{disabled}
+			bind:value
+			bind:this={ref}
+		>
 			{#each options as option (option.value)}
 				<option value={option.value} disabled={option.disabled}>{option.label}</option>
 			{/each}

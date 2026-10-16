@@ -95,30 +95,66 @@ pub(super) fn guard(
 }
 
 /// The album's indexed files whose identity names a release track, each
-/// with whether a person matched it there by hand and the match stands.
+/// with when a person matched it there by hand, if that match stands.
 pub(super) fn stored_placements(
     conn: &Connection,
     album_id: &str,
 ) -> rusqlite::Result<Vec<StoredPlacement>> {
     conn.prepare(
         "SELECT t.id, i.release_mbid, i.release_track_mbid, \
-         (i.decision_source = 'manual' AND EXISTS (SELECT 1 FROM library_track_hand_matches h \
-         WHERE h.local_track_id = t.id AND lower(h.release_mbid) = lower(i.release_mbid) \
-         AND lower(h.release_track_mbid) = lower(i.release_track_mbid))) \
+         CASE WHEN i.decision_source = 'manual' \
+         AND lower(h.release_mbid) = lower(i.release_mbid) \
+         AND lower(h.release_track_mbid) = lower(i.release_track_mbid) \
+         THEN h.matched_at END \
          FROM local_tracks t JOIN local_track_external_identities i \
          ON i.local_track_id = t.id AND i.provider = ?2 \
+         LEFT JOIN library_track_hand_matches h ON h.local_track_id = t.id \
          WHERE t.local_album_id = ?1 AND t.availability = 'indexed' \
          AND trim(COALESCE(i.release_track_mbid, '')) <> '' ORDER BY t.id",
     )?
     .query_map(params![album_id, PROVIDER], |row| {
+        let matched_at: Option<i64> = row.get(3)?;
         Ok(StoredPlacement {
             local_track_id: row.get(0)?,
             release_mbid: row.get(1)?,
             release_track_mbid: row.get(2)?,
-            by_hand: row.get(3)?,
+            by_hand: matched_at.is_some(),
+            matched_at,
         })
     })?
     .collect()
+}
+
+/// Whether the app has written the file since a match made at `matched_at`
+/// (milliseconds): a run that writes files (a profile run, a tag edit, a
+/// duplicate resolution), planned after the match with something to write
+/// to this file, not failed or discarded, and whose album that run's undo
+/// has not put back. Its plan exists before the file is written, so a
+/// write still under way counts too. A scan would then put the file back
+/// on the track, so "Undo match" waits until that write is undone. The
+/// undo and the plan both ask this.
+pub(super) fn written_since(
+    conn: &Connection,
+    track_id: &str,
+    matched_at: i64,
+) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM library_management_plan_items p \
+         JOIN library_management_job_snapshots s ON s.job_id = p.job_id \
+         JOIN library_operation_jobs j ON j.id = p.job_id \
+         WHERE p.local_track_id = ?1 \
+         AND s.mode IN ('apply', 'automatic_apply', 'duplicate_resolution') \
+         AND j.state NOT IN ('failed', 'cancelled', 'stopped') \
+         AND p.eligibility IN ('eligible', 'warning') \
+         AND json_extract(p.desired_document_json, '$.plan') IS NOT NULL \
+         AND p.created_at * 1000 >= ?2 \
+         AND NOT EXISTS (SELECT 1 FROM library_management_job_snapshots u \
+         JOIN library_operation_work w ON w.job_id = u.job_id \
+         WHERE u.linked_operation_job_id = p.job_id AND u.mode = 'undo' \
+         AND w.ordinal = p.bundle_ordinal AND w.state = 'succeeded'))",
+        params![track_id, matched_at],
+        |row| row.get(0),
+    )
 }
 
 /// The stored placements that name `release`: its own id, a merged id of
@@ -372,29 +408,7 @@ pub(super) fn unmatch_file(
     if !stands {
         return Err(OperationError::Conflict(reasons::HAND_MATCH_STALE));
     }
-    // Written since the match: a run that writes files (a profile run, a
-    // tag edit, a duplicate resolution), planned after the match with
-    // something to write to this file, not failed or discarded, and whose
-    // album that run's undo has not put back. Its plan exists before the
-    // file is written, so a write still under way counts too.
-    let written: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM library_management_plan_items p \
-         JOIN library_management_job_snapshots s ON s.job_id = p.job_id \
-         JOIN library_operation_jobs j ON j.id = p.job_id \
-         WHERE p.local_track_id = ?1 \
-         AND s.mode IN ('apply', 'automatic_apply', 'duplicate_resolution') \
-         AND j.state NOT IN ('failed', 'cancelled', 'stopped') \
-         AND p.eligibility IN ('eligible', 'warning') \
-         AND json_extract(p.desired_document_json, '$.plan') IS NOT NULL \
-         AND p.created_at * 1000 >= ?2 \
-         AND NOT EXISTS (SELECT 1 FROM library_management_job_snapshots u \
-         JOIN library_operation_work w ON w.job_id = u.job_id \
-         WHERE u.linked_operation_job_id = p.job_id AND u.mode = 'undo' \
-         AND w.ordinal = p.bundle_ordinal AND w.state = 'succeeded'))",
-        params![track_id, kept.matched_at],
-        |row| row.get(0),
-    )?;
-    if written {
+    if written_since(tx, track_id, kept.matched_at)? {
         return Err(OperationError::Conflict(reasons::HAND_MATCH_WRITTEN));
     }
     let prior: Option<PriorTrackIdentity> = kept

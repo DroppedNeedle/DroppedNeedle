@@ -284,6 +284,10 @@ pub struct EditionPlanFileView {
     /// A person matched this file to its edition track by hand, and the
     /// match stands: "Undo match" can take it back.
     pub matched_by_hand: bool,
+    /// DroppedNeedle has written this file since a person matched it by
+    /// hand, so "Undo match" is refused until that write is undone from
+    /// History. False whenever `matched_by_hand` is false.
+    pub match_written: bool,
 }
 
 /// What MusicBrainz says about the planned edition.
@@ -341,6 +345,7 @@ impl From<PlanReading> for EditionPlanView {
             plan,
             identity_revision,
             matched_by_hand,
+            match_written,
         } = reading;
         let count = |fate: FileFate| plan.files.iter().filter(|file| file.fate == fate).count();
         let (kept_count, duplicate_count, other_version_count, extra_count) = (
@@ -396,6 +401,7 @@ impl From<PlanReading> for EditionPlanView {
                 .into_iter()
                 .map(|file| EditionPlanFileView {
                     matched_by_hand: matched_by_hand.contains(&file.local_track_id),
+                    match_written: match_written.contains(&file.local_track_id),
                     local_track_id: file.local_track_id,
                     title: file.title,
                     disc_number: file.disc,
