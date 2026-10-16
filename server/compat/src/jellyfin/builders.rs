@@ -169,6 +169,8 @@ fn base(id: String, name: String, server_id: &str) -> BaseItemDto {
         location_type: "FileSystem".to_owned(),
         backdrop_image_tags: Vec::new(),
         image_blur_hashes: BTreeMap::new(),
+        media_sources: None,
+        media_streams: None,
         detail: None,
     }
 }
@@ -456,10 +458,19 @@ impl<'a, I: IdMap> Builder<'a, I> {
         items
     }
 
-    /// One track fetched by id. `can_download` is whether the caller may
-    /// download library files.
-    pub async fn audio_full(&self, t: &TrackView, can_download: bool) -> BaseItemDto {
+    /// One track fetched by id, with its file and audio stream as Jellyfin
+    /// sends them there: no stream address and no token. `can_download` is
+    /// whether the caller may download library files.
+    pub async fn audio_full(
+        &self,
+        t: &TrackView,
+        can_download: bool,
+        supports_transcoding: bool,
+    ) -> BaseItemDto {
         let mut dto = self.audio(t).await;
+        let source = media_source(t, &dto.id, supports_transcoding);
+        dto.media_streams = Some(source.media_streams.clone());
+        dto.media_sources = Some(vec![source]);
         let mut detail = item_detail(type_preferences_id(&dto.item_type));
         detail.can_download = can_download;
         detail.path = t.path.clone().unwrap_or_default();

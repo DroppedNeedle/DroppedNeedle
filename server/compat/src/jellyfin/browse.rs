@@ -147,12 +147,10 @@ where
     match kind {
         "track" => {
             let t = state.library.track(&user.id, internal).await?;
-            let can_download = state
-                .settings
-                .jellyfin()
-                .policy_facts(&user.role)
-                .content_downloading;
-            Some(b.audio_full(&t, can_download).await)
+            let settings = state.settings.jellyfin();
+            let can_download = settings.policy_facts(&user.role).content_downloading;
+            let can_transcode = settings.transcoding_enabled && settings.ffmpeg_available;
+            Some(b.audio_full(&t, can_download, can_transcode).await)
         }
         "album" => {
             let a = state.library.album(&user.id, internal).await?;

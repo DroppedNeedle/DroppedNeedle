@@ -1,6 +1,0 @@
-{
-  "differences": [
-    {"server": "jellyfin", "object": "body", "key": "MediaSources", "kind": "missing", "rows": ["after-writes/item.track", "item.legacy", "item.track"], "reason": "The app sends a track's file and stream details only when asked for playback information. Jellyfin also sends them when one track is fetched."},
-    {"server": "jellyfin", "object": "body", "key": "MediaStreams", "kind": "missing", "rows": ["after-writes/item.track", "item.legacy", "item.track"], "reason": "The app sends a track's file and stream details only when asked for playback information. Jellyfin also sends them when one track is fetched."}
-  ]
-}

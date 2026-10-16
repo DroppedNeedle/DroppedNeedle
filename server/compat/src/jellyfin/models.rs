@@ -365,6 +365,11 @@ pub struct BaseItemDto {
     pub location_type: String,
     pub backdrop_image_tags: Vec<String>,
     pub image_blur_hashes: BTreeMap<String, BTreeMap<String, String>>,
+    /// Only on one track fetched by id: its file and audio stream.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_sources: Option<Vec<MediaSourceInfo>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_streams: Option<Vec<MediaStream>>,
     /// The long form Jellyfin sends for one item fetched by id and for the
     /// library view; lists stay short.
     #[serde(flatten)]
