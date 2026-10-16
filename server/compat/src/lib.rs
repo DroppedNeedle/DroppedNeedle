@@ -32,11 +32,14 @@
 //! Wire goldens live with the tests, in `server/tests/fixtures/compat/`.
 //! `tests/compat/compat_library_journeys.rs` replays the client traces and
 //! pinned shapes through the whole app over a library its own scanner
-//! filled (the `library_*` goldens); `tests/compat/compat_journeys.rs` replays
-//! them over the test doubles. `COMPAT_BLESS=1` rewrites the goldens and is
-//! refused when `CI` is set. `tests/compat/compat_subsonic.rs` and
-//! `tests/compat/compat_jellyfin.rs` pin each protocol over the test doubles,
-//! and `tests/compat/compat_catalog.rs` runs both over a real database.
+//! filled (the `library_*` goldens). `COMPAT_BLESS=1` rewrites the goldens
+//! and is refused when `CI` is set. `tests/compat/compat_subsonic_library.rs`,
+//! `tests/compat/compat_jellyfin_library.rs` and
+//! `tests/compat/compat_catalog.rs` pin each protocol on that library. Its
+//! app turns transcoding off, so the answers with transcoding on are pinned
+//! over the test doubles in `tests/compat/compat_subsonic.rs` and
+//! `tests/compat/compat_jellyfin.rs`, until the test app can stand in for
+//! ffmpeg.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]

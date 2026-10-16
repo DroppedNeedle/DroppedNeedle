@@ -8,7 +8,6 @@ mod compat_adapters;
 mod compat_catalog;
 mod compat_jellyfin;
 mod compat_jellyfin_library;
-mod compat_journeys;
 mod compat_library_journeys;
 mod compat_reference;
 mod compat_shared;

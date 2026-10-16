@@ -1,20 +1,19 @@
-//! Jellyfin wire contract beyond the pinned references in
-//! `compat_journeys`: login echo, query dialects of Finamp, Jellify and
-//! Manet, images, favorites, transcode negotiation, session reports,
-//! playlists and error shapes. Runs the real router over the fixture
-//! seams; ids are the deterministic `sha256("kind:internal")[:32]`.
+//! Jellyfin answers with transcoding on: the user policy that offers it,
+//! transcoded audio, HLS and the PlaybackInfo transcoding fields. Runs the
+//! real router over the in-memory `fake` seams; ids are the deterministic
+//! `sha256("kind:internal")[:32]`. The rest of the protocol runs on the
+//! real library in `compat_jellyfin_library`, whose app turns transcoding
+//! off: a server transcodes only with ffmpeg on its PATH. These stay until
+//! the test app can stand in for ffmpeg.
 
 use axum::Router;
 use axum::body::Body;
-use axum::extract::ConnectInfo;
 use axum::http::Request;
 use droppedneedle_auth::compat_auth::fakes::FakeCompatPasswords;
 use droppedneedle_auth::compat_auth::jellyfin::server_id;
-use droppedneedle_compat::jellyfin::fake::{
-    FakeLibrary, MemoryEngine, MemoryIds, MemorySessions, SessionCall,
-};
+use droppedneedle_compat::jellyfin::fake::{FakeLibrary, MemoryEngine, MemoryIds, MemorySessions};
 use droppedneedle_compat::jellyfin::seams::{
-    DecideInput, IdMap, JellyfinSettings, StreamPlan, decide,
+    AlbumView, ArtistView, GenreView, IdMap, JellyfinSettings, TrackView,
 };
 use droppedneedle_compat::jellyfin::{JellyfinState, router};
 use droppedneedle_compat::shared::address::ListenerConfig;
@@ -32,13 +31,7 @@ struct Fx {
     sessions: MemorySessions,
     ids: MemoryIds,
     track1: String,
-    track2: String,
-    track3: String,
     album1: String,
-    album2: String,
-    artist1: String,
-    artist2: String,
-    library_id: String,
 }
 
 async fn fixture() -> Fx {
@@ -54,23 +47,144 @@ async fn fixture() -> Fx {
     passwords.add_user("user-bob", "bob", "Bob", "admin", "bob-account-pw", &[BOB]);
     let library = FakeLibrary::new();
     let engine = MemoryEngine::new();
-    crate::compat_journeys::seed_jellyfin(&library, &engine);
+    seed_jellyfin(&library, &engine);
     let ids = MemoryIds::new();
     Fx {
         track1: ids.to_jf("track", "f1").await,
-        track2: ids.to_jf("track", "f2").await,
-        track3: ids.to_jf("track", "f3").await,
         album1: ids.to_jf("album", "rg-1").await,
-        album2: ids.to_jf("album", "rg-2").await,
-        artist1: ids.to_jf("artist", "mb-a1").await,
-        artist2: ids.to_jf("artist", "mb-a2").await,
-        library_id: ids.to_jf("library", "music").await,
         passwords,
         library,
         engine,
         sessions: MemorySessions::new(),
         ids,
     }
+}
+
+/// Seeds the Jellyfin fixture library: two artists, two albums, three
+/// tracks (mp3 1024 bytes, flac 512 bytes, mp3 256 bytes), one genre, art.
+fn seed_jellyfin(library: &FakeLibrary, engine: &MemoryEngine) {
+    for (mbid, name, albums, added, album_artist) in [
+        ("mb-a1", "Blue Giant", 2, 900.0, true),
+        ("mb-a2", "Guest Star", 0, 950.0, false),
+    ] {
+        library.add_artist(
+            ArtistView {
+                id: mbid.to_owned(),
+                artist_mbid: Some(mbid.to_owned()),
+                name: name.to_owned(),
+                album_count: albums,
+                appearance_album_count: 0,
+                track_count: 0,
+                total_duration_seconds: 0.0,
+                date_added: Some(added),
+                starred: false,
+                image_tag: None,
+            },
+            album_artist,
+        );
+    }
+    for (rg, title, year, tracks, seconds, added, plays, last_played) in [
+        (
+            "rg-1",
+            "First Light",
+            2021,
+            2,
+            380.0,
+            1000.0,
+            5,
+            Some(5000.0),
+        ),
+        ("rg-2", "Second Dawn", 2023, 1, 240.0, 2000.0, 0, None),
+    ] {
+        library.add_album(AlbumView {
+            id: rg.to_owned(),
+            release_group_mbid: Some(rg.to_owned()),
+            release_mbid: None,
+            artist_musicbrainz_id: None,
+            title: title.to_owned(),
+            artist_name: Some("Blue Giant".to_owned()),
+            artist_id: Some("mb-a1".to_owned()),
+            year: Some(year),
+            release_date: None,
+            genre: Some("Rock".to_owned()),
+            track_count: tracks,
+            total_duration_seconds: Some(seconds),
+            date_added: Some(added),
+            starred: false,
+            play_count: plays,
+            last_played,
+            image_tag: None,
+        });
+    }
+    let track = |id: &str, title: &str, rg: &str, album: &str, artist: (&str, &str)| TrackView {
+        file_id: id.to_owned(),
+        title: title.to_owned(),
+        rg_mbid: Some(rg.to_owned()),
+        album_title: Some(album.to_owned()),
+        artist_mbid: Some(artist.0.to_owned()),
+        artist_name: Some(artist.1.to_owned()),
+        album_artist_mbid: Some("mb-a1".to_owned()),
+        album_artist_name: Some("Blue Giant".to_owned()),
+        disc_number: Some(1),
+        genre: Some("Rock".to_owned()),
+        ..TrackView::default()
+    };
+    let blue = ("mb-a1", "Blue Giant");
+    library.add_track(TrackView {
+        duration_seconds: Some(180.0),
+        year: Some(2021),
+        track_number: Some(1),
+        file_format: Some("mp3".to_owned()),
+        bitrate: Some(320),
+        channels: Some(2),
+        sample_rate: Some(44100),
+        file_size_bytes: Some(1024),
+        created_at: Some(1000.0),
+        recording_mbid: Some("rec-1".to_owned()),
+        play_count: 5,
+        last_played: Some(5000.0),
+        ..track("f1", "Opener", "rg-1", "First Light", blue)
+    });
+    library.add_track(TrackView {
+        duration_seconds: Some(200.0),
+        year: Some(2021),
+        track_number: Some(2),
+        file_format: Some("flac".to_owned()),
+        bitrate: Some(900),
+        file_size_bytes: Some(512),
+        created_at: Some(1100.0),
+        ..track("f2", "Deep Cut", "rg-1", "First Light", blue)
+    });
+    library.add_track(TrackView {
+        duration_seconds: Some(240.0),
+        year: Some(2023),
+        track_number: Some(1),
+        file_format: Some("mp3".to_owned()),
+        bitrate: Some(128),
+        file_size_bytes: Some(256),
+        created_at: Some(2000.0),
+        ..track(
+            "f3",
+            "Late Bloomer",
+            "rg-2",
+            "Second Dawn",
+            ("mb-a2", "Guest Star"),
+        )
+    });
+    library.add_genre(GenreView {
+        name: "Rock".to_owned(),
+        song_count: 3,
+    });
+    library.add_cover("rg-1", "500", b"cover-500-bytes".to_vec(), "image/jpeg");
+    library.add_cover("rg-1", "250", b"cover-250-bytes".to_vec(), "image/jpeg");
+    library.add_artist_image("mb-a1", b"artist-bytes".to_vec(), "image/jpeg");
+    engine.add_file(
+        "f1",
+        (0..1024).map(|i| (i % 251) as u8).collect(),
+        Some("mp3"),
+    );
+    engine.add_file("f2", vec![7u8; 512], Some("flac"));
+    engine.add_file("f3", vec![9u8; 256], Some("mp3"));
 }
 
 fn settings() -> JellyfinSettings {
@@ -278,126 +392,6 @@ fn expected_user(name: &str, id: &str, is_admin: bool) -> Value {
 }
 
 #[tokio::test]
-async fn gates_and_system_endpoints() {
-    let fx = fixture().await;
-    let auth = finamp(ALICE);
-    // Disabled: every route 404s with an empty body, authed or not.
-    let off = JellyfinSettings::default();
-    assert!(!off.enabled);
-    for (uri, header) in [
-        ("/jellyfin/System/Info/Public", None),
-        ("/jellyfin/Items", Some(auth.as_str())),
-    ] {
-        let reply = send(fx.app(off.clone()), "GET", uri, header, b"").await;
-        assert_eq!((reply.status, reply.body.len()), (404, 0), "{uri}");
-    }
-
-    let denied = fx.get("/jellyfin/System/Info", None).await;
-    assert_eq!((denied.status, denied.body.len()), (401, 0));
-    let info = fx.get("/jellyfin/System/Info", Some(&auth)).await;
-    assert_eq!(info.header("content-type"), "application/json");
-    let mut body = info.json();
-    // Both depend on the build host; only that they are named is pinned.
-    for key in ["OperatingSystemDisplayName", "SystemArchitecture"] {
-        let value = body.as_object_mut().expect("object").remove(key);
-        assert!(
-            value.is_some_and(|value| value.as_str().is_some_and(|text| !text.is_empty())),
-            "{key} is named"
-        );
-    }
-    assert_shape(
-        &body,
-        &json!({
-            "LocalAddress": "http://localhost/jellyfin",
-            "ServerName": "DroppedNeedle",
-            "Version": "10.10.6",
-            "ProductName": "Jellyfin Server",
-            "OperatingSystem": "",
-            "Id": server_id(),
-            "StartupWizardCompleted": true,
-            "HasPendingRestart": false,
-            "IsShuttingDown": false,
-            "SupportsLibraryMonitor": true,
-            "WebSocketPortNumber": 8096,
-            "CompletedInstallations": [],
-            "CanSelfRestart": false,
-            "CanLaunchWebBrowser": false,
-            "ProgramDataPath": "",
-            "WebPath": "",
-            "ItemsByNamePath": "",
-            "CachePath": "",
-            "LogPath": "",
-            "InternalMetadataPath": "",
-            "CastReceiverApplications": [],
-            "HasUpdateAvailable": false,
-            "EncoderLocation": "System",
-            "TranscodingTempPath": "",
-        }),
-        "$",
-    );
-    // No host path reaches the answer, so no value starts with a slash.
-    assert!(
-        info.json()
-            .as_object()
-            .expect("object")
-            .values()
-            .all(|value| !value.as_str().unwrap_or("").starts_with('/')),
-        "a System/Info value is a path"
-    );
-    let quick = fx.get("/jellyfin/QuickConnect/Enabled", None).await;
-    assert_eq!((quick.status, quick.body.as_slice()), (200, &b"false"[..]));
-    let logout = fx
-        .send("POST", "/jellyfin/Sessions/Logout", None, b"")
-        .await;
-    assert_eq!((logout.status, logout.body.len()), (204, 0));
-}
-
-/// `LocalAddress` as seen by one request that says it came over https
-/// through a proxy, sent from `peer`.
-async fn local_address_from(peer: &str) -> String {
-    let fx = fixture().await;
-    let mut request = Request::builder()
-        .uri("/jellyfin/System/Info")
-        .header("authorization", finamp(ALICE))
-        .header("host", "music.example")
-        .header("x-forwarded-proto", "https")
-        .body(Body::empty())
-        .expect("request");
-    let peer: std::net::SocketAddr = peer.parse().expect("peer address");
-    request.extensions_mut().insert(ConnectInfo(peer));
-    let response = fx
-        .app(settings())
-        .oneshot(request)
-        .await
-        .expect("router responds");
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body");
-    let info: Value = serde_json::from_slice(&bytes).expect("json");
-    info["LocalAddress"]
-        .as_str()
-        .expect("LocalAddress")
-        .to_owned()
-}
-
-#[tokio::test]
-async fn local_address_is_https_when_a_trusted_proxy_says_so() {
-    // The default trusted proxies are the loopback addresses.
-    assert_eq!(
-        local_address_from("127.0.0.1:50000").await,
-        "https://music.example/jellyfin"
-    );
-}
-
-#[tokio::test]
-async fn local_address_ignores_forwarded_scheme_from_an_untrusted_peer() {
-    assert_eq!(
-        local_address_from("203.0.113.9:50000").await,
-        "http://music.example/jellyfin"
-    );
-}
-
-#[tokio::test]
 async fn login_echoes_the_app_password_and_users_me_matches() {
     let fx = fixture().await;
     let login = "/jellyfin/Users/AuthenticateByName";
@@ -513,265 +507,6 @@ async fn login_echoes_the_app_password_and_users_me_matches() {
         )
         .await;
         assert_eq!(me.json()["Policy"][transcoding], false);
-    }
-}
-
-#[tokio::test]
-async fn browse_query_dialects() {
-    let fx = fixture().await;
-    let auth = finamp(ALICE);
-    let names = |page: &Value| -> Vec<String> {
-        let items = page.get("Items").unwrap_or(page);
-        items
-            .as_array()
-            .expect("item list")
-            .iter()
-            .map(|item| item["Name"].as_str().unwrap_or_default().to_owned())
-            .collect()
-    };
-    let none = "f".repeat(32);
-    let cases: Vec<(String, Vec<&str>)> =
-        vec![
-        // Lowercase query keys bind (ASP.NET parity); children in track order.
-        (format!("/jellyfin/Items?parentid={}", fx.album1), vec!["Opener", "Deep Cut"]),
-        // MusicArtist outranks MusicAlbum in IncludeItemTypes.
-        (
-            "/jellyfin/Items?IncludeItemTypes=MusicAlbum,MusicArtist".to_owned(),
-            vec!["Blue Giant", "Guest Star"],
-        ),
-        // Jellify's PremiereDate sort is year descending unless told otherwise.
-        (
-            "/jellyfin/Items?IncludeItemTypes=MusicAlbum&SortBy=PremiereDate".to_owned(),
-            vec!["Second Dawn", "First Light"],
-        ),
-        (
-            "/jellyfin/Items?IncludeItemTypes=MusicAlbum&SortBy=PremiereDate&SortOrder=Ascending"
-                .to_owned(),
-            vec!["First Light", "Second Dawn"],
-        ),
-        (
-            "/jellyfin/Items?IncludeItemTypes=MusicAlbum&SortBy=Bogus".to_owned(),
-            vec!["First Light", "Second Dawn"],
-        ),
-        // An unknown contributor yields nothing, never the whole catalog;
-        // a guest artist resolves to the albums they appear on.
-        (
-            format!("/jellyfin/Items?IncludeItemTypes=MusicAlbum&ContributingArtistIds={none}"),
-            vec![],
-        ),
-        (
-            format!(
-                "/jellyfin/Items?IncludeItemTypes=MusicAlbum&ContributingArtistIds={}",
-                fx.artist2
-            ),
-            vec!["Second Dawn"],
-        ),
-        // Ids skips unknown ids; the played filter keeps what was played.
-        (format!("/jellyfin/Items?Ids={},{none}", fx.track1), vec!["Opener"]),
-        (
-            "/jellyfin/Items?IncludeItemTypes=Audio&Filters=IsPlayed".to_owned(),
-            vec!["Opener"],
-        ),
-        // Latest is a bare newest-first array; a non-library ParentId is empty.
-        ("/jellyfin/Items/Latest".to_owned(), vec!["Second Dawn", "First Light"]),
-        ("/jellyfin/Users/x/Items/Latest?Limit=1".to_owned(), vec!["Second Dawn"]),
-        (
-            format!("/jellyfin/Items/Latest?ParentId={}", fx.library_id),
-            vec!["Second Dawn", "First Light"],
-        ),
-        (format!("/jellyfin/Items/Latest?ParentId={}", fx.album1), vec![]),
-        ("/jellyfin/Artists".to_owned(), vec!["Blue Giant", "Guest Star"]),
-        ("/jellyfin/Artists/AlbumArtists".to_owned(), vec!["Blue Giant"]),
-        ("/jellyfin/Genres".to_owned(), vec!["Rock"]),
-        ("/jellyfin/MusicGenres".to_owned(), vec!["Rock"]),
-        // Similar and InstantMix resolve through the artist; unknown is empty.
-        (format!("/jellyfin/Items/{}/Similar", fx.track1), vec!["Opener", "Deep Cut"]),
-        (format!("/jellyfin/Artists/{}/InstantMix", fx.artist1), vec!["Opener", "Deep Cut"]),
-        (format!("/jellyfin/Items/{none}/Similar"), vec![]),
-    ];
-    for (uri, expected) in cases {
-        let page = fx.json(&uri, Some(&auth)).await;
-        if uri.contains("Latest") {
-            assert!(page.is_array(), "{uri}: Latest is a bare array");
-        }
-        let mut got = names(&page);
-        if uri.contains("Similar") || uri.contains("InstantMix") {
-            got.sort();
-            let mut want: Vec<String> = expected.iter().map(|s| (*s).to_owned()).collect();
-            want.sort();
-            assert_eq!(got, want, "{uri}");
-        } else {
-            assert_eq!(got, expected, "{uri}");
-        }
-    }
-
-    // Manet boots on these: the music view and the filter lists.
-    let views = fx.json("/jellyfin/UserViews", Some(&auth)).await;
-    assert_eq!(views["Items"][0]["CollectionType"], "music");
-    let filters = fx.json("/jellyfin/Items/Filters", Some(&auth)).await;
-    assert_eq!(
-        filters,
-        json!({"Genres": ["Rock"], "Tags": [], "OfficialRatings": [], "Years": [2021, 2023]})
-    );
-    // .NET "O" dates keep seven fractional digits even on whole seconds.
-    let album = fx
-        .json(&format!("/jellyfin/Items/{}", fx.album1), Some(&auth))
-        .await;
-    assert_eq!(album["DateCreated"], "1970-01-01T00:16:40.0000000Z");
-    // Unknown ids and genre ids (v2 has no genre branch) 404 with the
-    // problem object.
-    let genre = fx.ids.to_jf("genre", "rock").await;
-    for id in [none, genre] {
-        let reply = fx.get(&format!("/jellyfin/Items/{id}"), Some(&auth)).await;
-        assert_eq!(reply.status, 404, "{id}");
-        assert_eq!(reply.json()["title"], "Not Found", "{id}");
-    }
-}
-
-#[tokio::test]
-async fn images_serve_anonymously_with_immutable_cache() {
-    let fx = fixture().await;
-    let immutable = "public, max-age=31536000, immutable";
-    let library = fx
-        .get(
-            &format!("/jellyfin/Items/{}/Images/Primary", fx.library_id),
-            None,
-        )
-        .await;
-    assert_eq!(
-        (library.status, library.header("content-type")),
-        (200, "image/png")
-    );
-    assert_eq!(library.header("cache-control"), immutable);
-    assert!(library.body.starts_with(b"\x89PNG\r\n\x1a\n"));
-    for (uri, bytes) in [
-        // width=200 picks the 250 bucket.
-        (
-            format!("/jellyfin/Items/{}/Images/Primary?width=200", fx.album1),
-            &b"cover-250-bytes"[..],
-        ),
-        (
-            format!("/jellyfin/Items/{}/Images/Primary/0", fx.artist1),
-            b"artist-bytes",
-        ),
-    ] {
-        let reply = fx.get(&uri, None).await;
-        assert_eq!(
-            (reply.status, reply.header("content-type")),
-            (200, "image/jpeg"),
-            "{uri}"
-        );
-        assert_eq!(reply.header("cache-control"), immutable, "{uri}");
-        assert_eq!(reply.header("x-content-type-options"), "nosniff", "{uri}");
-        assert_eq!(
-            reply.header("content-security-policy"),
-            "sandbox; default-src 'none'",
-            "{uri}"
-        );
-        assert_eq!(reply.body, bytes, "{uri}");
-    }
-    // Misses 404 with no placeholder (unlike Subsonic). An album or artist
-    // miss names the item; only Primary serves, and a track has no picture
-    // of its own (apps ask for its album's).
-    for (uri, name) in [
-        (
-            format!("/jellyfin/Items/{}/Images/Primary", fx.album2),
-            "Second Dawn",
-        ),
-        (
-            format!("/jellyfin/Items/{}/Images/Primary", fx.artist2),
-            "Guest Star",
-        ),
-    ] {
-        let reply = fx.get(&uri, None).await;
-        assert_eq!(reply.status, 404, "{uri}");
-        assert_eq!(
-            reply.json(),
-            json!(format!("{name} does not have an image of type Primary")),
-            "{uri}"
-        );
-    }
-    for uri in [
-        format!("/jellyfin/Items/{}/Images/Backdrop", fx.album1),
-        format!("/jellyfin/Items/{}/Images/Primary", fx.track1),
-    ] {
-        let reply = fx.get(&uri, None).await;
-        assert_eq!((reply.status, reply.body.len()), (404, 0), "{uri}");
-    }
-}
-
-#[tokio::test]
-async fn favorite_dialects_and_played_markers() {
-    let fx = fixture().await;
-    let auth = finamp(ALICE);
-    let favorites = "/jellyfin/Items?IncludeItemTypes=Audio&IsFavorite=true";
-    // Finamp adds through the legacy path.
-    let added = fx
-        .send(
-            "POST",
-            &format!("/jellyfin/Users/x/FavoriteItems/{}", fx.track1),
-            Some(&auth),
-            b"",
-        )
-        .await;
-    assert_eq!(added.status, 200);
-    assert_eq!(
-        added.json(),
-        json!({
-            "ItemId": fx.track1,
-            "Key": fx.track1,
-            "PlaybackPositionTicks": 0,
-            "PlayCount": 0,
-            "IsFavorite": true,
-            "Played": false,
-        })
-    );
-    for uri in [
-        favorites,
-        "/jellyfin/Items?IncludeItemTypes=Audio&Filters=IsFavorite",
-    ] {
-        let page = fx.json(uri, Some(&auth)).await;
-        assert_eq!(page["TotalRecordCount"], 1, "{uri}");
-        assert_eq!(page["Items"][0]["UserData"]["IsFavorite"], true, "{uri}");
-    }
-    // The played filter narrows favourites too: the one favourite is played.
-    for (filters, total) in [("IsFavorite,IsPlayed", 1), ("IsFavorite,IsUnplayed", 0)] {
-        let uri = format!("/jellyfin/Items?IncludeItemTypes=Audio&Filters={filters}");
-        let page = fx.json(&uri, Some(&auth)).await;
-        assert_eq!(page["TotalRecordCount"], total, "{uri}");
-    }
-    // Jellify removes through the modern path.
-    let removed = fx
-        .send(
-            "DELETE",
-            &format!("/jellyfin/UserFavoriteItems/{}", fx.track1),
-            Some(&auth),
-            b"",
-        )
-        .await;
-    assert_eq!(removed.json()["IsFavorite"], false);
-    assert_eq!(fx.json(favorites, Some(&auth)).await["TotalRecordCount"], 0);
-
-    // Played markers answer Played=true and forward nothing.
-    for uri in [
-        format!("/jellyfin/Users/x/PlayedItems/{}", fx.track1),
-        format!("/jellyfin/UserPlayedItems/{}", fx.track1),
-    ] {
-        let reply = fx.send("POST", &uri, Some(&auth), b"").await;
-        assert_eq!(reply.json()["Played"], true, "{uri}");
-    }
-    assert!(fx.sessions.calls().is_empty());
-
-    let unknown = "d".repeat(32);
-    for uri in [
-        format!("/jellyfin/UserFavoriteItems/{unknown}"),
-        format!("/jellyfin/UserPlayedItems/{unknown}"),
-    ] {
-        assert_eq!(
-            fx.send("POST", &uri, Some(&auth), b"").await.status,
-            404,
-            "{uri}"
-        );
     }
 }
 
@@ -905,51 +640,6 @@ async fn finamp_file_universal_and_hls_routes() {
     assert_eq!(reply.status, 404);
 }
 
-/// The transcode policy shared by `/Audio` and PlaybackInfo.
-#[test]
-fn transcode_decision_rules() {
-    let input = |requested: Option<&'static str>, ceiling: Option<u32>, force: bool| DecideInput {
-        src_format: Some("mp3"),
-        src_bitrate_kbps: 320,
-        requested,
-        ceiling_kbps: ceiling,
-        force_original: force,
-        start_seconds: 0.0,
-        transcoding_enabled: true,
-        server_max_kbps: 320,
-        default_format: "mp3",
-        ffmpeg: true,
-    };
-    // Nothing requested, a zero ceiling, force-original or transcoding off
-    // all stream direct.
-    assert_eq!(decide(&input(None, None, false)), StreamPlan::Direct);
-    assert_eq!(decide(&input(None, Some(0), false)), StreamPlan::Direct);
-    assert_eq!(decide(&input(Some("opus"), None, true)), StreamPlan::Direct);
-    let mut off = input(Some("opus"), None, false);
-    off.transcoding_enabled = false;
-    assert_eq!(decide(&off), StreamPlan::Direct);
-    // A codec or a ceiling triggers; the server max caps but never triggers.
-    assert!(matches!(
-        decide(&input(None, Some(64), false)),
-        StreamPlan::Transcode {
-            bitrate_kbps: 64,
-            ..
-        }
-    ));
-    assert!(matches!(
-        decide(&input(Some("opus"), Some(999), false)),
-        StreamPlan::Transcode { ref format, bitrate_kbps: 320, .. } if format == "opus"
-    ));
-    // Unusable formats fall back to the default; negative starts clamp.
-    let mut start = input(Some("wav"), None, false);
-    start.start_seconds = -5.0;
-    assert!(matches!(
-        decide(&start),
-        StreamPlan::Transcode { ref format, start_seconds, .. }
-            if format == "mp3" && start_seconds == 0.0
-    ));
-}
-
 #[tokio::test]
 async fn playback_info_urls_play_and_transcode_fields_follow_policy() {
     let fx = fixture().await;
@@ -959,6 +649,7 @@ async fn playback_info_urls_play_and_transcode_fields_follow_policy() {
     let info = fx.json(&info_uri, Some(&auth)).await;
     let source = &info["MediaSources"][0];
     assert!(source.get("TranscodingUrl").is_none());
+    assert_eq!(source["SupportsTranscoding"], true);
     let url = source["DirectStreamUrl"].as_str().expect("direct url");
     let path = url.strip_prefix("http://localhost").expect("origin");
     let played = fx.get(path, None).await;
@@ -995,283 +686,4 @@ async fn playback_info_urls_play_and_transcode_fields_follow_policy() {
 
     let unknown = format!("/jellyfin/Items/{}/PlaybackInfo", "c".repeat(32));
     assert_eq!(fx.get(&unknown, Some(&auth)).await.status, 404);
-}
-
-#[tokio::test]
-async fn session_reports_drive_presence_and_scrobbles() {
-    let auth = finamp(ALICE);
-    let alice = || "user-alice".to_owned();
-    let fx = fixture().await;
-    let post = |uri: &'static str, body: Value| {
-        let fx = &fx;
-        let auth = auth.clone();
-        async move {
-            let bytes = if body.is_null() {
-                Vec::new()
-            } else {
-                body.to_string().into_bytes()
-            };
-            fx.send("POST", uri, Some(&auth), &bytes).await.status
-        }
-    };
-    // Empty bodies, pings and capabilities accept silently.
-    assert_eq!(post("/jellyfin/Sessions/Playing", Value::Null).await, 204);
-    assert_eq!(
-        post("/jellyfin/Sessions/Playing/Ping", Value::Null).await,
-        204
-    );
-    assert_eq!(
-        post("/jellyfin/Sessions/Capabilities/Full", json!({})).await,
-        204
-    );
-    assert!(fx.sessions.calls().is_empty());
-    // Start records the session and now-playing; progress converts ticks
-    // to milliseconds and never scrobbles.
-    let start = json!({"ItemId": fx.track1, "PlaySessionId": "ps-1"});
-    assert_eq!(post("/jellyfin/Sessions/Playing", start).await, 204);
-    let progress = json!({"ItemId": fx.track1, "PositionTicks": 20_000_000_i64});
-    assert_eq!(
-        post("/jellyfin/Sessions/Playing/Progress", progress).await,
-        204
-    );
-    assert_eq!(
-        fx.sessions.calls(),
-        vec![
-            SessionCall::MarkStarted {
-                user_id: alice(),
-                key: "ps-1".to_owned()
-            },
-            SessionCall::NowPlaying {
-                user_id: alice(),
-                file_id: "f1".to_owned()
-            },
-            SessionCall::Progress {
-                user_id: alice(),
-                file_id: "f1".to_owned(),
-                position_ms: Some(2000),
-                paused: false,
-            },
-        ]
-    );
-
-    // Stopped always clears presence; it scrobbles past 90%, or when the
-    // position is omitted, but never below the threshold or on failure.
-    let runtime = 1_800_000_000_i64;
-    for (body, scrobbles) in [
-        (
-            json!({"PositionTicks": 1_700_000_000_i64, "RunTimeTicks": runtime}),
-            true,
-        ),
-        (
-            json!({"PositionTicks": 100_000_000_i64, "RunTimeTicks": runtime}),
-            false,
-        ),
-        (json!({}), true),
-        (json!({"Failed": true}), false),
-    ] {
-        let fx = fixture().await;
-        let mut body = body;
-        body["ItemId"] = json!(fx.track1);
-        let reply = fx
-            .send(
-                "POST",
-                "/jellyfin/Sessions/Playing/Stopped",
-                Some(&auth),
-                body.to_string().as_bytes(),
-            )
-            .await;
-        assert_eq!(reply.status, 204);
-        let calls = fx.sessions.calls();
-        assert_eq!(
-            calls[0],
-            SessionCall::ClearPresence { user_id: alice() },
-            "{body}"
-        );
-        let scrobbled = calls.contains(&SessionCall::Scrobble {
-            user_id: alice(),
-            file_id: "f1".to_owned(),
-        });
-        assert_eq!(scrobbled, scrobbles, "{body}");
-    }
-}
-
-#[tokio::test]
-async fn playlists_create_add_move_remove() {
-    let fx = fixture().await;
-    let auth = finamp(ALICE);
-    let entries = |pid: &str| format!("/jellyfin/Playlists/{pid}/Items");
-    // Unknown ids in the create body are skipped.
-    let body = json!({"Name": "Road", "Ids": [fx.track1, "b".repeat(32)]}).to_string();
-    let created = fx
-        .send("POST", "/jellyfin/Playlists", Some(&auth), body.as_bytes())
-        .await;
-    let pid = created.json()["Id"]
-        .as_str()
-        .expect("playlist id")
-        .to_owned();
-    let detail = fx
-        .json(&format!("/jellyfin/Playlists/{pid}"), Some(&auth))
-        .await;
-    assert_eq!(detail["Name"], "Road");
-    assert_eq!(detail["ItemIds"], json!([fx.track1]));
-    let page = fx.json(&entries(&pid), Some(&auth)).await;
-    let entry = page["Items"][0]["PlaylistItemId"]
-        .as_str()
-        .expect("entry id")
-        .to_owned();
-
-    // Add a second track, move the first entry to index 1, then remove it.
-    let add = format!("{}?ids={}", entries(&pid), fx.track2);
-    assert_eq!(fx.send("POST", &add, Some(&auth), b"").await.status, 204);
-    let moved = format!("{}/{entry}/Move/1", entries(&pid));
-    assert_eq!(fx.send("POST", &moved, Some(&auth), b"").await.status, 204);
-    let page = fx.json(&entries(&pid), Some(&auth)).await;
-    assert_eq!(page["Items"][0]["Name"], "Deep Cut");
-    assert_eq!(page["Items"][1]["Name"], "Opener");
-    let remove = format!("{}?entryIds={entry}", entries(&pid));
-    assert_eq!(
-        fx.send("DELETE", &remove, Some(&auth), b"").await.status,
-        204
-    );
-    let browse = fx
-        .json("/jellyfin/Items?IncludeItemTypes=Playlist", Some(&auth))
-        .await;
-    assert_eq!(browse["Items"][0]["ChildCount"], 1);
-
-    // Query-parameter creation defaults the name.
-    let created = fx
-        .send(
-            "POST",
-            &format!("/jellyfin/Playlists?ids={}", fx.track3),
-            Some(&auth),
-            b"",
-        )
-        .await;
-    let pid2 = created.json()["Id"]
-        .as_str()
-        .expect("playlist id")
-        .to_owned();
-    let detail = fx
-        .json(&format!("/jellyfin/Playlists/{pid2}"), Some(&auth))
-        .await;
-    assert_eq!(detail["Name"], "Playlist");
-
-    // A playlist id on a track route is a bare 404, never a native envelope.
-    let reply = fx
-        .get(&format!("/jellyfin/Audio/{pid}/stream"), Some(&auth))
-        .await;
-    assert_eq!((reply.status, reply.body.len()), (404, 0));
-}
-
-#[tokio::test]
-async fn token_transports_and_bad_tokens() {
-    let fx = fixture().await;
-    let bad = fx
-        .get("/jellyfin/Items", Some(&finamp("wrong-secret")))
-        .await;
-    assert_eq!((bad.status, bad.body.len()), (401, 0));
-    let by_query = fx
-        .get(&format!("/jellyfin/Items?api_key={ALICE}&Limit=0"), None)
-        .await;
-    assert_eq!(by_query.status, 200);
-}
-
-/// One item at the older address, the one with a user id in the path. The
-/// id is not read, as on the other `/Users/{id}/...` routes: the token
-/// decides whose library answers.
-#[tokio::test]
-async fn item_at_the_older_address_is_the_same_item() {
-    let fx = fixture().await;
-    let auth = finamp(ALICE);
-    let newer = fx
-        .get(&format!("/jellyfin/Items/{}", fx.track1), Some(&auth))
-        .await;
-    assert_eq!(newer.status, 200);
-    for user in ["user-alice", "user-bob"] {
-        let uri = format!("/jellyfin/Users/{user}/Items/{}", fx.track1);
-        let older = fx.get(&uri, Some(&auth)).await;
-        assert_eq!(older.status, 200, "{user}");
-        assert_eq!(older.json(), newer.json(), "{user}");
-        let anonymous = fx.get(&uri, None).await;
-        assert_eq!((anonymous.status, anonymous.body.len()), (401, 0));
-    }
-}
-
-/// A stream request with `token` written into the query as given.
-async fn play_with(fx: &Fx, key: &str, token: &str) -> u16 {
-    let uri = format!(
-        "/jellyfin/Audio/{}/stream?static=true&{key}={token}",
-        fx.track1
-    );
-    fx.get(&uri, None).await.status
-}
-
-/// An app password ends in `=`. A player may send it as written or as
-/// `%3D`, and both are the same token. The value is decoded once, and one
-/// that does not decode is refused.
-#[tokio::test]
-async fn query_token_is_percent_decoded_exactly_once() {
-    let fx = fixture().await;
-    fx.passwords.add_user(
-        "user-carol",
-        "carol",
-        "Carol",
-        "user",
-        "carol-pw",
-        &["carol-secret="],
-    );
-    for key in ["api_key", "ApiKey"] {
-        for played in [
-            "carol-secret=",
-            "carol-secret%3D",
-            "carol-secret%3d",
-            "%63arol-secret%3D",
-        ] {
-            assert_eq!(play_with(&fx, key, played).await, 200, "{key}={played}");
-        }
-        for refused in [
-            "wrong-secret%3D",
-            // Encoded twice: decoded once it is the text `%3D`.
-            "carol-secret%253D",
-            // No trimming, no case folding, no padding added.
-            "carol-secret",
-            "carol-secret%3D%20",
-            "Carol-secret%3D",
-            // Not percent-encoding, or not UTF-8 once decoded.
-            "carol-secret%3",
-            "carol-secret%zz",
-            "carol-secret%3D%ff",
-        ] {
-            assert_eq!(play_with(&fx, key, refused).await, 401, "{key}={refused}");
-        }
-    }
-    // A token in a header is taken as written.
-    let header = fx
-        .get("/jellyfin/Items?Limit=0", Some(&finamp("carol-secret%3D")))
-        .await;
-    assert_eq!(header.status, 401);
-    // A query token that does not decode refuses the request, even beside
-    // a header token that is good.
-    let good = finamp("carol-secret=");
-    let beside = fx.get("/jellyfin/Items?Limit=0", Some(&good)).await;
-    assert_eq!(beside.status, 200);
-    let beside = fx
-        .get("/jellyfin/Items?Limit=0&api_key=%zz", Some(&good))
-        .await;
-    assert_eq!(beside.status, 401);
-}
-
-#[tokio::test]
-async fn plus_in_a_query_token_stays_a_plus_and_is_never_a_space() {
-    let fx = fixture().await;
-    fx.passwords
-        .add_user("user-dave", "dave", "Dave", "user", "dave-pw", &["d+s="]);
-    fx.passwords
-        .add_user("user-erin", "erin", "Erin", "user", "erin-pw", &["d s="]);
-    for (token, name) in [("d+s=", "dave"), ("d%2Bs%3D", "dave"), ("d%20s%3D", "erin")] {
-        let me = fx
-            .json(&format!("/jellyfin/Users/Me?api_key={token}"), None)
-            .await;
-        assert_eq!(me["Name"], json!(name), "{token}");
-    }
 }
