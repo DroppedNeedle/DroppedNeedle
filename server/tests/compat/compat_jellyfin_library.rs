@@ -1029,7 +1029,7 @@ async fn playback_info_urls_play_and_transcode_fields_follow_policy() {
     rig.stop().await;
 }
 
-/// The admin's view of who is listening: (track, progress) per session.
+/// The admin's view of who is listening: (track, progress, paused) per session.
 async fn now_playing(rig: &CompatApp) -> Value {
     let admin = rig.app.login_admin().await;
     let (status, body) = rig
@@ -1047,7 +1047,13 @@ async fn now_playing(rig: &CompatApp) -> Value {
             .as_array()
             .expect("sessions")
             .iter()
-            .map(|entry| json!([entry["track_name"], entry["progress_ms"]]))
+            .map(|entry| {
+                json!([
+                    entry["track_name"],
+                    entry["progress_ms"],
+                    entry["is_paused"]
+                ])
+            })
             .collect(),
     )
 }
@@ -1076,20 +1082,20 @@ async fn session_reports_drive_presence_and_scrobbles() {
         StatusCode::NO_CONTENT
     );
     assert_eq!(now_playing(&rig).await, json!([]));
-    // Start shows the track as playing; progress keeps it there and never
-    // counts a play.
+    // Start shows the track as playing; progress moves it to the reported
+    // position and paused state, and never counts a play.
     let start = json!({"ItemId": airbag, "PlaySessionId": "ps-1"});
     assert_eq!(
         post("/jellyfin/Sessions/Playing", Some(start)).await,
         StatusCode::NO_CONTENT
     );
-    assert_eq!(now_playing(&rig).await, json!([["Airbag", null]]));
-    let progress = json!({"ItemId": airbag, "PositionTicks": 20_000_000_i64});
+    assert_eq!(now_playing(&rig).await, json!([["Airbag", null, false]]));
+    let progress = json!({"ItemId": airbag, "PositionTicks": 20_000_000_i64, "IsPaused": true});
     assert_eq!(
         post("/jellyfin/Sessions/Playing/Progress", Some(progress)).await,
         StatusCode::NO_CONTENT
     );
-    assert_eq!(now_playing(&rig).await, json!([["Airbag", null]]));
+    assert_eq!(now_playing(&rig).await, json!([["Airbag", 2000, true]]));
     assert_eq!(play_count(&rig, &auth, &airbag).await, 0);
 
     // Stopped always clears presence; it counts a play past 90%, or when

@@ -917,7 +917,8 @@ impl Store for SubsonicStore {
         client: Option<&str>,
         _user_name: &str,
     ) -> Result<(), CompatError> {
-        self.playback.now_playing(file_id, user_id, client);
+        self.playback
+            .now_playing(file_id, user_id, client, None, false);
         Ok(())
     }
 
@@ -931,14 +932,18 @@ impl Store for SubsonicStore {
         user_id: &str,
         _user_name: &str,
         client: &str,
-        _position_ms: i64,
+        position_ms: i64,
         state: &str,
         ignore_scrobble: bool,
     ) -> Result<(), CompatError> {
-        if !self
-            .playback
-            .report_playback(file_id, user_id, client, state, ignore_scrobble)
-        {
+        if !self.playback.report_playback(
+            file_id,
+            user_id,
+            client,
+            state,
+            position_ms,
+            ignore_scrobble,
+        ) {
             tracing::warn!(file_id, state, "compat playback report was refused");
         }
         Ok(())

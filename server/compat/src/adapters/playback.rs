@@ -48,12 +48,21 @@ impl CompatPlayback {
         normalize_client(client).unwrap_or_else(|| "compat".to_owned())
     }
 
-    /// Record now-playing presence for a file. Unknown files are skipped
-    /// (no names to project); sink forwarding is best-effort. The device is
-    /// always `compat`: the Jellyfin progress seam carries no client, so a
-    /// per-client device would split one listener across two presence rows;
-    /// the client rides `source` instead (v2 parity).
-    pub fn now_playing(&self, file_id: &str, user_id: &str, client: Option<&str>) {
+    /// Record now-playing presence for a file, with the position and paused
+    /// state its report carries (`None` and `false` on a start). Unknown
+    /// files are skipped (no names to project); sink forwarding is
+    /// best-effort. The device is always `compat`: the Jellyfin progress seam
+    /// carries no client, so a per-client device would split one listener
+    /// across two presence rows; the client rides `source` instead (v2
+    /// parity).
+    pub fn now_playing(
+        &self,
+        file_id: &str,
+        user_id: &str,
+        client: Option<&str>,
+        position_ms: Option<i64>,
+        paused: bool,
+    ) {
         let Some(track) = self.deps.catalog.get_track(file_id) else {
             return;
         };
@@ -67,8 +76,8 @@ impl CompatPlayback {
                 cover_url: presence_cover_url(&track),
                 source: Self::source(client),
                 device: "compat".to_owned(),
-                is_paused: false,
-                progress_ms: None,
+                is_paused: paused,
+                progress_ms: position_ms,
                 duration_ms: Some(track.duration_ms).filter(|duration| *duration > 0),
             },
             &track.track_id,
@@ -115,14 +124,16 @@ impl CompatPlayback {
         .is_ok()
     }
 
-    /// Subsonic playback report: starting/playing/paused refresh presence,
-    /// stopped drops it and scrobbles unless ignored.
+    /// Subsonic playback report: starting sets presence without a position,
+    /// playing and paused set it with the reported position, stopped drops
+    /// it and scrobbles unless ignored.
     pub fn report_playback(
         &self,
         file_id: &str,
         user_id: &str,
         client: &str,
         state: &str,
+        position_ms: i64,
         ignore_scrobble: bool,
     ) -> bool {
         if state == "stopped" {
@@ -132,7 +143,8 @@ impl CompatPlayback {
             }
             return self.scrobble(file_id, user_id, None);
         }
-        self.now_playing(file_id, user_id, Some(client));
+        let position = (state != "starting").then_some(position_ms);
+        self.now_playing(file_id, user_id, Some(client), position, state == "paused");
         true
     }
 
@@ -178,19 +190,13 @@ impl PlaybackSessions for CompatPlayback {
     }
 
     async fn now_playing(&self, user_id: &str, file_id: &str, client: Option<&str>) {
-        self.now_playing(file_id, user_id, client);
+        self.now_playing(file_id, user_id, client, None, false);
     }
 
-    async fn progress(
-        &self,
-        user_id: &str,
-        file_id: &str,
-        _position_ms: Option<i64>,
-        _paused: bool,
-    ) {
-        // Heartbeat refresh keeps presence alive; the position rides the
-        // next stop report's threshold check, never a scrobble here.
-        self.now_playing(file_id, user_id, None);
+    async fn progress(&self, user_id: &str, file_id: &str, position_ms: Option<i64>, paused: bool) {
+        // Presence only: a progress report never scrobbles, the stop report
+        // alone checks the play threshold.
+        self.now_playing(file_id, user_id, None, position_ms, paused);
     }
 
     async fn clear_presence(&self, user_id: &str, _client: Option<&str>) {
