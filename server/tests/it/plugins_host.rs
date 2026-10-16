@@ -16,18 +16,6 @@ use std::time::Duration;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use droppedneedle::middleware::request_scope;
-use droppedneedle::plugins::fakes::{
-    FakeConnection, FakeFetcher, FakeLauncher, FakeRoles, FakeUnpacker, scrobble_plugin_event,
-};
-use droppedneedle::plugins::handlers::{ExtRateLimiter, PluginsDeps, plugins_router};
-use droppedneedle::plugins::host::PluginHost;
-use droppedneedle::plugins::install::{Fetched, InstallError, parse_source, resolve};
-use droppedneedle::plugins::models::PluginRefKind;
-use droppedneedle::plugins::protocol::methods;
-use droppedneedle::plugins::runtime::{PublishPayload, ScrobbleEvent};
-use droppedneedle::plugins::ticks::{
-    HostTickAdapter, NoopTickSync, PluginTickLoops, TickLoopSync, TickStoreKind,
-};
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::session::store::SessionKind;
@@ -40,6 +28,18 @@ use droppedneedle_kernel::jobs::plugin_ticks::{
 use droppedneedle_kernel::jobs::registry::{JobRegistry, MemoryRegistryStore};
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
+use droppedneedle_plugins::fakes::{
+    FakeConnection, FakeFetcher, FakeLauncher, FakeRoles, FakeUnpacker, scrobble_plugin_event,
+};
+use droppedneedle_plugins::handlers::{ExtRateLimiter, PluginsDeps, plugins_router};
+use droppedneedle_plugins::host::PluginHost;
+use droppedneedle_plugins::install::{Fetched, InstallError, parse_source, resolve};
+use droppedneedle_plugins::models::PluginRefKind;
+use droppedneedle_plugins::protocol::methods;
+use droppedneedle_plugins::runtime::{PublishPayload, ScrobbleEvent};
+use droppedneedle_plugins::ticks::{
+    HostTickAdapter, NoopTickSync, PluginTickLoops, TickLoopSync, TickStoreKind,
+};
 use serde_json::json;
 use tower::ServiceExt as _;
 
@@ -724,7 +724,7 @@ async fn ext_proxy_serves_declared_routes_and_gates_the_rest() {
     // A plugin failure is a fixed 502, never the plugin's text.
     runtime.answer(
         methods::ROUTE,
-        Err(droppedneedle::plugins::runtime::CallError::Failed(
+        Err(droppedneedle_plugins::runtime::CallError::Failed(
             "Traceback: secret".to_owned(),
         )),
     );

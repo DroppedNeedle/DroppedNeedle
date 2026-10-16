@@ -21,7 +21,6 @@ pub mod youtube;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::plugins::scrobble::ListenBrainzLinkStore;
 use crate::reads::catalog::Catalog;
 use crate::reads::catalog::library::LocalCatalog;
 use crate::reads::catalog::upstream::{InstanceLastFmKey, Upstream};
@@ -36,6 +35,7 @@ use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::db::WriteLane;
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::{ConfigStore, secret_sections::AdvancedSettings};
+use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
 use droppedneedle_providers::{
     Providers,
     adapters::{CorePacer, CoreSink, ReqwestGet},

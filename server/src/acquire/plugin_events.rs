@@ -10,7 +10,7 @@
 
 use super::flows::seams::{FlowEvent, TickSink};
 use super::wiring::PluginSlot;
-use crate::plugins::runtime::{
+use droppedneedle_plugins::runtime::{
     DownloadTaskEvent, EventKind, EventPayload, ImportEvent, PluginEvent, RequestEvent,
 };
 

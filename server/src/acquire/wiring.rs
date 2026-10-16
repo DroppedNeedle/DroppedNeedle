@@ -211,7 +211,7 @@ pub struct LiveClients {
 
 /// The plugin host, set once boot has built it. Plugin sources and
 /// usenet-targeting plugin indexers join the pipeline through it.
-pub type PluginSlot = Arc<std::sync::OnceLock<Arc<crate::plugins::host::PluginHost>>>;
+pub type PluginSlot = Arc<std::sync::OnceLock<Arc<droppedneedle_plugins::host::PluginHost>>>;
 
 impl LiveClients {
     /// Resolver over a settings source. `slskd_downloads` is the slskd
@@ -881,7 +881,7 @@ impl AcquireSetup {
 
     /// Let enabled plugins act as download sources and feed usenet. Boot
     /// calls this once with the plugin host.
-    pub fn with_plugins(self, host: Arc<crate::plugins::host::PluginHost>) -> Self {
+    pub fn with_plugins(self, host: Arc<droppedneedle_plugins::host::PluginHost>) -> Self {
         if self.clients.plugins().set(host).is_err() {
             tracing::warn!("plugin host was already attached to acquisition");
         }

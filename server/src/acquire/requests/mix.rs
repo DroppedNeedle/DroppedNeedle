@@ -25,7 +25,6 @@ use super::error::RequestsError;
 use super::models::AlbumIntake;
 use super::service::RequestsService;
 
-use crate::plugins::scrobble::{ScrobblePrefsPatch, ScrobblePrefsStore};
 use crate::reads::catalog::library::LocalCatalog;
 use crate::reads::collections::store::playlists::{NewEntry, PlaylistStore, Written};
 use crate::reads::discover::adapters::queue::select::{self, Shuffler};
@@ -33,6 +32,7 @@ use crate::reads::discover::models::QueueItemLight;
 use droppedneedle_kernel::events::{
     EventSink, PersonalMixRefreshed, UserNotice, model::new_event_id,
 };
+use droppedneedle_plugins::scrobble::{ScrobblePrefsPatch, ScrobblePrefsStore};
 use droppedneedle_providers::listenbrainz::playlists::{
     RecommendationPlaylist, RecommendationTrack,
 };
@@ -818,7 +818,7 @@ impl MixGrantHooks {
     }
 }
 
-impl crate::plugins::scrobble::MixApprovalHook for MixGrantHooks {
+impl droppedneedle_plugins::scrobble::MixApprovalHook for MixGrantHooks {
     fn on_auto_request_toggled<'a>(
         &'a self,
         user_id: &'a str,
@@ -834,7 +834,7 @@ impl crate::plugins::scrobble::MixApprovalHook for MixGrantHooks {
     }
 }
 
-impl crate::plugins::scrobble::MixStateReader for MixGrantHooks {
+impl droppedneedle_plugins::scrobble::MixStateReader for MixGrantHooks {
     fn auto_request_state<'a>(
         &'a self,
         user_id: &'a str,

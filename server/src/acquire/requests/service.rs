@@ -104,7 +104,7 @@ impl RequestsService {
 
     /// Tell `subscriber` plugins about one new request.
     fn announce_created(&self, record: &super::ledger::RequestRecord) {
-        use crate::plugins::runtime::{EventKind, EventPayload, RequestEvent};
+        use droppedneedle_plugins::runtime::{EventKind, EventPayload, RequestEvent};
 
         let release_group_mbid = match record.kind {
             RequestKind::Album => record.key.clone(),

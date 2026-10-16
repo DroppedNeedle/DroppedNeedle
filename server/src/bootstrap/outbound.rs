@@ -13,12 +13,10 @@
 
 use std::sync::Arc;
 
-use crate::{
-    acquire::wiring::{SPOTIFY_ACCOUNTS_BASE, SPOTIFY_API_BASE, SpotifyEndpoints},
-    plugins::install::GitHubHosts,
-};
+use crate::acquire::wiring::{SPOTIFY_ACCOUNTS_BASE, SPOTIFY_API_BASE, SpotifyEndpoints};
 use droppedneedle_auth::{users::hibp::RANGE_URL_PREFIX, wiring::Upstreams};
 use droppedneedle_library::{contrib::ContribProviders, identify::providers::IdentifyProviders};
+use droppedneedle_plugins::install::GitHubHosts;
 use droppedneedle_providers::{
     acoustid, audiodb, coverart, discogs, geocoding, github, itunes, lastfm, listenbrainz, lrclib,
     musicbrainz, plextv::PLEX_TV_BASE, preview, skiddle, ticketmaster, wikidata, youtube,
@@ -129,8 +127,8 @@ impl Outbound {
             discogs: discogs::API_BASE.to_owned(),
             lrclib: lrclib::API_BASE.to_owned(),
             github_releases: github::GITHUB_RELEASES_URL.to_owned(),
-            github_api: crate::plugins::install::API_BASE.to_owned(),
-            github_codeload: crate::plugins::install::CODELOAD_BASE.to_owned(),
+            github_api: droppedneedle_plugins::install::API_BASE.to_owned(),
+            github_codeload: droppedneedle_plugins::install::CODELOAD_BASE.to_owned(),
             youtube: youtube::YOUTUBE_API_HOST.to_owned(),
             acoustid: acoustid::DEFAULT_BASE_URL.to_owned(),
             pwned_passwords: RANGE_URL_PREFIX.to_owned(),

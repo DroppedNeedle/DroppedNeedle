@@ -16,8 +16,8 @@ use super::wrapped::{
     ServerWrappedResponse, UserWrappedResponse, WrappedAlbum, WrappedArtist, WrappedData,
     WrappedGenre, WrappedLeaderboardEntry, WrappedTrack, WrappedUserSummary,
 };
-use crate::plugins::scrobble::ListenBrainzLinkStore;
 use droppedneedle_auth::users::stores::UserStore;
+use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
 use droppedneedle_providers::adapters::{CorePacer, CoreSink};
 use droppedneedle_providers::listenbrainz::{ListenBrainzClient, Outcome};
 

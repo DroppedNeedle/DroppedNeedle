@@ -8,8 +8,10 @@ use super::models::{PluginDetails, PurchaseKind};
 use super::ports::{
     BoxFuture, DetailsSource, ExtraPurchaseLink, PurchaseLinkSource, PurchaseQuery,
 };
-use crate::plugins::capabilities::metadata::{EnrichmentFields, PluginEnrichment, plain_text};
-use crate::plugins::host::PluginHost;
+use droppedneedle_plugins::capabilities::metadata::{
+    EnrichmentFields, PluginEnrichment, plain_text,
+};
+use droppedneedle_plugins::host::PluginHost;
 
 /// Every plugin's answer merged by the gap rule, as the catalog shows it.
 /// Text is reduced to plain text, links to `http(s)` and the image to

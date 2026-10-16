@@ -25,10 +25,10 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-use crate::plugins::scrobble::ListenBrainzLinkStore;
 use droppedneedle_auth::users::stores::{LastFmStore, LastFmSwitch};
 use droppedneedle_kernel::http_client::{BodyError, read_capped};
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
+use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
 
 use super::ports::{ReportTrack, ScrobbleLinks, ScrobbleSinks, ScrobbleTargets, ServiceOutcome};
 use super::scrobble_models::{AdditionalInfo, LastFmError, Listen, SubmitListens, TrackMetadata};

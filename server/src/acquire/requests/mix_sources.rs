@@ -9,7 +9,7 @@ use futures_util::future::BoxFuture;
 use sqlx::SqlitePool;
 
 use super::mix::MixSources;
-use crate::plugins::scrobble::ListenBrainzLinkStore;
+use droppedneedle_plugins::scrobble::ListenBrainzLinkStore;
 use droppedneedle_providers::adapters::{CorePacer, CoreSink};
 use droppedneedle_providers::listenbrainz::playlists::{
     RecommendationPlaylist, RecommendationTrack,
@@ -164,7 +164,7 @@ pub fn live_builder(
     providers: Arc<droppedneedle_providers::Providers>,
     http: reqwest::Client,
     links: Arc<dyn ListenBrainzLinkStore>,
-    prefs: Arc<dyn crate::plugins::scrobble::ScrobblePrefsStore>,
+    prefs: Arc<dyn droppedneedle_plugins::scrobble::ScrobblePrefsStore>,
     playlists: crate::reads::collections::store::playlists::PlaylistStore,
     events: droppedneedle_kernel::events::EventSink,
     listenbrainz: &str,

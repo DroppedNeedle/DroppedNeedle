@@ -64,7 +64,7 @@ pub fn hooked_state() -> AppState {
         providers.clone(),
     );
     let jobs = droppedneedle::bootstrap::jobs::JobsSetup::for_tests(auth.users.clone());
-    let plugins = droppedneedle::plugins::wiring::PluginsSetup::for_tests(
+    let plugins = droppedneedle_plugins::wiring::PluginsSetup::for_tests(
         auth.users.clone(),
         ids.clone(),
         jobs.registry().clone(),
@@ -115,7 +115,7 @@ pub fn hooked_state_with_compat(subsonic: bool, jellyfin: bool) -> AppState {
         providers.clone(),
     );
     let jobs = droppedneedle::bootstrap::jobs::JobsSetup::for_tests(auth.users.clone());
-    let plugins = droppedneedle::plugins::wiring::PluginsSetup::for_tests(
+    let plugins = droppedneedle_plugins::wiring::PluginsSetup::for_tests(
         auth.users.clone(),
         ids.clone(),
         jobs.registry().clone(),
@@ -165,7 +165,7 @@ pub fn prod_like_state() -> AppState {
         providers.clone(),
     );
     let jobs = droppedneedle::bootstrap::jobs::JobsSetup::for_tests(auth.users.clone());
-    let plugins = droppedneedle::plugins::wiring::PluginsSetup::for_tests(
+    let plugins = droppedneedle_plugins::wiring::PluginsSetup::for_tests(
         auth.users.clone(),
         ids.clone(),
         jobs.registry().clone(),
@@ -333,7 +333,7 @@ pub fn reads_inputs(
         no_redirect: http.no_redirect().clone(),
         providers: Arc::new(droppedneedle_providers::Providers::with_memory_cache()),
         listenbrainz_links: Arc::new(
-            droppedneedle::plugins::scrobble::MemoryListenBrainzLinkStore::new(Arc::new(
+            droppedneedle_plugins::scrobble::MemoryListenBrainzLinkStore::new(Arc::new(
                 droppedneedle_kernel::runtime_config::Crypto::from_key_bytes(&[7u8; 32])
                     .expect("test key"),
             )),

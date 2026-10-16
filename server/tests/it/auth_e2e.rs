@@ -307,7 +307,7 @@ impl E2e {
         ))
         .with_checkpoint(self.runtime.checkpoint().clone())
         .with_precache(jobs.precache_trigger());
-        let plugins = droppedneedle::plugins::wiring::PluginsSetup::for_tests(
+        let plugins = droppedneedle_plugins::wiring::PluginsSetup::for_tests(
             auth.users.clone(),
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             jobs.registry().clone(),

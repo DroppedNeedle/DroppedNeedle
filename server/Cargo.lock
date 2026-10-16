@@ -578,6 +578,7 @@ dependencies = [
  "droppedneedle-auth",
  "droppedneedle-kernel",
  "droppedneedle-library",
+ "droppedneedle-plugins",
  "droppedneedle-providers",
  "droppedneedle-testkit",
  "flate2",
@@ -703,6 +704,31 @@ dependencies = [
  "unicode-normalization",
  "utoipa",
  "uuid",
+]
+
+[[package]]
+name = "droppedneedle-plugins"
+version = "3.0.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "droppedneedle-auth",
+ "droppedneedle-kernel",
+ "droppedneedle-library",
+ "droppedneedle-providers",
+ "futures-util",
+ "libc",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "utoipa",
+ "uuid",
+ "zip",
 ]
 
 [[package]]

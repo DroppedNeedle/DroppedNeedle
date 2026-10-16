@@ -21,7 +21,6 @@ use crate::playback::services::{
     MixedDedup, PlaybackDeps, PresenceRegistry, ScrobbleDedup, SessionStore,
 };
 use crate::playback::sqlite::PlaybackDb;
-use crate::plugins::scrobble::SqliteListenBrainzLinkStore;
 use crate::remotes::adapter::ImportSink;
 use crate::remotes::connections::{
     ConfigServers, ConnectionResolver, CredentialCoder, SqliteConnectionStore,
@@ -46,6 +45,7 @@ use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
 use droppedneedle_kernel::runtime_config::sections::{AudioFormat, ConnectApps};
+use droppedneedle_plugins::scrobble::SqliteListenBrainzLinkStore;
 
 /// Production stream engine: gateway over stored-connection remote reads
 /// and ffmpeg transcodes behind the shared transcode gate.

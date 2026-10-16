@@ -4,8 +4,10 @@
 use std::sync::Arc;
 
 use super::ports::{PlayEvents, ReportTrack};
-use crate::plugins::host::PluginHost;
-use crate::plugins::runtime::{EventKind, EventPayload, PlaybackEvent, PluginEvent, ScrobbleEvent};
+use droppedneedle_plugins::host::PluginHost;
+use droppedneedle_plugins::runtime::{
+    EventKind, EventPayload, PlaybackEvent, PluginEvent, ScrobbleEvent,
+};
 
 /// Accepted plays from playback, as plugin events: a `scrobble` event
 /// (which also reaches `scrobbler` plugins) and a `playback_started`

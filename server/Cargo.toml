@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = [".", "auth", "kernel", "library", "providers", "testkit"]
+members = [".", "auth", "kernel", "library", "plugins", "providers", "testkit"]
 
 [workspace.package]
 version = "3.0.0"
@@ -12,6 +12,7 @@ license = "AGPL-3.0-or-later"
 droppedneedle-auth = { path = "auth", version = "3.0.0" }
 droppedneedle-kernel = { path = "kernel", version = "3.0.0" }
 droppedneedle-library = { path = "library", version = "3.0.0" }
+droppedneedle-plugins = { path = "plugins", version = "3.0.0" }
 droppedneedle-providers = { path = "providers", version = "3.0.0" }
 argon2 = { version = "0.5", features = ["alloc"] }
 axum = { version = "0.8", features = ["json", "query", "http1", "matched-path", "multipart"] }
@@ -75,6 +76,7 @@ license.workspace = true
 droppedneedle-auth.workspace = true
 droppedneedle-kernel.workspace = true
 droppedneedle-library.workspace = true
+droppedneedle-plugins.workspace = true
 droppedneedle-providers.workspace = true
 argon2.workspace = true
 axum.workspace = true
@@ -118,6 +120,7 @@ test-support = [
     "droppedneedle-providers/test-support",
     "droppedneedle-auth/test-support",
     "droppedneedle-library/test-support",
+    "droppedneedle-plugins/test-support",
 ]
 
 [dev-dependencies]

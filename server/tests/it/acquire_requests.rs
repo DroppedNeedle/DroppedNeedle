@@ -11,13 +11,13 @@ use std::sync::Arc;
 use droppedneedle::acquire::requests::mix::{
     MixGrantHooks, MixSources, PersonalMixBuilder, SkipReason,
 };
-use droppedneedle::plugins::scrobble::{
-    MemoryScrobblePrefsStore, MixApprovalHook as _, MixStateReader as _, ScrobblePrefsPatch,
-    ScrobblePrefsStore as _,
-};
 use droppedneedle::reads::collections::db::CollectionsDb;
 use droppedneedle::reads::collections::store::playlists::PlaylistStore;
 use droppedneedle_kernel::events::EventSink;
+use droppedneedle_plugins::scrobble::{
+    MemoryScrobblePrefsStore, MixApprovalHook as _, MixStateReader as _, ScrobblePrefsPatch,
+    ScrobblePrefsStore as _,
+};
 use droppedneedle_providers::listenbrainz::playlists::{
     RecommendationPlaylist, RecommendationTrack,
 };

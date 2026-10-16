@@ -350,7 +350,7 @@ pub struct ReadsInputs {
     /// Shared provider limiters.
     pub providers: Arc<droppedneedle_providers::Providers>,
     /// Users' ListenBrainz links (your-top charts, wrapped).
-    pub listenbrainz_links: Arc<dyn crate::plugins::scrobble::ListenBrainzLinkStore>,
+    pub listenbrainz_links: Arc<dyn droppedneedle_plugins::scrobble::ListenBrainzLinkStore>,
     /// The YouTube quota file (`<cache_dir>/youtube_quota.json`).
     pub youtube_quota_path: std::path::PathBuf,
     /// The instance Last.fm API key, read per call (Last.fm charts).

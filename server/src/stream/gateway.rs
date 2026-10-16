@@ -32,7 +32,7 @@ use std::sync::Arc;
 use super::leases::DirectGate;
 use super::local_files::{LibraryFiles, LocateError, PathRefusal};
 use super::plugin_url;
-use crate::plugins::capabilities::stream::{open_url, proxy_chunks};
+use droppedneedle_plugins::capabilities::stream::{open_url, proxy_chunks};
 use futures_util::StreamExt as _;
 
 use super::routes::{
@@ -90,7 +90,10 @@ pub type SettingsSource = Arc<dyn Fn() -> TranscodeSettings + Send + Sync>;
 pub struct Gateway<R, T> {
     local_root: PathBuf,
     library: Option<LibraryFiles>,
-    plugins: std::sync::OnceLock<(Arc<crate::plugins::host::PluginHost>, reqwest::Client)>,
+    plugins: std::sync::OnceLock<(
+        Arc<droppedneedle_plugins::host::PluginHost>,
+        reqwest::Client,
+    )>,
     remote: R,
     transcoder: T,
     settings: SettingsSource,
@@ -142,7 +145,7 @@ impl<R, T> Gateway<R, T> {
     /// once, after the shared engine exists.
     pub fn attach_plugins(
         &self,
-        host: Arc<crate::plugins::host::PluginHost>,
+        host: Arc<droppedneedle_plugins::host::PluginHost>,
         no_redirect: reqwest::Client,
     ) {
         if self.plugins.set((host, no_redirect)).is_err() {
@@ -418,7 +421,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
         request: &StreamOpen,
         head_only: bool,
     ) -> Result<StreamMedia, StreamFault> {
-        use crate::plugins::capabilities::stream::PluginStream;
+        use droppedneedle_plugins::capabilities::stream::PluginStream;
 
         let Some((host, client)) = self.plugins.get() else {
             return Err(StreamFault::NotFound);
@@ -700,7 +703,7 @@ async fn whole_media(media: StreamMedia) -> Result<OpenMedia, StreamFault> {
             })?
             .map_err(io_fault)?,
         MediaBody::Chunks(mut chunks) => {
-            let cap = crate::plugins::capabilities::stream::PROXY_MAX_BYTES as usize;
+            let cap = droppedneedle_plugins::capabilities::stream::PROXY_MAX_BYTES as usize;
             let mut bytes = Vec::new();
             while let Some(chunk) = chunks.next().await {
                 bytes.extend_from_slice(&chunk.map_err(|error| StreamFault::Internal {

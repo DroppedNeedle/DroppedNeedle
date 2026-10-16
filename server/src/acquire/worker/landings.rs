@@ -464,14 +464,17 @@ impl DownloadWorker {
         }
         let (kind, outcome) = match status {
             TaskStatus::Completed => (
-                crate::plugins::runtime::EventKind::DownloadCompleted,
+                droppedneedle_plugins::runtime::EventKind::DownloadCompleted,
                 "completed",
             ),
             TaskStatus::Partial => (
-                crate::plugins::runtime::EventKind::DownloadCompleted,
+                droppedneedle_plugins::runtime::EventKind::DownloadCompleted,
                 "partial",
             ),
-            _ => (crate::plugins::runtime::EventKind::DownloadFailed, "failed"),
+            _ => (
+                droppedneedle_plugins::runtime::EventKind::DownloadFailed,
+                "failed",
+            ),
         };
         crate::acquire::plugin_events::download_event(
             &self.plugins,
@@ -490,7 +493,7 @@ impl DownloadWorker {
     pub async fn announce_completed(&self, task: &TaskRow) {
         crate::acquire::plugin_events::download_event(
             &self.plugins,
-            crate::plugins::runtime::EventKind::DownloadCompleted,
+            droppedneedle_plugins::runtime::EventKind::DownloadCompleted,
             task,
             &task.source,
             "completed",

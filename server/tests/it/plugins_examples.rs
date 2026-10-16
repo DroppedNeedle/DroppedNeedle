@@ -8,16 +8,16 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use droppedneedle::plugins::capabilities::acquisition::PluginEnqueue;
-use droppedneedle::plugins::capabilities::stream::PluginStream;
-use droppedneedle::plugins::host::PluginHost;
-use droppedneedle::plugins::manifest::load_manifest;
-use droppedneedle::plugins::process::ProcessLauncher;
-use droppedneedle::plugins::runtime::{
-    DownloadTaskEvent, EventKind, EventPayload, PluginEvent, RuntimeState, ScrobbleEvent,
-};
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
+use droppedneedle_plugins::capabilities::acquisition::PluginEnqueue;
+use droppedneedle_plugins::capabilities::stream::PluginStream;
+use droppedneedle_plugins::host::PluginHost;
+use droppedneedle_plugins::manifest::load_manifest;
+use droppedneedle_plugins::process::ProcessLauncher;
+use droppedneedle_plugins::runtime::{
+    DownloadTaskEvent, EventKind, EventPayload, PluginEvent, RuntimeState, ScrobbleEvent,
+};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 fn repo() -> PathBuf {
@@ -239,9 +239,8 @@ async fn subscriber_publisher_and_routes_round_trip() {
     }
     assert_eq!(seen, 1);
 
-    let body = droppedneedle::plugins::runtime::PluginRouteBody::Json(
-        serde_json::json!({"note": "hello"}),
-    );
+    let body =
+        droppedneedle_plugins::runtime::PluginRouteBody::Json(serde_json::json!({"note": "hello"}));
     let answer = rig
         .host
         .handle_plugin_route("events-echo-toy", "POST", "note", &query, &body)

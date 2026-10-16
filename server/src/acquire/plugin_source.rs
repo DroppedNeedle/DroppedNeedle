@@ -28,11 +28,11 @@ use super::search_jobs::pinned;
 use super::target::reasons::TrackReason;
 use super::target::{SearchTarget, Targets};
 use super::usenet::policy::{QualityTier, UsenetPolicy};
-use crate::plugins::capabilities::acquisition::{
+use droppedneedle_plugins::capabilities::acquisition::{
     PluginEnqueue, PluginSearchResult, PluginTaskHandle,
 };
-use crate::plugins::host::PluginHost;
-use crate::plugins::runtime::CallError;
+use droppedneedle_plugins::host::PluginHost;
+use droppedneedle_plugins::runtime::CallError;
 
 /// Score at or above which a release downloads without a person.
 pub const AUTO_ACCEPT: f64 = 0.70;

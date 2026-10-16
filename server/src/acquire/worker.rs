@@ -956,11 +956,14 @@ impl DownloadWorker {
             .await;
         let (kind, outcome) = if status == TaskStatus::Partial {
             (
-                crate::plugins::runtime::EventKind::DownloadCompleted,
+                droppedneedle_plugins::runtime::EventKind::DownloadCompleted,
                 "partial",
             )
         } else {
-            (crate::plugins::runtime::EventKind::DownloadFailed, "failed")
+            (
+                droppedneedle_plugins::runtime::EventKind::DownloadFailed,
+                "failed",
+            )
         };
         super::plugin_events::download_event(&self.plugins, kind, task, &task.source, outcome);
         if settled.is_some()
@@ -1022,7 +1025,7 @@ impl DownloadWorker {
             .await;
         super::plugin_events::download_event(
             &self.plugins,
-            crate::plugins::runtime::EventKind::DownloadStarted,
+            droppedneedle_plugins::runtime::EventKind::DownloadStarted,
             task,
             source.journal_source(),
             "started",
@@ -1298,7 +1301,7 @@ impl DownloadWorker {
                 }
                 super::plugin_events::download_event(
                     &self.plugins,
-                    crate::plugins::runtime::EventKind::DownloadCompleted,
+                    droppedneedle_plugins::runtime::EventKind::DownloadCompleted,
                     task,
                     source.journal_source(),
                     "completed",

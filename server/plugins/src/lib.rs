@@ -24,6 +24,9 @@
 //! ListenBrainz links (verify-then-store, token sealed) and scrobble
 //! preference reads and writes, over the baseline tables.
 
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+
 pub mod capabilities;
 pub mod error;
 #[cfg(any(test, feature = "test-support"))]

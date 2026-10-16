@@ -9,14 +9,6 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::response::IntoResponse as _;
-use droppedneedle::plugins::fakes::{FakeRoles, FakeVerifier};
-use droppedneedle::plugins::handlers::{ScrobbleHttpDeps, scrobble_router};
-use droppedneedle::plugins::scrobble::{
-    ListenBrainzLinkStore, MemoryListenBrainzLinkStore, MemoryScrobblePrefsStore,
-    NoopConnectionChangedHook, NoopMixApprovalHook, ScrobbleDeps, ScrobblePrefsPatch,
-    ScrobblePrefsStore, SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore, StaticMixState,
-    connect_listenbrainz,
-};
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::session::store::SessionKind;
@@ -25,6 +17,14 @@ use droppedneedle_auth::users::roles::Role;
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, Lane, open_runtime};
 use droppedneedle_kernel::ids::IdGenerator;
 use droppedneedle_kernel::runtime_config::crypto::Crypto;
+use droppedneedle_plugins::fakes::{FakeRoles, FakeVerifier};
+use droppedneedle_plugins::handlers::{ScrobbleHttpDeps, scrobble_router};
+use droppedneedle_plugins::scrobble::{
+    ListenBrainzLinkStore, MemoryListenBrainzLinkStore, MemoryScrobblePrefsStore,
+    NoopConnectionChangedHook, NoopMixApprovalHook, ScrobbleDeps, ScrobblePrefsPatch,
+    ScrobblePrefsStore, SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore, StaticMixState,
+    connect_listenbrainz,
+};
 use droppedneedle_providers::listenbrainz::{HttpListenBrainzVerifier, VerifyOutcome};
 use tower::ServiceExt as _;
 
@@ -435,7 +435,7 @@ async fn sqlite_links_round_trip_sealed_and_survive_reopen() {
 #[tokio::test]
 async fn saved_visibility_reaches_the_live_presence_feed() {
     use droppedneedle::playback::services::{PresenceRegistry, PresenceUpdate};
-    use droppedneedle::plugins::scrobble::update_prefs;
+    use droppedneedle_plugins::scrobble::update_prefs;
 
     let registry = PresenceRegistry::new();
     let deps = rig().deps.with_visibility_hook(Arc::new(registry.clone()));

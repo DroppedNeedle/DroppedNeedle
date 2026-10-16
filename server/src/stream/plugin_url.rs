@@ -11,7 +11,7 @@ use futures_util::StreamExt as _;
 
 use super::ranged;
 use super::routes::SpanOpener;
-use crate::plugins::capabilities::stream::{PROXY_MAX_BYTES, open_url, proxy_chunks};
+use droppedneedle_plugins::capabilities::stream::{PROXY_MAX_BYTES, open_url, proxy_chunks};
 
 /// The audio format a plugin URL carries: the URL path's extension, else
 /// the content type hint (v2's rule), else empty.

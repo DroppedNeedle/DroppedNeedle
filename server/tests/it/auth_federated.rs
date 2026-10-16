@@ -12,7 +12,6 @@ use axum::{Form, Json, Router, extract::Path, extract::Query, extract::State};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use droppedneedle::playback::forwarding::{ScrobbleCredentials as _, StoredScrobbleCredentials};
-use droppedneedle::plugins::scrobble::MemoryListenBrainzLinkStore;
 use droppedneedle_auth::federated::SessionIssuer;
 use droppedneedle_auth::federated::fakes::{FakeHasher, FakeSessionIssuer, FakeUserStore};
 use droppedneedle_auth::federated::jellyfin_login::emby_auth_header;
@@ -32,6 +31,7 @@ use droppedneedle_kernel::runtime_config::Secret;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     JellyfinConnection, LastFmSettings, OidcConnection, PlexConnection,
 };
+use droppedneedle_plugins::scrobble::MemoryListenBrainzLinkStore;
 use ring::rand::SystemRandom;
 use ring::signature::{RSA_PKCS1_SHA256, RsaKeyPair, RsaPublicKeyComponents};
 use serde_json::{Value, json};

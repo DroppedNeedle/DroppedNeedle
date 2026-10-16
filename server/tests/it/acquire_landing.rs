@@ -789,9 +789,9 @@ async fn a_plugin_download_is_confined_to_the_plugins_folders() {
     use droppedneedle::acquire::downloads::SourceHandle;
     use droppedneedle::acquire::plugin_source::{PluginDownloadSource, ReleasePolicy};
     use droppedneedle::acquire::usenet::policy::UsenetPolicy;
-    use droppedneedle::plugins::fakes::FakeLauncher;
-    use droppedneedle::plugins::host::PluginHost;
-    use droppedneedle::plugins::protocol::methods;
+    use droppedneedle_plugins::fakes::FakeLauncher;
+    use droppedneedle_plugins::host::PluginHost;
+    use droppedneedle_plugins::protocol::methods;
 
     let (acquire, dir) = bare_acquire().await;
     let plugin_dir = dir.join("plugins/toy");

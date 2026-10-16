@@ -640,7 +640,7 @@ impl PresenceRegistry {
 }
 
 /// Saved visibility changes from the preferences route take effect live.
-impl crate::plugins::scrobble::VisibilityHook for PresenceRegistry {
+impl droppedneedle_plugins::scrobble::VisibilityHook for PresenceRegistry {
     fn on_visibility_changed(&self, user_id: &str, visibility: &str) {
         self.set_visibility(user_id, visibility);
     }

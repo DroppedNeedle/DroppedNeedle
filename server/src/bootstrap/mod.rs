@@ -34,7 +34,6 @@ use crate::{
     },
     media::MediaSetup,
     playback::plugin_events::PluginPlayEvents,
-    plugins::{scrobble::SqliteListenBrainzLinkStore, wiring::PluginsSetup},
     reads::{
         ReadsInputs, ReadsSetup,
         catalog::{
@@ -82,6 +81,7 @@ use droppedneedle_kernel::{
     },
 };
 use droppedneedle_library::wiring::LibrarySetup;
+use droppedneedle_plugins::{scrobble::SqliteListenBrainzLinkStore, wiring::PluginsSetup};
 use droppedneedle_providers::{InMemoryProviderCache, Providers};
 
 /// Why the server could not boot.
@@ -199,7 +199,8 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let events = EventHub::new();
     // The plugin host exists early so playback, acquisition and streaming
     // can hold it; no plugin starts until `PluginsSetup::build` loads it.
-    let plugin_host = crate::plugins::wiring::new_host(config.plugins_dir(), config_store.clone());
+    let plugin_host =
+        droppedneedle_plugins::wiring::new_host(config.plugins_dir(), config_store.clone());
     let auth_bundle = ProdAuth::new(
         runtime.pool(),
         runtime.lane(),
@@ -503,10 +504,12 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
             runtime.lane().clone(),
             crypto.clone(),
         )),
-        Arc::new(crate::plugins::scrobble::SqliteScrobblePrefsStore::new(
-            runtime.pool().clone(),
-            runtime.lane().clone(),
-        )),
+        Arc::new(
+            droppedneedle_plugins::scrobble::SqliteScrobblePrefsStore::new(
+                runtime.pool().clone(),
+                runtime.lane().clone(),
+            ),
+        ),
         reads.collections.stores.playlists.clone(),
         mix_events,
         &outbound.listenbrainz,
