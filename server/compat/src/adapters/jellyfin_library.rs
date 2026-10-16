@@ -21,7 +21,8 @@ use crate::jellyfin::builders::LIBRARY_INTERNAL_ID;
 use crate::jellyfin::params::SortKey;
 use crate::jellyfin::seams::{
     AlbumFilter, AlbumView, ArtistScope, ArtistView, CoverBytes, GenreView, IdMap, ItemSort,
-    LibraryRead, PlaylistDetail, PlaylistEntry, PlaylistView, TrackFilter, TrackView, WriteRefusal,
+    LibraryRead, LyricsView, PlaylistDetail, PlaylistEntry, PlaylistView, ReadFailed, TrackFilter,
+    TrackView, WriteRefusal,
 };
 use crate::subsonic::views::{genre_slug, song_path};
 use droppedneedle_catalog::reads::library::player::{
@@ -83,6 +84,7 @@ fn track_view(track: PlayerTrack) -> TrackView {
         play_count: 0,
         last_played: None,
         album_image_tag,
+        has_lyrics: track.has_lyrics,
     }
 }
 
@@ -596,6 +598,19 @@ impl LibraryRead for JellyfinLibrary {
             bytes,
             content_type,
         })
+    }
+
+    async fn lyrics(&self, file_id: &str) -> Result<Option<LyricsView>, ReadFailed> {
+        match self.library.lyrics(file_id).await {
+            Ok(doc) => Ok(doc.map(|doc| LyricsView {
+                lines: doc.lines,
+                synced: doc.synced,
+            })),
+            Err(error) => {
+                tracing::error!(%error, "jellyfin lyrics read failed");
+                Err(ReadFailed)
+            }
+        }
     }
 
     async fn name_of(&self, kind: &str, catalog_id: &str) -> Option<String> {

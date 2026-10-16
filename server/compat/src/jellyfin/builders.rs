@@ -353,7 +353,7 @@ impl<'a, I: IdMap> Builder<'a, I> {
         dto.parent_id = album_id;
         dto.container = t.file_format.clone();
         dto.genres = Some(t.genre.clone().map(|g| vec![g]).unwrap_or_default());
-        dto.has_lyrics = Some(false);
+        dto.has_lyrics = Some(t.has_lyrics);
         let provider_ids: BTreeMap<String, String> = [
             ("MusicBrainzTrack", &t.recording_mbid),
             ("MusicBrainzAlbum", &t.release_mbid),
@@ -594,7 +594,11 @@ pub fn media_source(
         supports_direct_stream: true,
         supports_transcoding,
         default_audio_stream_index: 0,
-        media_streams: vec![media_stream(track)],
+        media_streams: if track.has_lyrics {
+            vec![media_stream(track), lyric_stream()]
+        } else {
+            vec![media_stream(track)]
+        },
         name,
         path,
         etag,
@@ -648,8 +652,8 @@ pub fn media_stream(track: &TrackView) -> MediaStream {
             .bitrate
             .map(|b| u64::from(b) * 1000)
             .filter(|b| *b != 0),
-        channels,
-        channel_layout: "stereo".to_owned(),
+        channels: Some(channels),
+        channel_layout: Some("stereo".to_owned()),
         sample_rate: track.sample_rate,
         bit_depth: track.bit_depth,
         is_default: true,
@@ -659,14 +663,47 @@ pub fn media_stream(track: &TrackView) -> MediaStream {
         is_text_subtitle_stream: false,
         supports_external_stream: false,
         time_base: track.sample_rate.map(|rate| format!("1/{rate}")),
-        display_title,
+        display_title: Some(display_title),
         video_range: "Unknown".to_owned(),
         video_range_type: "Unknown".to_owned(),
         audio_spatial_format: "None".to_owned(),
-        localized_default: "Default".to_owned(),
-        localized_external: "External".to_owned(),
-        is_avc: false,
+        localized_default: Some("Default".to_owned()),
+        localized_external: Some("External".to_owned()),
+        is_avc: Some(false),
         is_hearing_impaired: false,
-        level: 0,
+        level: Some(0),
+    }
+}
+
+/// The `Lyric` entry of a file that carries lyrics, after its audio
+/// stream. Finamp asks for lyrics only when PlaybackInfo lists one.
+/// Jellyfin 10.10.6 also sends the lyrics file's `Path`; a host path is
+/// never sent here.
+pub fn lyric_stream() -> MediaStream {
+    MediaStream {
+        stream_type: "Lyric".to_owned(),
+        codec: None,
+        index: 1,
+        bit_rate: None,
+        channels: None,
+        channel_layout: None,
+        sample_rate: None,
+        bit_depth: None,
+        is_default: false,
+        is_interlaced: false,
+        is_forced: false,
+        is_external: false,
+        is_text_subtitle_stream: false,
+        supports_external_stream: false,
+        time_base: None,
+        display_title: None,
+        video_range: "Unknown".to_owned(),
+        video_range_type: "Unknown".to_owned(),
+        audio_spatial_format: "None".to_owned(),
+        localized_default: None,
+        localized_external: None,
+        is_avc: None,
+        is_hearing_impaired: false,
+        level: None,
     }
 }

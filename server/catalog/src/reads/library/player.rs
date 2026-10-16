@@ -90,6 +90,8 @@ pub struct PlayerTrack {
     pub replaygain_album_peak: Option<f64>,
     /// Whether the album has stored artwork.
     pub cover_available: bool,
+    /// Whether the track's file carries lyrics, as the lyrics sweep found.
+    pub has_lyrics: bool,
 }
 
 /// Per artist id: the summed length in seconds and the number of the
@@ -408,7 +410,8 @@ const TRACK_SELECT: &str = "SELECT t.id AS id, t.title AS title, t.local_album_i
     t.replaygain_track_gain AS rg_track_gain, t.replaygain_album_gain AS rg_album_gain, \
     t.replaygain_track_peak AS rg_track_peak, t.replaygain_album_peak AS rg_album_peak, \
     EXISTS (SELECT 1 FROM local_album_artwork w WHERE w.local_album_id = a.id) \
-    AS cover_available \
+    AS cover_available, \
+    EXISTS (SELECT 1 FROM local_track_lyrics l WHERE l.local_track_id = t.id) AS has_lyrics \
     FROM local_tracks t \
     JOIN local_albums a ON a.id = t.local_album_id \
     LEFT JOIN local_artists an ON an.id = a.album_artist_id \
@@ -466,6 +469,7 @@ fn map_track(row: &sqlx::sqlite::SqliteRow) -> Result<PlayerTrack, sqlx::Error> 
         replaygain_track_peak: row.try_get("rg_track_peak")?,
         replaygain_album_peak: row.try_get("rg_album_peak")?,
         cover_available: row.try_get("cover_available")?,
+        has_lyrics: row.try_get("has_lyrics")?,
     })
 }
 

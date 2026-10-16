@@ -654,6 +654,10 @@ impl LibraryRead for FakeLibrary {
             .flatten()
     }
 
+    async fn lyrics(&self, _file_id: &str) -> Result<Option<LyricsView>, ReadFailed> {
+        Ok(None)
+    }
+
     async fn name_of(&self, kind: &str, catalog_id: &str) -> Option<String> {
         self.with_rows(|rows| match kind {
             "album" => rows

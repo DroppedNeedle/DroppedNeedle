@@ -144,6 +144,10 @@ where
     // Tails match case-insensitively: Finamp asks for `Universal`.
     let tail = tail.to_ascii_lowercase();
     match tail.as_str() {
+        "lyrics" => {
+            let missing = not_found_item(&request);
+            super::lyrics::lyrics(&state, &item_id, missing).await
+        }
         "universal" => universal(&state, &headers, query.as_deref(), &item_id).await,
         HLS_PLAYLIST => hls_playlist(&state, query.as_deref(), &item_id).await,
         HLS_SEGMENT => hls_segment(&state, query.as_deref(), &item_id).await,

@@ -61,7 +61,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 156);
+    assert_eq!(table_names(&pool).await.len(), 158);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -2576,6 +2576,133 @@ async fn hand_matches_arrive_empty_and_strict() {
         indexed,
         vec!["idx_library_track_hand_matches_user".to_owned()]
     );
+}
+
+/// Migration 0061 adds the lyrics marks and the lyrics sweep's checks,
+/// empty and strict. A database from before keeps its tracks; a mark goes
+/// with its track and a check with its album, and a mark's source is one
+/// the sweep writes.
+#[tokio::test]
+async fn lyrics_marks_arrive_empty_and_go_with_their_track() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 61)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+         ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         album_title, album_title_folded, file_format, ingest_source, imported_at, \
+         membership_source) VALUES \
+         ('t1', 'al1', 'r1', '/m/1.flac', '1.flac', 'h1', 1, 0, 's', 'T', 't', 'T', 't', \
+         'flac', 'scan', 0, 'automatic'), \
+         ('t2', 'al1', 'r1', '/m/2.flac', '2.flac', 'h2', 1, 0, 's', 'U', 'u', 'T', 't', \
+         'flac', 'scan', 0, 'automatic');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    async fn tracks(pool: &SqlitePool) -> sqlx::Result<Vec<String>> {
+        sqlx::query_scalar("SELECT id FROM local_tracks ORDER BY id")
+            .fetch_all(pool)
+            .await
+    }
+    let kept = tracks(&pool).await.unwrap();
+    assert_eq!(kept, ["t1", "t2"]);
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(stamped >= 61 && stamped == latest_version(), "{stamped}");
+    assert_eq!(tracks(&pool).await.unwrap(), kept);
+    for (table, columns, parent) in [
+        (
+            "local_track_lyrics",
+            vec!["local_track_id", "source"],
+            ("local_track_id", "local_tracks"),
+        ),
+        (
+            "local_album_lyrics_checks",
+            vec!["local_album_id", "signature", "checked_at"],
+            ("local_album_id", "local_albums"),
+        ),
+    ] {
+        assert_eq!(column_names(&pool, table).await, columns);
+        let strict: i64 = sqlx::query_scalar("SELECT strict FROM pragma_table_list WHERE name = ?")
+            .bind(table)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(strict, 1, "{table}");
+        let rows: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(rows, 0, "{table}");
+        let keys: Vec<(String, String, String)> = sqlx::query_as(&format!(
+            "SELECT \"from\", \"table\", on_delete FROM pragma_foreign_key_list('{table}')"
+        ))
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            keys,
+            vec![(
+                parent.0.to_owned(),
+                parent.1.to_owned(),
+                "CASCADE".to_owned()
+            )],
+            "{table}"
+        );
+    }
+
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let track = &kept[0];
+    assert!(
+        sqlx::query("INSERT INTO local_track_lyrics VALUES (?, 'lrclib')")
+            .bind(track)
+            .execute(&pool)
+            .await
+            .is_err(),
+        "a source the sweep never writes is refused"
+    );
+    sqlx::query("INSERT INTO local_track_lyrics VALUES (?, 'sidecar')")
+        .bind(track)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM local_tracks WHERE id = ?")
+        .bind(track)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_track_lyrics")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0, "the mark went with its track");
 }
 
 /// Every table in the migrated schema is listed once in

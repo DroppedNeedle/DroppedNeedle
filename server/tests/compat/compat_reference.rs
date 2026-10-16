@@ -655,9 +655,9 @@ async fn compat_answers_have_the_shape_navidrome_returns() {
     rig.stop().await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn compat_answers_have_the_shape_jellyfin_returns() {
-    let rig = CompatApp::start("compat-reference-jellyfin").await;
+/// What the layout's keys and the caller stand for on the app's Jellyfin
+/// side.
+async fn jellyfin_refs(rig: &CompatApp) -> BTreeMap<String, String> {
     let auth = rig.jellyfin_auth();
     let auth = [("X-Emby-Authorization", auth.as_str())];
     let get = |uri: &'static str| rig.app.call("GET", uri, &auth, None);
@@ -679,17 +679,39 @@ async fn compat_answers_have_the_shape_jellyfin_returns() {
             .expect("a music library view")
             .to_owned(),
     );
+    refs
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compat_answers_have_the_shape_jellyfin_returns() {
+    let rig = CompatApp::start("compat-reference-jellyfin").await;
     let mut comparison = Comparison {
         rig: &rig,
         server: "jellyfin",
-        refs,
+        refs: jellyfin_refs(&rig).await,
         found: Found::new(),
     };
     comparison.replay("jellyfin-10.10.6", "").await;
     comparison
         .replay("jellyfin-10.10.6-writes", "after-writes/")
         .await;
+    // Lyrics were recorded on a fresh server with a `.lrc` file beside
+    // Airbag. A real Jellyfin has no online lookup, so it is off here.
+    let lyrics = CompatApp::start_as_recorded(
+        "compat-reference-jellyfin-lyrics",
+        crate::common::closed_outbound(),
+        "jellyfin-10.10.6-lyrics",
+    )
+    .await;
+    lyrics.set_lyrics_lookup(false).await;
+    lyrics.wait_for_lyrics_mark("Airbag").await;
+    comparison.rig = &lyrics;
+    comparison.refs = jellyfin_refs(&lyrics).await;
+    comparison
+        .replay("jellyfin-10.10.6-lyrics", "lyrics/")
+        .await;
     comparison.settle();
+    lyrics.stop().await;
     rig.stop().await;
 }
 

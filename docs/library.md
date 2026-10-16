@@ -18,6 +18,8 @@ How DroppedNeedle scans your music, works out which album and edition each folde
 
 Scans live on the Scanning tab of Library Management. A running scan can be paused, resumed or stopped there; stopping keeps everything it already read. Rescan files rereads every file in the folders you pick, even ones that look unchanged, which helps after you fix files with another tool. Each finished run in Recent runs lists the files it could not read or skipped, each with a short reason and what to do about it (for example, a damaged file says to re-download or replace it). If someone changed the library folders since you opened the page, the scan is refused: reload and try again.
 
+After a scan, the library notes which tracks carry lyrics (a lyrics tag, or a `.lrc` file named like the track); it only reads them.
+
 Recent runs can also export a diagnostic report for a scan: a small JSON file with the run's counters, timings, scopes and failed files, to attach to a bug report. Paths are replaced by fingerprints, and it holds no user names, passwords or error text.
 
 MusicBrainz lookups pace at 1 request per second on the official MusicBrainz server. Built-in BrainzMash runs its own local pacing instead. Either way, later scans are incremental, so the first one is the slow one.
@@ -64,7 +66,7 @@ You can download a single track or a whole album from the library. A track comes
 
 ## Lyrics
 
-The web player and player apps show lyrics for a track. When DroppedNeedle has none for it, the server asks LRCLIB ([lrclib.net](https://lrclib.net)), a free lyrics database, at the moment lyrics are opened, sending the track's title, artist, album and length. Nothing is written to your files. This is on unless an admin turns it off under Settings > Library > Lyrics; while it is off, the server never asks LRCLIB.
+The web player and player apps show lyrics for a track. Lyrics your files carry come first: a `.lrc` file next to the track with the same name, else the file's lyrics tag. Jellyfin apps such as Finamp only offer lyrics for those tracks. When a file has none, the server asks LRCLIB ([lrclib.net](https://lrclib.net)), a free lyrics database, at the moment lyrics are opened, sending the track's title, artist, album and length. Nothing is written to your files. This is on unless an admin turns it off under Settings > Library > Lyrics; while it is off, the server never asks LRCLIB.
 
 ## Ratings in player apps
 

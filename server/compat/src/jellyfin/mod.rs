@@ -13,7 +13,7 @@
 //! `SortBy` allowlist), [`builders`] (view → DTO shaping), [`seams`]
 //! (boundary traits), `fake` (test doubles). The handlers live in `router`
 //! (state, registration, shared helpers), `system`, `browse`, `images`,
-//! `audio`, `playstate` and `playlists`; `query` holds the item-type and
+//! `audio`, `lyrics`, `playstate` and `playlists`; `query` holds the item-type and
 //! short-list paging helpers.
 //!
 //! Wiring: this module lives in the tree under
@@ -37,6 +37,7 @@ pub mod builders;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake;
 mod images;
+mod lyrics;
 pub mod models;
 pub mod params;
 mod playlists;

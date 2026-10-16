@@ -42,6 +42,7 @@ use crate::reads::search::models::{
     EnrichmentSource,
 };
 use crate::reads::search::ports::{EnrichmentPort, MAX_ENRICHMENT_PER_BUCKET};
+use droppedneedle_library::tags::lyrics;
 use droppedneedle_providers::degradation::{IntegrationStatus as CoreStatus, record_current};
 
 // ---------------------------------------------------------------------------
@@ -1185,11 +1186,6 @@ impl std::fmt::Display for AlbumPageError {
 // Lyrics shaping (v2 `lrclib_repository.py`)
 // ---------------------------------------------------------------------------
 
-/// Max lyrics payload in bytes, kept from v2 (`_MAX_LYRICS_BYTES`).
-const MAX_LYRICS_BYTES: usize = 2 * 1024 * 1024;
-/// Max lyrics payload in characters, kept from v2 (`_MAX_LYRICS_CHARACTERS`).
-const MAX_LYRICS_CHARACTERS: usize = 1_000_000;
-
 /// One lyrics outcome: a document, or absence with an optional note.
 #[derive(Debug, Clone)]
 pub struct LyricsOutcome {
@@ -1199,104 +1195,16 @@ pub struct LyricsOutcome {
     pub degradation: Option<Degradation>,
 }
 
-/// Shape an LRCLIB lookup into a lyrics document. Oversized or unusable
-/// payloads fail so the caller degrades; empty-but-found payloads read as
-/// absence.
+/// Shape an LRCLIB lookup into a lyrics document through the library's
+/// lyrics parser. Oversized payloads fail so the caller degrades;
+/// empty-but-found payloads read as absence.
 fn lyric_doc(lookup: &LyricsLookup) -> Result<Option<LyricDoc>, String> {
-    let plain = lookup.plain.as_deref().map(str::trim).unwrap_or("");
-    let synced = lookup.synced.as_deref().map(str::trim).unwrap_or("");
-    let bytes = lookup
-        .plain
-        .as_ref()
-        .map(|text| text.len())
-        .unwrap_or(0)
-        .saturating_add(lookup.synced.as_ref().map(|text| text.len()).unwrap_or(0));
-    if bytes > MAX_LYRICS_BYTES {
-        return Err("lyrics payload exceeds the byte cap".to_owned());
-    }
-    let characters: usize = plain.chars().count().saturating_add(synced.chars().count());
-    if characters > MAX_LYRICS_CHARACTERS {
-        return Err("lyrics payload exceeds the character cap".to_owned());
-    }
-    if synced.is_empty() && plain.is_empty() {
-        return Ok(None);
-    }
-    if synced.is_empty() {
-        return Ok(Some(LyricDoc {
-            lines: plain
-                .lines()
-                .map(|line| (line.trim().to_owned(), None))
-                .filter(|(text, _)| !text.is_empty())
-                .collect(),
-            synced: false,
-        }));
-    }
-    let mut lines: Vec<(String, Option<i64>)> = Vec::new();
-    for raw in synced.lines() {
-        let line = raw.trim();
-        if line.is_empty() {
-            continue;
-        }
-        match parse_lrc_line(line) {
-            Some((text, start_ms)) => {
-                if !text.is_empty() {
-                    lines.push((text, Some(start_ms)));
-                }
-            }
-            None => {
-                if !line.starts_with('[') && !line.is_empty() {
-                    lines.push((line.to_owned(), None));
-                }
-            }
-        }
-    }
-    if lines.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(LyricDoc {
-        lines,
-        synced: true,
+    let parsed = lyrics::parse_lyrics(lookup.plain.as_deref(), lookup.synced.as_deref())
+        .map_err(|refused| refused.to_string())?;
+    Ok(parsed.map(|parsed| LyricDoc {
+        lines: parsed.lines,
+        synced: parsed.synced,
     }))
-}
-
-/// Parse one `[mm:ss.xx] text` LRC line into text and start milliseconds.
-/// Returns None for tag lines (`[ar:...]`) and malformed stamps.
-fn parse_lrc_line(line: &str) -> Option<(String, i64)> {
-    if !line.starts_with('[') {
-        return None;
-    }
-    let end = line.find(']')?;
-    let stamp = &line[1..end];
-    let (minutes_raw, rest) = stamp.split_once(':')?;
-    let minutes: i64 = minutes_raw.parse().ok()?;
-    let (seconds_raw, fraction_raw) = match rest.split_once('.') {
-        Some((seconds, fraction)) => (seconds, Some(fraction)),
-        None => match rest.split_once(':') {
-            Some(_) => return None,
-            None => (rest, None),
-        },
-    };
-    let seconds: i64 = seconds_raw.parse().ok()?;
-    if minutes < 0 || !(0..60).contains(&seconds) {
-        return None;
-    }
-    let fraction_ms: i64 = match fraction_raw {
-        None => 0,
-        Some(digits) => {
-            if digits.is_empty() || digits.len() > 3 || !digits.bytes().all(|b| b.is_ascii_digit())
-            {
-                return None;
-            }
-            let value: i64 = digits.parse().ok()?;
-            match digits.len() {
-                1 => value * 100,
-                2 => value * 10,
-                _ => value,
-            }
-        }
-    };
-    let text = line[end + 1..].trim().to_owned();
-    Some((text, minutes * 60_000 + seconds * 1_000 + fraction_ms))
 }
 
 // ---------------------------------------------------------------------------
@@ -1595,17 +1503,5 @@ mod tests {
             "got {london_to_paris}"
         );
         assert!(haversine_km(0.0, 0.0, 0.0, 180.0).is_finite());
-    }
-
-    #[test]
-    fn lrc_stamps_parse_to_milliseconds() {
-        assert_eq!(
-            parse_lrc_line("[01:02.34] hello"),
-            Some(("hello".to_owned(), 62_340))
-        );
-        assert_eq!(parse_lrc_line("[00:00.5] x"), Some(("x".to_owned(), 500)));
-        assert_eq!(parse_lrc_line("[ar:Someone]"), None);
-        assert_eq!(parse_lrc_line("[99:99.99] x"), None);
-        assert_eq!(parse_lrc_line("no stamp"), None);
     }
 }

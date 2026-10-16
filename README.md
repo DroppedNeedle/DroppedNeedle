@@ -137,7 +137,7 @@ Pre-releases are published to the same image under their own version tag, for ex
 | Request | Whole albums or single tracks from the MusicBrainz catalogue, with an approval queue for the User role |
 | Wanted | Failed and partial requests get re-searched on their own until a verified copy shows up |
 | Quality | Per-format quality floors, automatic upgrades when a better copy appears, storage caps and quotas |
-| Player | Queue, shuffle, 10-band EQ, embedded lyrics, live now-playing updates |
+| Player | Queue, shuffle, 10-band EQ, lyrics from your files (or from LRCLIB when it is on), live now-playing updates |
 | Discovery | Trending, charts, genre browsing, recommendations from your ListenBrainz and Last.fm history, an album-by-album discover queue, and a weekly mix that can queue up to five missing albums |
 | Live events | Ticketmaster and Skiddle gig alerts for artists you follow, each user with their own cities |
 | Following | New-release radar with optional auto-download, release-type filters, and sidebar badges |
@@ -168,7 +168,7 @@ Which edition a request fetches, how single tracks are found, following artists,
 | Direction | What plugs in |
 |-|-|
 | In | Your slskd, your SABnzbd with your Newznab indexers or Prowlarr, and drop imports. Identity from MusicBrainz and AcoustID, album art from your files and the Cover Art Archive, artist photos from Wikidata and AudioDB |
-| Out | Jellyfin, Navidrome, Plex, local files, and YouTube previews, plus OpenSubsonic and Jellyfin APIs so apps like Symfonium, Finamp, Feishin, Amperfy, Arpeggi, Jellify, and Manet can play from you |
+| Out | Jellyfin, Navidrome, Plex, local files, and YouTube previews, plus OpenSubsonic and Jellyfin APIs so apps like Symfonium, Finamp, Feishin, Amperfy, Arpeggi, Jellify, and Manet can play from you. The apps get the lyrics your files carry |
 | Around | ListenBrainz and Last.fm scrobbling, Spotify playlist import, Ticketmaster and Skiddle gigs, Deezer and iTunes preview clips, and purchase links that put Bandcamp first |
 
 ---

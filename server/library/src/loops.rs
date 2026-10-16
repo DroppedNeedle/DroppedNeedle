@@ -279,8 +279,9 @@ pub(crate) async fn scan_loop(setup: LibrarySetup, mut shutdown: watch::Receiver
         let setup = setup.clone();
         drive_blocking(move || async move { setup.scan_startup_recovery().await }).await;
     }
-    // Album art is refreshed once the scans go idle, and once at boot.
-    let mut artwork_due = true;
+    // Album art and the lyrics marks are refreshed once the scans go idle,
+    // and once at boot.
+    let mut sweeps_due = true;
     loop {
         if *shutdown.borrow() {
             break;
@@ -294,27 +295,30 @@ pub(crate) async fn scan_loop(setup: LibrarySetup, mut shutdown: watch::Receiver
             .await
         };
         if tick == Some(true) {
-            artwork_due = true;
+            sweeps_due = true;
             continue;
         }
-        if artwork_due {
-            // The sweep gives way to shutdown and to any scan request (a
-            // wakeup, or a queued run), and resumes on a later pass.
+        if sweeps_due {
+            // The sweeps give way to shutdown and to any scan request (a
+            // wakeup, or a queued run), and resume on a later pass.
             let (sweep_setup, shutdown) = (setup.clone(), shutdown.clone());
             let swept = drive_blocking(move || async move {
                 let wakeups = sweep_setup.wakeups.clone();
                 let coordinator = sweep_setup.coordinator.clone();
                 let polls = std::cell::Cell::new(0u32);
-                sweep_setup.scan_store.refresh_album_artwork(&|| {
+                let stop = || {
                     polls.set(polls.get().wrapping_add(1));
                     *shutdown.borrow()
                         || wakeups.revision("scan") != revision
                         || (polls.get() % 32 == 0 && !coordinator.current().is_empty())
-                })
+                };
+                let artwork = sweep_setup.scan_store.refresh_album_artwork(&stop);
+                let lyrics = sweep_setup.scan_store.refresh_track_lyrics(&stop);
+                artwork.complete && lyrics.complete
             })
             .await;
             // A panicked sweep (already logged) waits for the next scan.
-            artwork_due = swept.is_some_and(|sweep| !sweep.complete);
+            sweeps_due = swept.is_some_and(|complete| !complete);
         }
         tokio::select! {
             _ = shutdown.changed() => break,

@@ -496,7 +496,7 @@ fn ape_tag_from_items(items: &[(String, Vec<String>)]) -> AudioTag {
 }
 
 /// Raw APEv2 items: `(key, values)` with NUL-separated multi-values split.
-fn parse_apev2(bytes: &[u8]) -> Option<Vec<(String, Vec<String>)>> {
+pub(super) fn parse_apev2(bytes: &[u8]) -> Option<Vec<(String, Vec<String>)>> {
     if bytes.len() < 32 || &bytes[bytes.len() - 32..bytes.len() - 24] != b"APETAGEX" {
         return None;
     }

@@ -1,0 +1,5 @@
+{
+  "differences": [
+    {"server": "jellyfin", "object": "MediaStreams", "key": "Path", "kind": "missing", "rows": ["lyrics/item.airbag", "lyrics/playback-info.airbag"], "reason": "A track whose file carries lyrics gets a Lyric stream entry, but without the Path Jellyfin puts there: that is the host path of the .lrc file, and the app never sends a host path. Finamp reads only the entry's Type."}
+  ]
+}

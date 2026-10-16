@@ -9,12 +9,16 @@
 //! `fields` lists what it writes (Picard's tag set) and `picard` fills
 //! that set from an identified release.
 //!
+//! `lyrics` reads the lyrics a file carries (a `.lrc` beside it, or its
+//! lyrics tag) and holds the one lyrics parser.
+//!
 //! WMA is unrecognized everywhere here: there is no ASF code,
 //! and every entry point rejects `.wma` before touching the file.
 
 pub mod fields;
 pub mod fingerprint;
 pub mod loudness;
+pub mod lyrics;
 pub mod picard;
 pub mod probe;
 pub mod read;

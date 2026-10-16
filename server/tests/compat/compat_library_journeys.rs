@@ -2500,3 +2500,186 @@ async fn subsonic_ratings_are_per_user_and_follow_a_merge() {
     assert_eq!(left, 0);
     rig.stop().await;
 }
+
+/// LRCLIB as the lyrics lookup sees it, counting every lookup: synced
+/// lyrics for "Paranoid Android", nothing for anything else.
+async fn counted_lyrics_server() -> (
+    String,
+    tokio::task::JoinHandle<()>,
+    std::sync::Arc<std::sync::atomic::AtomicUsize>,
+) {
+    use axum::extract::Query;
+    use axum::response::IntoResponse;
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let asked = std::sync::Arc::new(AtomicUsize::new(0));
+    let counter = asked.clone();
+    let get = move |Query(query): Query<HashMap<String, String>>| {
+        let counter = counter.clone();
+        async move {
+            counter.fetch_add(1, Ordering::SeqCst);
+            if query.get("track_name").map(String::as_str) != Some("Paranoid Android") {
+                return StatusCode::NOT_FOUND.into_response();
+            }
+            axum::Json(json!({
+                "id": 7,
+                "trackName": "Paranoid Android",
+                "artistName": "Radiohead",
+                "albumName": "OK Computer",
+                "duration": 200,
+                "instrumental": false,
+                "syncedLyrics": "[00:01.00]Copper rain on a tin roof\n[00:02.50]Static in the hall",
+            }))
+            .into_response()
+        }
+    };
+    let router = axum::Router::new().route("/lrclib/api/get", axum::routing::get(get));
+    let (base, server) = droppedneedle_testkit::usenet::serve_loopback(router)
+        .await
+        .expect("lyrics server starts");
+    (base, server, asked)
+}
+
+/// Lyrics a file carries come first, and only those tracks are marked.
+/// With a `.lrc` beside Airbag, Jellyfin lists Airbag with lyrics and a
+/// `Lyric` stream and Paranoid Android with neither; Airbag's lyrics come
+/// from its file on both protocols, with no online lookup, and listing
+/// never looks anything up. Paranoid Android's come from LRCLIB while the
+/// lookup is on, after exactly one lookup. With it off, Airbag still reads
+/// from its file and Paranoid Android gets Jellyfin's 404, with no lookup.
+/// The address needs sign-in like the stream.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn lyrics_come_from_the_file_first() {
+    use std::sync::atomic::Ordering;
+
+    let (lrclib, server, asked) = counted_lyrics_server().await;
+    let rig = CompatApp::start_as_recorded(
+        "compat-lyrics",
+        crate::common::outbound_at(&lrclib),
+        "jellyfin-10.10.6-lyrics",
+    )
+    .await;
+    // The lookup skips a track shorter than a second, as every fixture is.
+    rig.app
+        .db()
+        .execute(
+            "UPDATE local_tracks SET duration_seconds = 200 \
+             WHERE relative_path = 'Radiohead/OK Computer/02 Paranoid Android.flac'",
+            [],
+        )
+        .expect("duration seeds");
+    rig.set_lyrics_lookup(true).await;
+    rig.wait_for_lyrics_mark("Airbag").await;
+
+    let token = rig.jellyfin_auth();
+    let auth = [("X-Emby-Authorization", token.as_str())];
+    let app = &rig.app;
+    let get = move |uri: String| async move { app.call("GET", &uri, &auth, None).await };
+    let (_, tracks) = get("/jellyfin/Items?Recursive=true&IncludeItemTypes=Audio".to_owned()).await;
+    let airbag = named(&tracks["Items"], "Name", "Airbag");
+    let album = airbag["AlbumId"].as_str().expect("album id").to_owned();
+    let airbag = airbag["Id"].as_str().expect("track id").to_owned();
+    let paranoid = named(&tracks["Items"], "Name", "Paranoid Android")["Id"]
+        .as_str()
+        .expect("track id")
+        .to_owned();
+
+    let (status, listed) = get(format!("/jellyfin/Items?ParentId={album}")).await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(
+        named(&listed["Items"], "Name", "Airbag")["HasLyrics"],
+        json!(true)
+    );
+    assert_eq!(
+        named(&listed["Items"], "Name", "Paranoid Android")["HasLyrics"],
+        json!(false)
+    );
+    for (id, streams) in [
+        (&airbag, json!(["Audio", "Lyric"])),
+        (&paranoid, json!(["Audio"])),
+    ] {
+        let (status, info) = rig
+            .app
+            .call(
+                "POST",
+                &format!("/jellyfin/Items/{id}/PlaybackInfo"),
+                &auth,
+                Some(json!({"UserId": rig.user_id, "DeviceProfile": {}})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{info}");
+        let types: Vec<Value> = info["MediaSources"][0]["MediaStreams"]
+            .as_array()
+            .expect("streams")
+            .iter()
+            .map(|stream| stream["Type"].clone())
+            .collect();
+        assert_eq!(json!(types), streams, "{id}");
+    }
+
+    let from_file = json!({
+        "Metadata": {"IsSynced": true},
+        "Lyrics": [
+            {"Text": "Paper lanterns over the quiet field", "Start": 0},
+            {"Text": "Velvet engines hum a borrowed tune", "Start": 4_000_000},
+            {"Text": "Every window counts the passing moon", "Start": 12_000_000},
+        ],
+    });
+    let (status, lyrics) = get(format!("/jellyfin/Audio/{airbag}/Lyrics")).await;
+    assert_eq!((status, &lyrics), (StatusCode::OK, &from_file));
+    let player = rig.subsonic_auth("lyrics");
+    let found = subsonic(&rig, "search3?query=Airbag&songCount=1", &player).await;
+    let song = found["searchResult3"]["song"][0]["id"]
+        .as_str()
+        .expect("song id")
+        .to_owned();
+    let answer = subsonic(&rig, &format!("getLyricsBySongId?id={song}"), &player).await;
+    let structured = &answer["lyricsList"]["structuredLyrics"];
+    assert_eq!(structured.as_array().map(Vec::len), Some(1), "{structured}");
+    assert_eq!(structured[0]["synced"], json!(true));
+    assert_eq!(
+        structured[0]["line"][1],
+        json!({"value": "Velvet engines hum a borrowed tune", "start": 400})
+    );
+    assert_eq!(
+        asked.load(Ordering::SeqCst),
+        0,
+        "file lyrics and lists never look up"
+    );
+
+    let (status, lyrics) = get(format!("/jellyfin/Audio/{paranoid}/Lyrics")).await;
+    assert_eq!(status, StatusCode::OK, "{lyrics}");
+    assert_eq!(
+        lyrics["Lyrics"],
+        json!([
+            {"Text": "Copper rain on a tin roof", "Start": 10_000_000},
+            {"Text": "Static in the hall", "Start": 25_000_000},
+        ])
+    );
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
+
+    rig.set_lyrics_lookup(false).await;
+    let (status, lyrics) = get(format!("/jellyfin/Audio/{airbag}/Lyrics")).await;
+    assert_eq!((status, &lyrics), (StatusCode::OK, &from_file));
+    let (status, missing) = get(format!("/jellyfin/Audio/{paranoid}/Lyrics")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{missing}");
+    assert_eq!(
+        (&missing["title"], &missing["status"]),
+        (&json!("Not Found"), &json!(404))
+    );
+    assert_eq!(asked.load(Ordering::SeqCst), 1, "no lookup while it is off");
+
+    let (status, _) = rig
+        .app
+        .call(
+            "GET",
+            &format!("/jellyfin/Audio/{airbag}/Lyrics"),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    rig.stop().await;
+    server.abort();
+}

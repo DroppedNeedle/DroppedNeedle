@@ -16,6 +16,7 @@
 //! document.
 
 pub mod error;
+pub mod file_lyrics;
 pub mod handlers;
 pub mod lookups;
 pub mod memory;

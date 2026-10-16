@@ -440,6 +440,10 @@ pub trait LibraryCatalog: Send + Sync {
         id: &'a str,
     ) -> BoxFuture<'a, Result<Option<TrackRecord>, StoreError>>;
 
+    /// Whether one streamable track's file carries lyrics, as the lyrics
+    /// sweep last found. False for unknown ids.
+    fn track_has_lyrics<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<bool, StoreError>>;
+
     /// Library totals.
     fn stats<'a>(&'a self) -> BoxFuture<'a, Result<StatsRecord, StoreError>>;
 
@@ -505,12 +509,11 @@ pub trait FavoriteReads: Send + Sync {
     ) -> BoxFuture<'a, Result<(u64, u64, u64), StoreError>>;
 }
 
-/// Stored-lyrics reads for one track.
+/// Lyrics reads for one track.
 ///
-/// No baseline table holds lyrics: the library engine owns embedded-tag
-/// extraction and the provider fetch is a separate client. This port is
-/// the seam both implement behind. None is absence (the handler
-/// answers 404), never failure.
+/// Production serves the lyrics the track's file carries first
+/// ([`super::file_lyrics::FileLyrics`]) and the provider fetch behind it.
+/// None is absence (the handler answers 404), never failure.
 pub trait LyricsPort: Send + Sync {
     /// Stored lyrics for one streamable track id.
     fn get<'a>(&'a self, track_id: &'a str) -> BoxFuture<'a, Result<Option<LyricDoc>, StoreError>>;

@@ -443,6 +443,10 @@ impl LibraryCatalog for MemoryCatalog {
         })
     }
 
+    fn track_has_lyrics<'a>(&'a self, _id: &'a str) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(async move { Ok(false) })
+    }
+
     fn stats<'a>(&'a self) -> BoxFuture<'a, Result<StatsRecord, StoreError>> {
         Box::pin(async move {
             let tracks = lock(&self.tracks);
@@ -722,6 +726,7 @@ impl LibraryCatalog for FailingCatalog {
     fail_catalog!(artist_appearances(artist_id: &'a str, limit: u64, offset: u64) -> (Vec<AlbumRecord>, u64));
     fail_catalog!(list_tracks(filter: &'a TrackFilter, sort: TrackSort, descending: bool, limit: u64, offset: u64) -> (Vec<TrackRecord>, u64));
     fail_catalog!(get_track(id: &'a str) -> Option<TrackRecord>);
+    fail_catalog!(track_has_lyrics(id: &'a str) -> bool);
     fail_catalog!(stats() -> StatsRecord);
     fail_catalog!(recently_added(limit: u64) -> Vec<AlbumRecord>);
     fail_catalog!(genres() -> Vec<GenreRecord>);

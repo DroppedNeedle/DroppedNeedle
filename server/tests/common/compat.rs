@@ -66,6 +66,41 @@ impl CompatApp {
     /// As [`CompatApp::start`], reaching the outside world as `outbound`
     /// says.
     pub async fn start_with(tag: &str, outbound: droppedneedle::bootstrap::Outbound) -> Self {
+        Self::planted(tag, outbound, &[]).await
+    }
+
+    /// As [`CompatApp::start_with`], with the other files the reference
+    /// recording `folder` planted beside the tracks (its `capture.json`
+    /// names them under `extra_files`).
+    pub async fn start_as_recorded(
+        tag: &str,
+        outbound: droppedneedle::bootstrap::Outbound,
+        folder: &str,
+    ) -> Self {
+        let capture: Value = serde_json::from_slice(
+            &std::fs::read(
+                manifest_dir()
+                    .join("tests/reference/compat")
+                    .join(folder)
+                    .join("capture.json"),
+            )
+            .expect("capture reads"),
+        )
+        .expect("capture parses");
+        let extras = capture["extra_files"]
+            .as_array()
+            .expect("the recording names extra files")
+            .clone();
+        Self::planted(tag, outbound, &extras).await
+    }
+
+    /// Plant the layout's tracks plus `extras` (`{fixture, path}`), then
+    /// scan them.
+    async fn planted(
+        tag: &str,
+        outbound: droppedneedle::bootstrap::Outbound,
+        extras: &[Value],
+    ) -> Self {
         let app = TestApp::start_with(tag, outbound).await;
         let layout: Value = serde_json::from_slice(
             &std::fs::read(manifest_dir().join("tests/reference/compat/library.json"))
@@ -74,11 +109,12 @@ impl CompatApp {
         .expect("library layout parses");
         let fixtures = manifest_dir().join("tests/fixtures/library");
         let music = app.config.root_app_dir.join("music");
-        for track in layout["tracks"].as_array().expect("tracks") {
-            let planted = music.join(track["path"].as_str().expect("planted path"));
+        let tracks = layout["tracks"].as_array().expect("tracks");
+        for file in tracks.iter().chain(extras) {
+            let planted = music.join(file["path"].as_str().expect("planted path"));
             std::fs::create_dir_all(planted.parent().expect("album folder")).expect("mkdir");
             std::fs::copy(
-                fixtures.join(track["fixture"].as_str().expect("fixture name")),
+                fixtures.join(file["fixture"].as_str().expect("fixture name")),
                 &planted,
             )
             .expect("fixture copies");
@@ -182,6 +218,43 @@ impl CompatApp {
             .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         self.app_password(&login.authorization).await
+    }
+
+    /// Turn the online lyrics lookup on or off, as the owner would.
+    pub async fn set_lyrics_lookup(&self, enabled: bool) {
+        let admin = self.app.login_admin().await;
+        let (status, body) = self
+            .app
+            .call(
+                "PUT",
+                "/api/v3/settings/lyrics",
+                &[("authorization", admin.as_str())],
+                Some(json!({ "enabled": enabled })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
+    /// Wait until the Jellyfin side marks the track `title` as having
+    /// lyrics, which it does once the lyrics sweep after the scan is done.
+    pub async fn wait_for_lyrics_mark(&self, title: &str) {
+        let auth = self.jellyfin_auth();
+        let headers = [("X-Emby-Authorization", auth.as_str())];
+        self.app
+            .until("the lyrics mark", || async {
+                let (status, tracks) = self
+                    .app
+                    .call(
+                        "GET",
+                        "/jellyfin/Items?Recursive=true&IncludeItemTypes=Audio",
+                        &headers,
+                        None,
+                    )
+                    .await;
+                assert_eq!(status, StatusCode::OK, "{tracks}");
+                (named(&tracks["Items"], "Name", title)["HasLyrics"] == json!(true)).then_some(())
+            })
+            .await;
     }
 
     /// Subsonic query credentials for `client`.

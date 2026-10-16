@@ -1,5 +1,5 @@
 {
   "differences": [
-    {"server": "jellyfin", "object": "ProviderIds", "key": "MusicBrainzArtist", "kind": "missing", "rows": ["after-writes/item.track", "item.legacy", "item.track"], "reason": "The app takes an artist's MusicBrainz id from the files only where a file pairs its artist names and ids one for one (an ARTISTS tag beside MUSICBRAINZ_ARTISTID), so a row that stands for several artists never gets one member's id. The fixture's Airbag file has one artist name and one id but no ARTISTS list, so the key is absent here. Jellyfin copies the first id from the tag."}
+    {"server": "jellyfin", "object": "ProviderIds", "key": "MusicBrainzArtist", "kind": "missing", "rows": ["after-writes/item.track", "item.legacy", "item.track", "lyrics/item.airbag", "lyrics/item.paranoid-android"], "reason": "The app takes an artist's MusicBrainz id from the files only where a file pairs its artist names and ids one for one (an ARTISTS tag beside MUSICBRAINZ_ARTISTID), so a row that stands for several artists never gets one member's id. The fixture's Airbag and Paranoid Android files each have one artist name and one id but no ARTISTS list, so the key is absent here. Jellyfin copies the first id from the tag."}
   ]
 }

@@ -53,9 +53,9 @@ const COVER_MAX_BYTES: u64 = 25 * 1024 * 1024;
 /// Longest stretch one sweep runs before handing back to the scan loop.
 pub const SWEEP_SLICE: std::time::Duration = std::time::Duration::from_secs(30);
 /// Albums read per sweep at least before the slice may end it.
-const MIN_PER_SLICE: usize = 50;
+pub(super) const MIN_PER_SLICE: usize = 50;
 /// Albums written per transaction, so the store lock is held briefly.
-const WRITE_BATCH: usize = 200;
+pub(super) const WRITE_BATCH: usize = 200;
 
 /// What one sweep did.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -71,10 +71,10 @@ pub struct ArtworkSweep {
 }
 
 /// One indexed track of an album, in album order.
-struct TrackFile {
-    id: String,
-    path: PathBuf,
-    stat_revision: String,
+pub(super) struct TrackFile {
+    pub(super) id: String,
+    pub(super) path: PathBuf,
+    pub(super) stat_revision: String,
 }
 
 /// The art row an album has now.
@@ -181,26 +181,10 @@ impl SqliteScanStore {
 
     fn artwork_snapshot(&self) -> rusqlite::Result<Snapshot> {
         let inner = self.lock();
-        let mut snapshot = Snapshot::default();
-        let mut tracks = inner.conn.prepare(
-            "SELECT t.local_album_id, t.id, t.file_path, t.stat_revision \
-             FROM local_tracks t JOIN local_albums a ON a.id = t.local_album_id \
-             WHERE t.availability = 'indexed' AND a.retired_into_album_id IS NULL \
-             ORDER BY t.local_album_id, t.disc_number, t.track_number, t.id",
-        )?;
-        let mut rows = tracks.query([])?;
-        while let Some(row) = rows.next()? {
-            let album_id: String = row.get(0)?;
-            let track = TrackFile {
-                id: row.get(1)?,
-                path: PathBuf::from(row.get::<_, String>(2)?),
-                stat_revision: row.get(3)?,
-            };
-            match snapshot.albums.last_mut() {
-                Some((last, files)) if *last == album_id => files.push(track),
-                _ => snapshot.albums.push((album_id, vec![track])),
-            }
-        }
+        let mut snapshot = Snapshot {
+            albums: album_tracks(&inner.conn)?,
+            ..Snapshot::default()
+        };
         let mut current = inner.conn.prepare(
             "SELECT local_album_id, source, source_locator, content_hash FROM local_album_artwork",
         )?;
@@ -319,10 +303,37 @@ impl SqliteScanStore {
     }
 }
 
+/// Every live album with its indexed tracks, in album order.
+pub(super) fn album_tracks(
+    conn: &rusqlite::Connection,
+) -> rusqlite::Result<Vec<(String, Vec<TrackFile>)>> {
+    let mut albums: Vec<(String, Vec<TrackFile>)> = Vec::new();
+    let mut tracks = conn.prepare(
+        "SELECT t.local_album_id, t.id, t.file_path, t.stat_revision \
+         FROM local_tracks t JOIN local_albums a ON a.id = t.local_album_id \
+         WHERE t.availability = 'indexed' AND a.retired_into_album_id IS NULL \
+         ORDER BY t.local_album_id, t.disc_number, t.track_number, t.id",
+    )?;
+    let mut rows = tracks.query([])?;
+    while let Some(row) = rows.next()? {
+        let album_id: String = row.get(0)?;
+        let track = TrackFile {
+            id: row.get(1)?,
+            path: PathBuf::from(row.get::<_, String>(2)?),
+            stat_revision: row.get(3)?,
+        };
+        match albums.last_mut() {
+            Some((last, files)) if *last == album_id => files.push(track),
+            _ => albums.push((album_id, vec![track])),
+        }
+    }
+    Ok(albums)
+}
+
 /// Folders an album's tracks live in, in track order. Disc folders
 /// (`Album/CD1/...`) keep their art one level up, so when every track
 /// folder shares one parent, that parent is probed last (v2 rule).
-fn album_dirs(tracks: &[TrackFile]) -> Vec<PathBuf> {
+pub(super) fn album_dirs(tracks: &[TrackFile]) -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     for track in tracks {
         if let Some(parent) = track.path.parent()
@@ -345,8 +356,13 @@ fn album_dirs(tracks: &[TrackFile]) -> Vec<PathBuf> {
 }
 
 /// Hash of what decides an album's art: track ids and stat revisions,
-/// folder modification times, and the folder image's size and time.
-fn album_signature(tracks: &[TrackFile], dirs: &[PathBuf], folder_image: Option<&Path>) -> String {
+/// folder modification times, and the folder image's size and time. The
+/// lyrics sweep signs with no folder image.
+pub(super) fn album_signature(
+    tracks: &[TrackFile],
+    dirs: &[PathBuf],
+    folder_image: Option<&Path>,
+) -> String {
     let mut hasher = Sha256::new();
     for track in tracks {
         hasher.update(track.id.as_bytes());

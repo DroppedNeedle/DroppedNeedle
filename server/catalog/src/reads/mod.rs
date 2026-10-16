@@ -105,10 +105,10 @@ impl ReadsSetup {
         let library_db = library::sqlite::LibraryDb::new(pool);
         let catalog: Arc<dyn library::stores::LibraryCatalog> =
             Arc::new(library::sqlite::SqliteCatalog::new(&library_db));
-        // No stored-lyrics table exists in the schema, so without the
-        // provider pair lyrics reads stay on the empty port (404s); with
-        // it, catalog tracks resolve through live LRCLIB while the lyrics
-        // setting (read per call) is on, and read as absent while it is off.
+        // Without the provider pair lyrics reads stay on the empty port
+        // (404s); with it, catalog tracks resolve through live LRCLIB while
+        // the lyrics setting (read per call) is on, and read as absent while
+        // it is off. `with_library_files` puts the files' own lyrics first.
         let lyrics: Arc<dyn library::stores::LyricsPort> = match &enrichment {
             Some(pair) => Arc::new(
                 enrichment::ProviderLyrics::new(
@@ -186,13 +186,19 @@ impl ReadsSetup {
         })
     }
 
-    /// Read file tags from the library catalog and roots, which are built
-    /// after the reads bundle.
+    /// Read file tags and the lyrics files carry from the library catalog
+    /// and roots, which are built after the reads bundle. Lyrics come from
+    /// the file first and from the port built before only when it has none.
     #[must_use]
     pub fn with_library_files(
         mut self,
         files: droppedneedle_media::stream::local_files::LibraryFiles,
     ) -> Self {
+        self.library.lyrics = Arc::new(library::file_lyrics::FileLyrics::new(
+            self.library.catalog.clone(),
+            files.clone(),
+            self.library.lyrics.clone(),
+        ));
         self.library.tags = Arc::new(library::tags::FileTagReader::new(files));
         self
     }

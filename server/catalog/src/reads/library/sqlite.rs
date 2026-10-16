@@ -1125,6 +1125,23 @@ impl LibraryCatalog for SqliteCatalog {
         })
     }
 
+    fn track_has_lyrics<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(async move {
+            let Some(pool) = self.db.live() else {
+                return Err(unwired_store());
+            };
+            sqlx::query_scalar::<_, bool>(&format!(
+                "SELECT EXISTS (SELECT 1 FROM local_tracks t \
+                 JOIN local_track_lyrics l ON l.local_track_id = t.id \
+                 WHERE t.id = ({CURRENT_TRACK}) AND t.availability = 'indexed')"
+            ))
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .map_err(|error| internal("library.tracks.lyrics", error))
+        })
+    }
+
     fn stats<'a>(&'a self) -> BoxFuture<'a, Result<StatsRecord, StoreError>> {
         Box::pin(async move {
             let Some(pool) = self.db.live() else {

@@ -2811,6 +2811,7 @@ fn player_track_cells(cells: &Cells<'_, '_>) -> rusqlite::Result<PlayerTrack> {
         replaygain_track_peak: cells.get("rg_track_peak")?,
         replaygain_album_peak: cells.get("rg_album_peak")?,
         cover_available: cells.get("cover_available")?,
+        has_lyrics: cells.get("has_lyrics")?,
     })
 }
 

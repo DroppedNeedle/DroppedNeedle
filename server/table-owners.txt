@@ -199,6 +199,7 @@ local_album_artists
 local_album_artwork
 local_album_artwork_checks
 local_album_external_identities
+local_album_lyrics_checks
 local_albums
 local_artist_aliases
 local_artist_external_identities
@@ -210,5 +211,6 @@ local_track_artists
 local_track_edition_tags
 local_track_external_identities
 local_track_genres
+local_track_lyrics
 local_tracks
 local_tracks_fts

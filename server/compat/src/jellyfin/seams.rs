@@ -202,7 +202,22 @@ pub struct TrackView {
     pub last_played: Option<f64>,
     /// `AlbumPrimaryImageTag` of the owning album, when it has art.
     pub album_image_tag: Option<String>,
+    /// The track's file carries lyrics (a `.lrc` beside it or a tag).
+    pub has_lyrics: bool,
 }
+
+/// One track's lyrics, as the lyrics address answers them.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LyricsView {
+    /// Lines in order: text plus the start in milliseconds, when timed.
+    pub lines: Vec<(String, Option<i64>)>,
+    /// True when the lines carry timestamps.
+    pub synced: bool,
+}
+
+/// A library read failed; the handler answers 500.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadFailed;
 
 /// Album row (v2 `ViewAlbum` subset).
 #[derive(Debug, Clone, Default)]
@@ -473,6 +488,12 @@ pub trait LibraryRead: Clone + Send + Sync + 'static {
     /// is `album` or `artist`; any other kind has no name here, and so does
     /// an album or artist that a merge retired or that is gone.
     fn name_of(&self, kind: &str, catalog_id: &str) -> impl Future<Output = Option<String>> + Send;
+    /// The lyrics of one track: its file's first, else the online lookup
+    /// while that is on. `Ok(None)` when it has none.
+    fn lyrics(
+        &self,
+        file_id: &str,
+    ) -> impl Future<Output = Result<Option<LyricsView>, ReadFailed>> + Send;
 }
 
 // ===== Streaming seam =====

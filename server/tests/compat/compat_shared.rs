@@ -40,6 +40,7 @@ fn anonymous_paths() {
         ("GET", "/jellyfin/Audio/abc"),
         ("GET", "/jellyfin/Audio/abc/universal"),
         ("GET", "/jellyfin/Audio/abc/stream.mp3"),
+        ("GET", "/jellyfin/Audio/abc/Lyrics"),
         ("HEAD", "/jellyfin/Audio/abc/stream"),
         ("DELETE", "/jellyfin/Items/abc/Images/Primary"),
     ];

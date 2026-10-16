@@ -560,6 +560,64 @@ async fn symlinks_never_escape_a_root() {
     );
 }
 
+/// The lyrics sweep marks the tracks whose files carry lyrics, a tag or a
+/// `.lrc` named like the track (its extension in any case), and only reads:
+/// no audio or lyrics file changes, a `.lrc` that is a link is not
+/// followed, and a `.lrc` deleted before the next scan takes its mark.
+#[tokio::test]
+async fn lyrics_sweep_marks_what_files_carry_and_only_reads() {
+    use std::os::unix::fs::symlink;
+
+    let scratch = ScratchDir::new("scan-lyrics");
+    let music = scratch.join("music");
+    plant(&music, "Tagged/01 Words.flac", "flac_lyrics_tag.flac");
+    plant(&music, "Album/01 Airbag.flac", "flac_full_01.flac");
+    let sidecar = plant(&music, "Album/01 Airbag.LRC", "lyrics_airbag.lrc");
+    plant(
+        &music,
+        "Album/02 Paranoid Android.flac",
+        "flac_full_02.flac",
+    );
+    plant(&music, "Linked/01 Song A.flac", "flac_compilation_01.flac");
+    let elsewhere = plant(&scratch.join("elsewhere"), "song.lrc", "lyrics_airbag.lrc");
+    symlink(&elsewhere, music.join("Linked/01 Song A.lrc")).expect("lyrics link");
+    let before = snapshot(&music);
+    let library = bundle(&music);
+    let mark = |library: &LibrarySetup, path: &str, source: &str| {
+        query(
+            library,
+            &format!(
+                "SELECT COUNT(*) FROM local_track_lyrics l \
+                 JOIN local_tracks t ON t.id = l.local_track_id \
+                 WHERE t.relative_path = '{path}' AND l.source = '{source}'"
+            ),
+        )
+    };
+    let marks = |library: &LibrarySetup| query(library, "SELECT COUNT(*) FROM local_track_lyrics");
+
+    scan(&library).await;
+    assert!(library.scan_store.refresh_track_lyrics(&|| false).complete);
+    assert_eq!(mark(&library, "Tagged/01 Words.flac", "tag"), 1);
+    assert_eq!(mark(&library, "Album/01 Airbag.flac", "sidecar"), 1);
+    assert_eq!(marks(&library), 2, "no plain file and no linked .lrc");
+    assert_eq!(snapshot(&music), before, "the sweep never writes a file");
+
+    std::fs::remove_file(&sidecar).expect("lyrics file removes");
+    // However coarse the filesystem's clock, the folder reads as changed.
+    std::fs::File::open(music.join("Album"))
+        .and_then(|dir| {
+            dir.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000))
+        })
+        .expect("folder time sets");
+    scan(&library).await;
+    assert!(library.scan_store.refresh_track_lyrics(&|| false).complete);
+    assert_eq!(mark(&library, "Tagged/01 Words.flac", "tag"), 1);
+    assert_eq!(marks(&library), 1, "the deleted .lrc took its mark");
+    let mut kept = before;
+    kept.remove("Album/01 Airbag.LRC");
+    assert_eq!(snapshot(&music), kept);
+}
+
 /// A scan request the store cannot record is an error. It used to answer
 /// a "conflict" naming a run id that was never written.
 #[tokio::test]

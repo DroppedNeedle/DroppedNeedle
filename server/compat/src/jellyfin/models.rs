@@ -444,8 +444,10 @@ pub struct BaseItemDtoQueryResult {
 
 // ===== Playback =====
 
-/// Audio stream description (v2 `MediaStream`). Finamp hard-casts the five
-/// trailing bools too (v2 issue #438), so they are always present.
+/// One stream of a file (v2 `MediaStream`): the audio, and a `Lyric` entry
+/// when the file carries lyrics. Finamp hard-casts the five trailing bools
+/// too (v2 issue #438), so they are always present. The audio-only fields
+/// are left out of a `Lyric` entry, as Jellyfin leaves them out.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct MediaStream {
@@ -456,8 +458,10 @@ pub struct MediaStream {
     pub index: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bit_rate: Option<u64>,
-    pub channels: u32,
-    pub channel_layout: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channels: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub channel_layout: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sample_rate: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -472,18 +476,47 @@ pub struct MediaStream {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time_base: Option<String>,
     /// Codec and channels, as Jellyfin titles the stream (`FLAC - Stereo`).
-    pub display_title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_title: Option<String>,
     /// The fields below are fixed: this server has no video, spatial
     /// audio, accessibility tracks or translated labels.
     pub video_range: String,
     pub video_range_type: String,
     pub audio_spatial_format: String,
-    pub localized_default: String,
-    pub localized_external: String,
-    #[serde(rename = "IsAVC")]
-    pub is_avc: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub localized_default: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub localized_external: Option<String>,
+    #[serde(rename = "IsAVC", skip_serializing_if = "Option::is_none")]
+    pub is_avc: Option<bool>,
     pub is_hearing_impaired: bool,
-    pub level: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level: Option<u32>,
+}
+
+/// `GET /Audio/{id}/Lyrics` (Jellyfin `LyricDto`), as Jellyfin 10.10.6
+/// answers it in `jellyfin-10.10.6-lyrics/lyrics.airbag.json`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct LyricDto {
+    pub metadata: LyricMetadata,
+    pub lyrics: Vec<LyricLine>,
+}
+
+/// What this server knows about the lyrics: only whether they are synced.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct LyricMetadata {
+    pub is_synced: bool,
+}
+
+/// One line. `Start` is in ticks and left out of an untimed line.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct LyricLine {
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<i64>,
 }
 
 /// Playback source (v2 `MediaSourceInfo`). `DirectStreamUrl` embeds
