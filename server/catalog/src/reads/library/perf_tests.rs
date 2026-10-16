@@ -301,6 +301,11 @@ fn legacy_scope(scope: ArtistScope) -> String {
         ArtistScope::All => "1 = 1",
         ArtistScope::AlbumArtists => "(LED)",
         ArtistScope::Contributors => "(NOT (LED) AND (CREDITED))",
+        ArtistScope::WithMusic => {
+            "((LED) OR EXISTS (SELECT 1 FROM local_track_artists lta \
+             JOIN local_tracks lt ON lt.id = lta.local_track_id \
+             WHERE lta.local_artist_id = r.id AND lt.availability = 'indexed'))"
+        }
     };
     base.replace("(LED)", LEGACY_LED)
         .replace("(CREDITED)", LEGACY_CREDITED)
@@ -777,6 +782,7 @@ async fn artists_batched_matches_legacy() {
         ArtistScope::All,
         ArtistScope::AlbumArtists,
         ArtistScope::Contributors,
+        ArtistScope::WithMusic,
     ];
     for scope in scopes {
         for (sort, descending) in sorts {

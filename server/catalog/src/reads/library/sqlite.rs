@@ -431,12 +431,18 @@ const CREDITED_PREDICATE: &str = "(EXISTS (SELECT 1 FROM local_album_artists laa
     OR EXISTS (SELECT 1 FROM local_track_artists lta WHERE lta.local_artist_id = r.id) \
     OR EXISTS (SELECT 1 FROM local_albums la WHERE la.album_artist_id = r.id))";
 
+/// Artists leading an album or credited on a streamable track.
+const WITH_MUSIC_PREDICATE: &str = "((LED) OR EXISTS (SELECT 1 FROM local_track_artists lta \
+    JOIN local_tracks lt ON lt.id = lta.local_track_id \
+    WHERE lta.local_artist_id = r.id AND lt.availability = 'indexed'))";
+
 /// Visible to the plan tests, which assemble the same statements.
 pub(crate) fn artist_scope_predicate(scope: ArtistScope) -> &'static str {
     match scope {
         ArtistScope::All => "1 = 1",
         ArtistScope::AlbumArtists => LED_PREDICATE,
         ArtistScope::Contributors => "(NOT (LED) AND (CREDITED))",
+        ArtistScope::WithMusic => WITH_MUSIC_PREDICATE,
     }
 }
 

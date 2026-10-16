@@ -90,6 +90,9 @@ pub enum ArtistScope {
     AlbumArtists,
     /// Artists appearing without leading.
     Contributors,
+    /// Artists leading an album or credited on a streamable track, which
+    /// leaves out empty rows such as an unused placeholder.
+    WithMusic,
 }
 
 /// Album list filter, shared by the catalog and browse surfaces.

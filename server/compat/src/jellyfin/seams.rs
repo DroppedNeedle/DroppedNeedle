@@ -305,8 +305,9 @@ pub struct CoverBytes {
     pub content_type: String,
 }
 
-/// Artist listing scope: every artist vs album artists (v2
-/// `/Artists` vs `/Artists/AlbumArtists`).
+/// Artist listing scope: every artist with music vs album artists (v2
+/// `/Artists` vs `/Artists/AlbumArtists`). Empty artist rows are never
+/// listed: player apps would show them as artists with nothing in them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArtistScope {
     All,

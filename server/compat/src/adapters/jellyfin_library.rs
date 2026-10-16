@@ -446,7 +446,7 @@ impl LibraryRead for JellyfinLibrary {
     ) -> (Vec<ArtistView>, usize) {
         let outcome = async {
             let scope = match scope {
-                ArtistScope::All => CatalogScope::All,
+                ArtistScope::All => CatalogScope::WithMusic,
                 ArtistScope::Album => CatalogScope::AlbumArtists,
             };
             let (artists, total) = self

@@ -531,15 +531,13 @@ async fn browse_query_dialects() {
         "OK Computer",
         "望厚",
     ];
-    // Every artist row is listed, the catalog's two empty placeholders
-    // ("Unknown Artist" and a second "Various Artists") among them.
+    // Every artist with music is listed; the catalog's empty placeholders
+    // ("Unknown Artist" and a second "Various Artists") are not.
     let every_artist = vec![
         "Artist One",
         "Massive Attack",
         "Radiohead",
         "U2",
-        "Unknown Artist",
-        "Various Artists",
         "Various Artists",
         "ユキ",
     ];
@@ -613,6 +611,14 @@ async fn browse_query_dialects() {
         let page = json(&rig, &uri, &auth).await;
         if uri.contains("Latest") {
             assert!(page.is_array(), "{uri}: Latest is a bare array");
+        }
+        let items = page["Items"].as_array().or(page.as_array());
+        for artist in items
+            .into_iter()
+            .flatten()
+            .filter(|item| item["Type"] == "MusicArtist")
+        {
+            assert_ne!(artist["ChildCount"], 0, "{uri}: an empty artist is listed");
         }
         let mut got = names(&page);
         if uri.contains("Similar") || uri.contains("InstantMix") {

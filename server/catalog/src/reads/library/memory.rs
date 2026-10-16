@@ -324,6 +324,7 @@ impl LibraryCatalog for MemoryCatalog {
                     ArtistScope::All => true,
                     ArtistScope::AlbumArtists => record.album_count > 0,
                     ArtistScope::Contributors => record.album_count == 0 && record.track_count > 0,
+                    ArtistScope::WithMusic => record.album_count > 0 || record.track_count > 0,
                 })
                 .collect();
             match sort {
