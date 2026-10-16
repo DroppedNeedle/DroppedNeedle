@@ -106,6 +106,9 @@ pub struct PlayerAlbum {
     pub sort_name: Option<String>,
     /// Original release date, `YYYY[-MM[-DD]]`.
     pub original_release_date: Option<String>,
+    /// Release date, `YYYY[-MM[-DD]]`: the one every indexed track's tags
+    /// give, else none.
+    pub release_date: Option<String>,
 }
 
 /// Track filters; every set field narrows.
@@ -455,6 +458,7 @@ fn map_album(row: &sqlx::sqlite::SqliteRow) -> Result<PlayerAlbum, sqlx::Error> 
         genre: row.try_get("primary_genre")?,
         sort_name: row.try_get("album_sort_name")?,
         original_release_date: row.try_get("original_release_date")?,
+        release_date: row.try_get("release_date")?,
     })
 }
 
@@ -1103,10 +1107,18 @@ fn album_order_sql(order: AlbumOrder) -> String {
     }
 }
 
-/// Album extras appended to the shared album columns.
+/// Album extras appended to the shared album columns. The release date is
+/// kept only when every indexed track has the same one, as Navidrome does.
 const ALBUM_EXTRAS: &str = "a.primary_genre AS primary_genre, \
     a.album_artist_sort_name AS album_sort_name, \
-    a.original_release_date AS original_release_date";
+    a.original_release_date AS original_release_date, \
+    CASE WHEN COUNT(h.release_date) = COUNT(t.id) \
+     AND MIN(h.release_date) = MAX(h.release_date) \
+     THEN MIN(h.release_date) END AS release_date";
+
+/// The edition hints of the tracks `ALBUM_JOINS` joins, at most one row
+/// each, for the release date in `ALBUM_EXTRAS`.
+const ALBUM_EXTRA_JOINS: &str = "LEFT JOIN local_track_edition_tags h ON h.local_track_id = t.id";
 
 /// Player reads over the reader pool.
 #[derive(Clone, Debug)]
@@ -1312,7 +1324,7 @@ impl SqlitePlayerCatalog {
         let mut out = HashMap::with_capacity(ids.len());
         for chunk in ids.chunks(500) {
             let sql = format!(
-                "SELECT {ALBUM_COLUMNS}, {ALBUM_EXTRAS} {ALBUM_JOINS} \
+                "SELECT {ALBUM_COLUMNS}, {ALBUM_EXTRAS} {ALBUM_JOINS} {ALBUM_EXTRA_JOINS} \
                  WHERE a.id IN ({}) GROUP BY a.id",
                 placeholders(chunk.len())
             );

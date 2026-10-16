@@ -373,6 +373,8 @@ fn read_flac_full() {
     );
     assert_eq!(tag.acoustid_id.as_deref(), Some("ac-airbag-0001"));
     assert!(!tag.compilation);
+    // A DATE with no original date is not a release date.
+    assert_eq!(tag.edition.release_date, None);
 }
 
 #[test]
@@ -409,6 +411,7 @@ fn read_mp3_full() {
     assert_eq!(tag.album, "Achtung Baby");
     assert_eq!(tag.track_number, 3);
     assert_eq!(tag.year, Some(1991));
+    assert_eq!(tag.edition.release_date, None);
     assert_eq!(tag.genre.as_deref(), Some("Rock"));
     assert_eq!(
         tag.musicbrainz_recording_id.as_deref(),
@@ -428,6 +431,8 @@ fn read_m4a_full() {
     assert_eq!(tag.album, "Mezzanine");
     assert_eq!(tag.track_number, 4);
     assert_eq!(tag.year, Some(1998));
+    // An MP4 ©day is the release date.
+    assert_eq!(tag.edition.release_date.as_deref(), Some("1998"));
     assert_eq!(
         tag.musicbrainz_recording_id.as_deref(),
         Some("rec-teardrop-0004")
@@ -455,6 +460,8 @@ fn read_management_mp3() {
     assert_eq!(tag.artist_sort.as_deref(), Some("Alpha, The"));
     assert_eq!(tag.disc_subtitle.as_deref(), Some("Main Programme"));
     assert_eq!(tag.original_release_date.as_deref(), Some("2020"));
+    // Picard's layout: the date beside an earlier original date.
+    assert_eq!(tag.edition.release_date.as_deref(), Some("2024-03-02"));
     assert_eq!(tag.artists.len(), 2);
     let credit: &AudioArtistCredit = &tag.artists[0];
     assert_eq!(credit.name, "Alpha");
@@ -486,6 +493,7 @@ fn read_management_flac() {
     assert_eq!(tag.year, Some(2024));
     assert!(tag.compilation);
     assert_eq!(tag.release_type.as_deref(), Some("Album"));
+    assert_eq!(tag.edition.release_date.as_deref(), Some("2024-03-02"));
     assert_eq!(
         tag.musicbrainz_recording_id.as_deref(),
         Some("10000000-0000-4000-8000-000000000003")
@@ -499,6 +507,11 @@ fn read_management_ogg_opus() {
         assert_eq!(tag.title, "Management Track", "{name}");
         assert_eq!(tag.artists.len(), 2, "{name}");
         assert_eq!(tag.genres, vec!["Electronic", "Ambient"], "{name}");
+        assert_eq!(
+            tag.edition.release_date.as_deref(),
+            Some("2024-03-02"),
+            "{name}"
+        );
         assert_eq!(
             tag.musicbrainz_recording_id.as_deref(),
             Some("10000000-0000-4000-8000-000000000003"),
@@ -520,6 +533,7 @@ fn read_management_m4a() {
     assert_eq!(tag.genres, vec!["Electronic", "Ambient"]);
     assert_eq!(tag.artist_sort.as_deref(), Some("Alpha, The"));
     assert_eq!(tag.disc_subtitle.as_deref(), Some("Main Programme"));
+    assert_eq!(tag.edition.release_date.as_deref(), Some("2024-03-02"));
     assert_eq!(
         tag.musicbrainz_recording_id.as_deref(),
         Some("10000000-0000-4000-8000-000000000003")

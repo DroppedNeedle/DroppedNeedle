@@ -117,6 +117,7 @@ fn view_album(album: PlayerAlbum) -> ViewAlbum {
         played_at: None,
         sort_name: album.sort_name,
         original_release_date: album.original_release_date,
+        release_date: album.release_date,
         release_types: None,
         disc_titles: Vec::new(),
     }

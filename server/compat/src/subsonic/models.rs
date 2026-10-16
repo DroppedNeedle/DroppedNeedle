@@ -97,9 +97,9 @@ impl Render for SArtist {
 
 /// ID3 album.
 ///
-/// The keys after `discTitles` are ones Navidrome 0.62.0 sends on every
-/// album and the app holds nothing for: no rating is stored, and no
-/// edition date, label, mood, explicit flag or version is read from the
+/// The keys after `discTitles`, `releaseDate` aside, are ones Navidrome
+/// 0.62.0 sends on every album and the app holds nothing for: no rating is
+/// stored, and no label, mood, explicit flag or version is read from the
 /// tags. Each carries what Navidrome sends for "none" (checked against its
 /// recorded `getAlbum` answer).
 #[derive(Debug, Clone, Default)]
@@ -146,6 +146,8 @@ pub struct SAlbumID3 {
     pub sortName: Option<String>,
     /// Original release date, an empty object when unknown.
     pub originalReleaseDate: Option<SItemDate>,
+    /// This edition's release date, an empty object when unknown.
+    pub releaseDate: Option<SItemDate>,
     /// Per-disc titles, empty when no disc has one.
     pub discTitles: Vec<SDiscTitle>,
     /// Populated by getAlbum only.
@@ -201,7 +203,12 @@ impl Render for SAlbumID3 {
                 Val::List(self.discTitles.iter().map(Render::render).collect()),
             ),
             ("userRating", Val::Int(0)),
-            ("releaseDate", obj(Vec::new())),
+            (
+                "releaseDate",
+                self.releaseDate
+                    .as_ref()
+                    .map_or_else(|| obj(Vec::new()), Render::render),
+            ),
             ("recordLabels", Val::List(Vec::new())),
             ("moods", Val::List(Vec::new())),
             ("explicitStatus", "".into_val()),

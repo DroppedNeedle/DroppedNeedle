@@ -182,6 +182,32 @@ async fn scan_catalogs_tags_without_touching_files() {
     assert_eq!(snapshot(&music), before, "scans never write music files");
 }
 
+/// Drafts and sealed decisions compare a file's tag revision to spot stale
+/// state, so a new tag the scan reads must not change it: a file whose tags
+/// did not change keeps the revision scans have always stored for it.
+#[tokio::test]
+async fn unchanged_tags_keep_their_revision() {
+    const STORED: &str = "21bef2cfb5b590d4380c105e0bbf0b228b7b75bbaa1ac88e28417a79fa3f612a";
+    let scratch = ScratchDir::new("scan-revision");
+    let music = scratch.join("music");
+    plant(&music, "Album/01.flac", "management_full.flac");
+    let library = bundle(&music);
+
+    let run = scan(&library).await;
+    assert_eq!(run.state, ScanState::Completed);
+    assert_eq!(
+        query(
+            &library,
+            &format!(
+                "SELECT COUNT(*) FROM local_tracks WHERE relative_path = 'Album/01.flac' \
+                 AND tag_revision = '{STORED}'"
+            ),
+        ),
+        1,
+        "the tag revision of an unchanged file changed"
+    );
+}
+
 /// A vanished file is marked missing, never deleted. A scope that loses
 /// most of its files at once (an unmounted share) is held back instead.
 #[tokio::test]

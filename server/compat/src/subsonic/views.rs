@@ -180,6 +180,8 @@ pub struct ViewAlbum {
     pub sort_name: Option<String>,
     /// Original release date `YYYY[-MM[-DD]]`.
     pub original_release_date: Option<String>,
+    /// This edition's release date `YYYY[-MM[-DD]]`.
+    pub release_date: Option<String>,
     /// Release types (defaults to ["album"], or ["compilation"]).
     pub release_types: Option<Vec<String>>,
     /// (disc, title) pairs.
@@ -388,6 +390,7 @@ pub fn to_album_id3(view: &ViewAlbum) -> SAlbumID3 {
         releaseTypes: Some(release_types),
         sortName: Some(view.sort_name.clone().unwrap_or_else(|| view.title.clone())),
         originalReleaseDate: item_date(view.original_release_date.as_deref()),
+        releaseDate: item_date(view.release_date.as_deref()),
         discTitles: view
             .disc_titles
             .iter()

@@ -2974,6 +2974,7 @@ fn replay_step(
                         genre: cells.get("primary_genre")?,
                         sort_name: cells.get("album_sort_name")?,
                         original_release_date: cells.get("original_release_date")?,
+                        release_date: cells.get("release_date")?,
                     });
                 }
                 *output =

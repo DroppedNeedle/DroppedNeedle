@@ -2312,6 +2312,76 @@ async fn unused_credit_tables_drop_and_tracks_survive() {
     assert_eq!(kept, ("al1".to_owned(), "t1".to_owned()));
 }
 
+/// Migration 0058 gives each track's edition hints a release date. A row
+/// from before keeps its hints, and its release date reads NULL until a
+/// scan reads the file again.
+#[tokio::test]
+async fn edition_hints_keep_their_rows_and_gain_a_release_date() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 58)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+         ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         album_title, album_title_folded, file_format, ingest_source, imported_at, \
+         membership_source) VALUES \
+         ('t1', 'al1', 'r1', '/m/1.flac', '1.flac', 'h1', 1, 0, 's', 'T', 't', 'T', 't', \
+         'flac', 'scan', 0, 'automatic'); \
+         INSERT INTO local_track_edition_tags (local_track_id, media, barcode, catalog_number, \
+         release_country, total_discs, total_tracks) VALUES \
+         ('t1', 'CD', '0123', 'CAT-1', 'GB', 2, 12);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(stamped >= 58 && stamped == latest_version(), "{stamped}");
+    type Hints = (String, String, String, String, i64, i64, Option<String>);
+    let row: Hints = sqlx::query_as(
+        "SELECT media, barcode, catalog_number, release_country, total_discs, total_tracks, \
+         release_date FROM local_track_edition_tags WHERE local_track_id = 't1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        row,
+        (
+            "CD".to_owned(),
+            "0123".to_owned(),
+            "CAT-1".to_owned(),
+            "GB".to_owned(),
+            2,
+            12,
+            None
+        )
+    );
+}
+
 /// Every table in the migrated schema is listed once in
 /// `server/table-owners.txt` under a known area, and the list names no
 /// table the schema lacks.

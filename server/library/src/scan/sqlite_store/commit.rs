@@ -826,6 +826,8 @@ fn write_item(
     };
     // Edition hints are kept beside the row and left out of the revision,
     // so reading them for the first time does not count as a tag change.
+    // Drafts and sealed decisions compare this digest, so the text hashed
+    // for unchanged tags must never change (see `EditionTags`'s `Debug`).
     let tag_revision = {
         let mut revised = tag.clone();
         revised.edition = Default::default();
@@ -979,10 +981,11 @@ fn write_item(
     };
     tx.prepare_cached(
         "INSERT INTO local_track_edition_tags (local_track_id, media, barcode, catalog_number, \
-         release_country, total_discs) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+         release_country, total_discs, release_date) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
          ON CONFLICT (local_track_id) DO UPDATE SET media = excluded.media, \
          barcode = excluded.barcode, catalog_number = excluded.catalog_number, \
-         release_country = excluded.release_country, total_discs = excluded.total_discs",
+         release_country = excluded.release_country, total_discs = excluded.total_discs, \
+         release_date = excluded.release_date",
     )?
     .execute(params![
         track_id,
@@ -991,6 +994,7 @@ fn write_item(
         blank(&edition.catalog_number),
         blank(&edition.release_country),
         edition.total_discs,
+        edition.release_date,
     ])?;
     tx.prepare_cached("DELETE FROM local_track_artists WHERE local_track_id = ?1")?
         .execute(params![track_id])?;

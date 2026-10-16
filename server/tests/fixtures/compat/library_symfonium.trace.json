@@ -181,7 +181,9 @@
                 "name": "Mezzanine",
                 "originalReleaseDate": {},
                 "recordLabels": [],
-                "releaseDate": {},
+                "releaseDate": {
+                  "year": 1998
+                },
                 "releaseTypes": [
                   "album"
                 ],

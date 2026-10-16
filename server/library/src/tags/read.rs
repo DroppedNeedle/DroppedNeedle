@@ -73,18 +73,39 @@ pub struct AudioTag {
     /// The same for `ALBUMARTISTS` and `musicbrainz_album_artist_ids`.
     pub album_artists_listed: bool,
     /// Edition hints: `MEDIA`, `BARCODE`, `CATALOGNUMBER`,
-    /// `RELEASECOUNTRY`, and the disc total.
+    /// `RELEASECOUNTRY`, the disc total and the release date.
     pub edition: EditionTags,
 }
 
 /// The tags that tell editions of one album apart.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct EditionTags {
     pub media: Option<String>,
     pub barcode: Option<String>,
     pub catalog_number: Option<String>,
     pub release_country: Option<String>,
     pub total_discs: Option<u32>,
+    /// `YYYY[-MM[-DD]]`, read as [`release_date`] describes.
+    pub release_date: Option<String>,
+}
+
+/// Written by hand so an absent release date prints nothing. A file's
+/// `tag_revision` hashes `AudioTag`'s `Debug` text with these hints empty,
+/// and that text stays what it was before the release date was read, so
+/// an unchanged file keeps its revision.
+impl std::fmt::Debug for EditionTags {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut out = f.debug_struct("EditionTags");
+        out.field("media", &self.media)
+            .field("barcode", &self.barcode)
+            .field("catalog_number", &self.catalog_number)
+            .field("release_country", &self.release_country)
+            .field("total_discs", &self.total_discs);
+        if let Some(release_date) = &self.release_date {
+            out.field("release_date", release_date);
+        }
+        out.finish()
+    }
 }
 
 /// Read tags plus technical info, like v2's `AudioTagger.read_tags`.
@@ -243,10 +264,13 @@ fn collect_values<'a>(items: impl Iterator<Item = &'a str>, out: &mut Vec<String
 }
 
 fn audio_tag_from_items(tag: &Tag) -> AudioTag {
-    audio_tag_from_values(|key| values_for(tag, key))
+    audio_tag_from_values(tag.tag_type(), |key| values_for(tag, key))
 }
 
-fn audio_tag_from_values(values_of: impl Fn(ItemKey) -> Vec<String>) -> AudioTag {
+fn audio_tag_from_values(
+    tag_type: TagType,
+    values_of: impl Fn(ItemKey) -> Vec<String>,
+) -> AudioTag {
     let first = |key: ItemKey| -> Option<String> { values_of(key).into_iter().next() };
     let genres = values_of(ItemKey::Genre);
     let artist_ids = values_of(ItemKey::MusicBrainzArtistId);
@@ -312,6 +336,7 @@ fn audio_tag_from_values(values_of: impl Fn(ItemKey) -> Vec<String>) -> AudioTag
             catalog_number: first(ItemKey::CatalogNumber),
             release_country: first(ItemKey::ReleaseCountry),
             total_discs: total_of(&values_of(ItemKey::DiscTotal)),
+            release_date: release_date(tag_type, &values_of),
         },
     }
 }
@@ -365,6 +390,60 @@ fn year_of(values: &[String]) -> Option<i32> {
     values.first()?.trim().get(..4)?.parse().ok()
 }
 
+/// A file's release date, read the way Navidrome 0.62.0 reads it, so player
+/// apps get the `releaseDate` they would get from Navidrome. First match:
+///
+/// 1. the release date item (ID3 `TDRL`, Vorbis `RELEASEDATE`, MP4
+///    `----:com.apple.iTunes:RELEASEDATE`);
+/// 2. in an MP4 tag, `©day`, which Navidrome takes as the release date;
+/// 3. a Vorbis `YEAR`;
+/// 4. the recording date (`DATE`, `TDRC`) when the file also has an
+///    original date and the recording date is not earlier: taggers such as
+///    Picard write the edition's release date there.
+///
+/// Verified against the Navidrome 0.62.0 recordings under
+/// `tests/reference/compat/navidrome-0.62.0/` (an M4A's `©day` comes back
+/// as the album's release date, a FLAC `DATE` or an ID3 `TDRC` alone does
+/// not) and its source at tag v0.62.0 (github.com/navidrome/navidrome):
+/// `resources/mappings.yaml` for the `releasedate` aliases, `mapDates` in
+/// `model/metadata/map_mediafile.go` for step 4, and `ToAlbum` in
+/// `model/mediafile.go`, where an album keeps the value only when every
+/// track has the same one. Item keys per lofty 0.25.4's table in
+/// `tag/item.rs`: `©day` is `RecordingDate`, Vorbis `YEAR` is `Year`.
+fn release_date(tag_type: TagType, values_of: &impl Fn(ItemKey) -> Vec<String>) -> Option<String> {
+    let date_of = |key: ItemKey| values_of(key).first().and_then(|value| date_text(value));
+    let only_in = |kind: TagType, key: ItemKey| (tag_type == kind).then(|| date_of(key)).flatten();
+    date_of(ItemKey::ReleaseDate)
+        .or_else(|| only_in(TagType::Mp4Ilst, ItemKey::RecordingDate))
+        .or_else(|| only_in(TagType::VorbisComments, ItemKey::Year))
+        .or_else(|| {
+            let original = date_of(ItemKey::OriginalReleaseDate)?;
+            date_of(ItemKey::RecordingDate).filter(|recorded| *recorded >= original)
+        })
+}
+
+/// `YYYY`, `YYYY-MM` or `YYYY-MM-DD` from the start of a date tag, any time
+/// part dropped. `None` when it does not start with a four-digit year.
+fn date_text(value: &str) -> Option<String> {
+    let digits = |part: &&str| part.bytes().all(|byte| byte.is_ascii_digit());
+    let value = value.trim();
+    let mut out = value.get(..4).filter(digits)?.to_owned();
+    let mut rest = &value[4..];
+    for _ in 0..2 {
+        let Some(part) = rest
+            .strip_prefix('-')
+            .and_then(|after| after.get(..2))
+            .filter(digits)
+        else {
+            break;
+        };
+        out.push('-');
+        out.push_str(part);
+        rest = &rest[3..];
+    }
+    Some(out)
+}
+
 /// ReplayGain float with v2's `dB`-suffix tolerance and peak clamping.
 fn gain(values: &[String], positive: bool) -> Option<f64> {
     let text = values.first()?;
@@ -407,7 +486,7 @@ fn ape_tag_from_items(items: &[(String, Vec<String>)]) -> AudioTag {
     }
     // APE maps "Track"/"Disc" to both the number and the total keys; the
     // mapper reads the number side.
-    audio_tag_from_values(|key| {
+    audio_tag_from_values(TagType::Ape, |key| {
         mapped
             .iter()
             .filter(|(mapped_key, _)| *mapped_key == key)
