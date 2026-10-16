@@ -5,7 +5,7 @@
 // there says how to run this.
 //
 //   plant <reference dir> <tmp dir>      copy the fixture tracks into <tmp dir>/music
-//   navidrome <reference dir> --image-id <id> [--port 14533]
+//   navidrome <reference dir> --image-id <id> [--port 14533] [--set arpeggi]
 //   jellyfin <reference dir> --image-id <id> [--port 18096]
 //   check <reference dir>                verify the checksums and the scrubbing
 //   clean <tmp dir>                      remove the planted tracks
@@ -25,6 +25,8 @@ const SERVERS = {
 	navidrome: { image: 'deluan/navidrome:0.62.0', version: '0.62.0', port: 14533 },
 	jellyfin: { image: 'jellyfin/jellyfin:10.10.6', version: '10.10.6', port: 18096 }
 };
+// Request sets recorded on their own, each into `<server>-<version>-<set>`.
+const SETS = { navidrome: ['arpeggi'] };
 const USER = 'reference';
 const CLIENT = 'dn-ref';
 const UNKNOWN_HEX_ID = 'ffffffffffffffffffffffffffffffff';
@@ -406,9 +408,11 @@ function prepare(server, refDir, args) {
 		stop('--image-id sha256:... is required (from docker container inspect)');
 	const port = Number(args.port ?? pinned.port);
 	if (!Number.isInteger(port) || port < 1024 || port > 65535) stop('bad --port');
+	const set = args.set;
+	if (set !== undefined && !(SETS[server] ?? []).includes(set)) stop(`unknown --set ${set}`);
 	const library = loadLibrary(refDir);
 	const folder = path.join(path.resolve(refDir), `${server}-${pinned.version}`);
-	const folders = [folder, `${folder}-writes`];
+	const folders = set ? [`${folder}-${set}`] : [folder, `${folder}-writes`];
 	for (const dir of folders)
 		if (fs.existsSync(dir)) stop(`${dir} exists: a capture is never replaced`);
 	const capture = (reported) => ({
@@ -421,7 +425,7 @@ function prepare(server, refDir, args) {
 		library: '../library.json',
 		library_sha256: library.sha256
 	});
-	return { pinned, library, folders, capture, recorder: new Recorder(server, port) };
+	return { pinned, library, folders, set, capture, recorder: new Recorder(server, port) };
 }
 
 function resolveByName(recorder, kind, wanted, found) {
@@ -631,8 +635,35 @@ function navidromeWrites() {
 	];
 }
 
+// Arpeggi's artist browsing. Its library sync is the search3 below, copied
+// from a request log in Arpeggi-App issue #6. It sends the folder id that
+// getMusicFolders lists, which against gonic, numbering from 0, was 0
+// (issue #153).
+function navidromeArpeggi() {
+	const sync = [
+		['artistCount', '500'],
+		['artistOffset', '0'],
+		['albumCount', '0'],
+		['albumOffset', '0'],
+		['songCount', '0'],
+		['songOffset', '0']
+	];
+	return [
+		rest('getMusicFolders', 'getMusicFolders'),
+		rest('search3.artist-sync', 'search3', [...sync, ['musicFolderId', '1']]),
+		rest('getArtists.folder-1', 'getArtists', [['musicFolderId', '1']]),
+		rest('getIndexes.if-modified-since', 'getIndexes', [
+			['musicFolderId', '1'],
+			['ifModifiedSince', '1760000000000']
+		]),
+		rest('getArtist.no-mbid', 'getArtist', [['id', '{artist.yuki}']]),
+		rest('getArtists.folder-0', 'getArtists', [['musicFolderId', '0']]),
+		rest('search3.folder-0', 'search3', [...sync, ['musicFolderId', '0']])
+	];
+}
+
 async function navidrome(refDir, args) {
-	const { pinned, library, folders, capture, recorder } = prepare('navidrome', refDir, args);
+	const { pinned, library, folders, set, capture, recorder } = prepare('navidrome', refDir, args);
 	const { scrub, refs } = recorder;
 
 	const page = await recorder.firstRead({ path: '/app/' });
@@ -686,9 +717,13 @@ async function navidrome(refDir, args) {
 	);
 
 	recorder.into(folders[0]);
-	await recorder.recordAll(navidromeReads());
-	recorder.into(folders[1]);
-	await recorder.recordAll(navidromeWrites());
+	if (set === 'arpeggi') {
+		await recorder.recordAll(navidromeArpeggi());
+	} else {
+		await recorder.recordAll(navidromeReads());
+		recorder.into(folders[1]);
+		await recorder.recordAll(navidromeWrites());
+	}
 	recorder.write(capture(version));
 }
 

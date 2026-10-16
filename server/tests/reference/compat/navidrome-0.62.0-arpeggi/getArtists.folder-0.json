@@ -1,0 +1,21 @@
+{
+  "request": "GET /rest/getArtists?u=reference&p=***&v=1.16.1&c=dn-ref&f=json&musicFolderId=0",
+  "status": 200,
+  "headers": {
+    "content-length": "194",
+    "content-type": "application/json"
+  },
+  "body": {
+    "subsonic-response": {
+      "status": "failed",
+      "version": "1.16.1",
+      "type": "navidrome",
+      "serverVersion": "0.62.0 (1b46b977)",
+      "openSubsonic": true,
+      "error": {
+        "code": 70,
+        "message": "Library not found or empty"
+      }
+    }
+  }
+}

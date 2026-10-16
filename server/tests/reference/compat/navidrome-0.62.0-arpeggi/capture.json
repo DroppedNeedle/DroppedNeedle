@@ -1,0 +1,10 @@
+{
+  "server": "navidrome",
+  "image": "deluan/navidrome:0.62.0",
+  "image_id": "sha256:c4b5cb36a790b3eb63ca6a68bbe2fe149c2d7fa2e586f7a480e61db630e6664b",
+  "reported_version": "0.62.0 (1b46b977)",
+  "recorded": "2026-10-16",
+  "recorder": "server/scripts/compat-reference.mjs",
+  "library": "../library.json",
+  "library_sha256": "f539ea2975b53338e3246d1b3a9db0a943fb89fcdac8f578af5c754c459eb567"
+}

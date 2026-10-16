@@ -4,6 +4,7 @@
 //! Symfonium (Subsonic) and Finamp (Jellyfin) each run browse, stream,
 //! favorite, playlist and scrobble; Jellify fetches `Latest` and plays the
 //! stream URL with no auth headers, the token in its `api_key` query.
+//! Arpeggi syncs its artist list and opens one artist.
 //! Every step lands in a `library_*` golden under `tests/fixtures/compat/`.
 //! `COMPAT_BLESS=1` rewrites them, never in CI: review the diff before
 //! committing.
@@ -250,6 +251,80 @@ async fn jellify_latest_then_headerless_play() {
     trace.get(&universal, &[]).await;
 
     assert_golden("library_jellify.trace.json", &trace.body());
+    rig.stop().await;
+}
+
+/// Arpeggi's artist browsing, as recorded from Navidrome 0.62.0 in
+/// `navidrome-0.62.0-arpeggi`. Its library sync is a search3 with no query
+/// (Arpeggi-App issue #6), and it may ask getIndexes with its own clock time.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn arpeggi_syncs_artists_then_opens_one() {
+    let rig = CompatApp::start("compat-arpeggi").await;
+    let mut trace = Trace::new(&rig);
+    let auth = rig.subsonic_auth("Arpeggi");
+
+    trace.get(&rest("ping", &auth), &[]).await;
+    trace.get(&rest("getMusicFolders", &auth), &[]).await;
+    let sync = "search3?artistCount=500&artistOffset=0&albumCount=0&albumOffset=0\
+                &songCount=0&songOffset=0&musicFolderId=1";
+    let synced = trace.get(&rest(sync, &auth), &[]).await;
+    let synced = &synced["subsonic-response"]["searchResult3"]["artist"];
+    let artists = trace
+        .get(&rest("getArtists?musicFolderId=1", &auth), &[])
+        .await;
+    let indexed = artists["subsonic-response"]["artists"]["index"]
+        .as_array()
+        .expect("artist index");
+    let listed: Vec<&Value> = synced
+        .as_array()
+        .expect("synced artists")
+        .iter()
+        .chain(indexed.iter().flat_map(|index| {
+            index["artist"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+        }))
+        .collect();
+    assert!(!listed.is_empty(), "{artists}");
+    for artist in listed {
+        assert!(artist["musicBrainzId"].is_string(), "{artist}");
+    }
+
+    let indexes = trace
+        .get(
+            &rest(
+                "getIndexes?musicFolderId=1&ifModifiedSince=1760000000000",
+                &auth,
+            ),
+            &[],
+        )
+        .await;
+    let index = &indexes["subsonic-response"]["indexes"]["index"];
+    assert!(
+        index.as_array().is_some_and(|index| !index.is_empty()),
+        "a clock time gets the full index: {indexes}"
+    );
+
+    let yuki = named(synced, "name", "ユキ")["id"]
+        .as_str()
+        .expect("artist id")
+        .to_owned();
+    let artist = trace
+        .get(&rest(&format!("getArtist?id={yuki}"), &auth), &[])
+        .await;
+    let albums = artist["subsonic-response"]["artist"]["album"]
+        .as_array()
+        .expect("albums");
+    assert!(!albums.is_empty(), "{artist}");
+    for album in albums {
+        for key in ["created", "displayArtist", "artists"] {
+            assert!(album.get(key).is_some(), "{key} missing: {album}");
+        }
+        assert_eq!(album["musicBrainzId"], json!(""), "{album}");
+    }
+
+    assert_golden("library_arpeggi.trace.json", &trace.body());
     rig.stop().await;
 }
 

@@ -1,0 +1,393 @@
+{
+  "steps": [
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "serverVersion": "10.10.6",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/ping?u=alice&p=***&v=1.16.1&c=Arpeggi&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "musicFolders": {
+            "musicFolder": [
+              {
+                "id": 1,
+                "name": "DroppedNeedle"
+              }
+            ]
+          },
+          "openSubsonic": true,
+          "serverVersion": "10.10.6",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getMusicFolders?u=alice&p=***&v=1.16.1&c=Arpeggi&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "openSubsonic": true,
+          "searchResult3": {
+            "album": [],
+            "artist": [
+              {
+                "albumCount": 1,
+                "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-1>&sig=***&size=500",
+                "coverArt": "ar-<id-1>",
+                "id": "ar-<id-1>",
+                "musicBrainzId": "",
+                "name": "Massive Attack",
+                "roles": [
+                  "albumartist",
+                  "artist",
+                  "maincredit"
+                ],
+                "sortName": "Massive Attack"
+              },
+              {
+                "albumCount": 1,
+                "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-2>&sig=***&size=500",
+                "coverArt": "ar-<id-2>",
+                "id": "ar-<id-2>",
+                "musicBrainzId": "",
+                "name": "Radiohead",
+                "roles": [
+                  "albumartist",
+                  "artist",
+                  "maincredit"
+                ],
+                "sortName": "Radiohead"
+              },
+              {
+                "albumCount": 1,
+                "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-3>&sig=***&size=500",
+                "coverArt": "ar-<id-3>",
+                "id": "ar-<id-3>",
+                "musicBrainzId": "",
+                "name": "U2",
+                "roles": [
+                  "albumartist",
+                  "artist",
+                  "maincredit"
+                ],
+                "sortName": "U2"
+              },
+              {
+                "albumCount": 1,
+                "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-4>&sig=***&size=500",
+                "coverArt": "ar-<id-4>",
+                "id": "ar-<id-4>",
+                "musicBrainzId": "",
+                "name": "Various Artists",
+                "roles": [
+                  "albumartist",
+                  "maincredit"
+                ],
+                "sortName": "Various Artists"
+              },
+              {
+                "albumCount": 1,
+                "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-5>&sig=***&size=500",
+                "coverArt": "ar-<id-5>",
+                "id": "ar-<id-5>",
+                "musicBrainzId": "",
+                "name": "ユキ",
+                "roles": [
+                  "albumartist",
+                  "artist",
+                  "maincredit"
+                ],
+                "sortName": "ユキ"
+              }
+            ],
+            "song": []
+          },
+          "serverVersion": "10.10.6",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/search3?artistCount=500&artistOffset=0&albumCount=0&albumOffset=0&songCount=0&songOffset=0&musicFolderId=1&u=alice&p=***&v=1.16.1&c=Arpeggi&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "artists": {
+            "ignoredArticles": "The El La Los Las Le Les",
+            "index": [
+              {
+                "artist": [
+                  {
+                    "albumCount": 1,
+                    "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-1>&sig=***&size=500",
+                    "coverArt": "ar-<id-1>",
+                    "id": "ar-<id-1>",
+                    "musicBrainzId": "",
+                    "name": "Massive Attack",
+                    "roles": [
+                      "albumartist",
+                      "artist",
+                      "maincredit"
+                    ],
+                    "sortName": "Massive Attack"
+                  }
+                ],
+                "name": "M"
+              },
+              {
+                "artist": [
+                  {
+                    "albumCount": 1,
+                    "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-2>&sig=***&size=500",
+                    "coverArt": "ar-<id-2>",
+                    "id": "ar-<id-2>",
+                    "musicBrainzId": "",
+                    "name": "Radiohead",
+                    "roles": [
+                      "albumartist",
+                      "artist",
+                      "maincredit"
+                    ],
+                    "sortName": "Radiohead"
+                  }
+                ],
+                "name": "R"
+              },
+              {
+                "artist": [
+                  {
+                    "albumCount": 1,
+                    "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-3>&sig=***&size=500",
+                    "coverArt": "ar-<id-3>",
+                    "id": "ar-<id-3>",
+                    "musicBrainzId": "",
+                    "name": "U2",
+                    "roles": [
+                      "albumartist",
+                      "artist",
+                      "maincredit"
+                    ],
+                    "sortName": "U2"
+                  }
+                ],
+                "name": "U"
+              },
+              {
+                "artist": [
+                  {
+                    "albumCount": 1,
+                    "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-4>&sig=***&size=500",
+                    "coverArt": "ar-<id-4>",
+                    "id": "ar-<id-4>",
+                    "musicBrainzId": "",
+                    "name": "Various Artists",
+                    "roles": [
+                      "albumartist",
+                      "maincredit"
+                    ],
+                    "sortName": "Various Artists"
+                  }
+                ],
+                "name": "V"
+              },
+              {
+                "artist": [
+                  {
+                    "albumCount": 1,
+                    "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-5>&sig=***&size=500",
+                    "coverArt": "ar-<id-5>",
+                    "id": "ar-<id-5>",
+                    "musicBrainzId": "",
+                    "name": "ユキ",
+                    "roles": [
+                      "albumartist",
+                      "artist",
+                      "maincredit"
+                    ],
+                    "sortName": "ユキ"
+                  }
+                ],
+                "name": "ユ"
+              }
+            ],
+            "lastModified": 2
+          },
+          "openSubsonic": true,
+          "serverVersion": "10.10.6",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getArtists?musicFolderId=1&u=alice&p=***&v=1.16.1&c=Arpeggi&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "indexes": {
+            "ignoredArticles": "The El La Los Las Le Les",
+            "index": [
+              {
+                "artist": [
+                  {
+                    "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-1>&sig=***&size=500",
+                    "coverArt": "ar-<id-1>",
+                    "id": "ar-<id-1>",
+                    "name": "Massive Attack"
+                  }
+                ],
+                "name": "M"
+              },
+              {
+                "artist": [
+                  {
+                    "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-2>&sig=***&size=500",
+                    "coverArt": "ar-<id-2>",
+                    "id": "ar-<id-2>",
+                    "name": "Radiohead"
+                  }
+                ],
+                "name": "R"
+              },
+              {
+                "artist": [
+                  {
+                    "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-3>&sig=***&size=500",
+                    "coverArt": "ar-<id-3>",
+                    "id": "ar-<id-3>",
+                    "name": "U2"
+                  }
+                ],
+                "name": "U"
+              },
+              {
+                "artist": [
+                  {
+                    "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-4>&sig=***&size=500",
+                    "coverArt": "ar-<id-4>",
+                    "id": "ar-<id-4>",
+                    "name": "Various Artists"
+                  }
+                ],
+                "name": "V"
+              },
+              {
+                "artist": [
+                  {
+                    "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-5>&sig=***&size=500",
+                    "coverArt": "ar-<id-5>",
+                    "id": "ar-<id-5>",
+                    "name": "ユキ"
+                  }
+                ],
+                "name": "ユ"
+              }
+            ],
+            "lastModified": 2
+          },
+          "openSubsonic": true,
+          "serverVersion": "10.10.6",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getIndexes?musicFolderId=1&ifModifiedSince=1760000000000&u=alice&p=***&v=1.16.1&c=Arpeggi&f=json",
+      "status": 200
+    },
+    {
+      "body": {
+        "subsonic-response": {
+          "artist": {
+            "album": [
+              {
+                "artist": "ユキ",
+                "artistId": "ar-<id-5>",
+                "artists": [
+                  {
+                    "id": "ar-<id-5>",
+                    "name": "ユキ"
+                  }
+                ],
+                "coverArt": "al-<id-6>",
+                "created": "0000-00-00T00:00:00Z",
+                "discTitles": [],
+                "displayArtist": "ユキ",
+                "duration": 0,
+                "explicitStatus": "",
+                "genres": [],
+                "id": "al-<id-6>",
+                "isCompilation": false,
+                "moods": [],
+                "musicBrainzId": "",
+                "name": "望厚",
+                "originalReleaseDate": {},
+                "recordLabels": [],
+                "releaseDate": {},
+                "releaseTypes": [
+                  "album"
+                ],
+                "songCount": 1,
+                "sortName": "望厚",
+                "userRating": 0,
+                "version": "",
+                "year": 2015
+              }
+            ],
+            "albumCount": 1,
+            "artistImageUrl": "http://test.local/subsonic/img?id=ar-<id-5>&sig=***&size=500",
+            "coverArt": "ar-<id-5>",
+            "id": "ar-<id-5>",
+            "musicBrainzId": "",
+            "name": "ユキ",
+            "roles": [
+              "albumartist",
+              "artist",
+              "maincredit"
+            ],
+            "sortName": "ユキ"
+          },
+          "openSubsonic": true,
+          "serverVersion": "10.10.6",
+          "status": "ok",
+          "type": "DroppedNeedle",
+          "version": "1.16.1"
+        }
+      },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "request": "GET /subsonic/rest/getArtist?id=ar-<id-5>&u=alice&p=***&v=1.16.1&c=Arpeggi&f=json",
+      "status": 200
+    }
+  ]
+}

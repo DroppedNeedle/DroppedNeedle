@@ -184,7 +184,9 @@ pub async fn indexes<P: Principal, S: Store, B: AudioBackend>(
         .await
         .map_err(Ctx::<P, S, B>::store_err)?;
     let since = ctx.pint("ifModifiedSince", None, Some(0), None)?;
-    if since.is_some_and(|since| since >= revision) {
+    // lastModified is a change counter, not a time: only its echo means
+    // unchanged. A client's clock time (milliseconds) gets the full index.
+    if since == Some(revision) {
         return Ok(Outcome::keyed(
             "indexes",
             SIndexes {

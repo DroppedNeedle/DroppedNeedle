@@ -1,0 +1,64 @@
+{
+  "request": "GET /rest/getArtist?u=reference&p=***&v=1.16.1&c=dn-ref&f=json&id=0000000000000000000006",
+  "status": 200,
+  "headers": {
+    "content-length": "1088",
+    "content-type": "application/json"
+  },
+  "body": {
+    "subsonic-response": {
+      "status": "ok",
+      "version": "1.16.1",
+      "type": "navidrome",
+      "serverVersion": "0.62.0 (1b46b977)",
+      "openSubsonic": true,
+      "artist": {
+        "id": "0000000000000000000006",
+        "name": "ユキ",
+        "coverArt": "ar-0000000000000000000006_0",
+        "albumCount": 1,
+        "artistImageUrl": "http://reference.invalid/share/img/<token>?size=600",
+        "musicBrainzId": "",
+        "sortName": "ユキ",
+        "roles": [
+          "albumartist",
+          "artist",
+          "maincredit"
+        ],
+        "album": [
+          {
+            "id": "0000000000000000000017",
+            "name": "望厚",
+            "artist": "ユキ",
+            "artistId": "0000000000000000000006",
+            "coverArt": "al-0000000000000000000017_00000000",
+            "songCount": 1,
+            "duration": 0,
+            "created": "0000-00-00T00:00:00.000000000Z",
+            "year": 2015,
+            "userRating": 0,
+            "genres": [],
+            "musicBrainzId": "",
+            "isCompilation": false,
+            "sortName": "望厚",
+            "discTitles": [],
+            "originalReleaseDate": {},
+            "releaseDate": {},
+            "releaseTypes": [],
+            "recordLabels": [],
+            "moods": [],
+            "artists": [
+              {
+                "id": "0000000000000000000006",
+                "name": "ユキ"
+              }
+            ],
+            "displayArtist": "ユキ",
+            "explicitStatus": "",
+            "version": ""
+          }
+        ]
+      }
+    }
+  }
+}
