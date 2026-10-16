@@ -9,6 +9,7 @@
 	import { Activity, TriangleAlert } from 'lucide-svelte';
 	import { getSystemHealthQuery } from '$lib/queries/system/SystemHealthQuery.svelte';
 	import { toastStore } from '$lib/stores/toast';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import type { ServiceHealthItem } from '$lib/types';
 
 	const query = getSystemHealthQuery();
@@ -89,18 +90,16 @@
 
 {#if hasDegradation}
 	<div class="relative">
-		<button
-			class="btn btn-ghost btn-circle btn-md relative"
-			onclick={toggle}
-			aria-label="Service status: {degraded.length} degraded"
+		<IconButton
+			icon={Activity}
+			label="Service status: {degraded.length} degraded"
 			aria-expanded={open}
-			title="Some services are degraded"
-		>
-			<Activity class="h-5 w-5 text-warning" />
-			<span
-				class="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-warning ring-2 ring-base-100"
-			></span>
-		</button>
+			class="text-warning"
+			onclick={toggle}
+		/>
+		<span
+			class="pointer-events-none absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-warning ring-2 ring-base-100"
+		></span>
 
 		{#if open}
 			<!-- click-away scrim -->

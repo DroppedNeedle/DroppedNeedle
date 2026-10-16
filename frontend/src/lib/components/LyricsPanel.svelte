@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { X, Music2, LoaderCircle, CircleAlert } from 'lucide-svelte';
 	import { slide } from 'svelte/transition';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import type { LyricLine } from '$lib/types';
 
 	interface Props {
@@ -99,16 +100,15 @@
 						{/if}
 					</div>
 				</div>
-				<button
-					class="btn btn-ghost btn-sm btn-circle"
+				<IconButton
+					size="sm"
+					icon={X}
+					label="Close lyrics"
 					onclick={() => {
 						open = false;
 						onclose();
 					}}
-					aria-label="Close lyrics"
-				>
-					<X class="h-4 w-4" />
-				</button>
+				/>
 			</div>
 
 			<div

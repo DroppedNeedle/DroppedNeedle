@@ -2,6 +2,7 @@
 	import { browser } from '$app/environment';
 	import { onDestroy } from 'svelte';
 	import { List } from 'lucide-svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 
@@ -157,9 +158,7 @@
 		class:bottom-6={!playerStore.isPlayerVisible}
 	>
 		<details bind:this={mobileMenu} class="dropdown dropdown-top dropdown-start">
-			<summary class="btn btn-circle btn-primary shadow-lg" aria-label="Open section navigation">
-				<List class="h-5 w-5" />
-			</summary>
+			<IconButton as="summary" variant="primary" icon={List} label="Open section navigation" />
 			<div
 				class="dropdown-content z-[1] mb-2 w-52 rounded-box border border-base-content/10 bg-base-200/95 p-3 shadow-xl backdrop-blur-md"
 			>

@@ -1,22 +1,16 @@
 <script lang="ts">
 	import '../../app.css';
 	import { browser } from '$app/environment';
-	import { goto, beforeNavigate, afterNavigate } from '$app/navigation';
-	import { resolve } from '$app/paths';
-	import { withBasePath, withoutBasePath } from '$lib/utils/basePath';
-	import { getApiUrl } from '$lib/api/api-utils';
+	import { beforeNavigate, afterNavigate } from '$app/navigation';
+	import { withoutBasePath } from '$lib/utils/basePath';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { logout } from '$lib/utils/logout';
 	import { migratePageSourceKeys } from '$lib/stores/musicSource';
 	import { watchMusicBrainzSourceScope } from '$lib/queries/musicbrainz/sourceScope.svelte';
-	import { errorModal } from '$lib/stores/errorModal';
 	import { libraryStore } from '$lib/stores/library';
 	import { integrationStore } from '$lib/stores/integration';
 	import { initCacheTTLs } from '$lib/stores/cacheTtl.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
-	import { launchYouTubePlayback } from '$lib/player/launchYouTubePlayback';
 	import { playbackToast } from '$lib/stores/playbackToast.svelte';
-	import { toastStore } from '$lib/stores/toast';
 	import { scrobbleManager } from '$lib/stores/scrobble.svelte';
 	import { imageSettingsStore } from '$lib/stores/imageSettings';
 	import { serviceStatusStore } from '$lib/stores/serviceStatus';
@@ -37,13 +31,10 @@
 	import { batchDownloadStore } from '$lib/stores/batchDownloadStatus.svelte';
 	import BatchDownloadIndicator from '$lib/components/BatchDownloadIndicator.svelte';
 	import { syncStatus } from '$lib/stores/syncStatus.svelte';
-	import SidebarServices from '$lib/components/SidebarServices.svelte';
 	import DegradedBanner from '$lib/components/DegradedBanner.svelte';
-	import ServiceHealthIndicator from '$lib/components/ServiceHealthIndicator.svelte';
 	import VersionOverlays from '$lib/components/VersionOverlays.svelte';
-	import SearchSuggestions from '$lib/components/SearchSuggestions.svelte';
 	import Footer from '$lib/components/Footer.svelte';
-	import type { SuggestResult } from '$lib/types';
+	import Toaster from '$lib/ui/Toaster.svelte';
 	import { onMount, onDestroy, untrack } from 'svelte';
 	import { cancelPendingImages } from '$lib/utils/lazyImage';
 	import { abortAllPageRequests } from '$lib/utils/navigationAbort';
@@ -51,40 +42,20 @@
 	import { nowPlayingReporter } from '$lib/stores/nowPlayingReporter.svelte';
 	import { createNavigationProgressController } from '$lib/utils/navigationProgress';
 	import { fromStore } from 'svelte/store';
-	import {
-		Settings,
-		Search,
-		House,
-		Compass,
-		Menu,
-		Download,
-		Ellipsis,
-		PanelLeft,
-		TriangleAlert,
-		Info,
-		X,
-		Check,
-		UserRound,
-		Inbox,
-		ListMusic,
-		ListChecks,
-		CircleArrowUp,
-		LogOut,
-		ShieldCheck,
-		Heart,
-		LibraryBig,
-		Cog
-	} from 'lucide-svelte';
 	import type { Component, Snippet } from 'svelte';
-	import NewReleasesNavBadge from '$lib/components/NewReleasesNavBadge.svelte';
-	import ConcertsNavBadge from '$lib/components/ConcertsNavBadge.svelte';
 	import { createFollowingEvents } from '$lib/queries/following/FollowingEvents';
 	import { createLibraryActivityEvents } from '$lib/queries/library/LibraryActivityEvents';
 	import { createDownloadEvents } from '$lib/queries/downloads/DownloadEvents';
 	import { muxEventStream } from '$lib/queries/events/MuxEventStream';
 	import LibraryActivityStrip from '$lib/components/library/LibraryActivityStrip.svelte';
-	import DownloadsNavBadge from '$lib/components/DownloadsNavBadge.svelte';
-	import PendingApprovalNavBadge from '$lib/components/PendingApprovalNavBadge.svelte';
+	import TopBar from '$lib/components/shell/TopBar.svelte';
+	import SidebarNav from '$lib/components/shell/SidebarNav.svelte';
+	import BottomNav from '$lib/components/shell/BottomNav.svelte';
+	import MoreNavSheet from '$lib/components/shell/MoreNavSheet.svelte';
+	import SearchDialog from '$lib/components/shell/SearchDialog.svelte';
+	import ErrorDialog from '$lib/components/shell/ErrorDialog.svelte';
+	import PlaybackToast from '$lib/components/shell/PlaybackToast.svelte';
+	import { handlePlayerShortcut, restorePlayerSession } from '$lib/components/shell/playerSession';
 
 	migratePageSourceKeys();
 
@@ -95,18 +66,24 @@
 	const libraryActivityEvents = createLibraryActivityEvents();
 	const downloadEvents = createDownloadEvents();
 
-	let query = $state('');
 	let audioElement = $state<HTMLAudioElement | undefined>(undefined);
 	let PlaylistModal = $state<PlaylistModalComponent | null>(null);
 	let DiscographyModal = $state<Component | null>(null);
 	let playlistModalRef = $state<PlaylistModalHandle | undefined>(undefined);
-	let modalQuery = $state('');
 	let showNavigationProgress = $state(false);
 	let currentPath = $state('/');
 	let versionUpdateAvailable = $state(false);
+	let searchOpen = $state(false);
+	let moreOpen = $state(false);
 	// Settings runs as a fixed two-pane app surface: the tab rail and the content
 	// pane scroll, the document itself must not.
 	const isSettingsPane = $derived(currentPath.startsWith('/settings'));
+
+	const integrations = fromStore(integrationStore);
+	const viewer = $derived({
+		isAdmin: authStore.isAdmin,
+		downloadClient: integrations.current.download_client || !integrations.current.loaded
+	});
 
 	const NAV_PROGRESS_DELAY_MS = 120;
 	const NAV_PROGRESS_MIN_VISIBLE_MS = 220;
@@ -168,7 +145,7 @@
 		if (browser) {
 			currentPath = withoutBasePath(window.location.pathname);
 		}
-		document.addEventListener('keydown', handleGlobalKeydown);
+		document.addEventListener('keydown', handlePlayerShortcut);
 	});
 
 	$effect(() => {
@@ -290,7 +267,7 @@
 		cleanupResumeListeners?.();
 		cleanupResumeListeners = null;
 		if (browser) {
-			document.removeEventListener('keydown', handleGlobalKeydown);
+			document.removeEventListener('keydown', handlePlayerShortcut);
 		}
 		syncStatus.disconnect();
 		muxEventStream.disconnect();
@@ -298,126 +275,11 @@
 		discographyDownloadStore.close();
 		batchDownloadStore.clear();
 	});
-
-	function handleGlobalKeydown(e: KeyboardEvent): void {
-		const tag = (e.target as HTMLElement)?.tagName;
-		if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-		if (!playerStore.isPlayerVisible) return;
-
-		switch (e.key) {
-			case ' ':
-				e.preventDefault();
-				playerStore.togglePlay();
-				break;
-			case 'ArrowRight':
-				e.preventDefault();
-				playerStore.seekTo(Math.min(playerStore.progress + 10, playerStore.duration));
-				break;
-			case 'ArrowLeft':
-				e.preventDefault();
-				playerStore.seekTo(Math.max(playerStore.progress - 10, 0));
-				break;
-			case 'ArrowUp':
-				e.preventDefault();
-				playerStore.setVolume(playerStore.volume + 5);
-				break;
-			case 'ArrowDown':
-				e.preventDefault();
-				playerStore.setVolume(playerStore.volume - 5);
-				break;
-		}
-	}
-
-	async function restorePlayerSession(): Promise<void> {
-		const session = playerStore.restoreSession();
-		if (!session) return;
-
-		try {
-			if (session.nowPlaying.sourceType === 'youtube') {
-				if (!session.nowPlaying.trackSourceId) return;
-				await launchYouTubePlayback({
-					albumId: session.nowPlaying.albumId,
-					albumName: session.nowPlaying.albumName,
-					artistName: session.nowPlaying.artistName,
-					coverUrl: session.nowPlaying.coverUrl,
-					videoId: session.nowPlaying.trackSourceId,
-					embedUrl: session.nowPlaying.embedUrl
-				});
-			} else {
-				playerStore.resumeSession();
-			}
-		} catch {
-			return;
-		}
-	}
-
-	function handleSearch() {
-		if (query.trim()) {
-			goto(withBasePath(`/search?q=${encodeURIComponent(query)}`));
-		}
-	}
-
-	function handleModalSearch() {
-		if (modalQuery.trim()) {
-			goto(withBasePath(`/search?q=${encodeURIComponent(modalQuery)}`));
-			const modal = document.getElementById('search_modal') as HTMLDialogElement;
-			if (modal) modal.close();
-			modalQuery = '';
-		}
-	}
-
-	function handleSuggestionSelect(result: SuggestResult) {
-		const routeId = result.type === 'artist' ? '/artist/[id]' : '/album/[id]';
-		goto(resolve(routeId, { id: result.musicbrainz_id }));
-	}
-
-	function handleModalSuggestionSelect(result: SuggestResult) {
-		(document.getElementById('search_modal') as HTMLDialogElement)?.close();
-		const routeId = result.type === 'artist' ? '/artist/[id]' : '/album/[id]';
-		goto(resolve(routeId, { id: result.musicbrainz_id }));
-	}
-
-	function isNavActive(path: string): boolean {
-		return currentPath === path || currentPath.startsWith(`${path}/`);
-	}
-
-	function isLibraryNavActive(): boolean {
-		return (
-			isNavActive('/library') &&
-			!isNavActive('/library/management') &&
-			!isNavActive('/library/review')
-		);
-	}
-	function openMoreNav(): void {
-		(document.getElementById('more_nav_sheet') as HTMLDialogElement | null)?.showModal();
-	}
-
-	function closeMoreNav(): void {
-		(document.getElementById('more_nav_sheet') as HTMLDialogElement | null)?.close();
-	}
-
-	// The bottom bar only fits the primary destinations; everything else lives in
-	// the More sheet, so the More tab highlights for any of those paths (#182).
-	function isMoreNavActive(): boolean {
-		return (
-			isNavActive('/downloads') ||
-			isNavActive('/following') ||
-			isNavActive('/playlists') ||
-			isNavActive('/requests') ||
-			isNavActive('/library/management') ||
-			isNavActive('/library/review')
-		);
-	}
-
-	const integrations = fromStore(integrationStore);
-	const downloadClientConfigured = $derived(
-		integrations.current.download_client || !integrations.current.loaded
-	);
 </script>
 
 {#if showNavigationProgress}
 	<div class="fixed top-0 left-0 right-0 z-120 pointer-events-none">
-		<progress class="progress progress-primary w-full h-1"></progress>
+		<progress class="progress progress-primary w-full h-1" aria-label="Loading page"></progress>
 	</div>
 {/if}
 
@@ -425,63 +287,13 @@
 <VersionOverlays bind:updateAvailable={versionUpdateAvailable} />
 
 <div class="drawer md:drawer-open">
-	<input id="main-drawer" type="checkbox" class="drawer-toggle" />
+	<input id="main-drawer" type="checkbox" class="drawer-toggle" aria-label="Expand sidebar" />
 
 	<div
 		class="drawer-content flex min-w-0 flex-col isolate"
 		class:droppedneedle-pane-mode={isSettingsPane}
 	>
-		<div
-			class="droppedneedle-topbar navbar bg-base-100/95 backdrop-blur shadow-sm sticky top-0 z-50"
-		>
-			<div class="navbar-start w-auto">
-				<a
-					href={withBasePath('/')}
-					class="btn btn-ghost px-2 max-xs:hidden sm:px-4"
-					aria-label="Home"
-				>
-					<img
-						src={withBasePath('/logo_wide.png')}
-						alt="DroppedNeedle"
-						class="h-8 hidden sm:block"
-					/>
-					<img
-						src={withBasePath('/logo_icon.png')}
-						alt="DroppedNeedle"
-						class="h-8 block sm:hidden"
-					/>
-				</a>
-			</div>
-			<div class="navbar-center min-w-0 grow justify-center px-1 sm:px-4">
-				<div class="w-full max-w-2xl">
-					<SearchSuggestions
-						bind:query
-						onSearch={handleSearch}
-						onSelect={handleSuggestionSelect}
-						id="navbar-suggest"
-					/>
-				</div>
-			</div>
-			<div class="navbar-end w-auto pr-1 sm:pr-2">
-				<ServiceHealthIndicator />
-				<a
-					href={withBasePath('/profile')}
-					class="btn btn-ghost btn-circle btn-md"
-					aria-label="Profile"
-				>
-					{#if authStore.user?.avatar_url}
-						<img
-							src={getApiUrl(authStore.user.avatar_url)}
-							alt="Profile"
-							class="h-7 w-7 rounded-full object-cover"
-						/>
-					{:else}
-						<UserRound class="h-6 w-6" />
-					{/if}
-				</a>
-			</div>
-		</div>
-
+		<TopBar />
 		<LibraryActivityStrip />
 
 		<div
@@ -493,555 +305,31 @@
 		</div>
 	</div>
 
-	<div class="drawer-side hidden md:block is-drawer-close:overflow-visible">
-		<label for="main-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
-		<div
-			class="is-drawer-close:w-16 is-drawer-open:w-64 bg-base-200 flex flex-col items-start min-h-full max-h-dvh overflow-y-auto overflow-x-hidden"
-		>
-			<ul class="menu w-full grow p-2 [&_li>*]:py-3">
-				<li>
-					<button
-						onclick={() =>
-							(document.getElementById('search_modal') as HTMLDialogElement)?.showModal()}
-						class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
-						data-tip="Search"
-					>
-						<Search class="h-6 w-6" />
-						<span class="is-drawer-close:hidden">Search</span>
-					</button>
-				</li>
-
-				<div class="divider my-0"></div>
-
-				<li>
-					<a
-						href={withBasePath('/')}
-						class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
-						data-tip="Home"
-					>
-						<House class="h-6 w-6" />
-						<span class="is-drawer-close:hidden">Home</span>
-					</a>
-				</li>
-
-				<li>
-					<a
-						href={withBasePath('/discover')}
-						class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
-						data-tip="Discover"
-					>
-						<Compass class="h-6 w-6" />
-						<span class="is-drawer-close:hidden">Discover</span>
-					</a>
-				</li>
-
-				<li>
-					<a
-						href={withBasePath('/library')}
-						class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
-						class:menu-active={isLibraryNavActive()}
-						aria-current={isLibraryNavActive() ? 'page' : undefined}
-						data-tip="Library"
-					>
-						<div class="relative">
-							<Menu class="h-6 w-6" />
-							{#if syncStatus.isActive}
-								<span
-									class="absolute -top-1 -right-1 badge badge-primary badge-xs w-2.5 h-2.5 p-0 animate-pulse"
-									aria-label="Library sync in progress"
-								></span>
-							{/if}
-						</div>
-						<span class="is-drawer-close:hidden">Library</span>
-					</a>
-				</li>
-
-				<li>
-					<a
-						href={withBasePath('/downloads')}
-						class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
-						data-tip="Downloads"
-					>
-						<div class="relative">
-							<Download class="h-6 w-6" />
-							<DownloadsNavBadge />
-						</div>
-						<span class="is-drawer-close:hidden">Downloads</span>
-					</a>
-				</li>
-
-				<li>
-					<a
-						href={withBasePath('/following')}
-						class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
-						class:menu-active={isNavActive('/following')}
-						aria-current={isNavActive('/following') ? 'page' : undefined}
-						data-tip="Following"
-					>
-						<div class="relative">
-							<Heart class="h-6 w-6" />
-							<!-- overlapping badge pair (U8): releases left, concerts right -->
-							<ConcertsNavBadge />
-							<NewReleasesNavBadge />
-						</div>
-						<span class="is-drawer-close:hidden">Following</span>
-					</a>
-				</li>
-
-				{#if downloadClientConfigured}
-					<li>
-						<a
-							href={withBasePath('/playlists')}
-							class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
-							class:menu-active={isNavActive('/playlists')}
-							aria-current={isNavActive('/playlists') ? 'page' : undefined}
-							data-tip="Playlists"
-						>
-							<ListMusic class="h-6 w-6" />
-							<span class="is-drawer-close:hidden">Playlists</span>
-						</a>
-					</li>
-				{/if}
-
-				<SidebarServices />
-
-				{#if downloadClientConfigured}
-					<div class="divider my-0"></div>
-				{/if}
-
-				{#if downloadClientConfigured}
-					<li>
-						<a
-							href={withBasePath('/requests')}
-							class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
-							data-tip="Requests"
-						>
-							<Inbox class="h-6 w-6" />
-							<span class="is-drawer-close:hidden">Requests</span>
-						</a>
-					</li>
-				{/if}
-
-				{#if authStore.isAdmin}
-					<div class="divider my-0"></div>
-					<li class="menu-title is-drawer-close:hidden px-3 pb-1 pt-2">
-						<span class="font-mono text-[0.65rem] uppercase tracking-[0.18em] text-base-content/40"
-							>Admin</span
-						>
-					</li>
-					<li>
-						<a
-							href={withBasePath('/library/management')}
-							class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
-							class:menu-active={isNavActive('/library/management')}
-							aria-current={isNavActive('/library/management') ? 'page' : undefined}
-							aria-label="Library Management"
-							data-tip="Library Management"
-						>
-							<div class="relative h-6 w-6">
-								<LibraryBig class="h-6 w-6" />
-								<span
-									class="absolute -bottom-1.5 -right-1.5 grid h-4 w-4 place-items-center rounded-full bg-base-200 text-library-manage"
-								>
-									<Cog class="h-3 w-3" />
-								</span>
-							</div>
-							<span class="is-drawer-close:hidden">Library Management</span>
-						</a>
-					</li>
-					<li>
-						<a
-							href={withBasePath('/requests?tab=approvals')}
-							class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
-							data-tip="Approvals"
-						>
-							<div class="relative">
-								<ShieldCheck class="h-6 w-6" />
-								<PendingApprovalNavBadge />
-							</div>
-							<span class="is-drawer-close:hidden">Approvals</span>
-						</a>
-					</li>
-					<li>
-						<a
-							href={withBasePath('/library/review')}
-							class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
-							class:menu-active={isNavActive('/library/review')}
-							aria-current={isNavActive('/library/review') ? 'page' : undefined}
-							aria-label="Review Queue"
-							data-tip="Review Queue"
-						>
-							<ListChecks class="h-6 w-6" />
-							<span class="is-drawer-close:hidden">Review Queue</span>
-						</a>
-					</li>
-				{/if}
-			</ul>
-			<div class="w-full p-2 flex flex-col gap-1" class:pb-24={playerStore.isPlayerVisible}>
-				{#if authStore.isAdmin}
-					<div
-						class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
-						data-tip={versionUpdateAvailable ? 'Settings - update available' : 'Settings'}
-					>
-						<a
-							href={versionUpdateAvailable
-								? withBasePath('/settings?tab=about')
-								: withBasePath('/settings')}
-							class="btn btn-ghost btn-circle relative"
-							aria-label={versionUpdateAvailable ? 'Settings - update available' : 'Settings'}
-						>
-							<Settings class="h-6 w-6" />
-							{#if versionUpdateAvailable}
-								<span
-									class="absolute -top-0.5 -right-0.5 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-accent text-accent-content shadow-sm shadow-accent/30"
-								>
-									<CircleArrowUp class="h-3 w-3" />
-								</span>
-							{/if}
-						</a>
-					</div>
-				{/if}
-				<div class="is-drawer-close:tooltip is-drawer-close:tooltip-right" data-tip="Log out">
-					<button
-						onclick={() => void logout()}
-						class="btn btn-ghost btn-circle"
-						aria-label="Log out"
-					>
-						<LogOut class="h-6 w-6" />
-					</button>
-				</div>
-				<div class="is-drawer-close:tooltip is-drawer-close:tooltip-right" data-tip="Open">
-					<label
-						for="main-drawer"
-						class="btn btn-ghost btn-circle drawer-button is-drawer-open:rotate-y-180"
-					>
-						<PanelLeft class="h-6 w-6" />
-					</label>
-				</div>
-			</div>
-		</div>
-	</div>
+	<SidebarNav
+		{currentPath}
+		{viewer}
+		updateAvailable={versionUpdateAvailable}
+		onsearch={() => (searchOpen = true)}
+	/>
 </div>
 
-<nav
-	class="droppedneedle-bottom-nav md:hidden"
-	class:droppedneedle-bottom-nav--no-settings={!authStore.isAdmin}
-	aria-label="Primary navigation"
->
-	<a
-		href={withBasePath('/')}
-		class="droppedneedle-bottom-nav__item"
-		class:active={currentPath === '/'}
-		aria-current={currentPath === '/' ? 'page' : undefined}
-	>
-		<House />
-		<span>Home</span>
-	</a>
-	<a
-		href={withBasePath('/discover')}
-		class="droppedneedle-bottom-nav__item"
-		class:active={isNavActive('/discover')}
-		aria-current={isNavActive('/discover') ? 'page' : undefined}
-	>
-		<Compass />
-		<span>Discover</span>
-	</a>
-	<button
-		type="button"
-		class="droppedneedle-bottom-nav__item"
-		class:active={isNavActive('/search')}
-		onclick={() => (document.getElementById('search_modal') as HTMLDialogElement)?.showModal()}
-		aria-current={isNavActive('/search') ? 'page' : undefined}
-	>
-		<Search />
-		<span>Search</span>
-	</button>
-	<a
-		href={withBasePath('/library')}
-		class="droppedneedle-bottom-nav__item"
-		class:active={isLibraryNavActive()}
-		aria-current={isLibraryNavActive() ? 'page' : undefined}
-	>
-		<Menu />
-		<span>Library</span>
-		{#if syncStatus.isActive}
-			<span class="droppedneedle-bottom-nav__badge" aria-label="Library sync in progress"></span>
-		{/if}
-	</a>
-	{#if authStore.isAdmin}
-		<a
-			href={versionUpdateAvailable
-				? withBasePath('/settings?tab=about')
-				: withBasePath('/settings')}
-			class="droppedneedle-bottom-nav__item"
-			class:active={isNavActive('/settings')}
-			aria-current={isNavActive('/settings') ? 'page' : undefined}
-		>
-			<Settings />
-			<span>Settings</span>
-			{#if versionUpdateAvailable}
-				<span class="droppedneedle-bottom-nav__badge" aria-label="Update available">
-					<CircleArrowUp class="h-3 w-3" />
-				</span>
-			{/if}
-		</a>
-	{/if}
-	<button
-		type="button"
-		class="droppedneedle-bottom-nav__item"
-		class:active={isMoreNavActive()}
-		onclick={openMoreNav}
-		aria-label="More navigation options"
-		aria-haspopup="dialog"
-	>
-		<Ellipsis />
-		<span>More</span>
-	</button>
-</nav>
-
-<dialog id="more_nav_sheet" class="modal modal-bottom sm:modal-middle" aria-label="More navigation">
-	<div class="modal-box p-2">
-		<form method="dialog">
-			<button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" aria-label="Close"
-				><X class="h-4 w-4" /></button
-			>
-		</form>
-		<h3 class="font-bold text-lg px-2 pt-1 pb-2">More</h3>
-		<ul class="menu w-full">
-			<li>
-				<a
-					href={withBasePath('/downloads')}
-					class:menu-active={isNavActive('/downloads')}
-					aria-current={isNavActive('/downloads') ? 'page' : undefined}
-					onclick={closeMoreNav}
-				>
-					<Download class="h-6 w-6" />
-					Downloads
-				</a>
-			</li>
-			<li>
-				<a
-					href={withBasePath('/following')}
-					class:menu-active={isNavActive('/following')}
-					aria-current={isNavActive('/following') ? 'page' : undefined}
-					onclick={closeMoreNav}
-				>
-					<Heart class="h-6 w-6" />
-					Following
-				</a>
-			</li>
-			{#if downloadClientConfigured}
-				<li>
-					<a
-						href={withBasePath('/playlists')}
-						class:menu-active={isNavActive('/playlists')}
-						aria-current={isNavActive('/playlists') ? 'page' : undefined}
-						onclick={closeMoreNav}
-					>
-						<ListMusic class="h-6 w-6" />
-						Playlists
-					</a>
-				</li>
-				<li>
-					<a
-						href={withBasePath('/requests')}
-						class:menu-active={isNavActive('/requests')}
-						aria-current={isNavActive('/requests') ? 'page' : undefined}
-						onclick={closeMoreNav}
-					>
-						<Inbox class="h-6 w-6" />
-						Requests
-					</a>
-				</li>
-			{/if}
-			{#if authStore.isAdmin}
-				<li>
-					<a
-						href={withBasePath('/library/management')}
-						class:menu-active={isNavActive('/library/management')}
-						aria-current={isNavActive('/library/management') ? 'page' : undefined}
-						aria-label="Library Management"
-						onclick={closeMoreNav}
-					>
-						<span class="relative inline-flex h-6 w-6">
-							<LibraryBig class="h-6 w-6" />
-							<span
-								class="absolute -bottom-1.5 -right-1.5 grid h-4 w-4 place-items-center rounded-full bg-base-200 text-library-manage"
-							>
-								<Cog class="h-3 w-3" />
-							</span>
-						</span>
-						Library Management
-					</a>
-				</li>
-				<li>
-					<a
-						href={withBasePath('/requests?tab=approvals')}
-						class:menu-active={isNavActive('/requests')}
-						aria-current={isNavActive('/requests') ? 'page' : undefined}
-						onclick={closeMoreNav}
-					>
-						<span class="relative inline-flex">
-							<ShieldCheck class="h-6 w-6" />
-							<PendingApprovalNavBadge />
-						</span>
-						Approvals
-					</a>
-				</li>
-				<li>
-					<a
-						href={withBasePath('/library/review')}
-						class:menu-active={isNavActive('/library/review')}
-						aria-current={isNavActive('/library/review') ? 'page' : undefined}
-						aria-label="Review Queue"
-						onclick={closeMoreNav}
-					>
-						<ListChecks class="h-6 w-6" />
-						Review Queue
-					</a>
-				</li>
-			{/if}
-		</ul>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Close more navigation">close</button>
-	</form>
-</dialog>
-
-<dialog id="search_modal" class="modal">
-	<div class="modal-box overflow-visible">
-		<form method="dialog">
-			<button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" aria-label="Close"
-				><X class="h-4 w-4" /></button
-			>
-		</form>
-		<h3 class="font-bold text-lg mb-4">Search</h3>
-		<SearchSuggestions
-			bind:query={modalQuery}
-			onSearch={handleModalSearch}
-			onSelect={handleModalSuggestionSelect}
-			placeholder="Search albums or artists..."
-			autofocus={true}
-			id="modal-suggest"
-		/>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Close modal">close</button>
-	</form>
-</dialog>
-
-{#if $errorModal.show}
-	<dialog class="modal modal-open">
-		<div class="modal-box bg-base-200 border border-base-300 shadow-xl max-w-md">
-			<button
-				class="btn btn-sm btn-circle btn-ghost absolute right-3 top-3 opacity-60 hover:opacity-100"
-				onclick={() => errorModal.hide()}
-				aria-label="Close"
-			>
-				<X class="h-4 w-4" />
-			</button>
-
-			<div class="flex flex-col items-center text-center pt-2 pb-1">
-				<div class="bg-error/10 rounded-full p-3 mb-4">
-					<TriangleAlert class="h-8 w-8 text-error" />
-				</div>
-
-				<h3 class="text-lg font-bold text-base-content mb-2">
-					{$errorModal.title}
-				</h3>
-
-				<p class="text-sm text-base-content/70 leading-relaxed">
-					{$errorModal.message}
-				</p>
-			</div>
-
-			{#if $errorModal.details}
-				<div class="mt-4 rounded-box bg-base-300/60 border border-base-300 p-4">
-					<div class="flex gap-3 items-start">
-						<Info class="h-5 w-5 text-info shrink-0 mt-0.5" />
-						<p class="text-sm text-base-content/80 leading-relaxed text-left">
-							{$errorModal.details}
-						</p>
-					</div>
-				</div>
-			{/if}
-
-			<div class="modal-action justify-center mt-5">
-				<button class="btn btn-accent btn-sm px-6" onclick={() => errorModal.hide()}>
-					Dismiss
-				</button>
-			</div>
-		</div>
-		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-		<!-- svelte-ignore a11y_click_events_have_key_events -->
-		<form method="dialog" class="modal-backdrop" onclick={() => errorModal.hide()}>
-			<button>close</button>
-		</form>
-	</dialog>
-{/if}
-
-{#if playbackToast.visible}
-	<div
-		class="droppedneedle-playback-toast fixed z-50 left-1/2 -translate-x-1/2 transition-all duration-300"
-		class:droppedneedle-playback-toast--player={playerStore.isPlayerVisible}
-	>
-		<div
-			class="alert {playbackToast.type === 'error'
-				? 'alert-error'
-				: playbackToast.type === 'warning'
-					? 'alert-warning'
-					: 'alert-info'} shadow-lg px-4 py-2 min-w-64 max-w-md"
-		>
-			{#if playbackToast.type === 'error'}
-				<X class="h-5 w-5 shrink-0" />
-			{:else if playbackToast.type === 'warning'}
-				<TriangleAlert class="h-5 w-5 shrink-0" />
-			{:else}
-				<Info class="h-5 w-5 shrink-0" />
-			{/if}
-			<span class="text-sm">{playbackToast.message}</span>
-			<button
-				class="btn btn-ghost btn-xs btn-circle"
-				onclick={() => playbackToast.dismiss()}
-				aria-label="Dismiss"
-			>
-				<X class="h-3.5 w-3.5" />
-			</button>
-		</div>
-	</div>
-{/if}
-
-{#if $toastStore}
-	<div
-		class="droppedneedle-playback-toast fixed z-50 left-1/2 -translate-x-1/2"
-		class:droppedneedle-playback-toast--player={playerStore.isPlayerVisible}
-	>
-		<div
-			role="status"
-			class="alert {$toastStore.type === 'error'
-				? 'alert-error'
-				: $toastStore.type === 'success'
-					? 'alert-success'
-					: 'alert-info'} shadow-lg px-4 py-2 min-w-64 max-w-md"
-		>
-			{#if $toastStore.type === 'success'}
-				<Check class="h-5 w-5 shrink-0" />
-			{:else if $toastStore.type === 'error'}
-				<X class="h-5 w-5 shrink-0" />
-			{:else}
-				<Info class="h-5 w-5 shrink-0" />
-			{/if}
-			<span class="text-sm">{$toastStore.message}</span>
-			<button
-				class="btn btn-ghost btn-xs btn-circle"
-				onclick={() => toastStore.hide()}
-				aria-label="Dismiss"
-			>
-				<X class="h-3.5 w-3.5" />
-			</button>
-		</div>
-	</div>
-{/if}
+<BottomNav
+	{currentPath}
+	{viewer}
+	updateAvailable={versionUpdateAvailable}
+	onsearch={() => (searchOpen = true)}
+	onmore={() => (moreOpen = true)}
+/>
+<MoreNavSheet
+	bind:open={moreOpen}
+	{currentPath}
+	{viewer}
+	updateAvailable={versionUpdateAvailable}
+/>
+<SearchDialog bind:open={searchOpen} />
+<ErrorDialog />
+<PlaybackToast />
+<Toaster abovePlayer={playerStore.isPlayerVisible} />
 
 {#if browser}
 	<audio bind:this={audioElement}></audio>

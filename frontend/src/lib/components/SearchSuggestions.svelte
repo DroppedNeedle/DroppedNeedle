@@ -1,6 +1,9 @@
 <script lang="ts">
-	import { coverSrc } from '$lib/api/covers';
-	import { Disc3, Search } from 'lucide-svelte';
+	import { Search } from 'lucide-svelte';
+	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import ArtistImage from '$lib/components/ArtistImage.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Input from '$lib/ui/Input.svelte';
 	import type { SearchRemoteStatus, SuggestResult } from '$lib/types';
 	import { getSearchSuggestionsV3Query } from '$lib/queries/search/SearchV3Queries.svelte';
 	import { toSearchRemoteStatus, toSuggestResultsV1 } from '$lib/queries/search/SearchV3Adapters';
@@ -27,7 +30,6 @@
 
 	const listboxId = $derived(`${id}-listbox`);
 
-	let imageErrors = $state<Record<string, boolean>>({});
 	let showDropdown = $state(false);
 	let activeIndex = $state(-1);
 	let debounceTimeout: ReturnType<typeof setTimeout>;
@@ -63,10 +65,9 @@
 		activeIndex >= 0 && activeIndex < suggestions.length ? `${id}-option-${activeIndex}` : undefined
 	);
 
-	function coverUrl(result: SuggestResult): string {
-		return result.type === 'artist'
-			? coverSrc('artist', result.musicbrainz_id, 250)
-			: coverSrc('release-group', result.musicbrainz_id, 250);
+	// A local-only album uses its local id in place of a MusicBrainz id, so it has no cover to fetch.
+	function isLocalOnly(result: SuggestResult): boolean {
+		return Boolean(result.local_id && result.local_id === result.musicbrainz_id);
 	}
 
 	function handleInput() {
@@ -85,7 +86,6 @@
 		debounceTimeout = setTimeout(() => {
 			debouncedQuery = query.trim();
 			queryEnabled = true;
-			imageErrors = {};
 		}, 300);
 	}
 
@@ -191,16 +191,16 @@
 	onfocusout={handleFocusOut}
 >
 	<form onsubmit={handleSubmit}>
-		<label class="input input-bordered flex items-center gap-2 w-full {inputClass}">
-			<Search class="h-[1em] opacity-50" strokeWidth={2.5} />
-			<!-- svelte-ignore a11y_autofocus -->
-			<input
+		<div class="relative">
+			<Input
 				type="search"
+				label="Search"
+				icon={Search}
 				{placeholder}
 				bind:value={query}
 				oninput={handleInput}
 				onkeydown={handleKeydown}
-				class="grow"
+				class="w-full {inputClass}"
 				autocomplete="off"
 				aria-autocomplete="list"
 				aria-controls={listboxId}
@@ -208,9 +208,12 @@
 				{autofocus}
 			/>
 			{#if loading}
-				<span class="loading loading-spinner loading-sm"></span>
+				<span
+					class="loading loading-spinner loading-sm pointer-events-none absolute right-3 top-1/2 -translate-y-1/2"
+					aria-hidden="true"
+				></span>
 			{/if}
-		</label>
+		</div>
 	</form>
 
 	{#if showDropdown && (suggestions.length > 0 || loading || remoteStatus !== 'ok')}
@@ -234,22 +237,30 @@
 					}}
 					tabindex="-1"
 				>
-					<div class="avatar avatar-placeholder">
-						<div class="w-10 h-10 rounded bg-base-200 flex items-center justify-center">
-							{#if (result.local_id && result.local_id === result.musicbrainz_id) || imageErrors[result.musicbrainz_id]}
-								<Disc3 class="h-5 w-5 text-base-content/20" />
-							{:else}
-								<img
-									src={coverUrl(result)}
-									alt={result.title}
-									class="w-full h-full object-cover rounded"
-									onerror={() => {
-										imageErrors[result.musicbrainz_id] = true;
-									}}
-								/>
-							{/if}
-						</div>
-					</div>
+					{#if result.type === 'artist'}
+						<ArtistImage
+							mbid={result.musicbrainz_id}
+							alt={result.title}
+							size="full"
+							requestSize={250}
+							lazy={false}
+							rounded="sm"
+							available={!isLocalOnly(result)}
+							className="w-10 h-10"
+						/>
+					{:else}
+						<AlbumImage
+							mbid={result.musicbrainz_id}
+							alt={result.title}
+							size="full"
+							requestSize={250}
+							lazy={false}
+							rounded="sm"
+							available={!isLocalOnly(result)}
+							retryOnError={false}
+							className="w-10 h-10"
+						/>
+					{/if}
 					<div class="flex-1 min-w-0">
 						<div class="font-medium truncate">{result.title}</div>
 						<div class="text-sm opacity-70 truncate">
@@ -301,7 +312,7 @@
 							? 'Suggestions took too long.'
 							: 'Some suggestions are unavailable.'}
 					</span>
-					<button class="btn btn-xs" onclick={() => suggestQuery.refetch()}>Retry</button>
+					<Button size="xs" onclick={() => suggestQuery.refetch()}>Retry</Button>
 				</li>
 			{/if}
 		</ul>

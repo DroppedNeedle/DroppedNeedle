@@ -3,6 +3,8 @@
 	import { batchDownloadStore } from '$lib/stores/batchDownloadStatus.svelte';
 	import { libraryStore } from '$lib/stores/library';
 	import { playerStore } from '$lib/stores/player.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	let completedPerJob = $derived.by(() => {
 		const { mbidSet } = $libraryStore;
@@ -66,9 +68,7 @@
 				<ChevronUp class="h-3.5 w-3.5 opacity-50 shrink-0" />
 			</button>
 		{:else}
-			<div
-				class="bg-base-200 rounded-box shadow-xl border border-base-300 p-4 animate-slide-in-right"
-			>
+			<Card variant="bordered" padding="md" class="shadow-xl animate-slide-in-right">
 				<div class="flex items-center justify-between gap-2 mb-3">
 					<div class="flex items-center gap-2.5">
 						<div
@@ -85,22 +85,18 @@
 						</span>
 					</div>
 					<div class="flex items-center gap-0.5 shrink-0">
-						<button
-							class="btn btn-ghost btn-xs btn-circle opacity-50 hover:opacity-100"
+						<IconButton
+							size="xs"
+							icon={Minus}
+							label="Minimize"
 							onclick={() => batchDownloadStore.toggleMinimized()}
-							aria-label="Minimize"
-							title="Minimize"
-						>
-							<Minus class="h-3.5 w-3.5" />
-						</button>
-						<button
-							class="btn btn-ghost btn-xs btn-circle opacity-50 hover:opacity-100"
+						/>
+						<IconButton
+							size="xs"
+							icon={X}
+							label="Dismiss"
 							onclick={() => batchDownloadStore.clear()}
-							aria-label="Dismiss"
-							title="Dismiss"
-						>
-							<X class="h-3.5 w-3.5" />
-						</button>
+						/>
 					</div>
 				</div>
 
@@ -131,7 +127,7 @@
 						</div>
 					</div>
 				{/each}
-			</div>
+			</Card>
 		{/if}
 	</div>
 {/if}
