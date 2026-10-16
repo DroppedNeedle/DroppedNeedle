@@ -38,7 +38,8 @@ use super::watcher::WorkWakeups;
 /// verdict maps, commit rows); the allocator keeps the freed pages mapped,
 /// so post-scan idle RSS holds the whole peak without this release.
 fn release_scan_memory() {
-    #[cfg(target_family = "unix")]
+    // malloc_trim is glibc-only; other targets keep their pages.
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
     {
         // malloc_trim only releases fully-free top pages; retained live
         // blocks stay mapped, so this never moves live data.
