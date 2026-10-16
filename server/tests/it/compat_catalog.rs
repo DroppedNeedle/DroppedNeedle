@@ -17,10 +17,12 @@ use droppedneedle::compat::jellyfin::seams::{
 use droppedneedle::compat::subsonic::fake::{FakeAudio, FakeVerifier, NOW_UNIX, USER_ID};
 use droppedneedle::compat::subsonic::params::SubsonicParameters;
 use droppedneedle::compat::subsonic::{Request, Settings, dispatch};
-use droppedneedle::reads::ReadsSetup;
-use droppedneedle::reads::collections::db::CollectionsDb;
-use droppedneedle::reads::collections::models::{AddTracksBody, CreatePlaylistBody, TrackInput};
-use droppedneedle::reads::collections::service::CollectionsService;
+use droppedneedle_catalog::reads::ReadsSetup;
+use droppedneedle_catalog::reads::collections::db::CollectionsDb;
+use droppedneedle_catalog::reads::collections::models::{
+    AddTracksBody, CreatePlaylistBody, TrackInput,
+};
+use droppedneedle_catalog::reads::collections::service::CollectionsService;
 use droppedneedle_kernel::db::{DbRuntime, Lane};
 use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_kernel::runtime_config::Crypto;

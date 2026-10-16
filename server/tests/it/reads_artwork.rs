@@ -9,10 +9,10 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use droppedneedle::reads::platform::artwork::{
+use droppedneedle_catalog::reads::platform::artwork::{
     ArtworkService, cache::ArtworkCache, local::LocalArtwork, remote::cover_client,
 };
-use droppedneedle::reads::platform::covers::{self, CoversState};
+use droppedneedle_catalog::reads::platform::covers::{self, CoversState};
 use droppedneedle_kernel::db::{DbRuntime, Lane, OpError};
 use droppedneedle_library::scan::SqliteScanStore;
 use droppedneedle_providers::coverart::{CaaRequest, CaaTransport, RawResponse, TransportError};

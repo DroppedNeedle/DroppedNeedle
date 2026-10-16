@@ -11,8 +11,8 @@ use std::sync::Arc;
 use droppedneedle::acquire::requests::mix::{
     MixGrantHooks, MixSources, PersonalMixBuilder, SkipReason,
 };
-use droppedneedle::reads::collections::db::CollectionsDb;
-use droppedneedle::reads::collections::store::playlists::PlaylistStore;
+use droppedneedle_catalog::reads::collections::db::CollectionsDb;
+use droppedneedle_catalog::reads::collections::store::playlists::PlaylistStore;
 use droppedneedle_kernel::events::EventSink;
 use droppedneedle_plugins::scrobble::{
     MemoryScrobblePrefsStore, MixApprovalHook as _, MixStateReader as _, ScrobblePrefsPatch,

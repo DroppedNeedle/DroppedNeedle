@@ -2,7 +2,7 @@
 //! warming, and the wrapped API key gate (exact match, no trimming, no
 //! key material in rejections).
 
-use droppedneedle::reads::platform;
+use droppedneedle_catalog::reads::platform;
 
 use std::collections::HashMap;
 use std::sync::Arc;

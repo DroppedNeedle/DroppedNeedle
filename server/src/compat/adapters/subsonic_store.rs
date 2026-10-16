@@ -22,12 +22,12 @@ use crate::compat::subsonic::store::{
     Store, TranscodeDecisionData,
 };
 use crate::compat::subsonic::views::{ViewAlbum, ViewArtist, ViewGenre, ViewTrack};
-use crate::reads::collections::service::Visible;
-use crate::reads::library::player::{
+use droppedneedle_auth::users::UsersDeps;
+use droppedneedle_catalog::reads::collections::service::Visible;
+use droppedneedle_catalog::reads::library::player::{
     AlbumOrder, AlbumQuery, PlayerAlbum, PlayerTrack, TrackOrder, TrackQuery,
 };
-use crate::reads::library::stores::ArtistRecord;
-use droppedneedle_auth::users::UsersDeps;
+use droppedneedle_catalog::reads::library::stores::ArtistRecord;
 use droppedneedle_kernel::runtime_config::Crypto;
 use droppedneedle_library::scan::counter_names;
 use droppedneedle_library::scan::models::{ScanKind, ScanRequest, ScanTrigger};
@@ -183,7 +183,7 @@ impl SubsonicStore {
     }
 
     fn now() -> f64 {
-        crate::reads::collections::db::now_real()
+        droppedneedle_catalog::reads::collections::db::now_real()
     }
 
     async fn tracks_for_caller(

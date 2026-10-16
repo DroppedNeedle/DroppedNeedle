@@ -32,10 +32,10 @@ use super::imports::models::{LidarrConnectionSettings, SpotifySettings as Import
 use super::imports::spotify::SpotifySettingsStore;
 use super::requests::bridges::FollowDecisionSink;
 use super::requests::sqlite::FollowApprovalStore;
-use crate::reads::collections::state::{
+use droppedneedle_catalog::reads::collections::state::{
     ApprovalSeedSink, PendingApproval, PendingApprovalsSource, PendingBatch,
 };
-use crate::reads::collections::store::FollowStore as CollectionsFollowStore;
+use droppedneedle_catalog::reads::collections::store::FollowStore as CollectionsFollowStore;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     LidarrImportConnection, SpotifySettings,
 };

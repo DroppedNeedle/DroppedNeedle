@@ -88,7 +88,7 @@ pub fn hooked_state() -> AppState {
         settings,
         jobs,
         plugins,
-        droppedneedle::concerts::ConcertsSetup::unwired(),
+        droppedneedle_catalog::concerts::ConcertsSetup::unwired(),
     )
 }
 
@@ -139,7 +139,7 @@ pub fn hooked_state_with_compat(subsonic: bool, jellyfin: bool) -> AppState {
         settings,
         jobs,
         plugins,
-        droppedneedle::concerts::ConcertsSetup::unwired(),
+        droppedneedle_catalog::concerts::ConcertsSetup::unwired(),
     )
 }
 
@@ -189,7 +189,7 @@ pub fn prod_like_state() -> AppState {
         settings,
         jobs,
         plugins,
-        droppedneedle::concerts::ConcertsSetup::unwired(),
+        droppedneedle_catalog::concerts::ConcertsSetup::unwired(),
     )
 }
 
@@ -197,7 +197,7 @@ pub fn prod_like_state() -> AppState {
 fn test_acquire(
     auth: &droppedneedle_auth::wiring::AuthSetup,
     ids: Arc<dyn IdGenerator>,
-    reads: &mut droppedneedle::reads::ReadsSetup,
+    reads: &mut droppedneedle_catalog::reads::ReadsSetup,
 ) -> droppedneedle::acquire::AcquireSetup {
     droppedneedle::acquire::AcquireSetup::for_tests(auth.users.clone(), ids, &mut reads.collections)
         .expect("test acquire bundle builds")
@@ -216,8 +216,8 @@ fn test_media(
 fn test_reads(
     auth: &droppedneedle_auth::wiring::AuthSetup,
     ids: Arc<dyn IdGenerator>,
-) -> droppedneedle::reads::ReadsSetup {
-    droppedneedle::reads::ReadsSetup::for_tests(auth.users.clone(), ids)
+) -> droppedneedle_catalog::reads::ReadsSetup {
+    droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.users.clone(), ids)
         .expect("test reads bundle builds")
 }
 
@@ -322,9 +322,9 @@ pub fn reads_inputs(
     config: Arc<droppedneedle_kernel::runtime_config::ConfigStore>,
     dir: &Path,
     lane: droppedneedle_kernel::db::WriteLane,
-) -> droppedneedle::reads::ReadsInputs {
+) -> droppedneedle_catalog::reads::ReadsInputs {
     let http = test_http();
-    droppedneedle::reads::ReadsInputs {
+    droppedneedle_catalog::reads::ReadsInputs {
         config,
         lane,
         covers_dir: dir.join("covers"),
@@ -348,7 +348,7 @@ pub fn reads_inputs(
 }
 
 /// Every catalog upstream on a closed port.
-pub fn closed_endpoints() -> droppedneedle::reads::catalog::upstream::Endpoints {
+pub fn closed_endpoints() -> droppedneedle_catalog::reads::catalog::upstream::Endpoints {
     closed_outbound().catalog()
 }
 

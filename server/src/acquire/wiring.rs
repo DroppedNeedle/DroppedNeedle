@@ -70,11 +70,11 @@ use super::usenet::policy::{QualityTier, UsenetPolicy};
 use super::usenet::prowlarr::{ProwlarrClient, ProwlarrIndexer};
 use super::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
 use super::worker::{DownloadWorker, Source, SourceSet, WorkerConfig, run_startup_recovery};
-use crate::reads::collections::state::CollectionsState;
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_auth::users::roles::Role as AuthRole;
 use droppedneedle_auth::users::stores::StoreError;
+use droppedneedle_catalog::reads::collections::state::CollectionsState;
 use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::db::{DurableWorkWakeups, JobState, WriteLane};
 use droppedneedle_kernel::events::{EventSink, PlaylistImported, UserNotice, new_event_id};
@@ -553,9 +553,9 @@ fn core(
     collections.acquire_approvals = Some(Arc::new(RequestsPendingSource::new(
         requests.follows.clone(),
     ))
-        as Arc<dyn crate::reads::collections::state::PendingApprovalsSource>);
+        as Arc<dyn droppedneedle_catalog::reads::collections::state::PendingApprovalsSource>);
     collections.approval_seeds = Some(Arc::new(ApprovalSeedBridge::new(requests.follows.clone()))
-        as Arc<dyn crate::reads::collections::state::ApprovalSeedSink>);
+        as Arc<dyn droppedneedle_catalog::reads::collections::state::ApprovalSeedSink>);
     requests.plugins = plugins.clone();
     let ticks: Arc<dyn TickSink> = Arc::new(super::plugin_events::FlowTicks::new(plugins, events));
     let flows = Arc::new(flows_bundle(

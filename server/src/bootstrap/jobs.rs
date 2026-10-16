@@ -22,8 +22,8 @@ use std::time::Duration;
 
 use axum::Router;
 
-use crate::concerts::ConcertsSweep;
 use droppedneedle_auth::users::{UsersDeps, roles::Role};
+use droppedneedle_catalog::concerts::ConcertsSweep;
 use droppedneedle_kernel::db::{CheckpointService, DurableWorkWakeups, WriteLane};
 use droppedneedle_kernel::jobs::cache_sync::CacheSyncStatus;
 use droppedneedle_kernel::jobs::checkpoint::{self, CheckpointRunner};
@@ -358,12 +358,12 @@ impl JobsSetup {
     /// both are wired; otherwise runs stay unwired and fail with a reason.
     pub fn with_precache_sources_from(
         self,
-        reads: &crate::reads::ReadsSetup,
+        reads: &droppedneedle_catalog::reads::ReadsSetup,
         config: &Arc<ConfigStore>,
     ) -> Self {
         match (&reads.catalog, &reads.artwork) {
             (Some(catalog), Some(artwork)) => self.with_precache_sources(Arc::new(
-                crate::reads::catalog::precache::CatalogPrecache::new(
+                droppedneedle_catalog::reads::catalog::precache::CatalogPrecache::new(
                     catalog.catalog.clone(),
                     artwork.clone(),
                     Arc::clone(config),

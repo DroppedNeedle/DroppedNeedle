@@ -575,6 +575,7 @@ dependencies = [
  "chacha20poly1305",
  "droppedneedle",
  "droppedneedle-auth",
+ "droppedneedle-catalog",
  "droppedneedle-kernel",
  "droppedneedle-library",
  "droppedneedle-media",
@@ -638,6 +639,35 @@ dependencies = [
  "time",
  "tokio",
  "tower-http",
+ "tracing",
+ "utoipa",
+ "uuid",
+]
+
+[[package]]
+name = "droppedneedle-catalog"
+version = "3.0.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "droppedneedle-auth",
+ "droppedneedle-kernel",
+ "droppedneedle-library",
+ "droppedneedle-media",
+ "droppedneedle-plugins",
+ "droppedneedle-providers",
+ "futures-util",
+ "image",
+ "md5",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror",
+ "time",
+ "tokio",
  "tracing",
  "utoipa",
  "uuid",

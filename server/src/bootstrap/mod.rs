@@ -32,17 +32,6 @@ use crate::{
     compat::{
         CompatSetup, settings::LiveSettings, setup::CompatDeps, shared::address::ListenerConfig,
     },
-    reads::{
-        ReadsInputs, ReadsSetup,
-        catalog::{
-            Catalog,
-            library::LocalCatalog,
-            plugin_sources::{PluginDetailsSource, PluginPurchaseLinks},
-            upstream::{Upstream, instance_lastfm_key},
-        },
-        collections::{db::CollectionsDb, remote_import::PlaylistImportSink},
-        enrichment::{library::LiveEnrichment, live::production_enrichment},
-    },
     settings::{
         effects::{LiveSaveEffects, SaveEffects},
         library_catalog::SqliteLibraryPolicyCatalog,
@@ -54,6 +43,17 @@ use crate::{
 };
 use droppedneedle_auth::{
     federated::MediaLinks, prod::ProdAuth, users::stores::SystemClock, wiring::AuthSetup,
+};
+use droppedneedle_catalog::reads::{
+    ReadsInputs, ReadsSetup,
+    catalog::{
+        Catalog,
+        library::LocalCatalog,
+        plugin_sources::{PluginDetailsSource, PluginPurchaseLinks},
+        upstream::{Upstream, instance_lastfm_key},
+    },
+    collections::{db::CollectionsDb, remote_import::PlaylistImportSink},
+    enrichment::{library::LiveEnrichment, live::production_enrichment},
 };
 use droppedneedle_kernel::{
     config::AppConfig,
@@ -240,26 +240,29 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     let providers = Arc::new(Providers::new(provider_cache.clone()));
     // Read per call so turning ListenBrainz on or off takes effect at once.
     let listenbrainz_store = config_store.clone();
-    let listenbrainz_enabled: crate::reads::enrichment::live::Switch = Arc::new(move || {
-        listenbrainz_store
+    let listenbrainz_enabled: droppedneedle_catalog::reads::enrichment::live::Switch = Arc::new(
+        move || {
+            listenbrainz_store
             .get_raw::<ListenBrainzConnection>()
             .map(|settings| settings.enabled)
             .unwrap_or_else(|error| {
                 tracing::warn!(%error, "cannot read listenbrainz settings; popularity enrichment off");
                 false
             })
-    });
+        },
+    );
     // Read per call so turning lyrics on or off takes effect at once.
     let lyrics_store = config_store.clone();
-    let lyrics_enabled: crate::reads::enrichment::live::Switch = Arc::new(move || {
-        lyrics_store
-            .get::<LyricsSettings>()
-            .map(|settings| settings.enabled)
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "cannot read lyrics settings; lyrics enrichment off");
-                false
-            })
-    });
+    let lyrics_enabled: droppedneedle_catalog::reads::enrichment::live::Switch =
+        Arc::new(move || {
+            lyrics_store
+                .get::<LyricsSettings>()
+                .map(|settings| settings.enabled)
+                .unwrap_or_else(|error| {
+                    tracing::warn!(%error, "cannot read lyrics settings; lyrics enrichment off");
+                    false
+                })
+        });
     let enrichment = production_enrichment(
         http.shared(),
         &providers,
@@ -317,7 +320,9 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         let outbound = outbound.clone();
         Arc::new(move || {
             outbound.musicbrainz_source(
-                &crate::reads::catalog::upstream::CatalogSettings::musicbrainz(settings.as_ref()),
+                &droppedneedle_catalog::reads::catalog::upstream::CatalogSettings::musicbrainz(
+                    settings.as_ref(),
+                ),
             )
         })
     };
@@ -486,7 +491,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         Ok(loaded) => tracing::info!(loaded, "quota overrides reloaded"),
         Err(error) => tracing::warn!(%error, "quota overrides failed to reload; defaults apply"),
     }
-    let concerts = crate::concerts::ConcertsSetup::from_runtime(
+    let concerts = droppedneedle_catalog::concerts::ConcertsSetup::from_runtime(
         &runtime,
         &http,
         &config_store,
@@ -539,9 +544,11 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     )
     .with_mixer(mix_hooks.clone())
     .with_precache_sources_from(&reads, &config_store)
-    .with_discovery_demand(Arc::new(crate::reads::discover::demand::ContentDemand(
-        reads.discover.content.clone(),
-    )));
+    .with_discovery_demand(Arc::new(
+        droppedneedle_catalog::reads::discover::demand::ContentDemand(
+            reads.discover.content.clone(),
+        ),
+    ));
     // Library Management plans genres, lyrics and covers through the same
     // clients and artwork cache the pages use, and AcoustID ids on
     // identification's shared rate limit.

@@ -146,8 +146,8 @@ impl Outbound {
     }
 
     /// The addresses the catalog, discovery and cover reads use.
-    pub fn catalog(&self) -> crate::reads::catalog::upstream::Endpoints {
-        crate::reads::catalog::upstream::Endpoints {
+    pub fn catalog(&self) -> droppedneedle_catalog::reads::catalog::upstream::Endpoints {
+        droppedneedle_catalog::reads::catalog::upstream::Endpoints {
             listenbrainz: self.listenbrainz.clone(),
             lastfm: self.lastfm.clone(),
             audiodb: self.audiodb.clone(),
@@ -166,8 +166,8 @@ impl Outbound {
     }
 
     /// The addresses the events sources use.
-    pub fn concerts(&self) -> crate::concerts::Endpoints {
-        crate::concerts::Endpoints {
+    pub fn concerts(&self) -> droppedneedle_catalog::concerts::Endpoints {
+        droppedneedle_catalog::concerts::Endpoints {
             ticketmaster: self.ticketmaster.clone(),
             skiddle: self.skiddle.clone(),
             geocoding: self.geocoding.clone(),

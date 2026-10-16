@@ -12,28 +12,28 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use droppedneedle::reads::discover::adapters::content::LiveContent;
-use droppedneedle::reads::discover::adapters::page::sources::{
-    LastFmChartAlbum, PageSources, PlayedArtist, RankedAlbum, ScoredArtist, SourceContext,
-    WeeklyPlaylist,
-};
-use droppedneedle::reads::discover::adapters::page::store::PageDb;
-use droppedneedle::reads::discover::adapters::page::{LiveDiscover, PageInputs};
-use droppedneedle::reads::discover::adapters::queue::sources::{
-    AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmFacts, MusicSource,
-    QueueSources, ReleaseGroupFacts, SourceResult, StatsRange, UserMusic,
-};
-use droppedneedle::reads::discover::adapters::queue::store::QueueDb;
-use droppedneedle::reads::discover::fakes::{
-    FakeBatches, FakeCharts, FakeNowPlaying, FakePreviews, FakeQueues, FakeRadio, FakeYouTube,
-    ManualClock,
-};
-use droppedneedle::reads::discover::ports::{BoxFuture, SystemClock};
-use droppedneedle::reads::discover::services::ReadsDeps;
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::memory::with_test_principal;
+use droppedneedle_catalog::reads::discover::adapters::content::LiveContent;
+use droppedneedle_catalog::reads::discover::adapters::page::sources::{
+    LastFmChartAlbum, PageSources, PlayedArtist, RankedAlbum, ScoredArtist, SourceContext,
+    WeeklyPlaylist,
+};
+use droppedneedle_catalog::reads::discover::adapters::page::store::PageDb;
+use droppedneedle_catalog::reads::discover::adapters::page::{LiveDiscover, PageInputs};
+use droppedneedle_catalog::reads::discover::adapters::queue::sources::{
+    AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmFacts, MusicSource,
+    QueueSources, ReleaseGroupFacts, SourceResult, StatsRange, UserMusic,
+};
+use droppedneedle_catalog::reads::discover::adapters::queue::store::QueueDb;
+use droppedneedle_catalog::reads::discover::fakes::{
+    FakeBatches, FakeCharts, FakeNowPlaying, FakePreviews, FakeQueues, FakeRadio, FakeYouTube,
+    ManualClock,
+};
+use droppedneedle_catalog::reads::discover::ports::{BoxFuture, SystemClock};
+use droppedneedle_catalog::reads::discover::services::ReadsDeps;
 use droppedneedle_kernel::db::{DbRuntime, Lane};
 use droppedneedle_kernel::ids::UuidGenerator;
 use serde_json::{Value, json};
@@ -422,7 +422,7 @@ fn page_app(runtime: &DbRuntime, dir: &std::path::Path) -> Router {
     };
     let router = Router::new().nest(
         "/api/v3",
-        droppedneedle::reads::discover::reads_router(deps),
+        droppedneedle_catalog::reads::discover::reads_router(deps),
     );
     with_test_principal(
         router,

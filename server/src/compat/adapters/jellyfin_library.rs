@@ -24,10 +24,10 @@ use crate::compat::jellyfin::seams::{
     LibraryRead, PlaylistDetail, PlaylistEntry, PlaylistView, TrackFilter, TrackView, WriteRefusal,
 };
 use crate::compat::subsonic::views::{genre_slug, song_path};
-use crate::reads::library::player::{
+use droppedneedle_catalog::reads::library::player::{
     AlbumOrder, AlbumQuery, OrderKey, PlayerAlbum, PlayerTrack, TrackOrder, TrackQuery,
 };
-use crate::reads::library::stores::{ArtistRecord, ArtistScope as CatalogScope};
+use droppedneedle_catalog::reads::library::stores::{ArtistRecord, ArtistScope as CatalogScope};
 use droppedneedle_kernel::runtime_config::Crypto;
 
 /// Shortest gap between two catalog reads for the id map.

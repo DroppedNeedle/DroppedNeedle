@@ -33,7 +33,7 @@ use crate::acquire::requests::ledger::{RequestRecord, WATCH_WATCHING, WantedWatc
 use crate::acquire::requests::models::RequestKind;
 use crate::acquire::requests::sqlite::{RequestStore, WantedStore};
 use crate::acquire::search_jobs::store::JobStore;
-use crate::reads::catalog::mapping::{should_include_release, type_set};
+use droppedneedle_catalog::reads::catalog::mapping::{should_include_release, type_set};
 use droppedneedle_kernel::events::{AutoDownloadEnqueued, UserNotice, WantedNotice};
 use droppedneedle_kernel::runtime_config::sections::UserPreferences;
 

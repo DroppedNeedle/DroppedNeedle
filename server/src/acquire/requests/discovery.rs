@@ -10,9 +10,11 @@ use super::error::{QUOTA_EXCEEDED, RequestsError, STORAGE_FULL};
 use super::models::{BatchIntake, BatchItem, RequestKind};
 use super::service::RequestsService;
 use super::{RequestsState, ledger::STATUS_FAILED};
-use crate::reads::discover::adapters::batches::{BatchAlbum, BatchCaller, BatchRequests};
-use crate::reads::discover::ports::{BatchFailure, BatchRefusal, ProviderFailure};
 use droppedneedle_auth::users::roles::Role as UserRole;
+use droppedneedle_catalog::reads::discover::adapters::batches::{
+    BatchAlbum, BatchCaller, BatchRequests,
+};
+use droppedneedle_catalog::reads::discover::ports::{BatchFailure, BatchRefusal, ProviderFailure};
 use droppedneedle_library::mutations::{MutationError, Mutations};
 use droppedneedle_library::wiring::LibrarySetup;
 

@@ -3,7 +3,7 @@
 //! paging, suggest, enrichment that degrades inside a 200, the auth row
 //! and the fixed 500 on a database fault.
 
-use droppedneedle::reads::search;
+use droppedneedle_catalog::reads::search;
 
 use crate::common;
 

@@ -1209,12 +1209,12 @@ async fn spotify_sqlite_stores_persist_and_expire() {
     );
     assert_eq!(links.get("u1").await.expect("store reads"), None);
 
-    let collections = droppedneedle::reads::collections::db::CollectionsDb::new(
+    let collections = droppedneedle_catalog::reads::collections::db::CollectionsDb::new(
         db.pool().clone(),
         db.lane().clone(),
     );
     let bridge = CollectionsPlaylistBridge::new(
-        droppedneedle::reads::collections::store::PlaylistStore::new(collections),
+        droppedneedle_catalog::reads::collections::store::PlaylistStore::new(collections),
         db.clone(),
     );
     let id = bridge

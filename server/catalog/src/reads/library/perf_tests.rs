@@ -3243,7 +3243,7 @@ struct Pass {
 fn passes_file() -> PathBuf {
     std::env::var_os("READ_POOL_REPLAY_PASSES")
         .map(PathBuf::from)
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../read-pool-replay.tsv"))
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../read-pool-replay.tsv"))
 }
 
 /// Values are kept as their bits, so the verdict is worked from what was

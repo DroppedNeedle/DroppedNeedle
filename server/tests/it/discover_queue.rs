@@ -11,22 +11,22 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use droppedneedle::reads::discover::adapters::queue::sources::{
-    AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmFacts, MusicSource,
-    QueueSources, ReleaseGroupFacts, SourceResult, StatsRange, UserMusic,
-};
-use droppedneedle::reads::discover::adapters::queue::store::QueueDb;
-use droppedneedle::reads::discover::adapters::queue::{LiveQueue, QueueSettings};
-use droppedneedle::reads::discover::fakes::{
-    FakeBatches, FakeCharts, FakeContent, FakeNowPlaying, FakePreviews, FakeRadio, FakeYouTube,
-    ManualClock,
-};
-use droppedneedle::reads::discover::ports::{BoxFuture, SystemClock};
-use droppedneedle::reads::discover::services::ReadsDeps;
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::memory::with_test_principal;
+use droppedneedle_catalog::reads::discover::adapters::queue::sources::{
+    AlbumRow, ArtistFacts, ArtistRow, JellyfinList, LastFmAlbum, LastFmFacts, MusicSource,
+    QueueSources, ReleaseGroupFacts, SourceResult, StatsRange, UserMusic,
+};
+use droppedneedle_catalog::reads::discover::adapters::queue::store::QueueDb;
+use droppedneedle_catalog::reads::discover::adapters::queue::{LiveQueue, QueueSettings};
+use droppedneedle_catalog::reads::discover::fakes::{
+    FakeBatches, FakeCharts, FakeContent, FakeNowPlaying, FakePreviews, FakeRadio, FakeYouTube,
+    ManualClock,
+};
+use droppedneedle_catalog::reads::discover::ports::{BoxFuture, SystemClock};
+use droppedneedle_catalog::reads::discover::services::ReadsDeps;
 use droppedneedle_kernel::db::DbRuntime;
 use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_providers::Providers;
@@ -295,7 +295,7 @@ fn queue_app(runtime: &DbRuntime) -> Router {
     };
     let router = Router::new().nest(
         "/api/v3",
-        droppedneedle::reads::discover::reads_router(deps),
+        droppedneedle_catalog::reads::discover::reads_router(deps),
     );
     with_test_principal(
         router,

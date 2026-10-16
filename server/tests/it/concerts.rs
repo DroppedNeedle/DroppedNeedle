@@ -13,10 +13,10 @@ use axum::routing::get;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
-use droppedneedle::concerts::{ConcertsEvents, ConcertsNew, ConcertsSetup, Endpoints};
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::session::store::SessionKind;
+use droppedneedle_catalog::concerts::{ConcertsEvents, ConcertsNew, ConcertsSetup, Endpoints};
 use droppedneedle_kernel::db::Lane;
 use droppedneedle_kernel::runtime_config::secret_sections::EventsSettings;
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto, Secret};

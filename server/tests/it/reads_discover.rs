@@ -9,15 +9,15 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use droppedneedle::reads::discover::fakes::{
-    FakeBatches, FakeCharts, FakeContent, FakeNowPlaying, FakePreviews, FakeQueues, FakeRadio,
-    FakeYouTube, ManualClock,
-};
-use droppedneedle::reads::discover::services::ReadsDeps;
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::memory::with_test_principal;
+use droppedneedle_catalog::reads::discover::fakes::{
+    FakeBatches, FakeCharts, FakeContent, FakeNowPlaying, FakePreviews, FakeQueues, FakeRadio,
+    FakeYouTube, ManualClock,
+};
+use droppedneedle_catalog::reads::discover::services::ReadsDeps;
 use droppedneedle_kernel::ids::IdGenerator;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -51,11 +51,12 @@ fn rig_with_youtube(configured: bool) -> Rig {
     let clock = ManualClock::new(1_790_000_000);
     let content = Arc::new(FakeContent::new(clock.clone()));
     let charts = Arc::new(FakeCharts::new());
-    let youtube: Arc<dyn droppedneedle::reads::discover::ports::YouTubeSource> = if configured {
-        Arc::new(FakeYouTube::configured())
-    } else {
-        Arc::new(FakeYouTube::unconfigured())
-    };
+    let youtube: Arc<dyn droppedneedle_catalog::reads::discover::ports::YouTubeSource> =
+        if configured {
+            Arc::new(FakeYouTube::configured())
+        } else {
+            Arc::new(FakeYouTube::unconfigured())
+        };
     let deps = ReadsDeps {
         content: content.clone(),
         queues: Arc::new(FakeQueues),
@@ -88,7 +89,7 @@ fn principal(user_id: &str) -> CurrentSession {
 fn app(rig: &Rig, user: Option<&str>) -> Router {
     let router = Router::new().nest(
         "/api/v3",
-        droppedneedle::reads::discover::reads_router(rig.deps.clone()),
+        droppedneedle_catalog::reads::discover::reads_router(rig.deps.clone()),
     );
     match user {
         Some(id) => with_test_principal(router, principal(id)),
@@ -274,7 +275,7 @@ async fn now_playing_snapshot_keeps_redacted_rows() {
     let rig = rig();
     let router = Router::new().nest(
         "/api/v3",
-        droppedneedle::reads::discover::now_playing_router(rig.deps.clone()),
+        droppedneedle_catalog::reads::discover::now_playing_router(rig.deps.clone()),
     );
     let router = with_test_principal(router, principal("user-1"));
     let (status, body, _) = call(router, "GET", "/api/v3/now-playing", None).await;

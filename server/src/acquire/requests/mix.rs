@@ -25,10 +25,12 @@ use super::error::RequestsError;
 use super::models::AlbumIntake;
 use super::service::RequestsService;
 
-use crate::reads::catalog::library::LocalCatalog;
-use crate::reads::collections::store::playlists::{NewEntry, PlaylistStore, Written};
-use crate::reads::discover::adapters::queue::select::{self, Shuffler};
-use crate::reads::discover::models::QueueItemLight;
+use droppedneedle_catalog::reads::catalog::library::LocalCatalog;
+use droppedneedle_catalog::reads::collections::store::playlists::{
+    NewEntry, PlaylistStore, Written,
+};
+use droppedneedle_catalog::reads::discover::adapters::queue::select::{self, Shuffler};
+use droppedneedle_catalog::reads::discover::models::QueueItemLight;
 use droppedneedle_kernel::events::{
     EventSink, PersonalMixRefreshed, UserNotice, model::new_event_id,
 };
@@ -793,7 +795,7 @@ fn entry_for(track: &MixTrack) -> NewEntry {
     }
 }
 
-fn store_fault(error: crate::reads::collections::db::StoreError) -> RequestsError {
+fn store_fault(error: droppedneedle_catalog::reads::collections::db::StoreError) -> RequestsError {
     RequestsError::internal(&error)
 }
 

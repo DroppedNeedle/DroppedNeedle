@@ -168,8 +168,9 @@ fn new_task(id: &str, group: &str) -> NewTask {
 async fn finished_downloads_land_in_the_library_or_wait_for_review() {
     let auth = droppedneedle_auth::wiring::AuthSetup::for_tests().expect("test auth");
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
-    let mut reads = droppedneedle::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
-        .expect("reads bundle");
+    let mut reads =
+        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
+            .expect("reads bundle");
     let acquire = droppedneedle::acquire::AcquireSetup::for_tests(
         auth.users.clone(),
         ids.clone(),
@@ -455,8 +456,9 @@ fn files_under(dir: &Path, extension: &str) -> Vec<PathBuf> {
 async fn held_files_import_as_upgrades_or_discard() {
     let auth = droppedneedle_auth::wiring::AuthSetup::for_tests().expect("test auth");
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
-    let mut reads = droppedneedle::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
-        .expect("reads bundle");
+    let mut reads =
+        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
+            .expect("reads bundle");
     let acquire = droppedneedle::acquire::AcquireSetup::for_tests(
         auth.users.clone(),
         ids.clone(),
@@ -651,8 +653,9 @@ async fn held_files_import_as_upgrades_or_discard() {
 async fn bare_acquire() -> (droppedneedle::acquire::AcquireSetup, PathBuf) {
     let auth = droppedneedle_auth::wiring::AuthSetup::for_tests().expect("test auth");
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
-    let mut reads = droppedneedle::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
-        .expect("reads bundle");
+    let mut reads =
+        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
+            .expect("reads bundle");
     let acquire = droppedneedle::acquire::AcquireSetup::for_tests(
         auth.users.clone(),
         ids,
@@ -914,8 +917,9 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
 
     let auth = droppedneedle_auth::wiring::AuthSetup::for_tests().expect("test auth");
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
-    let mut reads = droppedneedle::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
-        .expect("reads bundle");
+    let mut reads =
+        droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
+            .expect("reads bundle");
     let acquire = droppedneedle::acquire::AcquireSetup::for_tests(
         auth.users.clone(),
         ids.clone(),

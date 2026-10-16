@@ -14,7 +14,7 @@ use super::{
     error::AdminError,
     models::{CacheClearBody, CacheClearResponse, CacheStatsResponse},
 };
-use crate::reads::platform::artwork::cache::ArtworkCache;
+use droppedneedle_catalog::reads::platform::artwork::cache::ArtworkCache;
 use droppedneedle_providers::{
     InMemoryProviderCache, ProviderCache, cache::PROVIDER_CACHE_PREFIXES, invalidate_source,
     prefixes_for,

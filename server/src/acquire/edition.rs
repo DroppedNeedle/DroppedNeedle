@@ -105,7 +105,7 @@ pub async fn library_holds(
     release_group_mbid: &str,
 ) -> Result<bool, sqlx::Error> {
     Ok(
-        crate::reads::catalog::library::LocalCatalog::new(pool.clone())
+        droppedneedle_catalog::reads::catalog::library::LocalCatalog::new(pool.clone())
             .album(release_group_mbid)
             .await?
             .is_some(),
@@ -118,7 +118,7 @@ pub async fn local_names(
     pool: &SqlitePool,
     release_group_mbid: &str,
 ) -> Result<Option<(String, String)>, sqlx::Error> {
-    let album = crate::reads::catalog::library::LocalCatalog::new(pool.clone())
+    let album = droppedneedle_catalog::reads::catalog::library::LocalCatalog::new(pool.clone())
         .album(release_group_mbid)
         .await?;
     Ok(album

@@ -19,12 +19,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode};
 use droppedneedle::docs::ApiDoc;
-use droppedneedle::reads::catalog::{
-    Catalog,
-    library::LocalCatalog,
-    upstream::{CatalogSettings, Upstream},
-};
-use droppedneedle::{AppState, create_app, reads::ReadsSetup};
+use droppedneedle::{AppState, create_app};
 use droppedneedle_auth::compat_auth::jellyfin::{authenticate_by_name, resolve_token};
 use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle_auth::compat_auth::subsonic::{
@@ -35,6 +30,12 @@ use droppedneedle_auth::session::cookies::COOKIE_NAME;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_auth::users::stores::SystemClock;
 use droppedneedle_auth::wiring::{AuthSetup, Upstreams};
+use droppedneedle_catalog::reads::ReadsSetup;
+use droppedneedle_catalog::reads::catalog::{
+    Catalog,
+    library::LocalCatalog,
+    upstream::{CatalogSettings, Upstream},
+};
 use droppedneedle_kernel::config::AppConfig;
 use droppedneedle_kernel::config::DEFAULT_PORT;
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, open_runtime};
@@ -187,7 +188,7 @@ impl E2e {
             self.runtime.pool(),
             auth.users.clone(),
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            droppedneedle::reads::ReadsInputs {
+            droppedneedle_catalog::reads::ReadsInputs {
                 // Unpaced: every provider sits on the discard port, so
                 // pacing would only add whole seconds of waiting to rows
                 // that are bound to answer "provider down" anyway.
@@ -200,10 +201,12 @@ impl E2e {
             },
             None,
         )
-        .with_collections(droppedneedle::reads::collections::db::CollectionsDb::new(
-            self.runtime.pool().clone(),
-            self.runtime.lane().clone(),
-        ))
+        .with_collections(
+            droppedneedle_catalog::reads::collections::db::CollectionsDb::new(
+                self.runtime.pool().clone(),
+                self.runtime.lane().clone(),
+            ),
+        )
         .with_catalog(Catalog::new(
             Upstream::new(
                 &self.http,
@@ -237,7 +240,7 @@ impl E2e {
             self.runtime.lane().clone(),
             Arc::clone(&self.store),
             Arc::new(
-                droppedneedle::reads::collections::remote_import::PlaylistImportSink::new(
+                droppedneedle_catalog::reads::collections::remote_import::PlaylistImportSink::new(
                     reads.collections.clone(),
                 ),
             ),
@@ -282,12 +285,12 @@ impl E2e {
         let jobs = droppedneedle::bootstrap::jobs::JobsSetup::for_tests(auth.users.clone());
         // Concerts over the scratch database; the sources point at the
         // discard port so no row can reach a real provider.
-        let concerts = droppedneedle::concerts::ConcertsSetup::new(
+        let concerts = droppedneedle_catalog::concerts::ConcertsSetup::new(
             self.runtime.pool().clone(),
             self.runtime.lane().clone(),
             self.http.shared().clone(),
             Arc::clone(&self.store),
-            droppedneedle::concerts::Endpoints {
+            droppedneedle_catalog::concerts::Endpoints {
                 ticketmaster: "http://127.0.0.1:9".to_owned(),
                 skiddle: "http://127.0.0.1:9".to_owned(),
                 geocoding: "http://127.0.0.1:9".to_owned(),

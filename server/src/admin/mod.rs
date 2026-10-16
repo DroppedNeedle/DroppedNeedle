@@ -93,7 +93,7 @@ pub struct AdminSetup {
     pub precache: Option<crate::bootstrap::jobs::PrecacheTrigger>,
     /// Cover and artist image cache, for its stats and clears. `None` on
     /// states without one.
-    pub covers: Option<crate::reads::platform::artwork::cache::ArtworkCache>,
+    pub covers: Option<droppedneedle_catalog::reads::platform::artwork::cache::ArtworkCache>,
 }
 
 impl AdminSetup {
@@ -150,7 +150,7 @@ impl AdminSetup {
     #[must_use]
     pub fn with_covers(
         mut self,
-        covers: crate::reads::platform::artwork::cache::ArtworkCache,
+        covers: droppedneedle_catalog::reads::platform::artwork::cache::ArtworkCache,
     ) -> Self {
         self.covers = Some(covers);
         self

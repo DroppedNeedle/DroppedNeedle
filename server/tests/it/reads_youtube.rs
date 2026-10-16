@@ -9,13 +9,13 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use droppedneedle::reads::collections::db::CollectionsDb;
-use droppedneedle::reads::discover::fakes::FakeYouTube;
-use droppedneedle::reads::youtube::{self, YouTubeLinks, store::LinkStore};
 use droppedneedle_auth::session::extract::Transport;
 use droppedneedle_auth::session::middleware::CurrentSession;
 use droppedneedle_auth::session::store::SessionKind;
 use droppedneedle_auth::users::memory::with_test_principal;
+use droppedneedle_catalog::reads::collections::db::CollectionsDb;
+use droppedneedle_catalog::reads::discover::fakes::FakeYouTube;
+use droppedneedle_catalog::reads::youtube::{self, YouTubeLinks, store::LinkStore};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 

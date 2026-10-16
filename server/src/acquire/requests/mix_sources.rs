@@ -165,7 +165,7 @@ pub fn live_builder(
     http: reqwest::Client,
     links: Arc<dyn ListenBrainzLinkStore>,
     prefs: Arc<dyn droppedneedle_plugins::scrobble::ScrobblePrefsStore>,
-    playlists: crate::reads::collections::store::playlists::PlaylistStore,
+    playlists: droppedneedle_catalog::reads::collections::store::playlists::PlaylistStore,
     events: droppedneedle_kernel::events::EventSink,
     listenbrainz: &str,
 ) -> Option<Arc<super::mix::PersonalMixBuilder>> {

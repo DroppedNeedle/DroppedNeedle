@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = [".", "auth", "kernel", "library", "media", "plugins", "providers", "testkit"]
+members = [".", "auth", "catalog", "kernel", "library", "media", "plugins", "providers", "testkit"]
 
 [workspace.package]
 version = "3.0.0"
@@ -10,6 +10,7 @@ license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
 droppedneedle-auth = { path = "auth", version = "3.0.0" }
+droppedneedle-catalog = { path = "catalog", version = "3.0.0" }
 droppedneedle-kernel = { path = "kernel", version = "3.0.0" }
 droppedneedle-library = { path = "library", version = "3.0.0" }
 droppedneedle-media = { path = "media", version = "3.0.0" }
@@ -75,6 +76,7 @@ license.workspace = true
 
 [dependencies]
 droppedneedle-auth.workspace = true
+droppedneedle-catalog.workspace = true
 droppedneedle-kernel.workspace = true
 droppedneedle-library.workspace = true
 droppedneedle-media.workspace = true
@@ -88,7 +90,6 @@ chacha20poly1305.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
 libc.workspace = true
-md5.workspace = true
 reqwest.workspace = true
 rusqlite.workspace = true
 serde.workspace = true
@@ -122,6 +123,7 @@ test-support = [
     "droppedneedle-library/test-support",
     "droppedneedle-plugins/test-support",
     "droppedneedle-media/test-support",
+    "droppedneedle-catalog/test-support",
 ]
 
 [dev-dependencies]
@@ -129,6 +131,7 @@ droppedneedle = { path = ".", features = ["test-support"] }
 droppedneedle-testkit = { path = "testkit", version = "0.1.0" }
 tokio = { version = "1", features = ["test-util"] }
 flate2.workspace = true
+md5.workspace = true
 lofty.workspace = true
 regex.workspace = true
 ring.workspace = true

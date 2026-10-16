@@ -3,7 +3,7 @@
 //! favorites adapters over a scratch migrated database.
 
 use crate::common::ScratchDir;
-use droppedneedle::reads::library;
+use droppedneedle_catalog::reads::library;
 
 use std::sync::Arc;
 

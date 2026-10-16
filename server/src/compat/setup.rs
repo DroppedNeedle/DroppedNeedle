@@ -26,9 +26,9 @@ use crate::compat::http::{CompatLimits, SubsonicState, cors_layer, limits_layer,
 use crate::compat::jellyfin::{JellyfinState, router as jellyfin_router};
 use crate::compat::settings::LiveSettings;
 use crate::compat::shared::address::ListenerConfig;
-use crate::reads::ReadsSetup;
 use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle_auth::users::UsersDeps;
+use droppedneedle_catalog::reads::ReadsSetup;
 use droppedneedle_kernel::runtime_config::Crypto;
 use droppedneedle_library::wiring::LibrarySetup;
 use droppedneedle_media::MediaEngine;

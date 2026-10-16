@@ -14,17 +14,17 @@ use axum::{
     middleware,
 };
 use droppedneedle::middleware::request_scope;
-use droppedneedle::reads::catalog::{
-    self, Catalog, CatalogDeps,
-    library::LocalCatalog,
-    upstream::{CatalogSettings, Endpoints, Upstream},
-};
-use droppedneedle::reads::search::{self, SearchDeps, service::SearchService};
 use droppedneedle_auth::session::middleware::{SessionAuth, require_session};
 use droppedneedle_auth::session::store::{MemorySessionStore, SessionRecord, SessionStore};
 use droppedneedle_auth::session::tokens::hash_token;
 use droppedneedle_auth::users::memory::TestRig;
 use droppedneedle_auth::users::models::LastFmConnection;
+use droppedneedle_catalog::reads::catalog::{
+    self, Catalog, CatalogDeps,
+    library::LocalCatalog,
+    upstream::{CatalogSettings, Endpoints, Upstream},
+};
+use droppedneedle_catalog::reads::search::{self, SearchDeps, service::SearchService};
 use droppedneedle_kernel::runtime_config::secret_sections::AdvancedSettings;
 use droppedneedle_kernel::runtime_config::sections::{
     MbSourceMode, MusicBrainzSettings, MusicSource, UserPreferences,

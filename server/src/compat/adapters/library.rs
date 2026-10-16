@@ -10,18 +10,20 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::reads::collections::service::{CollectionsService, LOCAL_SOURCE, Visible};
-use crate::reads::collections::store::playlists::NewEntry;
-use crate::reads::collections::{CollectionsState, error::CollectionsError};
-use crate::reads::library::player::{
+use droppedneedle_catalog::reads::collections::service::{
+    CollectionsService, LOCAL_SOURCE, Visible,
+};
+use droppedneedle_catalog::reads::collections::store::playlists::NewEntry;
+use droppedneedle_catalog::reads::collections::{CollectionsState, error::CollectionsError};
+use droppedneedle_catalog::reads::library::player::{
     AlbumOrder, AlbumQuery, PlayStat, PlayerAlbum, PlayerCatalog, PlayerTrack, ShuffleSeeds,
     TrackOrder, TrackQuery,
 };
-use crate::reads::library::stores::{
+use droppedneedle_catalog::reads::library::stores::{
     ArtistRecord, ArtistScope, ArtistSort, GenreRecord, LibraryCatalog, LyricDoc, LyricsPort,
     StoreError,
 };
-use crate::reads::platform::covers::{CoverArt, CoverLookup};
+use droppedneedle_catalog::reads::platform::covers::{CoverArt, CoverLookup};
 
 /// A compat read or write failed. Client faults keep their kind so each
 /// protocol answers its own code (Subsonic 70/50/10/0, Jellyfin
@@ -59,8 +61,8 @@ impl From<StoreError> for CompatError {
     }
 }
 
-impl From<crate::reads::collections::db::StoreError> for CompatError {
-    fn from(error: crate::reads::collections::db::StoreError) -> Self {
+impl From<droppedneedle_catalog::reads::collections::db::StoreError> for CompatError {
+    fn from(error: droppedneedle_catalog::reads::collections::db::StoreError) -> Self {
         Self::Internal(error.to_string())
     }
 }
@@ -190,8 +192,10 @@ pub fn whole(seconds: Option<f64>) -> Option<i64> {
 impl CompatLibrary {
     /// Everything compat reads, from the native reads bundle: the same
     /// catalog, collections, lyrics and cover art the web UI uses.
-    pub fn from_reads(reads: &crate::reads::ReadsSetup) -> Self {
-        use crate::reads::library::{player::SqlitePlayerCatalog, sqlite::LibraryDb};
+    pub fn from_reads(reads: &droppedneedle_catalog::reads::ReadsSetup) -> Self {
+        use droppedneedle_catalog::reads::library::{
+            player::SqlitePlayerCatalog, sqlite::LibraryDb,
+        };
 
         let player_db = reads
             .collections
@@ -437,7 +441,10 @@ impl CompatLibrary {
         .fetch_one(pool)
         .await
         .map_err(|error| {
-            crate::reads::collections::db::StoreError::read("compat.playable_counts", error)
+            droppedneedle_catalog::reads::collections::db::StoreError::read(
+                "compat.playable_counts",
+                error,
+            )
         })?;
         Ok(counts)
     }
@@ -493,7 +500,7 @@ impl CompatLibrary {
         playlist_id: &str,
         name: &str,
     ) -> Result<(), CompatError> {
-        let body = crate::reads::collections::models::UpdatePlaylistBody {
+        let body = droppedneedle_catalog::reads::collections::models::UpdatePlaylistBody {
             name: Some(name.to_owned()),
         };
         self.service()
