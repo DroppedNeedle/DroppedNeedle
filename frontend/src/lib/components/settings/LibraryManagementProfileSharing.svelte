@@ -23,6 +23,10 @@
 		LibraryManagementProfileImportResponse
 	} from '$lib/queries/library-management/types';
 	import { toastStore } from '$lib/stores/toast';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import Field from '$lib/ui/Field.svelte';
+	import Input from '$lib/ui/Input.svelte';
 
 	interface Props {
 		shareProfile: LibraryManagementProfile | null;
@@ -277,7 +281,7 @@
 			{:else if shareError}
 				<div class="alert alert-error text-sm" role="alert">{shareError}</div>
 			{:else if shareResult}
-				<section class="rounded-xl border border-library-manage/20 bg-library-manage/5 p-4">
+				<Card as="section" variant="bordered" padding="md">
 					<div class="flex flex-wrap items-center justify-between gap-3">
 						<div>
 							<strong class="flex items-center gap-2 text-sm"
@@ -287,12 +291,12 @@
 								Attach {shareResult.filename} wherever you share the profile.
 							</p>
 						</div>
-						<button class="btn management-btn btn-sm" onclick={downloadProfile}>
-							<Download class="h-4 w-4" /> Download .dnprofile
-						</button>
+						<Button variant="warning" size="sm" icon={Download} onclick={downloadProfile}>
+							Download .dnprofile
+						</Button>
 					</div>
-				</section>
-				<section class="rounded-xl border border-base-content/10 p-4">
+				</Card>
+				<Card as="section" variant="bordered" padding="md">
 					<div class="flex flex-wrap items-start justify-between gap-3">
 						<div>
 							<strong class="text-sm">Copyable text code</strong>
@@ -300,31 +304,31 @@
 								Use this when you cannot attach a file. Some services may reject long profile codes.
 							</p>
 						</div>
-						<button class="btn btn-outline btn-sm" onclick={() => void copyShareCode()}>
+						<Button variant="outline" size="sm" onclick={() => void copyShareCode()}>
 							{#if shareCopied}<Check class="h-4 w-4" data-testid="profile-code-copied-icon" /> Code copied{:else}<Clipboard
 									class="h-4 w-4"
 								/> Copy code{/if}
-						</button>
+						</Button>
 					</div>
 					<details class="mt-3">
 						<summary class="cursor-pointer text-xs font-semibold text-base-content/65"
 							>Show text code</summary
 						>
 						<textarea
-							class="textarea textarea-bordered mt-2 h-28 w-full resize-y bg-base-200/50 font-mono text-[11px]"
+							class="textarea mt-2 h-28 w-full resize-y font-mono text-[11px]"
 							readonly
 							aria-label="Profile share code"
 							value={shareResult.share_code}></textarea>
 					</details>
-				</section>
+				</Card>
 				<p class="flex items-center gap-2 font-mono text-[10px] text-base-content/40">
 					<Hash class="h-3.5 w-3.5" /> Bundle checksum: SHA-256 {shareResult.bundle_hash}
 				</p>
 			{/if}
 		</div>
 		<div class="modal-action border-t border-base-content/10 px-6 py-4">
-			<button class="btn btn-ghost" disabled={exportProfile.isPending} onclick={closeShareDialog}
-				>Close</button
+			<Button variant="ghost" disabled={exportProfile.isPending} onclick={closeShareDialog}
+				>Close</Button
 			>
 		</div>
 	</div>
@@ -412,7 +416,7 @@
 						</p>
 						<textarea
 							id="management-profile-code"
-							class="textarea textarea-bordered mt-3 min-h-36 flex-1 resize-y bg-base-100 font-mono text-xs"
+							class="textarea mt-3 min-h-36 flex-1 resize-y font-mono text-xs"
 							placeholder="DNLP1:…"
 							value={importFilename ? '' : importContent}
 							oninput={(event) => updateContent(event.currentTarget.value)}></textarea>
@@ -423,7 +427,7 @@
 					</div>{/if}
 			{:else}
 				<div class="space-y-5">
-					<section class="rounded-2xl border border-library-manage/20 bg-library-manage/5 p-5">
+					<Card as="section" variant="bordered" padding="md">
 						<div class="flex flex-wrap items-start justify-between gap-3">
 							<div>
 								<p class="management-step">Profile preview</p>
@@ -441,7 +445,7 @@
 									>{aspect}</span
 								>{/each}
 						</div>
-					</section>
+					</Card>
 
 					{#if importPreview.warnings.length}
 						<section aria-labelledby="profile-import-warnings-title">
@@ -504,18 +508,20 @@
 						</div>
 					</section>
 
-					<label class="grid gap-1.5 text-sm">
-						<span class="font-semibold">Imported profile name</span>
-						<input
-							class="input input-bordered bg-base-100"
-							maxlength="120"
-							bind:value={importName}
-						/>
-						<small class="text-base-content/50"
-							>The profile and its scripts will be saved without assigning them to a root or
-							enabling automation.</small
-						>
-					</label>
+					<Field
+						label="Imported profile name"
+						help="The profile and its scripts will be saved without assigning them to a root or enabling automation."
+					>
+						{#snippet children(control)}
+							<Input
+								{...control}
+								label="Imported profile name"
+								class="w-full"
+								maxlength={120}
+								bind:value={importName}
+							/>
+						{/snippet}
+					</Field>
 					{#if importError}<div class="alert alert-error text-sm" role="alert">
 							{importError}
 						</div>{/if}
@@ -525,39 +531,40 @@
 
 		<div class="modal-action border-t border-base-content/10 px-6 py-4">
 			{#if importPreview}
-				<button
-					class="btn btn-ghost mr-auto"
+				<Button
+					variant="ghost"
+					class="mr-auto"
 					disabled={importProfile.isPending}
 					onclick={() => {
 						importPreview = null;
 						importName = '';
 						importError = '';
-					}}>Back</button
+					}}>Back</Button
 				>
 			{/if}
-			<button
-				class="btn btn-ghost"
+			<Button
+				variant="ghost"
 				disabled={previewImport.isPending || importProfile.isPending}
-				onclick={closeImportDialog}>Cancel</button
+				onclick={closeImportDialog}>Cancel</Button
 			>
 			{#if importPreview}
-				<button
-					class="btn management-btn"
-					disabled={!importName.trim() || importProfile.isPending}
+				<Button
+					variant="warning"
+					loading={importProfile.isPending}
+					disabled={!importName.trim()}
 					onclick={() => void confirmImport()}
 				>
-					{#if importProfile.isPending}<span class="loading loading-spinner loading-sm"></span>{/if}
 					Import custom profile
-				</button>
+				</Button>
 			{:else}
-				<button
-					class="btn management-btn"
-					disabled={!importContent.trim() || previewImport.isPending}
+				<Button
+					variant="warning"
+					loading={previewImport.isPending}
+					disabled={!importContent.trim()}
 					onclick={() => void reviewImport()}
 				>
-					{#if previewImport.isPending}<span class="loading loading-spinner loading-sm"></span>{/if}
 					Review profile
-				</button>
+				</Button>
 			{/if}
 		</div>
 	</div>
