@@ -8785,6 +8785,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/settings/lyrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the online lyrics lookup switch. */
+        get: operations["get_lyrics_settings"];
+        /** Save the online lyrics lookup switch. */
+        put: operations["put_lyrics_settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/settings/musicbrainz": {
         parameters: {
             query?: never;
@@ -16649,6 +16667,14 @@ export interface components {
              * @default true
              */
             write_synced: boolean;
+        };
+        /** @description Lyrics settings: the switch for the online LRCLIB lookup. */
+        LyricsSettings: {
+            /**
+             * @description Look up lyrics on LRCLIB when the server has none for a track.
+             * @default true
+             */
+            enabled: boolean;
         };
         /** @description Stored lyrics for one track. Missing lyrics read as 404, never empty. */
         LyricsView: {
@@ -43472,6 +43498,50 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    get_lyrics_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Lyrics lookup switch */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LyricsSettings"];
+                };
+            };
+        };
+    };
+    put_lyrics_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LyricsSettings"];
+            };
+        };
+        responses: {
+            /** @description Saved switch */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LyricsSettings"];
+                };
             };
         };
     };

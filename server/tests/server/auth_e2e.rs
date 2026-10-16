@@ -1322,6 +1322,8 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/settings/listenbrainz/verify",
         Posture::Admin,
     ),
+    ("GET", "/api/v3/settings/lyrics", Posture::Admin),
+    ("PUT", "/api/v3/settings/lyrics", Posture::Admin),
     ("GET", "/api/v3/settings/musicbrainz", Posture::Admin),
     ("PUT", "/api/v3/settings/musicbrainz", Posture::Admin),
     (

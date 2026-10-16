@@ -126,17 +126,25 @@ impl Section for PrimaryMusicSource {
 }
 
 // --- lyrics_settings (read-path lyrics provider) ---------------------------
-// The master switch for live LRCLIB lyrics on the library read path. This is
-// the read-path provider toggle, not the library-management write block
-// (`LyricsManagementSettings`): with this off, lyrics reads stay on the
-// empty memory port and the server makes no lyrics network calls.
+// The switch for the online LRCLIB lookup on the library read path, on by
+// default: a missing section or a stored `{}` reads on, and a stored
+// `"enabled": false` stays off. This is the read-path toggle, not the
+// library-management write block (`LyricsManagementSettings`): with it off,
+// lyrics reads stay on the empty memory port and the server makes no lyrics
+// network calls.
 
-/// Lyrics settings: master switch for the live LRCLIB read path.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
+/// Lyrics settings: the switch for the online LRCLIB lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct LyricsSettings {
-    /// Master switch for live LRCLIB lyrics fan-out.
+    /// Look up lyrics on LRCLIB when the server has none for a track.
     pub enabled: bool,
+}
+
+impl Default for LyricsSettings {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 impl Section for LyricsSettings {

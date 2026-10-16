@@ -11,6 +11,7 @@ How DroppedNeedle scans your music, works out which album and edition each folde
 - [Duplicate artists](#duplicate-artists)
 - [Removing albums and tracks](#removing-albums-and-tracks)
 - [Downloading from the library](#downloading-from-the-library)
+- [Lyrics](#lyrics)
 - [Adding a missing album to MusicBrainz](#adding-a-missing-album-to-musicbrainz)
 
 ## Scanning
@@ -60,6 +61,10 @@ Removing an album or a track never deletes your music. The files move into a rec
 ## Downloading from the library
 
 You can download a single track or a whole album from the library. A track comes as the original file. An album comes as a zip of its files, untouched and uncompressed, and starts downloading straight away, so even a big box set doesn't keep you waiting while the server packs it. Only files the library has scanned, sitting inside one of your library folders, can be downloaded. By default every signed-in user can download; to keep it to trusted users and admins, or admins only, change "Library downloads" under Settings > Security. Streaming is never limited by this setting. The setting is enforced in the web app and on the download addresses of both player-app APIs (Subsonic `download`, Jellyfin `/Items/{id}/Download`), and a player app is told whether its user may download. A player app that saves music through the same address it plays from is not stopped, because the server cannot tell saving from playing. So in player apps the setting holds for apps that use the download address and honour what they are told. It is not a guarantee.
+
+## Lyrics
+
+The web player and player apps show lyrics for a track. When DroppedNeedle has none for it, the server asks LRCLIB ([lrclib.net](https://lrclib.net)), a free lyrics database, at the moment lyrics are opened, sending the track's title, artist, album and length. Nothing is written to your files. This is on unless an admin turns it off under Settings > Library > Lyrics; while it is off, the server never asks LRCLIB.
 
 ## Adding a missing album to MusicBrainz
 

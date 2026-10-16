@@ -718,6 +718,28 @@ async fn schedule_manual_round_trips() {
     assert_eq!(read["scan_frequency"], "manual");
 }
 
+/// The online lyrics lookup is on until an admin turns it off, and a
+/// saved "off" stays off.
+#[tokio::test]
+async fn lyrics_lookup_on_by_default_off_stays_off() {
+    let rig = Rig::open(true).await;
+    let (status, read) = call(rig.admin_app(), "GET", "/settings/lyrics", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read["enabled"], true);
+    let (status, saved) = call(
+        rig.admin_app(),
+        "PUT",
+        "/settings/lyrics",
+        Some(json!({"enabled": false})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["enabled"], false);
+    let (status, read) = call(rig.admin_app(), "GET", "/settings/lyrics", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read["enabled"], false);
+}
+
 /// The dropped catalog-sync section answers 410 on both methods; the
 /// home section is back and enforces v2's ranges.
 #[tokio::test]

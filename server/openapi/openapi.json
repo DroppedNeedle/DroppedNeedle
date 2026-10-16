@@ -21558,6 +21558,56 @@
         }
       }
     },
+    "/api/v3/settings/lyrics": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Read the online lyrics lookup switch.",
+        "operationId": "get_lyrics_settings",
+        "responses": {
+          "200": {
+            "description": "Lyrics lookup switch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LyricsSettings"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Save the online lyrics lookup switch.",
+        "operationId": "put_lyrics_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LyricsSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved switch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LyricsSettings"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/settings/musicbrainz": {
       "get": {
         "tags": [
@@ -38460,6 +38510,17 @@
           "write_synced": {
             "type": "boolean",
             "description": "Write synced lyrics.",
+            "default": true
+          }
+        }
+      },
+      "LyricsSettings": {
+        "type": "object",
+        "description": "Lyrics settings: the switch for the online LRCLIB lookup.",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Look up lyrics on LRCLIB when the server has none for a track.",
             "default": true
           }
         }

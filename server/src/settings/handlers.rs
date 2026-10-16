@@ -36,8 +36,8 @@ use droppedneedle_kernel::runtime_config::secret_sections::{
 };
 use droppedneedle_kernel::runtime_config::sections::{
     ConnectApps, DownloadPolicy, EditionPreferences, FilesystemWatcher, GetIt, HomeSettings,
-    LibraryManagementProfile, LibraryScanSchedule, PrimaryMusicSource, PublicAddress,
-    ScrobbleSettings, SecuritySettings, UserPreferences, WantedWatcher,
+    LibraryManagementProfile, LibraryScanSchedule, LyricsSettings, PrimaryMusicSource,
+    PublicAddress, ScrobbleSettings, SecuritySettings, UserPreferences, WantedWatcher,
 };
 use droppedneedle_kernel::runtime_config::settings_error::{SettingsError, ValidJson, ValidQuery};
 use droppedneedle_library::management::settings::{ActivationHealth, ChangeImpact, PresetDiff};
@@ -155,6 +155,34 @@ pub async fn put_scrobble(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<ScrobbleSettings>,
 ) -> JsonResult<ScrobbleSettings> {
+    settings.service().save(body).await.map(Json)
+}
+
+/// Read the online lyrics lookup switch.
+#[utoipa::path(
+    get,
+    tag = "settings",
+    path = "/api/v3/settings/lyrics",
+    responses((status = 200, description = "Lyrics lookup switch", body = LyricsSettings))
+)]
+pub async fn get_lyrics_settings(
+    State(settings): State<SettingsSetup>,
+) -> JsonResult<LyricsSettings> {
+    settings.service().get().map(Json)
+}
+
+/// Save the online lyrics lookup switch.
+#[utoipa::path(
+    put,
+    tag = "settings",
+    path = "/api/v3/settings/lyrics",
+    request_body = LyricsSettings,
+    responses((status = 200, description = "Saved switch", body = LyricsSettings))
+)]
+pub async fn put_lyrics_settings(
+    State(settings): State<SettingsSetup>,
+    ValidJson(body): ValidJson<LyricsSettings>,
+) -> JsonResult<LyricsSettings> {
     settings.service().save(body).await.map(Json)
 }
 

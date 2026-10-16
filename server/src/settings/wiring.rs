@@ -354,6 +354,10 @@ impl SettingsSetup {
                 get(h::get_scrobble).put(h::put_scrobble),
             )
             .route(
+                "/settings/lyrics",
+                get(h::get_lyrics_settings).put(h::put_lyrics_settings),
+            )
+            .route(
                 "/settings/primary-source",
                 get(h::get_primary_source).put(h::put_primary_source),
             )

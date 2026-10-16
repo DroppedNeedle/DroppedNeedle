@@ -13,6 +13,7 @@ export const SETTINGS_ENDPOINTS = {
 	jellyfin: () => v3('/api/v3/settings/jellyfin'),
 	jellyfinVerify: () => v3('/api/v3/settings/jellyfin/verify'),
 	lastfm: () => v3('/api/v3/settings/lastfm'),
+	lyrics: () => v3('/api/v3/settings/lyrics'),
 	navidrome: () => v3('/api/v3/settings/navidrome'),
 	navidromeVerify: () => v3('/api/v3/settings/navidrome/verify'),
 	navidromePlaylistSync: () => v3('/api/v3/settings/navidrome/playlist-sync'),
