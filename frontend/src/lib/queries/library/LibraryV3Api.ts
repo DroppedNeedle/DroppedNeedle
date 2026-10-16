@@ -91,6 +91,11 @@ export const LibraryV3Api = {
 		v3('/api/v3/library/albums/{album_id}/edition/extras/restore', {
 			path: { album_id: albumId }
 		}),
+	// One file matched to an edition track by hand (PUT), and its undo (DELETE).
+	editionFile: (albumId: string, trackId: string) =>
+		v3('/api/v3/library/albums/{album_id}/edition/files/{track_id}', {
+			path: { album_id: albumId, track_id: trackId }
+		}),
 	// What taking an edition would do to the files; the current one without a release.
 	editionPlan: (albumId: string, releaseMbid?: string) =>
 		v3('/api/v3/library/albums/{album_id}/edition/plan', {

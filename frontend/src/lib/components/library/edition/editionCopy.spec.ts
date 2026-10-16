@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import type { components } from '$lib/api/v3/openapi';
 import {
+	MATCH_MAKES_IT_YOURS,
 	filesPlacedSentence,
 	fitLine,
 	formatsLabel,
+	freeTrackLabel,
 	plateCopy,
 	summarySentence
 } from './editionCopy';
@@ -194,6 +196,18 @@ describe('edition sentences', () => {
 		);
 		expect(filesPlacedSentence(1, 2)).toBe(
 			"1 of your files sits on its tracks. 2 files aren't on it and keep their own tags."
+		);
+	});
+
+	it('names a free track in the match picker and says what a match does', () => {
+		expect(
+			freeTrackLabel({ disc_number: 1, position: 3, title: 'Lantern Light', length_ms: 245_000 })
+		).toBe('1.3 Lantern Light (4:05)');
+		expect(freeTrackLabel({ disc_number: 2, position: 1, title: 'Coda', length_ms: null })).toBe(
+			'2.1 Coda'
+		);
+		expect(MATCH_MAKES_IT_YOURS).toBe(
+			'Matching a file makes this edition your choice, as Keep this edition does.'
 		);
 	});
 

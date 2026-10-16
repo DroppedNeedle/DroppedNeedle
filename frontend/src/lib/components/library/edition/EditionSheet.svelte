@@ -25,10 +25,12 @@
 		getEditionPlanQuery,
 		handBackAlbumEdition,
 		leaveAlbumUnmanaged,
+		matchEditionFile,
 		removeEditionExtras,
 		restoreEditionExtras,
 		sealCustomEdition,
 		undoAlbumEdition,
+		unmatchEditionFile,
 		type EditionChoice
 	} from '$lib/queries/albums/EditionQueries.svelte';
 	import EditionList, { type EditionGroup, type EditionRow } from './EditionList.svelte';
@@ -185,6 +187,8 @@
 	const acquire = acquireEdition();
 	const sealCustom = sealCustomEdition();
 	const leaveUnmanaged = leaveAlbumUnmanaged();
+	const matchFile = matchEditionFile();
+	const unmatchFile = unmatchEditionFile();
 
 	// A new copy starts over on its own edition.
 	$effect(() => {
@@ -473,6 +477,20 @@
 		}
 	}
 
+	// A file matched to an edition track by hand, and its undo. A refusal
+	// rejects, so the compare table shows it on the file's row.
+	async function matchTrack(
+		trackId: string,
+		releaseTrackMbid: string,
+		identityRevision: number
+	): Promise<void> {
+		await matchFile.mutateAsync({ localId: copyId, trackId, releaseTrackMbid, identityRevision });
+	}
+
+	async function unmatchTrack(trackId: string): Promise<void> {
+		await unmatchFile.mutateAsync({ localId: copyId, trackId });
+	}
+
 	async function putBack(): Promise<void> {
 		if (!lastRemoval) return;
 		actionError = null;
@@ -739,6 +757,10 @@
 						group={tracksGroup}
 						{tracks}
 						onacquire={acquireTracks}
+						editionKind={status?.edition_kind ?? null}
+						appPicked={status?.state === 'confirmed' || status?.state === 'unconfirmed'}
+						onmatch={matchTrack}
+						onunmatch={unmatchTrack}
 					/>
 				{:else if status}
 					<p class="text-sm text-base-content/60">Pick an edition to compare it with your files.</p>

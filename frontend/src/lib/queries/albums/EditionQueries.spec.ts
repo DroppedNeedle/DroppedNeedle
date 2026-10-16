@@ -57,7 +57,9 @@ import {
 	editionsKey,
 	getAlbumEditionStatusQuery,
 	getAlbumEditionsQuery,
-	handBackAlbumEdition
+	handBackAlbumEdition,
+	matchEditionFile,
+	unmatchEditionFile
 } from './EditionQueries.svelte';
 
 type EditionQueryOptions = {
@@ -207,6 +209,42 @@ it('reads one copy edition by local id and scopes the key by user', () => {
 	expect(queryFor('user-a', 'local-1').queryKey).not.toEqual(
 		queryFor('user-b', 'local-1').queryKey
 	);
+});
+
+it('matches a file by hand and undoes it, refreshing what the carry can move', async () => {
+	const match = matchEditionFile() as unknown as EditionMutationOptions;
+	const unmatch = unmatchEditionFile() as unknown as EditionMutationOptions;
+	const variables = {
+		localId: 'local-1',
+		trackId: 'file-9',
+		releaseTrackMbid: 'track-3',
+		identityRevision: 4
+	};
+
+	await match.mutationFn(variables);
+	expect(h.v3.PUT).toHaveBeenCalledWith('/api/v3/library/albums/local-1/edition/files/file-9', {
+		release_track_mbid: 'track-3',
+		expected_identity_revision: 4
+	});
+	await unmatch.mutationFn(variables);
+	expect(h.v3.DELETE).toHaveBeenCalledWith('/api/v3/library/albums/local-1/edition/files/file-9');
+
+	for (const done of [match, unmatch]) {
+		h.invalidate.mockClear();
+		await done.onSuccess({}, variables);
+		const invalidated = h.invalidate.mock.calls.map(([arg]) => arg.queryKey);
+		expect(invalidated).toEqual(
+			expect.arrayContaining([
+				['library', 'catalog', 'user-a', 'edition', 'local-1'],
+				['library', 'catalog', 'user-a', 'album-detail', 'local-1'],
+				['library', 'catalog', 'user-a', 'album-tracks', 'local-1'],
+				['library', 'catalog', 'user-a', 'album-copies'],
+				['library', 'catalog', 'user-a', 'album-history', 'local-1'],
+				['favorites'],
+				['playlists']
+			])
+		);
+	}
 });
 
 it('refuses edition choices carrying an RG MBID or a missing local id', async () => {

@@ -3,6 +3,7 @@
 // tracks.
 import { ApiError } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
+import { formatDuration } from '$lib/utils/formatting';
 
 type EditionStatus = components['schemas']['EditionStatusView'];
 type EditionPlan = components['schemas']['EditionPlanView'];
@@ -369,3 +370,27 @@ export const SHEET_DESCRIPTION = 'Pick the release your copy is, or the one you 
 // does not hand it back.
 export const LEFT_UNMANAGED_NOTE =
 	'This album is left unmanaged. Choosing an edition does not hand it back: DroppedNeedle leaves its files alone until you choose "Manage it again". Writing the edition\'s tags to the files overwrites the changes made outside DroppedNeedle.';
+
+// Matching one file to an edition track by hand (curators, on the album's
+// own edition).
+export const MATCH_TO_TRACK = 'Match to a track';
+export const MATCH_PICKER_LABEL = 'Track on this edition';
+export const MATCH = 'Match';
+export const ITS_THIS_TRACK = "It's this track";
+export const MATCHED_BY_YOU = 'Matched by you';
+export const UNDO_MATCH = 'Undo match';
+export const MATCH_MAKES_IT_YOURS =
+	'Matching a file makes this edition your choice, as Keep this edition does.';
+export const MATCH_FAILED = "This file couldn't be matched.";
+export const UNMATCH_FAILED = "The match couldn't be undone.";
+
+/** A free edition track in the picker: `1.3 Title (4:05)`. */
+export function freeTrackLabel(track: {
+	disc_number: number;
+	position: number;
+	title: string;
+	length_ms?: number | null;
+}): string {
+	const length = track.length_ms ? ` (${formatDuration(track.length_ms)})` : '';
+	return `${track.disc_number}.${track.position} ${track.title}${length}`;
+}

@@ -96,6 +96,8 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	undoTagWrite: () => mutation(),
 	removeEditionExtras: () => mutation(),
 	restoreEditionExtras: () => mutation(),
+	matchEditionFile: () => mutation(),
+	unmatchEditionFile: () => mutation(),
 	sealCustomEdition: () => mutation((...args: unknown[]) => h.seal(...args)),
 	leaveAlbumUnmanaged: () => mutation((...args: unknown[]) => h.leave(...args))
 }));

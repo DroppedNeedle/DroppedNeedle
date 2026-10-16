@@ -68,6 +68,12 @@
 		tracks: TracksOutcome | null;
 		/** Asks for the current edition's tracks. */
 		onacquire: (replaceVersions: boolean) => Promise<void>;
+		/** The album's edition kind from its status: `release`, `custom`, ... */
+		editionKind: string | null;
+		/** The app picked the album's edition (a best guess or confirmed). */
+		appPicked: boolean;
+		onmatch: (trackId: string, releaseTrackMbid: string, identityRevision: number) => Promise<void>;
+		onunmatch: (trackId: string) => Promise<void>;
 	}
 
 	let {
@@ -87,8 +93,14 @@
 		replaceVersions = $bindable(),
 		group,
 		tracks,
-		onacquire
+		onacquire,
+		editionKind,
+		appPicked,
+		onmatch,
+		onunmatch
 	}: Props = $props();
+
+	const canMatch = $derived(isCurrent && canEdit && editionKind === 'release');
 
 	let confirmExtras = $state(false);
 
@@ -177,7 +189,7 @@
 
 			<p class="text-sm">{summarySentence(plan)}</p>
 
-			<EditionCompare {plan} />
+			<EditionCompare {plan} {canMatch} {appPicked} {onmatch} {onunmatch} />
 
 			{#if !plan.same_album && albumHasGroup && !isCurrent}
 				<p class="text-sm text-base-content/75">

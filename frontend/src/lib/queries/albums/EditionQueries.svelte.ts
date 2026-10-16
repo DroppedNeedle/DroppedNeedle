@@ -9,6 +9,10 @@ import { CATALOG_ENDPOINTS } from '$lib/queries/catalog/endpoints';
 import { DownloadQueryKeyFactory } from '$lib/queries/downloads/DownloadQueryKeyFactory';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 import { invalidateLibraryManagementSurfaces } from '$lib/queries/library-management/LibraryManagementInvalidation';
+import {
+	FavoriteQueryKeyFactory,
+	PlaylistQueryKeyFactory
+} from '$lib/queries/playlists/PlaylistQueryKeyFactory';
 import { invalidateQueriesWithPersister, queryClient } from '$lib/queries/QueryClient';
 import { musicBrainzSourceKey } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
@@ -157,6 +161,50 @@ export function restoreEditionExtras() {
 			api.global.v3.POST(LibraryV3Api.editionExtrasRestore(localId), { action_id: actionId }),
 		onSuccess: (_data, { localId }) =>
 			invalidateEditionScope({ userId: authStore.user?.id, localId })
+	}));
+}
+
+// Match one file to a track of the album's edition by hand, and undo it.
+// A match can carry a missing track's plays, stars and playlist entries
+// to the file, for every listener, so those lists refresh too.
+function invalidateHandMatchScope(localId: string): void {
+	const userId = authStore.user?.id;
+	invalidateEditionScope({ userId, localId });
+	for (const queryKey of [
+		LibraryQueryKeyFactory.catalog.albumHistory(userId, localId),
+		FavoriteQueryKeyFactory.prefix,
+		PlaylistQueryKeyFactory.prefix
+	]) {
+		void invalidateQueriesWithPersister({ queryKey });
+	}
+}
+
+export function matchEditionFile() {
+	return createMutation(() => ({
+		mutationFn: ({
+			localId,
+			trackId,
+			releaseTrackMbid,
+			identityRevision
+		}: {
+			localId: string;
+			trackId: string;
+			releaseTrackMbid: string;
+			identityRevision: number;
+		}) =>
+			api.global.v3.PUT(LibraryV3Api.editionFile(localId, trackId), {
+				release_track_mbid: releaseTrackMbid,
+				expected_identity_revision: identityRevision
+			}),
+		onSuccess: (_data, { localId }) => invalidateHandMatchScope(localId)
+	}));
+}
+
+export function unmatchEditionFile() {
+	return createMutation(() => ({
+		mutationFn: ({ localId, trackId }: { localId: string; trackId: string }) =>
+			api.global.v3.DELETE(LibraryV3Api.editionFile(localId, trackId)),
+		onSuccess: (_data, { localId }) => invalidateHandMatchScope(localId)
 	}));
 }
 
