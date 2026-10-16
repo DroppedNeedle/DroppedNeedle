@@ -266,9 +266,6 @@ pub(super) fn retire_artist(
          ELSE source_local_artist_id END, updated_at = CAST(?3 * 1000 AS INTEGER), \
          row_revision = row_revision + 1 \
          WHERE local_artist_id = ?1 OR source_local_artist_id = ?1",
-        "UPDATE OR IGNORE library_identify_credit_proofs SET source_local_artist_id = ?2 \
-         WHERE source_local_artist_id = ?1",
-        "DELETE FROM library_identify_credit_proofs WHERE source_local_artist_id = ?1",
         "UPDATE local_artist_merge_candidates SET state = 'resolved', updated_at = ?3, \
          row_revision = row_revision + 1 WHERE state = 'open' \
          AND (left_artist_id = ?1 OR right_artist_id = ?1)",

@@ -61,7 +61,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 156);
+    assert_eq!(table_names(&pool).await.len(), 154);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -2244,6 +2244,72 @@ async fn scan_mounts_arrive_empty_with_the_guard_index() {
         index.contains("WHERE failure_code = 'MASS_MISSING_GUARD'"),
         "{index}"
     );
+}
+
+/// Migration 0057 drops the two identification tables nothing reads, rows
+/// and all, and leaves the albums and tracks they named alone.
+#[tokio::test]
+async fn unused_credit_tables_drop_and_tracks_survive() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 57)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+         ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         album_title, album_title_folded, file_format, ingest_source, imported_at, \
+         membership_source) VALUES \
+         ('t1', 'al1', 'r1', '/m/1.flac', '1.flac', 'h1', 1, 0, 's', 'T', 't', 'T', 't', \
+         'flac', 'scan', 0, 'automatic'); \
+         INSERT INTO library_identify_credit_proofs (local_album_id, local_track_id, \
+         source_local_artist_id, artist_mbid, release_mbid, album_identity_revision, \
+         track_identity_revision) VALUES ('al1', 't1', 'a1', 'mb-a', 'mb-r', 1, 1); \
+         INSERT INTO library_identify_track_credits (local_track_id, position, artist_mbid, \
+         canonical_name, credited_name) VALUES ('t1', 0, 'mb-a', 'A', 'A');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(stamped >= 57 && stamped == latest_version(), "{stamped}");
+    let left: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE name IN ('library_identify_credit_proofs', \
+         'library_identify_track_credits', 'idx_identify_credit_proofs_artist')",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(left.is_empty(), "{left:?}");
+    let kept: (String, String) = sqlx::query_as(
+        "SELECT a.id, t.id FROM local_albums a JOIN local_tracks t ON t.local_album_id = a.id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, ("al1".to_owned(), "t1".to_owned()));
 }
 
 /// Every table in the migrated schema is listed once in

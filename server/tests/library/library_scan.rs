@@ -1188,7 +1188,6 @@ async fn identify_now(rig: &RegroupRig, album: &str) -> String {
     let service = IdentifyService::new(IdentifyDeps {
         identities: store.clone(),
         facts: store.clone(),
-        proofs: store.clone(),
         aliases: store.clone(),
         queue: store.clone(),
         reviews: store.clone(),
@@ -1229,8 +1228,8 @@ async fn retag_with_matches(
 }
 
 /// What an identification job leaves beside an automatic match: the
-/// "unsure" flag, an undo for the edition, a credit proof, a place in the
-/// automatic management queue and a review waiting for a person.
+/// "unsure" flag, an undo for the edition, a place in the automatic
+/// management queue and a review waiting for a person.
 fn automatic_leftovers(album: &str, tag: &str) -> String {
     format!(
         "INSERT INTO library_album_match_state (local_album_id, state, reason_code, updated_at) \
@@ -1239,10 +1238,6 @@ fn automatic_leftovers(album: &str, tag: &str) -> String {
          expected_post_album_revision, expected_post_identity_revision, reason_code, created_at) \
          SELECT 'undo-{tag}', {album}, 1, 4, 'AUTOMATIC_EXACT_EDITION', 0 \
          WHERE {album} IS NOT NULL; \
-         INSERT INTO library_identify_credit_proofs (local_album_id, local_track_id, \
-         source_local_artist_id, artist_mbid, release_mbid, album_identity_revision, \
-         track_identity_revision) SELECT {album}, id, 'artist-{tag}', 'mbid', 'rel', 4, 1 \
-         FROM local_tracks WHERE relative_path = 'a/t000.flac' AND {album} IS NOT NULL; \
          INSERT INTO library_management_automatic_queue (local_album_id, queued_at, not_before) \
          SELECT {album}, 0, 0 WHERE {album} IS NOT NULL; \
          INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
@@ -1252,14 +1247,13 @@ fn automatic_leftovers(album: &str, tag: &str) -> String {
 }
 
 /// Rows left on `album` in the tables that hang on a match, in the order:
-/// flag, automatic undo, choice undo, credit proofs, remap queue,
-/// management queue, reviews.
-fn hanging_rows(rig: &RegroupRig, album: &str) -> [i64; 7] {
+/// flag, automatic undo, choice undo, remap queue, management queue,
+/// reviews.
+fn hanging_rows(rig: &RegroupRig, album: &str) -> [i64; 6] {
     [
         "library_album_match_state",
         "library_automatic_edition_undo",
         "library_edition_choice_undo",
-        "library_identify_credit_proofs",
         "library_edition_remap_queue",
         "library_management_automatic_queue",
         "library_identify_reviews",
@@ -1295,7 +1289,7 @@ async fn automatic_match_made_mid_scan_yields_to_a_chosen_one() {
     assert_eq!(match_of(&rig, &album), matched("rel-1", "manual"));
     assert_eq!(
         hanging_rows(&rig, &album),
-        [0, 0, 0, 0, 1, 1, 0],
+        [0, 0, 0, 1, 1, 0],
         "only a fresh look by automatic management, and the files waiting to be \
          placed on the chosen edition, are left"
     );
@@ -1356,7 +1350,7 @@ async fn automatic_match_made_mid_scan_replaces_a_revisable_one() {
             1,
             "{name}: the flag came with the match, at a revision neither row has had"
         );
-        assert_eq!(hanging_rows(&rig, &album), [1, 0, 0, 0, 0, 1, 1], "{name}");
+        assert_eq!(hanging_rows(&rig, &album), [1, 0, 0, 0, 1, 1], "{name}");
         assert_eq!(
             rig.count("SELECT COUNT(*) FROM library_identify_reviews WHERE id = 'closed'"),
             1,
@@ -1395,7 +1389,7 @@ async fn chosen_match_made_mid_scan_moves_to_the_kept_row() {
         assert_eq!(rig.album_of("a/t000.flac"), album, "{name}");
         assert_eq!(rig.count("SELECT COUNT(*) FROM local_albums"), 1, "{name}");
         assert_eq!(match_of(&rig, &album), matched("rel-new", source), "{name}");
-        assert_eq!(hanging_rows(&rig, &album), [0, 0, 0, 0, 1, 1, 0], "{name}");
+        assert_eq!(hanging_rows(&rig, &album), [0, 0, 0, 1, 1, 0], "{name}");
         assert_eq!(
             rig.count(&format!(
                 "SELECT COUNT(*) FROM library_edition_remap_queue WHERE local_album_id = '{album}' \
@@ -2157,9 +2151,8 @@ impl RegroupRig {
     }
 
     /// What is left on an album of the match it held: the match, its flag,
-    /// both kinds of edition undo, the remap, a custom edition, credit
-    /// proofs, its place in the automatic management queue and reviews
-    /// waiting for a person.
+    /// both kinds of edition undo, the remap, a custom edition, its place
+    /// in the automatic management queue and reviews waiting for a person.
     fn match_leftovers(&self, album: &str) -> i64 {
         [
             "local_album_external_identities",
@@ -2168,7 +2161,6 @@ impl RegroupRig {
             "library_automatic_edition_undo",
             "library_edition_remap_queue",
             "library_custom_edition_active",
-            "library_identify_credit_proofs",
             "library_management_automatic_queue",
         ]
         .iter()

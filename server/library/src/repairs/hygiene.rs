@@ -368,10 +368,6 @@ fn fold_split_legacy_album(
     let moved: Vec<String> = source.iter().map(|track| track.id.clone()).collect();
     let marks = vec!["?"; moved.len()].join(",");
     tx.execute(
-        "DELETE FROM library_identify_credit_proofs WHERE local_album_id = ?1",
-        params![album.id],
-    )?;
-    tx.execute(
         &format!(
             "DELETE FROM local_track_external_identities WHERE local_track_id IN ({marks}) \
              AND decision_source = 'legacy_import'"

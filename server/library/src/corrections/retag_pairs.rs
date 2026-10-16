@@ -239,18 +239,14 @@ pub(super) fn join(
     Ok(new)
 }
 
-/// Drop an album's edition and its credit proofs ahead of a join. Its
-/// track identities and any custom edition manifest stay.
+/// Drop an album's edition ahead of a join. Its track identities and any
+/// custom edition manifest stay.
 fn drop_for_join(
     tx: &Transaction<'_>,
     found: Identity,
     reason: Reason,
 ) -> rusqlite::Result<(Reason, String, DroppedEdition)> {
     drop_edition(tx, &found.album_id)?;
-    tx.execute(
-        "DELETE FROM library_identify_credit_proofs WHERE local_album_id = ?1",
-        params![found.album_id],
-    )?;
     let title = album_title(tx, &found.album_id)?;
     Ok((
         reason,

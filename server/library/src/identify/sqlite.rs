@@ -2,13 +2,13 @@
 //!
 //! One store implements every identify port. Accepted identities live in
 //! the external-identity tables with their `decision_source`, so manual
-//! and legacy decisions outlive rescans, moves, and restarts. The queue,
-//! reviews, proofs, and provider credits use the 0011 tables; pins and
-//! aliases use their 0001 tables. Album facts come straight from the
-//! catalog the scan writes, so a restart never strands an album without
-//! facts. Release documents go in `library_management_metadata_snapshots`
-//! (immutable rows, one per distinct payload); expired ones no identity
-//! names are pruned on each save.
+//! and legacy decisions outlive rescans, moves, and restarts. The queue
+//! and reviews use the 0011 tables; pins and aliases use their 0001
+//! tables. Album facts come straight from the catalog the scan writes, so
+//! a restart never strands an album without facts. Release documents go
+//! in `library_management_metadata_snapshots` (immutable rows, one per
+//! distinct payload); expired ones no identity names are pruned on each
+//! save.
 //!
 //! Every call is a short synchronous transaction on one connection behind
 //! a mutex. A store failure logs and reads as absence (or `false`), never
@@ -23,10 +23,9 @@ use sha2::{Digest as _, Sha256};
 
 use super::artist_links;
 use super::models::{
-    AlbumIdentity, Alias, AliasKind, ArtistCredit, ArtistIdentity, AutomaticSeal,
-    CandidateEvidence, CreditProof, DecisionSource, IdentifyJob, IdentifyKind, JobState,
-    LocalAlbumFacts, LocalTrackFacts, MatchFlag, MatchFlagState, PriorAlbumIdentity,
-    PriorTrackIdentity, ReviewItem, ReviewState, TrackIdentity,
+    AlbumIdentity, Alias, AliasKind, AutomaticSeal, CandidateEvidence, DecisionSource, IdentifyJob,
+    IdentifyKind, JobState, LocalAlbumFacts, LocalTrackFacts, MatchFlag, MatchFlagState,
+    PriorAlbumIdentity, PriorTrackIdentity, ReviewItem, ReviewState, TrackIdentity,
 };
 use super::queue::PRIORITY_NEW_OR_CHANGED;
 use super::stores::{Approval, RELEASE_FRESH_SECS, StoreError};
@@ -499,140 +498,6 @@ impl SqliteIdentifyStore {
                 "automatic identity not written over a person's track identity"
             );
         }
-    }
-
-    pub fn artist_identity(&self, local_artist_id: &str) -> Option<ArtistIdentity> {
-        self.read("artist identity", |conn| {
-            conn.query_row(
-                "SELECT provider_artist_id, decision_source, row_revision \
-                 FROM local_artist_external_identities \
-                 WHERE local_artist_id = ?1 AND provider = ?2",
-                params![local_artist_id, PROVIDER],
-                |row| {
-                    Ok(ArtistIdentity {
-                        local_artist_id: local_artist_id.to_owned(),
-                        provider: PROVIDER.to_owned(),
-                        provider_artist_mbid: Some(row.get(0)?),
-                        decision_source: decision_from(&row.get::<_, String>(1)?),
-                        row_revision: row.get::<_, i64>(2)? as u64,
-                    })
-                },
-            )
-            .optional()
-        })
-        .flatten()
-    }
-
-    pub fn save_artist_identity(&self, identity: ArtistIdentity) {
-        let Some(mbid) = identity.provider_artist_mbid.clone() else {
-            tracing::warn!(
-                artist = identity.local_artist_id,
-                "artist identity without an MBID not stored"
-            );
-            return;
-        };
-        self.write("save artist identity", |tx| {
-            tx.execute(
-                "INSERT INTO local_artist_external_identities (local_artist_id, provider, \
-                 provider_artist_id, decision_source, selected_at, row_revision) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
-                 ON CONFLICT (local_artist_id, provider) DO UPDATE SET \
-                 provider_artist_id = excluded.provider_artist_id, \
-                 decision_source = excluded.decision_source, \
-                 selected_at = excluded.selected_at, row_revision = excluded.row_revision",
-                params![
-                    identity.local_artist_id,
-                    PROVIDER,
-                    mbid,
-                    identity.decision_source.as_str(),
-                    now_secs(),
-                    identity.row_revision.max(1) as i64,
-                ],
-            )
-        });
-    }
-
-    pub fn owned_artist_by_mbid(&self, artist_mbid: &str) -> Option<String> {
-        self.read("owned artist", |conn| {
-            conn.query_row(
-                "SELECT local_artist_id FROM local_artist_external_identities \
-                 WHERE provider = ?1 AND lower(provider_artist_id) = lower(?2)",
-                params![PROVIDER, artist_mbid],
-                |row| row.get(0),
-            )
-            .optional()
-        })
-        .flatten()
-    }
-
-    pub fn save_owned_artist(&self, artist_mbid: &str, local_artist_id: &str) {
-        self.save_artist_identity(ArtistIdentity {
-            local_artist_id: local_artist_id.to_owned(),
-            provider: PROVIDER.to_owned(),
-            provider_artist_mbid: Some(artist_mbid.to_lowercase()),
-            decision_source: DecisionSource::Automatic,
-            row_revision: 1,
-        });
-    }
-
-    pub fn track_credits(&self, local_track_id: &str) -> Vec<ArtistCredit> {
-        self.read("track credits", |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT position, artist_mbid, canonical_name, credited_name \
-                 FROM library_identify_track_credits WHERE local_track_id = ?1 \
-                 ORDER BY position",
-            )?;
-            let rows = stmt.query_map(params![local_track_id], |row| {
-                Ok(ArtistCredit {
-                    position: row.get::<_, i64>(0)? as u32,
-                    artist_mbid: row.get(1)?,
-                    canonical_name: row.get(2)?,
-                    credited_name: row.get(3)?,
-                })
-            })?;
-            rows.collect()
-        })
-        .unwrap_or_default()
-    }
-
-    pub fn save_track_credits(&self, local_track_id: &str, credits: Vec<ArtistCredit>) {
-        self.write("save track credits", |tx| {
-            tx.execute(
-                "DELETE FROM library_identify_track_credits WHERE local_track_id = ?1",
-                params![local_track_id],
-            )?;
-            for credit in &credits {
-                tx.execute(
-                    "INSERT INTO library_identify_track_credits (local_track_id, position, \
-                     artist_mbid, canonical_name, credited_name) VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![
-                        local_track_id,
-                        credit.position as i64,
-                        credit.artist_mbid,
-                        credit.canonical_name,
-                        credit.credited_name,
-                    ],
-                )?;
-            }
-            Ok(())
-        });
-    }
-
-    /// Accepted MusicBrainz release MBID on the artist's albums, if any,
-    /// from the credits join.
-    pub fn accepted_release_mbid_for_artist(&self, source_local_artist_id: &str) -> Option<String> {
-        self.read("accepted release for artist", |conn| {
-            conn.query_row(
-                "SELECT e.release_mbid FROM local_album_external_identities e \
-                 JOIN local_album_artists a ON a.local_album_id = e.local_album_id \
-                 WHERE a.local_artist_id = ?1 AND e.release_mbid IS NOT NULL \
-                 ORDER BY e.selected_at DESC LIMIT 1",
-                params![source_local_artist_id],
-                |row| row.get(0),
-            )
-            .optional()
-        })
-        .flatten()
     }
 
     /// Seal an automatic win: the album row and the given track rows, never
@@ -1537,14 +1402,16 @@ pub(crate) fn match_chosen(conn: &Connection, album_id: &str) -> rusqlite::Resul
 ///   moves to `kept`.
 ///
 /// Rows made for a match that is no longer there are dropped, never
-/// pointed at another match: both kinds of edition undo and the credit
-/// proofs name the revisions of the match they were made for. The moved
-/// match takes a revision neither row has had, so nothing kept from
-/// either row reads as current against it. A chosen edition still waiting
-/// to be placed on the files is queued again for `kept`, and automatic
-/// management looks at `kept` afresh. When the match `kept` ends with is a
-/// person's release and a file is not on it yet, the files are queued to
-/// be placed on it, changing nothing else
+/// pointed at another match: both kinds of edition undo name the
+/// revisions of the match they were made for. The moved match takes a
+/// revision neither row has had, so nothing kept from either row reads as
+/// current against it. An artist proof names the album revision it was
+/// made at, so after the move it stops counting until the album's next
+/// pass replaces it. A chosen edition still waiting to be placed on the
+/// files is queued again for `kept`, and automatic management looks at
+/// `kept` afresh. When the match `kept` ends with is a person's release
+/// and a file is not on it yet, the files are queued to be placed on it,
+/// changing nothing else
 /// ([`queue_placement`](crate::operations::choice::queue_placement)).
 pub(crate) fn settle_followed_match(
     tx: &rusqlite::Transaction<'_>,
@@ -1644,7 +1511,6 @@ fn carry_match(
         "library_edition_choice_undo",
         "library_automatic_edition_undo",
         "library_edition_remap_queue",
-        "library_identify_credit_proofs",
     ] {
         tx.execute(
             &format!("DELETE FROM {table} WHERE local_album_id = ?1"),
@@ -1760,113 +1626,22 @@ fn hex_sha256(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// Durable credit proof rows.
-impl SqliteIdentifyStore {
-    pub fn proofs_for_artist(&self, source_local_artist_id: &str) -> Vec<CreditProof> {
-        self.read("credit proofs", |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT local_album_id, local_track_id, artist_mbid, release_mbid, \
-                 album_identity_revision, track_identity_revision \
-                 FROM library_identify_credit_proofs WHERE source_local_artist_id = ?1",
-            )?;
-            let rows = stmt.query_map(params![source_local_artist_id], |row| {
-                Ok(CreditProof {
-                    local_album_id: row.get(0)?,
-                    local_track_id: row.get(1)?,
-                    source_local_artist_id: source_local_artist_id.to_owned(),
-                    artist_mbid: row.get(2)?,
-                    release_mbid: row.get(3)?,
-                    album_identity_revision: row.get::<_, i64>(4)? as u64,
-                    track_identity_revision: row.get::<_, i64>(5)? as u64,
-                })
-            })?;
-            rows.collect()
-        })
-        .unwrap_or_default()
-    }
-
-    pub fn save_proof(&self, proof: CreditProof) {
-        self.write("save credit proof", |tx| {
-            tx.execute(
-                "INSERT OR REPLACE INTO library_identify_credit_proofs (local_album_id, \
-                 local_track_id, source_local_artist_id, artist_mbid, release_mbid, \
-                 album_identity_revision, track_identity_revision) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    proof.local_album_id,
-                    proof.local_track_id,
-                    proof.source_local_artist_id,
-                    proof.artist_mbid,
-                    proof.release_mbid,
-                    proof.album_identity_revision as i64,
-                    proof.track_identity_revision as i64,
-                ],
-            )
-        });
-    }
-
-    pub fn album_revision(&self, local_album_id: &str) -> u64 {
-        self.album_identity(local_album_id)
-            .map(|identity| identity.row_revision)
-            .unwrap_or(0)
-    }
-
-    pub fn track_revision(&self, local_track_id: &str) -> u64 {
-        self.track_identity(local_track_id)
-            .map(|identity| identity.row_revision)
-            .unwrap_or(0)
-    }
-}
-
-/// Alias table, owner column, and kind label for one alias kind.
-fn alias_table(kind: AliasKind) -> (&'static str, &'static str, &'static str) {
+/// Alias table and owner column for one alias kind.
+fn alias_table(kind: AliasKind) -> (&'static str, &'static str) {
     match kind {
-        AliasKind::MergedAlbum => ("local_album_aliases", "local_album_id", "merged_album"),
-        AliasKind::MergedArtist => ("local_artist_aliases", "local_artist_id", "merged_artist"),
+        AliasKind::MergedAlbum => ("local_album_aliases", "local_album_id"),
+        AliasKind::MergedArtist => ("local_artist_aliases", "local_artist_id"),
     }
 }
 
 const ALIAS_KINDS: [AliasKind; 2] = [AliasKind::MergedAlbum, AliasKind::MergedArtist];
 
-/// Retired-id aliases plus the live references that follow them.
+/// Retired-id aliases.
 impl SqliteIdentifyStore {
-    pub fn save_alias(&self, alias: Alias) {
-        let (table, owner, label) = alias_table(alias.kind);
-        self.write("save alias", |tx| {
-            tx.execute(
-                &format!(
-                    "INSERT OR REPLACE INTO {table} (alias, {owner}, kind, created_at) \
-                     VALUES (?1, ?2, ?3, ?4)"
-                ),
-                params![alias.retired_id, alias.surviving_id, label, now_secs()],
-            )
-        });
-    }
-
-    pub fn resolve(&self, id: &str) -> String {
-        for kind in ALIAS_KINDS {
-            let (table, owner, _) = alias_table(kind);
-            let found: Option<String> = self
-                .read("resolve alias", |conn| {
-                    conn.query_row(
-                        &format!("SELECT {owner} FROM {table} WHERE alias = ?1"),
-                        params![id],
-                        |row| row.get(0),
-                    )
-                    .optional()
-                })
-                .flatten();
-            if let Some(surviving) = found {
-                return surviving;
-            }
-        }
-        id.to_owned()
-    }
-
     pub fn aliases_for(&self, surviving_id: &str) -> Vec<Alias> {
         let mut out = Vec::new();
         for kind in ALIAS_KINDS {
-            let (table, owner, _) = alias_table(kind);
+            let (table, owner) = alias_table(kind);
             let retired: Vec<String> = self
                 .read("aliases", |conn| {
                     let mut stmt = conn.prepare(&format!(
@@ -1883,53 +1658,6 @@ impl SqliteIdentifyStore {
             }));
         }
         out
-    }
-
-    pub fn retarget(&self, retired_id: &str, surviving_id: &str) {
-        let kind = ALIAS_KINDS.into_iter().find(|kind| {
-            let (table, _, _) = alias_table(*kind);
-            self.read("alias kind", |conn| {
-                conn.query_row(
-                    &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE alias = ?1)"),
-                    params![retired_id],
-                    |row| row.get::<_, bool>(0),
-                )
-            })
-            .unwrap_or(false)
-        });
-        let Some(kind) = kind else {
-            tracing::warn!(retired_id, "retarget without a saved alias skipped");
-            return;
-        };
-        let item_kind = match kind {
-            AliasKind::MergedAlbum => "album",
-            AliasKind::MergedArtist => "artist",
-        };
-        self.write("retarget references", |tx| {
-            retarget_references(tx, item_kind, retired_id, surviving_id)
-        });
-    }
-
-    pub fn favorite_holds(&self, user_id: &str, item_kind: &str, item_id: &str) -> bool {
-        self.read("favorite", |conn| {
-            conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM library_user_favorites \
-                 WHERE user_id = ?1 AND item_kind = ?2 AND item_id = ?3)",
-                params![user_id, item_kind, item_id],
-                |row| row.get(0),
-            )
-        })
-        .unwrap_or(false)
-    }
-
-    pub fn add_favorite(&self, user_id: &str, item_kind: &str, item_id: &str) {
-        self.write("add favorite", |tx| {
-            tx.execute(
-                "INSERT OR IGNORE INTO library_user_favorites (user_id, item_kind, item_id, \
-                 created_at) VALUES (?1, ?2, ?3, ?4)",
-                params![user_id, item_kind, item_id, now_secs()],
-            )
-        });
     }
 }
 

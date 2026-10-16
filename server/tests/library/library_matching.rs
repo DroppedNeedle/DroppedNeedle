@@ -121,7 +121,6 @@ fn rig_with(routes: HashMap<String, RawResponse>, down: bool) -> Rig {
     let service = IdentifyService::new(IdentifyDeps {
         identities: store.clone(),
         facts: store.clone(),
-        proofs: store.clone(),
         aliases: store.clone(),
         queue: store.clone(),
         reviews: store.clone(),

@@ -65,7 +65,7 @@ pub(crate) enum MergeOutcome {
 /// - the match is settled ([`settle_merged_match`]): a person's match is
 ///   never replaced or dropped except by an equal one;
 /// - what was made for the old row's match is cleared from it, with its
-///   credit proofs and its place in the automatic management queue;
+///   place in the automatic management queue;
 /// - the track rows left on the old row (missing or excluded files) move
 ///   to the new one;
 /// - the old row's "leave unmanaged" goes first when the new row holds a
@@ -119,15 +119,10 @@ pub(crate) fn merge_retagged(
     let merged = (|| {
         settle_merged_match(tx, old, new, now)?;
         drop_edition(tx, old)?;
-        for table in [
-            "library_identify_credit_proofs",
-            "library_management_automatic_queue",
-        ] {
-            tx.execute(
-                &format!("DELETE FROM {table} WHERE local_album_id = ?1"),
-                params![old],
-            )?;
-        }
+        tx.execute(
+            "DELETE FROM library_management_automatic_queue WHERE local_album_id = ?1",
+            params![old],
+        )?;
         tx.execute(
             "UPDATE local_tracks SET local_album_id = ?2 WHERE local_album_id = ?1",
             params![old, new],

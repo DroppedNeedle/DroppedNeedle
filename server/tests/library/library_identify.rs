@@ -14,19 +14,15 @@ use droppedneedle_library::matching::{CreditedArtist, Release, ReleaseTrack};
 use identify::models::IdentifyJob;
 use identify::models::JobState;
 use identify::models::{
-    AlbumIdentity, AliasKind, ArtistCredit, ArtistIdentity, AutomaticSeal, CreditProof,
-    DecisionSource, IdentificationOutcome, IdentifyKind, IdentityBrief, LocalAlbumFacts,
-    LocalTrackFacts, RecallResult, ReviewState, TrackIdentity,
+    AlbumIdentity, AutomaticSeal, DecisionSource, IdentificationOutcome, IdentifyKind,
+    IdentityBrief, LocalAlbumFacts, LocalTrackFacts, RecallResult, ReviewState, TrackIdentity,
 };
 use identify::providers::FakeProviders;
 use identify::queue::{
     LEASE_SECONDS, MAX_BACKOFF_SECONDS, PRIORITY_HISTORICAL_BACKLOG, PRIORITY_NEW_OR_CHANGED,
     PRIORITY_REVIEW_RETRY, PRIORITY_SUPPORTING_MAINTENANCE, backoff_secs, terminally_deferred,
 };
-use identify::rules::{
-    ReconciliationProof, ReconciliationVerdict, SubstitutionCase, SubstitutionRefusal,
-    SubstitutionVerdict, evaluate_overwrite, evaluate_reconciliation, evaluate_substitution,
-};
+use identify::rules::evaluate_overwrite;
 use identify::service::{IdentifyDeps, IdentifyService};
 use identify::sqlite::SqliteIdentifyStore;
 use identify::stores::{AttemptLanding, land_job};
@@ -40,7 +36,6 @@ const RELEASE_A2: &str = "0687c8a5-40a2-4a0c-bdc9-c1d80d94bef5";
 const GROUP_B: &str = "dcff25f1-702d-3b5e-b0da-d48172e6e62a";
 const RELEASE_B1: &str = "c85ad49c-6bfb-4bdc-96f8-f5f305a8799e";
 const ARTIST_MBID: &str = "5441c29d-3602-4898-b1a1-b77fa23b8e50";
-const OTHER_ARTIST_MBID: &str = "9cb4af06-1c2d-4e5f-8a7b-6c5d4e3f2a10";
 const RECORDING_1: &str = "beaf82cd-24f9-4163-b1a9-022339a30f77";
 const RECORDING_2: &str = "5224cfc7-b3bb-4008-a41b-21b168dc631f";
 
@@ -66,7 +61,6 @@ fn rig_with_recall(recall: RecallResult) -> Rig {
     let service = IdentifyService::new(IdentifyDeps {
         identities: store.clone(),
         facts: store.clone(),
-        proofs: store.clone(),
         aliases: store.clone(),
         queue: store.clone(),
         reviews: store.clone(),
@@ -143,29 +137,6 @@ impl Rig {
                 params![album],
             )
             .expect("rescan lands");
-    }
-
-    /// `album-1` with its one track `t1`, both automatically identified,
-    /// the album row at `album_revision` and the track row at 1: what a
-    /// credit proof row is checked against.
-    fn seed_identified_album(&self, album_revision: u64) {
-        self.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
-        self.store.save_album_identity(AlbumIdentity {
-            local_album_id: "album-1".to_owned(),
-            provider: "musicbrainz".to_owned(),
-            release_group_mbid: Some(GROUP_A.to_owned()),
-            release_mbid: Some(RELEASE_A1.to_owned()),
-            decision_source: DecisionSource::Automatic,
-            row_revision: album_revision,
-        });
-        self.store.save_track_identity(TrackIdentity {
-            local_track_id: "t1".to_owned(),
-            provider: "musicbrainz".to_owned(),
-            recording_mbid: Some(RECORDING_1.to_owned()),
-            release_track_mbid: None,
-            decision_source: DecisionSource::Automatic,
-            row_revision: 1,
-        });
     }
 }
 
@@ -246,18 +217,6 @@ fn recall(releases: Vec<Release>) -> RecallResult {
 
 fn key(group: &str, release: &str) -> String {
     format!("{group}:{release}")
-}
-
-fn proof_row(album: &str, track: &str, source: &str, mbid: &str, release: &str) -> CreditProof {
-    CreditProof {
-        local_album_id: album.to_owned(),
-        local_track_id: track.to_owned(),
-        source_local_artist_id: source.to_owned(),
-        artist_mbid: mbid.to_owned(),
-        release_mbid: release.to_owned(),
-        album_identity_revision: 1,
-        track_identity_revision: 1,
-    }
 }
 
 #[tokio::test]
@@ -559,309 +518,6 @@ fn overwrite_matrix_matches_v2() {
     );
 }
 
-#[test]
-fn substitution_accepted_release_allows() {
-    let verdict = evaluate_substitution(&SubstitutionCase {
-        accepted_release_mbid: Some(RELEASE_A1.to_owned()),
-        durable_proof_mbids: Vec::new(),
-        expected_artist_mbid: ARTIST_MBID.to_owned(),
-        credits_unambiguous: true,
-        direct_identity_mbid: None,
-        name_evidence_present: true,
-    });
-    assert_eq!(verdict, SubstitutionVerdict::Allowed);
-}
-
-#[test]
-fn substitution_durable_proof_allows() {
-    let verdict = evaluate_substitution(&SubstitutionCase {
-        accepted_release_mbid: None,
-        durable_proof_mbids: vec![ARTIST_MBID.to_owned(), ARTIST_MBID.to_owned()],
-        expected_artist_mbid: ARTIST_MBID.to_owned(),
-        credits_unambiguous: true,
-        direct_identity_mbid: None,
-        name_evidence_present: false,
-    });
-    assert_eq!(verdict, SubstitutionVerdict::Allowed);
-}
-
-#[test]
-fn substitution_missing_proof_waits() {
-    let verdict = evaluate_substitution(&SubstitutionCase {
-        accepted_release_mbid: None,
-        durable_proof_mbids: Vec::new(),
-        expected_artist_mbid: ARTIST_MBID.to_owned(),
-        credits_unambiguous: true,
-        direct_identity_mbid: None,
-        name_evidence_present: false,
-    });
-    assert_eq!(verdict, SubstitutionVerdict::Waiting);
-}
-
-#[test]
-fn substitution_name_only_refuses() {
-    let verdict = evaluate_substitution(&SubstitutionCase {
-        accepted_release_mbid: None,
-        durable_proof_mbids: Vec::new(),
-        expected_artist_mbid: ARTIST_MBID.to_owned(),
-        credits_unambiguous: true,
-        direct_identity_mbid: None,
-        name_evidence_present: true,
-    });
-    assert_eq!(
-        verdict,
-        SubstitutionVerdict::Refused(SubstitutionRefusal::NameOnly)
-    );
-}
-
-#[test]
-fn substitution_conflicting_proof_needs_review() {
-    let verdict = evaluate_substitution(&SubstitutionCase {
-        accepted_release_mbid: Some(RELEASE_A1.to_owned()),
-        durable_proof_mbids: vec![ARTIST_MBID.to_owned(), OTHER_ARTIST_MBID.to_owned()],
-        expected_artist_mbid: ARTIST_MBID.to_owned(),
-        credits_unambiguous: true,
-        direct_identity_mbid: None,
-        name_evidence_present: false,
-    });
-    assert_eq!(verdict, SubstitutionVerdict::NeedsReview);
-}
-
-#[test]
-fn substitution_composite_credits_refuse() {
-    let verdict = evaluate_substitution(&SubstitutionCase {
-        accepted_release_mbid: Some(RELEASE_A1.to_owned()),
-        durable_proof_mbids: Vec::new(),
-        expected_artist_mbid: ARTIST_MBID.to_owned(),
-        credits_unambiguous: false,
-        direct_identity_mbid: None,
-        name_evidence_present: false,
-    });
-    assert_eq!(
-        verdict,
-        SubstitutionVerdict::Refused(SubstitutionRefusal::CompositeOrAmbiguousCredits)
-    );
-}
-
-#[test]
-fn substitution_conflicting_direct_identity_refuses() {
-    let verdict = evaluate_substitution(&SubstitutionCase {
-        accepted_release_mbid: Some(RELEASE_A1.to_owned()),
-        durable_proof_mbids: Vec::new(),
-        expected_artist_mbid: ARTIST_MBID.to_owned(),
-        credits_unambiguous: true,
-        direct_identity_mbid: Some(OTHER_ARTIST_MBID.to_owned()),
-        name_evidence_present: false,
-    });
-    assert_eq!(
-        verdict,
-        SubstitutionVerdict::Refused(SubstitutionRefusal::ConflictingDirectIdentity)
-    );
-}
-
-/// Two local artists a folded name nominated for merging, and `album-1`
-/// identified with its album row at `album_revision`.
-fn retirement_rig(album_revision: u64) -> Rig {
-    let rig = rig_with_recall(RecallResult::default());
-    rig.seed_artist("artist-old");
-    rig.seed_artist("artist-new");
-    rig.seed_identified_album(album_revision);
-    rig
-}
-
-#[test]
-fn stale_proof_rows_do_not_count() {
-    // The album's identity row moved on to revision 2 after the proof was
-    // banked at revision 1, so the stored row is stale.
-    let rig = retirement_rig(2);
-    rig.store.save_proof(proof_row(
-        "album-1",
-        "t1",
-        "artist-old",
-        ARTIST_MBID,
-        RELEASE_A1,
-    ));
-    let verdict = rig
-        .service
-        .retire_artist("artist-old", "artist-new", ARTIST_MBID, true, None);
-    assert_eq!(
-        verdict,
-        SubstitutionVerdict::Refused(SubstitutionRefusal::NameOnly)
-    );
-    assert_eq!(rig.store.resolve("artist-old"), "artist-old");
-}
-
-#[test]
-fn retire_artist_through_each_gate() {
-    // Accepted release: allowed.
-    let rig = retirement_rig(1);
-    rig.db
-        .execute(
-            "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role) \
-             VALUES ('album-1', 0, 'artist-old', 'primary')",
-            [],
-        )
-        .expect("album credit seeds");
-    let verdict = rig
-        .service
-        .retire_artist("artist-old", "artist-new", ARTIST_MBID, true, None);
-    assert_eq!(verdict, SubstitutionVerdict::Allowed);
-    assert_eq!(rig.store.resolve("artist-old"), "artist-new");
-
-    // Durable proof row: allowed.
-    let rig = retirement_rig(1);
-    rig.store.save_proof(proof_row(
-        "album-1",
-        "t1",
-        "artist-old",
-        ARTIST_MBID,
-        RELEASE_A1,
-    ));
-    let verdict = rig
-        .service
-        .retire_artist("artist-old", "artist-new", ARTIST_MBID, true, None);
-    assert_eq!(verdict, SubstitutionVerdict::Allowed);
-
-    // Conflicting proof: a curator decides, nothing retargets.
-    let rig = retirement_rig(1);
-    rig.store.save_proof(proof_row(
-        "album-1",
-        "t1",
-        "artist-old",
-        ARTIST_MBID,
-        RELEASE_A1,
-    ));
-    rig.store.save_proof(proof_row(
-        "album-1",
-        "t1",
-        "artist-old",
-        OTHER_ARTIST_MBID,
-        RELEASE_A1,
-    ));
-    let verdict = rig
-        .service
-        .retire_artist("artist-old", "artist-new", ARTIST_MBID, true, None);
-    assert_eq!(verdict, SubstitutionVerdict::NeedsReview);
-    assert_eq!(rig.store.resolve("artist-old"), "artist-old");
-}
-
-#[test]
-fn name_only_merge_refused() {
-    assert_eq!(
-        evaluate_reconciliation(&ReconciliationProof {
-            name_similarity: 0.99,
-            ..ReconciliationProof::default()
-        }),
-        ReconciliationVerdict::RefusedNameOnly
-    );
-    assert_eq!(
-        evaluate_reconciliation(&ReconciliationProof {
-            name_similarity: 0.99,
-            accepted_release_identity: true,
-            ..ReconciliationProof::default()
-        }),
-        ReconciliationVerdict::Merge
-    );
-    assert_eq!(
-        evaluate_reconciliation(&ReconciliationProof {
-            name_similarity: 0.2,
-            durable_proof_rows: 2,
-            ..ReconciliationProof::default()
-        }),
-        ReconciliationVerdict::Merge
-    );
-    assert_eq!(
-        evaluate_reconciliation(&ReconciliationProof {
-            name_similarity: 0.99,
-            durable_proof_rows: 1,
-            contradictory_proof: true,
-            ..ReconciliationProof::default()
-        }),
-        ReconciliationVerdict::NeedsReview
-    );
-    assert_eq!(
-        evaluate_reconciliation(&ReconciliationProof::default()),
-        ReconciliationVerdict::Waiting
-    );
-}
-
-#[test]
-fn retired_ids_keep_resolving() {
-    let rig = retirement_rig(1);
-    rig.store.save_proof(proof_row(
-        "album-1",
-        "t1",
-        "artist-old",
-        ARTIST_MBID,
-        RELEASE_A1,
-    ));
-    rig.store.add_favorite("user-1", "artist", "artist-old");
-    rig.db
-        .execute(
-            "INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
-             artist_name, played_at) VALUES ('play-1', 'user-1', 'artist-old', 'Song', \
-             'Old Name', '2026-01-01T00:00:00Z')",
-            [],
-        )
-        .expect("play seeds");
-    let verdict = rig
-        .service
-        .retire_artist("artist-old", "artist-new", ARTIST_MBID, true, None);
-    assert_eq!(verdict, SubstitutionVerdict::Allowed);
-    // Compat lookups resolve through the alias.
-    assert_eq!(rig.store.resolve("artist-old"), "artist-new");
-    let aliases = rig.store.aliases_for("artist-new");
-    assert_eq!(aliases.len(), 1);
-    assert_eq!(aliases[0].kind, AliasKind::MergedArtist);
-    // Live references followed the survivor.
-    assert!(rig.store.favorite_holds("user-1", "artist", "artist-new"));
-    assert!(!rig.store.favorite_holds("user-1", "artist", "artist-old"));
-    let played: String = rig
-        .db
-        .query_row(
-            "SELECT local_artist_id FROM library_play_history WHERE id = 'play-1'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("play reads");
-    assert_eq!(played, "artist-new");
-}
-
-#[test]
-fn exact_contributors_become_appearances() {
-    let rig = rig_with_recall(RecallResult::default());
-    rig.seed_artist("artist-owned");
-    rig.seed_album(&album_facts("album-1", &[("t1", Some(RECORDING_1))]));
-    rig.store.save_owned_artist(ARTIST_MBID, "artist-owned");
-    rig.store.save_track_credits(
-        "t1",
-        vec![
-            ArtistCredit {
-                position: 0,
-                artist_mbid: ARTIST_MBID.to_owned(),
-                canonical_name: "Owned".to_owned(),
-                credited_name: "Owned".to_owned(),
-            },
-            ArtistCredit {
-                position: 1,
-                artist_mbid: OTHER_ARTIST_MBID.to_owned(),
-                canonical_name: "Guest".to_owned(),
-                credited_name: "Guest Star".to_owned(),
-            },
-        ],
-    );
-    let appearances = rig.service.appearances_for_track("t1");
-    assert_eq!(appearances.len(), 1);
-    assert_eq!(appearances[0].artist_mbid, OTHER_ARTIST_MBID);
-    assert_eq!(appearances[0].credited_name, "Guest Star");
-    // The guest never became an owned artist.
-    assert_eq!(rig.store.owned_artist_by_mbid(OTHER_ARTIST_MBID), None);
-    assert_eq!(
-        rig.store.owned_artist_by_mbid(ARTIST_MBID).as_deref(),
-        Some("artist-owned")
-    );
-}
-
 /// File a pending review the way an edition correction does when it drops
 /// editions: the dropped editions are the candidates, keyed `group:release`.
 /// Identification itself never files one (it always picks a best guess).
@@ -1142,22 +798,6 @@ fn job_landings_cover_done_fail_attention_defer() {
     assert!(terminally_deferred(job.attempts));
 }
 
-#[test]
-fn artist_identity_rows_round_trip() {
-    let rig = rig_with_recall(RecallResult::default());
-    assert_eq!(rig.store.artist_identity("artist-1"), None);
-    rig.store.save_artist_identity(ArtistIdentity {
-        local_artist_id: "artist-1".to_owned(),
-        provider: "musicbrainz".to_owned(),
-        provider_artist_mbid: Some(ARTIST_MBID.to_owned()),
-        decision_source: DecisionSource::Manual,
-        row_revision: 1,
-    });
-    let stored = rig.store.artist_identity("artist-1").expect("artist");
-    assert_eq!(stored.provider_artist_mbid.as_deref(), Some(ARTIST_MBID));
-    assert!(!stored.decision_source.automatic_may_overwrite());
-}
-
 /// Migration 0011 adds the identify tables on a fresh database and on one
 /// migrated through 0010, keeping the catalog rows already there.
 #[tokio::test]
@@ -1201,12 +841,7 @@ async fn identify_state_migration_upgrades_in_place() {
         .await
         .expect("albums count");
     assert_eq!(albums, 1);
-    for table in [
-        "library_identify_jobs",
-        "library_identify_reviews",
-        "library_identify_credit_proofs",
-        "library_identify_track_credits",
-    ] {
+    for table in ["library_identify_jobs", "library_identify_reviews"] {
         let found: Option<String> =
             sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1")
                 .bind(table)

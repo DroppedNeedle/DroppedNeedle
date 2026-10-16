@@ -6,36 +6,29 @@
 //! and weak matches become reviews with their distances; contradicting
 //! ids retract automatic identities.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::evidence::{candidate_evidence, local_album};
 use super::models::{
-    AlbumIdentity, Alias, AliasKind, Appearance, AutomaticSeal, CandidateEvidence, CreditProof,
-    DecisionSource, EvidenceClass, IdentificationOutcome, IdentifyJob, IdentifyKind, IdentityBrief,
-    JobState, LocalAlbumFacts, MatchFlag, MatchFlagState, RecallResult, ReviewState, TrackIdentity,
+    AlbumIdentity, AutomaticSeal, CandidateEvidence, DecisionSource, EvidenceClass,
+    IdentificationOutcome, IdentifyJob, IdentifyKind, IdentityBrief, JobState, LocalAlbumFacts,
+    MatchFlag, MatchFlagState, RecallResult, ReviewState, TrackIdentity,
 };
 use super::providers::{IdentifyProviders, RecallOutcome};
 use super::queue::{PRIORITY_HISTORICAL_BACKLOG, PRIORITY_NEW_OR_CHANGED, PRIORITY_REVIEW_RETRY};
 use super::review::reject_review;
-use super::rules::{
-    SubstitutionCase, SubstitutionVerdict, classify_credit, evaluate_substitution,
-    retracts_on_contradiction,
-};
+use super::rules::retracts_on_contradiction;
 use super::sources::{EditionPage, EditionQuery, SourceError};
 use super::sqlite::SqliteIdentifyStore;
 use super::stores::{Approval, AttemptLanding, StoreError, keep_releases, land_job};
 use crate::edition_prefs::Preferences;
 use crate::matching::decide::{EDITION_COHORT, eligible};
-use crate::matching::{
-    EditionPrefs, LocalAlbum, ReleaseMatch, Support, Verdict, decide, match_release,
-};
+use crate::matching::{EditionPrefs, LocalAlbum, ReleaseMatch, Verdict, decide, match_release};
 
 /// Every dependency the identify service needs, injected by constructor.
 pub struct IdentifyDeps {
     pub identities: Arc<SqliteIdentifyStore>,
     pub facts: Arc<SqliteIdentifyStore>,
-    pub proofs: Arc<SqliteIdentifyStore>,
     pub aliases: Arc<SqliteIdentifyStore>,
     pub queue: Arc<SqliteIdentifyStore>,
     pub reviews: Arc<SqliteIdentifyStore>,
@@ -390,10 +383,10 @@ impl IdentifyService {
         report(&reason_code)
     }
 
-    /// Seal an automatic win: album row, supported track rows (curator
-    /// tracks keep theirs), and fresh credit proof rows. The store writes
-    /// them together, never over a curator's album row, and an exact
-    /// edition keeps what it replaced so an administrator can undo it.
+    /// Seal an automatic win: album row and supported track rows (curator
+    /// tracks keep theirs). The store writes them together, never over a
+    /// curator's album row, and an exact edition keeps what it replaced so
+    /// an administrator can undo it.
     fn seal_automatic(
         &self,
         facts: &LocalAlbumFacts,
@@ -422,52 +415,13 @@ impl IdentifyService {
             tracks,
             flag,
         });
-        if sealed {
-            self.bank_proofs(facts, winner);
-        } else {
+        if !sealed {
             tracing::info!(
                 album = facts.local_album_id,
                 "a curator decided this album meanwhile; automatic seal skipped"
             );
         }
         sealed
-    }
-
-    /// Bank one proof row per owned-artist credit on supported tracks.
-    fn bank_proofs(&self, facts: &LocalAlbumFacts, winner: &CandidateEvidence) {
-        let Some(release_mbid) = winner.release_mbid.as_deref() else {
-            return;
-        };
-        let album_revision = self.deps.proofs.album_revision(&facts.local_album_id);
-        for track in &winner.track_evidence {
-            // Proof rows need provider proof: an embedded id or the
-            // audio's fingerprint, never a title and length match.
-            let proven = track.evidence_kinds.iter().any(|kind| {
-                kind == Support::EmbeddedId.code() || kind == Support::Fingerprint.code()
-            });
-            if track.classification != EvidenceClass::Supported || !proven {
-                continue;
-            }
-            let track_revision = self.deps.proofs.track_revision(&track.local_track_id);
-            for credit in self.deps.identities.track_credits(&track.local_track_id) {
-                let Some(owned) = self
-                    .deps
-                    .identities
-                    .owned_artist_by_mbid(&credit.artist_mbid)
-                else {
-                    continue;
-                };
-                self.deps.proofs.save_proof(CreditProof {
-                    local_album_id: facts.local_album_id.clone(),
-                    local_track_id: track.local_track_id.clone(),
-                    source_local_artist_id: owned,
-                    artist_mbid: credit.artist_mbid.clone(),
-                    release_mbid: release_mbid.to_owned(),
-                    album_identity_revision: album_revision,
-                    track_identity_revision: track_revision,
-                });
-            }
-        }
     }
 
     /// A curator approves a review: the chosen candidate seals as a manual
@@ -528,87 +482,6 @@ impl IdentifyService {
     /// A curator rejects a review: the album keeps its tags, nothing seals.
     pub fn reject_candidates(&self, review_id: &str, by_user_id: &str) -> bool {
         reject_review(self.deps.reviews.as_ref(), review_id, by_user_id)
-    }
-
-    /// Retire one local artist into another through the album-level proof
-    /// gate. Allowed retirements keep the retired id as an
-    /// alias and retarget live references; anything else parks or refuses.
-    pub fn retire_artist(
-        &self,
-        source_local_artist_id: &str,
-        surviving_local_artist_id: &str,
-        expected_artist_mbid: &str,
-        credits_unambiguous: bool,
-        direct_identity_mbid: Option<&str>,
-    ) -> SubstitutionVerdict {
-        let durable: Vec<String> = self
-            .deps
-            .proofs
-            .proofs_for_artist(source_local_artist_id)
-            .into_iter()
-            .filter(|proof| {
-                self.deps.proofs.album_revision(&proof.local_album_id)
-                    == proof.album_identity_revision
-                    && self.deps.proofs.track_revision(&proof.local_track_id)
-                        == proof.track_identity_revision
-            })
-            .map(|proof| proof.artist_mbid.clone())
-            .collect();
-        let accepted_release_mbid = self
-            .deps
-            .identities
-            .accepted_release_mbid_for_artist(source_local_artist_id);
-        let verdict = evaluate_substitution(&SubstitutionCase {
-            accepted_release_mbid,
-            durable_proof_mbids: durable,
-            expected_artist_mbid: expected_artist_mbid.to_owned(),
-            credits_unambiguous,
-            direct_identity_mbid: direct_identity_mbid.map(str::to_owned),
-            // Retirement is only ever attempted on a name anchor: the
-            // folded-name match is what nominated this pair.
-            name_evidence_present: true,
-        });
-        if verdict == SubstitutionVerdict::Allowed {
-            self.deps.aliases.save_alias(Alias {
-                retired_id: source_local_artist_id.to_owned(),
-                surviving_id: surviving_local_artist_id.to_owned(),
-                kind: AliasKind::MergedArtist,
-            });
-            self.deps
-                .aliases
-                .retarget(source_local_artist_id, surviving_local_artist_id);
-        }
-        verdict
-    }
-
-    /// Exact track contributors become appearances, never owned artists.
-    pub fn appearances_for_track(&self, local_track_id: &str) -> Vec<Appearance> {
-        let credits = self.deps.identities.track_credits(local_track_id);
-        let mut owned = HashMap::new();
-        for credit in &credits {
-            if let Some(local_id) = self
-                .deps
-                .identities
-                .owned_artist_by_mbid(&credit.artist_mbid)
-            {
-                owned.insert(credit.artist_mbid.to_lowercase(), local_id);
-            }
-        }
-        credits
-            .iter()
-            .filter(|credit| {
-                matches!(
-                    classify_credit(credit, &owned),
-                    super::rules::CreditRole::Appearance
-                )
-            })
-            .map(|credit| Appearance {
-                local_track_id: local_track_id.to_owned(),
-                artist_mbid: credit.artist_mbid.clone(),
-                credited_name: credit.credited_name.clone(),
-                position: credit.position,
-            })
-            .collect()
     }
 
     /// One card with the whole case for an album.

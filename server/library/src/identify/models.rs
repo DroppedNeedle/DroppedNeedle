@@ -171,29 +171,6 @@ pub struct PriorTrackIdentity {
     pub selected_at: Option<f64>,
 }
 
-/// The durable artist identity row.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ArtistIdentity {
-    pub local_artist_id: String,
-    pub provider: String,
-    pub provider_artist_mbid: Option<String>,
-    pub decision_source: DecisionSource,
-    pub row_revision: u64,
-}
-
-/// A stored album-level credit proof row (v2 `library_artist_credit_proofs`).
-/// Durable only while its identity revisions still match the live rows.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CreditProof {
-    pub local_album_id: String,
-    pub local_track_id: String,
-    pub source_local_artist_id: String,
-    pub artist_mbid: String,
-    pub release_mbid: String,
-    pub album_identity_revision: u64,
-    pub track_identity_revision: u64,
-}
-
 /// A retired local id that keeps resolving to its survivor, so favorites
 /// and play history never break.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -209,25 +186,6 @@ pub struct Alias {
 pub enum AliasKind {
     MergedAlbum,
     MergedArtist,
-}
-
-/// A provider artist credit on one track.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ArtistCredit {
-    pub position: u32,
-    pub artist_mbid: String,
-    pub canonical_name: String,
-    pub credited_name: String,
-}
-
-/// Exact track contributors become appearances on the track, never newly
-/// owned artists in the catalog.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Appearance {
-    pub local_track_id: String,
-    pub artist_mbid: String,
-    pub credited_name: String,
-    pub position: u32,
 }
 
 /// One durable identification queue job.

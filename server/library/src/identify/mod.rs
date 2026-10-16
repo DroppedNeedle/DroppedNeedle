@@ -1,9 +1,8 @@
 //! Library identification: the queue, the proofs, and the curator.
 //!
 //! Automatic reconciliation needs provider proof (a folded name never
-//! merges); album-level provider proof gates every name-anchored
-//! substitution (see `rules`); `decision_source` protects curator rows;
-//! retired ids live on as aliases; release pins steer editions only.
+//! merges); `decision_source` protects curator rows; retired ids live on
+//! as aliases; release pins steer editions only.
 //!
 //! Layout: `models` holds the types, `rules` the pure product rules,
 //! `queue` the scheduling policy, `stores` the ports, `sqlite` the
