@@ -646,6 +646,7 @@ export type JellyfinTrackInfo = {
 	codec?: string | null;
 	bitrate?: number | null;
 	image_url?: string | null;
+	recording_mbid?: string | null;
 };
 
 export type JellyfinAlbumMatch = {
@@ -729,6 +730,7 @@ export type NavidromeTrackInfo = {
 	codec?: string | null;
 	bitrate?: number | null;
 	image_url?: string | null;
+	recording_mbid?: string | null;
 };
 
 export type NavidromeAlbumSummary = {
@@ -842,6 +844,7 @@ export type PlexTrackInfo = {
 	container?: string | null;
 	part_key?: string | null;
 	image_url?: string | null;
+	recording_mbid?: string | null;
 };
 
 export type PlexAlbumSummary = {

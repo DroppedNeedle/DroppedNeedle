@@ -129,6 +129,11 @@ pub struct ScrobbleSubmitRequest {
     /// Playback source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// The library track played. Files the play under that track, whose own
+    /// recording and release group replace any sent. Only for a play from
+    /// the library (source `local` or none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_id: Option<String>,
 }
 
 /// One native now-playing forward, by name (v2 `NowPlayingRequest` fields).

@@ -20,6 +20,7 @@ use std::time::Duration;
 
 use droppedneedle_auth::times::to_iso;
 use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_library::corrections::continuation::CURRENT_TRACK;
 use droppedneedle_library::repairs::plays::{Matched, PlayKeys, match_play};
 
 use super::ports::{
@@ -73,16 +74,18 @@ impl TrackCatalog for PlaybackDb {
 }
 
 impl PlaybackDb {
+    /// The track a local id names now: an id that continued into another
+    /// track reads as that track (retired ids stay aliases).
     fn read_track(&self, track_id: &str) -> Option<TrackInfo> {
         let guard = self.lock()?;
         let mut query = guard
-            .prepare(
+            .prepare(&format!(
                 "SELECT id, title, artist_name, album_title, duration_seconds, \
                  embedded_recording_mbid, \
                  (SELECT e.release_group_mbid FROM local_album_external_identities e \
                   WHERE e.local_album_id = local_tracks.local_album_id) AS rg_mbid \
-                 FROM local_tracks WHERE id = ?1",
-            )
+                 FROM local_tracks WHERE id = ({CURRENT_TRACK})"
+            ))
             .ok()?;
         let mut rows = query.query([track_id]).ok()?;
         let row = rows.next().ok()??;

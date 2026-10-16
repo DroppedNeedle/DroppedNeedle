@@ -21412,6 +21412,12 @@ export interface components {
              * @description Play time, unix seconds.
              */
             timestamp: number;
+            /**
+             * @description The library track played. Files the play under that track, whose own
+             *     recording and release group replace any sent. Only for a play from
+             *     the library (source `local` or none).
+             */
+            track_id?: string | null;
             /** @description Track title. */
             track_name: string;
         };

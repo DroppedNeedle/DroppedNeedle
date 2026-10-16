@@ -3,7 +3,7 @@ import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 import type { PlaybackMeta, QueueItem } from '$lib/player/types';
 import type { NavidromeTrackInfo } from '$lib/player/types';
 import { getCoverUrl } from '$lib/utils/errorHandling';
-import { normalizeCodec } from '$lib/player/queueHelpers';
+import { normalizeCodec, recordingFor } from '$lib/player/queueHelpers';
 
 export function launchNavidromePlayback(
 	tracks: NavidromeTrackInfo[],
@@ -27,7 +27,8 @@ export function launchNavidromePlayback(
 			sourceType: 'navidrome' as const,
 			artistId: meta.artistId,
 			streamUrl: gatewayStreamUrl('navidrome', t.navidrome_id),
-			format
+			format,
+			recordingIds: recordingFor('navidrome', t.recording_mbid)
 		};
 	});
 

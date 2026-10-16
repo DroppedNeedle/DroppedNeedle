@@ -1068,15 +1068,48 @@ pub fn submit_session_scrobble(
 // Native submit / now-playing forward (v2 ScrobbleService path)
 // ---------------------------------------------------------------------------
 
-/// Submit one native scrobble by name (v2 `ScrobbleService.submit_scrobble`,
+/// Submit one native scrobble (v2 `ScrobbleService.submit_scrobble`,
 /// exact order: validate, name-dedup, record history, short-track gate,
 /// Navidrome delegation, forward; accepted stays true once recorded).
+///
+/// A play from the library may name its track. The play is then filed
+/// under the track that id names now, with that track's recording and
+/// release group; names, length, time and source stay as sent. An id the
+/// library does not know keeps the play by name with no ids: a play is
+/// never lost to a lookup. A track id on a play from anywhere else is
+/// refused, as such a play is filed only by its recording id.
 pub fn submit_scrobble(
     deps: &PlaybackDeps,
     user_id: &str,
     request: &ScrobbleSubmitRequest,
 ) -> Result<ScrobbleResponse, ServiceError> {
-    submit_named(deps, user_id, request, None)
+    let Some(track_id) = request.track_id.as_deref().filter(|id| !id.is_empty()) else {
+        return submit_named(deps, user_id, request, None);
+    };
+    if normalize_client(request.source.as_deref()).is_some_and(|source| source != "local") {
+        return Err(ServiceError::InvalidInput(
+            "track_id is only for a play from the library".to_owned(),
+        ));
+    }
+    match deps.catalog.get_track(track_id) {
+        Some(track) => {
+            let filed = ScrobbleSubmitRequest {
+                mbid: track.recording_mbid.clone(),
+                release_group_mbid: track.rg_mbid.clone(),
+                ..request.clone()
+            };
+            submit_named(deps, user_id, &filed, Some(&track.track_id))
+        }
+        None => {
+            tracing::info!(track_id, "scrobble names no library track; kept by name");
+            let by_name = ScrobbleSubmitRequest {
+                mbid: None,
+                release_group_mbid: None,
+                ..request.clone()
+            };
+            submit_named(deps, user_id, &by_name, None)
+        }
+    }
 }
 
 /// [`submit_scrobble`] for a play of a library track the server looked up

@@ -49248,6 +49248,13 @@
             "format": "int64",
             "description": "Play time, unix seconds."
           },
+          "track_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The library track played. Files the play under that track, whose own\nrecording and release group replace any sent. Only for a play from\nthe library (source `local` or none)."
+          },
           "track_name": {
             "type": "string",
             "description": "Track title."

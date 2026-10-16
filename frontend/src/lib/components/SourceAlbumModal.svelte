@@ -31,6 +31,7 @@
 		compareDiscTrack,
 		normalizeCodec,
 		normalizeDiscNumber,
+		recordingFor,
 		type TrackMeta,
 		type TrackSourceData
 	} from '$lib/player/queueHelpers';
@@ -236,7 +237,8 @@
 					coverUrl: t.image_url ?? null,
 					sourceType: 'jellyfin' as const,
 					streamUrl: gatewayStreamUrl('jellyfin', t.id),
-					format: normalizeCodec(undefined)
+					format: normalizeCodec(undefined),
+					recordingIds: recordingFor('jellyfin', t.recording_mbid)
 				}));
 				playerStore.playQueue(items, 0, false);
 			}

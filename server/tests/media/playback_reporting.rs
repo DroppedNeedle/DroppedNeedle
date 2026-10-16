@@ -686,6 +686,7 @@ async fn a_scrobble_reaches_listenbrainz_once() {
         mbid: None,
         release_group_mbid: None,
         source: None,
+        track_id: None,
     };
     for _ in 0..2 {
         let answer =
@@ -946,6 +947,154 @@ async fn plays_from_every_player_are_filed_under_the_track() {
     let song = &song["subsonic-response"]["song"];
     assert_eq!(song["title"], "One", "{song}");
     assert!(song.get("playCount").is_none(), "{song}");
+
+    rig.stop().await;
+}
+
+/// The recording and release group stored with each of the user's plays
+/// of `title`.
+fn stored_ids(app: &TestApp, user_id: &str, title: &str) -> Vec<(Option<String>, Option<String>)> {
+    let db = app.db();
+    let mut plays = db
+        .prepare(
+            "SELECT recording_mbid, release_group_mbid FROM library_play_history \
+             WHERE user_id = ?1 AND track_name = ?2",
+        )
+        .expect("history query");
+    plays
+        .query_map([user_id, title], |row| Ok((row.get(0)?, row.get(1)?)))
+        .expect("history reads")
+        .collect::<Result<_, _>>()
+        .expect("history rows")
+}
+
+/// The web player names the library track it played. The play is filed
+/// under that track, or under the track an old id continued into, with the
+/// track's own recording whatever the body sent. An id the library does
+/// not know keeps the play by name with no ids. A track id on a play from
+/// another server or from YouTube is refused and nothing is written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn web_player_plays_are_filed_under_the_named_track() {
+    const RECORDING: &str = "0a8e8d55-4b83-4f8a-9732-fbb5ded9f344";
+    const GROUP: &str = "744c0a9e-5a4e-3b0e-8f0f-6a1f1b2c3d4e";
+    const SENT: &str = "5b11f4ce-a62d-471e-81fc-a69a8278c7da";
+    let rig = CompatApp::start("playback-web-player").await;
+    let app = &rig.app;
+    let (status, signed_in) = app
+        .call(
+            "POST",
+            "/api/v3/auth/login",
+            &[],
+            Some(json!({
+                "username": PLAYER,
+                "password": format!("{PLAYER}-password-1234"),
+                "transport": "bearer",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{signed_in}");
+    let web_value = format!("Bearer {}", signed_in["token"].as_str().expect("token"));
+    let web = [("authorization", web_value.as_str())];
+    let alice: String = app
+        .db()
+        .query_row(
+            "SELECT id FROM auth_users WHERE username = ?1",
+            [PLAYER],
+            |row| row.get(0),
+        )
+        .expect("the player's id");
+
+    let one = catalog_ids(app, "One");
+    let airbag = catalog_ids(app, "Airbag");
+    let teardrop = catalog_ids(app, "Teardrop");
+    let db = app.db();
+    db.execute(
+        "UPDATE local_tracks SET embedded_recording_mbid = ?2 WHERE id = ?1",
+        [one.0.as_str(), RECORDING],
+    )
+    .expect("the track has a recording");
+    db.execute(
+        "INSERT INTO local_album_external_identities \
+         (local_album_id, release_group_mbid, decision_source, selected_at) \
+         VALUES (?1, ?2, 'manual', 1)",
+        [one.1.as_str(), GROUP],
+    )
+    .expect("the album is matched");
+    // Airbag's file went missing and the track continued into Teardrop.
+    db.execute(
+        "UPDATE local_tracks SET availability = 'missing' WHERE id = ?1",
+        [airbag.0.as_str()],
+    )
+    .expect("the track is missing");
+    db.execute(
+        "INSERT INTO local_track_aliases (alias, local_track_id, created_at) VALUES (?1, ?2, 1)",
+        [airbag.0.as_str(), teardrop.0.as_str()],
+    )
+    .expect("the old id is an alias");
+    drop(db);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
+    for play in [
+        json!({
+            "track_name": "One",
+            "artist_name": "U2",
+            "timestamp": now - 300,
+            "track_id": one.0,
+            "mbid": SENT,
+            "release_group_mbid": SENT,
+            "source": "local",
+        }),
+        json!({
+            "track_name": "Ghost",
+            "artist_name": "Nobody",
+            "timestamp": now - 240,
+            "track_id": "no-such-track",
+            "mbid": SENT,
+            "source": "local",
+        }),
+        json!({
+            "track_name": "Queued Long Ago",
+            "artist_name": "Radiohead",
+            "timestamp": now - 180,
+            "track_id": airbag.0,
+        }),
+    ] {
+        let (status, body) = app
+            .call("POST", "/api/v3/scrobble/submit", &web, Some(play))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    assert_eq!(filed_under(app, &alice, "One"), vec![one.clone()]);
+    assert_eq!(
+        stored_ids(app, &alice, "One"),
+        vec![(Some(RECORDING.to_owned()), Some(GROUP.to_owned()))]
+    );
+    let empty = (String::new(), String::new(), String::new());
+    assert_eq!(filed_under(app, &alice, "Ghost"), vec![empty]);
+    assert_eq!(stored_ids(app, &alice, "Ghost"), vec![(None, None)]);
+    assert_eq!(
+        filed_under(app, &alice, "Queued Long Ago"),
+        vec![teardrop.clone()]
+    );
+
+    for source in ["jellyfin", "YouTube"] {
+        let play = json!({
+            "track_name": "Refused",
+            "artist_name": "U2",
+            "timestamp": now - 120,
+            "track_id": one.0,
+            "source": source,
+        });
+        let (status, body) = app
+            .call("POST", "/api/v3/scrobble/submit", &web, Some(play))
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{source}: {body}");
+        assert_eq!(error_code(&body), "INVALID_INPUT", "{source}: {body}");
+    }
+    assert!(filed_under(app, &alice, "Refused").is_empty());
 
     rig.stop().await;
 }

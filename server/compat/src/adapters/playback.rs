@@ -109,6 +109,7 @@ impl CompatPlayback {
                 mbid: track.recording_mbid,
                 release_group_mbid: track.rg_mbid,
                 source: Some("local".to_owned()),
+                track_id: None,
             },
         )
         .is_ok()

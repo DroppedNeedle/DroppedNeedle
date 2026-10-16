@@ -34,15 +34,42 @@ describe('native scrobble payloads', () => {
 			duration_ms: 180_000,
 			source: 'navidrome'
 		});
-		expect(makeScrobbleSubmission('Artist', 'Song', 'Album', 180_000, 1234, 'navidrome')).toEqual({
+	});
+
+	const play = {
+		artistName: 'Artist',
+		trackName: 'Song',
+		albumName: 'Album',
+		trackSourceId: 'item-1',
+		recordingMbid: 'rec-1'
+	};
+
+	it('name the library track on a local play, and send no recording', () => {
+		expect(makeScrobbleSubmission({ ...play, sourceType: 'local' }, 180_000, 1234)).toStrictEqual({
 			track_name: 'Song',
 			artist_name: 'Artist',
 			album_name: 'Album',
 			duration_ms: 180_000,
 			timestamp: 1234,
-			source: 'navidrome'
+			source: 'local',
+			track_id: 'item-1'
 		});
 	});
+
+	it.each(['navidrome', 'jellyfin', 'plex', 'youtube'] as const)(
+		'send the recording %s gave and name no track',
+		(source) => {
+			expect(makeScrobbleSubmission({ ...play, sourceType: source }, 180_000, 1234)).toStrictEqual({
+				track_name: 'Song',
+				artist_name: 'Artist',
+				album_name: 'Album',
+				duration_ms: 180_000,
+				timestamp: 1234,
+				source,
+				mbid: 'rec-1'
+			});
+		}
+	);
 });
 
 describe('scrobbleManager settings', () => {
