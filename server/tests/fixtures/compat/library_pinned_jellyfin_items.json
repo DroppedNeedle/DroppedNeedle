@@ -166,7 +166,10 @@
       "Name": "OK Computer",
       "PremiereDate": "0000-00-00T00:00:00.0000000Z",
       "ProductionYear": 1997,
-      "ProviderIds": {},
+      "ProviderIds": {
+        "MusicBrainzAlbum": "<id-14>",
+        "MusicBrainzReleaseGroup": "<id-15>"
+      },
       "RunTimeTicks": 6000000,
       "ServerId": "<id-1>",
       "SortName": "OK Computer",
@@ -184,13 +187,13 @@
       "AlbumArtist": "ユキ",
       "AlbumArtists": [
         {
-          "Id": "<id-14>",
+          "Id": "<id-16>",
           "Name": "ユキ"
         }
       ],
       "ArtistItems": [
         {
-          "Id": "<id-14>",
+          "Id": "<id-16>",
           "Name": "ユキ"
         }
       ],
@@ -201,7 +204,7 @@
       "ChildCount": 1,
       "DateCreated": "0000-00-00T00:00:00.0000000Z",
       "Genres": [],
-      "Id": "<id-15>",
+      "Id": "<id-17>",
       "ImageBlurHashes": {},
       "ImageTags": {},
       "IsFolder": true,
@@ -217,8 +220,8 @@
       "Type": "MusicAlbum",
       "UserData": {
         "IsFavorite": false,
-        "ItemId": "<id-15>",
-        "Key": "<id-15>",
+        "ItemId": "<id-17>",
+        "Key": "<id-17>",
         "PlayCount": 0,
         "PlaybackPositionTicks": 0,
         "Played": false

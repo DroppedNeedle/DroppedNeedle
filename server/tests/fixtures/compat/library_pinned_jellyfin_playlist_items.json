@@ -24,7 +24,7 @@
       "DateCreated": "0000-00-00T00:00:00.0000000Z",
       "Genres": [],
       "HasLyrics": false,
-      "Id": "<id-16>",
+      "Id": "<id-18>",
       "ImageBlurHashes": {},
       "ImageTags": {},
       "IndexNumber": 4,
@@ -34,7 +34,7 @@
       "Name": "Teardrop",
       "ParentId": "<id-9>",
       "ParentIndexNumber": 1,
-      "PlaylistItemId": "<id-20>",
+      "PlaylistItemId": "<id-22>",
       "PremiereDate": "0000-00-00T00:00:00.0000000Z",
       "ProductionYear": 1998,
       "ProviderIds": {
@@ -46,8 +46,8 @@
       "Type": "Audio",
       "UserData": {
         "IsFavorite": false,
-        "ItemId": "<id-16>",
-        "Key": "<id-16>",
+        "ItemId": "<id-18>",
+        "Key": "<id-18>",
         "PlayCount": 0,
         "PlaybackPositionTicks": 0,
         "Played": false

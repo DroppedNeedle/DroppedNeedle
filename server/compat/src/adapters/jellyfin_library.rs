@@ -77,6 +77,7 @@ fn track_view(track: PlayerTrack) -> TrackView {
         artist_musicbrainz_id: track.artist_mbid,
         album_artist_musicbrainz_id: track.album_artist_mbid,
         release_group_mbid: track.release_group_mbid,
+        release_mbid: None,
         path: song_path(&track.relative_path),
         starred: false,
         play_count: 0,
@@ -158,7 +159,29 @@ impl JellyfinLibrary {
             .collect::<Vec<_>>();
         let starred = self.library.starred(user_id, "track", &ids).await?;
         let plays = self.library.plays(user_id, "track", &ids).await?;
+        let player_ids = self
+            .library
+            .player_ids(
+                &distinct(views.iter().filter_map(|view| view.rg_mbid.as_ref())),
+                &distinct(views.iter().filter_map(|view| view.artist_mbid.as_ref())),
+            )
+            .await?;
         for view in &mut views {
+            if let Some(album) = view
+                .rg_mbid
+                .as_ref()
+                .and_then(|id| player_ids.albums.get(id))
+            {
+                view.release_group_mbid = album.release_group_mbid.clone();
+                view.release_mbid = album.release_mbid.clone();
+            }
+            if let Some(mbid) = view
+                .artist_mbid
+                .as_ref()
+                .and_then(|id| player_ids.artists.get(id))
+            {
+                view.artist_musicbrainz_id = Some(mbid.clone());
+            }
             view.starred = starred.contains_key(&view.file_id);
             if let Some((count, last)) = plays.get(&view.file_id) {
                 view.play_count = *count;
@@ -176,7 +199,12 @@ impl JellyfinLibrary {
         let ids = views.iter().map(|view| view.id.clone()).collect::<Vec<_>>();
         let starred = self.library.starred(user_id, "album", &ids).await?;
         let plays = self.library.plays(user_id, "album", &ids).await?;
+        let player_ids = self.library.player_ids(&ids, &[]).await?;
         for view in &mut views {
+            if let Some(album) = player_ids.albums.get(&view.id) {
+                view.release_group_mbid = album.release_group_mbid.clone();
+                view.release_mbid = album.release_mbid.clone();
+            }
             view.starred = starred.contains_key(&view.id);
             if let Some((count, last)) = plays.get(&view.id) {
                 view.play_count = *count;
@@ -273,6 +301,14 @@ fn to_u64(value: usize) -> u64 {
 
 fn to_usize(value: u64) -> usize {
     usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+/// Each id once.
+fn distinct<'a>(ids: impl Iterator<Item = &'a String>) -> Vec<String> {
+    let mut ids = ids.cloned().collect::<Vec<_>>();
+    ids.sort();
+    ids.dedup();
+    ids
 }
 
 /// Keep `ids` order; unknown ids drop out, repeats stay.

@@ -185,11 +185,13 @@ pub struct TrackView {
     /// Unix seconds added.
     pub created_at: Option<f64>,
     pub recording_mbid: Option<String>,
-    /// MusicBrainz ids of the track artist, the album artist and the
-    /// album's release group, when identified.
+    /// MusicBrainz ids of the track artist, the album artist, and the
+    /// album's release group and release: the accepted match's, else the
+    /// ones the files' tags agree on (the album artist's accepted only).
     pub artist_musicbrainz_id: Option<String>,
     pub album_artist_musicbrainz_id: Option<String>,
     pub release_group_mbid: Option<String>,
+    pub release_mbid: Option<String>,
     /// Path under the track's own library folder (the Subsonic `path`),
     /// never a host path.
     pub path: Option<String>,
@@ -207,9 +209,10 @@ pub struct TrackView {
 pub struct AlbumView {
     /// Local album id: the Jellyfin item id and image tag come from it.
     pub id: String,
-    /// Accepted MusicBrainz release group id, when the album has one.
+    /// MusicBrainz release group: the accepted match's, else the one the
+    /// album's files' tags agree on.
     pub release_group_mbid: Option<String>,
-    /// Exact MusicBrainz release, when known.
+    /// MusicBrainz release, the same way.
     pub release_mbid: Option<String>,
     /// MusicBrainz id of the album artist, when identified.
     pub artist_musicbrainz_id: Option<String>,

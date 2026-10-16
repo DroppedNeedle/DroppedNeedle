@@ -341,7 +341,8 @@ async fn jellyfin_pinned_reference_shapes() {
     let latest = trace.get("/jellyfin/Items/Latest", &auth).await;
     assert_golden("library_pinned_jellyfin_latest.json", &trace.recorded());
 
-    // The rig identifies no album, so no album sends a release group key.
+    // The rig identifies no album and Mezzanine's tags hold no well-formed
+    // MusicBrainz id, so it sends none.
     let mezzanine = named(&latest, "Name", "Mezzanine");
     assert_eq!(mezzanine["ProviderIds"], json!({}));
 
@@ -394,6 +395,169 @@ async fn jellyfin_pinned_reference_shapes() {
     assert_eq!(guest["ChildCount"], json!(2), "{guest}");
     assert!(guest["RunTimeTicks"].as_i64() > Some(0), "{guest}");
     rig.stop().await;
+}
+
+/// The MusicBrainz ids player apps get for an album come from the files'
+/// tags until the app has matched it, then from the accepted match, even
+/// where the tags say otherwise: Subsonic sends the release (the release
+/// group when the match knows no release), Jellyfin both. Reading them
+/// writes no identity.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_album_sends_the_accepted_ids_else_its_tags() {
+    const TAG_RELEASE: &str = "0da3b3e3-1111-4444-8888-aaaaaaaaaaaa";
+    const TAG_GROUP: &str = "b1392450-e666-3926-a536-22c65f834433";
+    const RELEASE: &str = "44444444-4444-4444-8444-444444444444";
+    const GROUP: &str = "55555555-5555-4555-8555-555555555555";
+    let rig = CompatApp::start("compat-player-ids").await;
+    let (airbag, album, _) = catalog_ids(&rig, "Radiohead/OK Computer/01 Airbag.flac");
+
+    let before = identity_rows(&rig);
+    let (subsonic, jellyfin) = album_ids_sent(&rig, &album, &airbag).await;
+    assert_eq!(subsonic, json!(TAG_RELEASE));
+    assert_eq!(
+        jellyfin,
+        json!({"MusicBrainzAlbum": TAG_RELEASE, "MusicBrainzReleaseGroup": TAG_GROUP})
+    );
+    assert_eq!(identity_rows(&rig), before, "reading wrote an identity");
+
+    rig.app
+        .db()
+        .execute_batch(&format!(
+            "INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, release_mbid, decision_source, selected_at) \
+             VALUES ('{album}', 'musicbrainz', '{GROUP}', '{RELEASE}', 'manual', 1) \
+             ON CONFLICT (local_album_id, provider) DO UPDATE SET \
+             release_group_mbid = excluded.release_group_mbid, \
+             release_mbid = excluded.release_mbid, decision_source = 'manual'; \
+             DELETE FROM library_album_match_state WHERE local_album_id = '{album}';"
+        ))
+        .expect("match accepted");
+    let before = identity_rows(&rig);
+    let (subsonic, jellyfin) = album_ids_sent(&rig, &album, &airbag).await;
+    assert_eq!(subsonic, json!(RELEASE));
+    assert_eq!(
+        jellyfin,
+        json!({"MusicBrainzAlbum": RELEASE, "MusicBrainzReleaseGroup": GROUP})
+    );
+    assert_eq!(identity_rows(&rig), before, "reading wrote an identity");
+
+    rig.app
+        .db()
+        .execute(
+            "UPDATE local_album_external_identities SET release_mbid = NULL \
+             WHERE local_album_id = ?1",
+            [album.as_str()],
+        )
+        .expect("release unknown");
+    let (subsonic, jellyfin) = album_ids_sent(&rig, &album, &airbag).await;
+    assert_eq!(subsonic, json!(GROUP));
+    assert_eq!(jellyfin, json!({"MusicBrainzReleaseGroup": GROUP}));
+    rig.stop().await;
+}
+
+/// An artist row whose files name two MusicBrainz artists for it, with no
+/// list pairing names and ids, is no single artist: player apps get no
+/// MusicBrainz id for it, on Subsonic or on a Jellyfin track.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_composite_artist_sends_no_musicbrainz_id() {
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+
+    const FIRST: &str = "aaaaaaaa-0000-4000-8000-000000000001";
+    const SECOND: &str = "aaaaaaaa-0000-4000-8000-000000000002";
+    let rig = CompatApp::start("compat-composite-artist").await;
+    let music = rig.app.config.root_app_dir.join("music");
+    let duet = music.join("Duo/Together/01.flac");
+    std::fs::create_dir_all(duet.parent().expect("folder")).expect("folder made");
+    std::fs::copy(music.join("Radiohead/OK Computer/01 Airbag.flac"), &duet).expect("copied");
+    let one = |value: &str| vec![value.to_owned()];
+    let both = vec![FIRST.to_owned(), SECOND.to_owned()];
+    save_tags(
+        &duet,
+        &[
+            TagEdit::verbatim(TagField::Album, one("Together")),
+            TagEdit::verbatim(TagField::Artist, one("Jay-Z & Kanye West")),
+            TagEdit::verbatim(TagField::AlbumArtist, one("Jay-Z & Kanye West")),
+            TagEdit::verbatim(TagField::Artists, Vec::new()),
+            TagEdit::verbatim(TagField::AlbumArtists, Vec::new()),
+            TagEdit::verbatim(TagField::MusicBrainzArtistId, both.clone()),
+            TagEdit::verbatim(TagField::MusicBrainzAlbumArtistId, both),
+            TagEdit::verbatim(TagField::MusicBrainzReleaseId, Vec::new()),
+            TagEdit::verbatim(TagField::MusicBrainzReleaseGroupId, Vec::new()),
+            TagEdit::verbatim(TagField::MusicBrainzRecordingId, Vec::new()),
+        ],
+    )
+    .expect("copy tagged");
+    rig.app.scan_library().await;
+    let (track, _, artist) = catalog_ids(&rig, "Duo/Together/01.flac");
+
+    let answer = subsonic_ok(&rig, &format!("getArtist?id=ar-{artist}")).await;
+    assert_eq!(answer["artist"]["musicBrainzId"], json!(""), "{answer}");
+    let token = rig.jellyfin_auth();
+    let (status, item) = rig
+        .app
+        .call(
+            "GET",
+            &format!("/jellyfin/Items/{}", unkeyed_id("track", &track)),
+            &[("X-Emby-Authorization", token.as_str())],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{item}");
+    assert_eq!(item["ProviderIds"].get("MusicBrainzArtist"), None, "{item}");
+    rig.stop().await;
+}
+
+/// What Subsonic `getAlbum` sends as the album's `musicBrainzId`, and the
+/// `ProviderIds` of the album a Jellyfin app reaches from its `track`.
+async fn album_ids_sent(rig: &CompatApp, album: &str, track: &str) -> (Value, Value) {
+    let subsonic = subsonic_ok(rig, &format!("getAlbum?id=al-{album}")).await;
+    let token = rig.jellyfin_auth();
+    let auth = [("X-Emby-Authorization", token.as_str())];
+    let (status, item) = rig
+        .app
+        .call(
+            "GET",
+            &format!("/jellyfin/Items/{}", unkeyed_id("track", track)),
+            &auth,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{item}");
+    let album_id = item["AlbumId"].as_str().expect("AlbumId");
+    let (status, album) = rig
+        .app
+        .call("GET", &format!("/jellyfin/Items/{album_id}"), &auth, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{album}");
+    (
+        subsonic["album"]["musicBrainzId"].clone(),
+        album["ProviderIds"].clone(),
+    )
+}
+
+/// Every row of the external identity tables, in a fixed order.
+fn identity_rows(rig: &CompatApp) -> Vec<String> {
+    let db = rig.app.db();
+    let mut rows = Vec::new();
+    for sql in [
+        "SELECT local_album_id || ' ' || release_group_mbid || ' ' || \
+         COALESCE(release_mbid, '-') || ' ' || row_revision \
+         FROM local_album_external_identities ORDER BY 1",
+        "SELECT local_artist_id || ' ' || provider_artist_id || ' ' || row_revision \
+         FROM local_artist_external_identities ORDER BY 1",
+        "SELECT local_track_id || ' ' || COALESCE(recording_mbid, '-') || ' ' || \
+         COALESCE(release_mbid, '-') FROM local_track_external_identities ORDER BY 1",
+    ] {
+        let mut statement = db.prepare(sql).expect("identity read");
+        let read = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .expect("identity rows")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("identity row");
+        rows.extend(read);
+    }
+    rows
 }
 
 fn header_str(map: &HeaderMap, name: &str) -> String {

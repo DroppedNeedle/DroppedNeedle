@@ -354,11 +354,17 @@ impl<'a, I: IdMap> Builder<'a, I> {
         dto.container = t.file_format.clone();
         dto.genres = Some(t.genre.clone().map(|g| vec![g]).unwrap_or_default());
         dto.has_lyrics = Some(false);
-        if let Some(mbid) = t.recording_mbid.as_deref() {
-            dto.provider_ids = Some(BTreeMap::from([(
-                "MusicBrainzTrack".to_owned(),
-                mbid.to_owned(),
-            )]));
+        let provider_ids: BTreeMap<String, String> = [
+            ("MusicBrainzTrack", &t.recording_mbid),
+            ("MusicBrainzAlbum", &t.release_mbid),
+            ("MusicBrainzArtist", &t.artist_musicbrainz_id),
+            ("MusicBrainzReleaseGroup", &t.release_group_mbid),
+        ]
+        .into_iter()
+        .filter_map(|(key, id)| Some((key.to_owned(), id.clone()?)))
+        .collect();
+        if !provider_ids.is_empty() {
+            dto.provider_ids = Some(provider_ids);
         }
         dto.date_created = Some(iso_o(t.created_at));
         dto.user_data = Some(user_data(&track_id, t.starred, t.play_count, t.last_played));
@@ -397,6 +403,9 @@ impl<'a, I: IdMap> Builder<'a, I> {
             dto.image_tags.insert("Primary".to_owned(), tag);
         }
         let mut provider_ids = BTreeMap::new();
+        if let Some(mbid) = a.release_mbid.as_deref() {
+            provider_ids.insert("MusicBrainzAlbum".to_owned(), mbid.to_owned());
+        }
         if let Some(mbid) = a.release_group_mbid.as_deref() {
             provider_ids.insert("MusicBrainzReleaseGroup".to_owned(), mbid.to_owned());
         }
@@ -475,6 +484,7 @@ impl<'a, I: IdMap> Builder<'a, I> {
         detail.can_download = can_download;
         detail.path = t.path.clone().unwrap_or_default();
         detail.external_urls = musicbrainz_urls(&[
+            ("release", t.release_mbid.as_deref()),
             ("artist", t.artist_musicbrainz_id.as_deref()),
             ("artist", t.album_artist_musicbrainz_id.as_deref()),
             ("release-group", t.release_group_mbid.as_deref()),
