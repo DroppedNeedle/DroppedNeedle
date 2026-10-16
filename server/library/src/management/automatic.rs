@@ -173,7 +173,7 @@ pub fn skip_reason(code: &str) -> ItemReason {
         SCAN_HELD_BACK => reason(
             code,
             "The last scan of this album's library folder found most of its files gone at once, and this album's files arrived after that. DroppedNeedle leaves them alone in case they are your own retag.",
-            "Nothing to do if the folder is mounted: the next full scan of it lets the album go ahead. If a drive or share is not mounted, mount it and scan again. To have it written now, preview the album by itself.",
+            "Usually nothing to do: the next full scan of the folder lets the album go ahead. If a drive or share is not mounted, mount it and scan again. If you deleted files there on purpose, the scan holds the folder until you remove the albums they belonged to from the library. To have this album written now, preview it by itself.",
         ),
         _ => reason(
             "MANAGEMENT_FAILED",
