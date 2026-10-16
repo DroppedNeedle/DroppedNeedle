@@ -14,7 +14,7 @@
 //! ([`proven_rows`]). Two rows proven to be one artist are merged at the
 //! end of the scan run (`corrections::artist_convergence`).
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use rusqlite::{Connection, OptionalExtension as _, params};
 
@@ -202,20 +202,26 @@ pub(crate) fn proven_rows(tx: &Connection, mbid: &str) -> rusqlite::Result<Vec<P
             continue;
         }
         let created: Option<f64> = tx
-            .prepare_cached(
+            .prepare_cached(&format!(
                 "SELECT created_at FROM local_artists WHERE id = ?1 \
                  AND retired_into_artist_id IS NULL AND kind <> 'various_artists' \
-                 AND id NOT IN (?2, ?3) AND NOT EXISTS (SELECT 1 FROM \
-                 local_artist_external_identities WHERE local_artist_id = ?1)",
-            )?
+                 AND id NOT IN (?5, ?6) AND NOT EXISTS (SELECT 1 FROM \
+                 local_artist_external_identities WHERE local_artist_id = ?1) \
+                 AND NOT {HOLDS_OTHER_ID}"
+            ))?
             .query_row(
-                params![holder, VARIOUS_ARTISTS_ID, UNKNOWN_ARTIST_ID],
+                params![
+                    holder,
+                    mbid,
+                    None::<&str>,
+                    None::<&str>,
+                    VARIOUS_ARTISTS_ID,
+                    UNKNOWN_ARTIST_ID
+                ],
                 |row| row.get(0),
             )
             .optional()?;
-        if let Some(created) = created
-            && !holds_other_id(tx, &holder, mbid, None)?
-        {
+        if let Some(created) = created {
             by_files.push((created, holder));
         }
     }
@@ -228,23 +234,26 @@ pub(crate) fn proven_rows(tx: &Connection, mbid: &str) -> rusqlite::Result<Vec<P
     Ok(out)
 }
 
-/// The rows any credit holding `mbid` points at, one index step each.
-fn holders(tx: &Connection, mbid: &str) -> rusqlite::Result<BTreeSet<String>> {
-    let mut out = BTreeSet::new();
-    for table in ["local_track_artists", "local_album_artists"] {
-        let mut after = String::new();
-        loop {
-            let next: Option<String> = tx
-                .prepare_cached(&format!(
-                    "SELECT local_artist_id FROM {table} WHERE artist_mbid = ?1 \
-                     AND local_artist_id > ?2 ORDER BY local_artist_id LIMIT 1"
-                ))?
-                .query_row(params![mbid, after], |row| row.get(0))
-                .optional()?;
-            let Some(next) = next else { break };
-            out.insert(next.clone());
-            after = next;
-        }
+/// The rows any credit holding `mbid` points at, in order: one statement
+/// per row, each taking the next row of both tables by index.
+fn holders(tx: &Connection, mbid: &str) -> rusqlite::Result<Vec<String>> {
+    let mut out = Vec::new();
+    let mut after = String::new();
+    loop {
+        let next: Option<String> = tx
+            .prepare_cached(
+                "SELECT min(id) FROM ( \
+                 SELECT (SELECT local_artist_id FROM local_track_artists \
+                  WHERE artist_mbid = ?1 AND local_artist_id > ?2 \
+                  ORDER BY local_artist_id LIMIT 1) AS id \
+                 UNION ALL SELECT (SELECT local_artist_id FROM local_album_artists \
+                  WHERE artist_mbid = ?1 AND local_artist_id > ?2 \
+                  ORDER BY local_artist_id LIMIT 1))",
+            )?
+            .query_row(params![mbid, after], |row| row.get(0))?;
+        let Some(next) = next else { break };
+        out.push(next.clone());
+        after = next;
     }
     Ok(out)
 }
@@ -260,48 +269,18 @@ pub(super) struct Own<'a> {
     pub album_id: &'a str,
 }
 
-/// Whether a credit of `artist` holds an id other than `mbid`, leaving
-/// out `own`'s credits. Two probes per table, each stopping at the first
-/// row found.
-fn holds_other_id(
-    tx: &Connection,
-    artist: &str,
-    mbid: &str,
-    own: Option<Own<'_>>,
-) -> rusqlite::Result<bool> {
-    let track = own.and_then(|own| own.track_id);
-    let album = own.map(|own| own.album_id);
-    for (sql, skip) in [
-        (
-            "SELECT EXISTS(SELECT 1 FROM local_track_artists WHERE local_artist_id = ?1 \
-             AND artist_mbid < ?2 AND local_track_id IS NOT ?3)",
-            track,
-        ),
-        (
-            "SELECT EXISTS(SELECT 1 FROM local_track_artists WHERE local_artist_id = ?1 \
-             AND artist_mbid > ?2 AND local_track_id IS NOT ?3)",
-            track,
-        ),
-        (
-            "SELECT EXISTS(SELECT 1 FROM local_album_artists WHERE local_artist_id = ?1 \
-             AND artist_mbid < ?2 AND local_album_id IS NOT ?3)",
-            album,
-        ),
-        (
-            "SELECT EXISTS(SELECT 1 FROM local_album_artists WHERE local_artist_id = ?1 \
-             AND artist_mbid > ?2 AND local_album_id IS NOT ?3)",
-            album,
-        ),
-    ] {
-        let found: bool = tx
-            .prepare_cached(sql)?
-            .query_row(params![artist, mbid, skip], |row| row.get(0))?;
-        if found {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
+/// SQL that is true when a credit of artist `?1` holds an id other than
+/// `?2`, leaving out the credits of track `?3` and album `?4` (NULL leaves
+/// out none). Each probe is a range on an (artist, id) index and stops at
+/// the first row found.
+const HOLDS_OTHER_ID: &str = "(EXISTS(SELECT 1 FROM local_track_artists \
+     WHERE local_artist_id = ?1 AND artist_mbid < ?2 AND local_track_id IS NOT ?3) \
+     OR EXISTS(SELECT 1 FROM local_track_artists \
+     WHERE local_artist_id = ?1 AND artist_mbid > ?2 AND local_track_id IS NOT ?3) \
+     OR EXISTS(SELECT 1 FROM local_album_artists \
+     WHERE local_artist_id = ?1 AND artist_mbid < ?2 AND local_album_id IS NOT ?4) \
+     OR EXISTS(SELECT 1 FROM local_album_artists \
+     WHERE local_artist_id = ?1 AND artist_mbid > ?2 AND local_album_id IS NOT ?4))";
 
 /// Picks the rows for one file's credits.
 struct Resolver<'a> {
@@ -379,21 +358,27 @@ impl Resolver<'_> {
         {
             return Ok(true);
         }
-        let marked: bool = self
-            .tx
-            .prepare_cached(
+        self.tx
+            .prepare_cached(&format!(
                 "SELECT EXISTS(SELECT 1 FROM local_artists WHERE id = ?1 \
-                 AND (kind = 'various_artists' OR id IN (?3, ?4))) \
+                 AND (kind = 'various_artists' OR id IN (?5, ?6))) \
                  OR EXISTS(SELECT 1 FROM local_artist_external_identities \
                  WHERE local_artist_id = ?1 AND provider = 'musicbrainz' \
                  AND decision_source IN ('manual', 'legacy_import') \
-                 AND lower(provider_artist_id) <> ?2)",
-            )?
+                 AND lower(provider_artist_id) <> ?2) \
+                 OR {HOLDS_OTHER_ID}"
+            ))?
             .query_row(
-                params![artist, mbid, VARIOUS_ARTISTS_ID, UNKNOWN_ARTIST_ID],
+                params![
+                    artist,
+                    mbid,
+                    self.own.track_id,
+                    self.own.album_id,
+                    VARIOUS_ARTISTS_ID,
+                    UNKNOWN_ARTIST_ID
+                ],
                 |row| row.get(0),
-            )?;
-        Ok(marked || holds_other_id(self.tx, artist, mbid, Some(self.own))?)
+            )
     }
 
     /// The proven row takes the credit's name once no other file still
