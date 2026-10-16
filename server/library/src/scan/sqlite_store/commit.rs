@@ -1449,7 +1449,8 @@ impl RetagPair<'_> {
 
 /// Drop an album left with no tracks, with its scan-owned joins. Rows that
 /// reference the album elsewhere (identities, reviews) keep it, and so do
-/// a favorite and a playlist entry, which name it without a foreign key:
+/// a favorite, a rating and a playlist entry, which name it without a
+/// foreign key:
 /// the album may be the old half of a retag that a later scan joins, and
 /// they go with it then.
 fn drop_if_empty(tx: &Connection, album_id: &str) -> rusqlite::Result<()> {
@@ -1457,6 +1458,8 @@ fn drop_if_empty(tx: &Connection, album_id: &str) -> rusqlite::Result<()> {
         .prepare_cached(
             "SELECT EXISTS(SELECT 1 FROM local_tracks WHERE local_album_id = ?1) \
              OR EXISTS(SELECT 1 FROM library_user_favorites \
+               WHERE item_kind = 'album' AND item_id = ?1) \
+             OR EXISTS(SELECT 1 FROM library_user_ratings \
                WHERE item_kind = 'album' AND item_id = ?1) \
              OR EXISTS(SELECT 1 FROM playlist_tracks WHERE album_id = ?1)",
         )?

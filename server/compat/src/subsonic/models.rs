@@ -16,7 +16,8 @@ pub trait Render {
 
 /// `averageRating`, rounded to two places. A whole mean is sent as an
 /// integer, as Navidrome 0.62.0 sends it (recorded
-/// `navidrome-0.62.0-ratings`).
+/// `navidrome-0.62.0-ratings`). The rounding is ours: that recording
+/// holds whole means only.
 fn average_rating(average: Option<f64>) -> Val {
     match average {
         Some(mean) if mean.is_finite() => {

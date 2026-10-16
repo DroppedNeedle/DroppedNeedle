@@ -10996,6 +10996,97 @@ async fn a_retagged_and_renamed_album_keeps_what_people_made() {
     );
 }
 
+/// A track nobody played but people rated continues into the track that
+/// took its place with its ratings: a rating the user already gave the
+/// new track stays, the old one goes, and the audit row lists both.
+#[tokio::test]
+async fn a_rated_track_continues_with_its_ratings() {
+    let (scratch, library, music, album, tracks) = album_at_rest("lib-continue-rated", 3).await;
+    let db = scratch_db(&scratch);
+    db.execute_batch(&format!(
+        "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
+         ('curator', 'Curator', 'admin', '2026-01-01T00:00:00Z'), \
+         ('listener', 'Listener', 'user', '2026-01-01T00:00:00Z'); \
+         INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
+         selected_at, row_revision) VALUES ('{album}', 'musicbrainz', 'rg-1', '{REL_1}', \
+         'manual', 'curator', 1234.5, 7);"
+    ))
+    .expect("edition chosen");
+    queue_remap_row(&library, &album, "place_only");
+    remap_once(&library, fitting_release(&library, &album)).await;
+    let old = &tracks[2];
+    db.execute_batch(&format!(
+        "INSERT INTO library_user_ratings (user_id, item_kind, item_id, rating, rated_at) \
+         VALUES ('listener', 'track', '{old}', 4, 1000), ('curator', 'track', '{old}', 2, 2000);"
+    ))
+    .expect("rated");
+
+    for number in 1..=2 {
+        retag_outside(&music, number, "Renamed", false, false);
+    }
+    let renamed = retag_outside(&music, 3, "Renamed", false, true);
+    rescan(&library).await;
+    rescan(&library).await;
+    let new = indexed_at(&library, &renamed);
+    let joined = album_row(&db, &new);
+    assert_eq!(album_row(&db, old), joined, "the album is joined");
+    db.execute(
+        "INSERT INTO library_user_ratings (user_id, item_kind, item_id, rating, rated_at) \
+         VALUES ('curator', 'track', ?1, 5, 3000)",
+        [&new],
+    )
+    .expect("the curator rated the new track");
+    remap_once(&library, fitting_release(&library, &joined)).await;
+
+    let ratings = |track: &str| -> Vec<(String, i64, i64)> {
+        db.prepare(
+            "SELECT user_id, rating, rated_at FROM library_user_ratings \
+             WHERE item_kind = 'track' AND item_id = ?1 ORDER BY user_id",
+        )
+        .expect("prepare")
+        .query_map([track], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .expect("ratings")
+        .collect::<Result<_, _>>()
+        .expect("ratings read")
+    };
+    assert_eq!(
+        ratings(&new),
+        vec![
+            ("curator".to_owned(), 5, 3000),
+            ("listener".to_owned(), 4, 1000)
+        ]
+    );
+    assert!(ratings(old).is_empty());
+    let audit: String = db
+        .query_row(
+            "SELECT after_json FROM library_catalog_actions WHERE action_kind = 'continue_tracks'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("audit row");
+    let audit: Value = serde_json::from_str(&audit).expect("audit json");
+    let pair = audit["pairs"]
+        .as_array()
+        .expect("pairs")
+        .iter()
+        .find(|pair| pair["old_track_id"] == json!(old))
+        .expect("pair of the rated track")
+        .clone();
+    assert_eq!(pair["new_track_id"], json!(new), "{audit}");
+    assert_eq!(
+        pair["moved"]["rating_user_ids"],
+        json!(["listener"]),
+        "{audit}"
+    );
+    assert_eq!(
+        pair["deleted"]["ratings"],
+        json!([{"user_id": "curator", "rating": 2, "rated_at": 2000}]),
+        "{audit}"
+    );
+    assert_eq!(audit["moved"]["library_user_ratings"], json!(2), "{audit}");
+}
+
 fn history_kinds(history: &Value) -> Vec<String> {
     history["items"]
         .as_array()

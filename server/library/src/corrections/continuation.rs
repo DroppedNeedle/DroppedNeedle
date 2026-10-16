@@ -83,6 +83,8 @@ const HOLDING_ALIASES: &str = "WITH dead AS (SELECT x.alias FROM local_track_ali
     SELECT local_track_id FROM library_play_history WHERE local_track_id IN dead \
     UNION SELECT item_id FROM library_user_favorites \
       WHERE item_kind = 'track' AND item_id IN dead \
+    UNION SELECT item_id FROM library_user_ratings \
+      WHERE item_kind = 'track' AND item_id IN dead \
     UNION SELECT library_file_id FROM playlist_tracks WHERE library_file_id IN dead \
     UNION SELECT file_id FROM compat_bookmarks WHERE file_id IN dead \
     UNION SELECT file_id FROM compat_play_queue_items WHERE file_id IN dead \
@@ -497,6 +499,30 @@ fn sweep(
             }))
         })?
         .collect::<rusqlite::Result<_>>()?;
+    // A rating the user already has on the new row stays; the old one is
+    // deleted, kept here as it was.
+    let ratings_moved = strings(
+        tx,
+        "SELECT r.user_id FROM library_user_ratings r WHERE r.item_kind = 'track' \
+         AND r.item_id = ?1 AND NOT EXISTS (SELECT 1 FROM library_user_ratings s \
+         WHERE s.user_id = r.user_id AND s.item_kind = 'track' AND s.item_id = ?2)",
+        params![old, new],
+    )?;
+    let ratings_deleted: Vec<Value> = tx
+        .prepare(
+            "SELECT r.user_id, r.rating, r.rated_at FROM library_user_ratings r \
+             WHERE r.item_kind = 'track' AND r.item_id = ?1 \
+             AND EXISTS (SELECT 1 FROM library_user_ratings s WHERE s.user_id = r.user_id \
+             AND s.item_kind = 'track' AND s.item_id = ?2)",
+        )?
+        .query_map(params![old, new], |row| {
+            Ok(json!({
+                "user_id": row.get::<_, String>(0)?,
+                "rating": row.get::<_, i64>(1)?,
+                "rated_at": row.get::<_, i64>(2)?,
+            }))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
     retarget_references(tx, "track", old, new)?;
 
     let entries = strings(
@@ -613,6 +639,10 @@ fn sweep(
         "library_user_favorites",
         stars_moved.len() + stars_deleted.len(),
     );
+    count(
+        "library_user_ratings",
+        ratings_moved.len() + ratings_deleted.len(),
+    );
     count("playlist_tracks", entries.len());
     count(
         "compat_bookmarks",
@@ -624,6 +654,7 @@ fn sweep(
         "moved": {
             "play_history_ids": plays,
             "star_user_ids": stars_moved,
+            "rating_user_ids": ratings_moved,
             "playlist_entry_ids": entries,
             "bookmark_user_ids": bookmarks_moved,
             "queue_entries": queue,
@@ -639,6 +670,7 @@ fn sweep(
         },
         "deleted": {
             "stars": stars_deleted,
+            "ratings": ratings_deleted,
             "bookmarks": bookmarks_deleted,
         },
     }))
