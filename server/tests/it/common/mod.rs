@@ -49,7 +49,7 @@ pub fn hooked_state() -> AppState {
     let mut reads = test_reads(&auth, ids.clone());
     let acquire = test_acquire(&auth, ids.clone(), &mut reads);
     let library = test_library(&auth, ids.clone());
-    let compat = droppedneedle::compat::CompatSetup::for_tests(
+    let compat = droppedneedle_compat::CompatSetup::for_tests(
         auth.users.clone(),
         library.clone(),
         &reads,
@@ -99,7 +99,7 @@ pub fn hooked_state_with_compat(subsonic: bool, jellyfin: bool) -> AppState {
     let mut reads = test_reads(&auth, ids.clone());
     let acquire = test_acquire(&auth, ids.clone(), &mut reads);
     let library = test_library(&auth, ids.clone());
-    let compat = droppedneedle::compat::CompatSetup::for_tests(
+    let compat = droppedneedle_compat::CompatSetup::for_tests(
         auth.users.clone(),
         library.clone(),
         &reads,
@@ -150,7 +150,7 @@ pub fn prod_like_state() -> AppState {
     let mut reads = test_reads(&auth, ids.clone());
     let acquire = test_acquire(&auth, ids.clone(), &mut reads);
     let library = test_library(&auth, ids.clone());
-    let compat = droppedneedle::compat::CompatSetup::for_tests(
+    let compat = droppedneedle_compat::CompatSetup::for_tests(
         auth.users.clone(),
         library.clone(),
         &reads,

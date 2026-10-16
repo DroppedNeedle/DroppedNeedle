@@ -83,9 +83,9 @@ impl From<CollectionsError> for CompatError {
     }
 }
 
-impl crate::compat::subsonic::store::StoreFailure for CompatError {
+impl crate::subsonic::store::StoreFailure for CompatError {
     fn client_error(&self) -> Option<(u8, String)> {
-        use crate::compat::subsonic::error::{GENERIC, NOT_AUTHORIZED, NOT_FOUND, PARAM_MISSING};
+        use crate::subsonic::error::{GENERIC, NOT_AUTHORIZED, NOT_FOUND, PARAM_MISSING};
         match self {
             Self::NotFound => Some((NOT_FOUND, "The requested data was not found.".to_owned())),
             Self::Forbidden => Some((
@@ -99,9 +99,9 @@ impl crate::compat::subsonic::store::StoreFailure for CompatError {
     }
 }
 
-impl From<CompatError> for crate::compat::jellyfin::seams::WriteRefusal {
+impl From<CompatError> for crate::jellyfin::seams::WriteRefusal {
     fn from(error: CompatError) -> Self {
-        use crate::compat::jellyfin::seams::WriteRefusal;
+        use crate::jellyfin::seams::WriteRefusal;
         match error {
             CompatError::NotFound => WriteRefusal::NotFound,
             CompatError::Forbidden => WriteRefusal::Forbidden,

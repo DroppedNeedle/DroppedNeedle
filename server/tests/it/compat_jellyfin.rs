@@ -8,16 +8,16 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::Request;
-use droppedneedle::compat::jellyfin::fake::{
-    FakeLibrary, MemoryEngine, MemoryIds, MemorySessions, SessionCall,
-};
-use droppedneedle::compat::jellyfin::seams::{
-    DecideInput, IdMap, JellyfinSettings, StreamPlan, decide,
-};
-use droppedneedle::compat::jellyfin::{JellyfinState, router};
-use droppedneedle::compat::shared::address::ListenerConfig;
 use droppedneedle_auth::compat_auth::fakes::FakeCompatPasswords;
 use droppedneedle_auth::compat_auth::jellyfin::server_id;
+use droppedneedle_compat::jellyfin::fake::{
+    FakeLibrary, MemoryEngine, MemoryIds, MemorySessions, SessionCall,
+};
+use droppedneedle_compat::jellyfin::seams::{
+    DecideInput, IdMap, JellyfinSettings, StreamPlan, decide,
+};
+use droppedneedle_compat::jellyfin::{JellyfinState, router};
+use droppedneedle_compat::shared::address::ListenerConfig;
 use droppedneedle_kernel::config::TrustedProxies;
 use serde_json::{Value, json};
 use tower::ServiceExt as _;

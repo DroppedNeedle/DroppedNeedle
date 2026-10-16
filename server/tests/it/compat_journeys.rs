@@ -16,22 +16,22 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode, header};
 use axum::middleware::from_fn_with_state;
-use droppedneedle::compat::adapters::principal::{CompatProfile, CompatProfiles, SubsonicVerifier};
-use droppedneedle::compat::http::{
+use droppedneedle_auth::compat_auth::fakes::FakeCompatPasswords;
+use droppedneedle_compat::adapters::principal::{CompatProfile, CompatProfiles, SubsonicVerifier};
+use droppedneedle_compat::http::{
     CompatLimits, StoreLabels, SubsonicState, cors_layer, limits_layer, redact_target,
     subsonic_router,
 };
-use droppedneedle::compat::jellyfin::fake::{
+use droppedneedle_compat::jellyfin::fake::{
     FakeLibrary, MemoryEngine, MemoryIds, MemorySessions, SessionCall,
 };
-use droppedneedle::compat::jellyfin::seams::{
+use droppedneedle_compat::jellyfin::seams::{
     AlbumView, ArtistView, GenreView, IdMap, JellyfinSettings, TrackView,
 };
-use droppedneedle::compat::jellyfin::{JellyfinState, router as jellyfin_router};
-use droppedneedle::compat::shared::address::ListenerConfig;
-use droppedneedle::compat::subsonic::Settings as SubsonicSettings;
-use droppedneedle::compat::subsonic::fake::{FakeAudio, FakeStore};
-use droppedneedle_auth::compat_auth::fakes::FakeCompatPasswords;
+use droppedneedle_compat::jellyfin::{JellyfinState, router as jellyfin_router};
+use droppedneedle_compat::shared::address::ListenerConfig;
+use droppedneedle_compat::subsonic::Settings as SubsonicSettings;
+use droppedneedle_compat::subsonic::fake::{FakeAudio, FakeStore};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 

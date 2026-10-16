@@ -7,7 +7,7 @@
 use rusqlite::params;
 use sqlx::Row as _;
 
-use crate::compat::subsonic::store::{BookmarkRecord, QueueState};
+use crate::subsonic::store::{BookmarkRecord, QueueState};
 use droppedneedle_catalog::reads::collections::db::{CollectionsDb, StoreError};
 
 /// Durable per-user play queues and bookmarks.

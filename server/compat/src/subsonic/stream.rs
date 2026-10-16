@@ -11,7 +11,7 @@
 //! `_download`, `_cover_size`).
 
 use super::error::{GENERIC, SubsonicError};
-pub use crate::compat::body::AudioBody;
+pub use crate::body::AudioBody;
 
 /// Minimum transcode bitrate kbps (v2 `_MIN_BITRATE_KBPS`).
 pub const MIN_BITRATE_KBPS: i64 = 32;

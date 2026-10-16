@@ -29,7 +29,7 @@
 //!
 //! # Tests
 //!
-//! Wire goldens live with the tests, in `tests/fixtures/compat/`.
+//! Wire goldens live with the tests, in `server/tests/fixtures/compat/`.
 //! `tests/it/compat_library_journeys.rs` replays the client traces and
 //! pinned shapes through the whole app over a library its own scanner
 //! filled (the `library_*` goldens); `tests/it/compat_journeys.rs` replays
@@ -37,6 +37,9 @@
 //! refused when `CI` is set. `tests/it/compat_subsonic.rs` and
 //! `tests/it/compat_jellyfin.rs` pin each protocol over the test doubles,
 //! and `tests/it/compat_catalog.rs` runs both over a real database.
+
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 pub mod adapters;
 pub mod body;

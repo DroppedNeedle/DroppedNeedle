@@ -15,11 +15,9 @@
 
 use std::sync::Arc;
 
-use crate::compat::body::{AudioBody, LiveBody};
-use crate::compat::jellyfin::seams::{ByteOutcome, StreamEngine as JellyfinStreamEngine};
-use crate::compat::subsonic::stream::{
-    AudioBackend, AudioFacts, BackendError, OpenedAudio, StreamPlan,
-};
+use crate::body::{AudioBody, LiveBody};
+use crate::jellyfin::seams::{ByteOutcome, StreamEngine as JellyfinStreamEngine};
+use crate::subsonic::stream::{AudioBackend, AudioFacts, BackendError, OpenedAudio, StreamPlan};
 use droppedneedle_media::stream::leases::OwnedDirectLease;
 use droppedneedle_media::stream::routes::{
     AudioSource, MediaBody, StreamEngine, StreamFault, StreamMedia, StreamOpen, StreamParams,

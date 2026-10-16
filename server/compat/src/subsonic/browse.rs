@@ -101,7 +101,7 @@ pub async fn extensions<P: Principal, S: Store, B: AudioBackend>(
     Ok(Outcome::keyed(
         "openSubsonicExtensions",
         Val::List(
-            crate::compat::shared::extensions::ADVERTISED
+            crate::shared::extensions::ADVERTISED
                 .iter()
                 .map(|ext| {
                     SOpenSubsonicExtension {

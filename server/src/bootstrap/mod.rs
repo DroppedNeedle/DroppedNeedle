@@ -28,9 +28,6 @@ use crate::{
     AppState,
     admin::{AdminDb, AdminSetup, quota::reload_overrides},
     app::create_app_with_web,
-    compat::{
-        CompatSetup, settings::LiveSettings, setup::CompatDeps, shared::address::ListenerConfig,
-    },
     settings::{
         effects::{LiveSaveEffects, SaveEffects},
         library_catalog::SqliteLibraryPolicyCatalog,
@@ -54,6 +51,9 @@ use droppedneedle_catalog::reads::{
     },
     collections::{db::CollectionsDb, remote_import::PlaylistImportSink},
     enrichment::{library::LiveEnrichment, live::production_enrichment},
+};
+use droppedneedle_compat::{
+    CompatSetup, settings::LiveSettings, setup::CompatDeps, shared::address::ListenerConfig,
 };
 use droppedneedle_kernel::{
     config::AppConfig,

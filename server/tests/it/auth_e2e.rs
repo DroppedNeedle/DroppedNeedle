@@ -260,16 +260,16 @@ impl E2e {
             &droppedneedle::bootstrap::Outbound::live().spotify(),
         )
         .expect("acquire bundle builds");
-        let compat = droppedneedle::compat::CompatSetup::build(
-            droppedneedle::compat::setup::CompatDeps::over_reads(
+        let compat = droppedneedle_compat::CompatSetup::build(
+            droppedneedle_compat::setup::CompatDeps::over_reads(
                 auth.users.clone(),
                 Arc::clone(&self.crypto),
                 media.playback.clone(),
                 media.stream.engine.clone(),
                 library.clone(),
                 &reads,
-                droppedneedle::compat::settings::LiveSettings::from_config(Arc::clone(&self.store)),
-                droppedneedle::compat::shared::address::ListenerConfig {
+                droppedneedle_compat::settings::LiveSettings::from_config(Arc::clone(&self.store)),
+                droppedneedle_compat::shared::address::ListenerConfig {
                     port: app_config.port,
                     trusted_proxies: app_config.trusted_proxies.clone(),
                     base_path: app_config.base_path.clone(),

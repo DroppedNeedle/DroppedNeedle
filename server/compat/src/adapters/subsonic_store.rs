@@ -12,16 +12,16 @@ use std::sync::Arc;
 use super::library::{CompatError, CompatLibrary, ImageBytes, whole};
 use super::playback::CompatPlayback;
 use super::queues::CompatQueues;
-use crate::compat::settings::LiveSettings;
-use crate::compat::subsonic::advanced;
-use crate::compat::subsonic::ids::IdKind;
-use crate::compat::subsonic::picture::PictureSigner;
-use crate::compat::subsonic::store::{
+use crate::settings::LiveSettings;
+use crate::subsonic::advanced;
+use crate::subsonic::ids::IdKind;
+use crate::subsonic::picture::PictureSigner;
+use crate::subsonic::store::{
     AlbumSort, BookmarkRecord, ClientInfo, LastScan, LyricLine, LyricsData, NowPlayingRow,
     PlaylistDetail, PlaylistEntry, PlaylistRecord, PlaylistSummary, QueueState, ScanStatusData,
     Store, TranscodeDecisionData,
 };
-use crate::compat::subsonic::views::{ViewAlbum, ViewArtist, ViewGenre, ViewTrack};
+use crate::subsonic::views::{ViewAlbum, ViewArtist, ViewGenre, ViewTrack};
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::reads::collections::service::Visible;
 use droppedneedle_catalog::reads::library::player::{
@@ -35,7 +35,7 @@ use droppedneedle_library::wiring::LibrarySetup;
 
 /// Unix seconds to the `YYYY-MM-DDTHH:MM:SSZ` form Subsonic shows.
 fn iso_text(unix: u64) -> Option<String> {
-    crate::compat::subsonic::views::iso(Some(unix as i64))
+    crate::subsonic::views::iso(Some(unix as i64))
 }
 
 /// A scan kind as the scan API and `library_scan_runs.kind` spell it.

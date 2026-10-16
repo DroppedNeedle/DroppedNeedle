@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = [".", "acquire", "auth", "catalog", "kernel", "library", "media", "plugins", "providers", "testkit"]
+members = [".", "acquire", "auth", "catalog", "compat", "kernel", "library", "media", "plugins", "providers", "testkit"]
 
 [workspace.package]
 version = "3.0.0"
@@ -12,6 +12,7 @@ license = "AGPL-3.0-or-later"
 droppedneedle-acquire = { path = "acquire", version = "3.0.0" }
 droppedneedle-auth = { path = "auth", version = "3.0.0" }
 droppedneedle-catalog = { path = "catalog", version = "3.0.0" }
+droppedneedle-compat = { path = "compat", version = "3.0.0" }
 droppedneedle-kernel = { path = "kernel", version = "3.0.0" }
 droppedneedle-library = { path = "library", version = "3.0.0" }
 droppedneedle-media = { path = "media", version = "3.0.0" }
@@ -79,6 +80,7 @@ license.workspace = true
 droppedneedle-acquire.workspace = true
 droppedneedle-auth.workspace = true
 droppedneedle-catalog.workspace = true
+droppedneedle-compat.workspace = true
 droppedneedle-kernel.workspace = true
 droppedneedle-library.workspace = true
 droppedneedle-media.workspace = true
@@ -111,7 +113,6 @@ cbc.workspace = true
 hmac.workspace = true
 toml.workspace = true
 time.workspace = true
-image.workspace = true
 
 [features]
 # Fakes, mocks, memory stores and test constructors for the test suite.
@@ -124,6 +125,7 @@ test-support = [
     "droppedneedle-media/test-support",
     "droppedneedle-catalog/test-support",
     "droppedneedle-acquire/test-support",
+    "droppedneedle-compat/test-support",
 ]
 
 [dev-dependencies]
@@ -131,6 +133,7 @@ droppedneedle = { path = ".", features = ["test-support"] }
 droppedneedle-testkit = { path = "testkit", version = "0.1.0" }
 tokio = { version = "1", features = ["test-util"] }
 flate2.workspace = true
+image.workspace = true
 md5.workspace = true
 lofty.workspace = true
 regex.workspace = true

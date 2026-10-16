@@ -10,8 +10,8 @@
 
 use std::sync::Arc;
 
-use crate::compat::jellyfin::seams::JellyfinSettings;
-use crate::compat::subsonic::Settings;
+use crate::jellyfin::seams::JellyfinSettings;
+use crate::subsonic::Settings;
 use droppedneedle_kernel::runtime_config::ConfigStore;
 use droppedneedle_kernel::runtime_config::origin::Origin;
 use droppedneedle_kernel::runtime_config::sections::{

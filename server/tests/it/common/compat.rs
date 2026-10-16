@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use axum::http::StatusCode;
-use droppedneedle::compat::http::redact_target;
+use droppedneedle_compat::http::redact_target;
 use serde_json::{Value, json};
 
 use super::TestApp;

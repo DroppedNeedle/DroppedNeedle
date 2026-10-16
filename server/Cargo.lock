@@ -577,6 +577,7 @@ dependencies = [
  "droppedneedle-acquire",
  "droppedneedle-auth",
  "droppedneedle-catalog",
+ "droppedneedle-compat",
  "droppedneedle-kernel",
  "droppedneedle-library",
  "droppedneedle-media",
@@ -699,6 +700,32 @@ dependencies = [
  "tokio",
  "tracing",
  "utoipa",
+ "uuid",
+]
+
+[[package]]
+name = "droppedneedle-compat"
+version = "3.0.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "droppedneedle-auth",
+ "droppedneedle-catalog",
+ "droppedneedle-kernel",
+ "droppedneedle-library",
+ "droppedneedle-media",
+ "droppedneedle-providers",
+ "futures-util",
+ "image",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "time",
+ "tokio",
+ "tower",
+ "tracing",
  "uuid",
 ]
 

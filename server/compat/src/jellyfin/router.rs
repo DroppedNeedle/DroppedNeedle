@@ -23,9 +23,9 @@ use droppedneedle_auth::compat_auth::jellyfin::{
     JellyfinPasswordStore, JellyfinRequest, extract_client, extract_token, resolve_token, server_id,
 };
 
-use crate::compat::body::AudioBody;
-use crate::compat::settings::LiveSettings;
-use crate::compat::shared::address::{ListenerConfig, base_address};
+use crate::body::AudioBody;
+use crate::settings::LiveSettings;
+use crate::shared::address::{ListenerConfig, base_address};
 
 use super::audio::*;
 use super::browse::*;

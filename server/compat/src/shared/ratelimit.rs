@@ -178,7 +178,7 @@ pub fn is_media_request(path: &str) -> bool {
 /// request budget would only produce blank tiles.
 pub fn is_artwork_request(path: &str) -> bool {
     let low = path.to_lowercase();
-    if low == crate::compat::subsonic::picture::PATH {
+    if low == crate::subsonic::picture::PATH {
         return true;
     }
     if let Some(endpoint) = subsonic_endpoint(&low) {

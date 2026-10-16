@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 use super::params::SortKey;
 use super::seams::*;
-use crate::compat::body::AudioBody;
+use crate::body::AudioBody;
 
 /// Deterministic `sha256("kind:internal")[:32]` with an in-memory reverse
 /// table (v2 `CompatIdMapService` derivation; the persisted table is not

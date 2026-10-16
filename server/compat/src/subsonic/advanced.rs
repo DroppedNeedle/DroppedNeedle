@@ -344,7 +344,7 @@ pub fn open(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compat::subsonic::media::client_info::TranscodingProfile;
+    use crate::subsonic::media::client_info::TranscodingProfile;
 
     fn flac() -> ViewTrack {
         ViewTrack {

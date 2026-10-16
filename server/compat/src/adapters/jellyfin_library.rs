@@ -17,13 +17,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::library::{CompatError, CompatLibrary};
-use crate::compat::jellyfin::builders::LIBRARY_INTERNAL_ID;
-use crate::compat::jellyfin::params::SortKey;
-use crate::compat::jellyfin::seams::{
+use crate::jellyfin::builders::LIBRARY_INTERNAL_ID;
+use crate::jellyfin::params::SortKey;
+use crate::jellyfin::seams::{
     AlbumFilter, AlbumView, ArtistScope, ArtistView, CoverBytes, GenreView, IdMap, ItemSort,
     LibraryRead, PlaylistDetail, PlaylistEntry, PlaylistView, TrackFilter, TrackView, WriteRefusal,
 };
-use crate::compat::subsonic::views::{genre_slug, song_path};
+use crate::subsonic::views::{genre_slug, song_path};
 use droppedneedle_catalog::reads::library::player::{
     AlbumOrder, AlbumQuery, OrderKey, PlayerAlbum, PlayerTrack, TrackOrder, TrackQuery,
 };

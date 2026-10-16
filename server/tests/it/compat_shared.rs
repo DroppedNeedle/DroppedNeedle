@@ -6,11 +6,11 @@
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::Request;
-use droppedneedle::compat::jellyfin::JellyfinSettings;
-use droppedneedle::compat::settings::LiveSettings;
-use droppedneedle::compat::shared::address::{ListenerConfig, base_address};
-use droppedneedle::compat::shared::{auth, ratelimit, redact};
-use droppedneedle::compat::subsonic::picture::{PURPOSE, PictureKind, PictureSigner};
+use droppedneedle_compat::jellyfin::JellyfinSettings;
+use droppedneedle_compat::settings::LiveSettings;
+use droppedneedle_compat::shared::address::{ListenerConfig, base_address};
+use droppedneedle_compat::shared::{auth, ratelimit, redact};
+use droppedneedle_compat::subsonic::picture::{PURPOSE, PictureKind, PictureSigner};
 use droppedneedle_kernel::config::TrustedProxies;
 use droppedneedle_kernel::runtime_config::Crypto;
 use droppedneedle_kernel::runtime_config::origin::Origin;

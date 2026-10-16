@@ -311,7 +311,7 @@ pub struct Rendered {
     /// Exact body bytes.
     pub body: Vec<u8>,
     /// A streamed body, sent instead of `body` (audio only).
-    pub stream: Option<crate::compat::body::LiveBody>,
+    pub stream: Option<crate::body::LiveBody>,
 }
 
 impl Rendered {

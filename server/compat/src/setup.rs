@@ -15,17 +15,17 @@ use std::sync::Arc;
 use axum::Router;
 use axum::middleware::from_fn_with_state;
 
-use crate::compat::adapters::engines::{GatewayAudio, GatewayStream};
-use crate::compat::adapters::jellyfin_library::{CatalogIds, JellyfinLibrary, REBUILD_COOLDOWN};
-use crate::compat::adapters::library::CompatLibrary;
-use crate::compat::adapters::playback::CompatPlayback;
-use crate::compat::adapters::principal::SubsonicVerifier;
-use crate::compat::adapters::queues::CompatQueues;
-use crate::compat::adapters::subsonic_store::SubsonicStore;
-use crate::compat::http::{CompatLimits, SubsonicState, cors_layer, limits_layer, subsonic_router};
-use crate::compat::jellyfin::{JellyfinState, router as jellyfin_router};
-use crate::compat::settings::LiveSettings;
-use crate::compat::shared::address::ListenerConfig;
+use crate::adapters::engines::{GatewayAudio, GatewayStream};
+use crate::adapters::jellyfin_library::{CatalogIds, JellyfinLibrary, REBUILD_COOLDOWN};
+use crate::adapters::library::CompatLibrary;
+use crate::adapters::playback::CompatPlayback;
+use crate::adapters::principal::SubsonicVerifier;
+use crate::adapters::queues::CompatQueues;
+use crate::adapters::subsonic_store::SubsonicStore;
+use crate::http::{CompatLimits, SubsonicState, cors_layer, limits_layer, subsonic_router};
+use crate::jellyfin::{JellyfinState, router as jellyfin_router};
+use crate::settings::LiveSettings;
+use crate::shared::address::ListenerConfig;
 use droppedneedle_auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::reads::ReadsSetup;
@@ -41,7 +41,7 @@ pub type CompatVerifier = SubsonicVerifier<ProdCompatPasswords, UsersDeps>;
 pub type CompatAudio = GatewayAudio<MediaEngine>;
 
 /// Wired Jellyfin router state.
-pub type CompatJellyfinState = crate::compat::jellyfin::JellyfinState<
+pub type CompatJellyfinState = crate::jellyfin::JellyfinState<
     ProdCompatPasswords,
     JellyfinLibrary,
     GatewayStream<MediaEngine>,
@@ -138,7 +138,7 @@ impl CompatSetup {
         let verifier = SubsonicVerifier::new(passwords.clone(), deps.users);
         // Rate limits key the client behind these proxies (`TRUSTED_PROXY_IPS`).
         let limits = CompatLimits::new(
-            Arc::new(crate::compat::http::StoreLabels::new(passwords)),
+            Arc::new(crate::http::StoreLabels::new(passwords)),
             deps.settings.clone(),
         )
         .with_trusted_proxies(deps.listener.trusted_proxies.clone());
@@ -175,8 +175,8 @@ impl CompatSetup {
     ) -> Result<Self, String> {
         use std::path::PathBuf;
 
-        use crate::compat::jellyfin::seams::JellyfinSettings;
-        use crate::compat::subsonic::Settings;
+        use crate::jellyfin::seams::JellyfinSettings;
+        use crate::subsonic::Settings;
         use droppedneedle_media::playback::fakes::{
             FakeCatalog, FakeHistory, FakeNames, FakePrefs, FakeSinks,
         };
@@ -284,7 +284,7 @@ impl CompatSetup {
     /// The mounted compat routers with the shared layers, ready to merge
     /// outside the `/api` session gate. Case-variant paths and preflights
     /// never match a route; the app fallbacks redispatch them here via
-    /// [`fallback_redispatch`](crate::compat::http::fallback_redispatch).
+    /// [`fallback_redispatch`](crate::http::fallback_redispatch).
     pub fn router(&self) -> Router {
         self.router.clone()
     }

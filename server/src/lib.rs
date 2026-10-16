@@ -16,7 +16,6 @@
 pub mod admin;
 pub mod app;
 pub mod bootstrap;
-pub mod compat;
 pub mod docs;
 pub mod export;
 pub mod handlers;

@@ -17,18 +17,18 @@
 //! short-list paging helpers.
 //!
 //! Wiring: this module lives in the tree under
-//! [`compat`](crate::compat) and mounts through
-//! [`CompatSetup`](crate::compat::setup::CompatSetup), which nests the
+//! [`compat`](crate) and mounts through
+//! [`CompatSetup`](crate::setup::CompatSetup), which nests the
 //! [`router`] under `/jellyfin` outside the `/api/*` session gate (compat
 //! carries its own app-password auth) behind the shared CORS + limits
 //! layers. Production binds the seams to the app-password store, the
 //! catalog-backed
-//! [`JellyfinLibrary`](crate::compat::adapters::jellyfin_library::JellyfinLibrary)
-//! and [`CatalogIds`](crate::compat::adapters::jellyfin_library::CatalogIds),
-//! the [`GatewayStream`](crate::compat::adapters::engines::GatewayStream),
+//! [`JellyfinLibrary`](crate::adapters::jellyfin_library::JellyfinLibrary)
+//! and [`CatalogIds`](crate::adapters::jellyfin_library::CatalogIds),
+//! the [`GatewayStream`](crate::adapters::engines::GatewayStream),
 //! and the playback adapter. Not in this module, on purpose: rate
 //! limiting, CORS, case-insensitive path handling, access-log redaction
-//! (the shared compat edge in [`compat::http`](crate::compat::http)), and
+//! (the shared compat edge in [`compat::http`](crate::http)), and
 //! the plugin-stream fallback (not wired yet).
 
 mod audio;

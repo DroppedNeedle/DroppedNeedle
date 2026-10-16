@@ -5,13 +5,13 @@
 
 use std::collections::HashMap;
 
-use droppedneedle::compat::subsonic::fake::{FakeAudio, FakeStore, FakeVerifier, NOW_UNIX};
-use droppedneedle::compat::subsonic::params::SubsonicParameters;
-use droppedneedle::compat::subsonic::stream::{
+use droppedneedle_compat::subsonic::fake::{FakeAudio, FakeStore, FakeVerifier, NOW_UNIX};
+use droppedneedle_compat::subsonic::params::SubsonicParameters;
+use droppedneedle_compat::subsonic::stream::{
     AudioBackend, AudioBody, AudioFacts, BackendError, OpenedAudio, StreamPlan, decide,
 };
-use droppedneedle::compat::subsonic::value::{Rendered, Val, obj};
-use droppedneedle::compat::subsonic::{Request, Settings, dispatch, dispatch_uses_envelope};
+use droppedneedle_compat::subsonic::value::{Rendered, Val, obj};
+use droppedneedle_compat::subsonic::{Request, Settings, dispatch, dispatch_uses_envelope};
 
 fn settings() -> Settings {
     Settings {
@@ -688,7 +688,7 @@ async fn binary_endpoints_render_errors_as_text() {
         body.header("Content-Disposition"),
         Some("attachment; filename=\"Song One.mp3\"")
     );
-    use droppedneedle::compat::subsonic::stream::download_filename;
+    use droppedneedle_compat::subsonic::stream::download_filename;
     assert_eq!(download_filename("a/b:c*d", "MP3"), "a_b_c_d.mp3");
     assert_eq!(download_filename("...", "flac"), "track.flac");
 
@@ -1054,7 +1054,7 @@ fn stream_transcode_decision() {
 /// Request parsing bounds and XML escaping: both guard against hostile input.
 #[test]
 fn request_limits_and_xml_escaping() {
-    use droppedneedle::compat::subsonic::params::{
+    use droppedneedle_compat::subsonic::params::{
         MAX_REQUEST_PARAMETER_BYTES, check_limits, decode_pairs,
     };
     assert_eq!(MAX_REQUEST_PARAMETER_BYTES, 64 * 1024);

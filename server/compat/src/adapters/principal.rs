@@ -5,8 +5,8 @@
 //! is that lookup, implemented for [`UsersDeps`] in production and scripted
 //! by tests.
 
-use crate::compat::subsonic::auth::{Credentials, Principal};
-use crate::compat::subsonic::error::SubsonicError;
+use crate::subsonic::auth::{Credentials, Principal};
+use crate::subsonic::error::SubsonicError;
 use droppedneedle_auth::compat_auth::subsonic::{
     SubsonicDenied, SubsonicParams, SubsonicPasswordStore, authenticate,
 };
@@ -100,7 +100,7 @@ impl<P, U> SubsonicVerifier<P, U> {
     }
 }
 
-impl<P: SubsonicPasswordStore, U: CompatProfiles> crate::compat::subsonic::Verifier
+impl<P: SubsonicPasswordStore, U: CompatProfiles> crate::subsonic::Verifier
     for SubsonicVerifier<P, U>
 {
     type Principal = CompatPrincipal;

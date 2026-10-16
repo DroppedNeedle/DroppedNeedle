@@ -424,7 +424,7 @@ pub enum Outcome {
         /// Extra headers.
         headers: Vec<(String, String)>,
         /// The live body.
-        body: crate::compat::body::LiveBody,
+        body: crate::body::LiveBody,
     },
 }
 

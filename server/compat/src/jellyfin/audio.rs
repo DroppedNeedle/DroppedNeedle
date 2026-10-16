@@ -15,7 +15,7 @@ use super::seams::{
     ByteOutcome, DecideInput, IdMap, LibraryRead, PlaybackSessions, StreamEngine, StreamPlan,
     TICKS_PER_SECOND, decide,
 };
-use crate::compat::subsonic::stream::download_filename;
+use crate::subsonic::stream::download_filename;
 
 // ===== Streaming + PlaybackInfo =====
 

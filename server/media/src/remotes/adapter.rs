@@ -130,8 +130,8 @@ const MAX_REQUEST_ID_BYTES: usize = 128;
 /// with no request made.
 ///
 /// Shapes checked: every `Id`, `ItemId`, `AlbumId` and `ParentId` in the
-/// recorded Jellyfin 10.10.6 answers under `tests/reference/compat/` is
-/// 32 hex characters, and the in-repo mocks use forms like `jf-al-1` and
+/// recorded Jellyfin 10.10.6 answers under `server/tests/reference/compat/`
+/// is 32 hex characters, and the in-repo mocks use forms like `jf-al-1` and
 /// `px-pl-1`. Plex rating keys are digits and Jellyfin also accepts the
 /// dashed UUID form; neither was probed against a live server here.
 pub(crate) fn request_id(id: &str) -> Result<&str, AdapterError> {

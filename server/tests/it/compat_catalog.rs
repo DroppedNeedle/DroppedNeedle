@@ -6,23 +6,23 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use droppedneedle::compat::CompatSetup;
-use droppedneedle::compat::adapters::jellyfin_library::CatalogIds;
-use droppedneedle::compat::adapters::library::CompatLibrary;
-use droppedneedle::compat::jellyfin::builders::LIBRARY_INTERNAL_ID;
-use droppedneedle::compat::jellyfin::params::SortKey;
-use droppedneedle::compat::jellyfin::seams::{
-    AlbumFilter, IdMap as _, ItemSort, LibraryRead as _, TrackFilter,
-};
-use droppedneedle::compat::subsonic::fake::{FakeAudio, FakeVerifier, NOW_UNIX, USER_ID};
-use droppedneedle::compat::subsonic::params::SubsonicParameters;
-use droppedneedle::compat::subsonic::{Request, Settings, dispatch};
 use droppedneedle_catalog::reads::ReadsSetup;
 use droppedneedle_catalog::reads::collections::db::CollectionsDb;
 use droppedneedle_catalog::reads::collections::models::{
     AddTracksBody, CreatePlaylistBody, TrackInput,
 };
 use droppedneedle_catalog::reads::collections::service::CollectionsService;
+use droppedneedle_compat::CompatSetup;
+use droppedneedle_compat::adapters::jellyfin_library::CatalogIds;
+use droppedneedle_compat::adapters::library::CompatLibrary;
+use droppedneedle_compat::jellyfin::builders::LIBRARY_INTERNAL_ID;
+use droppedneedle_compat::jellyfin::params::SortKey;
+use droppedneedle_compat::jellyfin::seams::{
+    AlbumFilter, IdMap as _, ItemSort, LibraryRead as _, TrackFilter,
+};
+use droppedneedle_compat::subsonic::fake::{FakeAudio, FakeVerifier, NOW_UNIX, USER_ID};
+use droppedneedle_compat::subsonic::params::SubsonicParameters;
+use droppedneedle_compat::subsonic::{Request, Settings, dispatch};
 use droppedneedle_kernel::db::{DbRuntime, Lane};
 use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_kernel::runtime_config::Crypto;

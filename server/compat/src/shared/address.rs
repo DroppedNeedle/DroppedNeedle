@@ -7,7 +7,7 @@
 use axum::body::Body;
 use axum::http::Request;
 
-use crate::compat::settings::LiveSettings;
+use crate::settings::LiveSettings;
 use droppedneedle_auth::session::middleware::effective_origin;
 use droppedneedle_kernel::config::TrustedProxies;
 

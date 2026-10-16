@@ -545,7 +545,7 @@ pub fn decide(input: &DecideInput) -> StreamPlan {
 pub struct ByteOutcome {
     pub status: u16,
     pub headers: Vec<(String, String)>,
-    pub body: crate::compat::body::AudioBody,
+    pub body: crate::body::AudioBody,
 }
 
 /// Audio bytes behind the `/Audio` routes. Production binds the stream

@@ -16,8 +16,8 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use crate::compat::jellyfin::seams::PlaybackSessions;
-use crate::compat::subsonic::store::NowPlayingRow;
+use crate::jellyfin::seams::PlaybackSessions;
+use crate::subsonic::store::NowPlayingRow;
 use droppedneedle_media::playback::models::{
     NowPlayingHeartbeat, ScrobbleNowPlayingRequest, ScrobbleSubmitRequest,
 };

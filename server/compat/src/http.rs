@@ -24,16 +24,16 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 
-use crate::compat::jellyfin::QueryTokens;
-use crate::compat::settings::LiveSettings;
-use crate::compat::shared::address::{ListenerConfig, base_address};
-use crate::compat::shared::{auth, cors, path_case, ratelimit, redact};
-use crate::compat::subsonic::auth::Principal;
-use crate::compat::subsonic::error::SubsonicError;
-use crate::compat::subsonic::params::{MAX_REQUEST_PARAMETER_BYTES, SubsonicParameters};
-use crate::compat::subsonic::picture;
-use crate::compat::subsonic::value::{Rendered, SubsonicFormat, parse_format, render_error};
-use crate::compat::subsonic::{
+use crate::jellyfin::QueryTokens;
+use crate::settings::LiveSettings;
+use crate::shared::address::{ListenerConfig, base_address};
+use crate::shared::{auth, cors, path_case, ratelimit, redact};
+use crate::subsonic::auth::Principal;
+use crate::subsonic::error::SubsonicError;
+use crate::subsonic::params::{MAX_REQUEST_PARAMETER_BYTES, SubsonicParameters};
+use crate::subsonic::picture;
+use crate::subsonic::value::{Rendered, SubsonicFormat, parse_format, render_error};
+use crate::subsonic::{
     AudioBackend, Request as SubsonicRequest, Settings, Store, Verifier, classify, dispatch_with,
     normalize_endpoint,
 };
@@ -636,7 +636,7 @@ where
     if body_bytes.len() > MAX_REQUEST_PARAMETER_BYTES {
         return envelope(10, "Required parameter is missing.");
     }
-    let mut pairs = match crate::compat::subsonic::params::decode_pairs(
+    let mut pairs = match crate::subsonic::params::decode_pairs(
         raw_query.as_deref().unwrap_or("").as_bytes(),
     ) {
         Ok(pairs) => pairs,
@@ -650,14 +650,14 @@ where
         .trim()
         .to_lowercase();
     if mime == "application/x-www-form-urlencoded" && !body_bytes.is_empty() {
-        match crate::compat::subsonic::params::decode_pairs(&body_bytes) {
+        match crate::subsonic::params::decode_pairs(&body_bytes) {
             Ok(mut form) => pairs.append(&mut form),
             Err(_) => return envelope(10, "Invalid request parameter encoding"),
         }
     } else if mime == "application/json" && name == "reportplayback" && !body_bytes.is_empty() {
         pairs.extend(flatten_json_object(&body_bytes));
     }
-    if crate::compat::subsonic::params::check_limits(&pairs).is_err() {
+    if crate::subsonic::params::check_limits(&pairs).is_err() {
         return envelope(10, "Required parameter is missing.");
     }
     let params = SubsonicParameters::new(pairs);
@@ -670,7 +670,7 @@ where
     // Principal buckets + backoff run here (post-verify); the lockout
     // pre-check and, for the public endpoint, the public bucket ran in the
     // limits layer.
-    let principal = if name == crate::compat::subsonic::PUBLIC_ENDPOINT {
+    let principal = if name == crate::subsonic::PUBLIC_ENDPOINT {
         None
     } else {
         let credentials = match classify(&params) {
@@ -802,19 +802,18 @@ fn render_denied(
     settings: &Settings,
     head_only: bool,
 ) -> Response {
-    let rendered =
-        if crate::compat::subsonic::dispatch_uses_envelope(denied.code, normalized_endpoint) {
-            render_error(
-                denied.code,
-                &denied.message,
-                format,
-                callback,
-                &settings.server_name,
-                &settings.server_version,
-            )
-        } else {
-            crate::compat::subsonic::value::render_binary_error(denied.code, &denied.message)
-        };
+    let rendered = if crate::subsonic::dispatch_uses_envelope(denied.code, normalized_endpoint) {
+        render_error(
+            denied.code,
+            &denied.message,
+            format,
+            callback,
+            &settings.server_name,
+            &settings.server_version,
+        )
+    } else {
+        crate::subsonic::value::render_binary_error(denied.code, &denied.message)
+    };
     rendered_response(&rendered, head_only)
 }
 

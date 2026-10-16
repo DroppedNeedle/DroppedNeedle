@@ -6,13 +6,11 @@
 
 use std::sync::Arc;
 
-use crate::{
-    admin::AdminSetup, bootstrap::jobs::JobsSetup, compat::CompatSetup,
-    settings::wiring::SettingsSetup,
-};
+use crate::{admin::AdminSetup, bootstrap::jobs::JobsSetup, settings::wiring::SettingsSetup};
 use droppedneedle_acquire::AcquireSetup;
 use droppedneedle_auth::wiring::AuthSetup;
 use droppedneedle_catalog::{concerts::ConcertsSetup, reads::ReadsSetup};
+use droppedneedle_compat::CompatSetup;
 use droppedneedle_kernel::{
     config::AppConfig, events::EventHub, http_client::HttpClientFactory, ids::IdGenerator,
 };

@@ -42,7 +42,6 @@ use axum::{Router, extract::Request, middleware, response::IntoResponse, routing
 use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
 
 use crate::{
-    compat::http::fallback_redispatch,
     handlers,
     middleware::request_scope,
     security_headers::{
@@ -52,6 +51,7 @@ use crate::{
     web::WebUi,
 };
 use droppedneedle_auth::session::{middleware::require_session, rate_limit::rate_limit};
+use droppedneedle_compat::http::fallback_redispatch;
 
 /// Build the application router without a web UI.
 pub fn create_app(state: AppState) -> Router {
@@ -232,7 +232,7 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
         let compat_router = compat_router.clone();
         move |request: Request| async move {
             let path = request.uri().path().to_owned();
-            let compat_path = crate::compat::shared::path_case::is_compat_path(&path);
+            let compat_path = droppedneedle_compat::shared::path_case::is_compat_path(&path);
             let method = request.method().clone();
             let headers = web.as_ref().map(|_| request.headers().clone());
             if let Some(redispatch) = fallback_redispatch(&compat_router, request).await {
@@ -246,7 +246,7 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
             }
             let mut response = handlers::fallback_404().await.into_response();
             if compat_path {
-                crate::compat::http::stamp_cors(&mut response);
+                droppedneedle_compat::http::stamp_cors(&mut response);
             }
             response
         }
@@ -265,7 +265,7 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
             let is_options = request.method() == axum::http::Method::OPTIONS;
             let origin = request.headers().get(axum::http::header::ORIGIN).cloned();
             let compat_path =
-                crate::compat::shared::path_case::is_compat_path(request.uri().path());
+                droppedneedle_compat::shared::path_case::is_compat_path(request.uri().path());
             if let Some(redispatch) = fallback_redispatch(&compat_router, request).await {
                 return redispatch;
             }
@@ -277,7 +277,7 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
             }
             let mut response = handlers::fallback_405().await.into_response();
             if compat_path {
-                crate::compat::http::stamp_cors(&mut response);
+                droppedneedle_compat::http::stamp_cors(&mut response);
             }
             response
         }

@@ -7,10 +7,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use droppedneedle::compat::adapters::engines::{GatewayAudio, GatewayStream};
-use droppedneedle::compat::body::AudioBody;
-use droppedneedle::compat::jellyfin::seams::StreamEngine as JellyfinEngine;
-use droppedneedle::compat::subsonic::stream::{
+use droppedneedle_compat::adapters::engines::{GatewayAudio, GatewayStream};
+use droppedneedle_compat::body::AudioBody;
+use droppedneedle_compat::jellyfin::seams::StreamEngine as JellyfinEngine;
+use droppedneedle_compat::subsonic::stream::{
     AudioBackend, ServeError, StreamPlan, serve_original,
 };
 use droppedneedle_media::stream::routes::{OpenMedia, StreamEngine, StreamFault, StreamOpen};
@@ -67,7 +67,7 @@ impl StreamEngine for StubEngine {
 }
 
 fn audio(engine: &StubEngine) -> GatewayAudio<StubEngine> {
-    use droppedneedle::compat::subsonic::AudioBackend as _;
+    use droppedneedle_compat::subsonic::AudioBackend as _;
     GatewayAudio::new(Arc::new(engine.clone())).for_caller("test-user")
 }
 
