@@ -13,15 +13,21 @@
 		RotateCcw,
 		FolderSearch,
 		LogIn,
-		Eye,
-		EyeOff,
 		Download
 	} from 'lucide-svelte';
 	import { api } from '$lib/api/client';
 	import type { OIDCConnectionSettings } from '$lib/types';
 	import type { components } from '$lib/api/v3/openapi';
+	import AsyncButton from '$lib/ui/AsyncButton.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import Field from '$lib/ui/Field.svelte';
+	import Input from '$lib/ui/Input.svelte';
 	import ListField from '$lib/ui/ListField.svelte';
+	import SecretField from '$lib/ui/SecretField.svelte';
 	import SelectField from '$lib/ui/SelectField.svelte';
+	import TextField from '$lib/ui/TextField.svelte';
+	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import SettingsPublicAddress from './SettingsPublicAddress.svelte';
 
 	type SecuritySettingsForm = components['schemas']['SecuritySettings'];
@@ -39,6 +45,7 @@
 	};
 
 	const MAX_FRAMING_ADDRESSES = 8;
+	const OIDC_SECRET_MASK = 'oidc****';
 
 	const POLICY_MODES: { value: PolicyMode; label: string }[] = [
 		{ value: 'enforce', label: 'Enforce' },
@@ -74,8 +81,6 @@
 		enabledField: 'enabled'
 	}) as OIDCSettingsForm;
 
-	let showClientSecret = $state(false);
-
 	async function testOidc() {
 		await oidcForm.test();
 	}
@@ -92,6 +97,27 @@
 	const oidcToggleDisabled = $derived(
 		!hasOidcCredentials || (!oidcForm.testResult?.valid && !oidcForm.wasAlreadyEnabled)
 	);
+	const oidcToggleHelp = $derived(
+		!hasOidcCredentials
+			? 'Enter a client ID and redirect URI to enable SSO.'
+			: !oidcForm.testResult?.valid && !oidcForm.wasAlreadyEnabled
+				? 'Test and get a valid connection to enable'
+				: 'Let users sign in to DroppedNeedle with this SSO provider'
+	);
+
+	const DOWNLOAD_ACCESS = [
+		{
+			value: 'everyone',
+			label: 'Everyone',
+			help: 'Any logged-in user can download. This is the default.'
+		},
+		{
+			value: 'trusted',
+			label: 'Trusted users and admins',
+			help: 'Regular users can stream but not download.'
+		},
+		{ value: 'admin', label: 'Admins only', help: 'Only admins can download.' }
+	] as const;
 
 	async function verifyLocalFile() {
 		if (!form.data) return;
@@ -168,8 +194,8 @@
 		{/if}
 
 		<!-- Password Security -->
-		<div class="card bg-base-200">
-			<div class="card-body gap-4">
+		<Card>
+			{#snippet header()}
 				<div class="flex items-center gap-2">
 					<div class="bg-primary/10 rounded-lg p-2">
 						<KeyRound class="h-5 w-5 text-primary" />
@@ -179,24 +205,13 @@
 						<p class="text-xs text-base-content/50">Controls applied when accounts are created.</p>
 					</div>
 				</div>
-
-				<div class="form-control">
-					<label class="label cursor-pointer justify-start gap-4">
-						<input
-							type="checkbox"
-							class="toggle toggle-primary"
-							bind:checked={form.data.hibp_check}
-						/>
-						<div>
-							<span class="label-text font-medium">Check passwords against Have I Been Pwned</span>
-							<p class="text-xs text-base-content/50 mt-0.5">
-								Rejects passwords found in known data breaches. Uses k-anonymity, only the first 5
-								characters of the password's SHA-1 hash are sent. The full password is never
-								transmitted.
-							</p>
-						</div>
-					</label>
-				</div>
+			{/snippet}
+			<div class="mt-2 flex flex-col gap-4">
+				<ToggleRow
+					label="Check passwords against Have I Been Pwned"
+					description="Rejects passwords found in known data breaches. Uses k-anonymity, only the first 5 characters of the password's SHA-1 hash are sent. The full password is never transmitted."
+					bind:checked={form.data.hibp_check}
+				/>
 
 				{#if !form.data.hibp_check}
 					<div class="alert alert-warning alert-soft text-sm">
@@ -211,36 +226,32 @@
 				{#if form.data.hibp_check}
 					<div class="divider my-1"></div>
 
-					<div class="form-control w-full">
-						<label class="label" for="hibp-local-path">
-							<span class="label-text font-medium"
-								>Local database path <span class="text-base-content/40 font-normal">(optional)</span
-								></span
-							>
-						</label>
-						<div class="flex gap-2">
-							<input
-								id="hibp-local-path"
-								type="text"
-								class="input w-full font-mono text-sm"
-								placeholder="/data/pwned-passwords-sha1-ordered-by-hash-v8.txt"
-								bind:value={form.data.hibp_local_path}
-								oninput={() => (verifyResult = null)}
-							/>
-							<button
-								type="button"
-								class="btn btn-ghost gap-1.5 shrink-0"
-								onclick={() => void verifyLocalFile()}
-								disabled={verifying || !form.data.hibp_local_path.trim()}
-							>
-								{#if verifying}
-									<span class="loading loading-spinner loading-xs"></span>
-								{:else}
-									<FolderSearch class="h-4 w-4" />
-								{/if}
-								Verify
-							</button>
-						</div>
+					<div>
+						<Field label="Local database path (optional)">
+							{#snippet children(control)}
+								<div class="flex gap-2">
+									<Input
+										{...control}
+										label="Local database path (optional)"
+										mono
+										class="w-full"
+										placeholder="/data/pwned-passwords-sha1-ordered-by-hash-v8.txt"
+										bind:value={form.data!.hibp_local_path}
+										oninput={() => (verifyResult = null)}
+									/>
+									<Button
+										variant="ghost"
+										icon={FolderSearch}
+										class="shrink-0"
+										loading={verifying}
+										disabled={!form.data?.hibp_local_path.trim()}
+										onclick={() => void verifyLocalFile()}
+									>
+										Verify
+									</Button>
+								</div>
+							{/snippet}
+						</Field>
 						<p class="text-xs text-base-content/50 mt-1.5 ml-1 space-y-1">
 							Absolute path to a local copy of the HIBP
 							<a
@@ -275,11 +286,11 @@
 					{/if}
 				{/if}
 			</div>
-		</div>
+		</Card>
 
 		<!-- Library downloads -->
-		<div class="card bg-base-200">
-			<div class="card-body gap-4">
+		<Card>
+			{#snippet header()}
 				<div class="flex items-center gap-2">
 					<div class="bg-success/10 rounded-lg p-2">
 						<Download class="h-5 w-5 text-success" />
@@ -291,58 +302,30 @@
 						</p>
 					</div>
 				</div>
-
-				<div class="form-control gap-1">
-					<label class="label cursor-pointer justify-start gap-4">
+			{/snippet}
+			<fieldset class="mt-2 flex flex-wrap gap-x-8 gap-y-3">
+				<legend class="sr-only">Who can download</legend>
+				{#each DOWNLOAD_ACCESS as option (option.value)}
+					<label class="flex cursor-pointer items-start gap-4">
 						<input
 							type="radio"
 							name="library-download-access"
-							class="radio radio-primary"
-							value="everyone"
+							class="radio radio-sm mt-0.5"
+							value={option.value}
 							bind:group={form.data.library_download_access}
 						/>
-						<div>
-							<span class="label-text font-medium">Everyone</span>
-							<p class="text-xs text-base-content/50 mt-0.5">
-								Any logged-in user can download. This is the default.
-							</p>
-						</div>
+						<span>
+							<span class="block text-sm font-medium">{option.label}</span>
+							<span class="mt-0.5 block text-xs text-base-content/50">{option.help}</span>
+						</span>
 					</label>
-					<label class="label cursor-pointer justify-start gap-4">
-						<input
-							type="radio"
-							name="library-download-access"
-							class="radio radio-primary"
-							value="trusted"
-							bind:group={form.data.library_download_access}
-						/>
-						<div>
-							<span class="label-text font-medium">Trusted users and admins</span>
-							<p class="text-xs text-base-content/50 mt-0.5">
-								Regular users can stream but not download.
-							</p>
-						</div>
-					</label>
-					<label class="label cursor-pointer justify-start gap-4">
-						<input
-							type="radio"
-							name="library-download-access"
-							class="radio radio-primary"
-							value="admin"
-							bind:group={form.data.library_download_access}
-						/>
-						<div>
-							<span class="label-text font-medium">Admins only</span>
-							<p class="text-xs text-base-content/50 mt-0.5">Only admins can download.</p>
-						</div>
-					</label>
-				</div>
-			</div>
-		</div>
+				{/each}
+			</fieldset>
+		</Card>
 
 		<!-- HSTS -->
-		<div class="card bg-base-200">
-			<div class="card-body gap-4">
+		<Card>
+			{#snippet header()}
 				<div class="flex items-center gap-2">
 					<div class="bg-accent/10 rounded-lg p-2">
 						<ShieldCheck class="h-5 w-5 text-accent" />
@@ -354,7 +337,8 @@
 						</p>
 					</div>
 				</div>
-
+			{/snippet}
+			<div class="mt-2 flex flex-col gap-4">
 				<div class="alert alert-warning alert-soft text-sm">
 					<CircleAlert class="h-4 w-4 shrink-0" />
 					<span>
@@ -365,38 +349,36 @@
 					</span>
 				</div>
 
-				<div class="form-control w-full">
-					<label class="label" for="hsts-max-age">
-						<span class="label-text font-medium">Max-Age (seconds)</span>
-						<span class="label-text-alt text-base-content/40"
-							>0 = disabled, 63072000 (two years) at most</span
-						>
-					</label>
-					<div class="flex gap-2 items-center flex-wrap">
-						<input
-							id="hsts-max-age"
-							type="number"
-							min="0"
-							max="63072000"
-							class="input w-40"
-							bind:value={form.data.hsts_max_age}
-						/>
-						<div class="flex gap-1 flex-wrap">
-							{#each HSTS_PRESETS as preset (preset.value)}
-								<button
-									type="button"
-									class="btn btn-xs {form.data.hsts_max_age === preset.value
-										? 'btn-primary'
-										: 'btn-ghost'}"
-									onclick={() => {
-										if (form.data) form.data.hsts_max_age = preset.value;
-									}}
-								>
-									{preset.label}
-								</button>
-							{/each}
-						</div>
-					</div>
+				<div>
+					<Field label="Max-Age (seconds)" help="0 = disabled, 63072000 (two years) at most">
+						{#snippet children(control)}
+							<div class="flex gap-2 items-center flex-wrap">
+								<Input
+									{...control}
+									label="Max-Age (seconds)"
+									type="number"
+									min="0"
+									max="63072000"
+									class="w-40"
+									bind:value={form.data!.hsts_max_age}
+								/>
+								<div class="flex gap-1 flex-wrap">
+									{#each HSTS_PRESETS as preset (preset.value)}
+										<Button
+											size="xs"
+											variant={form.data?.hsts_max_age === preset.value ? 'primary' : 'ghost'}
+											aria-pressed={form.data?.hsts_max_age === preset.value}
+											onclick={() => {
+												if (form.data) form.data.hsts_max_age = preset.value;
+											}}
+										>
+											{preset.label}
+										</Button>
+									{/each}
+								</div>
+							</div>
+						{/snippet}
+					</Field>
 					<p class="text-xs text-base-content/50 mt-1 ml-1">
 						Recommended starting value when behind HTTPS: <strong>1 month</strong>. Increase
 						gradually after confirming everything works.
@@ -405,46 +387,29 @@
 
 				<div class="divider my-0"></div>
 
-				<div class="form-control">
-					<label class="label cursor-pointer justify-start gap-4">
-						<input
-							type="checkbox"
-							class="toggle toggle-accent toggle-sm"
-							bind:checked={form.data.hsts_include_subdomains}
-							disabled={form.data.hsts_max_age === 0}
-						/>
-						<div>
-							<span class="label-text font-medium">Include Subdomains</span>
-							<p class="text-xs text-base-content/50 mt-0.5">
-								Applies HSTS to all subdomains of your domain. Only enable if <em>all</em> subdomains
-								also serve HTTPS.
-							</p>
-						</div>
-					</label>
-				</div>
+				<ToggleRow
+					label="Include Subdomains"
+					description="Applies HSTS to all subdomains of your domain. Only enable if all subdomains also serve HTTPS."
+					bind:checked={form.data.hsts_include_subdomains}
+					disabled={form.data.hsts_max_age === 0}
+				/>
 
-				<div class="form-control">
-					<label class="label cursor-pointer justify-start gap-4">
-						<input
-							type="checkbox"
-							class="toggle toggle-accent toggle-sm"
-							bind:checked={form.data.hsts_preload}
-							disabled={form.data.hsts_max_age === 0}
-						/>
-						<div>
-							<span class="label-text font-medium">Preload</span>
-							<p class="text-xs text-base-content/50 mt-0.5">
-								Adds the <code class="text-xs">preload</code> directive. Only enable after
-								registering your domain at
-								<a
-									href="https://hstspreload.org"
-									target="_blank"
-									rel="noopener noreferrer"
-									class="link link-accent">hstspreload.org</a
-								>. This is very difficult to undo.
-							</p>
-						</div>
-					</label>
+				<div>
+					<ToggleRow
+						label="Preload"
+						description="Adds the preload directive. Very difficult to undo."
+						bind:checked={form.data.hsts_preload}
+						disabled={form.data.hsts_max_age === 0}
+					/>
+					<p class="mt-0.5 text-sm text-base-content/60">
+						Only enable after registering your domain at
+						<a
+							href="https://hstspreload.org"
+							target="_blank"
+							rel="noopener noreferrer"
+							class="link link-accent">hstspreload.org</a
+						>.
+					</p>
 				</div>
 
 				{#if form.data.hsts_preload && !form.data.hsts_include_subdomains}
@@ -454,11 +419,11 @@
 					</div>
 				{/if}
 			</div>
-		</div>
+		</Card>
 
 		<!-- Content-security policy -->
-		<div class="card bg-base-200">
-			<div class="card-body gap-4">
+		<Card>
+			{#snippet header()}
 				<div class="flex items-center gap-2">
 					<div class="bg-warning/10 rounded-lg p-2">
 						<ShieldAlert class="h-5 w-5 text-warning" />
@@ -470,7 +435,8 @@
 						</p>
 					</div>
 				</div>
-
+			{/snippet}
+			<div class="mt-2 flex flex-col gap-4">
 				<SelectField
 					label="Policy"
 					bind:value={form.data.content_security_policy}
@@ -497,13 +463,13 @@
 					disabled={form.saving}
 				/>
 			</div>
-		</div>
+		</Card>
 
 		<SettingsPublicAddress />
 
 		<!-- OIDC / SSO -->
-		<div class="card bg-base-200">
-			<div class="card-body gap-4">
+		<Card>
+			{#snippet header()}
 				<div class="flex items-center gap-2">
 					<div class="bg-info/10 rounded-lg p-2">
 						<LogIn class="h-5 w-5 text-info" />
@@ -515,105 +481,43 @@
 						</p>
 					</div>
 				</div>
-
+			{/snippet}
+			<div class="mt-2 flex flex-col gap-4">
 				{#if oidcForm.loading}
 					<div class="flex justify-center items-center py-12">
 						<span class="loading loading-spinner loading-lg"></span>
 					</div>
 				{:else if oidcForm.data}
-					<div class="form-control w-full">
-						<label class="label" for="oidc-issuer">
-							<span class="label-text font-medium">Issuer URL</span>
-						</label>
-						<input
-							id="oidc-issuer"
-							type="url"
-							bind:value={oidcForm.data.issuer}
-							class="input input-bordered w-full"
-							placeholder="https://accounts.example.com"
-						/>
-						<p class="text-xs text-base-content/50 mt-1.5 ml-1">
-							The base URL of your OIDC provider. Must serve a
-							<code class="text-xs">/.well-known/openid-configuration</code> document.
-						</p>
-					</div>
+					<TextField
+						label="Issuer URL"
+						type="url"
+						placeholder="https://accounts.example.com"
+						help="The base URL of your OIDC provider. Must serve a /.well-known/openid-configuration document."
+						bind:value={oidcForm.data.issuer}
+					/>
 
-					<div class="form-control w-full">
-						<label class="label" for="oidc-client-id">
-							<span class="label-text font-medium">Client ID</span>
-						</label>
-						<input
-							id="oidc-client-id"
-							type="text"
-							bind:value={oidcForm.data.client_id}
-							class="input input-bordered w-full"
-						/>
-					</div>
+					<TextField label="Client ID" bind:value={oidcForm.data.client_id} />
 
-					<div class="form-control w-full">
-						<label class="label" for="oidc-client-secret">
-							<span class="label-text font-medium">Client Secret</span>
-							<span class="label-text-alt opacity-60"
-								>optional - leave blank for public/PKCE clients</span
-							>
-						</label>
-						<label class="input input-bordered flex items-center gap-2 w-full">
-							{#if showClientSecret}
-								<input
-									id="oidc-client-secret"
-									type="text"
-									class="grow"
-									bind:value={oidcForm.data.client_secret}
-								/>
-							{:else}
-								<input
-									id="oidc-client-secret"
-									type="password"
-									class="grow"
-									bind:value={oidcForm.data.client_secret}
-								/>
-							{/if}
-							<button
-								type="button"
-								onclick={() => (showClientSecret = !showClientSecret)}
-								class="opacity-50 hover:opacity-100 transition-opacity"
-								aria-label="Toggle client secret visibility"
-							>
-								{#if showClientSecret}<EyeOff class="h-4 w-4" />{:else}<Eye class="h-4 w-4" />{/if}
-							</button>
-						</label>
-					</div>
+					<SecretField
+						label="Client Secret"
+						mask={OIDC_SECRET_MASK}
+						help="Optional - leave blank for public/PKCE clients"
+						bind:value={oidcForm.data.client_secret}
+					/>
 
-					<div class="form-control w-full">
-						<label class="label" for="oidc-redirect-uri">
-							<span class="label-text font-medium">Redirect URI</span>
-						</label>
-						<input
-							id="oidc-redirect-uri"
-							type="url"
-							bind:value={oidcForm.data.redirect_uri}
-							class="input input-bordered w-full"
-							placeholder={`https://droppedneedle.example.com${AUTH_ENDPOINTS.oidcCallback}`}
-						/>
-						<p class="text-xs text-base-content/50 mt-1.5 ml-1">
-							This must point to the DroppedNeedle <strong>backend API</strong> (it ends in
-							<code class="text-xs">{AUTH_ENDPOINTS.oidcCallback}</code>), not the web app page.
-							Register this exact URL as a redirect/callback URI with your provider.
-						</p>
-					</div>
+					<TextField
+						label="Redirect URI"
+						type="url"
+						placeholder={`https://droppedneedle.example.com${AUTH_ENDPOINTS.oidcCallback}`}
+						help={`This must point to the DroppedNeedle backend API (it ends in ${AUTH_ENDPOINTS.oidcCallback}), not the web app page. Register this exact URL as a redirect/callback URI with your provider.`}
+						bind:value={oidcForm.data.redirect_uri}
+					/>
 
-					<div class="form-control w-full">
-						<label class="label" for="oidc-scopes">
-							<span class="label-text font-medium">Scopes</span>
-						</label>
-						<input
-							id="oidc-scopes"
-							type="text"
-							bind:value={oidcForm.data.scopes}
-							class="input input-bordered w-full"
-							placeholder="openid email profile"
-						/>
-					</div>
+					<TextField
+						label="Scopes"
+						placeholder="openid email profile"
+						bind:value={oidcForm.data.scopes}
+					/>
 
 					{#if oidcForm.testResult}
 						<div
@@ -630,28 +534,12 @@
 						</div>
 					{/if}
 
-					<div class="form-control">
-						<label class="label cursor-pointer justify-start gap-4">
-							<input
-								type="checkbox"
-								bind:checked={oidcForm.data.enabled}
-								class="toggle toggle-primary"
-								disabled={oidcToggleDisabled}
-							/>
-							<div>
-								<span class="label-text font-medium">Allow login with SSO</span>
-								<p class="text-xs text-base-content/50">
-									{#if !hasOidcCredentials}
-										Enter a client ID and redirect URI to enable SSO.
-									{:else if !oidcForm.testResult?.valid && !oidcForm.wasAlreadyEnabled}
-										Test and get a valid connection to enable
-									{:else}
-										Let users sign in to DroppedNeedle with this SSO provider
-									{/if}
-								</p>
-							</div>
-						</label>
-					</div>
+					<ToggleRow
+						label="Allow login with SSO"
+						description={oidcToggleHelp}
+						bind:checked={oidcForm.data.enabled}
+						disabled={oidcToggleDisabled}
+					/>
 
 					{#if oidcForm.message}
 						<div
@@ -664,51 +552,36 @@
 					{/if}
 
 					<div class="flex justify-end gap-2 pt-2">
-						<button
-							type="button"
-							class="btn btn-ghost"
+						<Button
+							variant="ghost"
+							loading={oidcForm.testing}
+							disabled={!oidcForm.data.issuer}
 							onclick={testOidc}
-							disabled={oidcForm.testing || !oidcForm.data.issuer}
 						>
-							{#if oidcForm.testing}
-								<span class="loading loading-spinner loading-sm"></span>
-							{/if}
 							Test Connection
-						</button>
-						<button
-							type="button"
-							class="btn btn-primary"
-							onclick={saveOidc}
-							disabled={oidcForm.saving}
-						>
-							{#if oidcForm.saving}
-								<span class="loading loading-spinner loading-sm"></span>
-							{/if}
+						</Button>
+						<Button variant="primary" loading={oidcForm.saving} onclick={saveOidc}>
 							Save Settings
-						</button>
+						</Button>
 					</div>
 				{/if}
 			</div>
-		</div>
+		</Card>
 
 		<div class="flex justify-end gap-3 pt-2">
-			<button class="btn btn-ghost" onclick={resetToDefaults} disabled={form.saving}>
-				<RotateCcw class="w-4 h-4" />
+			<Button variant="ghost" icon={RotateCcw} onclick={resetToDefaults} disabled={form.saving}>
 				Reset
-			</button>
-			<button
-				class="btn btn-primary"
+			</Button>
+			<AsyncButton
+				variant="primary"
+				icon={Save}
 				onclick={saveSecurity}
-				disabled={form.saving || (form.data.hsts_preload && !form.data.hsts_include_subdomains)}
+				pending={form.saving}
+				pendingLabel="Saving…"
+				disabled={form.data.hsts_preload && !form.data.hsts_include_subdomains}
 			>
-				{#if form.saving}
-					<span class="loading loading-spinner loading-sm"></span>
-					Saving…
-				{:else}
-					<Save class="w-4 h-4" />
-					Save Settings
-				{/if}
-			</button>
+				Save Settings
+			</AsyncButton>
 		</div>
 	{/if}
 </div>

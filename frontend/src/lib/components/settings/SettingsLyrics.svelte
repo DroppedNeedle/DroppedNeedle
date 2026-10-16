@@ -51,7 +51,7 @@
 	}
 </script>
 
-<Card variant="bordered" as="section" class="bg-base-200/55">
+<Card variant="bordered" as="section">
 	{#snippet header()}
 		<div class="flex items-center gap-2">
 			<div class="rounded-lg bg-secondary/10 p-2">

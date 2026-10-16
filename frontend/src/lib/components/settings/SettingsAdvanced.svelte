@@ -20,6 +20,8 @@
 	import SettingsNetworkBatch from './SettingsNetworkBatch.svelte';
 	import SettingsStorageQueue from './SettingsStorageQueue.svelte';
 	import SettingsAudioDB from './SettingsAudioDB.svelte';
+	import AsyncButton from '$lib/ui/AsyncButton.svelte';
+	import Button from '$lib/ui/Button.svelte';
 
 	const form = createSettingsForm<AdvancedSettingsForm>({
 		loadEndpoint: SETTINGS_ENDPOINTS.advanced(),
@@ -137,19 +139,16 @@
 		</SettingsSectionCollapse>
 
 		<div class="flex justify-end gap-3 pt-2">
-			<button class="btn btn-ghost" onclick={load} disabled={form.saving}>
-				<RotateCcw class="w-4 h-4" />
-				Reset
-			</button>
-			<button class="btn btn-primary" onclick={save} disabled={form.saving}>
-				{#if form.saving}
-					<span class="loading loading-spinner loading-sm"></span>
-					Saving…
-				{:else}
-					<Save class="w-4 h-4" />
-					Save Settings
-				{/if}
-			</button>
+			<Button variant="ghost" icon={RotateCcw} onclick={load} disabled={form.saving}>Reset</Button>
+			<AsyncButton
+				variant="primary"
+				icon={Save}
+				onclick={save}
+				pending={form.saving}
+				pendingLabel="Saving…"
+			>
+				Save Settings
+			</AsyncButton>
 		</div>
 	{/if}
 </div>

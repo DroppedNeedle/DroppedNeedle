@@ -1,31 +1,31 @@
 <script lang="ts">
 	import type { AdvancedSettingsForm } from './advanced-settings-types';
-	import SettingsNumberField from './SettingsNumberField.svelte';
+	import NumberField from '$lib/ui/NumberField.svelte';
 
 	let { data = $bindable() }: { data: AdvancedSettingsForm } = $props();
 </script>
 
 <h4 class="font-medium text-sm text-base-content/70 mb-3">Network & HTTP</h4>
 <div class="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-4 pt-2">
-	<SettingsNumberField
+	<NumberField
 		label="Request Timeout"
-		description="Default: 10s"
+		help="Default: 10s"
 		bind:value={data.http_timeout}
 		min={5}
 		max={60}
 		unit="sec"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Connect Timeout"
-		description="Default: 5s"
+		help="Default: 5s"
 		bind:value={data.http_connect_timeout}
 		min={1}
 		max={30}
 		unit="sec"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Max Connections"
-		description="Pool size (default: 200)"
+		help="Pool size (default: 200)"
 		bind:value={data.http_max_connections}
 		min={50}
 		max={500}
@@ -39,64 +39,64 @@
 	on the providers.
 </p>
 <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
-	<SettingsNumberField
+	<NumberField
 		label="Artist Image Concurrency"
-		description="Artists fetched at once (default: 10)"
+		help="Artists fetched at once (default: 10)"
 		bind:value={data.batch_artist_images}
 		min={1}
 		max={20}
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Album Concurrency"
-		description="Albums fetched at once; adjusts to provider speed (default: 8)"
+		help="Albums fetched at once; adjusts to provider speed (default: 8)"
 		bind:value={data.batch_albums}
 		min={1}
 		max={20}
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Artist Batch Delay"
-		description="Default: 0.5s"
+		help="Default: 0.5s"
 		bind:value={data.delay_artist}
 		min={0}
 		max={5}
 		step={0.1}
 		unit="sec"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Album Batch Delay"
-		description="Default: 0.3s"
+		help="Default: 0.3s"
 		bind:value={data.delay_albums}
 		min={0}
 		max={5}
 		step={0.1}
 		unit="sec"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Discovery Concurrency"
-		description="Artists whose similar artists and top tracks are fetched at once (default: 5)"
+		help="Artists whose similar artists and top tracks are fetched at once (default: 5)"
 		bind:value={data.artist_discovery_precache_concurrency}
 		min={1}
 		max={8}
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Discovery Delay"
-		description="Pause after each artist (default: 0.2s)"
+		help="Pause after each artist (default: 0.2s)"
 		bind:value={data.artist_discovery_precache_delay}
 		min={0}
 		max={5}
 		step={0.1}
 		unit="sec"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="AudioDB Concurrency"
-		description="TheAudioDB lookups at once (default: 4)"
+		help="TheAudioDB lookups at once (default: 4)"
 		bind:value={data.audiodb_prewarm_concurrency}
 		min={1}
 		max={8}
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="AudioDB Delay"
-		description="Pause before each lookup (default: 0.3s)"
+		help="Pause before each lookup (default: 0.3s)"
 		bind:value={data.audiodb_prewarm_delay}
 		min={0}
 		max={5}
@@ -107,17 +107,17 @@
 <div class="divider my-4"></div>
 <h4 class="font-medium text-sm text-base-content/70 mb-3">Library Image Refresh Limits</h4>
 <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
-	<SettingsNumberField
+	<NumberField
 		label="Stall Timeout"
-		description="Stop a refresh that makes no progress (default: 10 min)"
+		help="Stop a refresh that makes no progress (default: 10 min)"
 		bind:value={data.sync_stall_timeout_minutes}
 		min={2}
 		max={30}
 		unit="min"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Max Timeout"
-		description="Longest a refresh may run (default: 8 hrs)"
+		help="Longest a refresh may run (default: 8 hrs)"
 		bind:value={data.sync_max_timeout_hours}
 		min={1}
 		max={48}

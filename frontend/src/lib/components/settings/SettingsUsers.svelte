@@ -34,6 +34,15 @@
 	import { getApiUrl } from '$lib/api/api-utils';
 	import type { components } from '$lib/api/v3/openapi';
 	import { AUTH_ENDPOINTS } from '$lib/queries/auth/endpoints';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import ConfirmDialog from '$lib/ui/ConfirmDialog.svelte';
+	import Field from '$lib/ui/Field.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
+	import Input from '$lib/ui/Input.svelte';
+	import Modal from '$lib/ui/Modal.svelte';
+	import SelectField from '$lib/ui/SelectField.svelte';
+	import TextField from '$lib/ui/TextField.svelte';
 
 	type UserRecord = components['schemas']['UserResponse'];
 
@@ -48,13 +57,11 @@
 	let total = $state(0);
 
 	let userToDelete = $state<UserRecord | null>(null);
-	let deleteDialogEl: HTMLDialogElement | undefined = $state();
-	let deleting = $state(false);
-	let deleteError = $state<string | null>(null);
+	let deleteOpen = $state(false);
 
 	const createRecoveryCode = createPasswordRecoveryCodeMutation();
 	let recoveryUser = $state<UserRecord | null>(null);
-	let recoveryDialogEl: HTMLDialogElement | undefined = $state();
+	let recoveryOpen = $state(false);
 	let recoveryCode = $state<string | null>(null);
 	let recoveryExpiresAt = $state<number | null>(null);
 	let recoveryError = $state<string | null>(null);
@@ -189,32 +196,22 @@
 	}
 
 	function confirmDelete(user: UserRecord) {
-		deleteError = null;
 		userToDelete = user;
+		deleteOpen = true;
 	}
 
-	function closeDeleteDialog() {
-		deleteDialogEl?.close();
-		userToDelete = null;
-		deleteError = null;
-	}
-
+	// Throws on failure, so the dialog stays open and shows why.
 	async function handleDeleteUser() {
 		if (!userToDelete) return;
-		deleting = true;
-		deleteError = null;
 		try {
 			await api.v3.DELETE(AUTH_ENDPOINTS.adminUser(userToDelete.id));
-			deleteDialogEl?.close();
-			const wasLastOnPage = users.length === 1 && page > 1;
-			userToDelete = null;
-			await loadUsers(wasLastOnPage ? page - 1 : page);
 		} catch (e: unknown) {
 			const msg = (e as { message?: string })?.message;
-			deleteError = msg ?? 'Could not delete user';
-		} finally {
-			deleting = false;
+			throw new Error(msg ?? 'Could not delete user', { cause: e });
 		}
+		const wasLastOnPage = users.length === 1 && page > 1;
+		userToDelete = null;
+		await loadUsers(wasLastOnPage ? page - 1 : page);
 	}
 
 	function openRecoveryDialog(user: UserRecord) {
@@ -224,10 +221,11 @@
 		recoveryError = null;
 		recoveryCopied = false;
 		createRecoveryCode.reset();
+		recoveryOpen = true;
 	}
 
 	function closeRecoveryDialog() {
-		recoveryDialogEl?.close();
+		recoveryOpen = false;
 		recoveryUser = null;
 		recoveryCode = null;
 		recoveryExpiresAt = null;
@@ -254,10 +252,6 @@
 		}
 	}
 
-	function handleRecoveryCancel(event: Event) {
-		if (createRecoveryCode.isPending) event.preventDefault();
-	}
-
 	async function copyRecoveryCode() {
 		if (!recoveryCode) return;
 		try {
@@ -277,17 +271,11 @@
 		return expires.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 	}
 
-	$effect(() => {
-		if (userToDelete) {
-			deleteDialogEl?.showModal();
-		}
-	});
-
-	$effect(() => {
-		if (recoveryUser) {
-			recoveryDialogEl?.showModal();
-		}
-	});
+	const roleOptions: { value: 'admin' | 'trusted' | 'user'; label: string }[] = [
+		{ value: 'user', label: 'User' },
+		{ value: 'trusted', label: 'Trusted' },
+		{ value: 'admin', label: 'Admin' }
+	];
 
 	const roleLabel: Record<string, string> = {
 		admin: 'Admin',
@@ -319,488 +307,414 @@
 	});
 </script>
 
-<div class="bg-base-200 rounded-box p-6 space-y-6">
-	<div class="flex items-center justify-between">
-		<div>
-			<h2 class="text-lg font-semibold">User Management</h2>
-			<p class="text-sm text-base-content/50 mt-0.5">Manage accounts and roles.</p>
+<Card>
+	<div class="space-y-6">
+		<div class="flex items-center justify-between">
+			<div>
+				<h2 class="text-lg font-semibold">User Management</h2>
+				<p class="text-sm text-base-content/50 mt-0.5">Manage accounts and roles.</p>
+			</div>
+			<div class="flex gap-2">
+				<IconButton
+					size="sm"
+					icon={RefreshCw}
+					label="Refresh"
+					{loading}
+					onclick={() => void loadUsers(page)}
+				/>
+				<Button variant="outline" size="sm" icon={Download} onclick={() => (showImport = true)}>
+					Import
+				</Button>
+				<Button
+					variant="primary"
+					size="sm"
+					icon={Plus}
+					onclick={() => (showCreateForm = !showCreateForm)}
+				>
+					New User
+				</Button>
+			</div>
 		</div>
-		<div class="flex gap-2">
-			<button
-				class="btn btn-ghost btn-sm btn-circle"
-				onclick={() => void loadUsers(page)}
-				aria-label="Refresh"
-				disabled={loading}
-			>
-				<RefreshCw class="h-4 w-4 {loading ? 'animate-spin' : ''}" />
-			</button>
-			<button class="btn btn-outline btn-sm gap-1" onclick={() => (showImport = true)}>
-				<Download class="h-4 w-4" />
-				Import
-			</button>
-			<button
-				class="btn btn-primary btn-sm gap-1"
-				onclick={() => (showCreateForm = !showCreateForm)}
-			>
-				<Plus class="h-4 w-4" />
-				New User
-			</button>
-		</div>
-	</div>
 
-	<SettingsImportUsers bind:open={showImport} onImported={() => void loadUsers(page)} />
+		<SettingsImportUsers bind:open={showImport} onImported={() => void loadUsers(page)} />
 
-	{#if showCreateForm}
-		<div class="bg-base-300/50 rounded-box p-4 border border-base-300">
-			<h3 class="text-sm font-semibold mb-4 text-base-content/70 uppercase tracking-wider">
-				Create User
-			</h3>
-			<form
-				onsubmit={(e) => {
-					e.preventDefault();
-					void handleCreateUser();
-				}}
-				class="grid grid-cols-1 sm:grid-cols-2 gap-3"
-			>
-				<fieldset class="fieldset">
-					<legend class="fieldset-legend">Display Name</legend>
-					<input
-						type="text"
-						class="input input-bordered w-full input-sm"
-						bind:value={newName}
-						required
-						placeholder="Jane Smith"
-					/>
-				</fieldset>
-				<fieldset class="fieldset">
-					<legend class="fieldset-legend">Username</legend>
-					<input
-						type="text"
-						class="input input-bordered w-full input-sm"
-						bind:value={newUsername}
-						required
-						autocomplete="off"
-						placeholder="jane.smith"
-					/>
-				</fieldset>
-				<fieldset class="fieldset">
-					<legend class="fieldset-legend">Email (optional)</legend>
-					<input
+		{#if showCreateForm}
+			<Card variant="bordered" padding="md">
+				<h3 class="text-sm font-semibold mb-2 text-base-content/70 uppercase tracking-wider">
+					Create User
+				</h3>
+				<form
+					onsubmit={(e) => {
+						e.preventDefault();
+						void handleCreateUser();
+					}}
+					class="grid grid-cols-1 sm:grid-cols-2 gap-3"
+				>
+					<TextField label="Display Name" bind:value={newName} required placeholder="Jane Smith" />
+					<TextField label="Username" bind:value={newUsername} required placeholder="jane.smith" />
+					<TextField
+						label="Email (optional)"
 						type="email"
-						class="input input-bordered w-full input-sm"
 						bind:value={newEmail}
 						placeholder="jane@example.com"
 					/>
-				</fieldset>
-				<fieldset class="fieldset">
-					<legend class="fieldset-legend">Password</legend>
-					<label class="input input-bordered flex items-center gap-2 w-full input-sm">
-						{#if showNewPassword}
-							<input
-								type="text"
-								class="grow"
-								bind:value={newPassword}
-								required
-								placeholder="Min. 12 chars"
-							/>
-						{:else}
-							<input
-								type="password"
-								class="grow"
-								bind:value={newPassword}
-								required
-								placeholder="Min. 12 chars"
-							/>
-						{/if}
-						<button
-							type="button"
-							onclick={() => (showNewPassword = !showNewPassword)}
-							class="opacity-50 hover:opacity-100"
-							aria-label="Toggle"
-						>
-							{#if showNewPassword}
-								<EyeOff class="h-3.5 w-3.5" />
-							{:else}
-								<Eye class="h-3.5 w-3.5" />
-							{/if}
-						</button>
-					</label>
-				</fieldset>
-				<fieldset class="fieldset">
-					<legend class="fieldset-legend">Role</legend>
-					<select class="select select-bordered w-full select-sm" bind:value={newRole}>
-						<option value="user">User</option>
-						<option value="trusted">Trusted</option>
-						<option value="admin">Admin</option>
-					</select>
-				</fieldset>
-				{#if createError}
-					<div class="sm:col-span-2 alert alert-error py-2 text-sm">{createError}</div>
-				{/if}
-				<div class="sm:col-span-2 flex gap-2 justify-end">
-					<button
-						type="button"
-						class="btn btn-ghost btn-sm"
-						onclick={() => (showCreateForm = false)}
-					>
-						Cancel
-					</button>
-					<button type="submit" class="btn btn-primary btn-sm" disabled={creating}>
-						{#if creating}<span class="loading loading-spinner loading-xs"></span>{/if}
-						Create
-					</button>
-				</div>
-			</form>
-		</div>
-	{/if}
-
-	{#if createSuccess}
-		<div class="alert alert-success py-2 text-sm">{createSuccess}</div>
-	{/if}
-
-	{#if roleError}
-		<div class="alert alert-error py-2 text-sm">{roleError}</div>
-	{/if}
-
-	{#if error}
-		<div class="alert alert-error py-2 text-sm">{error}</div>
-	{/if}
-
-	{#if loading && users.length === 0}
-		<div class="space-y-2">
-			{#each Array(3) as _, i (`user-skel-${i}`)}
-				<div class="flex items-center gap-3 p-3 bg-base-300/40 rounded-box animate-pulse">
-					<div class="w-9 h-9 rounded-full bg-base-300"></div>
-					<div class="flex-1">
-						<div class="h-3.5 bg-base-300 rounded w-32 mb-1.5"></div>
-						<div class="h-3 bg-base-300 rounded w-48"></div>
-					</div>
-					<div class="h-6 bg-base-300 rounded-full w-16"></div>
-				</div>
-			{/each}
-		</div>
-	{:else}
-		<div class="space-y-1.5">
-			{#each users as user (user.id)}
-				{@const RoleIcon = roleIcon(user.role)}
-				<div
-					class="flex items-center gap-3 p-3 bg-base-300/30 rounded-box hover:bg-base-300/50 transition-colors"
-				>
-					<div
-						class="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0 overflow-hidden"
-					>
-						{#if user.avatar_url}
-							<img
-								src={getApiUrl(user.avatar_url)}
-								alt={user.display_name}
-								class="h-full w-full object-cover"
-							/>
-						{:else}
-							<UserRound class="h-5 w-5 text-primary/60" />
-						{/if}
-					</div>
-					<div class="flex-1 min-w-0">
-						<p class="text-sm font-medium truncate">{user.display_name}</p>
-						{#if user.username_display ?? user.username}
-							<p class="text-xs text-base-content/40 truncate">
-								@{user.username_display ?? user.username}
-							</p>
-						{/if}
-						{#if user.email}
-							<p class="text-xs text-base-content/50 truncate">{user.email}</p>
-						{/if}
-					</div>
-					{#if user.providers.length > 0}
-						<div class="flex items-center gap-1.5 shrink-0">
-							{#each user.providers as provider (provider)}
-								<div class="tooltip" data-tip={providerLabel[provider] ?? provider}>
-									{#if provider === 'jellyfin'}
-										<JellyfinIcon class="h-3.5 w-3.5 text-info" />
-									{:else if provider === 'plex'}
-										<PlexIcon class="h-3.5 w-3.5" style="color: rgb(var(--brand-plex))" />
-									{:else if provider === 'oidc'}
-										<KeyRound class="h-3.5 w-3.5 text-base-content/40" />
-									{:else}
-										<Mail class="h-3.5 w-3.5 text-base-content/40" />
-									{/if}
-								</div>
-							{/each}
-						</div>
+					<Field label="Password">
+						{#snippet children(control)}
+							<div class="join w-full">
+								<Input
+									{...control}
+									label="Password"
+									type={showNewPassword ? 'text' : 'password'}
+									class="join-item w-full"
+									autocomplete="new-password"
+									required
+									placeholder="Min. 12 chars"
+									bind:value={newPassword}
+								/>
+								<IconButton
+									variant="neutral"
+									shape="square"
+									class="join-item"
+									icon={showNewPassword ? EyeOff : Eye}
+									label={showNewPassword ? 'Hide password' : 'Show password'}
+									onclick={() => (showNewPassword = !showNewPassword)}
+								/>
+							</div>
+						{/snippet}
+					</Field>
+					<SelectField label="Role" options={roleOptions} bind:value={newRole} />
+					{#if createError}
+						<div class="sm:col-span-2 alert alert-error py-2 text-sm">{createError}</div>
 					{/if}
-					<div class="flex items-center gap-2 shrink-0">
-						<span class="badge {roleBadgeClass(user.role)} badge-sm gap-1">
-							<RoleIcon class="h-3 w-3" />
-							{roleLabel[user.role]}
-						</span>
-						{#if savingRole === user.id}
-							<span class="loading loading-spinner loading-xs"></span>
-						{:else}
-							<select
-								class="select select-bordered select-xs"
-								value={user.role}
-								onchange={(e) =>
-									void setRole(
-										user.id,
-										(e.target as HTMLSelectElement).value as 'admin' | 'trusted' | 'user'
-									)}
-								aria-label="Change role"
-							>
-								<option value="user">User</option>
-								<option value="trusted">Trusted</option>
-								<option value="admin">Admin</option>
-							</select>
-						{/if}
-						<button
-							class="btn btn-ghost btn-sm btn-circle {quotaOpen.has(user.id)
-								? 'text-primary'
-								: 'text-base-content/50 hover:text-primary'}"
-							onclick={() => toggleQuota(user.id)}
-							aria-expanded={quotaOpen.has(user.id)}
-							aria-label="Request and storage quota"
-							title="Request and storage quota"
-						>
-							<Gauge class="h-4 w-4" />
-						</button>
-						<button
-							class="btn btn-ghost btn-sm btn-circle text-base-content/50 hover:bg-primary/10 hover:text-primary"
-							onclick={() => openRecoveryDialog(user)}
-							disabled={!user.providers.includes('local')}
-							aria-label={`Create recovery code for ${user.display_name}`}
-							title={user.providers.includes('local')
-								? 'Create password recovery code'
-								: 'This account does not have a local password'}
-						>
-							<KeyRound class="h-4 w-4" />
-						</button>
-						<button
-							class="btn btn-ghost btn-sm btn-circle text-error/70 hover:text-error hover:bg-error/10"
-							onclick={() => confirmDelete(user)}
-							disabled={user.id === authStore.user?.id}
-							aria-label="Delete user"
-							title={user.id === authStore.user?.id
-								? 'You cannot delete your own account'
-								: `Delete ${user.display_name}`}
-						>
-							<Trash2 class="h-4 w-4" />
-						</button>
+					<div class="sm:col-span-2 flex gap-2 justify-end">
+						<Button variant="ghost" size="sm" onclick={() => (showCreateForm = false)}>
+							Cancel
+						</Button>
+						<Button type="submit" variant="primary" size="sm" loading={creating}>Create</Button>
 					</div>
-				</div>
-				{#if quotaOpen.has(user.id)}
-					<UserQuotaEditor userId={user.id} displayName={user.display_name} />
-				{/if}
-			{/each}
-		</div>
-	{/if}
-
-	{#if total > PAGE_SIZE}
-		<div class="flex items-center justify-between">
-			<button
-				class="btn btn-sm btn-outline"
-				disabled={page === 1 || loading}
-				onclick={() => void loadUsers(page - 1)}>Previous</button
-			>
-			<span class="text-sm text-base-content/60">
-				Showing {rangeStart}-{rangeEnd} of {total} users (page {page} of {totalPages})
-			</span>
-			<button
-				class="btn btn-sm btn-outline"
-				disabled={page >= totalPages || loading}
-				onclick={() => void loadUsers(page + 1)}>Next</button
-			>
-		</div>
-	{/if}
-
-	<div class="pt-2 border-t border-base-300 space-y-2">
-		<h3 class="text-xs font-semibold text-base-content/50 uppercase tracking-wider">
-			Quota defaults
-		</h3>
-		<p class="text-xs text-base-content/60">
-			Limits for every plain user without an override (admin and trusted are exempt). 0 = unlimited.
-			Requests use a rolling window; storage counts each user's own downloads.
-		</p>
-		<div class="flex flex-wrap items-end gap-2">
-			<label class="form-control">
-				<span class="label-text text-xs">Requests</span>
-				<input
-					type="number"
-					min="0"
-					class="input input-bordered input-sm w-24"
-					bind:value={defRequestCount}
-				/>
-			</label>
-			<label class="form-control">
-				<span class="label-text text-xs">Window (days)</span>
-				<input
-					type="number"
-					min="1"
-					class="input input-bordered input-sm w-24"
-					bind:value={defRequestDays}
-				/>
-			</label>
-			<label class="form-control">
-				<span class="label-text text-xs">Storage (GB)</span>
-				<input
-					type="number"
-					min="0"
-					class="input input-bordered input-sm w-28"
-					bind:value={defStorageGb}
-				/>
-			</label>
-			<button
-				class="btn btn-primary btn-sm"
-				onclick={handleSaveQuotaDefaults}
-				disabled={savePolicy.isPending || !defaultsSeeded}
-			>
-				Save defaults
-			</button>
-		</div>
-	</div>
-
-	<div class="pt-2 border-t border-base-300 space-y-2">
-		<h3 class="text-xs font-semibold text-base-content/50 uppercase tracking-wider">Role guide</h3>
-		<div class="grid gap-2 text-xs text-base-content/60">
-			<div class="flex gap-2">
-				<ShieldCheck class="h-4 w-4 text-accent shrink-0 mt-0.5" />
-				<span
-					><strong class="text-base-content/80">Admin</strong>, full access, approves requests,
-					manages users.</span
-				>
-			</div>
-			<div class="flex gap-2">
-				<UserCheck class="h-4 w-4 text-info shrink-0 mt-0.5" />
-				<span
-					><strong class="text-base-content/80">Trusted</strong>, requests auto-approved, no admin
-					functions.</span
-				>
-			</div>
-			<div class="flex gap-2">
-				<UserX class="h-4 w-4 text-base-content/40 shrink-0 mt-0.5" />
-				<span
-					><strong class="text-base-content/80">User</strong>, requests need admin approval before
-					downloading.</span
-				>
-			</div>
-		</div>
-	</div>
-</div>
-
-<dialog bind:this={deleteDialogEl} class="modal" onclose={closeDeleteDialog}>
-	<div class="modal-box max-w-md">
-		<h3 class="text-lg font-bold">Delete User</h3>
-		<p class="py-4 text-base-content/70">
-			Delete <span class="font-semibold text-base-content">{userToDelete?.display_name}</span>? This
-			permanently removes their account, login methods, and sessions. This cannot be undone.
-		</p>
-
-		{#if deleteError}
-			<div class="alert alert-error py-2 text-sm">{deleteError}</div>
+				</form>
+			</Card>
 		{/if}
 
-		<div class="modal-action">
-			<button class="btn btn-ghost" onclick={closeDeleteDialog} disabled={deleting}>
-				Cancel
-			</button>
-			<button class="btn btn-error" onclick={() => void handleDeleteUser()} disabled={deleting}>
-				{#if deleting}
-					<span class="loading loading-spinner loading-sm"></span>
-					Deleting...
-				{:else}
-					Delete
-				{/if}
-			</button>
-		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button>close</button>
-	</form>
-</dialog>
+		{#if createSuccess}
+			<div class="alert alert-success py-2 text-sm">{createSuccess}</div>
+		{/if}
 
-<dialog
-	bind:this={recoveryDialogEl}
-	class="modal"
-	oncancel={handleRecoveryCancel}
-	onclose={closeRecoveryDialog}
->
-	<div class="modal-box max-w-md overflow-hidden p-0">
-		{#if recoveryCode}
-			<div class="border-b border-base-300 bg-primary/5 px-6 py-5">
-				<div class="flex items-center gap-3">
-					<div class="flex h-10 w-10 items-center justify-center rounded-box bg-primary/10">
-						<KeyRound class="h-5 w-5 text-primary" aria-hidden="true" />
+		{#if roleError}
+			<div class="alert alert-error py-2 text-sm">{roleError}</div>
+		{/if}
+
+		{#if error}
+			<div class="alert alert-error py-2 text-sm">{error}</div>
+		{/if}
+
+		{#if loading && users.length === 0}
+			<div class="space-y-2">
+				{#each Array(3) as _, i (`user-skel-${i}`)}
+					<div class="flex items-center gap-3 p-3 bg-base-300/40 rounded-box animate-pulse">
+						<div class="w-9 h-9 rounded-full bg-base-300"></div>
+						<div class="flex-1">
+							<div class="h-3.5 bg-base-300 rounded w-32 mb-1.5"></div>
+							<div class="h-3 bg-base-300 rounded w-48"></div>
+						</div>
+						<div class="h-6 bg-base-300 rounded-full w-16"></div>
 					</div>
-					<div>
-						<h3 class="text-lg font-bold">Recovery code ready</h3>
-						<p class="text-xs text-base-content/55">For {recoveryUser?.display_name}</p>
-					</div>
-				</div>
-			</div>
-			<div class="space-y-4 p-6">
-				<p class="text-sm leading-relaxed text-base-content/65">
-					Share this code privately. It can be used once and will not be shown again after you close
-					this window.
-				</p>
-				<div class="rounded-box border border-primary/20 bg-base-300/60 p-4 text-center">
-					<code class="block break-all font-mono text-lg font-semibold tracking-wider text-primary">
-						{recoveryCode}
-					</code>
-					<button class="btn btn-outline btn-sm mt-3 gap-2" onclick={() => void copyRecoveryCode()}>
-						{#if recoveryCopied}<Check class="h-4 w-4" /> Copied{:else}<Copy class="h-4 w-4" /> Copy code{/if}
-					</button>
-				</div>
-				<div class="flex items-center gap-2 text-xs text-base-content/50">
-					<Clock3 class="h-4 w-4 text-accent" aria-hidden="true" />
-					Expires at {recoveryExpiryLabel(recoveryExpiresAt)}. Creating another code will replace
-					this one.
-				</div>
-				<div class="modal-action mt-2">
-					<button class="btn btn-primary" onclick={closeRecoveryDialog}>Done</button>
-				</div>
+				{/each}
 			</div>
 		{:else}
-			<div class="p-6">
-				<div class="flex items-start gap-3">
+			<div class="space-y-1.5">
+				{#each users as user (user.id)}
+					{@const RoleIcon = roleIcon(user.role)}
+					{@const canRecover = user.providers.includes('local')}
+					{@const isSelf = user.id === authStore.user?.id}
 					<div
-						class="flex h-10 w-10 shrink-0 items-center justify-center rounded-box bg-primary/10"
+						class="flex items-center gap-3 p-3 bg-base-300/30 rounded-box hover:bg-base-300/50 transition-colors"
 					>
-						<KeyRound class="h-5 w-5 text-primary" aria-hidden="true" />
-					</div>
-					<div>
-						<h3 class="text-lg font-bold">Create recovery code</h3>
-						<p class="mt-1 text-sm leading-relaxed text-base-content/65">
-							Create a 15-minute, single-use code for
-							<span class="font-semibold text-base-content">{recoveryUser?.display_name}</span>?
-							Their current password remains valid until the code is used.
-						</p>
-					</div>
-				</div>
-
-				{#if recoveryError}
-					<div class="alert alert-error mt-4 py-2 text-sm" role="alert">{recoveryError}</div>
-				{/if}
-
-				<div class="modal-action">
-					<button
-						class="btn btn-ghost"
-						onclick={closeRecoveryDialog}
-						disabled={createRecoveryCode.isPending}
-					>
-						Cancel
-					</button>
-					<button
-						class="btn btn-primary"
-						onclick={() => void handleCreateRecoveryCode()}
-						disabled={createRecoveryCode.isPending}
-					>
-						{#if createRecoveryCode.isPending}
-							<span class="loading loading-spinner loading-sm"></span>
+						<div
+							class="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0 overflow-hidden"
+						>
+							{#if user.avatar_url}
+								<img
+									src={getApiUrl(user.avatar_url)}
+									alt={user.display_name}
+									class="h-full w-full object-cover"
+								/>
+							{:else}
+								<UserRound class="h-5 w-5 text-primary/60" />
+							{/if}
+						</div>
+						<div class="flex-1 min-w-0">
+							<p class="text-sm font-medium truncate">{user.display_name}</p>
+							{#if user.username_display ?? user.username}
+								<p class="text-xs text-base-content/40 truncate">
+									@{user.username_display ?? user.username}
+								</p>
+							{/if}
+							{#if user.email}
+								<p class="text-xs text-base-content/50 truncate">{user.email}</p>
+							{/if}
+						</div>
+						{#if user.providers.length > 0}
+							<div class="flex items-center gap-1.5 shrink-0">
+								{#each user.providers as provider (provider)}
+									<div class="tooltip" data-tip={providerLabel[provider] ?? provider}>
+										{#if provider === 'jellyfin'}
+											<JellyfinIcon class="h-3.5 w-3.5 text-info" />
+										{:else if provider === 'plex'}
+											<PlexIcon class="h-3.5 w-3.5 text-plex" />
+										{:else if provider === 'oidc'}
+											<KeyRound class="h-3.5 w-3.5 text-base-content/40" />
+										{:else}
+											<Mail class="h-3.5 w-3.5 text-base-content/40" />
+										{/if}
+									</div>
+								{/each}
+							</div>
 						{/if}
-						Create code
-					</button>
-				</div>
+						<div class="flex items-center gap-2 shrink-0">
+							<span class="badge {roleBadgeClass(user.role)} badge-sm gap-1">
+								<RoleIcon class="h-3 w-3" />
+								{roleLabel[user.role]}
+							</span>
+							{#if savingRole === user.id}
+								<span class="loading loading-spinner loading-xs"></span>
+							{:else}
+								<select
+									class="select select-sm"
+									value={user.role}
+									onchange={(e) =>
+										void setRole(
+											user.id,
+											(e.target as HTMLSelectElement).value as 'admin' | 'trusted' | 'user'
+										)}
+									aria-label="Change role"
+								>
+									<option value="user">User</option>
+									<option value="trusted">Trusted</option>
+									<option value="admin">Admin</option>
+								</select>
+							{/if}
+							<IconButton
+								size="sm"
+								icon={Gauge}
+								label="Request and storage quota"
+								active={quotaOpen.has(user.id)}
+								aria-expanded={quotaOpen.has(user.id)}
+								onclick={() => toggleQuota(user.id)}
+							/>
+							<span title={canRecover ? undefined : 'This account does not have a local password'}>
+								<IconButton
+									size="sm"
+									icon={KeyRound}
+									label={`Create recovery code for ${user.display_name}`}
+									disabled={!canRecover}
+									onclick={() => openRecoveryDialog(user)}
+								/>
+							</span>
+							<span title={isSelf ? 'You cannot delete your own account' : undefined}>
+								<IconButton
+									size="sm"
+									variant="danger-ghost"
+									icon={Trash2}
+									label="Delete user"
+									disabled={isSelf}
+									onclick={() => confirmDelete(user)}
+								/>
+							</span>
+						</div>
+					</div>
+					{#if quotaOpen.has(user.id)}
+						<UserQuotaEditor userId={user.id} displayName={user.display_name} />
+					{/if}
+				{/each}
 			</div>
 		{/if}
+
+		{#if total > PAGE_SIZE}
+			<div class="flex items-center justify-between">
+				<Button
+					variant="outline"
+					size="sm"
+					disabled={page === 1 || loading}
+					onclick={() => void loadUsers(page - 1)}>Previous</Button
+				>
+				<span class="text-sm text-base-content/60">
+					Showing {rangeStart}-{rangeEnd} of {total} users (page {page} of {totalPages})
+				</span>
+				<Button
+					variant="outline"
+					size="sm"
+					disabled={page >= totalPages || loading}
+					onclick={() => void loadUsers(page + 1)}>Next</Button
+				>
+			</div>
+		{/if}
+
+		<div class="pt-2 border-t border-base-300 space-y-2">
+			<h3 class="text-xs font-semibold text-base-content/50 uppercase tracking-wider">
+				Quota defaults
+			</h3>
+			<p class="text-xs text-base-content/60">
+				Limits for every plain user without an override (admin and trusted are exempt). 0 =
+				unlimited. Requests use a rolling window; storage counts each user's own downloads.
+			</p>
+			<div class="flex flex-wrap items-end gap-2">
+				<Field label="Requests">
+					{#snippet children(control)}
+						<Input
+							{...control}
+							label="Requests"
+							type="number"
+							size="sm"
+							min="0"
+							class="w-24"
+							bind:value={defRequestCount}
+						/>
+					{/snippet}
+				</Field>
+				<Field label="Window (days)">
+					{#snippet children(control)}
+						<Input
+							{...control}
+							label="Window (days)"
+							type="number"
+							size="sm"
+							min="1"
+							class="w-24"
+							bind:value={defRequestDays}
+						/>
+					{/snippet}
+				</Field>
+				<Field label="Storage (GB)">
+					{#snippet children(control)}
+						<Input
+							{...control}
+							label="Storage (GB)"
+							type="number"
+							size="sm"
+							min="0"
+							class="w-28"
+							bind:value={defStorageGb}
+						/>
+					{/snippet}
+				</Field>
+				<Button
+					variant="primary"
+					size="sm"
+					class="mb-1"
+					onclick={handleSaveQuotaDefaults}
+					loading={savePolicy.isPending}
+					disabled={!defaultsSeeded}
+				>
+					Save defaults
+				</Button>
+			</div>
+		</div>
+
+		<div class="pt-2 border-t border-base-300 space-y-2">
+			<h3 class="text-xs font-semibold text-base-content/50 uppercase tracking-wider">
+				Role guide
+			</h3>
+			<div class="grid gap-2 text-xs text-base-content/60">
+				<div class="flex gap-2">
+					<ShieldCheck class="h-4 w-4 text-accent shrink-0 mt-0.5" />
+					<span
+						><strong class="text-base-content/80">Admin</strong>, full access, approves requests,
+						manages users.</span
+					>
+				</div>
+				<div class="flex gap-2">
+					<UserCheck class="h-4 w-4 text-info shrink-0 mt-0.5" />
+					<span
+						><strong class="text-base-content/80">Trusted</strong>, requests auto-approved, no admin
+						functions.</span
+					>
+				</div>
+				<div class="flex gap-2">
+					<UserX class="h-4 w-4 text-base-content/40 shrink-0 mt-0.5" />
+					<span
+						><strong class="text-base-content/80">User</strong>, requests need admin approval before
+						downloading.</span
+					>
+				</div>
+			</div>
+		</div>
 	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button disabled={createRecoveryCode.isPending}>close</button>
-	</form>
-</dialog>
+</Card>
+
+<ConfirmDialog
+	bind:open={deleteOpen}
+	title="Delete User"
+	confirmLabel="Delete"
+	tone="danger"
+	onconfirm={handleDeleteUser}
+	oncancel={() => (userToDelete = null)}
+>
+	<p class="text-base-content/70">
+		Delete <span class="font-semibold text-base-content">{userToDelete?.display_name}</span>? This
+		permanently removes their account, login methods, and sessions. This cannot be undone.
+	</p>
+</ConfirmDialog>
+
+<Modal
+	bind:open={recoveryOpen}
+	title={recoveryCode ? 'Recovery code ready' : 'Create recovery code'}
+	description={recoveryCode ? `For ${recoveryUser?.display_name}` : undefined}
+	dismissible={!createRecoveryCode.isPending}
+	onclose={closeRecoveryDialog}
+>
+	{#if recoveryCode}
+		<div class="space-y-4">
+			<p class="text-sm leading-relaxed text-base-content/65">
+				Share this code privately. It can be used once and will not be shown again after you close
+				this window.
+			</p>
+			<Card variant="bordered" padding="md" class="text-center">
+				<code class="block break-all font-mono text-lg font-semibold tracking-wider text-primary">
+					{recoveryCode}
+				</code>
+				<Button
+					variant="outline"
+					size="sm"
+					class="mx-auto mt-2"
+					icon={recoveryCopied ? Check : Copy}
+					onclick={() => void copyRecoveryCode()}
+				>
+					{recoveryCopied ? 'Copied' : 'Copy code'}
+				</Button>
+			</Card>
+			<div class="flex items-center gap-2 text-xs text-base-content/50">
+				<Clock3 class="h-4 w-4 text-accent" aria-hidden="true" />
+				Expires at {recoveryExpiryLabel(recoveryExpiresAt)}. Creating another code will replace this
+				one.
+			</div>
+		</div>
+	{:else}
+		<p class="text-sm leading-relaxed text-base-content/65">
+			Create a 15-minute, single-use code for
+			<span class="font-semibold text-base-content">{recoveryUser?.display_name}</span>? Their
+			current password remains valid until the code is used.
+		</p>
+
+		{#if recoveryError}
+			<div class="alert alert-error mt-4 py-2 text-sm" role="alert">{recoveryError}</div>
+		{/if}
+	{/if}
+
+	{#snippet actions()}
+		{#if recoveryCode}
+			<Button variant="primary" onclick={closeRecoveryDialog}>Done</Button>
+		{:else}
+			<Button variant="ghost" onclick={closeRecoveryDialog} disabled={createRecoveryCode.isPending}>
+				Cancel
+			</Button>
+			<Button
+				variant="primary"
+				loading={createRecoveryCode.isPending}
+				onclick={() => void handleCreateRecoveryCode()}
+			>
+				Create code
+			</Button>
+		{/if}
+	{/snippet}
+</Modal>

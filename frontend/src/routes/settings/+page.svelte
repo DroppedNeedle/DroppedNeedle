@@ -40,6 +40,8 @@
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
 	import SpotifyIcon from '$lib/components/SpotifyIcon.svelte';
 	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import Input from '$lib/ui/Input.svelte';
 
 	const integration = fromStore(integrationStore);
 
@@ -169,26 +171,19 @@
 
 		<div class="flex flex-col lg:flex-row gap-6 lg:min-h-0 lg:flex-1">
 			<aside class="w-full lg:w-80 lg:shrink-0 space-y-3 lg:min-h-0 lg:overflow-y-auto lg:pb-4">
-				<label class="relative block">
-					<Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-base-content/40" />
-					<input
-						type="text"
-						bind:value={filter}
-						placeholder="Filter settings…"
-						class="input input-sm input-soft w-full pl-9"
-					/>
-				</label>
+				<Input
+					size="sm"
+					icon={Search}
+					label="Filter settings"
+					placeholder="Filter settings…"
+					class="w-full"
+					bind:value={filter}
+				/>
 
 				{#each tiers as tier (tier.id)}
 					{@const tierTabs = tabsForTier(tier.id)}
 					{#if tierTabs.length > 0}
-						<div
-							class="rounded-2xl border p-2 {tier.id === 'setup'
-								? 'border-primary/15 bg-base-200'
-								: tier.id === 'personalize'
-									? 'border-base-300/40 bg-base-200/70'
-									: 'border-base-300/30 bg-base-200/40'}"
-						>
+						<Card variant="bordered" padding="sm">
 							<div class="px-3 pb-1 pt-2">
 								<h3
 									class="text-xs font-bold uppercase tracking-widest {tier.id === 'setup'
@@ -210,6 +205,7 @@
 											class="group justify-start gap-3 rounded-xl text-base transition-all {isActive
 												? 'glow-primary-soft bg-primary/15 font-semibold text-primary'
 												: 'text-base-content/70 hover:bg-base-300/40'}"
+											aria-current={isActive ? 'page' : undefined}
 											onclick={() => selectTab(tab.id)}
 										>
 											<Icon
@@ -241,7 +237,7 @@
 									</li>
 								{/each}
 							</ul>
-						</div>
+						</Card>
 					{/if}
 				{/each}
 

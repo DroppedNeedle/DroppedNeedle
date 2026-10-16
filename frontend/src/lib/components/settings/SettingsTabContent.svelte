@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Component } from 'svelte';
 
+	import Button from '$lib/ui/Button.svelte';
 	import { loadSettingsTab } from './settingsTabs';
 
 	interface Props {
@@ -53,7 +54,7 @@
 			<p class="font-semibold">This settings section did not load.</p>
 			<p class="mt-1 text-sm opacity-80">Check your connection, then try again.</p>
 		</div>
-		<button class="btn btn-sm" type="button" onclick={retryLoad}>Try again</button>
+		<Button size="sm" onclick={retryLoad}>Try again</Button>
 	</div>
 {:else}
 	<div class="space-y-4" aria-busy="true" aria-label="Loading settings">

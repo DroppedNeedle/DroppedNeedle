@@ -21,6 +21,12 @@
 	import LibraryNamingPreview from '$lib/components/library/LibraryNamingPreview.svelte';
 	import LibraryScanScheduleControl from '$lib/components/library/LibraryScanScheduleControl.svelte';
 	import SettingsLyrics from './SettingsLyrics.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import Field from '$lib/ui/Field.svelte';
+	import Input from '$lib/ui/Input.svelte';
+	import SecretField from '$lib/ui/SecretField.svelte';
+	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -29,6 +35,8 @@
 		TargetLibrarySettingsResponse,
 		TypedLibrarySettings
 	} from '$lib/queries/library/LibraryOperationsTypes';
+
+	const ACOUSTID_KEY_MASK = 'acoustid****';
 
 	const settingsQuery = getTargetLibrarySettingsQuery(() => authStore.isAdmin);
 	const restorableQuery = getLibraryRestorableRootsQuery(() => authStore.isAdmin);
@@ -53,9 +61,9 @@
 	let impactHeading: HTMLHeadingElement;
 	let applyHeading: HTMLHeadingElement;
 	let restoreHeading: HTMLHeadingElement;
-	let impactOpener: HTMLButtonElement | null = null;
-	let applyOpener: HTMLButtonElement | null = null;
-	let restoreOpener: HTMLButtonElement | null = null;
+	let impactOpener: HTMLElement | null = null;
+	let applyOpener: HTMLElement | null = null;
+	let restoreOpener: HTMLElement | null = null;
 	let restorePaths = $state<Record<string, string>>({});
 	let maxLibraryGb = $state<number | null>(0);
 	let capSeeded = $state(false);
@@ -116,11 +124,9 @@
 		};
 	}
 
-	async function previewSave(
-		event: MouseEvent & { currentTarget: HTMLButtonElement }
-	): Promise<void> {
+	async function previewSave(event: MouseEvent): Promise<void> {
 		if (!seeded) return;
-		impactOpener = event.currentTarget;
+		impactOpener = event.currentTarget as HTMLElement;
 		let result;
 		try {
 			result = await impact.mutateAsync({
@@ -152,8 +158,8 @@
 		impactDialog.close();
 	}
 
-	function openRestore(event: MouseEvent & { currentTarget: HTMLButtonElement }): void {
-		restoreOpener = event.currentTarget;
+	function openRestore(event: MouseEvent): void {
+		restoreOpener = event.currentTarget as HTMLElement;
 		restorePaths = Object.fromEntries(restorableRoots.map((entry) => [entry.root_id, entry.path]));
 		restoreDialog.showModal();
 		restoreHeading.focus();
@@ -183,10 +189,8 @@
 		}
 	}
 
-	async function previewApply(
-		event: MouseEvent & { currentTarget: HTMLButtonElement }
-	): Promise<void> {
-		applyOpener = event.currentTarget;
+	async function previewApply(event: MouseEvent): Promise<void> {
+		applyOpener = event.currentTarget as HTMLElement;
 		const settings = currentSettings;
 		if (!settings?.pending_policy_revision) return;
 		try {
@@ -293,12 +297,11 @@
 						ready to update existing catalog availability.
 					</p>
 				</div>
-				<button
-					class="btn btn-warning btn-sm"
-					disabled={applyPreview.isPending}
-					onclick={(event) => void previewApply(event)}
-					>{#if applyPreview.isPending}<span class="loading loading-spinner loading-sm"></span>{/if} Apply
-					changes...</button
+				<Button
+					variant="warning"
+					size="sm"
+					loading={applyPreview.isPending}
+					onclick={(event: MouseEvent) => void previewApply(event)}>Apply changes...</Button
 				>
 			</div>
 		{/if}
@@ -319,39 +322,22 @@
 						{restorableRoots.length === 1 ? 'it' : 'them'} to keep your library working without a rescan.
 					</p>
 				</div>
-				<button
-					class="btn btn-warning btn-sm"
-					disabled={restore.isPending}
-					onclick={(event) => openRestore(event)}
-					>{#if restore.isPending}<span class="loading loading-spinner loading-sm"></span>{/if}
-					Restore roots...</button
+				<Button
+					variant="warning"
+					size="sm"
+					loading={restore.isPending}
+					onclick={(event: MouseEvent) => openRestore(event)}>Restore roots...</Button
 				>
 			</div>
 		{/if}
 
-		<section class="card border border-base-300 bg-base-200/55">
-			<div class="card-body gap-6">
-				<section class="space-y-2">
-					<div class="flex flex-wrap items-center justify-between gap-3">
-						<div class="min-w-0 flex-1">
-							<h3 class="font-semibold">Local library</h3>
-							<p class="mt-1 text-xs text-base-content/60">
-								Scanning, identification, and file organization run while this is on. Turn it off to
-								pause the library without removing your roots. Existing catalog data and playback
-								keep working.
-							</p>
-						</div>
-						<label class="flex cursor-pointer items-center gap-2">
-							<span class="text-sm font-medium">{libraryEnabled ? 'Enabled' : 'Disabled'}</span>
-							<input
-								type="checkbox"
-								class="toggle toggle-primary"
-								bind:checked={libraryEnabled}
-								aria-label="Local library enabled"
-							/>
-						</label>
-					</div>
-				</section>
+		<Card as="section" variant="bordered">
+			<div class="flex flex-col gap-6">
+				<ToggleRow
+					label="Local library"
+					description="Scanning, identification, and file organization run while this is on. Turn it off to pause the library without removing your roots. Existing catalog data and playback keep working."
+					bind:checked={libraryEnabled}
+				/>
 
 				<div class="divider my-0"></div>
 
@@ -369,29 +355,19 @@
 						"The" plus following Unicode whitespace, then returns one uppercase letter; empty or nonletter
 						leads return "#".
 					</p>
-					<input
-						class="input input-bordered w-full bg-base-100 font-mono text-sm"
-						bind:value={template}
-						aria-label="Naming template"
-					/>
+					<Input label="Naming template" mono class="w-full" bind:value={template} />
 					<LibraryNamingPreview {template} />
 				</section>
 
 				<div class="divider my-0"></div>
 
-				<section class="space-y-2">
-					<h3 class="font-semibold">AcoustID API key</h3>
-					<p class="text-xs text-base-content/60">
-						Used to identify files that do not contain MusicBrainz tags.
-					</p>
-					<input
-						type="password"
-						class="input input-bordered w-full bg-base-100 font-mono text-sm"
-						bind:value={acoustidKey}
-						placeholder="Enter AcoustID API key"
-						aria-label="AcoustID API key"
-					/>
-				</section>
+				<SecretField
+					label="AcoustID API key"
+					mask={ACOUSTID_KEY_MASK}
+					placeholder="Enter AcoustID API key"
+					help="Used to identify files that do not contain MusicBrainz tags."
+					bind:value={acoustidKey}
+				/>
 
 				{#if settingsBlockedMessage}
 					<p class="text-sm text-warning">{settingsBlockedMessage}</p>
@@ -404,20 +380,19 @@
 					{:else}
 						<span></span>
 					{/if}
-					<button
-						class="btn btn-primary"
-						disabled={impact.isPending || save.isPending || !seeded}
-						onclick={(event) => void previewSave(event)}
-						>{#if impact.isPending || save.isPending}<span
-								class="loading loading-spinner loading-sm"
-							></span>{/if} Preview and save settings</button
+					<Button
+						variant="primary"
+						loading={impact.isPending || save.isPending}
+						disabled={!seeded}
+						onclick={(event: MouseEvent) => void previewSave(event)}
+						>Preview and save settings</Button
 					>
 				</div>
 			</div>
-		</section>
+		</Card>
 
-		<section class="card border border-base-300 bg-base-200/55">
-			<div class="card-body gap-4">
+		<Card as="section" variant="bordered">
+			<div class="flex flex-col gap-4">
 				<div>
 					<h3 class="font-semibold">Storage cap</h3>
 					<p class="mt-1 text-xs text-base-content/60">
@@ -426,20 +401,27 @@
 					</p>
 				</div>
 				<div class="flex flex-wrap items-end gap-3">
-					<label class="grid gap-1.5">
-						<span class="text-xs font-medium">Maximum library size (GB)</span>
-						<input
-							type="number"
-							min="0"
-							max="1000000"
-							class="input input-bordered input-sm w-40 bg-base-100"
-							bind:value={maxLibraryGb}
-						/>
-					</label>
-					<button
-						class="btn btn-primary btn-sm"
-						onclick={() => void handleSaveCap()}
-						disabled={savePolicy.isPending || !capSeeded}>Save cap</button
+					<Field label="Maximum library size (GB)">
+						{#snippet children(control)}
+							<Input
+								{...control}
+								label="Maximum library size (GB)"
+								type="number"
+								size="sm"
+								min="0"
+								max="1000000"
+								class="w-40"
+								bind:value={maxLibraryGb}
+							/>
+						{/snippet}
+					</Field>
+					<Button
+						variant="primary"
+						size="sm"
+						class="mb-1"
+						loading={savePolicy.isPending}
+						disabled={!capSeeded}
+						onclick={() => void handleSaveCap()}>Save cap</Button
 					>
 				</div>
 				{#if maxLibraryGb && maxLibraryGb > 0}<div class="max-w-md space-y-1">
@@ -460,10 +442,10 @@
 						Library size: {usedGb.toFixed(1)} GB (no cap set)
 					</p>{/if}
 			</div>
-		</section>
+		</Card>
 
-		<section class="card border border-base-300 bg-base-200/55">
-			<div class="card-body gap-5">
+		<Card as="section" variant="bordered">
+			<div class="flex flex-col gap-5">
 				<section class="space-y-2">
 					<h3 class="font-semibold">Automatic scanning</h3>
 					<p class="text-xs text-base-content/60">
@@ -474,19 +456,19 @@
 				<div class="divider my-0"></div>
 				<section class="space-y-2">
 					<h3 class="font-semibold">Manual scan</h3>
-					<button
-						class="btn btn-outline btn-sm"
-						disabled={requestRun.isPending || roots.length === 0 || !libraryEnabled}
-						onclick={() => void scanForChanges()}
-						>{#if requestRun.isPending}<span class="loading loading-spinner loading-sm"></span>{/if} Scan
-						for changes</button
+					<Button
+						variant="outline"
+						size="sm"
+						loading={requestRun.isPending}
+						disabled={roots.length === 0 || !libraryEnabled}
+						onclick={() => void scanForChanges()}>Scan for changes</Button
 					>
 					{#if !libraryEnabled}<p class="text-xs text-warning">
 							The local library is disabled. Re-enable it before starting a scan.
 						</p>{/if}
 				</section>
 			</div>
-		</section>
+		</Card>
 
 		{#if authStore.isAdmin}
 			<SettingsLyrics />
@@ -500,10 +482,12 @@
 						workspace under the Automation tab.
 					</p>
 				</div>
-				<a
+				<Button
+					variant="warning"
+					size="sm"
 					href={withBasePath('/library/management?tab=automation')}
-					class="btn management-btn btn-sm"
-					>Open Organize files settings <ArrowRight class="h-4 w-4" /></a
+					icon={ArrowRight}
+					iconPosition="end">Open Organize files settings</Button
 				>
 			</section>
 		{/if}
@@ -546,11 +530,10 @@
 			<p class="mt-3 text-sm text-error">{save.error.message}</p>
 		{/if}
 		<div class="modal-action">
-			<button class="btn btn-ghost" onclick={() => impactDialog.close()}>Cancel</button><button
-				class="btn btn-primary"
-				disabled={save.isPending}
-				onclick={() => void confirmSave()}
-				>{#if save.isPending}<span class="loading loading-spinner loading-sm"></span>{/if} Save policies</button
+			<Button variant="ghost" onclick={() => impactDialog.close()}>Cancel</Button><Button
+				variant="primary"
+				loading={save.isPending}
+				onclick={() => void confirmSave()}>Save policies</Button
 			>
 		</div>
 	</div>
@@ -578,12 +561,10 @@
 					and connected clients.
 				</div>{/if}{/if}
 		<div class="modal-action">
-			<button class="btn btn-ghost" onclick={() => applyDialog.close()}>Cancel</button><button
-				class="btn btn-warning"
-				disabled={requestRun.isPending}
-				onclick={() => void confirmApply()}
-				>{#if requestRun.isPending}<span class="loading loading-spinner loading-sm"></span>{/if} Apply
-				policy changes</button
+			<Button variant="ghost" onclick={() => applyDialog.close()}>Cancel</Button><Button
+				variant="warning"
+				loading={requestRun.isPending}
+				onclick={() => void confirmApply()}>Apply policy changes</Button
 			>
 		</div>
 	</div>
@@ -608,32 +589,32 @@
 		</p>
 		<div class="mt-4 space-y-4">
 			{#each restorableRoots as entry (entry.root_id)}
-				<label class="form-control">
-					<span class="label-text">
-						Root <span class="font-mono text-xs">{entry.root_id.slice(0, 8)}…</span>
-					</span>
-					<input
-						class="input input-bordered w-full font-mono"
-						bind:value={restorePaths[entry.root_id]}
-						aria-label={`Path for ${entry.root_id}`}
-					/>
-					<span class="label-text-alt">
-						{#if entry.indexed_file_count > 0}
-							Recovered from {entry.indexed_file_count.toLocaleString()} catalog
-							{entry.indexed_file_count === 1 ? 'file' : 'files'}.
-						{:else}Check this is the original root path.{/if}
-						A wrong path duplicates your library on the next scan.
-					</span>
-				</label>
+				<Field
+					label={`Root ${entry.root_id.slice(0, 8)}…`}
+					help={`${
+						entry.indexed_file_count > 0
+							? `Recovered from ${entry.indexed_file_count.toLocaleString()} catalog ${entry.indexed_file_count === 1 ? 'file' : 'files'}.`
+							: 'Check this is the original root path.'
+					} A wrong path duplicates your library on the next scan.`}
+				>
+					{#snippet children(control)}
+						<Input
+							{...control}
+							label={`Path for ${entry.root_id}`}
+							mono
+							class="w-full"
+							bind:value={restorePaths[entry.root_id]}
+						/>
+					{/snippet}
+				</Field>
 			{/each}
 		</div>
 		<div class="modal-action">
-			<button class="btn btn-ghost" onclick={() => restoreDialog.close()}>Cancel</button><button
-				class="btn btn-warning"
-				disabled={restore.isPending}
+			<Button variant="ghost" onclick={() => restoreDialog.close()}>Cancel</Button><Button
+				variant="warning"
+				loading={restore.isPending}
 				onclick={() => void confirmRestore()}
-				>{#if restore.isPending}<span class="loading loading-spinner loading-sm"></span>{/if} Restore
-				{restorableRoots.length === 1 ? 'root' : 'roots'}</button
+				>Restore {restorableRoots.length === 1 ? 'root' : 'roots'}</Button
 			>
 		</div>
 	</div>

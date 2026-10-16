@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { AdvancedSettingsForm } from './advanced-settings-types';
-	import SettingsNumberField from './SettingsNumberField.svelte';
+	import NumberField from '$lib/ui/NumberField.svelte';
 
 	let { data = $bindable() }: { data: AdvancedSettingsForm } = $props();
 </script>
@@ -12,81 +12,81 @@
 	>
 </div>
 <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 pt-2">
-	<SettingsNumberField
+	<NumberField
 		label="Home Page"
-		description="Default: 5 minutes"
+		help="Default: 5 minutes"
 		bind:value={data.frontend_ttl_home}
 		min={1}
 		max={60}
 		unit="min"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Discover Page"
-		description="Default: 30 minutes"
+		help="Default: 30 minutes"
 		bind:value={data.frontend_ttl_discover}
 		min={1}
 		max={1440}
 		unit="min"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Library"
-		description="Default: 5 minutes"
+		help="Default: 5 minutes"
 		bind:value={data.frontend_ttl_library}
 		min={1}
 		max={60}
 		unit="min"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Recently Added"
-		description="Default: 5 minutes"
+		help="Default: 5 minutes"
 		bind:value={data.frontend_ttl_recently_added}
 		min={1}
 		max={60}
 		unit="min"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Discover Queue"
-		description="Default: 24 hours"
+		help="Default: 24 hours"
 		bind:value={data.frontend_ttl_discover_queue}
 		min={60}
 		max={10080}
 		unit="min"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Search & Discovery"
-		description="Default: 5 minutes"
+		help="Default: 5 minutes"
 		bind:value={data.frontend_ttl_search}
 		min={1}
 		max={60}
 		unit="min"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Local Files Sidebar"
-		description="Default: 2 minutes"
+		help="Default: 2 minutes"
 		bind:value={data.frontend_ttl_local_files_sidebar}
 		min={1}
 		max={60}
 		unit="min"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Jellyfin Sidebar"
-		description="Default: 2 minutes"
+		help="Default: 2 minutes"
 		bind:value={data.frontend_ttl_jellyfin_sidebar}
 		min={1}
 		max={60}
 		unit="min"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Plex Sidebar"
-		description="Default: 2 minutes"
+		help="Default: 2 minutes"
 		bind:value={data.frontend_ttl_plex_sidebar}
 		min={1}
 		max={60}
 		unit="min"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Playlist Sources"
-		description="Default: 15 minutes"
+		help="Default: 15 minutes"
 		bind:value={data.frontend_ttl_playlist_sources}
 		min={1}
 		max={60}

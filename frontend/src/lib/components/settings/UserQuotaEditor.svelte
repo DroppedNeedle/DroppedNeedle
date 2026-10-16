@@ -5,6 +5,10 @@
 		type UserQuotaResponse
 	} from '$lib/queries/auth/UserQuotaQueries.svelte';
 	import { toastStore } from '$lib/stores/toast';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import Field from '$lib/ui/Field.svelte';
+	import Input from '$lib/ui/Input.svelte';
 
 	interface Props {
 		userId: string;
@@ -67,7 +71,7 @@
 	}
 </script>
 
-<div class="rounded-box border border-base-300 bg-base-300/20 p-3 space-y-3">
+<Card variant="bordered" padding="sm">
 	{#if quotaQuery.isPending}
 		<div class="skeleton h-16 w-full"></div>
 	{:else if quotaQuery.isError}
@@ -127,40 +131,58 @@
 		{/if}
 
 		<div class="flex flex-wrap items-end gap-2">
-			<label class="form-control">
-				<span class="label-text text-xs">Requests</span>
-				<input
-					type="number"
-					min="0"
-					class="input input-bordered input-xs w-20"
-					bind:value={requestCount}
-					placeholder="default"
-				/>
-			</label>
-			<label class="form-control">
-				<span class="label-text text-xs">Window (days)</span>
-				<input
-					type="number"
-					min="1"
-					class="input input-bordered input-xs w-20"
-					bind:value={requestDays}
-					placeholder="default"
-				/>
-			</label>
-			<label class="form-control">
-				<span class="label-text text-xs">Storage (GB)</span>
-				<input
-					type="number"
-					min="0"
-					class="input input-bordered input-xs w-24"
-					bind:value={storageGb}
-					placeholder="default"
-				/>
-			</label>
-			<button class="btn btn-primary btn-xs" onclick={handleSave} disabled={save.isPending}>
+			<Field label="Requests">
+				{#snippet children(control)}
+					<Input
+						{...control}
+						label="Requests"
+						type="number"
+						size="sm"
+						min="0"
+						class="w-24"
+						placeholder="default"
+						bind:value={requestCount}
+					/>
+				{/snippet}
+			</Field>
+			<Field label="Window (days)">
+				{#snippet children(control)}
+					<Input
+						{...control}
+						label="Window (days)"
+						type="number"
+						size="sm"
+						min="1"
+						class="w-24"
+						placeholder="default"
+						bind:value={requestDays}
+					/>
+				{/snippet}
+			</Field>
+			<Field label="Storage (GB)">
+				{#snippet children(control)}
+					<Input
+						{...control}
+						label="Storage (GB)"
+						type="number"
+						size="sm"
+						min="0"
+						class="w-28"
+						placeholder="default"
+						bind:value={storageGb}
+					/>
+				{/snippet}
+			</Field>
+			<Button
+				variant="primary"
+				size="sm"
+				class="mb-1"
+				loading={save.isPending}
+				onclick={handleSave}
+			>
 				Save
-			</button>
+			</Button>
 		</div>
 		<p class="text-[11px] text-base-content/40">Blank = use the global default. 0 = unlimited.</p>
 	{/if}
-</div>
+</Card>

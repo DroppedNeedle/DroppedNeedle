@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { AdvancedSettingsForm } from './advanced-settings-types';
-	import SettingsNumberField from './SettingsNumberField.svelte';
+	import NumberField from '$lib/ui/NumberField.svelte';
 
 	let { data = $bindable() }: { data: AdvancedSettingsForm } = $props();
 </script>
@@ -14,129 +14,129 @@
 	>
 </div>
 <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 pt-2">
-	<SettingsNumberField
+	<NumberField
 		label="Library Albums"
-		description="Default: 24 hours"
+		help="Default: 24 hours"
 		bind:value={data.cache_ttl_album_library}
 		min={1}
 		max={168}
 		unit="hours"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Non-Library Albums"
-		description="Default: 6 hours"
+		help="Default: 6 hours"
 		bind:value={data.cache_ttl_album_non_library}
 		min={1}
 		max={24}
 		unit="hours"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Library Artists"
-		description="Default: 6 hours"
+		help="Default: 6 hours"
 		bind:value={data.cache_ttl_artist_library}
 		min={1}
 		max={168}
 		unit="hours"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Non-Library Artists"
-		description="Default: 6 hours"
+		help="Default: 6 hours"
 		bind:value={data.cache_ttl_artist_non_library}
 		min={1}
 		max={168}
 		unit="hours"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Discovery (Library Artists)"
-		description="Popular albums/songs/similar (default: 6h)"
+		help="Popular albums/songs/similar (default: 6h)"
 		bind:value={data.cache_ttl_artist_discovery_library}
 		min={1}
 		max={168}
 		unit="hours"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Discovery (Non-Library Artists)"
-		description="Popular albums/songs/similar (default: 1h)"
+		help="Popular albums/songs/similar (default: 1h)"
 		bind:value={data.cache_ttl_artist_discovery_non_library}
 		min={1}
 		max={168}
 		unit="hours"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Search Results"
-		description="Default: 60 minutes"
+		help="Default: 60 minutes"
 		bind:value={data.cache_ttl_search}
 		min={1}
 		max={1440}
 		unit="min"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Persistent Metadata"
-		description="Covers & enrichment (default: 24h)"
+		help="Covers & enrichment (default: 24h)"
 		bind:value={data.persistent_metadata_ttl_hours}
 		min={1}
 		max={168}
 		unit="hours"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Jellyfin Recent (Backend)"
-		description="Default: 5 minutes"
+		help="Default: 5 minutes"
 		bind:value={data.cache_ttl_jellyfin_recently_played}
 		min={1}
 		max={60}
 		unit="min"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Jellyfin Favorites (Backend)"
-		description="Default: 5 minutes"
+		help="Default: 5 minutes"
 		bind:value={data.cache_ttl_jellyfin_favorites}
 		min={1}
 		max={60}
 		unit="min"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Jellyfin Genres (Backend)"
-		description="Default: 60 minutes"
+		help="Default: 60 minutes"
 		bind:value={data.cache_ttl_jellyfin_genres}
 		min={1}
 		max={1440}
 		unit="min"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Jellyfin Stats (Backend)"
-		description="Default: 10 minutes"
+		help="Default: 10 minutes"
 		bind:value={data.cache_ttl_jellyfin_library_stats}
 		min={1}
 		max={60}
 		unit="min"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Plex Albums (Backend)"
-		description="Default: 5 minutes"
+		help="Default: 5 minutes"
 		bind:value={data.cache_ttl_plex_albums}
 		min={1}
 		max={60}
 		unit="min"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Plex Search (Backend)"
-		description="Default: 2 minutes"
+		help="Default: 2 minutes"
 		bind:value={data.cache_ttl_plex_search}
 		min={1}
 		max={60}
 		unit="min"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Plex Genres (Backend)"
-		description="Default: 60 minutes"
+		help="Default: 60 minutes"
 		bind:value={data.cache_ttl_plex_genres}
 		min={1}
 		max={1440}
 		unit="min"
 	/>
-	<SettingsNumberField
+	<NumberField
 		label="Plex Stats (Backend)"
-		description="Default: 10 minutes"
+		help="Default: 10 minutes"
 		bind:value={data.cache_ttl_plex_stats}
 		min={1}
 		max={60}

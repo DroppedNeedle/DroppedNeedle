@@ -6,6 +6,8 @@
 		createSavePublicAddressMutation,
 		getPublicAddressQuery
 	} from '$lib/queries/settings/PublicAddressQueries.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import ListField from '$lib/ui/ListField.svelte';
 	import QueryBoundary from '$lib/ui/QueryBoundary.svelte';
 	import SaveBar from '$lib/ui/SaveBar.svelte';
@@ -79,8 +81,8 @@
 	}
 </script>
 
-<div class="card bg-base-200">
-	<div class="card-body gap-4">
+<Card>
+	{#snippet header()}
 		<div class="flex items-center gap-2">
 			<div class="bg-secondary/10 rounded-lg p-2">
 				<Globe class="h-5 w-5 text-secondary" />
@@ -92,7 +94,8 @@
 				</p>
 			</div>
 		</div>
-
+	{/snippet}
+	<div class="mt-2 flex flex-col gap-4">
 		<p class="text-sm text-base-content/70">
 			Behind some reverse proxies the server gets its own address wrong and answers every change
 			with "Origin not allowed". List the address from the browser's address bar here and changes
@@ -122,18 +125,17 @@
 				disabled={save.isPending}
 			>
 				{#snippet actions()}
-					<button
-						type="button"
-						class="btn btn-sm"
+					<Button
+						size="sm"
 						disabled={save.isPending || pageListed || rows.length >= MAX_ADDRESSES}
 						onclick={addPageAddress}
 					>
 						Use this page's address
-					</button>
+					</Button>
 				{/snippet}
 			</ListField>
 
 			<SaveBar onsave={saveList} {dirty} saving={save.isPending} ondiscard={discard} {status} />
 		</QueryBoundary>
 	</div>
-</div>
+</Card>

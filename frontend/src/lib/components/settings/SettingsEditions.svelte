@@ -4,6 +4,12 @@
 	import { ArrowDown, ArrowUp, Disc3, Plus, X } from 'lucide-svelte';
 	import type { EditionPreferences } from '$lib/types';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
+	import Input from '$lib/ui/Input.svelte';
+	import SelectField from '$lib/ui/SelectField.svelte';
+	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
 	const form = createSettingsForm<EditionPreferences>({
 		loadEndpoint: SETTINGS_ENDPOINTS.editionPreferences(),
@@ -37,6 +43,17 @@
 	];
 
 	const avoidable = ['live', 'compilation', 'remix', 'soundtrack', 'demo', 'dj-mix'];
+
+	const dateOptions: { value: EditionPreferences['date']; label: string }[] = [
+		{ value: 'earliest', label: 'Earliest (usually the original)' },
+		{ value: 'latest', label: 'Latest (usually the newest remaster)' },
+		{ value: 'any', label: "Doesn't matter" }
+	];
+	const versionOptions: { value: EditionPreferences['version']; label: string }[] = [
+		{ value: 'standard', label: 'The standard album' },
+		{ value: 'deluxe', label: 'Deluxe and expanded editions' },
+		{ value: 'any', label: "Doesn't matter" }
+	];
 
 	let drafts = $state<Record<ListKey, string>>({
 		status_order: '',
@@ -74,12 +91,14 @@
 	}
 </script>
 
-<div class="card bg-base-200">
-	<div class="card-body gap-4">
+<Card>
+	{#snippet header()}
 		<div class="flex items-center gap-2">
 			<Disc3 class="h-5 w-5 text-primary" aria-hidden="true" />
 			<h2 class="card-title">Edition preferences</h2>
 		</div>
+	{/snippet}
+	<div class="flex flex-col gap-4">
 		<p class="text-sm text-base-content/60">
 			Most albums come in several editions: the original CD, a remaster, a deluxe set, a vinyl
 			pressing. DroppedNeedle picks the edition that fits your files best. When two editions fit
@@ -95,34 +114,37 @@
 		{:else if form.data}
 			<div class="grid gap-4 lg:grid-cols-3">
 				{#each lists as list (list.key)}
-					<section class="rounded-box border border-base-content/10 bg-base-100 p-4">
+					<Card as="section" variant="bordered" padding="md">
 						<h3 class="font-semibold">{list.title}</h3>
-						<p class="mt-1 text-xs text-base-content/55">{list.hint}</p>
+						<p class="grow-0 text-xs text-base-content/55">{list.hint}</p>
 						<ol class="mt-3 space-y-1">
 							{#each form.data[list.key] as entry, index (entry)}
 								<li class="flex items-center gap-2 rounded-lg bg-base-200/60 px-2 py-1 text-sm">
 									<span class="w-5 text-xs text-base-content/45">{index + 1}.</span>
 									<span class="min-w-0 flex-1 truncate">{entry}</span>
-									<button
-										type="button"
-										class="btn btn-ghost btn-xs btn-square"
-										aria-label={`Move ${entry} up`}
+									<IconButton
+										size="xs"
+										shape="square"
+										icon={ArrowUp}
+										label={`Move ${entry} up`}
 										disabled={index === 0}
-										onclick={() => move(list.key, index, -1)}><ArrowUp class="h-3 w-3" /></button
-									>
-									<button
-										type="button"
-										class="btn btn-ghost btn-xs btn-square"
-										aria-label={`Move ${entry} down`}
+										onclick={() => move(list.key, index, -1)}
+									/>
+									<IconButton
+										size="xs"
+										shape="square"
+										icon={ArrowDown}
+										label={`Move ${entry} down`}
 										disabled={index === form.data[list.key].length - 1}
-										onclick={() => move(list.key, index, 1)}><ArrowDown class="h-3 w-3" /></button
-									>
-									<button
-										type="button"
-										class="btn btn-ghost btn-xs btn-square"
-										aria-label={`Remove ${entry}`}
-										onclick={() => remove(list.key, index)}><X class="h-3 w-3" /></button
-									>
+										onclick={() => move(list.key, index, 1)}
+									/>
+									<IconButton
+										size="xs"
+										shape="square"
+										icon={X}
+										label={`Remove ${entry}`}
+										onclick={() => remove(list.key, index)}
+									/>
 								</li>
 							{:else}
 								<li class="text-xs text-base-content/45">
@@ -137,41 +159,38 @@
 								add(list.key);
 							}}
 						>
-							<input
-								class="input input-bordered input-sm join-item w-full"
+							<Input
+								size="sm"
+								class="join-item w-full"
 								placeholder={list.placeholder}
-								aria-label={`Add to ${list.title}`}
+								label={`Add to ${list.title}`}
 								bind:value={drafts[list.key]}
 							/>
-							<button class="btn btn-sm join-item" type="submit" aria-label="Add"
-								><Plus class="h-4 w-4" /></button
-							>
+							<IconButton
+								type="submit"
+								variant="neutral"
+								size="sm"
+								shape="square"
+								class="join-item"
+								icon={Plus}
+								label="Add"
+							/>
 						</form>
-					</section>
+					</Card>
 				{/each}
 			</div>
 
 			<div class="grid gap-4 md:grid-cols-2">
-				<label class="form-control">
-					<span class="label-text font-medium">Release date</span>
-					<select class="select select-bordered select-sm mt-1" bind:value={form.data.date}>
-						<option value="earliest">Earliest (usually the original)</option>
-						<option value="latest">Latest (usually the newest remaster)</option>
-						<option value="any">Doesn't matter</option>
-					</select>
-				</label>
-				<label class="form-control">
-					<span class="label-text font-medium">Standard or deluxe</span>
-					<select class="select select-bordered select-sm mt-1" bind:value={form.data.version}>
-						<option value="standard">The standard album</option>
-						<option value="deluxe">Deluxe and expanded editions</option>
-						<option value="any">Doesn't matter</option>
-					</select>
-				</label>
+				<SelectField label="Release date" options={dateOptions} bind:value={form.data.date} />
+				<SelectField
+					label="Standard or deluxe"
+					options={versionOptions}
+					bind:value={form.data.version}
+				/>
 			</div>
 
 			<fieldset>
-				<legend class="label-text font-medium">Avoid unless nothing else fits</legend>
+				<legend class="text-sm font-medium">Avoid unless nothing else fits</legend>
 				<div class="mt-2 flex flex-wrap gap-3">
 					{#each avoidable as kind (kind)}
 						<label class="label cursor-pointer gap-2">
@@ -181,32 +200,24 @@
 								checked={form.data.avoid_types.includes(kind)}
 								onchange={(event) => toggleAvoid(kind, event.currentTarget.checked)}
 							/>
-							<span class="label-text capitalize">{kind}</span>
+							<span class="capitalize">{kind}</span>
 						</label>
 					{/each}
 				</div>
 			</fieldset>
 
-			<div class="rounded-box border border-base-content/10 bg-base-100 p-4">
-				<label class="label cursor-pointer justify-start gap-3">
-					<input
-						type="checkbox"
-						class="toggle toggle-primary toggle-sm"
-						bind:checked={form.data.manage_unconfirmed}
-					/>
-					<span class="label-text font-medium">Also manage unconfirmed matches</span>
-				</label>
-				<p class="text-xs text-base-content/55">
-					When DroppedNeedle isn't sure of an album's edition, it still uses its best guess for
-					pages, playback and downloads, but leaves the files alone until you confirm it. Turn this
-					on to let tagging and organizing work on those albums too.
-				</p>
-			</div>
+			<Card variant="bordered" padding="md">
+				<ToggleRow
+					label="Also manage unconfirmed matches"
+					description="When DroppedNeedle isn't sure of an album's edition, it still uses its best guess for pages, playback and downloads, but leaves the files alone until you confirm it. Turn this on to let tagging and organizing work on those albums too."
+					bind:checked={form.data.manage_unconfirmed}
+				/>
+			</Card>
 
-			<div class="card-actions justify-end">
-				<button class="btn btn-primary btn-sm" onclick={() => form.save()} disabled={form.saving}>
-					{form.saving ? 'Saving…' : 'Save'}
-				</button>
+			<div class="flex justify-end">
+				<Button variant="primary" size="sm" loading={form.saving} onclick={() => form.save()}>
+					Save
+				</Button>
 			</div>
 			{#if form.message}
 				<p class="text-sm {form.messageType === 'error' ? 'text-error' : 'text-success'}">
@@ -215,4 +226,4 @@
 			{/if}
 		{/if}
 	</div>
-</div>
+</Card>

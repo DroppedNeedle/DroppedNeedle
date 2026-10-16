@@ -3,6 +3,8 @@
 	import type { UserPreferences, ReleaseTypeOption } from '$lib/types';
 	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 	import { ArtistQueryKeyFactory } from '$lib/queries/artist/ArtistQueryKeyFactory';
+	import AsyncButton from '$lib/ui/AsyncButton.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	let preferences: UserPreferences = $state({
 		primary_types: [],
@@ -133,7 +135,8 @@
 						<td class="w-12 text-center">
 							<input
 								type="checkbox"
-								class="checkbox checkbox-primary checkbox-sm"
+								class="checkbox checkbox-sm"
+								aria-label="Show {type.title}"
 								checked={msEnabled}
 								onchange={() => toggleType(category, type.id)}
 							/>
@@ -147,49 +150,44 @@
 	</div>
 {/snippet}
 
-<div class="card bg-base-200">
-	<div class="card-body">
+<Card>
+	{#snippet header()}
 		<h2 class="card-title text-2xl mb-2">Release Types</h2>
-		<p class="text-base-content/70 mb-6">
-			Choose which release types appear on artist pages and in search. The same choices apply to
-			automatic downloads for followed artists. Saving a different selection starts a new baseline,
-			so releases already present are not queued.
+	{/snippet}
+	<p class="text-base-content/70 mb-6">
+		Choose which release types appear on artist pages and in search. The same choices apply to
+		automatic downloads for followed artists. Saving a different selection starts a new baseline, so
+		releases already present are not queued.
+	</p>
+
+	<div class="mb-8">
+		<h3 class="text-xl font-semibold mb-1">Primary Types</h3>
+		<p class="text-base-content/60 mb-4 text-sm">
+			Choose the main MusicBrainz release formats to include.
 		</p>
-
-		<div class="mb-8">
-			<h3 class="text-xl font-semibold mb-1">Primary Types</h3>
-			<p class="text-base-content/60 mb-4 text-sm">
-				Choose the main MusicBrainz release formats to include.
-			</p>
-			{@render typeTable(primaryTypes, 'primary_types')}
-		</div>
-
-		<div class="mb-8">
-			<h3 class="text-xl font-semibold mb-1">Secondary Types</h3>
-			<p class="text-base-content/60 mb-4 text-sm">
-				Choose which additional release classifications to include.
-			</p>
-			{@render typeTable(secondaryTypes, 'secondary_types')}
-		</div>
-
-		<div class="card-actions justify-end items-center gap-4">
-			{#if saveMessage}
-				<div
-					class="alert flex-1"
-					class:alert-success={saveMessage.includes('success')}
-					class:alert-error={saveMessage.includes('Failed')}
-				>
-					<span>{saveMessage}</span>
-				</div>
-			{/if}
-			<button class="btn btn-primary" onclick={handleSave} disabled={saving}>
-				{#if saving}
-					<span class="loading loading-spinner loading-sm"></span>
-					Saving...
-				{:else}
-					Save Settings
-				{/if}
-			</button>
-		</div>
+		{@render typeTable(primaryTypes, 'primary_types')}
 	</div>
-</div>
+
+	<div class="mb-8">
+		<h3 class="text-xl font-semibold mb-1">Secondary Types</h3>
+		<p class="text-base-content/60 mb-4 text-sm">
+			Choose which additional release classifications to include.
+		</p>
+		{@render typeTable(secondaryTypes, 'secondary_types')}
+	</div>
+
+	<div class="card-actions justify-end items-center gap-4">
+		{#if saveMessage}
+			<div
+				class="alert flex-1"
+				class:alert-success={saveMessage.includes('success')}
+				class:alert-error={saveMessage.includes('Failed')}
+			>
+				<span>{saveMessage}</span>
+			</div>
+		{/if}
+		<AsyncButton variant="primary" onclick={handleSave} pending={saving} pendingLabel="Saving...">
+			Save Settings
+		</AsyncButton>
+	</div>
+</Card>

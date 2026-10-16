@@ -4,13 +4,16 @@
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import { Gift } from 'lucide-svelte';
 	import { onMount, onDestroy } from 'svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import SecretField from '$lib/ui/SecretField.svelte';
+
+	const API_KEY_MASK = 'wrapped****';
 
 	const form = createSettingsForm<WrappedSettingsResponse>({
 		loadEndpoint: SETTINGS_ENDPOINTS.wrapped(),
 		saveEndpoint: SETTINGS_ENDPOINTS.wrapped()
 	});
-
-	let showKey = $state(false);
 
 	function generateKey() {
 		const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -18,7 +21,6 @@
 			.map((b) => b.toString(16).padStart(2, '0'))
 			.join('');
 		if (form.data) form.data.api_key = key;
-		showKey = true;
 	}
 
 	onMount(() => {
@@ -27,8 +29,8 @@
 	onDestroy(() => form.cleanup());
 </script>
 
-<div class="card border border-base-300/50 bg-base-200/60 backdrop-blur-sm">
-	<div class="card-body gap-4">
+<Card variant="bordered">
+	{#snippet header()}
 		<div class="flex items-center gap-3">
 			<div
 				class="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-500/10 text-purple-400 light:text-purple-700 ring-1 ring-purple-500/20"
@@ -43,7 +45,8 @@
 				</p>
 			</div>
 		</div>
-
+	{/snippet}
+	<div class="mt-2 flex flex-col gap-4">
 		<div class="rounded-xl border border-info/20 bg-info/5 p-3 text-sm text-base-content/70">
 			Generate a key here, then paste the same value into the other service's settings. It's sent as <code
 				>X-Wrapped-Api-Key</code
@@ -57,37 +60,16 @@
 				<span class="loading loading-spinner loading-lg"></span>
 			</div>
 		{:else if form.data}
-			<label class="form-control w-full">
-				<span
-					class="label-text mb-1 text-xs font-semibold uppercase tracking-wider text-base-content/50"
-				>
-					API key
-				</span>
-				<div class="relative">
-					<input
-						type={showKey ? 'text' : 'password'}
-						class="input input-soft w-full pr-16"
-						bind:value={form.data.api_key}
-						placeholder="No key set"
-						autocomplete="off"
-					/>
-					<button
-						type="button"
-						class="btn btn-ghost btn-xs absolute right-2 top-1/2 -translate-y-1/2 rounded-full"
-						onclick={() => (showKey = !showKey)}
-					>
-						{showKey ? 'Hide' : 'Show'}
-					</button>
-				</div>
-			</label>
+			<SecretField
+				label="API key"
+				mask={API_KEY_MASK}
+				placeholder="No key set"
+				bind:value={form.data.api_key}
+			/>
 
-			<button
-				type="button"
-				class="btn btn-outline btn-sm w-fit gap-2 rounded-full"
-				onclick={generateKey}
-			>
+			<Button variant="outline" size="sm" pill class="w-fit" onclick={generateKey}>
 				Generate new key
-			</button>
+			</Button>
 
 			{#if form.message}
 				<div
@@ -100,20 +82,12 @@
 			{/if}
 
 			<div class="flex justify-end pt-1">
-				<button
-					type="button"
-					class="btn btn-primary glow-primary-soft gap-2 rounded-full"
-					onclick={() => void form.save()}
-					disabled={form.saving}
-				>
-					{#if form.saving}
-						<span class="loading loading-spinner loading-sm"></span>
-					{/if}
+				<Button variant="primary" pill loading={form.saving} onclick={() => void form.save()}>
 					Save key
-				</button>
+				</Button>
 			</div>
 		{:else if form.message}
 			<div class="alert alert-error"><span>{form.message}</span></div>
 		{/if}
 	</div>
-</div>
+</Card>

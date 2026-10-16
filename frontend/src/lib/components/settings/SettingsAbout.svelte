@@ -8,6 +8,8 @@
 	import { outsideLink } from '$lib/components/outsideLink';
 	import { ExternalLink, RefreshCw, Info, Tag, Calendar, CircleArrowUp } from 'lucide-svelte';
 	import GitHubIcon from '$lib/components/GitHubIcon.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	const versionQuery = getVersionQuery();
 	const updateCheckQuery = getUpdateCheckQuery();
@@ -33,33 +35,33 @@
 		<p class="text-base-content/60 mt-1">App version, updates, and release notes.</p>
 	</div>
 
-	<p
-		class="rounded-box border border-base-content/10 bg-base-200/50 p-4 text-xs text-base-content/60"
-	>
-		This application uses Discogs’ API but is not affiliated with, sponsored or endorsed by Discogs.
-		‘Discogs’ is a trademark of Zink Media, LLC.
-	</p>
+	<Card variant="bordered" padding="md">
+		<p class="text-xs text-base-content/60">
+			This application uses Discogs’ API but is not affiliated with, sponsored or endorsed by
+			Discogs. ‘Discogs’ is a trademark of Zink Media, LLC.
+		</p>
+	</Card>
 
 	{#if versionQuery.isLoading}
 		<div class="flex justify-center items-center py-20">
 			<span class="loading loading-spinner loading-lg text-primary"></span>
 		</div>
 	{:else if versionQuery.isError}
-		<div class="card bg-base-200 shadow-md border border-base-content/5">
-			<div class="card-body items-center text-center">
+		<Card variant="bordered" class="text-center">
+			<div class="flex flex-col items-center">
 				<Info class="w-10 h-10 text-base-content/50 mb-2" />
 				<p class="text-base-content/70">Unable to load version information.</p>
-				<button class="btn btn-primary btn-sm mt-3" onclick={() => versionQuery.refetch()}>
+				<Button variant="primary" size="sm" class="mt-3" onclick={() => versionQuery.refetch()}>
 					Try Again
-				</button>
+				</Button>
 			</div>
-		</div>
+		</Card>
 	{:else if version}
-		<div class="card bg-base-200 shadow-md border border-primary/10 relative overflow-hidden">
+		<Card variant="bordered" class="relative overflow-hidden">
 			<div
 				class="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-accent/5 pointer-events-none"
 			></div>
-			<div class="card-body relative">
+			<div class="relative">
 				<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
 					<div class="flex items-center gap-4">
 						<div class="bg-primary/10 p-3 rounded-xl">
@@ -82,28 +84,26 @@
 					</div>
 
 					<div class="flex flex-wrap gap-2">
-						<button
-							class="btn btn-primary btn-sm"
+						<Button
+							variant="primary"
+							size="sm"
+							icon={RefreshCw}
+							loading={isCheckingUpdate}
 							onclick={() => updateCheckQuery.refetch()}
-							disabled={isCheckingUpdate}
 						>
-							{#if isCheckingUpdate}
-								<span class="loading loading-spinner loading-sm"></span>
-							{:else}
-								<RefreshCw class="w-4 h-4" />
-							{/if}
 							Check for Updates
-						</button>
-						<a
+						</Button>
+						<Button
+							variant="ghost"
+							size="sm"
 							href="https://github.com/DroppedNeedle/DroppedNeedle"
 							target="_blank"
 							rel="noopener noreferrer"
-							class="btn btn-ghost btn-sm"
 						>
 							<GitHubIcon class="w-4 h-4" />
 							View on GitHub
 							<ExternalLink class="w-3 h-3" />
-						</a>
+						</Button>
 					</div>
 				</div>
 
@@ -124,15 +124,17 @@
 								</p>
 							</div>
 							{#if outsideLink(updateCheck.latest_release?.html_url)}
-								<a
+								<Button
+									variant="ghost"
+									size="sm"
+									class="ml-auto"
 									href={outsideLink(updateCheck.latest_release?.html_url)}
 									target="_blank"
 									rel="noopener noreferrer"
-									class="btn btn-sm btn-ghost ml-auto"
 								>
 									View Release
 									<ExternalLink class="w-3 h-3" />
-								</a>
+								</Button>
 							{/if}
 						</div>
 					{:else if updateCheck.comparison_failed}
@@ -153,12 +155,12 @@
 					</div>
 				{/if}
 			</div>
-		</div>
+		</Card>
 	{/if}
 
 	{#if updateCheck?.update_available && updateCheck.latest_release}
-		<div class="card bg-base-200 shadow-md border border-base-content/5">
-			<div class="card-body">
+		<Card variant="bordered">
+			<div>
 				<div class="flex items-center gap-3 mb-4">
 					<div class="bg-accent/10 p-2 rounded-lg">
 						<Tag class="w-5 h-5 text-accent" />
@@ -181,7 +183,7 @@
 					/>
 				{/if}
 			</div>
-		</div>
+		</Card>
 	{/if}
 
 	<div>
@@ -192,27 +194,30 @@
 		{#if releaseHistoryQuery.isLoading}
 			<div class="space-y-3">
 				{#each Array(3) as _, i (i)}
-					<div class="card bg-base-200 shadow-md border border-base-content/5 skeleton-shimmer">
-						<div class="card-body py-4">
-							<div class="flex items-center gap-3">
-								<div class="h-5 w-16 bg-base-content/10 rounded"></div>
-								<div class="h-4 w-40 bg-base-content/10 rounded"></div>
-								<div class="ml-auto h-3 w-24 bg-base-content/10 rounded"></div>
-							</div>
+					<Card variant="bordered" padding="md" class="skeleton-shimmer">
+						<div class="flex items-center gap-3">
+							<div class="h-5 w-16 bg-base-content/10 rounded"></div>
+							<div class="h-4 w-40 bg-base-content/10 rounded"></div>
+							<div class="ml-auto h-3 w-24 bg-base-content/10 rounded"></div>
 						</div>
-					</div>
+					</Card>
 				{/each}
 			</div>
 		{:else if releaseHistoryQuery.isError}
-			<div class="card bg-base-200 shadow-md border border-base-content/5">
-				<div class="card-body items-center text-center">
+			<Card variant="bordered" class="text-center">
+				<div class="flex flex-col items-center">
 					<Info class="w-8 h-8 text-base-content/50 mb-2" />
 					<p class="text-base-content/70">Unable to load release history.</p>
-					<button class="btn btn-primary btn-sm mt-3" onclick={() => releaseHistoryQuery.refetch()}>
+					<Button
+						variant="primary"
+						size="sm"
+						class="mt-3"
+						onclick={() => releaseHistoryQuery.refetch()}
+					>
 						Try Again
-					</button>
+					</Button>
 				</div>
-			</div>
+			</Card>
 		{:else if releases && releases.length > 0}
 			<div class="space-y-3 border-l-2 border-accent/20 pl-6">
 				{#each releases as release (release.tag_name)}
@@ -266,12 +271,12 @@
 				{/each}
 			</div>
 		{:else}
-			<div class="card bg-base-200 shadow-md border border-base-content/5">
-				<div class="card-body items-center text-center py-8">
+			<Card variant="bordered" class="text-center">
+				<div class="flex flex-col items-center py-2">
 					<Tag class="w-8 h-8 text-base-content/50 mb-2" />
 					<p class="text-base-content/70">No releases found.</p>
 				</div>
-			</div>
+			</Card>
 		{/if}
 	</div>
 </div>

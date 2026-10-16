@@ -9,6 +9,9 @@
 	} from '$lib/queries/section-prefs/SectionPrefsQuery.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { withBasePath } from '$lib/utils/basePath';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import ToggleRow from '$lib/ui/ToggleRow.svelte';
 
 	interface Props {
 		page: 'home' | 'discover' | 'sidebar';
@@ -110,8 +113,8 @@
 	});
 </script>
 
-<div class="card bg-base-200">
-	<div class="card-body">
+<Card>
+	{#snippet header()}
 		<div class="flex items-start justify-between gap-3">
 			<div>
 				<h2 class="card-title text-2xl">{title}</h2>
@@ -126,80 +129,71 @@
 				Saved
 			</div>
 		</div>
+	{/snippet}
 
-		{#if prefsQuery.isLoading && sections.length === 0}
-			<div class="flex justify-center items-center py-12">
-				<span class="loading loading-spinner loading-lg"></span>
-			</div>
-		{:else if prefsQuery.isError && sections.length === 0}
-			<div class="alert alert-error mt-4">
-				<span>Couldn't load your section settings.</span>
-				<button class="btn btn-sm" onclick={() => prefsQuery.refetch()}>Retry</button>
-			</div>
-		{:else if sections.length > 0}
-			<label
-				class="label mt-2 cursor-pointer justify-start gap-4 rounded-xl bg-base-100/60 px-4 py-3"
-			>
-				<input
-					type="checkbox"
-					class="toggle toggle-primary"
-					checked={allOn}
-					indeterminate={!allOn && !allOff}
-					onchange={() => toggleAll(!allOn)}
-				/>
+	{#if prefsQuery.isLoading && sections.length === 0}
+		<div class="flex justify-center items-center py-12">
+			<span class="loading loading-spinner loading-lg"></span>
+		</div>
+	{:else if prefsQuery.isError && sections.length === 0}
+		<div class="alert alert-error mt-4">
+			<span>Couldn't load your section settings.</span>
+			<Button size="sm" onclick={() => prefsQuery.refetch()}>Retry</Button>
+		</div>
+	{:else if sections.length > 0}
+		<label
+			class="mt-2 flex cursor-pointer items-start justify-between gap-3 rounded-xl bg-base-100/60 px-4 py-3"
+		>
+			<span class="min-w-0">
+				<span class="block text-sm font-semibold">All sections</span>
+				<span class="mt-0.5 block text-xs text-base-content/50">
+					{enabledCount} of {sections.length} sections shown
+				</span>
+			</span>
+			<input
+				type="checkbox"
+				class="toggle toggle-sm toggle-primary shrink-0"
+				checked={allOn}
+				indeterminate={!allOn && !allOff}
+				onchange={() => toggleAll(!allOn)}
+			/>
+		</label>
+
+		<div class="mt-2 space-y-5">
+			{#each zones as group (group.zone)}
 				<div>
-					<span class="label-text font-semibold">All sections</span>
-					<p class="text-xs text-base-content/50">
-						{enabledCount} of {sections.length} sections shown
-					</p>
-				</div>
-			</label>
-
-			<div class="mt-2 space-y-5">
-				{#each zones as group (group.zone)}
-					<div>
-						<h3
-							class="mb-1 px-1 text-xs font-semibold uppercase tracking-widest text-base-content/40"
-						>
-							{group.zone}
-						</h3>
-						<div class="divide-y divide-base-content/5 rounded-xl bg-base-100/40">
-							{#each group.items as section (section.key)}
-								<label
-									class="label cursor-pointer justify-start gap-4 px-4 py-3 {section.available
-										? ''
-										: 'opacity-55'}"
-								>
-									<input
-										type="checkbox"
-										class="toggle toggle-primary toggle-sm"
-										checked={section.enabled}
-										disabled={!section.available}
-										onchange={() => toggleSection(section.key)}
-									/>
-									<div class="min-w-0 flex-1">
-										<span class="label-text font-medium">{section.title}</span>
-										<p class="text-xs text-base-content/50">{section.description}</p>
-									</div>
-									{#if !section.available && section.requires}
-										<a
-											href={getConnectLink(section.requires)}
-											class="link flex shrink-0 items-center gap-1 text-xs text-primary/80"
-										>
-											Connect {section.requires === 'listenbrainz'
-												? 'ListenBrainz'
-												: section.requires === 'lastfm'
-													? 'Last.fm'
-													: section.requires}
-											<ExternalLink class="h-3 w-3" />
-										</a>
-									{/if}
-								</label>
-							{/each}
-						</div>
+					<h3
+						class="mb-1 px-1 text-xs font-semibold uppercase tracking-widest text-base-content/40"
+					>
+						{group.zone}
+					</h3>
+					<div class="divide-y divide-base-content/5 rounded-xl bg-base-100/40">
+						{#each group.items as section (section.key)}
+							<div class="px-4 py-3 {section.available ? '' : 'opacity-55'}">
+								<ToggleRow
+									label={section.title}
+									description={section.description}
+									bind:checked={() => section.enabled, () => toggleSection(section.key)}
+									disabled={!section.available}
+								/>
+								{#if !section.available && section.requires}
+									<a
+										href={getConnectLink(section.requires)}
+										class="link mt-1 inline-flex items-center gap-1 text-xs text-primary/80"
+									>
+										Connect {section.requires === 'listenbrainz'
+											? 'ListenBrainz'
+											: section.requires === 'lastfm'
+												? 'Last.fm'
+												: section.requires}
+										<ExternalLink class="h-3 w-3" />
+									</a>
+								{/if}
+							</div>
+						{/each}
 					</div>
-				{/each}
-			</div>
-		{/if}
-	</div>
-</div>
+				</div>
+			{/each}
+		</div>
+	{/if}
+</Card>
