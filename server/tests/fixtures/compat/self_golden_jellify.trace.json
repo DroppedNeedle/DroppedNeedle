@@ -106,7 +106,7 @@
         "content-length": "1830",
         "content-type": "application/json"
       },
-      "request": "GET /jellyfin/UserItems/Latest",
+      "request": "GET /jellyfin/Items/Latest",
       "status": 200
     },
     {

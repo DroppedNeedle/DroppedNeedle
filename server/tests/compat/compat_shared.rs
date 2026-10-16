@@ -34,7 +34,7 @@ fn anonymous_paths() {
         ("GET", "/jellyfin/System/Info"),
         ("GET", "/jellyfin/Users/me"),
         ("GET", "/jellyfin/Items"),
-        ("GET", "/jellyfin/UserItems/Latest"),
+        ("GET", "/jellyfin/Items/Latest"),
         ("GET", "/jellyfin/Items/abc"),
         ("POST", "/jellyfin/Items/abc/PlaybackInfo"),
         ("GET", "/jellyfin/Audio/abc"),

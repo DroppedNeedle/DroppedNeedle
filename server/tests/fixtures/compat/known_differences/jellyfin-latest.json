@@ -1,5 +1,0 @@
-{
-  "differences": [
-    {"server": "jellyfin", "object": "latest", "key": "status", "kind": "value", "rows": ["latest"], "reason": "The app answers this address with the latest albums. Jellyfin 10.10.6 has no such address and answers 404."}
-  ]
-}

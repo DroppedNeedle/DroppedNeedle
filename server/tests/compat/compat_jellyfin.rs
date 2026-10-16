@@ -573,13 +573,13 @@ async fn browse_query_dialects() {
             vec!["Opener"],
         ),
         // Latest is a bare newest-first array; a non-library ParentId is empty.
-        ("/jellyfin/UserItems/Latest".to_owned(), vec!["Second Dawn", "First Light"]),
+        ("/jellyfin/Items/Latest".to_owned(), vec!["Second Dawn", "First Light"]),
         ("/jellyfin/Users/x/Items/Latest?Limit=1".to_owned(), vec!["Second Dawn"]),
         (
-            format!("/jellyfin/UserItems/Latest?ParentId={}", fx.library_id),
+            format!("/jellyfin/Items/Latest?ParentId={}", fx.library_id),
             vec!["Second Dawn", "First Light"],
         ),
-        (format!("/jellyfin/UserItems/Latest?ParentId={}", fx.album1), vec![]),
+        (format!("/jellyfin/Items/Latest?ParentId={}", fx.album1), vec![]),
         ("/jellyfin/Artists".to_owned(), vec!["Blue Giant", "Guest Star"]),
         ("/jellyfin/Artists/AlbumArtists".to_owned(), vec!["Blue Giant"]),
         ("/jellyfin/Genres".to_owned(), vec!["Rock"]),

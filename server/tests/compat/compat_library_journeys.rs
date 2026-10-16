@@ -219,7 +219,7 @@ async fn jellify_latest_then_headerless_play() {
     let auth = [("X-Emby-Authorization", auth_value.as_str())];
     let teardrop = rig.file("teardrop");
 
-    let latest = trace.get("/jellyfin/UserItems/Latest", &auth).await;
+    let latest = trace.get("/jellyfin/Items/Latest", &auth).await;
     assert_eq!(latest[0]["Type"], json!("MusicAlbum"));
     let album_id = named(&latest, "Name", "Mezzanine")["Id"]
         .as_str()
@@ -338,7 +338,7 @@ async fn jellyfin_pinned_reference_shapes() {
         trace.get(&uri, &auth).await;
         assert_golden(pinned, &trace.recorded());
     }
-    let latest = trace.get("/jellyfin/UserItems/Latest", &auth).await;
+    let latest = trace.get("/jellyfin/Items/Latest", &auth).await;
     assert_golden("library_pinned_jellyfin_latest.json", &trace.recorded());
 
     // The rig identifies no album, so no album sends a release group key.

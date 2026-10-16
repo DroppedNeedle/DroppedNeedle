@@ -655,7 +655,7 @@ async fn jellify_latest_then_headerless_play() {
     let auth_value = jf_auth_value();
     let auth = [("X-Emby-Authorization", auth_value.as_str())];
 
-    let latest = trace.get(app, "/jellyfin/UserItems/Latest", &auth).await;
+    let latest = trace.get(app, "/jellyfin/Items/Latest", &auth).await;
     assert_eq!(latest[0]["Type"], json!("MusicAlbum"));
     let album_id = latest[0]["Id"].as_str().expect("album id");
     let tracks = trace
@@ -748,7 +748,7 @@ async fn jellyfin_pinned_reference_shapes() {
     ] {
         assert_golden(pinned, &trace.get(app, &uri, &auth).await);
     }
-    let latest = trace.get(app, "/jellyfin/UserItems/Latest", &auth).await;
+    let latest = trace.get(app, "/jellyfin/Items/Latest", &auth).await;
     assert_golden("pinned_jellyfin_latest.json", &latest);
 
     let album_id = latest[0]["Id"].as_str().expect("album id");

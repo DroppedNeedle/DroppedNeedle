@@ -57,7 +57,7 @@ pub const JELLYFIN_TEMPLATES: &[&str] = &[
     "/jellyfin/UserViews",
     "/jellyfin/Users/{user_id}/Items",
     "/jellyfin/Items",
-    "/jellyfin/UserItems/Latest",
+    "/jellyfin/Items/Latest",
     "/jellyfin/Users/{user_id}/Items/Latest",
     "/jellyfin/Artists",
     "/jellyfin/Artists/AlbumArtists",

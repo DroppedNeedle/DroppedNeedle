@@ -118,7 +118,10 @@ where
         .route("/UserViews", get(views::<S, L, E, P, I>))
         .route("/Users/{user_id}/Items", get(browse::<S, L, E, P, I>))
         .route("/Items", get(browse::<S, L, E, P, I>))
-        .route("/UserItems/Latest", get(latest::<S, L, E, P, I>))
+        // Not recorded: Jellyfin 10.10.6 serves this from
+        // `UserLibraryController.GetLatestMedia`, the user from the token.
+        // Jellify asks here (`@jellyfin/sdk` 0.13.0). Before `/Items/{item_id}`.
+        .route("/Items/Latest", get(latest::<S, L, E, P, I>))
         .route(
             "/Users/{user_id}/Items/Latest",
             get(latest::<S, L, E, P, I>),
