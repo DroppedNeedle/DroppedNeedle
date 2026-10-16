@@ -8,7 +8,7 @@ use droppedneedle_auth::compat_auth::jellyfin::JellyfinPasswordStore;
 use uuid::Uuid;
 
 use super::builders::{self};
-use super::models::{MediaSourceInfo, PlaybackInfoBody, PlaybackInfoResponse};
+use super::models::{PlaybackInfoBody, PlaybackInfoResponse};
 use super::params::{self, CiParams};
 use super::router::*;
 use super::seams::{
@@ -655,9 +655,10 @@ where
 }
 
 /// GET+POST PlaybackInfo (v2 `_playback_info`). `DirectStreamUrl` embeds
-/// `?api_key=<token>` for headerless players; transcoding fields appear only
-/// when the policy says transcode; Finamp's 15 non-null fields are always
-/// present (MediaStream 5 + MediaSourceInfo 10, v2 issue #438).
+/// `?api_key=<token>` for headerless players; the transcoding address and
+/// container appear only when the policy says transcode; Finamp's 15
+/// non-null fields are always present (MediaStream 5 + MediaSourceInfo 10,
+/// v2 issue #438).
 pub(super) async fn playback_info<S, L, E, P, I>(
     State(state): State<JellyfinState<S, L, E, P, I>>,
     Path(item_id): Path<String>,
@@ -735,38 +736,12 @@ where
         "{}/Audio/{item_id}/stream.{ext}?static=true&mediaSourceId={item_id}&api_key={}",
         advertised, authed.principal.token,
     );
-    let mut src = MediaSourceInfo {
-        id: item_id.clone(),
-        protocol: "File".to_owned(),
-        container: track.file_format.clone(),
-        size: track.file_size_bytes,
-        bitrate: track
-            .bitrate
-            .map(|b| u64::from(b) * 1000)
-            .filter(|b| *b != 0),
-        run_time_ticks: builders::ticks(track.duration_seconds),
-        supports_direct_play: true,
-        supports_direct_stream: true,
-        supports_transcoding: settings.transcoding_enabled && settings.ffmpeg_available,
-        default_audio_stream_index: 0,
-        media_streams: vec![builders::media_stream(&track)],
-        name: None,
-        is_remote: false,
-        direct_stream_url: Some(direct_url),
-        transcoding_url: None,
-        transcoding_sub_protocol: None,
-        transcoding_container: None,
-        source_type: "Default".to_owned(),
-        is_infinite_stream: false,
-        requires_opening: false,
-        requires_closing: false,
-        requires_looping: false,
-        supports_probing: false,
-        read_at_native_framerate: false,
-        ignore_dts: false,
-        ignore_index: false,
-        gen_pts_input: false,
-    };
+    let mut src = builders::media_source(
+        &track,
+        &item_id,
+        settings.transcoding_enabled && settings.ffmpeg_available,
+    );
+    src.direct_stream_url = Some(direct_url);
     if will_transcode {
         let out = settings.transcode_default_format.clone();
         // Root-relative yet inside the deployment prefix: players resolve
@@ -776,7 +751,6 @@ where
             "{}/jellyfin/Audio/{item_id}/universal?AudioCodec={out}&Container={out}&PlaySessionId={psid}&api_key={}",
             state.listener.base_path, authed.principal.token,
         ));
-        src.transcoding_sub_protocol = Some("http".to_owned());
         src.transcoding_container = Some(if out == "mp3" {
             "mp3".to_owned()
         } else {

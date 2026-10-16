@@ -8,7 +8,8 @@ use sha2::{Digest, Sha256};
 use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 use super::models::{
-    BaseItemDto, EmptyList, ExternalUrl, ItemDetail, MediaStream, NameGuidPair, UserItemDataDto,
+    BaseItemDto, EmptyList, ExternalUrl, ItemDetail, MediaSourceInfo, MediaStream, NameGuidPair,
+    UserItemDataDto,
 };
 use super::seams::{
     AlbumView, ArtistView, GenreView, IdMap, PlaylistView, TICKS_PER_SECOND, TrackView,
@@ -531,17 +532,102 @@ impl<'a, I: IdMap> Builder<'a, I> {
     }
 }
 
-/// Track → `MediaStream` for PlaybackInfo (v2 `_audio_stream_model`).
+/// A track's file as a Jellyfin media source, with no stream address.
+/// The playback information answer and one track fetched by id both
+/// describe the file with it.
+pub fn media_source(
+    track: &TrackView,
+    item_id: &str,
+    supports_transcoding: bool,
+) -> MediaSourceInfo {
+    let path = track.path.clone().unwrap_or_default();
+    let name = std::path::Path::new(&path)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .map_or_else(|| track.title.clone(), str::to_owned);
+    let etag = hex_id(
+        &serde_json::to_vec(&(
+            &track.file_id,
+            &path,
+            &track.file_format,
+            track.file_size_bytes,
+            track.duration_seconds,
+            track.bitrate,
+            track.channels,
+            track.sample_rate,
+            track.bit_depth,
+        ))
+        .unwrap_or_default(),
+    );
+    MediaSourceInfo {
+        id: item_id.to_owned(),
+        protocol: "File".to_owned(),
+        container: track.file_format.clone(),
+        size: track.file_size_bytes,
+        bitrate: track
+            .bitrate
+            .map(|b| u64::from(b) * 1000)
+            .filter(|b| *b != 0),
+        run_time_ticks: ticks(track.duration_seconds),
+        supports_direct_play: true,
+        supports_direct_stream: true,
+        supports_transcoding,
+        default_audio_stream_index: 0,
+        media_streams: vec![media_stream(track)],
+        name,
+        path,
+        etag,
+        is_remote: false,
+        direct_stream_url: None,
+        transcoding_url: None,
+        transcoding_sub_protocol: "http".to_owned(),
+        transcoding_container: None,
+        source_type: "Default".to_owned(),
+        is_infinite_stream: false,
+        requires_opening: false,
+        requires_closing: false,
+        requires_looping: false,
+        supports_probing: false,
+        read_at_native_framerate: false,
+        ignore_dts: false,
+        ignore_index: false,
+        gen_pts_input: false,
+        formats: EmptyList,
+        media_attachments: EmptyList,
+        required_http_headers: BTreeMap::new(),
+        use_most_compatible_transcoding_profile: false,
+        has_segments: false,
+    }
+}
+
+/// Track → `MediaStream` (v2 `_audio_stream_model`).
 pub fn media_stream(track: &TrackView) -> MediaStream {
+    // An MP4 file holds AAC or ALAC, and the scan reads a bit depth only
+    // from ALAC.
+    let codec = match (track.file_format.as_deref(), track.bit_depth) {
+        (Some("m4a"), None) => Some("aac".to_owned()),
+        (Some("m4a"), Some(_)) => Some("alac".to_owned()),
+        _ => track.file_format.clone(),
+    };
+    let channels = track.channels.unwrap_or(2);
+    let layout = match channels {
+        1 => "Mono".to_owned(),
+        2 => "Stereo".to_owned(),
+        n => format!("{n} ch"),
+    };
+    let display_title = match codec.as_deref() {
+        Some(codec) => format!("{} - {layout}", codec.to_uppercase()),
+        None => layout,
+    };
     MediaStream {
         stream_type: "Audio".to_owned(),
-        codec: track.file_format.clone(),
+        codec,
         index: 0,
         bit_rate: track
             .bitrate
             .map(|b| u64::from(b) * 1000)
             .filter(|b| *b != 0),
-        channels: track.channels.unwrap_or(2),
+        channels,
         channel_layout: "stereo".to_owned(),
         sample_rate: track.sample_rate,
         bit_depth: track.bit_depth,
@@ -551,5 +637,15 @@ pub fn media_stream(track: &TrackView) -> MediaStream {
         is_external: false,
         is_text_subtitle_stream: false,
         supports_external_stream: false,
+        time_base: track.sample_rate.map(|rate| format!("1/{rate}")),
+        display_title,
+        video_range: "Unknown".to_owned(),
+        video_range_type: "Unknown".to_owned(),
+        audio_spatial_format: "None".to_owned(),
+        localized_default: "Default".to_owned(),
+        localized_external: "External".to_owned(),
+        is_avc: false,
+        is_hearing_impaired: false,
+        level: 0,
     }
 }

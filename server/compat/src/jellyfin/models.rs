@@ -463,11 +463,28 @@ pub struct MediaStream {
     pub is_external: bool,
     pub is_text_subtitle_stream: bool,
     pub supports_external_stream: bool,
+    /// `1/<sample rate>`, when the sample rate is known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_base: Option<String>,
+    /// Codec and channels, as Jellyfin titles the stream (`FLAC - Stereo`).
+    pub display_title: String,
+    /// The fields below are fixed: this server has no video, spatial
+    /// audio, accessibility tracks or translated labels.
+    pub video_range: String,
+    pub video_range_type: String,
+    pub audio_spatial_format: String,
+    pub localized_default: String,
+    pub localized_external: String,
+    #[serde(rename = "IsAVC")]
+    pub is_avc: bool,
+    pub is_hearing_impaired: bool,
+    pub level: u32,
 }
 
 /// Playback source (v2 `MediaSourceInfo`). `DirectStreamUrl` embeds
 /// `?api_key=<token>` because headerless players (Finamp, Jellify, Manet)
-/// fetch it with no auth headers. The ten trailing fields are the rest of
+/// fetch it with no auth headers; it is sent only in the playback
+/// information answer. The ten bools after `Type` are the rest of
 /// Finamp's 15 non-null fields (v2 issue #438).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "PascalCase")]
@@ -487,15 +504,20 @@ pub struct MediaSourceInfo {
     pub supports_transcoding: bool,
     pub default_audio_stream_index: u32,
     pub media_streams: Vec<MediaStream>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
+    /// The file's name without its extension.
+    pub name: String,
+    /// The file's path under its library folder, never a host path.
+    pub path: String,
+    /// Changes whenever the file's row does.
+    #[serde(rename = "ETag")]
+    pub etag: String,
     pub is_remote: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub direct_stream_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transcoding_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub transcoding_sub_protocol: Option<String>,
+    /// Always `http`, as Jellyfin sends it.
+    pub transcoding_sub_protocol: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transcoding_container: Option<String>,
     #[serde(rename = "Type")]
@@ -509,6 +531,13 @@ pub struct MediaSourceInfo {
     pub ignore_dts: bool,
     pub ignore_index: bool,
     pub gen_pts_input: bool,
+    /// The fields below are fixed: a library file has no attachments,
+    /// segments or required headers.
+    pub formats: EmptyList,
+    pub media_attachments: EmptyList,
+    pub required_http_headers: BTreeMap<String, String>,
+    pub use_most_compatible_transcoding_profile: bool,
+    pub has_segments: bool,
 }
 
 /// PlaybackInfo result (v2 `PlaybackInfoResponse`).

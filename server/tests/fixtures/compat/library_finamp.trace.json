@@ -416,31 +416,48 @@
             "Container": "mp3",
             "DefaultAudioStreamIndex": 0,
             "DirectStreamUrl": "http://test.local/jellyfin/Audio/<id-11>/stream.mp3?static=true&mediaSourceId=<id-11>&api_key=***",
+            "ETag": "<id-23>",
+            "Formats": [],
             "GenPtsInput": false,
+            "HasSegments": false,
             "Id": "<id-11>",
             "IgnoreDts": false,
             "IgnoreIndex": false,
             "IsInfiniteStream": false,
             "IsRemote": false,
+            "MediaAttachments": [],
             "MediaStreams": [
               {
+                "AudioSpatialFormat": "None",
                 "BitRate": 344000,
                 "ChannelLayout": "stereo",
                 "Channels": 2,
                 "Codec": "mp3",
+                "DisplayTitle": "MP3 - Stereo",
                 "Index": 0,
+                "IsAVC": false,
                 "IsDefault": true,
                 "IsExternal": false,
                 "IsForced": false,
+                "IsHearingImpaired": false,
                 "IsInterlaced": false,
                 "IsTextSubtitleStream": false,
+                "Level": 0,
+                "LocalizedDefault": "Default",
+                "LocalizedExternal": "External",
                 "SampleRate": 44100,
                 "SupportsExternalStream": false,
-                "Type": "Audio"
+                "TimeBase": "1/44100",
+                "Type": "Audio",
+                "VideoRange": "Unknown",
+                "VideoRangeType": "Unknown"
               }
             ],
+            "Name": "03 One",
+            "Path": "U2/Achtung Baby/03 One.mp3",
             "Protocol": "File",
             "ReadAtNativeFramerate": false,
+            "RequiredHttpHeaders": {},
             "RequiresClosing": false,
             "RequiresLooping": false,
             "RequiresOpening": false,
@@ -450,13 +467,15 @@
             "SupportsDirectStream": true,
             "SupportsProbing": false,
             "SupportsTranscoding": false,
-            "Type": "Default"
+            "TranscodingSubProtocol": "http",
+            "Type": "Default",
+            "UseMostCompatibleTranscodingProfile": false
           }
         ],
-        "PlaySessionId": "<id-23>"
+        "PlaySessionId": "<id-24>"
       },
       "headers": {
-        "content-length": "1028",
+        "content-length": "1517",
         "content-type": "application/json"
       },
       "request": "GET /jellyfin/Items/<id-11>/PlaybackInfo",
@@ -593,7 +612,7 @@
     },
     {
       "body": {
-        "Id": "<id-24>"
+        "Id": "<id-25>"
       },
       "headers": {
         "content-length": "41",
@@ -641,7 +660,7 @@
             "Name": "One",
             "ParentId": "<id-10>",
             "ParentIndexNumber": 1,
-            "PlaylistItemId": "<id-25>",
+            "PlaylistItemId": "<id-26>",
             "PremiereDate": "0000-00-00T00:00:00.0000000Z",
             "ProductionYear": 1991,
             "ProviderIds": {
@@ -668,7 +687,7 @@
         "content-length": "1100",
         "content-type": "application/json"
       },
-      "request": "GET /jellyfin/Playlists/<id-24>/Items",
+      "request": "GET /jellyfin/Playlists/<id-25>/Items",
       "status": 200
     },
     {
