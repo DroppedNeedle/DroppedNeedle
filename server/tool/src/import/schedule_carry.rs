@@ -20,7 +20,7 @@ const KNOWN_FREQUENCIES: &[&str] = &[
 /// Every way the schedule carry can fail. A missing or unreadable v2 file is
 /// not an error: the carry simply does not happen.
 #[derive(Debug, Error, PartialEq, Eq)]
-pub enum R8Error {
+pub enum ScheduleCarryError {
     /// The v2 config file is present but unparseable.
     #[error("v2 config is not valid JSON: {reason}")]
     InvalidJson {
@@ -73,7 +73,7 @@ pub fn carry_frequency(
     v2_config_path: &Path,
     schedule_present: bool,
     export_instance_id: &str,
-) -> Result<Option<String>, R8Error> {
+) -> Result<Option<String>, ScheduleCarryError> {
     if schedule_present {
         return Ok(None);
     }
@@ -81,19 +81,20 @@ pub fn carry_frequency(
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
-            return Err(R8Error::ReadFailed {
+            return Err(ScheduleCarryError::ReadFailed {
                 reason: error.to_string(),
             });
         }
     };
-    let parsed: Value = serde_json::from_str(&text).map_err(|error| R8Error::InvalidJson {
-        reason: error.to_string(),
-    })?;
+    let parsed: Value =
+        serde_json::from_str(&text).map_err(|error| ScheduleCarryError::InvalidJson {
+            reason: error.to_string(),
+        })?;
     if let Some(v2_instance) = parsed.get("instance_id").and_then(Value::as_str)
         && !v2_instance.is_empty()
         && v2_instance != export_instance_id
     {
-        return Err(R8Error::InstanceMismatch {
+        return Err(ScheduleCarryError::InstanceMismatch {
             export_instance: export_instance_id.to_owned(),
             v2_instance: v2_instance.to_owned(),
         });

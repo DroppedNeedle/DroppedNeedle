@@ -21,8 +21,8 @@
 pub(crate) mod carry;
 pub mod envelope;
 pub mod pipeline;
-pub mod r8;
 pub mod report;
+pub mod schedule_carry;
 pub mod validate;
 
 pub use envelope::{ExportFile, Opener, unseal_value, verify_content_digest};

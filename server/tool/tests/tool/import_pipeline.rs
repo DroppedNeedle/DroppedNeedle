@@ -1,5 +1,5 @@
 //! Pipeline tests: conflicts, deleted IDs, idempotency,
-//! settings replace, and the R8 one-shot carry.
+//! settings replace, and the one-shot scan schedule carry.
 //!
 //! Every test imports into scratch state only: in-memory databases
 //! and temp-dir config files.
@@ -638,11 +638,11 @@ async fn settings_replace_filters_and_preserves() {
 }
 
 #[tokio::test]
-async fn r8_carries_sync_frequency_once() {
+async fn schedule_carry_moves_sync_frequency_once() {
     let fixture = Fixture::shared();
     let export = fixture.shell();
     let pool = migrated_pool().await;
-    let (dir, config_path, crypto) = scratch_config("r8");
+    let (dir, config_path, crypto) = scratch_config("schedule-carry");
     let v2_config = dir.join("v2-config.json");
     std::fs::write(
         &v2_config,
@@ -678,7 +678,7 @@ async fn r8_carries_sync_frequency_once() {
     with_schedule["settings"]["library_scan_schedule"] =
         json!({"scan_frequency": "daily", "daily_scan_time": "03:00"});
     let pool2 = migrated_pool().await;
-    let (_dir2, config2, crypto2) = scratch_config("r8-export-wins");
+    let (_dir2, config2, crypto2) = scratch_config("schedule-carry-export-wins");
     let mut direct = import_request(&with_schedule, pool2, config2.clone(), crypto2);
     direct.v2_config_path = Some(dir.join("v2-config.json"));
     run_import(direct).await;
@@ -691,15 +691,15 @@ async fn r8_carries_sync_frequency_once() {
 }
 
 #[tokio::test]
-async fn r8_ignores_unknown_values() {
+async fn schedule_carry_ignores_unknown_values() {
     assert_eq!(
-        droppedneedle_tool::import::r8::read_sync_frequency(&json!({
+        droppedneedle_tool::import::schedule_carry::read_sync_frequency(&json!({
             "library_sync_settings": {"sync_frequency": "fortnightly"}
         })),
         None
     );
     assert_eq!(
-        droppedneedle_tool::import::r8::read_sync_frequency(&json!({
+        droppedneedle_tool::import::schedule_carry::read_sync_frequency(&json!({
             "library_sync_settings": {"sync_frequency": "12hr"}
         })),
         Some("12hr".to_owned())
@@ -947,12 +947,12 @@ async fn unknown_settings_section_with_corrupt_blob_is_ignored() {
 }
 
 #[tokio::test]
-async fn r8_instance_mismatch_refuses_with_zero_writes() {
+async fn schedule_carry_instance_mismatch_refuses_with_zero_writes() {
     let fixture = Fixture::shared();
     let mut export = fixture.shell();
     export["users"] = json!([fixture.user("u1")]);
     let pool = migrated_pool().await;
-    let (dir, config_path, crypto) = scratch_config("r8-mismatch");
+    let (dir, config_path, crypto) = scratch_config("schedule-carry-mismatch");
     let v2_config = dir.join("v2-config.json");
     std::fs::write(
         &v2_config,
@@ -972,25 +972,26 @@ async fn r8_instance_mismatch_refuses_with_zero_writes() {
 }
 
 #[test]
-fn r8_missing_file_skips_silently() {
-    let (dir, _, _) = scratch_config("r8-missing");
+fn schedule_carry_missing_file_skips_silently() {
+    let (dir, _, _) = scratch_config("schedule-carry-missing");
     let missing = dir.join("no-such-config.json");
     assert_eq!(
-        droppedneedle_tool::import::r8::carry_frequency(&missing, false, "instance-1"),
+        droppedneedle_tool::import::schedule_carry::carry_frequency(&missing, false, "instance-1"),
         Ok(None)
     );
 }
 
 #[test]
-fn r8_corrupt_file_fails() {
-    let (dir, _, _) = scratch_config("r8-corrupt");
+fn schedule_carry_corrupt_file_fails() {
+    let (dir, _, _) = scratch_config("schedule-carry-corrupt");
     let path = dir.join("v2-config.json");
     std::fs::write(&path, "{not json").unwrap();
     let error =
-        droppedneedle_tool::import::r8::carry_frequency(&path, false, "instance-1").unwrap_err();
+        droppedneedle_tool::import::schedule_carry::carry_frequency(&path, false, "instance-1")
+            .unwrap_err();
     assert!(matches!(
         error,
-        droppedneedle_tool::import::r8::R8Error::InvalidJson { .. }
+        droppedneedle_tool::import::schedule_carry::ScheduleCarryError::InvalidJson { .. }
     ));
 }
 

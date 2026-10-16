@@ -296,7 +296,7 @@ async fn compat_clients_reauth_on_surviving_secrets() {
 }
 
 #[tokio::test]
-async fn settings_land_with_r8_and_no_plaintext() {
+async fn settings_land_with_schedule_carry_and_no_plaintext() {
     let root = scratch_dir("settings");
     let (fixture, text) = repaired_export(&root);
     let (v3_root, pool) = seeded_target(&root).await;
@@ -835,7 +835,7 @@ async fn assert_compat_reauth(
     assert_eq!(legacy.user_id, fixture.bob_id);
 }
 
-/// Settings assertions: R8 carried the legacy frequency, secrets decrypt
+/// Settings assertions: the import carried the legacy frequency, secrets decrypt
 /// under the v3 key, dropped fields stayed behind, order and ids survived.
 fn assert_settings_landed(
     v3_root: &Path,
@@ -856,7 +856,7 @@ fn assert_settings_landed(
             .and_then(|section| section.get("scan_frequency"))
             .and_then(serde_json::Value::as_str),
         Some("6hr"),
-        "R8 carried the legacy frequency"
+        "the import carried the legacy frequency"
     );
     let crypto = Crypto::load(&v3_root.join("config")).expect("v3 key loads");
     let slskd = config

@@ -37,8 +37,8 @@ use thiserror::Error;
 
 use super::carry::bundle::{Bundle, BundleRejection};
 use super::envelope::{ExportFile, Opener, collect_sealed, is_sealed, unseal_value};
-use super::r8::carry_frequency;
 use super::report::{ExitCode, ExportProvenance, ImportReport, ReportBuilder, utc_now_iso};
+use super::schedule_carry::carry_frequency;
 use super::validate::{ValidationIssue, validate_export};
 use droppedneedle_kernel::runtime_config::Crypto;
 
@@ -109,7 +109,7 @@ enum ImportError {
     Rekey,
     /// Reading the scan schedule from v2's `config.json` failed.
     #[error("v2 scan schedule carry failed: {0}")]
-    R8(#[from] super::r8::R8Error),
+    ScheduleCarry(#[from] super::schedule_carry::ScheduleCarryError),
     /// A carried section failed; earlier sections stay applied.
     #[error("{0}")]
     Carry(#[from] super::carry::CarryError),
@@ -264,9 +264,9 @@ pub async fn run_import(request: ImportRequest) -> ImportReport {
             ExitCode::FailedInternal,
             "simulated crash after commit; config not written".to_owned(),
         ),
-        Err(ImportError::R8(mismatch @ super::r8::R8Error::InstanceMismatch { .. })) => {
-            report.finish(ExitCode::FailedValidation, mismatch.to_string())
-        }
+        Err(ImportError::ScheduleCarry(
+            mismatch @ super::schedule_carry::ScheduleCarryError::InstanceMismatch { .. },
+        )) => report.finish(ExitCode::FailedValidation, mismatch.to_string()),
         Err(error) => report.finish(ExitCode::FailedInternal, error.to_string()),
     }
 }
