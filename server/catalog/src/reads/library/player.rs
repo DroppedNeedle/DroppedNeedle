@@ -19,6 +19,7 @@ use super::sqlite::{
     hydrate_artists,
 };
 use super::stores::{AlbumRecord, ArtistRecord, BoxFuture, StoreError};
+use droppedneedle_providers::musicbrainz::is_valid_mbid;
 
 /// One streamable track with everything a player shows.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -227,6 +228,28 @@ pub enum AlbumOrder {
 /// Play statistics for one item: count and last play (unix seconds).
 pub type PlayStat = (u64, Option<f64>);
 
+/// The MusicBrainz ids player apps are sent for one album.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AlbumIds {
+    /// True when these are the accepted match's ids, false when they are
+    /// the ones the album's files' tags agree on.
+    pub accepted: bool,
+    /// Release.
+    pub release_mbid: Option<String>,
+    /// Release group.
+    pub release_group_mbid: Option<String>,
+}
+
+/// MusicBrainz ids for player answers, by local id. An album or artist
+/// with no id is absent.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PlayerIds {
+    /// Per album.
+    pub albums: HashMap<String, AlbumIds>,
+    /// Per artist.
+    pub artists: HashMap<String, String>,
+}
+
 /// Catalog and history reads for the player protocols.
 pub trait PlayerCatalog: Send + Sync {
     /// Tracks by id, in no particular order; unknown or unstreamable ids
@@ -320,6 +343,20 @@ pub trait PlayerCatalog: Send + Sync {
         kind: &'a str,
         ids: &'a [String],
     ) -> BoxFuture<'a, Result<HashMap<String, PlayStat>, StoreError>>;
+
+    /// The MusicBrainz ids player apps are sent for some albums and
+    /// artists: the accepted match's, else the one their files' tags agree
+    /// on. An album's tags are its indexed tracks'; an artist's are the ids
+    /// its track and album credits took from their files, which the scan
+    /// keeps only where a file pairs artist names and ids one for one, so a
+    /// tag holding several ids for one artist row gives none. A value that
+    /// is not one well-formed MBID is skipped. Tag ids are for player
+    /// answers only, never identity or matching.
+    fn player_ids<'a>(
+        &'a self,
+        album_ids: &'a [String],
+        artist_ids: &'a [String],
+    ) -> BoxFuture<'a, Result<PlayerIds, StoreError>>;
 
     /// Every `(kind, id)` a player can address: artists, albums and
     /// streamable tracks by local id, genres by display name.
@@ -464,6 +501,50 @@ fn map_album(row: &sqlx::sqlite::SqliteRow) -> Result<PlayerAlbum, sqlx::Error> 
 
 fn read_error(operation: &str) -> impl Fn(sqlx::Error) -> StoreError + '_ {
     move |error| StoreError::read(operation, error)
+}
+
+/// Tag ids of some artists (`{marks}`, bound twice): the id each credit
+/// of an indexed track or a live album took from its file, set by the scan
+/// only where the file pairs its artist names and ids one for one. The
+/// credits lead, so a chunk never walks the tracks.
+pub(crate) const ARTIST_TAG_IDS: &str = "SELECT ta.local_artist_id, ta.artist_mbid \
+    FROM local_track_artists ta CROSS JOIN local_tracks t \
+    WHERE ta.local_artist_id IN ({marks}) AND ta.artist_mbid IS NOT NULL \
+    AND t.id = ta.local_track_id AND t.availability = 'indexed' \
+    UNION ALL \
+    SELECT aa.local_artist_id, aa.artist_mbid \
+    FROM local_album_artists aa CROSS JOIN local_albums a \
+    WHERE aa.local_artist_id IN ({marks}) AND aa.artist_mbid IS NOT NULL \
+    AND a.id = aa.local_album_id AND a.retired_into_album_id IS NULL";
+
+/// Tag ids per local id, kept only while every value agrees.
+#[derive(Default)]
+struct Agreement(HashMap<String, Option<String>>);
+
+impl Agreement {
+    /// Count one tag value for `id`. A value that is not one well-formed
+    /// MBID is skipped.
+    fn note(&mut self, id: &str, value: Option<&str>) {
+        let Some(value) = value.map(str::trim).filter(|value| is_valid_mbid(value)) else {
+            return;
+        };
+        let value = value.to_ascii_lowercase();
+        match self.0.get_mut(id) {
+            Some(seen) => {
+                if seen.as_deref() != Some(value.as_str()) {
+                    *seen = None;
+                }
+            }
+            None => {
+                self.0.insert(id.to_owned(), Some(value));
+            }
+        }
+    }
+
+    /// The agreed id for `id`, if any.
+    fn agreed(&self, id: &str) -> Option<String> {
+        self.0.get(id).cloned().flatten()
+    }
 }
 
 fn placeholders(len: usize) -> String {
@@ -1586,6 +1667,118 @@ impl PlayerCatalog for SqlitePlayerCatalog {
                         .try_get("last_played")
                         .map_err(read_error("player.play_stats"))?;
                     out.insert(id, (plays.max(0) as u64, last));
+                }
+            }
+            Ok(out)
+        })
+    }
+
+    fn player_ids<'a>(
+        &'a self,
+        album_ids: &'a [String],
+        artist_ids: &'a [String],
+    ) -> BoxFuture<'a, Result<PlayerIds, StoreError>> {
+        Box::pin(async move {
+            let pool = self.pool()?;
+            let mut out = PlayerIds::default();
+            for chunk in album_ids.chunks(500) {
+                // An accepted album is one row with no tracks joined.
+                let sql = format!(
+                    "SELECT a.id, ae.release_mbid, ae.release_group_mbid, \
+                     t.embedded_release_mbid, t.embedded_release_group_mbid \
+                     FROM local_albums a \
+                     LEFT JOIN local_album_external_identities ae ON ae.local_album_id = a.id \
+                     LEFT JOIN local_tracks t ON ae.local_album_id IS NULL \
+                     AND t.local_album_id = a.id AND t.availability = 'indexed' \
+                     WHERE a.id IN ({})",
+                    placeholders(chunk.len())
+                );
+                let mut query = sqlx::query_as::<
+                    _,
+                    (
+                        String,
+                        Option<String>,
+                        Option<String>,
+                        Option<String>,
+                        Option<String>,
+                    ),
+                >(&sql);
+                for id in chunk {
+                    query = query.bind(id);
+                }
+                let rows = query
+                    .fetch_all(pool)
+                    .await
+                    .map_err(read_error("player.player_ids"))?;
+                let (mut releases, mut groups) = (Agreement::default(), Agreement::default());
+                for (id, release, group, tag_release, tag_group) in rows {
+                    if group.is_some() {
+                        out.albums.insert(
+                            id,
+                            AlbumIds {
+                                accepted: true,
+                                release_mbid: release,
+                                release_group_mbid: group,
+                            },
+                        );
+                    } else {
+                        releases.note(&id, tag_release.as_deref());
+                        groups.note(&id, tag_group.as_deref());
+                    }
+                }
+                for id in chunk {
+                    let (release, group) = (releases.agreed(id), groups.agreed(id));
+                    if release.is_some() || group.is_some() {
+                        out.albums.insert(
+                            id.clone(),
+                            AlbumIds {
+                                accepted: false,
+                                release_mbid: release,
+                                release_group_mbid: group,
+                            },
+                        );
+                    }
+                }
+            }
+            for chunk in artist_ids.chunks(500) {
+                let sql = format!(
+                    "SELECT local_artist_id, provider_artist_id \
+                     FROM local_artist_external_identities WHERE local_artist_id IN ({})",
+                    placeholders(chunk.len())
+                );
+                let mut query = sqlx::query_as::<_, (String, String)>(&sql);
+                for id in chunk {
+                    query = query.bind(id);
+                }
+                let accepted = query
+                    .fetch_all(pool)
+                    .await
+                    .map_err(read_error("player.player_ids"))?;
+                out.artists.extend(accepted);
+                let unmatched: Vec<&String> = chunk
+                    .iter()
+                    .filter(|id| !out.artists.contains_key(*id))
+                    .collect();
+                if unmatched.is_empty() {
+                    continue;
+                }
+                let sql = ARTIST_TAG_IDS.replace("{marks}", &placeholders(unmatched.len()));
+                let mut query = sqlx::query_as::<_, (String, String)>(&sql);
+                for id in unmatched.iter().chain(&unmatched) {
+                    query = query.bind(*id);
+                }
+                let rows = query
+                    .fetch_all(pool)
+                    .await
+                    .map_err(read_error("player.player_ids"))?;
+                let mut tags = Agreement::default();
+                for (id, value) in &rows {
+                    tags.note(id, Some(value));
+                }
+                for id in unmatched {
+                    if let Some(mbid) = tags.agreed(id) {
+                        out.artists.insert(id.clone(), mbid);
+                    }
                 }
             }
             Ok(out)

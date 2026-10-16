@@ -994,8 +994,8 @@ pub fn effective_username(user: &impl Principal) -> String {
     }
 }
 
-/// Artist info: projected MBID (else the raw mbid when it looks like
-/// one) plus small/medium/large open picture links. `count`
+/// Artist info: projected MBID or an empty string (else the raw mbid when
+/// it looks like one) plus small/medium/large open picture links. `count`
 /// and `includeNotPresent` are parsed and ignored.
 pub async fn artist_info<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
@@ -1011,7 +1011,7 @@ pub async fn artist_info<P: Principal, S: Store, B: AudioBackend>(
         .map_err(Ctx::<P, S, B>::store_err)?
         .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Artist not found"))?;
     let music_brainz_id = if artist.provider_identity_projected {
-        artist.musicbrainz_artist_id.clone()
+        Some(artist.musicbrainz_artist_id.clone().unwrap_or_default())
     } else if artist.artist_mbid.contains('-') {
         Some(artist.artist_mbid.clone())
     } else {
@@ -1039,8 +1039,8 @@ pub async fn artist_info<P: Principal, S: Store, B: AudioBackend>(
     ))
 }
 
-/// Album info: projected MBID (else the raw rg mbid) plus sized open
-/// picture links.
+/// Album info: projected MBID or an empty string (else the raw rg mbid)
+/// plus sized open picture links.
 pub async fn album_info<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
@@ -1055,7 +1055,7 @@ pub async fn album_info<P: Principal, S: Store, B: AudioBackend>(
     let [small, medium, large] =
         INFO_SIZES.map(|size| ctx.picture_link(PictureKind::Album, &album.rg_mbid, size));
     let music_brainz_id = if album.provider_identity_projected {
-        album.musicbrainz_release_group_id.clone()
+        Some(album.musicbrainz_album_id.clone().unwrap_or_default())
     } else {
         Some(album.rg_mbid.clone())
     };

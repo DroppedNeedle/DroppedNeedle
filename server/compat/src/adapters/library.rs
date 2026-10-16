@@ -5,7 +5,9 @@
 //! `artist_mbid`, `file_id`) are the protocol layers' names for "album id",
 //! "artist id" and "track id"; real MusicBrainz ids ride the
 //! `musicbrainz_*` fields with `provider_identity_projected` set, so no
-//! local id is ever advertised as an MBID.
+//! local id is ever advertised as an MBID. Those ids come from
+//! [`CompatLibrary::player_ids`]: the accepted match's, else the files'
+//! tags'.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,8 +18,8 @@ use droppedneedle_catalog::reads::collections::service::{
 use droppedneedle_catalog::reads::collections::store::playlists::NewEntry;
 use droppedneedle_catalog::reads::collections::{CollectionsState, error::CollectionsError};
 use droppedneedle_catalog::reads::library::player::{
-    AlbumOrder, AlbumQuery, PlayStat, PlayerAlbum, PlayerCatalog, PlayerTrack, ShuffleSeeds,
-    TrackOrder, TrackQuery,
+    AlbumOrder, AlbumQuery, PlayStat, PlayerAlbum, PlayerCatalog, PlayerIds, PlayerTrack,
+    ShuffleSeeds, TrackOrder, TrackQuery,
 };
 use droppedneedle_catalog::reads::library::stores::{
     ArtistRecord, ArtistScope, ArtistSort, GenreRecord, LibraryCatalog, LyricDoc, LyricsPort,
@@ -411,6 +413,15 @@ impl CompatLibrary {
         ids: &[String],
     ) -> Result<HashMap<String, PlayStat>, CompatError> {
         Ok(self.player.play_stats(user_id, kind, ids).await?)
+    }
+
+    /// The MusicBrainz ids players are sent for some albums and artists.
+    pub async fn player_ids(
+        &self,
+        album_ids: &[String],
+        artist_ids: &[String],
+    ) -> Result<PlayerIds, CompatError> {
+        Ok(self.player.player_ids(album_ids, artist_ids).await?)
     }
 
     /// Album ids from the user's play history.

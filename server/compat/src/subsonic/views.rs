@@ -168,8 +168,9 @@ pub struct ViewAlbum {
     pub genre: Option<String>,
     /// Compilation flag.
     pub is_compilation: Option<bool>,
-    /// Projected MusicBrainz release-group id.
-    pub musicbrainz_release_group_id: Option<String>,
+    /// Projected MusicBrainz id: the release, or the release group of an
+    /// accepted match with no known release.
+    pub musicbrainz_album_id: Option<String>,
     /// Projected MusicBrainz artist id.
     pub musicbrainz_artist_id: Option<String>,
     /// True when provider identity was projected.
@@ -291,6 +292,20 @@ pub fn artist_roles(view: &ViewArtist) -> Vec<String> {
     roles
 }
 
+/// A listed item's `musicBrainzId`: its id, else an empty string as
+/// Navidrome sends, or `fallback` where no identity was projected.
+fn musicbrainz_id(
+    id: Option<&String>,
+    projected: bool,
+    fallback: Option<&String>,
+) -> Option<String> {
+    match (id, projected) {
+        (Some(id), _) => Some(id.clone()),
+        (None, true) => Some(String::new()),
+        (None, false) => fallback.cloned(),
+    }
+}
+
 /// Artist -> ID3 artist (v2 `to_artist_id3`), with its picture link.
 pub fn to_artist_id3(view: &ViewArtist, image_url: Option<String>) -> SArtistID3 {
     let aid = encode(IdKind::Artist, &view.artist_mbid);
@@ -301,10 +316,11 @@ pub fn to_artist_id3(view: &ViewArtist, image_url: Option<String>) -> SArtistID3
         albumCount: view.album_count,
         artistImageUrl: image_url,
         starred: iso(view.starred_at),
-        musicBrainzId: view
-            .musicbrainz_artist_id
-            .clone()
-            .or_else(|| (!view.provider_identity_projected).then(|| view.artist_mbid.clone())),
+        musicBrainzId: musicbrainz_id(
+            view.musicbrainz_artist_id.as_ref(),
+            view.provider_identity_projected,
+            Some(&view.artist_mbid),
+        ),
         sortName: Some(view.name.clone()),
         roles: Some(artist_roles(view)),
         album: None,
@@ -379,10 +395,11 @@ pub fn to_album_id3(view: &ViewAlbum) -> SAlbumID3 {
         year: view.year,
         genre: view.genre.clone(),
         isCompilation: view.is_compilation,
-        musicBrainzId: view
-            .musicbrainz_release_group_id
-            .clone()
-            .or_else(|| (!view.provider_identity_projected).then(|| view.rg_mbid.clone())),
+        musicBrainzId: musicbrainz_id(
+            view.musicbrainz_album_id.as_ref(),
+            view.provider_identity_projected,
+            Some(&view.rg_mbid),
+        ),
         played: played_iso(view.played_at.as_deref()),
         genres: album_genres(view),
         artists,
@@ -474,11 +491,11 @@ pub fn to_child(view: &ViewTrack, transcode_hint: Option<(&str, &str)>) -> SChil
         bitDepth: Some(view.bit_depth.unwrap_or(0)),
         samplingRate: view.sample_rate,
         channelCount: Some(view.channels.unwrap_or(2)),
-        musicBrainzId: view.musicbrainz_recording_id.clone().or_else(|| {
-            (!view.provider_identity_projected)
-                .then(|| view.recording_mbid.clone())
-                .flatten()
-        }),
+        musicBrainzId: musicbrainz_id(
+            view.musicbrainz_recording_id.as_ref(),
+            view.provider_identity_projected,
+            view.recording_mbid.as_ref(),
+        ),
         played: played_iso(view.played_at.as_deref()),
         sortName: Some(view.sort_name.clone().unwrap_or_else(|| view.title.clone())),
         genres: Some(genres),
@@ -526,6 +543,11 @@ pub fn to_album_child(view: &ViewAlbum) -> SChild {
         bitDepth: Some(0),
         samplingRate: Some(0),
         channelCount: Some(0),
+        musicBrainzId: musicbrainz_id(
+            view.musicbrainz_album_id.as_ref(),
+            view.provider_identity_projected,
+            Some(&view.rg_mbid),
+        ),
         sortName: Some(view.sort_name.clone().unwrap_or_else(|| view.title.clone())),
         genres: Some(album_genres(view)),
         artists: artists.clone(),

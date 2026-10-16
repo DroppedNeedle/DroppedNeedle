@@ -25,7 +25,7 @@ use crate::subsonic::views::{ViewAlbum, ViewArtist, ViewGenre, ViewTrack};
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::reads::collections::service::Visible;
 use droppedneedle_catalog::reads::library::player::{
-    AlbumOrder, AlbumQuery, PlayerAlbum, PlayerTrack, TrackOrder, TrackQuery,
+    AlbumIds, AlbumOrder, AlbumQuery, PlayerAlbum, PlayerIds, PlayerTrack, TrackOrder, TrackQuery,
 };
 use droppedneedle_catalog::reads::library::stores::ArtistRecord;
 use droppedneedle_kernel::runtime_config::Crypto;
@@ -96,8 +96,23 @@ fn view_track(track: PlayerTrack) -> ViewTrack {
     }
 }
 
-fn view_album(album: PlayerAlbum) -> ViewAlbum {
+/// An album's `musicBrainzId`, as Navidrome sends it: the release. An
+/// accepted match with no known release sends its release group; tag ids
+/// count only as a release.
+fn album_musicbrainz_id(ids: Option<&AlbumIds>) -> Option<String> {
+    let ids = ids?;
+    if ids.accepted {
+        ids.release_mbid
+            .clone()
+            .or_else(|| ids.release_group_mbid.clone())
+    } else {
+        ids.release_mbid.clone()
+    }
+}
+
+fn view_album(album: PlayerAlbum, ids: &PlayerIds) -> ViewAlbum {
     let record = album.record;
+    let musicbrainz_album_id = album_musicbrainz_id(ids.albums.get(&record.id));
     ViewAlbum {
         rg_mbid: record.id,
         title: record.title,
@@ -111,7 +126,7 @@ fn view_album(album: PlayerAlbum) -> ViewAlbum {
         year: record.year,
         genre: album.genre,
         is_compilation: Some(record.is_compilation),
-        musicbrainz_release_group_id: record.release_group_mbid,
+        musicbrainz_album_id,
         musicbrainz_artist_id: record.artist_mbid,
         provider_identity_projected: true,
         played_at: None,
@@ -123,14 +138,15 @@ fn view_album(album: PlayerAlbum) -> ViewAlbum {
     }
 }
 
-fn view_artist(artist: ArtistRecord) -> ViewArtist {
+fn view_artist(artist: ArtistRecord, ids: &PlayerIds) -> ViewArtist {
+    let musicbrainz_artist_id = ids.artists.get(&artist.id).cloned();
     ViewArtist {
         artist_mbid: artist.id,
         name: artist.name,
         album_count: Some(artist.album_count as i64),
         track_count: Some(artist.track_count as i64),
         starred_at: None,
-        musicbrainz_artist_id: artist.artist_mbid,
+        musicbrainz_artist_id,
         provider_identity_projected: true,
     }
 }
@@ -214,12 +230,16 @@ impl SubsonicStore {
         &self,
         albums: Vec<PlayerAlbum>,
     ) -> Result<Vec<ViewAlbum>, CompatError> {
-        let mut views = albums.into_iter().map(view_album).collect::<Vec<_>>();
+        let ids = albums
+            .iter()
+            .map(|album| album.record.id.clone())
+            .collect::<Vec<_>>();
+        let player_ids = self.library.player_ids(&ids, &[]).await?;
+        let mut views = albums
+            .into_iter()
+            .map(|album| view_album(album, &player_ids))
+            .collect::<Vec<_>>();
         if let Some(user_id) = &self.caller {
-            let ids = views
-                .iter()
-                .map(|view| view.rg_mbid.clone())
-                .collect::<Vec<_>>();
             let starred = self.library.starred(user_id, "album", &ids).await?;
             let plays = self.library.plays(user_id, "album", &ids).await?;
             for view in &mut views {
@@ -237,12 +257,16 @@ impl SubsonicStore {
         &self,
         artists: Vec<ArtistRecord>,
     ) -> Result<Vec<ViewArtist>, CompatError> {
-        let mut views = artists.into_iter().map(view_artist).collect::<Vec<_>>();
+        let ids = artists
+            .iter()
+            .map(|artist| artist.id.clone())
+            .collect::<Vec<_>>();
+        let player_ids = self.library.player_ids(&[], &ids).await?;
+        let mut views = artists
+            .into_iter()
+            .map(|artist| view_artist(artist, &player_ids))
+            .collect::<Vec<_>>();
         if let Some(user_id) = &self.caller {
-            let ids = views
-                .iter()
-                .map(|view| view.artist_mbid.clone())
-                .collect::<Vec<_>>();
             let starred = self.library.starred(user_id, "artist", &ids).await?;
             for view in &mut views {
                 view.starred_at = starred.get(&view.artist_mbid).copied();

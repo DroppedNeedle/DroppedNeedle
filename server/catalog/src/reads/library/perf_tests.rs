@@ -1305,6 +1305,28 @@ async fn assert_hot_plans(pool: &SqlitePool) {
             .any(|line| line.contains("SCAN local_albums") || line.contains("SCAN local_tracks")),
         "artist page never scans the catalog: {plan:?}"
     );
+
+    // Player apps read every artist's tag ids in chunks of 500: each chunk
+    // probes those artists' credits, never a walk over the tracks.
+    let ids: Vec<String> = (0..500).map(|n| format!("ar{n}")).collect();
+    let tag_ids =
+        library::player::ARTIST_TAG_IDS.replace("{marks}", &vec!["?"; ids.len()].join(", "));
+    let binds: Vec<ExplainBind> = ids
+        .iter()
+        .chain(&ids)
+        .map(|id| ExplainBind::Text(Some(id)))
+        .collect();
+    let plan = explain(pool, &tag_ids, &binds).await;
+    assert!(
+        !plan.iter().any(|line| line.contains("SCAN ")),
+        "artist tag ids never scan: {plan:?}"
+    );
+    assert!(
+        plan.iter()
+            .filter(|line| line.starts_with("SEARCH t ") || line.starts_with("SEARCH a "))
+            .all(|line| line.contains("(id=?")),
+        "artist tag ids reach tracks and albums by id from the credits: {plan:?}"
+    );
 }
 
 /// Plays on the small fixture: `u1` has ties in both the last play (t2 and
