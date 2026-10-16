@@ -176,7 +176,7 @@ async fn jellyfin_adapter_serves_ranges_maps_faults_and_forwards_transcodes() {
             Some("bytes=100-"),
             416,
             Some("bytes */100"),
-            None,
+            Some("bytes"),
             vec![],
         ),
         // Transcode landings serve whole and never honor ranges.

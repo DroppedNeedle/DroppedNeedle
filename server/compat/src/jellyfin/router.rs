@@ -293,8 +293,8 @@ pub(super) fn refused(refusal: WriteRefusal) -> Response {
     })
 }
 
-/// Map an engine byte outcome to a response (200/206 bytes, 416 range-only,
-/// 404/429 status-only). Outcomes without a `Content-Length` carry a
+/// Map an engine byte outcome to a response (200/206 bytes, 416 with its
+/// headers, 404/429 status-only). Outcomes without a `Content-Length` carry a
 /// non-empty body only for transcodes (estimate off on Jellyfin), and those
 /// must stream unsized: axum stamps a `Content-Length` on sized bodies, so a
 /// sized transcode response would violate the v2 wire contract. Empty bodies

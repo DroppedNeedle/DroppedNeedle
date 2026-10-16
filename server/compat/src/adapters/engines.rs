@@ -341,9 +341,14 @@ impl<E> GatewayStream<E> {
             Some(header) => match droppedneedle_media::stream::routes::parse_range(header, total) {
                 Some(resolved) => Some(resolved),
                 None => {
+                    // Jellyfin's 416 also carries the file's type and Accept-Ranges.
                     return status(
                         416,
-                        vec![("Content-Range".to_owned(), format!("bytes */{total}"))],
+                        vec![
+                            ("Content-Type".to_owned(), media.content_type.clone()),
+                            ("Content-Range".to_owned(), format!("bytes */{total}")),
+                            ("Accept-Ranges".to_owned(), "bytes".to_owned()),
+                        ],
                     );
                 }
             },
