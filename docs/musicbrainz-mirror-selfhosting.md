@@ -26,10 +26,10 @@ This startup normalization is not a runtime fallback. Because it can make Brainz
 can switch to Official, a Self-hosted mirror, or Community / external by explicitly saving it, and a
 deliberate Official save persists across restarts.
 
-## Which claim comes from where?
+## Where these details come from
 
-The labels below separate public documentation, operator statements, DroppedNeedle owner
-choices, and observations made against a live surface:
+The details on this page come from four places: public documentation, statements from the
+BrainzMash operator, DroppedNeedle's own policy, and observations of the live service.
 
 - **Pinned public documentation:** the BrainzMash project README and integration guides at
   commit `c25bd6e8816592af33cac65c42dff6a35b9e0566` (2026-08-29) describe the public pool,
@@ -38,11 +38,10 @@ choices, and observations made against a live surface:
   approved for DroppedNeedle consumer reads. Consumer requests are expected to be
   credentialless. The `X-BrainzMash-Key` shown in the Nginx guide is for private contributor
   backends, not for DroppedNeedle.
-- **DroppedNeedle owner decision:** BrainzMash may be embedded, distributed, labeled
-  Recommended, and preselected for fresh and reset configuration. DroppedNeedle independently
-  uses a local 10 requests/second, capacity-1 wire policy for BrainzMash and a 1 request/second,
-  capacity-1 wire policy for Official. The app does not promise provider availability and never
-  falls back silently.
+- **DroppedNeedle policy:** DroppedNeedle ships BrainzMash built in, labels it Recommended, and
+  preselects it for fresh and reset configuration. It applies its own 10 requests/second,
+  capacity-1 wire policy to BrainzMash and a 1 request/second, capacity-1 wire policy to
+  Official. The app does not promise provider availability and never falls back silently.
 - **Live observation:** a dashboard retrieval on 2026-08-24 showed recent search terms and
   partial network or location information. This is an observed exposure, not a promise that the
   dashboard always displays the same fields.
@@ -85,8 +84,8 @@ families:
 Each family may have one optional path segment and an optional trailing slash. Other `/ws/2`
 routes are outside the documented boundary and must fail explicitly. The public material does
 not establish that every query parameter, search form, browse form, include profile, pagination
-offset, redirect, or error body is compatible. DroppedNeedle must verify the exact request shapes
-it uses before treating them as supported.
+offset, redirect, or error body is compatible, so DroppedNeedle treats a request shape as
+supported only once it has been checked.
 
 BrainzMash is read-only for this integration. DroppedNeedle does not depend on provider cache
 behavior, quorum or fingerprint internals, replication checks, freshness thresholds, or a
@@ -106,8 +105,7 @@ DroppedNeedle therefore applies its own policy before every BrainzMash request a
 - the Official source uses 1 request per second and the same capacity-1 wire policy; and
 - explicit typed failures when the provider is unavailable or returns an unsupported result.
 
-This local policy is not a BrainzMash quota. Raising it requires a separate written owner
-decision and a new implementation review.
+This local policy is not a BrainzMash quota. It is fixed in DroppedNeedle and is not a setting.
 
 ### Privacy disclosure
 
@@ -436,6 +434,6 @@ by the current application remains an engineering check, not a blanket promise f
   public project and contributor documentation used for the BrainzMash boundary above.
 
 Public documentation describes what its authors publish. Operator statements describe the
-specific frontdoor and handoff expectations. DroppedNeedle owner decisions define local policy.
+specific frontdoor and handoff expectations. DroppedNeedle's own policy sets the local limits.
 The dashboard statement is a dated live observation. None of those categories supplies an SLA,
 complete privacy guarantee, or permission for hidden fallback.
