@@ -6927,6 +6927,128 @@
         }
       }
     },
+    "/api/v3/library/albums/{album_id}/edition/files/{track_id}": {
+      "put": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Match one file to a track of the album's edition by hand.",
+        "description": "A file the edition did not place goes on a track no file holds, and\nthen counts as that track. On an edition the app picked, the edition\nbecomes the person's, as \"Looks right\" makes it. No file is read or\nwritten.",
+        "operationId": "match_edition_file",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "track_id",
+            "in": "path",
+            "description": "Local track id of the file",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MatchFileBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The album's edition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionStatusView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The album has no edition, or the track is not on it"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Unknown album, or the file is not one of its files"
+          },
+          "409": {
+            "description": "The edition changed (STALE_REVISION), the file is already on a track, another file holds the track, or the album is a custom edition"
+          },
+          "503": {
+            "description": "MusicBrainz is not answering"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "library management"
+        ],
+        "summary": "Undo a file's match by hand.",
+        "description": "The file's identity goes back to what it was before the match. Plays\nand favorites that moved to it stay.",
+        "operationId": "unmatch_edition_file",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "track_id",
+            "in": "path",
+            "description": "Local track id of the file",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The album's edition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionStatusView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Unknown album, not one of its files, or no match to undo"
+          },
+          "409": {
+            "description": "The match changed since (STALE_REVISION), or the app has written the file since"
+          }
+        }
+      }
+    },
     "/api/v3/library/albums/{album_id}/edition/leave-unmanaged": {
       "post": {
         "tags": [
@@ -32400,7 +32522,8 @@
           "title",
           "disc_number",
           "track_number",
-          "fate"
+          "fate",
+          "matched_by_hand"
         ],
         "properties": {
           "disc_number": {
@@ -32440,6 +32563,10 @@
           },
           "local_track_id": {
             "type": "string"
+          },
+          "matched_by_hand": {
+            "type": "boolean",
+            "description": "A person matched this file to its edition track by hand, and the\nmatch stands: \"Undo match\" can take it back."
           },
           "note": {
             "oneOf": [
@@ -32520,6 +32647,7 @@
           "artist_name",
           "is_current",
           "same_album",
+          "identity_revision",
           "edition",
           "kept_count",
           "missing_count",
@@ -32552,6 +32680,11 @@
             "items": {
               "$ref": "#/components/schemas/EditionPlanFileView"
             }
+          },
+          "identity_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The album identity's row revision the plan was read at, 0 when the\nalbum has none. Matching a file by hand echoes it."
           },
           "is_current": {
             "type": "boolean",
@@ -40618,6 +40751,25 @@
           },
           "idempotency_key": {
             "type": "string"
+          }
+        }
+      },
+      "MatchFileBody": {
+        "type": "object",
+        "description": "Match a file by hand.",
+        "required": [
+          "release_track_mbid",
+          "expected_identity_revision"
+        ],
+        "properties": {
+          "expected_identity_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The `identity_revision` the edition plan showed."
+          },
+          "release_track_mbid": {
+            "type": "string",
+            "description": "A track of the album's current edition that no file holds."
           }
         }
       },

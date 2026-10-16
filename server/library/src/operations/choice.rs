@@ -26,7 +26,7 @@ use super::store::PROVIDER;
 use crate::corrections::continuation::{Scope, continue_replaced, continue_tracks};
 use crate::corrections::release_join::join_replaced;
 use crate::identify::models::{EvidenceClass, PriorAlbumIdentity, PriorTrackIdentity};
-use crate::identify::sqlite::{album_identity_row, track_identity_rows};
+use crate::identify::sqlite::{album_identity_row, stored_release, track_identity_rows};
 
 /// An album's match state row, as the undo snapshot keeps it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -357,9 +357,26 @@ pub(super) fn place(
     (placed, extra)
 }
 
+/// Whether `release` is the album's current edition: the same id, or a
+/// release whose stored document answers to it (a merged id).
+fn answers_to_current(conn: &Connection, album_id: &str, release: &str) -> rusqlite::Result<bool> {
+    let Some(current) = album_identity_row(conn, album_id)?
+        .and_then(|row| row.release_mbid)
+        .filter(|current| !current.trim().is_empty())
+    else {
+        return Ok(false);
+    };
+    if current.trim().eq_ignore_ascii_case(release.trim()) {
+        return Ok(true);
+    }
+    Ok(stored_release(conn, release, 0.0)?.is_some_and(|doc| doc.answers_to(current.trim())))
+}
+
 /// Seal the candidate's release as the album's chosen edition and keep an
 /// undo. Used by every edition choice, including a re-identification's
-/// exact release. `actor` is the person choosing (`None` for a choice
+/// exact release. Choosing the edition the album already has keeps the
+/// files a person matched by hand on their tracks; the matcher places the
+/// rest. `actor` is the person choosing (`None` for a choice
 /// carried from an older pin). `undo_for` names the audit row or job the
 /// undo belongs to; `None` (placing files for a choice already made) keeps
 /// the album's existing undo record as it is.
@@ -380,8 +397,29 @@ pub fn apply_choice(
     if indexed.is_empty() {
         return Err(OperationError::NotFound(reasons::ALBUM_NOT_FOUND));
     }
-    let (placed, extra) = place(&indexed, candidate);
-    if placed.is_empty() {
+    // A placement on a track a match by hand holds makes that file extra.
+    let by_hand = if answers_to_current(tx, album_id, &release)? {
+        super::hand_match::standing(tx, album_id)?
+    } else {
+        Vec::new()
+    };
+    let free: Vec<String> = indexed
+        .into_iter()
+        .filter(|file| !by_hand.iter().any(|(kept, _)| kept == file))
+        .collect();
+    let (offered, mut extra) = place(&free, candidate);
+    let mut placed = Vec::with_capacity(offered.len());
+    for placement in offered {
+        if by_hand
+            .iter()
+            .any(|(_, track)| track.eq_ignore_ascii_case(&placement.release_track_mbid))
+        {
+            extra.push(placement.local_track_id);
+        } else {
+            placed.push(placement);
+        }
+    }
+    if placed.is_empty() && by_hand.is_empty() {
         return Err(OperationError::Invalid(reasons::EDITION_FITS_NO_FILE));
     }
     let before = snapshot(tx, album_id)?;
@@ -436,22 +474,31 @@ pub fn apply_choice(
         local_album_id: album_id.to_owned(),
         release_group_mbid: group,
         release_mbid: release,
-        placed: placed_files(tx, &placed)?,
+        placed: placed_files(
+            tx,
+            placed
+                .iter()
+                .map(|placement| placement.local_track_id.as_str())
+                .chain(by_hand.iter().map(|(file, _)| file.as_str())),
+        )?,
         extra_track_ids: extra,
         missing_titles: candidate.unmatched_expected_tracks.clone(),
     })
 }
 
-fn placed_files(conn: &Connection, placed: &[Placement]) -> rusqlite::Result<Vec<PlacedFile>> {
-    let mut out = Vec::with_capacity(placed.len());
-    for placement in placed {
+fn placed_files<'a>(
+    conn: &Connection,
+    placed: impl Iterator<Item = &'a str>,
+) -> rusqlite::Result<Vec<PlacedFile>> {
+    let mut out = Vec::new();
+    for track_id in placed {
         let file = conn
             .query_row(
                 "SELECT root_id, relative_path FROM local_tracks WHERE id = ?1",
-                params![placement.local_track_id],
+                params![track_id],
                 |row| {
                     Ok(PlacedFile {
-                        local_track_id: placement.local_track_id.clone(),
+                        local_track_id: track_id.to_owned(),
                         root_id: row.get(0)?,
                         relative_path: row.get(1)?,
                     })
@@ -600,6 +647,35 @@ pub fn confirm(
     {
         return Err(OperationError::Conflict(reasons::NOTHING_TO_CONFIRM));
     }
+    make_persons(tx, album_id, &before, &identity, actor, now)
+}
+
+/// A person's word on one of the album's files (a match by hand) makes the
+/// album's edition theirs, as "Looks right" does, whatever its source.
+/// `point` was taken before the change wrote anything; the edition's undo
+/// puts the album back to it.
+pub(super) fn confirm_for_match(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    point: &UndoPoint,
+    actor: &str,
+    now: f64,
+) -> Result<(), OperationError> {
+    let identity = point.0.identity.clone().unwrap_or_default();
+    make_persons(tx, album_id, &point.0, &identity, actor, now)
+}
+
+/// The writes of a confirmation: the album row and its indexed track rows
+/// become the person's, the match state goes, open reviews are settled,
+/// automatic management looks again, and `before` is kept as the undo.
+fn make_persons(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    before: &Snapshot,
+    identity: &PriorAlbumIdentity,
+    actor: &str,
+    now: f64,
+) -> Result<(), OperationError> {
     tx.execute(
         "UPDATE local_album_external_identities SET decision_source = 'manual', \
          selected_by_user_id = (SELECT id FROM auth_users WHERE id = ?2), selected_at = ?3, \
@@ -626,12 +702,12 @@ pub fn confirm(
         Some(actor),
         "edition_confirmed",
         album_id,
-        serde_json::to_value(&identity).unwrap_or_default(),
+        serde_json::to_value(identity).unwrap_or_default(),
         serde_json::json!({ "decision_source": "manual" }),
         "MATCH_CONFIRMED",
         now,
     )?;
-    keep_undo(tx, album_id, &before, &action, now)?;
+    keep_undo(tx, album_id, before, &action, now)?;
     bump_catalog(tx)?;
     Ok(())
 }

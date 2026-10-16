@@ -15,11 +15,11 @@ use super::models::{
     CandidateChoice, Control, EditionChoice, OperationDetail, OperationError, OperationJob,
     ReidentificationCandidate, ReidentifyInput, ReleaseSearch, UndoOutcome,
 };
-use super::plan::{self, EditionPlan};
+use super::plan::{self, EditionPlan, PlanReading};
 use super::reasons;
 use super::reidentify::{MAX_ATTEMPTS, RETRY_SECS, evaluation, unavailable};
 use super::store::{self, NewReidentification};
-use super::{choice, decisions, history, reviews};
+use super::{choice, decisions, hand_match, history, reviews};
 use crate::clock::now_unix;
 use crate::identify::models::IdentifyKind;
 use crate::identify::models::LocalAlbumFacts;
@@ -554,7 +554,19 @@ impl Operations {
         album_id: &str,
         raw_release: Option<&str>,
     ) -> Result<EditionPlan, OperationError> {
-        let (identity, indexed) = {
+        Ok(self.read_edition_plan(album_id, raw_release).await?.plan)
+    }
+
+    /// [`Self::edition_plan`] with the identity revision it was read at and
+    /// the files on it a person matched by hand. On the album's current
+    /// edition (or a release that answers to it), files whose stored
+    /// identity names one of its tracks keep that track.
+    pub async fn read_edition_plan(
+        &self,
+        album_id: &str,
+        raw_release: Option<&str>,
+    ) -> Result<PlanReading, OperationError> {
+        let (identity, revision, indexed, stored) = {
             let ops = self.clone();
             let album = album_id.to_owned();
             tokio::task::spawn_blocking(move || {
@@ -562,7 +574,9 @@ impl Operations {
                     let identity = album_identity_row(conn, &album)?;
                     Ok((
                         identity.map(|row| (row.release_mbid, row.release_group_mbid)),
+                        choice::identity_revision(conn, &album)?,
                         indexed_track_ids(conn, &album)?,
+                        hand_match::stored_placements(conn, &album)?,
                     ))
                 })
             })
@@ -580,14 +594,86 @@ impl Operations {
                 .ok_or(OperationError::Invalid(reasons::NO_EDITION_TO_PLAN))?,
         };
         let (facts, release, candidate) = self.scored(album_id, &release).await?;
-        Ok(plan::build(
+        let stored = match current.as_deref() {
+            Some(current) if release.answers_to(current.trim()) => {
+                hand_match::on_release(stored, &release)
+            }
+            _ => Vec::new(),
+        };
+        let (plan, matched_by_hand) = plan::build(
             &facts,
             &release,
             &candidate,
             &indexed,
-            current.as_deref(),
-            group.as_deref(),
-        ))
+            &stored,
+            (current.as_deref(), group.as_deref()),
+        );
+        Ok(PlanReading {
+            plan,
+            identity_revision: revision,
+            matched_by_hand,
+        })
+    }
+
+    /// Match one file of the album to a track of its edition by hand. The
+    /// album's identity revision is checked before MusicBrainz is asked for
+    /// the release and again when the match is written.
+    pub async fn match_file(
+        &self,
+        album_id: &str,
+        track_id: &str,
+        release_track_mbid: &str,
+        expected_identity_revision: i64,
+        actor: &str,
+    ) -> Result<(), OperationError> {
+        let release = {
+            let ops = self.clone();
+            let album = album_id.to_owned();
+            tokio::task::spawn_blocking(move || {
+                ops.read(|conn| hand_match::guard(conn, &album, expected_identity_revision))
+            })
+            .await
+            .map_err(|error| OperationError::Store(error.to_string()))??
+        };
+        let (_, release, candidate) = self.scored(album_id, &release).await?;
+        let ops = self.clone();
+        let (album, track, wanted, actor) = (
+            album_id.to_owned(),
+            track_id.to_owned(),
+            release_track_mbid.to_owned(),
+            actor.to_owned(),
+        );
+        tokio::task::spawn_blocking(move || {
+            let asked = hand_match::HandMatch {
+                album_id: &album,
+                track_id: &track,
+                release_track_mbid: &wanted,
+                expected_identity_revision,
+                actor: &actor,
+            };
+            ops.write(|tx| {
+                hand_match::match_file(
+                    tx,
+                    &asked,
+                    &release,
+                    &candidate,
+                    now_unix(),
+                    crate::clock::now_ms() as i64,
+                )
+            })
+        })
+        .await
+        .map_err(|error| OperationError::Store(error.to_string()))?
+    }
+
+    /// "Undo match" on one file the person matched by hand. Blocking.
+    pub fn unmatch_file(
+        &self,
+        album_id: &str,
+        track_id: &str,
+        actor: &str,
+    ) -> Result<(), OperationError> {
+        self.write(|tx| hand_match::unmatch_file(tx, album_id, track_id, actor, now_unix()))
     }
 
     /// "Let DroppedNeedle choose": hand the album's edition back to

@@ -15,6 +15,10 @@
 //!   for curators.
 //! - `POST /library/albums/{id}/edition/extras/remove` and `.../restore`:
 //!   move picked extras to the recycle bin, and put them back.
+//! - `PUT /library/albums/{id}/edition/files/{track_id}`: match one file
+//!   to a track of the album's edition by hand.
+//! - `DELETE /library/albums/{id}/edition/files/{track_id}`: undo that
+//!   match.
 //! - `GET /library/unconfirmed`: albums whose match waits for a look.
 //!
 //! Changing an edition is for curators (admins and trusted users), as
@@ -24,7 +28,7 @@ use axum::{
     Json, Router,
     extract::{Path, State},
     response::{IntoResponse as _, Response},
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
@@ -39,7 +43,7 @@ use crate::management::automatic::AutomaticWrites;
 use crate::management::service::Management;
 use crate::mutations::Mutations;
 use crate::operations::models::{EditionChoice, OperationError};
-use crate::operations::plan::{EditionPlan, FileFate};
+use crate::operations::plan::{FileFate, PlanReading};
 use crate::operations::reasons;
 use crate::operations::service::Operations;
 use crate::operations::status::{self, EditionStatus, WaitingAlbum};
@@ -81,6 +85,10 @@ pub fn edition_router() -> Router<LibrarySetup> {
         .route(
             "/library/albums/{album_id}/edition/extras/restore",
             post(restore_extras),
+        )
+        .route(
+            "/library/albums/{album_id}/edition/files/{track_id}",
+            put(match_edition_file).delete(unmatch_edition_file),
         )
         .route("/library/unconfirmed", get(list_unconfirmed))
 }
@@ -273,6 +281,9 @@ pub struct EditionPlanFileView {
     /// belongs to another edition and it has no recording ID. Absent
     /// otherwise.
     pub note: Option<ReasonView>,
+    /// A person matched this file to its edition track by hand, and the
+    /// match stands: "Undo match" can take it back.
+    pub matched_by_hand: bool,
 }
 
 /// What MusicBrainz says about the planned edition.
@@ -309,6 +320,9 @@ pub struct EditionPlanView {
     /// The edition belongs to the album's current release group (false
     /// for an album with none).
     pub same_album: bool,
+    /// The album identity's row revision the plan was read at, 0 when the
+    /// album has none. Matching a file by hand echoes it.
+    pub identity_revision: i64,
     pub edition: EditionFactsView,
     pub kept_count: usize,
     /// Edition tracks no file holds, including those a file is another
@@ -321,8 +335,13 @@ pub struct EditionPlanView {
     pub files: Vec<EditionPlanFileView>,
 }
 
-impl From<EditionPlan> for EditionPlanView {
-    fn from(plan: EditionPlan) -> Self {
+impl From<PlanReading> for EditionPlanView {
+    fn from(reading: PlanReading) -> Self {
+        let PlanReading {
+            plan,
+            identity_revision,
+            matched_by_hand,
+        } = reading;
         let count = |fate: FileFate| plan.files.iter().filter(|file| file.fate == fate).count();
         let (kept_count, duplicate_count, other_version_count, extra_count) = (
             count(FileFate::Keep),
@@ -339,6 +358,7 @@ impl From<EditionPlan> for EditionPlanView {
             other_version_count,
             extra_count,
             same_album: plan.same_album,
+            identity_revision,
             edition: EditionFactsView {
                 title: edition.title,
                 disambiguation: edition.disambiguation,
@@ -375,6 +395,7 @@ impl From<EditionPlan> for EditionPlanView {
                 .files
                 .into_iter()
                 .map(|file| EditionPlanFileView {
+                    matched_by_hand: matched_by_hand.contains(&file.local_track_id),
                     local_track_id: file.local_track_id,
                     title: file.title,
                     disc_number: file.disc,
@@ -719,9 +740,92 @@ pub async fn plan_edition(
         .into());
     }
     let plan = Operations::new(&state)
-        .edition_plan(&album_id, query.release_mbid.as_deref())
+        .read_edition_plan(&album_id, query.release_mbid.as_deref())
         .await?;
     Ok(Json(plan.into()))
+}
+
+/// Match a file by hand.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct MatchFileBody {
+    /// A track of the album's current edition that no file holds.
+    pub release_track_mbid: String,
+    /// The `identity_revision` the edition plan showed.
+    pub expected_identity_revision: i64,
+}
+
+/// Match one file to a track of the album's edition by hand.
+///
+/// A file the edition did not place goes on a track no file holds, and
+/// then counts as that track. On an edition the app picked, the edition
+/// becomes the person's, as "Looks right" makes it. No file is read or
+/// written.
+#[utoipa::path(
+    put,
+    tag = "library management",
+    path = "/api/v3/library/albums/{album_id}/edition/files/{track_id}",
+    params(
+        ("album_id" = String, Path, description = "Local album id"),
+        ("track_id" = String, Path, description = "Local track id of the file"),
+    ),
+    request_body = MatchFileBody,
+    responses(
+        (status = 200, description = "The album's edition", body = EditionStatusView),
+        (status = 400, description = "The album has no edition, or the track is not on it"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Curator role required"),
+        (status = 404, description = "Unknown album, or the file is not one of its files"),
+        (status = 409, description = "The edition changed (STALE_REVISION), the file is already on a track, another file holds the track, or the album is a custom edition"),
+        (status = 503, description = "MusicBrainz is not answering"),
+    )
+)]
+pub async fn match_edition_file(
+    State(state): State<LibrarySetup>,
+    caller: RequireCurator,
+    Path((album_id, track_id)): Path<(String, String)>,
+    ValidJson(body): ValidJson<MatchFileBody>,
+) -> Result<Json<EditionStatusView>, OperationsHttpError> {
+    Operations::new(&state)
+        .match_file(
+            &album_id,
+            &track_id,
+            &body.release_track_mbid,
+            body.expected_identity_revision,
+            &caller.0.user_id,
+        )
+        .await?;
+    Ok(Json(status_of(&state, &album_id).await?))
+}
+
+/// Undo a file's match by hand.
+///
+/// The file's identity goes back to what it was before the match. Plays
+/// and favorites that moved to it stay.
+#[utoipa::path(
+    delete,
+    tag = "library management",
+    path = "/api/v3/library/albums/{album_id}/edition/files/{track_id}",
+    params(
+        ("album_id" = String, Path, description = "Local album id"),
+        ("track_id" = String, Path, description = "Local track id of the file"),
+    ),
+    responses(
+        (status = 200, description = "The album's edition", body = EditionStatusView),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Curator role required"),
+        (status = 404, description = "Unknown album, not one of its files, or no match to undo"),
+        (status = 409, description = "The match changed since (STALE_REVISION), or the app has written the file since"),
+    )
+)]
+pub async fn unmatch_edition_file(
+    State(state): State<LibrarySetup>,
+    caller: RequireCurator,
+    Path((album_id, track_id)): Path<(String, String)>,
+) -> Result<Json<EditionStatusView>, OperationsHttpError> {
+    let ops = Operations::new(&state);
+    let (album, track, user) = (album_id.clone(), track_id, caller.0.user_id);
+    blocking(move || ops.unmatch_file(&album, &track, &user)).await?;
+    Ok(Json(status_of(&state, &album_id).await?))
 }
 
 /// Extra files to move to the recycle bin.

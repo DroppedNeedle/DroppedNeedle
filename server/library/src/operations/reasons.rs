@@ -183,6 +183,48 @@ pub const NO_MATCH_TO_CONFIRM: Reason = reason(
     "Pick an edition for it instead.",
 );
 
+// Matching one file to an edition track by hand.
+pub const FILE_NOT_ON_ALBUM: Reason = reason(
+    "FILE_NOT_ON_ALBUM",
+    "That file is not one of this album's files.",
+    "Reload the album and try again.",
+);
+pub const TRACK_NOT_ON_EDITION: Reason = reason(
+    "TRACK_NOT_ON_EDITION",
+    "That track is not on this album's edition.",
+    "Reload the album and pick one of its tracks.",
+);
+pub const FILE_ALREADY_PLACED: Reason = reason(
+    "FILE_ALREADY_PLACED",
+    "This file already sits on a track of this edition.",
+    "If it is on the wrong track and you matched it by hand, undo that match first.",
+);
+pub const EDITION_TRACK_TAKEN: Reason = reason(
+    "EDITION_TRACK_TAKEN",
+    "Another of this album's files already sits on that track.",
+    "Pick a track no file holds.",
+);
+pub const CUSTOM_EDITION_KEEPS_FILES: Reason = reason(
+    "CUSTOM_EDITION_KEEPS_FILES",
+    "This album is a custom edition: its files are kept as they are, not matched to a MusicBrainz edition.",
+    "Choose a MusicBrainz edition first.",
+);
+pub const NO_HAND_MATCH: Reason = reason(
+    "NO_HAND_MATCH",
+    "This file has no match of yours to undo.",
+    "Nothing to do.",
+);
+pub const HAND_MATCH_STALE: Reason = reason(
+    STALE,
+    "This file's match changed after you made it, so undoing it would bring back an outdated match.",
+    "Reload the album.",
+);
+pub const HAND_MATCH_WRITTEN: Reason = reason(
+    "HAND_MATCH_WRITTEN",
+    "DroppedNeedle has written this track's tags to the file since you matched it, so a scan would put it back on the track.",
+    "Undo that tag write first, then undo the match.",
+);
+
 // Notes on one planned file.
 pub const TRACK_ID_CORRECTED: Reason = reason(
     "TRACK_ID_CORRECTED",
@@ -192,7 +234,7 @@ pub const TRACK_ID_CORRECTED: Reason = reason(
 pub const TRACK_ID_ELSEWHERE: Reason = reason(
     "TRACK_ID_ELSEWHERE",
     "This file names this edition, but its track ID belongs to another edition and it has no recording ID to match it by.",
-    "Fix the file's MusicBrainz tags and rescan, or keep it as an extra.",
+    "Match it to its track, fix its MusicBrainz tags and rescan, or keep it as an extra.",
 );
 
 // A custom edition cannot be sealed.

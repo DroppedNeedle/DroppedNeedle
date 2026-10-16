@@ -16,6 +16,7 @@
 pub mod choice;
 pub mod control;
 pub mod decisions;
+mod hand_match;
 pub mod history;
 pub mod models;
 pub mod plan;

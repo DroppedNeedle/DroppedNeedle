@@ -647,6 +647,8 @@ use droppedneedle_plugins::{
         droppedneedle_library::http::edition::plan_edition,
         droppedneedle_library::http::edition::remove_extras,
         droppedneedle_library::http::edition::restore_extras,
+        droppedneedle_library::http::edition::match_edition_file,
+        droppedneedle_library::http::edition::unmatch_edition_file,
         droppedneedle_library::http::edition::list_unconfirmed,
         droppedneedle_library::http::history::get_album_history,
         crate::admin::handlers::list_backups,

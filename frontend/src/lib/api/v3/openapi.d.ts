@@ -3223,6 +3223,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/albums/{album_id}/edition/files/{track_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Match one file to a track of the album's edition by hand.
+         * @description A file the edition did not place goes on a track no file holds, and
+         *     then counts as that track. On an edition the app picked, the edition
+         *     becomes the person's, as "Looks right" makes it. No file is read or
+         *     written.
+         */
+        put: operations["match_edition_file"];
+        post?: never;
+        /**
+         * Undo a file's match by hand.
+         * @description The file's identity goes back to what it was before the match. Plays
+         *     and favorites that moved to it stay.
+         */
+        delete: operations["unmatch_edition_file"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/albums/{album_id}/edition/leave-unmanaged": {
         parameters: {
             query?: never;
@@ -13735,6 +13763,11 @@ export interface components {
              */
             length_ms?: number | null;
             local_track_id: string;
+            /**
+             * @description A person matched this file to its edition track by hand, and the
+             *     match stands: "Undo match" can take it back.
+             */
+            matched_by_hand: boolean;
             note?: null | components["schemas"]["ReasonView"];
             title: string;
             /** Format: int32 */
@@ -13762,6 +13795,12 @@ export interface components {
             edition: components["schemas"]["EditionFactsView"];
             extra_count: number;
             files: components["schemas"]["EditionPlanFileView"][];
+            /**
+             * Format: int64
+             * @description The album identity's row revision the plan was read at, 0 when the
+             *     album has none. Matching a file by hand echoes it.
+             */
+            identity_revision: number;
             /** @description The edition is already the album's edition. */
             is_current: boolean;
             kept_count: number;
@@ -17462,6 +17501,16 @@ export interface components {
             /** Format: int64 */
             expected_operation_row_revision: number;
             idempotency_key: string;
+        };
+        /** @description Match a file by hand. */
+        MatchFileBody: {
+            /**
+             * Format: int64
+             * @description The `identity_revision` the edition plan showed.
+             */
+            expected_identity_revision: number;
+            /** @description A track of the album's current edition that no file holds. */
+            release_track_mbid: string;
         };
         /** @description MBID match result: the remote album behind a MusicBrainz id. */
         MatchView: {
@@ -30029,6 +30078,130 @@ export interface operations {
                 content?: never;
             };
             /** @description Another file now sits at an old path; nothing was put back */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    match_edition_file: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+                /** @description Local track id of the file */
+                track_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MatchFileBody"];
+            };
+        };
+        responses: {
+            /** @description The album's edition */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionStatusView"];
+                };
+            };
+            /** @description The album has no edition, or the track is not on it */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album, or the file is not one of its files */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The edition changed (STALE_REVISION), the file is already on a track, another file holds the track, or the album is a custom edition */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description MusicBrainz is not answering */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    unmatch_edition_file: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+                /** @description Local track id of the file */
+                track_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The album's edition */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionStatusView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album, not one of its files, or no match to undo */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The match changed since (STALE_REVISION), or the app has written the file since */
             409: {
                 headers: {
                     [name: string]: unknown;

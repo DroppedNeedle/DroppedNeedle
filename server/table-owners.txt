@@ -190,6 +190,7 @@ library_scan_mounts
 library_scan_run_scopes
 library_scan_runs
 library_scan_unjudged_tracks
+library_track_hand_matches
 library_track_management_identity
 library_track_management_state
 library_work_control

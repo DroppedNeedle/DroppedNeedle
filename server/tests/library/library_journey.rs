@@ -16254,3 +16254,679 @@ async fn a_custom_edition_replaced_by_hand_is_merged_by_a_person() {
     managed.worker_looks().await;
     assert_eq!(managed.bytes(&new), bytes, "nothing written");
 }
+
+// ---------------------------------------------------------------------------
+// A file matched to an edition track by hand.
+// ---------------------------------------------------------------------------
+
+/// The recording of the third track on the hand-match album's edition.
+const THIRD_RECORDING: &str = "c3c3c3c3-3333-4333-8333-333333333333";
+
+/// A three-track album whose third file went missing and whose new file
+/// nothing places.
+struct HandMatchAlbum {
+    album: String,
+    /// The release the files name, three tracks long.
+    fit: Release,
+    /// The files of tracks 1 and 2, and the third track's file that went.
+    tracks: Vec<String>,
+    /// The file that came instead: no recording or track id, an odd title.
+    odd: String,
+}
+
+/// A three-file album in `music/{folder}`, identified as the release its
+/// tags name and chosen by the owner. A listener plays and stars its third
+/// track; then that file goes, and a file with the album's release ids but
+/// no recording or track id and an odd title comes in its place.
+async fn hand_match_album(rig: &Rig, folder: &str) -> HandMatchAlbum {
+    use droppedneedle_library::tags::TagField;
+    use droppedneedle_library::tags::save::{TagEdit, save_tags};
+
+    let app = &rig.app;
+    let music = app.config.root_app_dir.join("music");
+    plant(&music, &format!("{folder}/01.flac"), "flac_full_01.flac");
+    plant(&music, &format!("{folder}/02.flac"), "flac_full_02.flac");
+    let third = plant(&music, &format!("{folder}/03.flac"), "flac_full_02.flac");
+    save_tags(
+        &third,
+        &[
+            TagEdit::verbatim(TagField::Title, vec!["Track 3".to_owned()]),
+            TagEdit::verbatim(TagField::TrackNumber, vec!["3".to_owned()]),
+            TagEdit::verbatim(
+                TagField::MusicBrainzRecordingId,
+                vec![THIRD_RECORDING.to_owned()],
+            ),
+            TagEdit::verbatim(TagField::MusicBrainzReleaseTrackId, Vec::new()),
+        ],
+    )
+    .expect("third track tagged");
+    let paused_at = rig.pause_identification().await;
+    app.add_library_folder("music", &music).await;
+    let tracks: Vec<String> = (1..=3)
+        .map(|number| {
+            rig.scan_store
+                .track_at("music", &format!("{folder}/{number:02}.flac"))
+                .expect("track indexed")
+        })
+        .collect();
+    let album = rig.scan_store.album_for_track(&tracks[0]).expect("album");
+    for track in &tracks {
+        assert_eq!(rig.scan_store.album_for_track(track).as_ref(), Some(&album));
+    }
+    let fit = tagged_release(&rig.identify_store, &album);
+    assert_eq!(fit.tracks.len(), 3);
+    rig.identify.set_recall(RecallResult {
+        releases: vec![fit.clone()],
+        ..RecallResult::default()
+    });
+    rig.resume_identification(paused_at).await;
+    rig.identified(1).await;
+    let auth = app.login_admin().await;
+    let (status, body) = app
+        .call(
+            "PUT",
+            &format!("/api/v3/library/albums/{album}/edition"),
+            &[("authorization", auth.as_str())],
+            Some(json!({"release_mbid": fit.id})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let listener = app.login_user("listener").await.user_id;
+    app.db()
+        .execute_batch(&format!(
+            "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+             VALUES ('{listener}', 'track', '{}', 0); \
+             INSERT INTO library_play_history (id, user_id, local_track_id, track_name, \
+             artist_name, played_at) VALUES ('play-3', '{listener}', '{}', 'Track 3', \
+             'Artist', '2026-01-01T00:00:00Z');",
+            tracks[2], tracks[2]
+        ))
+        .expect("play and star seeded");
+
+    std::fs::remove_file(&third).expect("third file goes");
+    let odd = plant(&music, &format!("{folder}/odd.flac"), "flac_full_02.flac");
+    save_tags(
+        &odd,
+        &[
+            TagEdit::verbatim(TagField::Title, vec!["Untitled Take".to_owned()]),
+            TagEdit::verbatim(TagField::TrackNumber, vec!["9".to_owned()]),
+            TagEdit::verbatim(TagField::MusicBrainzRecordingId, Vec::new()),
+            TagEdit::verbatim(TagField::MusicBrainzReleaseTrackId, Vec::new()),
+        ],
+    )
+    .expect("odd file tagged");
+    app.scan_library().await;
+    let odd = rig
+        .scan_store
+        .track_at("music", &format!("{folder}/odd.flac"))
+        .expect("odd file indexed");
+    assert_eq!(rig.scan_store.album_for_track(&odd).as_ref(), Some(&album));
+    let db = app.db();
+    app.until("the album settles after the scan", || {
+        let busy: i64 = db
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM library_identify_jobs \
+                 WHERE state IN ('queued', 'running')) \
+                 + (SELECT COUNT(*) FROM library_edition_remap_queue)",
+                [],
+                |row| row.get(0),
+            )
+            .expect("queues read");
+        async move { (busy == 0).then_some(()) }
+    })
+    .await;
+    HandMatchAlbum {
+        album,
+        fit,
+        tracks,
+        odd,
+    }
+}
+
+/// One track identity row, if the file has one.
+fn identity_of(db: &rusqlite::Connection, track: &str) -> Option<TrackRow> {
+    use rusqlite::OptionalExtension as _;
+    db.query_row(
+        "SELECT recording_mbid, release_mbid, release_track_mbid, medium_position, \
+         release_track_position, decision_source FROM local_track_external_identities \
+         WHERE local_track_id = ?1",
+        [track],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        },
+    )
+    .optional()
+    .expect("identity reads")
+}
+
+/// The album's identity row: source, chooser and revision.
+fn album_choice(db: &rusqlite::Connection, album: &str) -> (String, Option<String>, i64) {
+    db.query_row(
+        "SELECT decision_source, selected_by_user_id, row_revision \
+         FROM local_album_external_identities WHERE local_album_id = ?1",
+        [album],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )
+    .expect("album identity reads")
+}
+
+fn hand_match_row(db: &rusqlite::Connection, track: &str) -> Option<(String, String, bool)> {
+    use rusqlite::OptionalExtension as _;
+    db.query_row(
+        "SELECT release_mbid, release_track_mbid, matched_by_user_id IS NOT NULL \
+         FROM library_track_hand_matches WHERE local_track_id = ?1",
+        [track],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )
+    .optional()
+    .expect("hand matches read")
+}
+
+fn album_match_state(db: &rusqlite::Connection, album: &str) -> Option<String> {
+    use rusqlite::OptionalExtension as _;
+    db.query_row(
+        "SELECT state FROM library_album_match_state WHERE local_album_id = ?1",
+        [album],
+        |row| row.get(0),
+    )
+    .optional()
+    .expect("match state reads")
+}
+
+/// One file of a plan, by id.
+fn plan_file<'a>(plan: &'a Value, track: &str) -> &'a Value {
+    plan["files"]
+        .as_array()
+        .expect("files")
+        .iter()
+        .find(|file| file["local_track_id"] == json!(track))
+        .expect("file in the plan")
+}
+
+/// A curator matches a file nothing could place to the edition track whose
+/// file went missing. The file then sits on that track as the person's
+/// (the plan shows it matched by hand, the recycle bin refuses it), the
+/// missing track's play and star move to it, the album is queued for
+/// management and is not marked taken over. A scan and choosing the same
+/// edition again keep the match. "Undo match" puts the file back as it
+/// was; the play and star stay. On an edition the app picked, or one
+/// carried from v2, the match makes the edition the person's, and the
+/// edition's own undo puts the album and the file back.
+#[tokio::test]
+async fn a_file_matched_by_hand_counts_as_its_track() {
+    let rig = Rig::start("lib-hand-match").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let h = hand_match_album(&rig, "album-h").await;
+    let db = app.db();
+    let album = &h.album;
+    let plan_uri = format!("/api/v3/library/albums/{album}/edition/plan");
+    let file_uri = format!("/api/v3/library/albums/{album}/edition/files/{}", h.odd);
+    let third = h.fit.tracks[2].id.clone();
+    let plan = |uri: String| async move {
+        let (status, body) = app.call("GET", &uri, &headers, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body
+    };
+
+    let before = plan(plan_uri.clone()).await;
+    assert_ne!(
+        plan_file(&before, &h.odd)["fate"],
+        json!("keep"),
+        "{before}"
+    );
+    assert_eq!(
+        before["tracks"][2]["local_track_id"],
+        Value::Null,
+        "{before}"
+    );
+    let prior = identity_of(&db, &h.odd);
+    let release: String = db
+        .query_row(
+            "SELECT release_mbid FROM local_album_external_identities WHERE local_album_id = ?1",
+            [album],
+            |row| row.get(0),
+        )
+        .expect("album release");
+    db.execute(
+        "DELETE FROM library_management_automatic_queue WHERE local_album_id = ?1",
+        [album],
+    )
+    .expect("queue cleared");
+    let carries = continuations(&db);
+
+    let (status, body) = app
+        .call(
+            "PUT",
+            &file_uri,
+            &headers,
+            Some(json!({
+                "release_track_mbid": third,
+                "expected_identity_revision": before["identity_revision"],
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let matched = identity_of(&db, &h.odd);
+    assert_eq!(
+        matched,
+        Some((
+            THIRD_RECORDING.to_owned(),
+            Some(release.clone()),
+            Some(third.clone()),
+            Some(1),
+            Some(3),
+            "manual".to_owned(),
+        ))
+    );
+    assert_eq!(
+        hand_match_row(&db, &h.odd),
+        Some((release.clone(), third.clone(), true))
+    );
+    let after = plan(plan_uri.clone()).await;
+    let file = plan_file(&after, &h.odd);
+    assert_eq!(
+        (
+            &file["fate"],
+            &file["edition_position"],
+            &file["matched_by_hand"]
+        ),
+        (&json!("keep"), &json!(3), &json!(true)),
+        "{after}"
+    );
+    assert_eq!(after["missing_count"], json!(0), "{after}");
+    assert_eq!(holdings(&db, &h.odd)[..2], [1, 1], "play and star moved");
+    assert_eq!(holdings(&db, &h.tracks[2])[..2], [0, 0]);
+    assert_eq!(continuations(&db), carries + 1);
+    let count = |sql: &str| -> i64 {
+        db.query_row(sql, [album], |row| row.get(0))
+            .expect("count reads")
+    };
+    assert_eq!(
+        count("SELECT COUNT(*) FROM library_management_automatic_queue WHERE local_album_id = ?1"),
+        1,
+        "queued for management"
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM library_album_takeovers WHERE local_album_id = ?1"),
+        0,
+        "not taken over"
+    );
+    assert_eq!(catalog_actions(&db, album, "track_matched"), 1);
+
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/albums/{album}/edition/extras/remove"),
+            &headers,
+            Some(json!({"track_ids": [h.odd]})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], json!("FILE_KEEPS_ITS_PLACE"));
+
+    // A scan, then the same edition chosen again: the match stays.
+    app.scan_library().await;
+    let (status, body) = app
+        .call(
+            "PUT",
+            &format!("/api/v3/library/albums/{album}/edition"),
+            &headers,
+            Some(json!({"release_mbid": h.fit.id})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(identity_of(&db, &h.odd), matched);
+    assert_eq!(
+        plan_file(&plan(plan_uri.clone()).await, &h.odd)["matched_by_hand"],
+        json!(true)
+    );
+
+    // Undo match: the file is back as it was; the play and star stay.
+    let (status, body) = app.call("DELETE", &file_uri, &headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(identity_of(&db, &h.odd), prior);
+    assert_eq!(hand_match_row(&db, &h.odd), None);
+    let undone = plan(plan_uri.clone()).await;
+    let file = plan_file(&undone, &h.odd);
+    assert_ne!(file["fate"], json!("keep"), "{undone}");
+    assert_eq!(file["matched_by_hand"], json!(false));
+    assert_eq!(holdings(&db, &h.odd)[..2], [1, 1], "play and star stay");
+    let (status, body) = app.call("DELETE", &file_uri, &headers, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"]["code"], json!("NO_HAND_MATCH"));
+
+    // An edition the app picked, left as a best guess.
+    db.execute_batch(&format!(
+        "UPDATE local_album_external_identities SET decision_source = 'automatic', \
+         selected_by_user_id = NULL, row_revision = row_revision + 1 \
+         WHERE local_album_id = '{album}'; \
+         UPDATE local_track_external_identities SET decision_source = 'automatic' \
+         WHERE local_track_id IN (SELECT id FROM local_tracks WHERE local_album_id = '{album}'); \
+         INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+         release_mbid, candidates_json, updated_at) \
+         VALUES ('{album}', 'unconfirmed', 'CLOSE_CALL', '{release}', '[]', 1);"
+    ))
+    .expect("the app's best guess");
+    let guessed = album_choice(&db, album);
+    let before_guess = identity_of(&db, &h.odd);
+    let revision = plan(plan_uri.clone()).await["identity_revision"].clone();
+    let (status, body) = app
+        .call(
+            "PUT",
+            &file_uri,
+            &headers,
+            Some(json!({"release_track_mbid": third, "expected_identity_revision": revision})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["state"], json!("chosen"), "{body}");
+    let chosen = album_choice(&db, album);
+    assert_eq!(chosen.0, "manual");
+    assert!(chosen.1.is_some(), "chosen by the curator");
+    assert_eq!(album_match_state(&db, album), None);
+    assert_eq!(catalog_actions(&db, album, "edition_confirmed"), 1);
+
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/albums/{album}/edition/undo"),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let back = album_choice(&db, album);
+    assert_eq!((back.0.as_str(), &back.1), ("automatic", &guessed.1));
+    assert_eq!(
+        album_match_state(&db, album).as_deref(),
+        Some("unconfirmed")
+    );
+    assert_eq!(identity_of(&db, &h.odd), before_guess);
+    assert_eq!(
+        plan_file(&plan(plan_uri.clone()).await, &h.odd)["matched_by_hand"],
+        json!(false)
+    );
+
+    // An edition carried from v2.
+    db.execute_batch(&format!(
+        "UPDATE local_album_external_identities SET decision_source = 'legacy_import', \
+         selected_by_user_id = NULL, row_revision = row_revision + 1 \
+         WHERE local_album_id = '{album}'; \
+         DELETE FROM library_album_match_state WHERE local_album_id = '{album}';"
+    ))
+    .expect("v2's edition");
+    let revision = plan(plan_uri.clone()).await["identity_revision"].clone();
+    let (status, body) = app
+        .call(
+            "PUT",
+            &file_uri,
+            &headers,
+            Some(json!({"release_track_mbid": third, "expected_identity_revision": revision})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let carried = album_choice(&db, album);
+    assert_eq!(carried.0, "manual");
+    assert!(carried.1.is_some(), "chosen by the curator");
+    rig.stop().await;
+}
+
+/// What a refused match must leave alone: the album's identity, its files'
+/// rows, the record of matches, the takeover mark and the audit rows.
+fn hand_match_world(db: &rusqlite::Connection, album: &str) -> (String, Vec<String>, [i64; 3]) {
+    let identity: String = db
+        .query_row(
+            "SELECT decision_source || '|' || COALESCE(release_mbid, '') || '|' || row_revision \
+             FROM local_album_external_identities WHERE local_album_id = ?1",
+            [album],
+            |row| row.get(0),
+        )
+        .expect("album identity reads");
+    let rows = db
+        .prepare(
+            "SELECT t.id || '|' || COALESCE(i.release_mbid, '') || '|' || \
+             COALESCE(i.release_track_mbid, '') || '|' || COALESCE(i.decision_source, '') || \
+             '|' || COALESCE(i.row_revision, 0) FROM local_tracks t \
+             LEFT JOIN local_track_external_identities i ON i.local_track_id = t.id \
+             WHERE t.local_album_id = ?1 ORDER BY t.id",
+        )
+        .expect("rows prepare")
+        .query_map([album], |row| row.get(0))
+        .expect("rows read")
+        .collect::<rusqlite::Result<Vec<String>>>()
+        .expect("rows decode");
+    let counts = [
+        "SELECT COUNT(*) FROM library_track_hand_matches h \
+         JOIN local_tracks t ON t.id = h.local_track_id WHERE t.local_album_id = ?1",
+        "SELECT COUNT(*) FROM library_album_takeovers WHERE local_album_id = ?1",
+        "SELECT COUNT(*) FROM library_catalog_actions WHERE local_album_id = ?1",
+    ]
+    .map(|sql| {
+        db.query_row(sql, [album], |row| row.get(0))
+            .expect("counts read")
+    });
+    (identity, rows, counts)
+}
+
+/// Every refusal of a match by hand, each with nothing changed: a stale
+/// revision; a track another file holds by its stored row, and its twin, a
+/// track the matcher places another file on that has no stored row; a file
+/// already on a track; another album's file and a missing file; a track
+/// not on the edition; a custom edition; "Leave unmanaged". A track only a
+/// missing file holds can be taken. Its undo is refused once another
+/// edition was chosen (the record stays), and once the app wrote the file.
+#[tokio::test]
+async fn a_match_by_hand_is_refused_with_nothing_changed() {
+    let rig = Rig::start("lib-hand-match-refusals").await;
+    let app = &rig.app;
+    let auth = app.login_admin().await;
+    let headers = [("authorization", auth.as_str())];
+    let h = hand_match_album(&rig, "album-r").await;
+    let music = app.config.root_app_dir.join("music");
+    plant(&music, "elsewhere/01.flac", "flac_cjk_01.flac");
+    app.scan_library().await;
+    let elsewhere = rig
+        .scan_store
+        .track_at("music", "elsewhere/01.flac")
+        .expect("another album's file");
+    assert_ne!(
+        rig.scan_store.album_for_track(&elsewhere).as_ref(),
+        Some(&h.album)
+    );
+    let db = app.db();
+    let album = &h.album;
+    let edition = format!("/api/v3/library/albums/{album}/edition");
+    let revision = || async {
+        let (status, body) = app.call("GET", &edition, &headers, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["identity_revision"].as_i64().expect("revision")
+    };
+    let put = |track: String, release_track: String, expected: i64| async move {
+        app.call(
+            "PUT",
+            &format!("/api/v3/library/albums/{album}/edition/files/{track}"),
+            &headers,
+            Some(json!({
+                "release_track_mbid": release_track,
+                "expected_identity_revision": expected,
+            })),
+        )
+        .await
+    };
+    let tracks = |n: usize| h.fit.tracks[n].id.clone();
+    // The second file loses its stored row: the matcher still places it.
+    db.execute(
+        "DELETE FROM local_track_external_identities WHERE local_track_id = ?1",
+        [&h.tracks[1]],
+    )
+    .expect("second file's row gone");
+
+    let current = revision().await;
+    let refusals: [(&str, String, String, i64, StatusCode, &str); 7] = [
+        (
+            "a stale revision",
+            h.odd.clone(),
+            tracks(2),
+            current - 1,
+            StatusCode::CONFLICT,
+            "STALE_REVISION",
+        ),
+        (
+            "a track another file holds",
+            h.odd.clone(),
+            tracks(0),
+            current,
+            StatusCode::CONFLICT,
+            "EDITION_TRACK_TAKEN",
+        ),
+        (
+            "a track the matcher gives another file",
+            h.odd.clone(),
+            tracks(1),
+            current,
+            StatusCode::CONFLICT,
+            "EDITION_TRACK_TAKEN",
+        ),
+        (
+            "a file already on a track",
+            h.tracks[0].clone(),
+            tracks(2),
+            current,
+            StatusCode::CONFLICT,
+            "FILE_ALREADY_PLACED",
+        ),
+        (
+            "another album's file",
+            elsewhere.clone(),
+            tracks(2),
+            current,
+            StatusCode::NOT_FOUND,
+            "FILE_NOT_ON_ALBUM",
+        ),
+        (
+            "a missing file",
+            h.tracks[2].clone(),
+            tracks(2),
+            current,
+            StatusCode::NOT_FOUND,
+            "FILE_NOT_ON_ALBUM",
+        ),
+        (
+            "a track not on the edition",
+            h.odd.clone(),
+            "not-a-track".to_owned(),
+            current,
+            StatusCode::BAD_REQUEST,
+            "TRACK_NOT_ON_EDITION",
+        ),
+    ];
+    for (case, track, release_track, expected, want, code) in refusals {
+        let world = hand_match_world(&db, album);
+        let (status, body) = put(track, release_track, expected).await;
+        assert_eq!(status, want, "{case}: {body}");
+        assert_eq!(body["error"]["code"], json!(code), "{case}: {body}");
+        assert_eq!(
+            hand_match_world(&db, album),
+            world,
+            "{case}: nothing changed"
+        );
+    }
+
+    // A custom edition, then "Leave unmanaged": each undone afterwards.
+    for (route, want, code) in [
+        ("custom", StatusCode::CONFLICT, "CUSTOM_EDITION_KEEPS_FILES"),
+        (
+            "leave-unmanaged",
+            StatusCode::BAD_REQUEST,
+            "NO_EDITION_TO_PLAN",
+        ),
+    ] {
+        let body = json!({
+            "release_mbid": h.fit.id,
+            "expected_identity_revision": revision().await,
+        });
+        let (status, sealed) = app
+            .call("POST", &format!("{edition}/{route}"), &headers, Some(body))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{route}: {sealed}");
+        let world = hand_match_world(&db, album);
+        let (status, refused) = put(h.odd.clone(), tracks(2), revision().await).await;
+        assert_eq!(status, want, "{route}: {refused}");
+        assert_eq!(refused["error"]["code"], json!(code), "{route}: {refused}");
+        assert_eq!(
+            hand_match_world(&db, album),
+            world,
+            "{route}: nothing changed"
+        );
+        let (status, undone) = app
+            .call("POST", &format!("{edition}/undo"), &headers, None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{route}: {undone}");
+    }
+
+    // A track only a missing file holds is free.
+    let (status, body) = put(h.odd.clone(), tracks(2), revision().await).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let file_uri = format!("{edition}/files/{}", h.odd);
+
+    // Another edition chosen since: the match no longer stands.
+    let mut other = h.fit.clone();
+    other.id = REL_2.to_owned();
+    rig.identify.set_recall(RecallResult {
+        releases: vec![h.fit.clone(), other.clone()],
+        ..RecallResult::default()
+    });
+    let (status, body) = app
+        .call(
+            "PUT",
+            &edition,
+            &headers,
+            Some(json!({"release_mbid": other.id})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let world = hand_match_world(&db, album);
+    let (status, body) = app.call("DELETE", &file_uri, &headers, None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], json!("STALE_REVISION"));
+    assert_eq!(hand_match_world(&db, album), world, "nothing changed");
+    assert!(hand_match_row(&db, &h.odd).is_some(), "the record stays");
+
+    // Back to the edition with the match, then the app writes the file.
+    let (status, body) = app
+        .call("POST", &format!("{edition}/undo"), &headers, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        plan_file(
+            &app.call("GET", &format!("{edition}/plan"), &headers, None)
+                .await
+                .1,
+            &h.odd
+        )["matched_by_hand"],
+        json!(true)
+    );
+    db.execute(
+        "INSERT INTO library_track_management_state (local_track_id, last_managed_at, \
+         last_outcome, written_sha256) VALUES (?1, CAST(strftime('%s', 'now') AS REAL) + 1, \
+         'succeeded', 'written')",
+        [&h.odd],
+    )
+    .expect("a managed write of the file");
+    let world = hand_match_world(&db, album);
+    let (status, body) = app.call("DELETE", &file_uri, &headers, None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], json!("HAND_MATCH_WRITTEN"));
+    assert_eq!(hand_match_world(&db, album), world, "nothing changed");
+    rig.stop().await;
+}

@@ -1,9 +1,13 @@
 //! What converting an album to one edition would do, worked out before
 //! anything changes.
 //!
-//! The plan lines the album's files up against the edition's tracklist
-//! with the same placement a choice writes ([`super::choice::place`]):
-//! each file keeps its place on an edition track, is a second copy of a
+//! On the album's current edition, a file whose stored identity names a
+//! track of it keeps that track first (a person's match by hand before any
+//! other), so the plan shows what automatic management writes from. The
+//! rest are lined up against the edition's tracklist with the same
+//! placement a choice writes ([`super::choice::place`]). Other editions
+//! are lined up by that placement alone. Each file keeps its place on an
+//! edition track, is a second copy of a
 //! song the edition already has a file for, is another version of a track
 //! no file took (same title and artist, but the matcher would not place
 //! it), or is an extra the edition has no track for. Edition tracks no
@@ -125,6 +129,104 @@ impl EditionFacts {
     }
 }
 
+/// A file of the album whose stored identity names a release track.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredPlacement {
+    pub local_track_id: String,
+    pub release_mbid: Option<String>,
+    pub release_track_mbid: String,
+    /// A person matched the file to this track by hand, and the match
+    /// stands.
+    pub by_hand: bool,
+}
+
+/// The plan as a person reads it: the plan, the album identity revision
+/// it was read at, and the files a person matched by hand.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlanReading {
+    pub plan: EditionPlan,
+    pub identity_revision: i64,
+    pub matched_by_hand: Vec<String>,
+}
+
+/// One file on one edition track: the index into `release.tracks`, the
+/// (disc, position) it keeps, and whether a person matched it by hand.
+pub(super) struct Seat {
+    pub track: usize,
+    pub local_track_id: String,
+    pub spot: (u32, u32),
+    pub by_hand: bool,
+}
+
+/// Seat the album's indexed files on `release`: the stored placements
+/// first (by hand before the rest, then by file id), each skipped when the
+/// release has no such track or another file took it; then the matcher
+/// places the files left on the tracks still free.
+pub(super) fn seat(
+    release: &Release,
+    candidate: &ReidentificationCandidate,
+    indexed: &[String],
+    stored: &[StoredPlacement],
+) -> Vec<Seat> {
+    let mut seats: Vec<Seat> = Vec::new();
+    let mut ordered: Vec<&StoredPlacement> = stored
+        .iter()
+        .filter(|row| indexed.contains(&row.local_track_id))
+        .collect();
+    ordered.sort_by(|a, b| {
+        b.by_hand
+            .cmp(&a.by_hand)
+            .then_with(|| a.local_track_id.cmp(&b.local_track_id))
+    });
+    for row in ordered {
+        let Some(index) = release
+            .tracks
+            .iter()
+            .position(|track| track.id.eq_ignore_ascii_case(&row.release_track_mbid))
+        else {
+            continue;
+        };
+        if seats
+            .iter()
+            .any(|seat| seat.track == index || seat.local_track_id == row.local_track_id)
+        {
+            continue;
+        }
+        let track = &release.tracks[index];
+        seats.push(Seat {
+            track: index,
+            local_track_id: row.local_track_id.clone(),
+            spot: (track.disc, track.position),
+            by_hand: row.by_hand,
+        });
+    }
+    let free: Vec<String> = indexed
+        .iter()
+        .filter(|file| !seats.iter().any(|seat| seat.local_track_id == **file))
+        .cloned()
+        .collect();
+    let (placed, _) = place(&free, candidate);
+    for placement in placed {
+        let Some(index) = release
+            .tracks
+            .iter()
+            .position(|track| track.id.eq_ignore_ascii_case(&placement.release_track_mbid))
+        else {
+            continue;
+        };
+        if seats.iter().any(|seat| seat.track == index) {
+            continue;
+        }
+        seats.push(Seat {
+            track: index,
+            local_track_id: placement.local_track_id,
+            spot: (placement.disc, placement.position),
+            by_hand: false,
+        });
+    }
+    seats
+}
+
 /// The whole plan for one album and one edition.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EditionPlan {
@@ -157,16 +259,20 @@ impl EditionPlan {
     }
 }
 
-/// Line the album's indexed files up against `release`.
+/// Line the album's indexed files up against `release`, the files in
+/// `stored` first (given only for the album's current edition). `current`
+/// is the album's release and release group. Returns the plan and the
+/// files on it a person matched by hand.
 pub fn build(
     facts: &LocalAlbumFacts,
     release: &Release,
     candidate: &ReidentificationCandidate,
     indexed: &[String],
-    current_release: Option<&str>,
-    current_group: Option<&str>,
-) -> EditionPlan {
-    let (placed, _) = place(indexed, candidate);
+    stored: &[StoredPlacement],
+    current: (Option<&str>, Option<&str>),
+) -> (EditionPlan, Vec<String>) {
+    let (current_release, current_group) = current;
+    let seats = seat(release, candidate, indexed, stored);
     let mut tracks: Vec<PlanTrack> = release
         .tracks
         .iter()
@@ -181,15 +287,9 @@ pub fn build(
         })
         .collect();
     let mut kept: HashSet<&str> = HashSet::new();
-    for placement in &placed {
-        if let Some(track) = tracks.iter_mut().find(|track| {
-            track
-                .release_track_mbid
-                .eq_ignore_ascii_case(&placement.release_track_mbid)
-        }) {
-            track.local_track_id = Some(placement.local_track_id.clone());
-            kept.insert(placement.local_track_id.as_str());
-        }
+    for seat in &seats {
+        tracks[seat.track].local_track_id = Some(seat.local_track_id.clone());
+        kept.insert(seat.local_track_id.as_str());
     }
     let recording_of = |track_id: &str| {
         candidate
@@ -214,10 +314,10 @@ pub fn build(
                 .iter()
                 .find(|file| file.local_track_id == *track_id);
             let (fate, edition_track) = if kept.contains(track_id.as_str()) {
-                let spot = placed
+                let spot = seats
                     .iter()
-                    .find(|placement| placement.local_track_id == *track_id)
-                    .map(|placement| (placement.disc, placement.position));
+                    .find(|seat| seat.local_track_id == *track_id)
+                    .map(|seat| seat.spot);
                 (FileFate::Keep, spot)
             } else {
                 let same_song = recording_of(track_id).and_then(|recording| {
@@ -275,7 +375,12 @@ pub fn build(
         .iter()
         .map(|artist| format!("{}{}", artist.name, artist.join))
         .collect::<String>();
-    EditionPlan {
+    let by_hand = seats
+        .iter()
+        .filter(|seat| seat.by_hand)
+        .map(|seat| seat.local_track_id.clone())
+        .collect();
+    let plan = EditionPlan {
         local_album_id: facts.local_album_id.clone(),
         release_group_mbid: release.release_group_id.to_ascii_lowercase(),
         release_mbid: release.id.to_ascii_lowercase(),
@@ -287,7 +392,8 @@ pub fn build(
         edition: EditionFacts::of(release),
         tracks,
         files,
-    }
+    };
+    (plan, by_hand)
 }
 
 /// The note for a file whose track id belongs to another edition: set

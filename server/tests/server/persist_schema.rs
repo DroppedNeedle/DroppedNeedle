@@ -61,7 +61,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 155);
+    assert_eq!(table_names(&pool).await.len(), 156);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -2481,6 +2481,101 @@ async fn user_ratings_arrive_empty_and_go_with_their_user() {
         .await
         .unwrap();
     assert_eq!(left, 0);
+}
+
+/// Migration 0060 adds the record of files matched by hand, empty: a strict
+/// table whose row goes with its track and outlives the person who made
+/// it, an index on that person, and the version stamp.
+#[tokio::test]
+async fn hand_matches_arrive_empty_and_strict() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 60)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    assert!(
+        !table_names(&pool)
+            .await
+            .contains(&"library_track_hand_matches".to_owned())
+    );
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(stamped >= 60 && stamped == latest_version(), "{stamped}");
+    assert_eq!(
+        column_names(&pool, "library_track_hand_matches").await,
+        [
+            "local_track_id",
+            "release_mbid",
+            "release_track_mbid",
+            "prior_identity_json",
+            "matched_by_user_id",
+            "matched_at"
+        ]
+    );
+    let strict: i64 = sqlx::query_scalar(
+        "SELECT strict FROM pragma_table_list WHERE name = 'library_track_hand_matches'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(strict, 1);
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_track_hand_matches")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+    let mut keys: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT \"from\", \"table\", \"to\", on_delete \
+         FROM pragma_foreign_key_list('library_track_hand_matches')",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    keys.sort();
+    assert_eq!(
+        keys,
+        vec![
+            (
+                "local_track_id".to_owned(),
+                "local_tracks".to_owned(),
+                "id".to_owned(),
+                "CASCADE".to_owned()
+            ),
+            (
+                "matched_by_user_id".to_owned(),
+                "auth_users".to_owned(),
+                "id".to_owned(),
+                "SET NULL".to_owned()
+            ),
+        ]
+    );
+    let indexed: Vec<String> = sqlx::query_scalar(
+        "SELECT i.name FROM pragma_index_list('library_track_hand_matches') i \
+         JOIN pragma_index_info(i.name) c WHERE c.name = 'matched_by_user_id'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        indexed,
+        vec!["idx_library_track_hand_matches_user".to_owned()]
+    );
 }
 
 /// Every table in the migrated schema is listed once in
