@@ -1180,3 +1180,88 @@ async fn v2_management_fields_carry_over_as_they_were() {
     preserved.sort();
     assert_eq!(preserved, ["album", "artist", "artists", "date"]);
 }
+
+/// A v2 profile that ticked Other gets the five Other role fields as
+/// replace with clear off, and one that did not gets them off. v2 never
+/// listed these fields, so the carry leaves them to completion.
+#[tokio::test]
+async fn v2_profile_that_ticked_other_gets_the_role_fields() {
+    use droppedneedle_kernel::runtime_config::ConfigStore;
+    use droppedneedle_kernel::runtime_config::sections::FieldMode;
+    use droppedneedle_library::management::settings::service::LibraryManagementService;
+    use droppedneedle_library::management::settings::{
+        COMPLETE_LIBRARY_ORGANIZER_PROFILE_ID, PICARD_ORGANIZER_PROFILE_ID, StructuralCompiler,
+        initial_settings,
+    };
+    use std::sync::Arc;
+
+    let mut management = serde_json::to_value(initial_settings("")).unwrap();
+    let fields: Vec<Value> = V2_MANAGED_FIELDS
+        .iter()
+        .map(
+            |name| json!({"field": name, "mode": "replace", "clear_when_canonical_missing": false}),
+        )
+        .collect();
+    let profiles = management["profiles"].as_array_mut().unwrap();
+    let picard = profiles
+        .iter_mut()
+        .find(|profile| profile["id"] == PICARD_ORGANIZER_PROFILE_ID)
+        .unwrap();
+    picard["metadata"]["fields"] = Value::Array(fields.clone());
+    picard["metadata"]["relationships"] = json!({"enabled": true, "types": ["composer", "other"]});
+    let complete = profiles
+        .iter_mut()
+        .find(|profile| profile["id"] == COMPLETE_LIBRARY_ORGANIZER_PROFILE_ID)
+        .unwrap();
+    complete["metadata"]["fields"] = Value::Array(fields);
+    complete["metadata"]["relationships"] = json!({"enabled": true, "types": ["composer"]});
+
+    let fixture = Fixture::shared();
+    let mut export = fixture.shell();
+    export["settings"]["library_management"] = management;
+    let (_dir, config_path, crypto) = scratch_config("management-other-roles");
+    let report = run_import(import_request(
+        &export,
+        migrated_pool().await,
+        config_path.clone(),
+        crypto,
+    ))
+    .await;
+    assert_eq!(report.exit.code, ExitCode::Ok, "{}", report.to_json());
+
+    let store = Arc::new(ConfigStore::open(&config_path, test_crypto()).unwrap());
+    let service = LibraryManagementService::new(
+        store,
+        Arc::new(crate::common::FixedIdGenerator::new(
+            crate::common::FIXED_ID,
+        )),
+        Arc::new(StructuralCompiler),
+    );
+    let settings = service.get_settings().expect("the section reads").settings;
+    let state = |profile_id: &str, field: &str| {
+        let profile = settings
+            .profiles
+            .iter()
+            .find(|profile| profile.id == profile_id)
+            .unwrap();
+        let entry = profile
+            .metadata
+            .fields
+            .iter()
+            .find(|entry| entry.field == field)
+            .unwrap();
+        (entry.mode, entry.clear_when_canonical_missing)
+    };
+    for name in ["engineer", "mixer", "dj_mixer", "writer", "director"] {
+        assert_eq!(
+            state(PICARD_ORGANIZER_PROFILE_ID, name),
+            (FieldMode::Replace, false),
+            "{name} on a profile that ticked Other"
+        );
+        assert_eq!(
+            state(COMPLETE_LIBRARY_ORGANIZER_PROFILE_ID, name),
+            (FieldMode::Disabled, false),
+            "{name} on a profile that did not"
+        );
+    }
+}

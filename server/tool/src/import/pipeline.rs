@@ -638,7 +638,9 @@ fn note_unflagged_plugin_settings(plugins: &Value, report: &mut ReportBuilder) {
 }
 
 /// Carry each v2 profile's field entries as they are. A field it did not
-/// list was off in v2 and stays off. `artists` and `album_artists` take
+/// list was off in v2 and stays off, except the Other role fields, which
+/// v2 never had: completion sets those from the profile's Relationships.
+/// `artists` and `album_artists` take
 /// the mode and the preserve of `artist` and `album_artist`: v2's
 /// `artist` wrote the ARTISTS list, and `album_artist` kept the album
 /// artist list (on MP3 and M4A it now also goes to its own ALBUMARTISTS
@@ -647,6 +649,7 @@ fn note_unflagged_plugin_settings(plugins: &Value, report: &mut ReportBuilder) {
 /// reader to report.
 fn carry_v2_management_fields(section: &mut Value) {
     use droppedneedle_kernel::runtime_config::sections::{FieldMode, ManagedField};
+    use droppedneedle_library::management::enrich::other_role_field;
     use droppedneedle_library::management::settings::MANAGED_FIELDS;
     let Some(profiles) = section.get_mut("profiles").and_then(Value::as_array_mut) else {
         return;
@@ -694,8 +697,9 @@ fn carry_v2_management_fields(section: &mut Value) {
                 }
             }
         }
+        // v2 never had the Other role fields: completion sets them.
         for spec in MANAGED_FIELDS {
-            if !listed(&parsed, spec.name) {
+            if !listed(&parsed, spec.name) && !other_role_field(spec.name) {
                 parsed.push(ManagedField {
                     field: spec.name.to_owned(),
                     mode: FieldMode::Disabled,
