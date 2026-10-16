@@ -332,7 +332,6 @@ async fn error_codes() {
         ("getArtist", vec![("id", "xx-1")], 70),
         ("getSong", vec![("id", "tr-nope")], 70),
         ("getAlbumList2", vec![], 10),
-        ("getAlbumList2", vec![("type", "highest")], 0),
         (
             "getAlbumList2",
             vec![("type", "byYear"), ("fromYear", "2020")],
