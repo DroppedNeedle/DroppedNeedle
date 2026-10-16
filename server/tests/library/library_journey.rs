@@ -16441,6 +16441,53 @@ fn album_match_state(db: &rusqlite::Connection, album: &str) -> Option<String> {
     .expect("match state reads")
 }
 
+/// One management job as the operations page reads it.
+async fn job_view(app: &TestApp, headers: &[(&str, &str)], job: &str) -> Value {
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/management/previews/{job}"),
+            headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body
+}
+
+/// Wait for a management preview to be planned, apply it, and wait for
+/// the write to succeed.
+async fn run_management_job(app: &TestApp, headers: &[(&str, &str)], job: &str, token: &Value) {
+    let ready = app
+        .until("the preview is planned", || async {
+            let view = job_view(app, headers, job).await;
+            view["ready_for_confirmation"].as_bool()?.then_some(view)
+        })
+        .await;
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/management/previews/{job}/apply"),
+            headers,
+            Some(json!({
+                "preview_token": token,
+                "expected_operation_row_revision": ready["operation_row_revision"],
+                "idempotency_key": format!("apply-{job}"),
+                "confirmation": true,
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let state = app
+        .until("the write ends", || async {
+            let view = job_view(app, headers, job).await;
+            let state = view["state"].as_str()?.to_owned();
+            (!matches!(state.as_str(), "queued" | "running" | "ready")).then_some(state)
+        })
+        .await;
+    assert_eq!(state, "succeeded");
+}
+
 /// One file of a plan, by id.
 fn plan_file<'a>(plan: &'a Value, track: &str) -> &'a Value {
     plan["files"]
@@ -16456,8 +16503,10 @@ fn plan_file<'a>(plan: &'a Value, track: &str) -> &'a Value {
 /// (the plan shows it matched by hand, the recycle bin refuses it), the
 /// missing track's play and star move to it, the album is queued for
 /// management and is not marked taken over. A scan and choosing the same
-/// edition again keep the match. "Undo match" puts the file back as it
-/// was; the play and star stay. On an edition the app picked, or one
+/// edition again keep the match. A tag edit written to the file after the
+/// match holds "Undo match" back until that write is undone from History;
+/// then "Undo match" puts the file back as it was, and the play and star
+/// stay. On an edition the app picked, or one
 /// carried from v2, the match makes the edition the person's, and the
 /// edition's own undo puts the album and the file back.
 #[tokio::test]
@@ -16590,6 +16639,76 @@ async fn a_file_matched_by_hand_counts_as_its_track() {
         plan_file(&plan(plan_uri.clone()).await, &h.odd)["matched_by_hand"],
         json!(true)
     );
+
+    // A tag edit written to the file after the match: Undo match waits
+    // until that write is undone from History.
+    let page = "/api/v3/settings/library-management";
+    let (status, saved) = app.call("GET", page, &headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let mut settings = saved.clone();
+    let fields = settings.as_object_mut().expect("settings");
+    fields.remove("settings_revision");
+    fields.insert(
+        "default_profile_id".to_owned(),
+        json!(droppedneedle_library::management::settings::PICARD_ORGANIZER_PROFILE_ID),
+    );
+    let (status, body) = app
+        .call(
+            "PUT",
+            page,
+            &headers,
+            Some(json!({
+                "settings": settings,
+                "expected_settings_revision": saved["settings_revision"],
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, editor) = app
+        .call(
+            "GET",
+            &format!("/api/v3/library/management/tracks/{}/tag-editor", h.odd),
+            &headers,
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{editor}");
+    let (status, edit) = app
+        .call(
+            "POST",
+            "/api/v3/library/management/tag-edit-previews",
+            &headers,
+            Some(json!({
+                "local_track_id": h.odd,
+                "mode": "save_override",
+                "expected_settings_revision": editor["settings_revision"],
+                "expected_policy_revision": editor["policy_revision"],
+                "fields": [{"field_name": "title", "value": "Untitled Take (edited)"}],
+                "idempotency_key": "hand-match-edit",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{edit}");
+    let edit_job = edit["job_id"].as_str().expect("edit job").to_owned();
+    run_management_job(app, &headers, &edit_job, &edit["preview_token"]).await;
+    let (status, body) = app.call("DELETE", &file_uri, &headers, None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], json!("HAND_MATCH_WRITTEN"));
+    let written = job_view(app, &headers, &edit_job).await;
+    let (status, undo) = app
+        .call(
+            "POST",
+            &format!("/api/v3/library/management/operations/{edit_job}/undo-preview"),
+            &headers,
+            Some(json!({
+                "expected_operation_row_revision": written["operation_row_revision"],
+                "idempotency_key": "hand-match-edit-undo",
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{undo}");
+    let undo_job = undo["job_id"].as_str().expect("undo job").to_owned();
+    run_management_job(app, &headers, &undo_job, &undo["preview_token"]).await;
 
     // Undo match: the file is back as it was; the play and star stay.
     let (status, body) = app.call("DELETE", &file_uri, &headers, None).await;
@@ -16724,7 +16843,7 @@ fn hand_match_world(db: &rusqlite::Connection, album: &str) -> (String, Vec<Stri
 /// already on a track; another album's file and a missing file; a track
 /// not on the edition; a custom edition; "Leave unmanaged". A track only a
 /// missing file holds can be taken. Its undo is refused once another
-/// edition was chosen (the record stays), and once the app wrote the file.
+/// edition was chosen, and the record stays.
 #[tokio::test]
 async fn a_match_by_hand_is_refused_with_nothing_changed() {
     let rig = Rig::start("lib-hand-match-refusals").await;
@@ -16901,32 +17020,5 @@ async fn a_match_by_hand_is_refused_with_nothing_changed() {
     assert_eq!(body["error"]["code"], json!("STALE_REVISION"));
     assert_eq!(hand_match_world(&db, album), world, "nothing changed");
     assert!(hand_match_row(&db, &h.odd).is_some(), "the record stays");
-
-    // Back to the edition with the match, then the app writes the file.
-    let (status, body) = app
-        .call("POST", &format!("{edition}/undo"), &headers, None)
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(
-        plan_file(
-            &app.call("GET", &format!("{edition}/plan"), &headers, None)
-                .await
-                .1,
-            &h.odd
-        )["matched_by_hand"],
-        json!(true)
-    );
-    db.execute(
-        "INSERT INTO library_track_management_state (local_track_id, last_managed_at, \
-         last_outcome, written_sha256) VALUES (?1, CAST(strftime('%s', 'now') AS REAL) + 1, \
-         'succeeded', 'written')",
-        [&h.odd],
-    )
-    .expect("a managed write of the file");
-    let world = hand_match_world(&db, album);
-    let (status, body) = app.call("DELETE", &file_uri, &headers, None).await;
-    assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert_eq!(body["error"]["code"], json!("HAND_MATCH_WRITTEN"));
-    assert_eq!(hand_match_world(&db, album), world, "nothing changed");
     rig.stop().await;
 }

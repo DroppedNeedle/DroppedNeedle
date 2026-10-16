@@ -372,13 +372,25 @@ pub(super) fn unmatch_file(
     if !stands {
         return Err(OperationError::Conflict(reasons::HAND_MATCH_STALE));
     }
-    // A profile run that wrote the file records `succeeded`; the undo of
-    // that run leaves the publisher's own outcome and a restore leaves
-    // `restored`, so neither counts as written.
+    // Written since the match: a run that writes files (a profile run, a
+    // tag edit, a duplicate resolution), planned after the match with
+    // something to write to this file, not failed or discarded, and whose
+    // album that run's undo has not put back. Its plan exists before the
+    // file is written, so a write still under way counts too.
     let written: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM library_track_management_state \
-         WHERE local_track_id = ?1 AND last_outcome = 'succeeded' \
-         AND last_managed_at * 1000 >= ?2)",
+        "SELECT EXISTS(SELECT 1 FROM library_management_plan_items p \
+         JOIN library_management_job_snapshots s ON s.job_id = p.job_id \
+         JOIN library_operation_jobs j ON j.id = p.job_id \
+         WHERE p.local_track_id = ?1 \
+         AND s.mode IN ('apply', 'automatic_apply', 'duplicate_resolution') \
+         AND j.state NOT IN ('failed', 'cancelled', 'stopped') \
+         AND p.eligibility IN ('eligible', 'warning') \
+         AND json_extract(p.desired_document_json, '$.plan') IS NOT NULL \
+         AND p.created_at * 1000 >= ?2 \
+         AND NOT EXISTS (SELECT 1 FROM library_management_job_snapshots u \
+         JOIN library_operation_work w ON w.job_id = u.job_id \
+         WHERE u.linked_operation_job_id = p.job_id AND u.mode = 'undo' \
+         AND w.ordinal = p.bundle_ordinal AND w.state = 'succeeded'))",
         params![track_id, kept.matched_at],
         |row| row.get(0),
     )?;
