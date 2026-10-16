@@ -1811,6 +1811,13 @@ async fn merged_albums_keep_their_ids_in_player_apps() {
     }
     let (status, _, body) = picture(&rig, &keyed, None).await;
     assert_eq!((status, body.len()), (StatusCode::NOT_FOUND, 0));
+    // The survivor has no picture in this library, and its miss names it.
+    let (status, _, body) = picture(&rig, &ok_computer_id, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).expect("a JSON answer"),
+        json!("OK Computer does not have an image of type Primary")
+    );
 
     merge_albums(&rig, &airbag, &achtung).await;
     let album = subsonic_ok(&rig, &format!("getAlbum?id={old}")).await;

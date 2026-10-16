@@ -3,7 +3,8 @@
 //! reads no token and never answers 401 (a 401 counts as a failed sign-in),
 //! and it answers only to ids this server hands out: album and artist ids
 //! are made with the data key, so nobody without an account can work one
-//! out. Everything else is the same empty 404.
+//! out. A missing album or artist picture is a 404 that names the item;
+//! everything else is the same empty 404.
 
 use axum::body::Body;
 use axum::extract::{Path, State};
@@ -136,6 +137,17 @@ where
             .header("Content-Security-Policy", "sandbox; default-src 'none'")
             .body(Body::from(cover.bytes))
             .unwrap_or_else(|_| error(StatusCode::INTERNAL_SERVER_ERROR)),
+        // A missing picture on an album or an artist names it, as Jellyfin
+        // does. Other kinds stay an empty 404.
+        None if matches!(kind.as_str(), "album" | "artist") => {
+            match state.library.name_of(&kind, &internal).await {
+                Some(name) => json(
+                    StatusCode::NOT_FOUND,
+                    &format!("{name} does not have an image of type Primary"),
+                ),
+                None => error(StatusCode::NOT_FOUND),
+            }
+        }
         _ => error(StatusCode::NOT_FOUND),
     }
 }

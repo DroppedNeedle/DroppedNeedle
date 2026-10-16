@@ -1,5 +1,0 @@
-{
-  "differences": [
-    {"server": "jellyfin", "object": "image.primary", "key": "body", "kind": "type", "rows": ["image.primary"], "reason": "For an album with no cover both answer 404. The app's answer has no body, Jellyfin's has a JSON one."}
-  ]
-}

@@ -464,6 +464,11 @@ pub trait LibraryRead: Clone + Send + Sync + 'static {
     /// 404 with no placeholder, unlike Subsonic (v2 `_image`).
     fn cover(&self, rg_mbid: &str, size: &str) -> impl Future<Output = Option<CoverBytes>> + Send;
     fn artist_image(&self, mbid: &str) -> impl Future<Output = Option<CoverBytes>> + Send;
+    /// The album title or artist name of a catalog id, read for a caller who
+    /// has not signed in (the picture address), so no user overlays. `kind`
+    /// is `album` or `artist`; any other kind has no name here, and so does
+    /// an album or artist that a merge retired or that is gone.
+    fn name_of(&self, kind: &str, catalog_id: &str) -> impl Future<Output = Option<String>> + Send;
 }
 
 // ===== Streaming seam =====

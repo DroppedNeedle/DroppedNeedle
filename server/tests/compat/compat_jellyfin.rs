@@ -670,10 +670,28 @@ async fn images_serve_anonymously_with_immutable_cache() {
         );
         assert_eq!(reply.body, bytes, "{uri}");
     }
-    // Misses 404 with no placeholder (unlike Subsonic); only Primary serves,
-    // and a track has no picture of its own (apps ask for its album's).
+    // Misses 404 with no placeholder (unlike Subsonic). An album or artist
+    // miss names the item; only Primary serves, and a track has no picture
+    // of its own (apps ask for its album's).
+    for (uri, name) in [
+        (
+            format!("/jellyfin/Items/{}/Images/Primary", fx.album2),
+            "Second Dawn",
+        ),
+        (
+            format!("/jellyfin/Items/{}/Images/Primary", fx.artist2),
+            "Guest Star",
+        ),
+    ] {
+        let reply = fx.get(&uri, None).await;
+        assert_eq!(reply.status, 404, "{uri}");
+        assert_eq!(
+            reply.json(),
+            json!(format!("{name} does not have an image of type Primary")),
+            "{uri}"
+        );
+    }
     for uri in [
-        format!("/jellyfin/Items/{}/Images/Primary", fx.album2),
         format!("/jellyfin/Items/{}/Images/Backdrop", fx.album1),
         format!("/jellyfin/Items/{}/Images/Primary", fx.track1),
     ] {

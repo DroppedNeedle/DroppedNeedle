@@ -653,6 +653,23 @@ impl LibraryRead for FakeLibrary {
         self.with_rows(|rows| rows.artist_images.get(mbid).cloned())
             .flatten()
     }
+
+    async fn name_of(&self, kind: &str, catalog_id: &str) -> Option<String> {
+        self.with_rows(|rows| match kind {
+            "album" => rows
+                .albums
+                .iter()
+                .find(|album| album.id == catalog_id)
+                .map(|album| album.title.clone()),
+            "artist" => rows
+                .artists
+                .iter()
+                .find(|artist| artist.id == catalog_id)
+                .map(|artist| artist.name.clone()),
+            _ => None,
+        })
+        .flatten()
+    }
 }
 
 /// In-memory [`StreamEngine`]: seeded bytes served under the v2 range

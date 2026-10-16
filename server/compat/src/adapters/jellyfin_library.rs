@@ -561,6 +561,34 @@ impl LibraryRead for JellyfinLibrary {
             content_type,
         })
     }
+
+    async fn name_of(&self, kind: &str, catalog_id: &str) -> Option<String> {
+        let outcome = async {
+            if !matches!(kind, "album" | "artist") {
+                return Ok(None);
+            }
+            // A merged-away album or artist keeps its old id, and the picture
+            // address never opens one, so only the live holder of the id has
+            // a name here.
+            let live = self.library.player.current_id(kind, catalog_id).await?;
+            if live.as_deref() != Some(catalog_id) {
+                return Ok(None);
+            }
+            Ok(if kind == "album" {
+                self.library
+                    .album(catalog_id)
+                    .await?
+                    .map(|album| album.record.title)
+            } else {
+                self.library
+                    .artist(catalog_id)
+                    .await?
+                    .map(|artist| artist.name)
+            })
+        }
+        .await;
+        logged("name_of", outcome)
+    }
 }
 
 #[derive(Default)]
