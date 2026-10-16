@@ -10,6 +10,8 @@ import { DEFAULT_SOURCE, isMusicSource, musicSourceStore } from '$lib/stores/mus
 import { authStore, LAST_USER_ID_KEY } from '$lib/stores/authStore.svelte';
 import { clearUserSessionState } from '$lib/utils/userSessionCleanup';
 import { withBasePath, withoutBasePath } from '$lib/utils/basePath';
+// Applies the stored theme before the app shell and its CSS load.
+import '$lib/stores/theme.svelte';
 import { error, redirect } from '@sveltejs/kit';
 import type { LayoutLoad } from './$types';
 

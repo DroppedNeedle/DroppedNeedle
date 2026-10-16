@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { ApiError } from '$lib/api/client';
 	import { useDiscoverActivity } from '$lib/queries/discover/DiscoverDemand.svelte';
-	import { colors } from '$lib/colors';
 	import ArtistHeaderSkeleton from '$lib/components/ArtistHeaderSkeleton.svelte';
 	import AlbumGridSkeleton from '$lib/components/AlbumGridSkeleton.svelte';
 	import ArtistWhereToBuy from '$lib/components/ArtistWhereToBuy.svelte';
@@ -404,8 +403,8 @@
 							{#each [...new Set(artist.tags)].slice(0, 10) as tag (tag)}
 								<a
 									href={withBasePath(`/genre?name=${encodeURIComponent(tag)}`)}
-									class="badge badge-lg cursor-pointer hover:opacity-80 transition-opacity"
-									style="background-color: {colors.primary}; color: {colors.secondary};">{tag}</a
+									class="badge badge-lg cursor-pointer border-none bg-primary text-primary-content hover:opacity-80 transition-opacity"
+									>{tag}</a
 								>
 							{/each}
 						</div>

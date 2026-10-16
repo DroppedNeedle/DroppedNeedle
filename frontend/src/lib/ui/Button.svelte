@@ -21,6 +21,7 @@
 		| 'danger'
 		| 'danger-ghost'
 		| 'warning'
+		| 'info'
 		| 'lastfm'
 		| 'listenbrainz';
 
@@ -36,6 +37,7 @@
 		danger: 'btn btn-error',
 		'danger-ghost': 'btn btn-ghost text-error',
 		warning: 'btn btn-warning',
+		info: 'btn btn-info',
 		lastfm: 'btn btn-lastfm',
 		listenbrainz: 'btn btn-listenbrainz'
 	};

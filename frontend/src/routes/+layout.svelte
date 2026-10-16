@@ -40,7 +40,7 @@
 </script>
 
 <QueryProvider>
-	<div data-testid="app-shell" data-theme="dark" class="droppedneedle-app-shell">
+	<div data-testid="app-shell" class="droppedneedle-app-shell">
 		{#if needsAppShell}
 			{#if AppShell}
 				<AppShell {children} />

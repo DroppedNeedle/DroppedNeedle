@@ -18,6 +18,7 @@
 	import NavidromeMusicFoldersCard from '$lib/components/profile/NavidromeMusicFoldersCard.svelte';
 	import ProfileHeader from '$lib/components/profile/ProfileHeader.svelte';
 	import SessionsManager from '$lib/components/profile/SessionsManager.svelte';
+	import AppearanceCard from '$lib/components/profile/AppearanceCard.svelte';
 	import ScrobblingDiscoveryCard from '$lib/components/profile/ScrobblingDiscoveryCard.svelte';
 	import SpotifyConnectionCard from '$lib/components/profile/SpotifyConnectionCard.svelte';
 	import ProfileConnectApps from '$lib/components/profile/ProfileConnectApps.svelte';
@@ -123,6 +124,7 @@
 
 		return [
 			{ id: 'account', label: 'Account' },
+			{ id: 'appearance', label: 'Appearance' },
 			{ id: 'sessions', label: 'Sessions' },
 			{ id: 'connected-services', label: 'Connected Services' },
 			...(mediaAccountsEnabled ? [{ id: 'media-accounts', label: 'Media Accounts' }] : []),
@@ -214,6 +216,10 @@
 				/>
 
 				<AccountCard {profile} {hasLocalPassword} />
+
+				<div id="appearance" class="scroll-mt-24 xl:ml-40">
+					<AppearanceCard />
+				</div>
 
 				<div id="sessions" class="scroll-mt-24 xl:ml-40">
 					<SessionsManager />

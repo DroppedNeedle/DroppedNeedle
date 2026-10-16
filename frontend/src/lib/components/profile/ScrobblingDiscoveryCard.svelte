@@ -259,7 +259,7 @@
 						<div class="flex items-center justify-between gap-3">
 							{@render serviceRow(
 								Music,
-								'bg-orange-500/10 text-orange-400 ring-orange-500/20',
+								'bg-listenbrainz/10 text-listenbrainz ring-listenbrainz/20',
 								'ListenBrainz',
 								lb?.username,
 								Boolean(lb)
@@ -348,7 +348,7 @@
 						<div class="flex items-center justify-between gap-3">
 							{@render serviceRow(
 								Radio,
-								'bg-red-500/10 text-red-400 ring-red-500/20',
+								'bg-lastfm/10 text-lastfm ring-lastfm/20',
 								'Last.fm',
 								lfm?.username,
 								Boolean(lfm)

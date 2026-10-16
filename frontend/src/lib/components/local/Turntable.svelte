@@ -145,7 +145,9 @@
 			class:animate-glow-pulse={isPlaying}
 		></div>
 
+		<!-- Records are black in every theme: the platter always takes dark's tokens. -->
 		<div
+			data-theme="dark"
 			class="turntable-platter vinyl-spin absolute inset-0 rounded-full"
 			class:is-paused={!isPlaying}
 		>

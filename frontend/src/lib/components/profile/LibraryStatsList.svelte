@@ -19,9 +19,9 @@
 	}
 
 	function getSourceColor(source: string): string {
-		if (source === 'Jellyfin') return 'text-purple-400';
-		if (source === 'Navidrome') return 'text-green-400';
-		if (source === 'Local Files') return 'text-teal-400';
+		if (source === 'Jellyfin') return 'text-jellyfin';
+		if (source === 'Navidrome') return 'text-navidrome';
+		if (source === 'Local Files') return 'text-localfiles';
 		return 'text-base-content';
 	}
 

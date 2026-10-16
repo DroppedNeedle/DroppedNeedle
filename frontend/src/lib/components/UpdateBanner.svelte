@@ -38,17 +38,17 @@
 		class:mt-12={hasDegradation}
 	>
 		<div
-			class="alert alert-info shadow-lg mx-auto mt-2 max-w-xl pointer-events-auto text-sm gap-2 py-2 banner-enter"
+			class="alert border-info/40 shadow-lg mx-auto mt-2 max-w-xl pointer-events-auto text-sm gap-2 py-2 banner-enter"
 			role="status"
 		>
-			<CircleArrowUp class="h-4 w-4 shrink-0" />
+			<CircleArrowUp class="h-4 w-4 shrink-0 text-info" />
 			<span>
 				A new version of DroppedNeedle is available
 				{#if latestVersion}
 					<span class="font-semibold">({latestVersion})</span>
 				{/if}
 			</span>
-			<Button variant="outline" size="xs" href={withBasePath('/settings?tab=about')}>Details</Button
+			<Button variant="info" size="xs" href={withBasePath('/settings?tab=about')}>Details</Button
 			>
 			<IconButton size="sm" icon={X} label="Dismiss update notification" onclick={dismiss} />
 		</div>

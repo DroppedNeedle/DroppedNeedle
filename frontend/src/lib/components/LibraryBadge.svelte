@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { Check, Clock, Trash2 } from 'lucide-svelte';
-	import { colors } from '$lib/colors';
 	import { STATUS_COLORS } from '$lib/constants';
 	import DeleteAlbumModal from './DeleteAlbumModal.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -42,7 +41,9 @@
 	const lgButtonClass = $derived(
 		size === 'lg' ? 'w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center' : ''
 	);
-	const bgColor = $derived(status === 'library' ? colors.accent : STATUS_COLORS.REQUESTED);
+	const bgColor = $derived(status === 'library' ? 'var(--color-accent)' : STATUS_COLORS.REQUESTED);
+	// amber stays the same in both themes, so its icon stays dark
+	const iconColor = $derived(status === 'library' ? 'text-accent-content' : 'text-neutral-900');
 
 	function handleClick(e: Event) {
 		e.stopPropagation();
@@ -72,14 +73,12 @@
 	>
 		{#if status === 'library'}
 			<Check
-				class="{sizeClasses.icon} group-hover/badge:hidden"
-				color={colors.secondary}
+				class="{sizeClasses.icon} {iconColor} group-hover/badge:hidden"
 				strokeWidth={Number(sizeClasses.strokeWidth)}
 			/>
 		{:else}
 			<Clock
-				class="{sizeClasses.icon} group-hover/badge:hidden"
-				color={colors.secondary}
+				class="{sizeClasses.icon} {iconColor} group-hover/badge:hidden"
 				strokeWidth={Number(sizeClasses.strokeWidth)}
 			/>
 		{/if}
@@ -96,17 +95,9 @@
 		aria-label={status === 'library' ? 'In library' : 'Requested'}
 	>
 		{#if status === 'library'}
-			<Check
-				class={sizeClasses.icon}
-				color={colors.secondary}
-				strokeWidth={Number(sizeClasses.strokeWidth)}
-			/>
+			<Check class="{sizeClasses.icon} {iconColor}" strokeWidth={Number(sizeClasses.strokeWidth)} />
 		{:else}
-			<Clock
-				class={sizeClasses.icon}
-				color={colors.secondary}
-				strokeWidth={Number(sizeClasses.strokeWidth)}
-			/>
+			<Clock class="{sizeClasses.icon} {iconColor}" strokeWidth={Number(sizeClasses.strokeWidth)} />
 		{/if}
 	</span>
 {/if}

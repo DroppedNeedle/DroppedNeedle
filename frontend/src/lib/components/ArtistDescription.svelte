@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { ChevronUp, ChevronDown } from 'lucide-svelte';
-	import { colors } from '$lib/colors';
 
 	interface Props {
 		description: string | null | undefined;
@@ -42,8 +41,7 @@
 			{#if descriptionExpanded}
 				<div class="whitespace-pre-line">{description}</div>
 				<button
-					class="btn btn-sm mt-3 gap-2"
-					style="background-color: {colors.accent}; color: {colors.secondary};"
+					class="btn btn-sm mt-3 gap-2 bg-accent text-accent-content"
 					onclick={() => (descriptionExpanded = false)}
 				>
 					Show Less
@@ -59,8 +57,7 @@
 				</div>
 				{#if showViewMore}
 					<button
-						class="btn btn-sm mt-3 gap-2"
-						style="background-color: {colors.accent}; color: {colors.secondary};"
+						class="btn btn-sm mt-3 gap-2 bg-accent text-accent-content"
 						onclick={() => (descriptionExpanded = true)}
 					>
 						Read More

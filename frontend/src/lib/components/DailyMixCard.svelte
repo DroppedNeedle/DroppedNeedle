@@ -50,7 +50,7 @@
 			class="group relative w-full overflow-hidden rounded-2xl border transition-all cursor-pointer text-left
 				focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-base-100
 				active:scale-[0.98]
-				{expanded ? 'border-primary/30' : 'border-white/10'}"
+				{expanded ? 'border-primary/30' : 'border-base-content/10'}"
 			style="
 				transform-style: preserve-3d;
 				transform: var(--tilt-transform, rotateX(0) rotateY(0));

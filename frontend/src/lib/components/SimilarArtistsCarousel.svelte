@@ -4,7 +4,6 @@
 	import HorizontalCarousel from './HorizontalCarousel.svelte';
 	import CarouselSkeleton from './CarouselSkeleton.svelte';
 	import ArtistImage from './ArtistImage.svelte';
-	import { colors } from '$lib/colors';
 	import { artistHref } from '$lib/utils/entityRoutes';
 	import { withBasePath } from '$lib/utils/basePath';
 
@@ -49,11 +48,8 @@
 							/>
 						</div>
 						{#if artist.in_library}
-							<div
-								class="absolute bottom-1 right-1 rounded-full p-1"
-								style="background-color: {colors.accent};"
-							>
-								<Check class="w-3 h-3" color={colors.secondary} strokeWidth={3} />
+							<div class="absolute bottom-1 right-1 rounded-full bg-accent p-1 text-accent-content">
+								<Check class="w-3 h-3" strokeWidth={3} />
 							</div>
 						{/if}
 					</div>

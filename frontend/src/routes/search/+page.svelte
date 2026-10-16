@@ -9,7 +9,6 @@
 	import ArtistCardSkeleton from '$lib/components/ArtistCardSkeleton.svelte';
 	import AlbumCardSkeleton from '$lib/components/AlbumCardSkeleton.svelte';
 	import type { EnrichmentSource, SearchRemoteStatus } from '$lib/types';
-	import { colors } from '$lib/colors';
 	import { applyArtistEnrichment, applyAlbumEnrichment } from '$lib/utils/enrichment';
 	import { getSearchStatusNotice } from '$lib/utils/searchStatus';
 	import {
@@ -142,22 +141,17 @@
 {#if hasSearched || isSearching}
 	<div class="px-8 pt-4 pb-2">
 		<div class="flex gap-2">
-			<button
-				class="badge badge-lg cursor-pointer"
-				style="background-color: {colors.primary}; color: {colors.secondary};"
-			>
+			<button class="badge badge-lg cursor-pointer border-none bg-primary text-primary-content">
 				All
 			</button>
 			<button
-				class="badge badge-lg cursor-pointer transition-colors"
-				style="background-color: {colors.secondary}; color: {colors.primary};"
+				class="badge badge-lg cursor-pointer transition-colors border-none bg-base-300 text-primary"
 				onclick={() => navigateToBucket('artists')}
 			>
 				Artists
 			</button>
 			<button
-				class="badge badge-lg cursor-pointer transition-colors"
-				style="background-color: {colors.secondary}; color: {colors.primary};"
+				class="badge badge-lg cursor-pointer transition-colors border-none bg-base-300 text-primary"
 				onclick={() => navigateToBucket('albums')}
 			>
 				Albums
@@ -286,7 +280,7 @@
 		</div>
 	</section>
 {:else}
-	<p class="text-center mt-32 text-gray-400">Enter a search query to get started.</p>
+	<p class="text-center mt-32 text-base-content/50">Enter a search query to get started.</p>
 {/if}
 
 {#if showToast}

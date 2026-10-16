@@ -20,9 +20,9 @@
 	}
 
 	function getServiceColor(name: string): string {
-		if (name === 'Jellyfin') return 'text-purple-400';
-		if (name === 'Navidrome') return 'text-green-400';
-		if (name === 'Plex') return 'text-amber-400';
+		if (name === 'Jellyfin') return 'text-jellyfin';
+		if (name === 'Navidrome') return 'text-navidrome';
+		if (name === 'Plex') return 'text-plex';
 		return 'text-base-content';
 	}
 </script>
