@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { FingerprintPattern } from 'lucide-svelte';
+	import Button from '$lib/ui/Button.svelte';
 
 	import type { LibraryArtistSummary } from '$lib/types';
 
@@ -13,7 +14,6 @@
 	);
 </script>
 
-<a class="btn btn-ghost btn-sm gap-2" href={identityDeskUrl}>
-	<FingerprintPattern class="h-4 w-4" />
-	Open artist identity desk
-</a>
+<Button variant="ghost" size="sm" icon={FingerprintPattern} href={identityDeskUrl}
+	>Open artist identity desk</Button
+>

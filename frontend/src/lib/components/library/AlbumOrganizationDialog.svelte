@@ -1,5 +1,8 @@
 <script lang="ts">
 	import { ChevronDown, FolderTree } from 'lucide-svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import Input from '$lib/ui/Input.svelte';
 	import type { LibraryAlbumDetail, NativeTrackListItem } from '$lib/types';
 	import type { MembershipPreviewResponse } from '$lib/queries/library/LibraryOperationsTypes';
 	import {
@@ -172,9 +175,9 @@
 </script>
 
 <details class="dropdown dropdown-end">
-	<summary class="btn btn-ghost btn-sm gap-2">
-		<FolderTree class="h-4 w-4" /> Album organization <ChevronDown class="h-3.5 w-3.5" />
-	</summary>
+	<Button as="summary" variant="ghost" size="sm" icon={FolderTree}>
+		Album organization <ChevronDown class="h-3.5 w-3.5" aria-hidden="true" />
+	</Button>
 	<ul class="menu dropdown-content z-30 mt-2 w-64 rounded-box bg-base-100 p-2 shadow-xl">
 		<li><button onclick={(event) => open('split', event)}>Split album...</button></li>
 		<li>
@@ -218,8 +221,9 @@
 		{#if needsTarget}
 			<section class="mt-5" aria-labelledby="target-album-title">
 				<h3 id="target-album-title" class="font-semibold">Choose the other local album</h3>
-				<input
-					class="input input-bordered mt-2 w-full"
+				<Input
+					label="Search local albums"
+					class="mt-2 w-full"
 					placeholder="Search local albums"
 					bind:value={targetSearch}
 				/>
@@ -256,8 +260,9 @@
 			<label class="mt-5 block">
 				<span class="font-semibold">New album title</span>
 				<span class="block text-xs text-base-content/55">Leave empty to keep "{album.title}".</span>
-				<input
-					class="input input-bordered mt-2 w-full"
+				<Input
+					label="New album title"
+					class="mt-2 w-full"
 					placeholder={album.title}
 					bind:value={newTitle}
 					oninput={() => {
@@ -301,11 +306,8 @@
 
 		{#if previewResult}
 			{@const result = previewResult}
-			<section
-				class="mt-5 rounded-box bg-base-200/60 p-4"
-				aria-labelledby="organization-preview-title"
-			>
-				<h3 id="organization-preview-title" class="font-semibold">Preview</h3>
+			<Card as="section" padding="md" class="mt-5" aria-label="Preview">
+				<h3 class="font-semibold">Preview</h3>
 				<ul class="mt-2 space-y-2 text-sm">
 					{#each result.automatic_groups as group, index (group.local_album_id ?? `new-${index}`)}
 						<li>
@@ -381,27 +383,27 @@
 					<input type="checkbox" class="checkbox checkbox-sm mt-0.5" bind:checked={confirmed} />
 					<span>I understand this changes local grouping and preserves files and tags.</span>
 				</label>
-			</section>
+			</Card>
 		{/if}
 
 		<div class="modal-action">
-			<form method="dialog"><button class="btn btn-ghost">Cancel</button></form>
+			<form method="dialog"><Button type="submit" variant="ghost">Cancel</Button></form>
 			{#if previewResult}
-				<button
-					class="btn btn-primary"
+				<Button
+					variant="primary"
 					disabled={!confirmed || applyMutation.isPending}
 					onclick={() => void apply()}
 				>
 					Apply {title.toLowerCase()}
-				</button>
+				</Button>
 			{:else}
-				<button
-					class="btn btn-primary"
+				<Button
+					variant="primary"
 					disabled={!canPreview || previewMutation.isPending}
 					onclick={() => void preview()}
 				>
 					Preview changes
-				</button>
+				</Button>
 			{/if}
 		</div>
 	</div>

@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { Download, FileClock, LoaderCircle } from 'lucide-svelte';
+	import { Download, FileClock } from 'lucide-svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import { api } from '$lib/api/client';
 	import { LibraryV3Api } from '$lib/queries/library/LibraryV3Api';
 	import { toastStore } from '$lib/stores/toast';
@@ -23,10 +25,10 @@
 	let exporting = $state(false);
 	let detailDialog: HTMLDialogElement;
 	let detailHeading = $state<HTMLHeadingElement>();
-	let detailOpener: HTMLButtonElement | null = null;
+	let detailOpener: HTMLElement | null = null;
 	let exportDialog: HTMLDialogElement;
 	let exportHeading: HTMLHeadingElement;
-	let exportOpener: HTMLButtonElement | null = null;
+	let exportOpener: HTMLElement | null = null;
 
 	function formatTime(value: number | null): string {
 		return value ? new Date(value * 1000).toLocaleString() : '-';
@@ -58,10 +60,7 @@
 			: '-';
 	}
 
-	function openExport(
-		run: ScanRun,
-		event: MouseEvent & { currentTarget: HTMLButtonElement }
-	): void {
+	function openExport(run: ScanRun, event: MouseEvent & { currentTarget: HTMLElement }): void {
 		exportOpener = detailOpener ?? event.currentTarget;
 		exportRun = run;
 		if (detailDialog.open) detailDialog.close();
@@ -71,7 +70,7 @@
 
 	async function openDetails(
 		run: ScanRun,
-		event: MouseEvent & { currentTarget: HTMLButtonElement }
+		event: MouseEvent & { currentTarget: HTMLElement }
 	): Promise<void> {
 		detailOpener = event.currentTarget;
 		detailRun = run;
@@ -84,7 +83,7 @@
 		detailDialog.close();
 	}
 
-	function openDetailExport(event: MouseEvent & { currentTarget: HTMLButtonElement }): void {
+	function openDetailExport(event: MouseEvent & { currentTarget: HTMLElement }): void {
 		if (!detailRun) return;
 		openExport(detailRun, event);
 	}
@@ -117,12 +116,9 @@
 	}
 </script>
 
-<section
-	class="rounded-box border border-base-content/15 bg-base-200/40"
-	aria-labelledby="run-history-title"
->
+<Card as="section" variant="bordered" padding="none" aria-label="Recent runs">
 	<div class="flex items-center justify-between gap-3 border-b border-base-content/10 px-4 py-3">
-		<h3 id="run-history-title" class="flex items-center gap-2 font-semibold">
+		<h3 class="flex items-center gap-2 font-semibold">
 			<FileClock class="h-4 w-4 text-primary" /> Recent runs
 		</h3>
 		<span class="text-xs text-base-content/50">Latest 50 retained</span>
@@ -161,9 +157,8 @@
 								).toLocaleString()} errors</td
 							><td>{duration(run)}</td>
 							<td class="text-right">
-								<button
-									class="btn btn-ghost btn-xs"
-									onclick={(event) => void openDetails(run, event)}>Details</button
+								<Button variant="ghost" size="xs" onclick={(event) => void openDetails(run, event)}
+									>Details</Button
 								>
 							</td>
 						</tr>
@@ -183,36 +178,36 @@
 					<span class="text-right text-xs"
 						>{(run.counters.changed_count ?? 0).toLocaleString()} changed</span
 					>
-					<button
-						class="btn btn-ghost btn-xs col-span-2 justify-self-start"
-						onclick={(event) => void openDetails(run, event)}>Details</button
+					<Button
+						variant="ghost"
+						size="xs"
+						class="col-span-2 justify-self-start"
+						onclick={(event) => void openDetails(run, event)}>Details</Button
 					>
 				</div>
 			{/each}
 		</div>
 		{#if olderRunCount > 0}
 			<div class="border-t border-base-content/10 p-2 text-center">
-				<button class="btn btn-ghost btn-xs" onclick={() => (showOlder = !showOlder)}>
+				<Button variant="ghost" size="xs" onclick={() => (showOlder = !showOlder)}>
 					{showOlder
 						? `Show latest ${DEFAULT_VISIBLE_RUNS}`
 						: `Show ${olderRunCount} older ${olderRunCount === 1 ? 'run' : 'runs'}`}
-				</button>
+				</Button>
 			</div>
 		{/if}
 		{#if showOlder && historyQuery.hasNextPage}
 			<div class="border-t border-base-content/10 p-3 text-center">
-				<button
-					class="btn btn-ghost btn-sm"
-					disabled={historyQuery.isFetchingNextPage}
-					onclick={() => void historyQuery.fetchNextPage()}
+				<Button
+					variant="ghost"
+					size="sm"
+					loading={historyQuery.isFetchingNextPage}
+					onclick={() => void historyQuery.fetchNextPage()}>Load older runs</Button
 				>
-					{#if historyQuery.isFetchingNextPage}<LoaderCircle class="h-4 w-4 animate-spin" />{/if} Load
-					older runs
-				</button>
 			</div>
 		{/if}
 	{/if}
-</section>
+</Card>
 
 <dialog
 	bind:this={detailDialog}
@@ -288,31 +283,28 @@
 					</ul>
 					{#if failuresQuery.hasNextPage}
 						<div class="mt-2 text-center">
-							<button
-								class="btn btn-ghost btn-sm"
-								disabled={failuresQuery.isFetchingNextPage}
-								onclick={() => failuresQuery.fetchNextPage()}
+							<Button
+								variant="ghost"
+								size="sm"
+								loading={failuresQuery.isFetchingNextPage}
+								onclick={() => failuresQuery.fetchNextPage()}>Load more</Button
 							>
-								{#if failuresQuery.isFetchingNextPage}
-									<span class="loading loading-spinner loading-xs"></span>
-								{/if}
-								Load more
-							</button>
 						</div>
 					{/if}
 				{/if}
 			{/if}
 			<div class="modal-action">
 				{#if detailRun.diagnostics_available !== false}
-					<button
-						class="btn btn-outline btn-sm mr-auto"
+					<Button
+						variant="outline"
+						size="sm"
+						icon={Download}
+						class="mr-auto"
 						onclick={openDetailExport}
-						aria-label={`Export diagnostics for run ${detailRun.id}`}
+						aria-label={`Export diagnostics for run ${detailRun.id}`}>Export diagnostics</Button
 					>
-						<Download class="h-3.5 w-3.5" /> Export diagnostics
-					</button>
 				{/if}
-				<button class="btn btn-ghost" onclick={closeDetails}>Close</button>
+				<Button variant="ghost" onclick={closeDetails}>Close</Button>
 			</div>
 		</div>
 	{/if}
@@ -341,14 +333,10 @@
 			paths are replaced with non-reversible hashes.
 		</p>
 		<div class="modal-action">
-			<button class="btn btn-ghost" onclick={() => exportDialog.close()}>Cancel</button>
-			<button
-				class="btn btn-primary"
-				disabled={exporting}
-				onclick={() => void downloadDiagnostic()}
+			<Button variant="ghost" onclick={() => exportDialog.close()}>Cancel</Button>
+			<Button variant="primary" loading={exporting} onclick={() => void downloadDiagnostic()}
+				>Export report</Button
 			>
-				{#if exporting}<span class="loading loading-spinner loading-sm"></span>{/if} Export report
-			</button>
 		</div>
 	</div>
 	<form method="dialog" class="modal-backdrop">

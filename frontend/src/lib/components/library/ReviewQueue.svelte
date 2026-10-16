@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { ChevronDown, ChevronRight, CircleAlert, Search } from 'lucide-svelte';
 	import { ApiError } from '$lib/api/client';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import Input from '$lib/ui/Input.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -258,28 +261,25 @@
 				>
 			{/each}
 		</div>
-		<label
-			class="input input-sm input-bordered flex min-w-56 flex-1 items-center gap-2 sm:flex-none"
-		>
-			<Search class="h-4 w-4 opacity-60" />
-			<input
-				type="search"
-				class="grow"
-				placeholder="Album or artist"
-				value={searchInput}
-				oninput={(event) => onSearch(event.currentTarget.value)}
-			/>
-		</label>
+		<Input
+			type="search"
+			size="sm"
+			icon={Search}
+			label="Search reviews"
+			class="min-w-56 flex-1 sm:flex-none"
+			placeholder="Album or artist"
+			value={searchInput}
+			oninput={(event) => onSearch(event.currentTarget.value)}
+		/>
 
 		{#if authStore.isAdmin && reviewState === 'pending' && total > 0}
 			<div class="ml-auto flex items-center gap-3">
 				<label class="label cursor-pointer gap-2 text-xs">
-					<input type="checkbox" class="checkbox checkbox-xs" bind:checked={confirmLocalMetadata} />
+					<input type="checkbox" class="checkbox checkbox-sm" bind:checked={confirmLocalMetadata} />
 					Include Local metadata folders
 				</label>
-				<button class="btn btn-sm" disabled={retryAll.isPending} onclick={() => void previewRetry()}
-					>{#if retryAll.isPending}<span class="loading loading-spinner loading-xs"></span>{/if}
-					Retry all {total} shown…</button
+				<Button size="sm" loading={retryAll.isPending} onclick={() => void previewRetry()}
+					>Retry all {total} shown…</Button
 				>
 			</div>
 		{/if}
@@ -287,26 +287,26 @@
 
 	<div class="flex flex-wrap items-end gap-2 text-sm">
 		{#if authStore.isAdmin && roots.length > 1}
-			<label class="form-control">
-				<span class="label-text text-xs">Folder</span>
-				<select class="select select-bordered select-sm" bind:value={rootId}>
+			<label class="grid gap-1 text-xs">
+				<span>Folder</span>
+				<select class="select select-sm" bind:value={rootId}>
 					<option value="">All folders</option>
 					{#each roots as root (root.id)}<option value={root.id}>{root.label}</option>{/each}
 				</select>
 			</label>
 		{/if}
-		<label class="form-control">
-			<span class="label-text text-xs">Folder policy</span>
-			<select class="select select-bordered select-sm" bind:value={policy}>
+		<label class="grid gap-1 text-xs">
+			<span>Folder policy</span>
+			<select class="select select-sm" bind:value={policy}>
 				<option value="">Any</option>
 				<option value="automatic">Automatic</option>
 				<option value="local_metadata">Local metadata</option>
 				<option value="excluded">Excluded</option>
 			</select>
 		</label>
-		<label class="form-control">
-			<span class="label-text text-xs">Identification</span>
-			<select class="select select-bordered select-sm" bind:value={jobState}>
+		<label class="grid gap-1 text-xs">
+			<span>Identification</span>
+			<select class="select select-sm" bind:value={jobState}>
 				<option value="">Any</option>
 				<option value="queued">Queued</option>
 				<option value="running">Running</option>
@@ -316,45 +316,45 @@
 				<option value="succeeded">Finished</option>
 			</select>
 		</label>
-		<label class="form-control">
-			<span class="label-text text-xs">Filed from</span>
-			<input type="date" class="input input-bordered input-sm" bind:value={filedFrom} />
+		<label class="grid gap-1 text-xs">
+			<span>Filed from</span>
+			<Input type="date" size="sm" label="Filed from" bind:value={filedFrom} />
 		</label>
-		<label class="form-control">
-			<span class="label-text text-xs">Filed to</span>
-			<input type="date" class="input input-bordered input-sm" bind:value={filedTo} />
+		<label class="grid gap-1 text-xs">
+			<span>Filed to</span>
+			<Input type="date" size="sm" label="Filed to" bind:value={filedTo} />
 		</label>
-		<label class="form-control">
-			<span class="label-text text-xs">Order</span>
-			<select class="select select-bordered select-sm" bind:value={sort}>
+		<label class="grid gap-1 text-xs">
+			<span>Order</span>
+			<select class="select select-sm" bind:value={sort}>
 				<option value="newest">Newest first</option>
 				<option value="oldest">Oldest first</option>
 				<option value="tracks">Most tracks first</option>
 			</select>
 		</label>
 		<label class="label cursor-pointer gap-2 pb-1 text-xs">
-			<input type="checkbox" class="checkbox checkbox-xs" bind:checked={withCandidates} />
+			<input type="checkbox" class="checkbox checkbox-sm" bind:checked={withCandidates} />
 			Only with candidates
 		</label>
 		<label class="label cursor-pointer gap-2 pb-1 text-xs">
-			<input type="checkbox" class="checkbox checkbox-xs" bind:checked={hideActiveJobs} />
+			<input type="checkbox" class="checkbox checkbox-sm" bind:checked={hideActiveJobs} />
 			Hide albums still being matched
 		</label>
 	</div>
 
 	{#if (query.data?.reason_counts.length ?? 0) > 1 || reasonCode}
 		<div class="flex flex-wrap gap-2" role="group" aria-label="Reasons">
-			<button
-				class="btn btn-xs {reasonCode ? 'btn-ghost' : 'btn-primary'}"
-				onclick={() => (reasonCode = '')}>All reasons</button
+			<Button size="xs" variant={reasonCode ? 'ghost' : 'primary'} onclick={() => (reasonCode = '')}
+				>All reasons</Button
 			>
 			{#each query.data?.reason_counts ?? [] as bucket (bucket.reason_code)}
-				<button
-					class="btn btn-xs {reasonCode === bucket.reason_code ? 'btn-primary' : 'btn-ghost'}"
+				<Button
+					size="xs"
+					variant={reasonCode === bucket.reason_code ? 'primary' : 'ghost'}
 					title={bucket.reason.action}
 					onclick={() => (reasonCode = bucket.reason_code)}
 					>{bucket.reason.message}
-					<span class="badge badge-sm">{bucket.count}</span></button
+					<span class="badge badge-sm">{bucket.count}</span></Button
 				>
 			{/each}
 		</div>
@@ -366,34 +366,32 @@
 		>
 			<strong class="mr-1">{selectionCount} selected</strong>
 			{#if !allMatching && total > selected.length}
-				<button class="btn btn-ghost btn-xs" onclick={() => (allMatching = true)}
-					>Select all {total} matching</button
+				<Button variant="ghost" size="xs" onclick={() => (allMatching = true)}
+					>Select all {total} matching</Button
 				>
 			{/if}
 			<span class="flex-1"></span>
-			<button
-				class="btn btn-sm"
-				disabled={preview.isPending}
-				onclick={() => void startBulk('keep_tagged')}>{BULK_LABEL.keep_tagged}</button
+			<Button size="sm" disabled={preview.isPending} onclick={() => void startBulk('keep_tagged')}
+				>{BULK_LABEL.keep_tagged}</Button
 			>
-			<button
-				class="btn btn-sm"
-				disabled={preview.isPending}
-				onclick={() => void startBulk('accept')}>{BULK_LABEL.accept}</button
+			<Button size="sm" disabled={preview.isPending} onclick={() => void startBulk('accept')}
+				>{BULK_LABEL.accept}</Button
 			>
 			{#if authStore.isAdmin}
-				<button
-					class="btn btn-ghost btn-sm text-error"
+				<Button
+					variant="danger-ghost"
+					size="sm"
 					disabled={preview.isPending}
-					onclick={() => void startBulk('exclude')}>{BULK_LABEL.exclude}</button
+					onclick={() => void startBulk('exclude')}>{BULK_LABEL.exclude}</Button
 				>
 			{/if}
-			<button
-				class="btn btn-ghost btn-sm"
+			<Button
+				variant="ghost"
+				size="sm"
 				onclick={() => {
 					selected = [];
 					allMatching = false;
-				}}>Clear</button
+				}}>Clear</Button
 			>
 		</div>
 	{/if}
@@ -419,16 +417,16 @@
 	{:else if query.isError}
 		<div class="alert alert-error">
 			<span>The reviews couldn't be loaded.</span>
-			<button class="btn btn-sm" onclick={() => query.refetch()}>Retry</button>
+			<Button size="sm" onclick={() => query.refetch()}>Retry</Button>
 		</div>
 	{:else if !reviews.length}
-		<div class="rounded-box bg-base-200 p-8 text-center text-base-content/60">
+		<Card class="text-center text-base-content/60">
 			{reviewState === 'pending'
 				? 'Nothing is waiting on you.'
 				: reviewState === 'excluded'
 					? 'No album was taken out of the library from a review.'
 					: 'No reviews yet.'}
-		</div>
+		</Card>
 	{:else}
 		<ul class="space-y-2">
 			{#each reviews as review (review.id)}
@@ -467,9 +465,11 @@
 							{#if review.state !== 'pending'}
 								<span class="badge badge-ghost badge-sm capitalize">{review.state}</span>
 							{/if}
-							<a
-								class="btn btn-ghost btn-sm"
-								href={withBasePath(`/album/${encodeURIComponent(review.album_id)}`)}>Open album</a
+							<Button
+								variant="ghost"
+								size="sm"
+								href={withBasePath(`/album/${encodeURIComponent(review.album_id)}`)}
+								>Open album</Button
 							>
 						</div>
 					</div>
@@ -519,11 +519,12 @@
 												{/if}
 											</div>
 											{#if authStore.isTrusted && review.state === 'pending'}
-												<button
-													class="btn btn-primary btn-xs"
+												<Button
+													variant="primary"
+													size="xs"
 													disabled={busy}
 													onclick={() => void choose(review, candidate.candidate_key)}
-													>Use this release</button
+													>Use this release</Button
 												>
 											{/if}
 										</li>
@@ -539,40 +540,42 @@
 							<div class="flex flex-wrap gap-2">
 								{#if review.state === 'pending'}
 									{#if authStore.isTrusted}
-										<button
-											class="btn btn-sm"
+										<Button
+											size="sm"
 											disabled={busy}
-											onclick={() => void run(review, 'keep_tagged')}>Keep as tagged</button
+											onclick={() => void run(review, 'keep_tagged')}>Keep as tagged</Button
 										>
-										<button
-											class="btn btn-ghost btn-sm"
+										<Button
+											variant="ghost"
+											size="sm"
 											disabled={busy}
 											title="Take the MusicBrainz match off; the album keeps its own tags"
-											onclick={() => void run(review, 'detach')}>Remove match</button
+											onclick={() => void run(review, 'detach')}>Remove match</Button
 										>
-										<button
-											class="btn btn-ghost btn-sm"
+										<Button
+											variant="ghost"
+											size="sm"
 											disabled={busy}
-											onclick={() => void run(review, 'dismiss')}>Close without deciding</button
+											onclick={() => void run(review, 'dismiss')}>Close without deciding</Button
 										>
 									{/if}
 									{#if authStore.isAdmin}
-										<button
-											class="btn btn-ghost btn-sm"
+										<Button
+											variant="ghost"
+											size="sm"
 											disabled={busy}
-											onclick={() => void retryOne(review)}>Retry identification</button
+											onclick={() => void retryOne(review)}>Retry identification</Button
 										>
-										<button
-											class="btn btn-ghost btn-sm text-error"
+										<Button
+											variant="danger-ghost"
+											size="sm"
 											disabled={busy}
-											onclick={() => void run(review, 'exclude')}>Take out of library</button
+											onclick={() => void run(review, 'exclude')}>Take out of library</Button
 										>
 									{/if}
 								{:else if review.state === 'excluded' && authStore.isAdmin}
-									<button
-										class="btn btn-sm"
-										disabled={busy}
-										onclick={() => void run(review, 'restore')}>Put back in library</button
+									<Button size="sm" disabled={busy} onclick={() => void run(review, 'restore')}
+										>Put back in library</Button
 									>
 								{/if}
 							</div>
@@ -587,15 +590,17 @@
 					>{offset + 1}–{Math.min(offset + PAGE, total)} of {total}</span
 				>
 				<div class="join">
-					<button
-						class="btn btn-sm join-item"
+					<Button
+						size="sm"
+						class="join-item"
 						disabled={offset === 0}
-						onclick={() => (offset = Math.max(0, offset - PAGE))}>Previous</button
+						onclick={() => (offset = Math.max(0, offset - PAGE))}>Previous</Button
 					>
-					<button
-						class="btn btn-sm join-item"
+					<Button
+						size="sm"
+						class="join-item"
 						disabled={offset + PAGE >= total}
-						onclick={() => (offset += PAGE)}>Next</button
+						onclick={() => (offset += PAGE)}>Next</Button
 					>
 				</div>
 			</div>
@@ -639,14 +644,13 @@
 			{/if}
 		{/if}
 		<div class="modal-action">
-			<button class="btn btn-ghost" onclick={() => bulkDialog?.close()}>Close</button>
+			<Button variant="ghost" onclick={() => bulkDialog?.close()}>Close</Button>
 			{#if !applyBulk.data}
-				<button
-					class="btn btn-primary"
-					disabled={applyBulk.isPending || !preview.data?.eligible}
-					onclick={() => void confirmBulk()}
-					>{#if applyBulk.isPending}<span class="loading loading-spinner loading-sm"></span>{/if}
-					Apply to {preview.data?.eligible ?? 0}</button
+				<Button
+					variant="primary"
+					loading={applyBulk.isPending}
+					disabled={!preview.data?.eligible}
+					onclick={() => void confirmBulk()}>Apply to {preview.data?.eligible ?? 0}</Button
 				>
 			{/if}
 		</div>
@@ -678,11 +682,11 @@
 			{/if}
 		{/if}
 		<div class="modal-action">
-			<button class="btn btn-ghost" onclick={() => retryDialog?.close()}>Cancel</button>
-			<button
-				class="btn btn-primary"
+			<Button variant="ghost" onclick={() => retryDialog?.close()}>Cancel</Button>
+			<Button
+				variant="primary"
 				disabled={!retryAll.data?.preview || !retryAll.data.started}
-				onclick={() => void retryEverything()}>Retry {retryAll.data?.started ?? 0}</button
+				onclick={() => void retryEverything()}>Retry {retryAll.data?.started ?? 0}</Button
 			>
 		</div>
 	</div>

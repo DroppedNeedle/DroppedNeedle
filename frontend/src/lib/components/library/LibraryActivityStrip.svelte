@@ -8,6 +8,8 @@
 		LibraryActivityResponse,
 		LibraryWorkItem
 	} from '$lib/queries/library/LibraryOperationsTypes';
+	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import LibraryWorkIcon from './LibraryWorkIcon.svelte';
 	import LibraryWorkProgress from './LibraryWorkProgress.svelte';
 	import {
@@ -152,25 +154,31 @@
 			</a>
 
 			{#if primary.effect === 'attention' && primary.kind !== 'recovery'}
-				<button
-					type="button"
-					class="library-activity-icon-button"
+				<IconButton
+					label="Dismiss library failure"
+					icon={X}
+					size="sm"
+					shape="square"
 					onclick={() => dismissFailure(primary)}
-					aria-label="Dismiss library failure"><X class="h-4 w-4" /></button
-				>
+				/>
 			{/if}
 			{#if additional.length}
-				<button
-					type="button"
-					class="library-activity-stack-toggle"
+				<Button
+					variant="ghost"
+					size="xs"
+					class="ml-1"
 					aria-expanded={expanded}
 					aria-controls="library-activity-work-stack"
 					aria-label={`${expanded ? 'Hide' : 'Show'} ${additional.length} other ${additional.length === 1 ? 'task' : 'tasks'}`}
 					onclick={() => (expanded = !expanded)}
 				>
-					<span>+{additional.length} other {additional.length === 1 ? 'task' : 'tasks'}</span>
-					<ChevronDown class={`h-4 w-4${expanded ? ' rotate-180' : ''}`} />
-				</button>
+					<span class="max-sm:hidden"
+						>+{additional.length} other {additional.length === 1 ? 'task' : 'tasks'}</span
+					>
+					<ChevronDown
+						class={`h-4 w-4 transition-transform motion-reduce:transition-none${expanded ? ' rotate-180' : ''}`}
+					/>
+				</Button>
 			{/if}
 		</div>
 

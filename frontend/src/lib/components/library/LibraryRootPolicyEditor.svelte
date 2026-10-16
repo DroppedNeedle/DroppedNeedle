@@ -1,5 +1,10 @@
 <script lang="ts">
 	import { ChevronDown, FolderPlus, Plus, Trash2 } from 'lucide-svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
+	import SelectField from '$lib/ui/SelectField.svelte';
+	import TextField from '$lib/ui/TextField.svelte';
 	import { getLibraryPolicyTreeQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import { createUuid } from '$lib/utils/uuid';
 	import type {
@@ -19,8 +24,8 @@
 	let ruleDialog: HTMLDialogElement;
 	let rootHeading: HTMLHeadingElement;
 	let ruleHeading: HTMLHeadingElement;
-	let rootOpener: HTMLButtonElement | null = null;
-	let ruleOpener: HTMLButtonElement | null = null;
+	let rootOpener: HTMLElement | null = null;
+	let ruleOpener: HTMLElement | null = null;
 	let expanded = $state<string[]>([]);
 	let ruleRootId = $state<string | null>(null);
 	let newRootPath = $state('');
@@ -36,6 +41,11 @@
 		excluded:
 			'Keep files on disk but hide this path from DroppedNeedle and connected music clients.'
 	};
+	const POLICY_OPTIONS: { value: LibraryIdentificationPolicy; label: string }[] = [
+		{ value: 'local_metadata', label: 'Local metadata' },
+		{ value: 'automatic', label: 'Automatic identification' },
+		{ value: 'excluded', label: 'Excluded' }
+	];
 
 	function updateRoot(
 		id: string,
@@ -76,16 +86,13 @@
 		ruleDialog.close();
 	}
 
-	function openRoot(event: MouseEvent & { currentTarget: HTMLButtonElement }): void {
+	function openRoot(event: MouseEvent & { currentTarget: HTMLElement }): void {
 		rootOpener = event.currentTarget;
 		rootDialog.showModal();
 		rootHeading.focus();
 	}
 
-	function openRule(
-		rootId: string,
-		event: MouseEvent & { currentTarget: HTMLButtonElement }
-	): void {
+	function openRule(rootId: string, event: MouseEvent & { currentTarget: HTMLElement }): void {
 		ruleOpener = event.currentTarget;
 		ruleRootId = rootId;
 		ruleDialog.showModal();
@@ -134,9 +141,7 @@
 				needed.
 			</p>
 		</div>
-		<button type="button" class="btn btn-outline btn-sm" onclick={openRoot}
-			><FolderPlus class="h-4 w-4" /> Add root</button
-		>
+		<Button variant="outline" size="sm" icon={FolderPlus} onclick={openRoot}>Add root</Button>
 	</div>
 
 	{#if roots.length === 0}
@@ -149,7 +154,7 @@
 	{#each roots as root (root.id)}
 		{@const treeRoot = treeQuery.data?.roots.find((node) => node.id === root.id)}
 		{@const effectiveRows = policyRows(root, treeRoot)}
-		<article class="overflow-hidden rounded-box border border-base-content/10 bg-base-100/65">
+		<Card as="article" variant="bordered" padding="none" class="overflow-hidden">
 			<div class="grid gap-3 p-4 lg:grid-cols-[minmax(0,1fr)_14rem_auto] lg:items-start">
 				<div class="min-w-0">
 					<div class="flex flex-wrap items-center gap-2">
@@ -166,10 +171,10 @@
 							'-'} on disk
 					</p>
 				</div>
-				<label class="form-control">
-					<span class="label-text text-xs">Default policy</span>
+				<label class="grid gap-1 text-xs">
+					<span>Default policy</span>
 					<select
-						class="select select-bordered select-sm"
+						class="select select-sm"
 						value={root.policy}
 						onchange={(event) =>
 							updateRoot(root.id, (value) => ({
@@ -184,9 +189,9 @@
 					<span class="mt-1 text-xs text-base-content/50">{policyCopy[root.policy]}</span>
 				</label>
 				<div class="flex gap-1 lg:justify-end">
-					<button
-						type="button"
-						class="btn btn-ghost btn-sm"
+					<Button
+						variant="ghost"
+						size="sm"
 						onclick={() =>
 							(expanded = expanded.includes(root.id)
 								? expanded.filter((id) => id !== root.id)
@@ -194,22 +199,27 @@
 						aria-expanded={expanded.includes(root.id)}
 						><ChevronDown
 							class={`h-4 w-4 transition-transform ${expanded.includes(root.id) ? 'rotate-180' : ''}`}
-						/> Rules</button
+						/> Rules</Button
 					>
-					<button
-						type="button"
-						class="btn btn-ghost btn-sm text-error"
+					<IconButton
+						variant="danger-ghost"
+						size="sm"
+						shape="square"
+						icon={Trash2}
+						label={`Remove ${root.label}`}
 						onclick={() => onchange(roots.filter((value) => value.id !== root.id))}
-						aria-label={`Remove ${root.label}`}><Trash2 class="h-4 w-4" /></button
-					>
+					/>
 				</div>
 			</div>
 			{#if expanded.includes(root.id)}
 				<div class="border-t border-base-content/10 p-3">
 					<div class="mb-2 flex items-center justify-between">
 						<h5 class="text-sm font-semibold">Directory overrides</h5>
-						<button class="btn btn-ghost btn-xs" onclick={(event) => openRule(root.id, event)}
-							><Plus class="h-3.5 w-3.5" /> Add override</button
+						<Button
+							variant="ghost"
+							size="xs"
+							icon={Plus}
+							onclick={(event) => openRule(root.id, event)}>Add override</Button
 						>
 					</div>
 					{#if effectiveRows.length === 0}<p class="text-xs text-base-content/50">
@@ -232,7 +242,7 @@
 								</div>
 								{#if rule}
 									<select
-										class="select select-ghost select-xs"
+										class="select select-sm"
 										value={rule.policy}
 										aria-label={`Policy for ${rule.relative_path}`}
 										onchange={(event) =>
@@ -251,16 +261,17 @@
 											>Automatic</option
 										><option value="excluded">Excluded</option></select
 									>
-									<button
-										class="btn btn-ghost btn-xs btn-square"
+									<IconButton
+										size="xs"
+										shape="square"
+										icon={Trash2}
+										label={`Remove override ${rule.relative_path}`}
 										onclick={() =>
 											updateRoot(root.id, (value) => ({
 												...value,
 												rules: value.rules.filter((current) => current.id !== rule.id)
 											}))}
-										aria-label={`Remove override ${rule.relative_path}`}
-										><Trash2 class="h-3.5 w-3.5" /></button
-									>
+									/>
 								{:else}
 									<span class="badge badge-outline">{node.policy.replace('_', ' ')}</span>
 									<span aria-hidden="true"></span>
@@ -270,7 +281,7 @@
 					</div>
 				</div>
 			{/if}
-		</article>
+		</Card>
 	{/each}
 </section>
 
@@ -303,57 +314,36 @@
 			}}
 		>
 			<div class="space-y-5 px-6 py-5">
+				<TextField
+					label="Name"
+					bind:value={newRootLabel}
+					placeholder="Main library"
+					help="A short name shown in Library settings."
+				/>
+				<TextField
+					label="Folder path"
+					mono
+					bind:value={newRootPath}
+					placeholder="/music"
+					help="Use the path as DroppedNeedle sees it inside the container."
+				/>
 				<div class="grid gap-2">
-					<label for="new-library-root-name" class="text-sm font-semibold">Name</label>
-					<input
-						id="new-library-root-name"
-						class="input input-bordered w-full"
-						bind:value={newRootLabel}
-						placeholder="Main library"
-						aria-describedby="new-library-root-name-help"
-					/>
-					<span id="new-library-root-name-help" class="text-xs text-base-content/50">
-						A short name shown in Library settings.
-					</span>
-				</div>
-				<div class="grid gap-2">
-					<label for="new-library-root-path" class="text-sm font-semibold">Folder path</label>
-					<input
-						id="new-library-root-path"
-						class="input input-bordered w-full font-mono"
-						bind:value={newRootPath}
-						placeholder="/music"
-						aria-describedby="new-library-root-path-help"
-					/>
-					<span id="new-library-root-path-help" class="text-xs text-base-content/50">
-						Use the path as DroppedNeedle sees it inside the container.
-					</span>
-				</div>
-				<div class="grid gap-2">
-					<label for="new-library-root-policy" class="text-sm font-semibold">
-						Default identification
-					</label>
-					<select
-						id="new-library-root-policy"
-						class="select select-bordered w-full"
+					<SelectField
+						label="Default identification"
 						bind:value={newRootPolicy}
-						><option value="local_metadata">Local metadata</option><option value="automatic"
-							>Automatic identification</option
-						><option value="excluded">Excluded</option></select
-					>
+						options={POLICY_OPTIONS}
+					/>
 					<span class="rounded-box bg-base-200/70 px-3 py-2 text-xs text-base-content/60">
 						{policyCopy[newRootPolicy]}
 					</span>
 				</div>
 			</div>
 			<div class="modal-action mt-0 border-t border-base-content/10 bg-base-200/40 px-6 py-4">
-				<button type="button" class="btn btn-ghost" onclick={() => rootDialog.close()}
-					>Cancel</button
-				>
-				<button
+				<Button variant="ghost" onclick={() => rootDialog.close()}>Cancel</Button>
+				<Button
 					type="submit"
-					class="btn btn-primary"
-					disabled={!newRootLabel.trim() || !newRootPath.trim()}>Add root</button
+					variant="primary"
+					disabled={!newRootLabel.trim() || !newRootPath.trim()}>Add root</Button
 				>
 			</div>
 		</form>
@@ -377,27 +367,24 @@
 			Enter a path relative to this library root. Globs and regular expressions are not used.
 		</p>
 		<div class="mt-4 space-y-3">
-			<label class="form-control"
-				><span class="label-text">Relative path</span><input
-					class="input input-bordered font-mono"
-					bind:value={newRulePath}
-					placeholder="Compilations/Live"
-				/></label
-			><label class="form-control"
-				><span class="label-text">Policy</span><select
-					class="select select-bordered"
-					bind:value={newRulePolicy}
-					><option value="local_metadata">Local metadata</option><option value="automatic"
-						>Automatic identification</option
-					><option value="excluded">Excluded</option></select
-				><span class="mt-1 text-xs text-base-content/50">{policyCopy[newRulePolicy]}</span></label
-			>
+			<TextField
+				label="Relative path"
+				mono
+				bind:value={newRulePath}
+				placeholder="Compilations/Live"
+			/>
+			<SelectField
+				label="Policy"
+				bind:value={newRulePolicy}
+				options={POLICY_OPTIONS}
+				help={policyCopy[newRulePolicy]}
+			/>
 		</div>
 		<div class="modal-action">
-			<button class="btn btn-ghost" onclick={() => ruleDialog.close()}>Cancel</button><button
-				class="btn btn-primary"
+			<Button variant="ghost" onclick={() => ruleDialog.close()}>Cancel</Button><Button
+				variant="primary"
 				disabled={!newRulePath.trim()}
-				onclick={addRule}>Add override</button
+				onclick={addRule}>Add override</Button
 			>
 		</div>
 	</div>

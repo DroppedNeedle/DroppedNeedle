@@ -14,6 +14,9 @@
 	import type { LibraryFileMeta } from '$lib/types';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { createUuid } from '$lib/utils/uuid';
+	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
+	import Input from '$lib/ui/Input.svelte';
 
 	interface Props {
 		track: LibraryFileMeta;
@@ -206,12 +209,14 @@
 					Changes are previewed, journalled, validated, and published through file organization.
 				</p>
 			</div>
-			<button
-				class="btn btn-ghost btn-sm btn-square"
-				aria-label="Close tag editor"
+			<IconButton
+				label="Close tag editor"
+				icon={X}
+				size="sm"
+				shape="square"
 				disabled={pending}
-				onclick={close}><X class="h-5 w-5" /></button
-			>
+				onclick={close}
+			/>
 		</header>
 
 		<div class="max-h-[72vh] overflow-y-auto p-5 sm:p-6">
@@ -345,8 +350,9 @@
 						<div class="p-4">
 							<label class="grid gap-1 text-sm">
 								<span>Find a field</span>
-								<input
-									class="input input-bordered input-sm"
+								<Input
+									size="sm"
+									label="Find a field"
 									bind:value={advancedSearch}
 									placeholder="Composer, ISRC, sort name…"
 								/>
@@ -375,16 +381,16 @@
 				Using {context?.profile_name ?? 'the root profile'} format compatibility rules.
 			</p>
 			<div class="flex gap-2">
-				<button class="btn btn-ghost" disabled={pending} onclick={close}>Cancel</button>
-				<button
-					class="btn management-btn"
-					disabled={pending || !context?.accepted_identity || selectionCount === 0}
+				<Button variant="ghost" disabled={pending} onclick={close}>Cancel</Button>
+				<Button
+					variant="warning"
+					loading={pending}
+					disabled={!context?.accepted_identity || selectionCount === 0}
 					onclick={preview}
 				>
-					{#if pending}<span class="loading loading-spinner loading-sm"></span>{/if}
 					Preview {selectionCount || ''}
 					{selectionCount === 1 ? 'change' : 'changes'}
-				</button>
+				</Button>
 			</div>
 		</footer>
 	</div>
@@ -406,23 +412,21 @@
 				>Local override</span
 			>{/if}
 		{#if field.cardinality === 'ordered_strings'}
-			<textarea
-				class="textarea textarea-bordered min-h-20 sm:col-span-2"
-				bind:value={drafts[field.field_name]}></textarea>
+			<textarea class="textarea min-h-20 sm:col-span-2" bind:value={drafts[field.field_name]}
+			></textarea>
 		{:else if field.cardinality === 'boolean'}
-			<select
-				class="select select-bordered select-sm sm:col-span-2"
-				bind:value={drafts[field.field_name]}
-			>
+			<select class="select select-sm sm:col-span-2" bind:value={drafts[field.field_name]}>
 				<option value="">Not set</option>
 				<option value="true">Yes</option>
 				<option value="false">No</option>
 			</select>
 		{:else}
-			<input
+			<Input
 				type={field.cardinality === 'integer' ? 'number' : 'text'}
 				min={field.cardinality === 'integer' ? 0 : undefined}
-				class="input input-bordered input-sm sm:col-span-2"
+				size="sm"
+				label={fieldLabel(field.field_name)}
+				class="sm:col-span-2"
 				bind:value={drafts[field.field_name]}
 			/>
 		{/if}

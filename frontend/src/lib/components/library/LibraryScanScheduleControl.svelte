@@ -1,5 +1,9 @@
 <script lang="ts">
 	import { Check, X } from 'lucide-svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Field from '$lib/ui/Field.svelte';
+	import Input from '$lib/ui/Input.svelte';
+	import SelectField from '$lib/ui/SelectField.svelte';
 	import { getLibraryScanScheduleQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import { saveLibraryScanSchedule } from '$lib/queries/library/LibraryMutations.svelte';
 	import { SCAN_FREQUENCY_OPTIONS } from '$lib/utils/scanFrequency';
@@ -63,29 +67,24 @@
 
 <div class="space-y-3">
 	<div class="flex flex-wrap items-end gap-3">
-		<label class="form-control">
-			<div class="label py-1"><span class="label-text">Scheduled scan frequency</span></div>
-			<select class="select select-bordered" bind:value={frequency} aria-label="Scan frequency">
-				{#each options as opt (opt.value)}
-					<option value={opt.value}>{opt.label}{opt.legacy ? ' (legacy)' : ''}</option>
-				{/each}
-			</select>
-		</label>
+		<SelectField
+			label="Scheduled scan frequency"
+			bind:value={frequency}
+			options={options.map((opt) => ({
+				value: opt.value,
+				label: `${opt.label}${opt.legacy ? ' (legacy)' : ''}`
+			}))}
+		/>
 		{#if isDaily}
-			<label class="form-control">
-				<div class="label py-1"><span class="label-text">Time of day</span></div>
-				<input
-					type="time"
-					class="input input-bordered"
-					bind:value={dailyTime}
-					aria-label="Daily scan time"
-				/>
-			</label>
+			<Field label="Time of day">
+				{#snippet children(control)}
+					<Input {...control} type="time" label="Time of day" bind:value={dailyTime} />
+				{/snippet}
+			</Field>
 		{/if}
-		<button class="btn btn-primary" onclick={handleSave} disabled={!dirty || save.isPending}>
-			{#if save.isPending}<span class="loading loading-spinner loading-sm"></span>{/if}
-			Save
-		</button>
+		<Button variant="primary" loading={save.isPending} disabled={!dirty} onclick={handleSave}
+			>Save</Button
+		>
 	</div>
 	{#if isDaily}
 		<p class="text-xs text-base-content/60">

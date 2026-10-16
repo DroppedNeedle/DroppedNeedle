@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Button from '$lib/ui/Button.svelte';
 	import { Pencil } from 'lucide-svelte';
 	import AudioQualityBadge from '$lib/components/AudioQualityBadge.svelte';
 	import TagEditor from './TagEditor.svelte';
@@ -24,9 +25,13 @@
 			</span>
 		{/if}
 		{#if authStore.isAdmin}
-			<button class="btn btn-ghost btn-xs ml-auto gap-1" onclick={() => (editing = true)}>
-				<Pencil class="h-3 w-3" /> Edit tags
-			</button>
+			<Button
+				variant="ghost"
+				size="xs"
+				icon={Pencil}
+				class="ml-auto"
+				onclick={() => (editing = true)}>Edit tags</Button
+			>
 		{/if}
 	</div>
 

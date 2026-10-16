@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Play } from 'lucide-svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
 	import { formatBytes, formatDurationSec } from '$lib/utils/formatting';
@@ -22,11 +23,12 @@
 >
 	{#each tracks as track, index (track.id)}
 		<li class="group flex items-center gap-3 px-3 py-2.5">
-			<button
-				class="btn btn-ghost btn-circle btn-sm"
+			<IconButton
+				label={`Play ${track.title}`}
+				icon={Play}
+				size="sm"
 				onclick={() => playerStore.playQueue(buildDiscoveryQueueFromLocal(tracks), index, false)}
-				aria-label={`Play ${track.title}`}><Play class="h-4 w-4" /></button
-			>
+			/>
 			<span class="w-9 shrink-0 text-right text-xs tabular-nums text-base-content/40"
 				>{track.disc_number}.{track.track_number}</span
 			>

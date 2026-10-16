@@ -12,6 +12,8 @@
 	import { playbackToast } from '$lib/stores/playbackToast.svelte';
 	import { fetchLibraryTracks } from '$lib/queries/library/libraryTracks';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import { NOISE_TEXTURE } from './noiseTexture';
 	import type { NativeTrackListItem, NativeTrackPage } from '$lib/types';
 	import { withBasePath } from '$lib/utils/basePath';
 
@@ -119,35 +121,31 @@
 
 	<div
 		aria-hidden="true"
-		class="absolute inset-0"
-		style="background:
-			linear-gradient(105deg, oklch(from var(--color-base-100) l c h / 0.96) 28%, oklch(from var(--color-base-100) l c h / 0.72) 62%, rgb(var(--brand-localfiles) / 0.22) 100%);"
+		class="absolute inset-0 bg-linear-[105deg] from-base-100/96 from-28% via-base-100/72 via-62% to-localfiles/22"
 	></div>
 	<div
 		aria-hidden="true"
-		class="pointer-events-none absolute -top-16 -right-12 h-56 w-56 rounded-full blur-3xl"
-		style="background: rgb(var(--brand-localfiles) / 0.28);"
+		class="pointer-events-none absolute -top-16 -right-12 h-56 w-56 rounded-full bg-localfiles/28 blur-3xl"
 	></div>
 	<div
 		aria-hidden="true"
 		class="pointer-events-none absolute inset-0 opacity-[0.05]"
-		style="background-image: url('data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 200 200%22><filter id=%22n%22><feTurbulence type=%22fractalNoise%22 baseFrequency=%220.9%22 numOctaves=%224%22 stitchTiles=%22stitch%22/></filter><rect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23n)%22 opacity=%220.5%22/></svg>'); background-size: 200px;"
+		style:background-image={NOISE_TEXTURE}
+		style:background-size="200px"
 	></div>
 
 	<!-- stretched link under the content so empty area navigates, while playback buttons (pointer-events re-enabled) still act in place; avoids nested interactives -->
 	<a
 		href={withBasePath('/library/local')}
 		aria-label="Enter the Listening Room"
-		class="absolute inset-0 z-10 rounded-3xl focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 focus-visible:outline-none"
-		style="--tw-ring-color: rgb(var(--brand-localfiles));"
+		class="absolute inset-0 z-10 rounded-3xl focus-visible:ring-2 focus-visible:ring-localfiles focus-visible:ring-offset-2 focus-visible:ring-offset-base-100 focus-visible:outline-none"
 	></a>
 
 	<div class="pointer-events-none relative z-20 flex flex-col gap-5 p-6 sm:p-8">
 		<div class="flex items-start justify-between gap-3">
 			<div class="flex items-center gap-4">
 				<div
-					class="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl ring-1 transition-transform duration-300 group-hover:-rotate-6 group-hover:scale-110"
-					style="background: rgb(var(--brand-localfiles) / 0.15); color: rgb(var(--brand-localfiles)); --tw-ring-color: rgb(var(--brand-localfiles) / 0.35);"
+					class="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-localfiles/15 text-localfiles ring-1 ring-localfiles/35 transition-transform duration-300 group-hover:-rotate-6 group-hover:scale-110"
 				>
 					<Headphones class="h-7 w-7" />
 				</div>
@@ -163,10 +161,7 @@
 					</p>
 				</div>
 			</div>
-			<div
-				class="flex shrink-0 items-center gap-2 text-right"
-				style="color: rgb(var(--brand-localfiles));"
-			>
+			<div class="flex shrink-0 items-center gap-2 text-right text-localfiles">
 				<div class="leading-tight">
 					<div
 						class="hidden text-[10px] font-semibold tracking-[0.2em] uppercase opacity-70 sm:block"
@@ -182,44 +177,28 @@
 		<div class="h-px w-full bg-base-content/10"></div>
 
 		<div class="flex flex-wrap items-center gap-3">
-			<button
-				onclick={playAll}
-				disabled={busy === 'play'}
-				class="btn btn-lg pointer-events-auto gap-2 border-0 text-base-100 shadow-lg transition-transform hover:scale-[1.02]"
-				style="background: rgb(var(--brand-localfiles));"
+			<Button
+				size="lg"
+				icon={Play}
+				loading={busy === 'play'}
+				class="pointer-events-auto border-0 bg-localfiles text-base-100 shadow-lg transition-transform hover:scale-[1.02]"
+				onclick={playAll}>Play All</Button
 			>
-				{#if busy === 'play'}
-					<span class="loading loading-spinner loading-sm"></span>
-				{:else}
-					<Play class="h-5 w-5" />
-				{/if}
-				Play All
-			</button>
-			<button
-				onclick={shuffleAll}
-				disabled={busy === 'shuffle'}
-				class="btn btn-lg pointer-events-auto gap-2 border bg-base-100/40 backdrop-blur-sm hover:bg-base-100/70"
-				style="border-color: rgb(var(--brand-localfiles) / 0.4);"
+			<Button
+				size="lg"
+				icon={Shuffle}
+				loading={busy === 'shuffle'}
+				class="pointer-events-auto border-localfiles/40 bg-base-100/40 backdrop-blur-sm hover:bg-base-100/70"
+				onclick={shuffleAll}>Shuffle</Button
 			>
-				{#if busy === 'shuffle'}
-					<span class="loading loading-spinner loading-sm"></span>
-				{:else}
-					<Shuffle class="h-5 w-5" />
-				{/if}
-				Shuffle
-			</button>
-			<button
-				onclick={surprise}
-				disabled={busy === 'surprise'}
-				class="btn btn-lg btn-ghost pointer-events-auto gap-2"
+			<Button
+				variant="ghost"
+				size="lg"
+				icon={Sparkles}
+				loading={busy === 'surprise'}
+				class="pointer-events-auto"
+				onclick={surprise}>Surprise me</Button
 			>
-				{#if busy === 'surprise'}
-					<span class="loading loading-spinner loading-sm"></span>
-				{:else}
-					<Sparkles class="h-5 w-5" />
-				{/if}
-				Surprise me
-			</button>
 		</div>
 	</div>
 </section>

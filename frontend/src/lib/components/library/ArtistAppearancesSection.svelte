@@ -1,4 +1,6 @@
 <script lang="ts">
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import { Disc3, MicVocal } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import LocalAlbumTrackList from '$lib/components/library/LocalAlbumTrackList.svelte';
@@ -39,9 +41,7 @@
 					Couldn't load this artist's local track appearances.
 				</p>
 			</div>
-			<button class="btn btn-sm btn-outline" onclick={() => appearancesQuery.refetch()}
-				>Retry</button
-			>
+			<Button variant="outline" size="sm" onclick={() => appearancesQuery.refetch()}>Retry</Button>
 		</div>
 	</section>
 {:else if appearances.length > 0}
@@ -87,13 +87,11 @@
 
 		<div class="space-y-3 p-3 sm:p-4">
 			{#each appearances as appearance (appearance.album.id)}
-				<article
-					class="appearance-release rounded-xl border border-base-content/10 bg-base-100/80 p-3 shadow-sm transition-colors hover:border-accent/25 sm:p-4"
-				>
+				<Card as="article" variant="bordered" padding="sm">
 					<div class="grid gap-4 sm:grid-cols-[7rem_minmax(0,1fr)]">
 						<a
 							href={albumHref(appearance.album.musicbrainz_release_group_id ?? appearance.album.id)}
-							class="group/cover relative mx-auto block aspect-square w-28 overflow-hidden rounded-lg shadow-md sm:mx-0 sm:w-full"
+							class="appearance-cover group/cover relative mx-auto block aspect-square w-28 overflow-hidden rounded-lg shadow-md sm:mx-0 sm:w-full"
 							aria-label={`Open ${appearance.album.title}`}
 						>
 							<AlbumImage
@@ -130,7 +128,7 @@
 							<LocalAlbumTrackList tracks={appearance.tracks} />
 						</div>
 					</div>
-				</article>
+				</Card>
 			{/each}
 		</div>
 
@@ -141,18 +139,15 @@
 				<p class="text-xs text-base-content/50">
 					Showing {appearances.length} of {releaseCount} local releases
 				</p>
-				<button
-					class="btn btn-sm btn-ghost"
-					disabled={appearancesQuery.isFetchingNextPage}
+				<Button
+					variant="ghost"
+					size="sm"
+					loading={appearancesQuery.isFetchingNextPage}
 					onclick={() => void appearancesQuery.fetchNextPage()}
+					>{appearancesQuery.isFetchingNextPage
+						? 'Loading appearances'
+						: 'Load more appearances'}</Button
 				>
-					{#if appearancesQuery.isFetchingNextPage}
-						<span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
-						Loading appearances
-					{:else}
-						Load more appearances
-					{/if}
-				</button>
 			</footer>
 		{/if}
 	</section>
@@ -172,11 +167,8 @@
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.appearance-release,
-		.appearance-release :global(img) {
+		.appearance-cover :global(img) {
 			transition: none !important;
-		}
-		.appearance-release :global(img) {
 			transform: none !important;
 		}
 	}

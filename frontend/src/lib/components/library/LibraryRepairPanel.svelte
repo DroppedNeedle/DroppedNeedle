@@ -1,5 +1,8 @@
 <script lang="ts">
-	import { CirclePause, CirclePlay, OctagonX, ShieldCheck, Wrench } from 'lucide-svelte';
+	import { ShieldCheck, Wrench } from 'lucide-svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import OperationJobStrip from './OperationJobStrip.svelte';
 	import {
 		getLibraryRepairEstimateQuery,
 		getLibraryRepairFindingsQuery,
@@ -125,21 +128,18 @@
 	}
 </script>
 
-<section
-	class="rounded-box border border-base-content/15 bg-base-200/40"
-	aria-labelledby="repair-title"
->
+<Card as="section" variant="bordered" padding="none" aria-label="Repair">
 	<div class="flex flex-wrap items-center gap-3 p-4">
 		<div class="flex h-9 w-9 items-center justify-center rounded-xl bg-warning/10 text-warning">
 			<Wrench class="h-4 w-4" aria-hidden="true" />
 		</div>
 		<div class="min-w-0 flex-1">
-			<h3 id="repair-title" class="font-semibold">Repair</h3>
+			<h3 class="font-semibold">Repair</h3>
 			<p class="text-sm text-base-content/55">
 				Re-check albums matched by older identification rules.
 			</p>
 		</div>
-		<button class="btn btn-outline btn-sm" onclick={openStart}>Check existing matches</button>
+		<Button variant="outline" size="sm" onclick={openStart}>Check existing matches</Button>
 	</div>
 
 	{#if repairsQuery.isLoading}
@@ -165,50 +165,35 @@
 							</p>
 						{/if}
 					</div>
-					<div class="flex flex-wrap justify-end gap-1">
-						{#if repair.control_request === 'stop'}<button class="btn btn-ghost btn-xs" disabled
-								><span class="loading loading-spinner loading-xs"></span> Stopping...</button
-							>{:else if repair.control_request === 'pause'}<button
-								class="btn btn-ghost btn-xs"
-								disabled><span class="loading loading-spinner loading-xs"></span> Pausing...</button
-							>{:else if repair.state === 'running'}<button
-								class="btn btn-ghost btn-xs"
-								onclick={() =>
-									void pause
-										.mutateAsync({
-											jobId: repair.id,
-											expectedRevision: repair.row_revision
-										})
-										.catch(() => undefined)}><CirclePause class="h-3.5 w-3.5" /> Pause</button
-							>{:else if repair.state === 'paused'}<button
-								class="btn btn-ghost btn-xs"
-								onclick={() =>
-									void resume
-										.mutateAsync({
-											jobId: repair.id,
-											expectedRevision: repair.row_revision
-										})
-										.catch(() => undefined)}><CirclePlay class="h-3.5 w-3.5" /> Resume</button
+					<OperationJobStrip
+						class="justify-end"
+						size="xs"
+						status={repair.state}
+						controlRequest={repair.control_request}
+						onpause={() =>
+							pause
+								.mutateAsync({ jobId: repair.id, expectedRevision: repair.row_revision })
+								.catch(() => undefined)}
+						onresume={() =>
+							resume
+								.mutateAsync({ jobId: repair.id, expectedRevision: repair.row_revision })
+								.catch(() => undefined)}
+						onstop={() =>
+							stop
+								.mutateAsync({ jobId: repair.id, expectedRevision: repair.row_revision })
+								.catch(() => undefined)}
+					>
+						{#if repair.repair_summary}<Button
+								variant="outline"
+								size="xs"
+								onclick={() => openReport(repair)}>View report</Button
 							>{/if}
-						{#if repair.control_request === 'none' && ['queued', 'running', 'paused'].includes(repair.state)}<button
-								class="btn btn-ghost btn-xs text-error"
-								onclick={() =>
-									void stop
-										.mutateAsync({
-											jobId: repair.id,
-											expectedRevision: repair.row_revision
-										})
-										.catch(() => undefined)}><OctagonX class="h-3.5 w-3.5" /> Stop</button
+						{#if repair.state === 'ready' && repair.repair_summary?.estimated_apply_changes}<Button
+								variant="warning"
+								size="xs"
+								onclick={() => openApply(repair)}>Apply safe repairs...</Button
 							>{/if}
-						{#if repair.repair_summary}<button
-								class="btn btn-outline btn-xs"
-								onclick={() => openReport(repair)}>View report</button
-							>{/if}
-						{#if repair.state === 'ready' && repair.repair_summary?.estimated_apply_changes}<button
-								class="btn btn-warning btn-xs"
-								onclick={() => openApply(repair)}>Apply safe repairs...</button
-							>{/if}
-					</div>
+					</OperationJobStrip>
 					{#if repair.state === 'succeeded' && repair.repair_summary?.estimated_apply_changes}
 						<a
 							class="text-sm link link-primary sm:col-span-2 sm:justify-self-end"
@@ -219,11 +204,11 @@
 			{/each}
 			{#if olderRepairCount > 0}
 				<div class="flex justify-center p-2">
-					<button class="btn btn-ghost btn-xs" onclick={() => (showOlder = !showOlder)}>
+					<Button variant="ghost" size="xs" onclick={() => (showOlder = !showOlder)}>
 						{showOlder
 							? `Show latest ${DEFAULT_VISIBLE_REPAIRS}`
 							: `Show ${olderRepairCount} older ${olderRepairCount === 1 ? 'check' : 'checks'}`}
-					</button>
+					</Button>
 				</div>
 			{/if}
 		</div>
@@ -233,28 +218,28 @@
 		<section class="border-t border-base-content/10 p-4" aria-labelledby="repair-report-title">
 			<div class="flex flex-wrap items-center justify-between gap-2">
 				<h4 id="repair-report-title" class="font-semibold">Recheck report</h4>
-				<button class="btn btn-ghost btn-xs" onclick={() => (selected = null)}>Close report</button>
+				<Button variant="ghost" size="xs" onclick={() => (selected = null)}>Close report</Button>
 			</div>
 			<dl class="mt-3 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
-				<div class="rounded-box bg-base-200/50 p-3">
+				<div class="rounded-box bg-base-100/50 p-3">
 					<dt class="text-xs text-base-content/55">Identities evaluated</dt>
 					<dd class="mt-1 font-semibold">
 						{selected.repair_summary.total_identities.toLocaleString()}
 					</dd>
 				</div>
-				<div class="rounded-box bg-base-200/50 p-3">
+				<div class="rounded-box bg-base-100/50 p-3">
 					<dt class="text-xs text-base-content/55">Still being checked</dt>
 					<dd class="mt-1 font-semibold">
 						{selected.repair_summary.remaining_identities.toLocaleString()}
 					</dd>
 				</div>
-				<div class="rounded-box bg-base-200/50 p-3">
+				<div class="rounded-box bg-base-100/50 p-3">
 					<dt class="text-xs text-base-content/55">Tracks that stay playable</dt>
 					<dd class="mt-1 font-semibold">
 						{selected.repair_summary.playable_after_detach_track_count.toLocaleString()} of {selected.repair_summary.input_track_count.toLocaleString()}
 					</dd>
 				</div>
-				<div class="rounded-box bg-base-200/50 p-3">
+				<div class="rounded-box bg-base-100/50 p-3">
 					<dt class="text-xs text-base-content/55">Evidence unavailable</dt>
 					<dd class="mt-1 font-semibold">
 						{(
@@ -290,7 +275,7 @@
 				></div>{:else if findingsQuery.isError}<div class="alert alert-error mt-3 text-sm">
 					Could not load the repair findings.
 				</div>{:else if findings.length === 0}<p
-					class="mt-3 rounded-box bg-base-200/50 p-4 text-sm text-base-content/60"
+					class="mt-3 rounded-box bg-base-100/50 p-4 text-sm text-base-content/60"
 				>
 					No findings in this result.
 				</p>{:else}<div
@@ -322,23 +307,26 @@
 												: 'Report only'}
 								</p>
 							</div>
-							<a
-								class="btn btn-ghost btn-xs"
+							<Button
+								variant="ghost"
+								size="xs"
 								href={finding.review_id
 									? withBasePath(`/library/review?review=${finding.review_id}`)
 									: withBasePath(`/album/${finding.local_album_id}`)}
-								>{finding.review_id ? 'Open evidence' : 'Open local album'}</a
+								>{finding.review_id ? 'Open evidence' : 'Open local album'}</Button
 							>
 						</article>{/each}
 				</div>{/if}
-			{#if findingsQuery.hasNextPage}<button
-					class="btn btn-ghost btn-sm mt-3"
+			{#if findingsQuery.hasNextPage}<Button
+					variant="ghost"
+					size="sm"
+					class="mt-3"
 					disabled={findingsQuery.isFetchingNextPage}
-					onclick={() => void findingsQuery.fetchNextPage()}>Load more findings</button
+					onclick={() => void findingsQuery.fetchNextPage()}>Load more findings</Button
 				>{/if}
 		</section>
 	{/if}
-</section>
+</Card>
 
 <dialog
 	bind:this={startDialog}
@@ -428,15 +416,13 @@
 			{/if}
 		</div>
 		<div class="modal-action">
-			<button class="btn btn-ghost" onclick={() => startDialog.close()}>Cancel</button>
-			<button
-				class="btn btn-primary"
-				disabled={createRepair.isPending || estimateQuery.isLoading || !estimateQuery.data}
-				onclick={() => void startCheck()}
+			<Button variant="ghost" onclick={() => startDialog.close()}>Cancel</Button>
+			<Button
+				variant="primary"
+				loading={createRepair.isPending}
+				disabled={estimateQuery.isLoading || !estimateQuery.data}
+				onclick={() => void startCheck()}>Start check</Button
 			>
-				{#if createRepair.isPending}<span class="loading loading-spinner loading-sm"></span>{/if} Start
-				check
-			</button>
 		</div>
 	</div>
 	<form method="dialog" class="modal-backdrop">
@@ -459,15 +445,10 @@
 			</p>
 		{/if}
 		<div class="modal-action">
-			<button class="btn btn-ghost" onclick={() => applyDialog.close()}>Cancel</button>
-			<button
-				class="btn btn-warning"
-				disabled={applyRepair.isPending}
-				onclick={() => void applySelected()}
+			<Button variant="ghost" onclick={() => applyDialog.close()}>Cancel</Button>
+			<Button variant="warning" loading={applyRepair.isPending} onclick={() => void applySelected()}
+				>Apply safe repairs</Button
 			>
-				{#if applyRepair.isPending}<span class="loading loading-spinner loading-sm"></span>{/if} Apply
-				safe repairs
-			</button>
 		</div>
 	</div>
 	<form method="dialog" class="modal-backdrop">

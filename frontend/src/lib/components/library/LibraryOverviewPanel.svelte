@@ -15,6 +15,8 @@
 		Sparkles
 	} from 'lucide-svelte';
 	import { onMount } from 'svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getLibraryActivityQuery } from '$lib/queries/library/LibraryActivityQueries.svelte';
@@ -255,12 +257,14 @@
 							MusicBrainz 1/s limit, playback unaffected.
 						</p>
 					</div>
-					<a
-						class="btn btn-ghost btn-sm"
+					<Button
+						variant="ghost"
+						size="sm"
+						icon={ArrowRight}
+						iconPosition="end"
 						href={withBasePath('/library/management?tab=scanning#scanning-controls')}
+						>View matching progress</Button
 					>
-						View matching progress <ArrowRight class="h-4 w-4" />
-					</a>
 				</div>
 			{:else}
 				<div class="flex flex-wrap items-center gap-4 p-5 sm:p-6">
@@ -308,9 +312,13 @@
 								>{/if}
 						</div>
 					</div>
-					<a class="btn btn-ghost btn-sm" href={libraryWorkHref(primary)}>
-						Open details <ArrowRight class="h-4 w-4" />
-					</a>
+					<Button
+						variant="ghost"
+						size="sm"
+						icon={ArrowRight}
+						iconPosition="end"
+						href={libraryWorkHref(primary)}>Open details</Button
+					>
 				</header>
 
 				<LibraryWorkProgress item={primary} />
@@ -374,10 +382,7 @@
 	</section>
 
 	<div class="stagger-fade-in grid grid-cols-2 gap-3 lg:grid-cols-4">
-		<a
-			href={withBasePath('/library/tracks')}
-			class="rounded-2xl border border-base-content/10 bg-base-200/40 p-4 transition-colors hover:border-base-content/20 hover:bg-base-200/60"
-		>
+		<Card href={withBasePath('/library/tracks')} variant="bordered" padding="md">
 			<span class="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary"
 				><Music2 class="h-4 w-4" /></span
 			>
@@ -388,10 +393,11 @@
 				class="mt-1 block text-xs font-semibold tracking-[0.15em] text-base-content/55 uppercase"
 				>Tracks</span
 			>
-		</a>
-		<a
+		</Card>
+		<Card
 			href={withBasePath('/library/management?tab=scanning#recent-runs')}
-			class="rounded-2xl border border-base-content/10 bg-base-200/40 p-4 transition-colors hover:border-base-content/20 hover:bg-base-200/60"
+			variant="bordered"
+			padding="md"
 		>
 			<span
 				class="flex h-9 w-9 items-center justify-center rounded-xl bg-base-content/5 text-base-content/60"
@@ -406,11 +412,8 @@
 				class="mt-1 block text-xs font-semibold tracking-[0.15em] text-base-content/55 uppercase"
 				>Last scan{latestTerminalRun ? ` · ${stateLabel(latestTerminalRun.state)}` : ''}</span
 			>
-		</a>
-		<a
-			href={withBasePath('/library/review')}
-			class="rounded-2xl border border-base-content/10 bg-base-200/40 p-4 transition-colors hover:border-base-content/20 hover:bg-base-200/60"
-		>
+		</Card>
+		<Card href={withBasePath('/library/review')} variant="bordered" padding="md">
 			<span class="flex h-9 w-9 items-center justify-center rounded-xl bg-accent/10 text-accent"
 				><ListChecks class="h-4 w-4" /></span
 			>
@@ -424,12 +427,9 @@
 			<span class="mt-0.5 block text-xs text-base-content/45"
 				>{localOnlyCount.toLocaleString()} local-only</span
 			>
-		</a>
+		</Card>
 		{#if attentionCount > 0}
-			<a
-				href={withBasePath('/library/management?tab=organize')}
-				class="rounded-2xl border border-warning/30 bg-base-200/40 p-4 transition-colors hover:border-warning/50 hover:bg-base-200/60"
-			>
+			<Card href={withBasePath('/library/management?tab=organize')} variant="bordered" padding="md">
 				<span class="flex h-9 w-9 items-center justify-center rounded-xl bg-warning/15 text-warning"
 					><TriangleAlert class="h-4 w-4" /></span
 				>
@@ -440,12 +440,9 @@
 					class="mt-1 block text-xs font-semibold tracking-[0.15em] text-base-content/55 uppercase"
 					>Needs attention</span
 				>
-			</a>
+			</Card>
 		{:else}
-			<a
-				href={withBasePath('/library/management?tab=organize')}
-				class="rounded-2xl border border-base-content/10 bg-base-200/40 p-4 transition-colors hover:border-base-content/20 hover:bg-base-200/60"
-			>
+			<Card href={withBasePath('/library/management?tab=organize')} variant="bordered" padding="md">
 				<span class="flex h-9 w-9 items-center justify-center rounded-xl bg-warning/10 text-warning"
 					><Sparkles class="h-4 w-4" /></span
 				>
@@ -456,13 +453,15 @@
 					class="mt-1 block text-xs font-semibold tracking-[0.15em] text-base-content/55 uppercase"
 					>Ready previews</span
 				>
-			</a>
+			</Card>
 		{/if}
 	</div>
 
 	<div class="grid gap-3 md:grid-cols-3">
-		<div
-			class="flex flex-col gap-3 rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/8 via-base-200/50 to-base-200/40 p-5"
+		<Card
+			variant="bordered"
+			padding="md"
+			class="bg-gradient-to-br from-primary/8 via-base-200/50 to-base-200/40"
 		>
 			<div class="flex items-center gap-2.5">
 				<span class="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/10 text-primary"
@@ -475,13 +474,13 @@
 				music files.
 			</p>
 			<div class="mt-auto flex flex-col gap-2">
-				<button
-					class="btn btn-primary rounded-full shadow-lg shadow-primary/25"
+				<Button
+					variant="primary"
+					pill
+					icon={RefreshCw}
 					disabled={requestRun.isPending || !policyRevision || !libraryEnabled}
-					onclick={startScan}
+					onclick={startScan}>Scan for changes</Button
 				>
-					<RefreshCw class="h-4 w-4" /> Scan for changes
-				</button>
 				<div class="flex items-center justify-between gap-2 text-xs text-base-content/55">
 					<span>{scheduleText}</span>
 					<a
@@ -490,9 +489,11 @@
 					>
 				</div>
 			</div>
-		</div>
-		<div
-			class="flex flex-col gap-3 rounded-2xl border border-warning/15 bg-gradient-to-br from-warning/8 via-base-200/50 to-base-200/40 p-5"
+		</Card>
+		<Card
+			variant="bordered"
+			padding="md"
+			class="bg-gradient-to-br from-warning/8 via-base-200/50 to-base-200/40"
 		>
 			<div class="flex items-center gap-2.5">
 				<span class="flex h-9 w-9 items-center justify-center rounded-xl bg-warning/10 text-warning"
@@ -504,10 +505,11 @@
 				Preview exactly what would change to tags, names, and paths before anything is written.
 			</p>
 			<div class="mt-auto flex flex-col gap-2">
-				<a
-					class="btn management-btn"
+				<Button
+					variant="warning"
+					icon={Sparkles}
 					href={withBasePath('/library/management?tab=organize&runner=manage')}
-					><Sparkles class="h-4 w-4" /> Preview organization...</a
+					>Preview organization...</Button
 				>
 				<div class="flex items-center justify-end gap-2 text-xs text-base-content/55">
 					<a
@@ -516,9 +518,11 @@
 					>
 				</div>
 			</div>
-		</div>
-		<div
-			class="flex flex-col gap-3 rounded-2xl border border-accent/15 bg-gradient-to-br from-accent/8 via-base-200/50 to-base-200/40 p-5"
+		</Card>
+		<Card
+			variant="bordered"
+			padding="md"
+			class="bg-gradient-to-br from-accent/8 via-base-200/50 to-base-200/40"
 		>
 			<div class="flex items-center gap-2.5">
 				<span class="flex h-9 w-9 items-center justify-center rounded-xl bg-accent/10 text-accent"
@@ -533,12 +537,12 @@
 					>{/if}
 			</p>
 			<div class="mt-auto flex flex-col gap-2">
-				<a
-					class="btn btn-outline"
+				<Button
+					variant="outline"
 					href={withBasePath('/library/management?tab=organize#identity-readiness')}
-					>Open identity readiness</a
+					>Open identity readiness</Button
 				>
 			</div>
-		</div>
+		</Card>
 	</div>
 </div>

@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { TriangleAlert, Check, ExternalLink, GitCompareArrows } from 'lucide-svelte';
 	import type { LibraryContribution, ReleaseDraft } from '$lib/types';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	type ComparisonField =
 		| 'title'
@@ -80,17 +82,14 @@
 </script>
 
 {#if release}
-	<section
-		class="rounded-box border border-base-content/10 bg-base-100"
-		aria-labelledby="compare-title"
-	>
+	<Card as="section" variant="bordered" padding="none" aria-label="Compare edition metadata">
 		<div
 			class="flex flex-wrap items-start justify-between gap-3 border-b border-base-content/10 px-5 py-4 sm:px-6"
 		>
 			<div class="flex items-start gap-3">
 				<GitCompareArrows class="mt-0.5 h-5 w-5 text-primary" />
 				<div>
-					<h2 id="compare-title" class="font-bold">Compare edition metadata</h2>
+					<h2 class="font-bold">Compare edition metadata</h2>
 					<p class="text-sm text-base-content/55">
 						Choose only the Discogs facts that belong to this exact edition.
 					</p>
@@ -120,22 +119,24 @@
 				</div>
 				<div class="bg-base-100 px-4 py-3 text-base-content/65">{row.discogs ?? 'Not listed'}</div>
 				<div class="grid gap-1 bg-base-100 px-4 py-2">
-					<button
-						class="btn btn-xs {draft[row.key].source === 'local' ? 'btn-primary' : 'btn-outline'}"
+					<Button
+						size="xs"
+						variant={draft[row.key].source === 'local' ? 'primary' : 'outline'}
 						disabled={!canMutate}
 						aria-pressed={draft[row.key].source === 'local'}
 						onclick={() => onuse(row.key, row.local, 'local')}
 					>
 						Local
-					</button>
-					<button
-						class="btn btn-xs {draft[row.key].source === 'discogs' ? 'btn-primary' : 'btn-outline'}"
+					</Button>
+					<Button
+						size="xs"
+						variant={draft[row.key].source === 'discogs' ? 'primary' : 'outline'}
 						disabled={!canMutate || row.discogs === null}
 						aria-pressed={draft[row.key].source === 'discogs'}
 						onclick={() => onuse(row.key, row.discogs, 'discogs')}
 					>
 						Discogs
-					</button>
+					</Button>
 				</div>
 			{/each}
 		</div>
@@ -155,19 +156,19 @@
 						</div>
 					</dl>
 					<div class="mt-3 flex gap-2">
-						<button
-							class="btn btn-sm {draft[row.key].source === 'local' ? 'btn-primary' : 'btn-outline'}"
+						<Button
+							size="sm"
+							variant={draft[row.key].source === 'local' ? 'primary' : 'outline'}
 							disabled={!canMutate}
 							aria-pressed={draft[row.key].source === 'local'}
-							onclick={() => onuse(row.key, row.local, 'local')}>Use local</button
+							onclick={() => onuse(row.key, row.local, 'local')}>Use local</Button
 						>
-						<button
-							class="btn btn-sm {draft[row.key].source === 'discogs'
-								? 'btn-primary'
-								: 'btn-outline'}"
+						<Button
+							size="sm"
+							variant={draft[row.key].source === 'discogs' ? 'primary' : 'outline'}
 							disabled={!canMutate || row.discogs === null}
 							aria-pressed={draft[row.key].source === 'discogs'}
-							onclick={() => onuse(row.key, row.discogs, 'discogs')}>Use Discogs</button
+							onclick={() => onuse(row.key, row.discogs, 'discogs')}>Use Discogs</Button
 						>
 					</div>
 				</fieldset>
@@ -182,7 +183,7 @@
 					{@const localMedium = contribution.local_snapshot.media.find(
 						(item) => item.position === medium.position
 					)}
-					<div class="rounded-box border border-base-content/10 bg-base-200/35 p-3 text-sm">
+					<Card variant="bordered" padding="sm">
 						<p class="font-semibold">Medium {medium.position}</p>
 						<p class="mt-1 text-xs text-base-content/55">
 							Local: {localMedium?.title ?? 'No title'} · no format inferred
@@ -192,30 +193,30 @@
 								'No format'}
 						</p>
 						<div class="mt-3 flex gap-2">
-							<button
-								class="btn btn-xs {medium.title.source === 'local' &&
-								medium.format.source === 'local'
-									? 'btn-primary'
-									: 'btn-outline'}"
+							<Button
+								size="xs"
+								variant={medium.title.source === 'local' && medium.format.source === 'local'
+									? 'primary'
+									: 'outline'}
 								disabled={!canMutate}
 								onclick={() => {
 									onusemedium(medium.position, 'title', localMedium?.title ?? null, 'local');
 									onusemedium(medium.position, 'format', null, 'local');
-								}}>Use local</button
+								}}>Use local</Button
 							>
-							<button
-								class="btn btn-xs {medium.title.source === 'discogs' ||
-								medium.format.source === 'discogs'
-									? 'btn-primary'
-									: 'btn-outline'}"
+							<Button
+								size="xs"
+								variant={medium.title.source === 'discogs' || medium.format.source === 'discogs'
+									? 'primary'
+									: 'outline'}
 								disabled={!canMutate || !providerMedium}
 								onclick={() => {
 									onusemedium(medium.position, 'title', providerMedium?.title ?? null, 'discogs');
 									onusemedium(medium.position, 'format', providerMedium?.format ?? null, 'discogs');
-								}}>Use Discogs</button
+								}}>Use Discogs</Button
 							>
 						</div>
-					</div>
+					</Card>
 				{/each}
 			</div>
 		</div>
@@ -243,7 +244,7 @@
 						providerTrack?.artists[0]?.credited_name ??
 						providerTrack?.artists[0]?.name ??
 						release.artist_name}
-					<li class="rounded-box bg-base-200/45 px-3 py-3 text-sm">
+					<li class="rounded-box bg-base-100/45 px-3 py-3 text-sm">
 						<div class="flex items-start justify-between gap-3">
 							<span class="min-w-0 font-semibold"
 								>{localTrack?.disc_number}.{localTrack?.track_number} {localTrack?.title}</span
@@ -276,10 +277,9 @@
 						</div>
 						{#if trackDraft && localTrack}
 							<div class="mt-3 flex gap-2">
-								<button
-									class="btn btn-xs {trackDraft.title.source === 'local'
-										? 'btn-primary'
-										: 'btn-outline'}"
+								<Button
+									size="xs"
+									variant={trackDraft.title.source === 'local' ? 'primary' : 'outline'}
 									disabled={!canMutate}
 									onclick={() =>
 										onusetrack(
@@ -287,12 +287,11 @@
 											localTrack.title,
 											localTrack.artist_name,
 											'local'
-										)}>Use local</button
+										)}>Use local</Button
 								>
-								<button
-									class="btn btn-xs {trackDraft.title.source === 'discogs'
-										? 'btn-primary'
-										: 'btn-outline'}"
+								<Button
+									size="xs"
+									variant={trackDraft.title.source === 'discogs' ? 'primary' : 'outline'}
 									disabled={!canMutate || !providerTrack}
 									onclick={() =>
 										onusetrack(
@@ -300,7 +299,7 @@
 											providerTrack?.title ?? null,
 											providerArtist,
 											'discogs'
-										)}>Use Discogs</button
+										)}>Use Discogs</Button
 								>
 							</div>
 						{/if}
@@ -308,5 +307,5 @@
 				{/each}
 			</ul>
 		</div>
-	</section>
+	</Card>
 {/if}

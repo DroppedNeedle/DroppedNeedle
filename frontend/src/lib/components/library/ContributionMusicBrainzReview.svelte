@@ -13,6 +13,9 @@
 		ShieldCheck
 	} from 'lucide-svelte';
 	import type { ContributionDuplicateCandidate, LibraryContribution } from '$lib/types';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import Input from '$lib/ui/Input.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import {
 		attachExistingMusicBrainzReleaseMutation,
@@ -147,48 +150,51 @@
 </script>
 
 {#snippet recoveryForm()}
-	<div class="rounded-box border border-base-content/10 bg-base-200/45 p-4">
+	<Card variant="bordered" padding="md">
 		<h3 class="font-semibold">Already submitted the release?</h3>
 		<p class="mt-1 text-sm text-base-content/60">
 			If MusicBrainz did not return you here, paste the release MBID or its full MusicBrainz release
 			URL.
 		</p>
 		<div class="mt-3 flex flex-col gap-2 sm:flex-row">
-			<label class="form-control min-w-0 flex-1">
-				<span class="sr-only">MusicBrainz release MBID or URL</span>
-				<input
+			<div class="min-w-0 flex-1">
+				<Input
+					label="MusicBrainz release MBID or URL"
+					mono
+					class="w-full"
+					error={recoveryTouched && recoveryValue.length > 0 && !parsedRecoveryMbid}
 					bind:value={recoveryValue}
-					class="input input-bordered w-full font-mono text-sm"
-					class:input-error={recoveryTouched && recoveryValue.length > 0 && !parsedRecoveryMbid}
 					placeholder="Release MBID or https://musicbrainz.org/release/…"
 					onblur={() => (recoveryTouched = true)}
 					disabled={!canMutate}
 				/>
-			</label>
-			<button
-				class="btn btn-secondary gap-2"
-				disabled={!canMutate || !parsedRecoveryMbid || resultMutation.isPending}
+			</div>
+			<Button
+				variant="outline"
+				icon={SearchCheck}
+				loading={resultMutation.isPending}
+				disabled={!canMutate || !parsedRecoveryMbid}
 				onclick={recordResult}
 			>
-				{#if resultMutation.isPending}<LoaderCircle
-						class="h-4 w-4 animate-spin"
-					/>{:else}<SearchCheck class="h-4 w-4" />{/if}
 				{contribution.result_release_mbid && parsedRecoveryMbid !== contribution.result_release_mbid
 					? 'Replace and verify'
 					: 'Verify result'}
-			</button>
+			</Button>
 		</div>
 		{#if recoveryTouched && recoveryValue.length > 0 && !parsedRecoveryMbid}
 			<p class="mt-2 text-sm text-error" role="alert">
 				Enter a release MBID or an official musicbrainz.org release URL.
 			</p>
 		{/if}
-	</div>
+	</Card>
 {/snippet}
 
-<section
-	class="overflow-hidden rounded-box border border-base-content/10 bg-base-100"
-	aria-labelledby="musicbrainz-review-title"
+<Card
+	as="section"
+	variant="bordered"
+	padding="none"
+	class="overflow-hidden"
+	aria-label="Check MusicBrainz"
 >
 	<div class="flex items-start gap-3 border-b border-base-content/10 px-5 py-4 sm:px-6">
 		<div
@@ -197,7 +203,7 @@
 			<SearchCheck class="h-5 w-5" />
 		</div>
 		<div>
-			<h2 id="musicbrainz-review-title" class="font-bold">Check MusicBrainz</h2>
+			<h2 class="font-bold">Check MusicBrainz</h2>
 			<p class="text-sm text-base-content/55">
 				Make sure this release does not already exist before opening the editor.
 			</p>
@@ -280,16 +286,14 @@
 						Review on MusicBrainz <ExternalLink class="h-3.5 w-3.5" />
 					</a>
 					<div class="mt-4">
-						<button
-							class="btn btn-warning btn-sm gap-2"
-							disabled={!canMutate || retryMutation.isPending}
-							onclick={retryVerification}
+						<Button
+							variant="warning"
+							size="sm"
+							icon={RefreshCw}
+							loading={retryMutation.isPending}
+							disabled={!canMutate}
+							onclick={retryVerification}>Retry verification</Button
 						>
-							{#if retryMutation.isPending}<LoaderCircle
-									class="h-4 w-4 animate-spin"
-								/>{:else}<RefreshCw class="h-4 w-4" />{/if}
-							Retry verification
-						</button>
 					</div>
 				</div>
 			</div>
@@ -305,17 +309,14 @@
 						releases. An exact Discogs match blocks a duplicate submission.
 					</p>
 				</div>
-				<button
-					class="btn btn-secondary gap-2"
-					disabled={!canMutate || checkMutation.isPending || contribution.validation.length > 0}
+				<Button
+					variant="outline"
+					icon={SearchCheck}
+					loading={checkMutation.isPending}
+					disabled={!canMutate || contribution.validation.length > 0}
 					onclick={() => checkDuplicates()}
+					>{checkMutation.isPending ? 'Checking…' : 'Check MusicBrainz'}</Button
 				>
-					{#if checkMutation.isPending}
-						<LoaderCircle class="h-4 w-4 animate-spin" /> Checking…
-					{:else}
-						<SearchCheck class="h-4 w-4" /> Check MusicBrainz
-					{/if}
-				</button>
 			</div>
 		</div>
 	{:else}
@@ -336,25 +337,24 @@
 								blocked.
 							</p>
 							<div class="mt-4 flex flex-wrap gap-2">
-								<button
-									class="btn btn-warning btn-sm gap-2"
-									disabled={!canMutate || attachMutation.isPending || !candidate.release_mbid}
-									onclick={() => attach(candidate)}
+								<Button
+									variant="warning"
+									size="sm"
+									icon={Library}
+									loading={attachMutation.isPending}
+									disabled={!canMutate || !candidate.release_mbid}
+									onclick={() => attach(candidate)}>Use this MusicBrainz release</Button
 								>
-									{#if attachMutation.isPending}<LoaderCircle
-											class="h-4 w-4 animate-spin"
-										/>{:else}<Library class="h-4 w-4" />{/if}
-									Use this MusicBrainz release
-								</button>
 								{#if candidateUrl(candidate)}
-									<a
-										class="btn btn-ghost btn-sm gap-2"
+									<Button
+										variant="ghost"
+										size="sm"
+										icon={ExternalLink}
+										iconPosition="end"
 										href={candidateUrl(candidate) ?? undefined}
 										target="_blank"
-										rel="noreferrer"
+										rel="noreferrer">Inspect on MusicBrainz</Button
 									>
-										Inspect on MusicBrainz <ExternalLink class="h-3.5 w-3.5" />
-									</a>
 								{/if}
 							</div>
 						</div>
@@ -409,14 +409,15 @@
 									{/if}
 								</div>
 								{#if candidateUrl(candidate)}
-									<a
-										class="btn btn-ghost btn-xs gap-1"
+									<Button
+										variant="ghost"
+										size="xs"
+										icon={ExternalLink}
+										iconPosition="end"
 										href={candidateUrl(candidate) ?? undefined}
 										target="_blank"
-										rel="noreferrer"
+										rel="noreferrer">Review</Button
 									>
-										Review <ExternalLink class="h-3 w-3" />
-									</a>
 								{/if}
 							</div>
 						{/each}
@@ -425,12 +426,12 @@
 			{/if}
 
 			{#if exactCandidates.length === 0 && seriousCandidates.length > 0 && !result?.different_edition_confirmed}
-				<div class="rounded-box border border-base-content/15 bg-base-200/45 p-4">
+				<Card variant="bordered" padding="md">
 					<label class="flex cursor-pointer items-start gap-3">
 						<input
 							bind:checked={differentEdition}
 							type="checkbox"
-							class="checkbox checkbox-primary mt-0.5"
+							class="checkbox checkbox-sm mt-0.5"
 						/>
 						<span>
 							<span class="block font-semibold">These are different editions</span>
@@ -440,17 +441,16 @@
 							</span>
 						</span>
 					</label>
-					<button
-						class="btn btn-primary btn-sm mt-4 gap-2"
-						disabled={!canMutate || !differentEdition || checkMutation.isPending}
-						onclick={() => checkDuplicates(true)}
+					<Button
+						variant="primary"
+						size="sm"
+						icon={Check}
+						class="mt-4 self-start"
+						loading={checkMutation.isPending}
+						disabled={!canMutate || !differentEdition}
+						onclick={() => checkDuplicates(true)}>Confirm and check again</Button
 					>
-						{#if checkMutation.isPending}<LoaderCircle class="h-4 w-4 animate-spin" />{:else}<Check
-								class="h-4 w-4"
-							/>{/if}
-						Confirm and check again
-					</button>
-				</div>
+				</Card>
 			{/if}
 
 			{#if canSeed && exactCandidates.length === 0}
@@ -482,16 +482,17 @@
 								</p>
 							{/if}
 						</div>
-						<button
-							class="btn btn-primary mt-4 shrink-0 gap-2 sm:mt-0"
-							disabled={!canMutate || seedMutation.isPending}
+						<Button
+							variant="primary"
+							icon={ExternalLink}
+							class="mt-4 shrink-0 sm:mt-0"
+							loading={seedMutation.isPending}
+							disabled={!canMutate}
 							onclick={continueOnMusicBrainz}
+							>{contribution.state === 'seeded'
+								? 'Continue again'
+								: 'Continue on MusicBrainz'}</Button
 						>
-							{#if seedMutation.isPending}<LoaderCircle
-									class="h-4 w-4 animate-spin"
-								/>{:else}<ExternalLink class="h-4 w-4" />{/if}
-							{contribution.state === 'seeded' ? 'Continue again' : 'Continue on MusicBrainz'}
-						</button>
 					</div>
 					<div
 						class="border-t border-base-content/10 px-4 py-3 text-xs text-base-content/50 sm:px-5"
@@ -505,4 +506,4 @@
 			{/if}
 		</div>
 	{/if}
-</section>
+</Card>

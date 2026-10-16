@@ -17,6 +17,7 @@
 	} from '$lib/queries/library/LibraryRetagPairQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import AsyncButton from '$lib/ui/AsyncButton.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 
 	interface Props {
@@ -130,8 +131,10 @@
 		href={withBasePath(`/album/${encodeURIComponent(side.id)}`)}>{side.title}</a
 	>{/snippet}
 
-<article
-	class="rounded-lg border border-base-content/10 bg-base-200/40 p-4"
+<Card
+	as="article"
+	variant="bordered"
+	padding="md"
 	aria-label="Might be one album: {oldAlbum.title} and {newAlbum.title}"
 >
 	<p
@@ -223,16 +226,18 @@
 
 	<div class="mt-3 flex flex-wrap gap-2">
 		<AsyncButton
-			class="btn btn-primary btn-sm"
+			variant="primary"
+			size="sm"
 			disabled={mergeBlocked || dismiss.isPending}
 			pending={join.isPending}
 			onclick={merge}>Merge into one album</AsyncButton
 		>
 		<AsyncButton
-			class="btn btn-ghost btn-sm"
+			variant="ghost"
+			size="sm"
 			disabled={join.isPending}
 			pending={dismiss.isPending}
 			onclick={keepApart}>Keep them apart</AsyncButton
 		>
 	</div>
-</article>
+</Card>

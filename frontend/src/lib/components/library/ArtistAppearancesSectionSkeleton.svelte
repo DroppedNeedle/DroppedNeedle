@@ -1,3 +1,7 @@
+<script lang="ts">
+	import Card from '$lib/ui/Card.svelte';
+</script>
+
 <section
 	class="overflow-hidden rounded-2xl border border-base-content/10 bg-base-200/30 p-4 sm:p-6"
 >
@@ -11,7 +15,7 @@
 
 	<div class="mt-5 space-y-3">
 		{#each Array(2) as _, index (index)}
-			<div class="rounded-xl border border-base-content/10 bg-base-100/75 p-3 sm:p-4">
+			<Card variant="bordered" padding="sm">
 				<div class="grid gap-4 sm:grid-cols-[7rem_minmax(0,1fr)]">
 					<div class="skeleton skeleton-shimmer aspect-square w-full rounded-lg"></div>
 					<div class="space-y-3">
@@ -20,7 +24,7 @@
 						<div class="skeleton skeleton-shimmer h-12 w-full"></div>
 					</div>
 				</div>
-			</div>
+			</Card>
 		{/each}
 	</div>
 </section>

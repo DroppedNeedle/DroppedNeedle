@@ -7,6 +7,8 @@
 	import LocalFilesBand from './LocalFilesBand.svelte';
 	import LibraryHubTiles from './LibraryHubTiles.svelte';
 	import EmptyState from '$lib/components/EmptyState.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { integrationStore } from '$lib/stores/integration';
 	import { formatBytes, formatLastUpdated } from '$lib/utils/formatting';
@@ -66,29 +68,30 @@
 	<div class="space-y-4">
 		<LibraryHubTiles {stats} />
 
-		<div
-			class="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl border border-base-content/5 bg-base-200/30 px-5 py-3 text-sm"
-		>
-			<div class="flex items-center gap-2 text-base-content/55">
-				<HardDrive class="h-4 w-4 text-base-content/40" />
-				<span class="font-semibold text-base-content/80">{formatBytes(stats.total_size_bytes)}</span
-				>
-				on disk
+		<Card variant="bordered" padding="sm">
+			<div class="flex flex-wrap items-center gap-x-6 gap-y-2 px-2 text-sm">
+				<div class="flex items-center gap-2 text-base-content/55">
+					<HardDrive class="h-4 w-4 text-base-content/40" />
+					<span class="font-semibold text-base-content/80"
+						>{formatBytes(stats.total_size_bytes)}</span
+					>
+					on disk
+				</div>
+				<span class="hidden h-4 w-px bg-base-content/10 sm:block"></span>
+				<div class="flex items-center gap-2 text-base-content/55">
+					<Clock class="h-4 w-4 text-base-content/40" />
+					Last scan
+					<span class="font-semibold text-base-content/80"
+						>{lastScan ? formatLastUpdated(lastScan) : 'never'}</span
+					>
+				</div>
+				<span class="hidden h-4 w-px bg-base-content/10 sm:block"></span>
+				<div class="flex min-w-0 items-center gap-2 text-base-content/55">
+					<Layers class="h-4 w-4 shrink-0 text-base-content/40" />
+					<span class="truncate font-semibold text-base-content/80">{formatSummary || '-'}</span>
+				</div>
 			</div>
-			<span class="hidden h-4 w-px bg-base-content/10 sm:block"></span>
-			<div class="flex items-center gap-2 text-base-content/55">
-				<Clock class="h-4 w-4 text-base-content/40" />
-				Last scan
-				<span class="font-semibold text-base-content/80"
-					>{lastScan ? formatLastUpdated(lastScan) : 'never'}</span
-				>
-			</div>
-			<span class="hidden h-4 w-px bg-base-content/10 sm:block"></span>
-			<div class="flex min-w-0 items-center gap-2 text-base-content/55">
-				<Layers class="h-4 w-4 shrink-0 text-base-content/40" />
-				<span class="truncate font-semibold text-base-content/80">{formatSummary || '-'}</span>
-			</div>
-		</div>
+		</Card>
 	</div>
 
 	{#if localEnabled}
@@ -96,11 +99,6 @@
 	{/if}
 
 	<div class="flex justify-center pt-4">
-		<button
-			class="btn btn-ghost btn-sm gap-1.5 text-base-content/50 transition-colors hover:text-base-content"
-			onclick={scrollToTop}
-		>
-			<ArrowUp class="h-4 w-4" /> Back to top
-		</button>
+		<Button variant="ghost" size="sm" icon={ArrowUp} onclick={scrollToTop}>Back to top</Button>
 	</div>
 {/if}

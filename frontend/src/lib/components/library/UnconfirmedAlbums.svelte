@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { CircleAlert, CircleHelp } from 'lucide-svelte';
 	import { ApiError } from '$lib/api/client';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -79,14 +81,14 @@
 	{:else if query.isError}
 		<div class="alert alert-error">
 			<span>The list couldn't be loaded.</span>
-			<button class="btn btn-sm" onclick={() => query.refetch()}>Retry</button>
+			<Button size="sm" onclick={() => query.refetch()}>Retry</Button>
 		</div>
 	{:else if !items.length}
-		<div class="rounded-box bg-base-200 p-8 text-center text-base-content/60">
+		<Card class="text-center text-base-content/60">
 			{view === 'unconfirmed'
 				? 'Every matched album is confirmed. Nothing to look at.'
 				: 'Every album matches something on MusicBrainz.'}
-		</div>
+		</Card>
 	{:else}
 		<ul class="space-y-2">
 			{#each items as item (item.album_id)}
@@ -110,16 +112,18 @@
 					</div>
 					<div class="flex gap-2">
 						{#if authStore.isTrusted && item.state === 'unconfirmed'}
-							<button
-								class="btn btn-primary btn-sm"
+							<Button
+								variant="primary"
+								size="sm"
 								disabled={confirm.isPending}
-								onclick={() => void looksRight(item.album_id)}>Looks right</button
+								onclick={() => void looksRight(item.album_id)}>Looks right</Button
 							>
 						{/if}
-						<a
-							class="btn btn-ghost btn-sm"
+						<Button
+							variant="ghost"
+							size="sm"
 							href={withBasePath(`/album/${encodeURIComponent(item.album_id)}`)}
-							>{item.state === 'unmatched' ? 'Pick an edition' : 'Compare editions'}</a
+							>{item.state === 'unmatched' ? 'Pick an edition' : 'Compare editions'}</Button
 						>
 					</div>
 				</li>
@@ -131,15 +135,17 @@
 					>{offset + 1}–{Math.min(offset + PAGE, total)} of {total}</span
 				>
 				<div class="join">
-					<button
-						class="btn btn-sm join-item"
+					<Button
+						size="sm"
+						class="join-item"
 						disabled={offset === 0}
-						onclick={() => (offset = Math.max(0, offset - PAGE))}>Previous</button
+						onclick={() => (offset = Math.max(0, offset - PAGE))}>Previous</Button
 					>
-					<button
-						class="btn btn-sm join-item"
+					<Button
+						size="sm"
+						class="join-item"
 						disabled={offset + PAGE >= total}
-						onclick={() => (offset += PAGE)}>Next</button
+						onclick={() => (offset += PAGE)}>Next</Button
 					>
 				</div>
 			</div>

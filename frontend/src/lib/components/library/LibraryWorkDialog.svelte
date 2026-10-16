@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Button from '$lib/ui/Button.svelte';
 	import { TriangleAlert, FolderTree } from 'lucide-svelte';
 	import { getLibraryPolicyTreeQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import { getLibraryRunEstimateQuery } from '$lib/queries/library/LibraryOperationQueries.svelte';
@@ -147,9 +148,7 @@
 		<div class="mt-5 space-y-2">
 			<div class="flex items-center justify-between gap-3">
 				<h3 class="font-semibold">Scope</h3>
-				<button type="button" class="btn btn-ghost btn-xs" onclick={selectWholeLibrary}>
-					Whole library
-				</button>
+				<Button variant="ghost" size="xs" onclick={selectWholeLibrary}>Whole library</Button>
 			</div>
 			{#if treeQuery.isLoading}
 				<div class="skeleton h-28 rounded-box"></div>
@@ -310,37 +309,33 @@
 		{/if}
 
 		<div class="modal-action">
-			<button type="button" class="btn btn-ghost" onclick={() => dialog.close()}>Cancel</button>
+			<Button variant="ghost" onclick={() => dialog.close()}>Cancel</Button>
 			{#if kind === 'retry_identification'}
-				{#if !retryAll.data && !retryPreview.data}<button
-						type="button"
-						class="btn btn-primary"
-						disabled={retryPreview.isPending || pendingCount === 0}
-						onclick={() => void previewRetry()}
-						>{#if retryPreview.isPending}<span class="loading loading-spinner loading-sm"
-							></span>{/if} Preview retry</button
-					>{:else if !retryAll.data}<button
-						type="button"
-						class="btn btn-primary"
-						disabled={retryAll.isPending || !retryPreview.data?.started}
+				{#if !retryAll.data && !retryPreview.data}<Button
+						variant="primary"
+						loading={retryPreview.isPending}
+						disabled={pendingCount === 0}
+						onclick={() => void previewRetry()}>Preview retry</Button
+					>{:else if !retryAll.data}<Button
+						variant="primary"
+						loading={retryAll.isPending}
+						disabled={!retryPreview.data?.started}
 						onclick={() => void startRetry()}
-						>{#if retryAll.isPending}<span class="loading loading-spinner loading-sm"></span>{/if}
-						Retry {(retryPreview.data?.started ?? 0).toLocaleString()}
-						{retryPreview.data?.started === 1 ? 'album' : 'albums'}</button
+						>Retry {(retryPreview.data?.started ?? 0).toLocaleString()}
+						{retryPreview.data?.started === 1 ? 'album' : 'albums'}</Button
 					>{/if}
-			{:else}<button
-					type="button"
-					class="btn btn-primary"
-					disabled={pending || treeQuery.isLoading}
+			{:else}<Button
+					variant="primary"
+					loading={pending}
+					disabled={treeQuery.isLoading}
 					onclick={() => void onconfirm(selected)}
 				>
-					{#if pending}<span class="loading loading-spinner loading-sm"></span>{/if}
 					{kind === 'rescan_files'
 						? estimatedFiles
 							? `Rescan about ${estimatedFiles.toLocaleString()} files`
 							: 'Rescan selected files'
 						: 'Apply policy changes'}
-				</button>{/if}
+				</Button>{/if}
 		</div>
 	</div>
 	<form method="dialog" class="modal-backdrop">

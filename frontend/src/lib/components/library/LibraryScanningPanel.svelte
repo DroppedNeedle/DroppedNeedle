@@ -1,16 +1,15 @@
 <script lang="ts">
 	import {
-		CirclePause,
-		CirclePlay,
 		FolderSync,
 		FingerprintPattern,
 		ListChecks,
-		OctagonX,
 		RefreshCw,
 		ScanLine,
 		Settings2,
 		ShieldAlert
 	} from 'lucide-svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getLibraryActivityQuery } from '$lib/queries/library/LibraryActivityQueries.svelte';
 	import {
@@ -30,6 +29,7 @@
 	import LibraryWorkLane from './LibraryWorkLane.svelte';
 	import LibraryWorkDialog from './LibraryWorkDialog.svelte';
 	import LibraryRunHistory from './LibraryRunHistory.svelte';
+	import OperationJobStrip from './OperationJobStrip.svelte';
 
 	const activityQuery = getLibraryActivityQuery(() => authStore.user?.id);
 	const runsQuery = getCurrentLibraryRunsQuery(() => authStore.isAdmin);
@@ -79,7 +79,7 @@
 	);
 	let stopDialog: HTMLDialogElement;
 	let stopHeading: HTMLHeadingElement;
-	let stopOpener: HTMLButtonElement | null = null;
+	let stopOpener: HTMLElement | null = null;
 	let workDialogOpen = $state(false);
 	let workKind = $state<'rescan_files' | 'policy_reconcile' | 'retry_identification'>(
 		'rescan_files'
@@ -169,9 +169,12 @@
 						watcher still active){:else}Schedule:
 						{scheduleQuery.data?.scan_frequency?.replace('_', ' ') ?? 'loading'}{/if}
 				</p>
-				<a href={withBasePath('/settings?tab=library')} class="btn btn-ghost btn-sm">
-					<Settings2 class="h-4 w-4" /> Settings
-				</a>
+				<Button
+					href={withBasePath('/settings?tab=library')}
+					variant="ghost"
+					size="sm"
+					icon={Settings2}>Settings</Button
+				>
 			</div>
 		</div>
 		{#if !libraryEnabled}
@@ -196,21 +199,26 @@
 						to MusicBrainz. Nothing here writes to your files.
 					</p>
 				</div>
-				<button
-					class="btn btn-primary btn-lg rounded-full shadow-lg shadow-primary/25 glow-primary-soft"
+				<Button
+					variant="primary"
+					size="lg"
+					pill
+					icon={RefreshCw}
+					class="shadow-lg shadow-primary/25 glow-primary-soft"
 					disabled={requestRun.isPending || !policyRevision}
-					onclick={() => void startRun('incremental')}
+					onclick={() => void startRun('incremental')}>Scan for changes</Button
 				>
-					<RefreshCw class="h-5 w-5" /> Scan for changes
-				</button>
 			</div>
 			<div class="mt-4 space-y-3">
 				<div
 					class="flex flex-wrap items-center justify-between gap-3 border-t border-base-content/10 pt-3 text-sm"
 				>
-					<button class="btn btn-outline btn-sm" onclick={() => openWork('rescan_files')}>
-						<ScanLine class="h-4 w-4" /> Rescan files...
-					</button>
+					<Button
+						variant="outline"
+						size="sm"
+						icon={ScanLine}
+						onclick={() => openWork('rescan_files')}>Rescan files...</Button
+					>
 					<p class="text-base-content/55">
 						Deep re-read of selected folders. Use after fixing files outside DroppedNeedle.
 					</p>
@@ -218,9 +226,12 @@
 				<div
 					class="flex flex-wrap items-center justify-between gap-3 border-t border-base-content/10 pt-3 text-sm"
 				>
-					<button class="btn btn-outline btn-sm" onclick={() => openWork('retry_identification')}>
-						<ListChecks class="h-4 w-4" /> Retry identification...
-					</button>
+					<Button
+						variant="outline"
+						size="sm"
+						icon={ListChecks}
+						onclick={() => openWork('retry_identification')}>Retry identification...</Button
+					>
 					<p class="text-base-content/55">
 						Re-runs matching for albums still waiting on review or a provider.
 					</p>
@@ -238,7 +249,7 @@
 		<div class="alert alert-error">Could not load library operations.</div>
 	{:else}
 		<div class="space-y-3">
-			<article class="overflow-hidden rounded-box border border-base-content/15 bg-base-200/40">
+			<Card as="article" variant="bordered" padding="none" class="overflow-hidden">
 				<div class="flex flex-wrap items-center gap-3 border-b border-base-content/10 px-4 py-3">
 					<div
 						class="flex h-9 w-9 items-center justify-center rounded-xl bg-[color-mix(in_oklab,var(--color-library-index)_16%,transparent)] text-[var(--color-library-index)]"
@@ -252,42 +263,30 @@
 								· {activeRun.trigger.replaceAll('_', ' ')} · {scopeLabel}{/if}
 						</p>
 					</div>
-					{#if activeRun?.state === 'paused'}
-						<button
-							class="btn btn-outline btn-sm"
-							disabled={resumeRun.isPending}
-							onclick={() =>
-								void resumeRun
-									.mutateAsync({
-										runId: activeRun.id,
-										expectedRevision: activeRun.row_revision
-									})
+					{#if activeRun}
+						<OperationJobStrip
+							status={activeRun.state === 'paused' ? 'paused' : 'running'}
+							controlRequest={activeRun.state === 'pausing'
+								? 'pause'
+								: activeRun.state === 'stopping'
+									? 'stop'
+									: 'none'}
+							subject="local scan"
+							onpause={() =>
+								pauseRun
+									.mutateAsync({ runId: activeRun.id, expectedRevision: activeRun.row_revision })
 									.catch(() => undefined)}
-							aria-label="Resume local scan"><CirclePlay class="h-4 w-4" /> Resume</button
-						>
-					{:else if activeRun && !['pausing', 'stopping'].includes(activeRun.state)}
-						<button
-							class="btn btn-outline btn-sm"
-							disabled={pauseRun.isPending}
-							onclick={() =>
-								void pauseRun
-									.mutateAsync({
-										runId: activeRun.id,
-										expectedRevision: activeRun.row_revision
-									})
+							onresume={() =>
+								resumeRun
+									.mutateAsync({ runId: activeRun.id, expectedRevision: activeRun.row_revision })
 									.catch(() => undefined)}
-							aria-label="Pause local scan"><CirclePause class="h-4 w-4" /> Pause</button
-						>
-					{/if}
-					{#if activeRun}<button
-							class="btn btn-ghost btn-sm text-error"
-							onclick={(event) => {
-								stopOpener = event.currentTarget;
+							onstop={(opener) => {
+								stopOpener = opener;
 								stopDialog.showModal();
 								stopHeading.focus();
 							}}
-							aria-label="Stop local scan"><OctagonX class="h-4 w-4" /> Stop</button
-						>{/if}
+						/>
+					{/if}
 				</div>
 				<div class="space-y-3 p-4">
 					<LibraryWorkLane kind="scan" item={scan} />
@@ -375,14 +374,14 @@
 							class="alert alert-warning text-sm"
 						>
 							<ShieldAlert class="h-4 w-4" /><span>Stopped because library policy changed</span
-							><button class="btn btn-sm" onclick={() => openWork('policy_reconcile')}
-								>Apply policy changes...</button
+							><Button size="sm" onclick={() => openWork('policy_reconcile')}
+								>Apply policy changes...</Button
 							>
 						</div>{/if}
 				</div>
-			</article>
+			</Card>
 
-			<article class="overflow-hidden rounded-box border border-base-content/15 bg-base-200/40">
+			<Card as="article" variant="bordered" padding="none" class="overflow-hidden">
 				<div class="flex flex-wrap items-center gap-3 border-b border-base-content/10 px-4 py-3">
 					<div
 						class="flex h-9 w-9 items-center justify-center rounded-xl bg-[color-mix(in_oklab,var(--color-library-identify)_16%,transparent)] text-[var(--color-library-identify)]"
@@ -395,25 +394,21 @@
 							{identification ? stateLabel(identification.state) : 'Idle'}
 						</p>
 					</div>
-					{#if identification?.state === 'paused' && identification.control_revision}<button
-							class="btn btn-outline btn-sm"
-							disabled={resumeIdentification.isPending}
-							onclick={() =>
-								void resumeIdentification
+					{#if identification?.control_revision && (identification.state === 'paused' || identification.waiting_count)}
+						<OperationJobStrip
+							status={identification.state === 'paused' ? 'paused' : 'running'}
+							controlRequest={identification.state === 'pausing' ? 'pause' : 'none'}
+							subject="identification"
+							onpause={() =>
+								pauseIdentification
 									.mutateAsync(identification.control_revision ?? 0)
 									.catch(() => undefined)}
-							aria-label="Resume identification"><CirclePlay class="h-4 w-4" /> Resume</button
-						>{:else if identification?.waiting_count && identification.control_revision}<button
-							class="btn btn-outline btn-sm"
-							disabled={pauseIdentification.isPending || identification.state === 'pausing'}
-							onclick={() =>
-								void pauseIdentification
+							onresume={() =>
+								resumeIdentification
 									.mutateAsync(identification.control_revision ?? 0)
 									.catch(() => undefined)}
-							aria-label="Pause identification"
-							><CirclePause class="h-4 w-4" />
-							{identification.state === 'pausing' ? 'Pausing...' : 'Pause'}</button
-						>{/if}
+						/>
+					{/if}
 				</div>
 				<div class="space-y-3 p-4">
 					<LibraryWorkLane kind="identification" item={identification} />
@@ -508,47 +503,46 @@
 						>
 					</div>
 				</div>
-			</article>
+			</Card>
 
-			<a
-				href={withBasePath('/library/management/artists')}
-				class="flex flex-wrap items-center gap-4 rounded-box border border-base-content/15 bg-base-200/40 p-4 hover:bg-base-200"
-			>
-				<div
-					class="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary"
-				>
-					<FingerprintPattern class="h-5 w-5" />
-				</div>
-				<div class="min-w-0 flex-1">
-					<h3 class="font-semibold">Artist identity desk</h3>
-					<p class="text-sm text-base-content/55">
-						Provider-proven reconciliation and duplicate groups that need administrator judgement.
-					</p>
-				</div>
-				<div class="flex gap-5 text-sm">
-					<span
-						><strong
-							>{(
-								artistReconciliationQuery.data?.automatically_resolved_count ?? 0
-							).toLocaleString()}</strong
-						><span class="block text-xs text-base-content/50">resolved</span></span
+			<Card href={withBasePath('/library/management/artists')} variant="bordered" padding="md">
+				<div class="flex flex-wrap items-center gap-4">
+					<div
+						class="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary"
 					>
-					<span
-						><strong
-							>{(
-								artistReconciliationQuery.data?.waiting_for_identity_count ?? 0
-							).toLocaleString()}</strong
-						><span class="block text-xs text-base-content/50">waiting</span></span
-					>
-					<span
-						><strong
-							>{(
-								artistReconciliationQuery.data?.genuine_review_count ?? 0
-							).toLocaleString()}</strong
-						><span class="block text-xs text-base-content/50">review</span></span
-					>
+						<FingerprintPattern class="h-5 w-5" />
+					</div>
+					<div class="min-w-0 flex-1">
+						<h3 class="font-semibold">Artist identity desk</h3>
+						<p class="text-sm text-base-content/55">
+							Provider-proven reconciliation and duplicate groups that need administrator judgement.
+						</p>
+					</div>
+					<div class="flex gap-5 text-sm">
+						<span
+							><strong
+								>{(
+									artistReconciliationQuery.data?.automatically_resolved_count ?? 0
+								).toLocaleString()}</strong
+							><span class="block text-xs text-base-content/50">resolved</span></span
+						>
+						<span
+							><strong
+								>{(
+									artistReconciliationQuery.data?.waiting_for_identity_count ?? 0
+								).toLocaleString()}</strong
+							><span class="block text-xs text-base-content/50">waiting</span></span
+						>
+						<span
+							><strong
+								>{(
+									artistReconciliationQuery.data?.genuine_review_count ?? 0
+								).toLocaleString()}</strong
+							><span class="block text-xs text-base-content/50">review</span></span
+						>
+					</div>
 				</div>
-			</a>
+			</Card>
 		</div>
 	{/if}
 
@@ -579,9 +573,10 @@
 			compares the library again.
 		</p>
 		<div class="modal-action">
-			<button class="btn btn-ghost" onclick={() => stopDialog.close()}>Keep scanning</button><button
-				class="btn btn-error"
-				disabled={stopRun.isPending || !activeRun}
+			<Button variant="ghost" onclick={() => stopDialog.close()}>Keep scanning</Button><Button
+				variant="danger"
+				loading={stopRun.isPending}
+				disabled={!activeRun}
 				onclick={async () => {
 					try {
 						if (activeRun)
@@ -593,8 +588,7 @@
 						return;
 					}
 					stopDialog.close();
-				}}
-				>{#if stopRun.isPending}<span class="loading loading-spinner loading-sm"></span>{/if} Stop scan</button
+				}}>Stop scan</Button
 			>
 		</div>
 	</div>
