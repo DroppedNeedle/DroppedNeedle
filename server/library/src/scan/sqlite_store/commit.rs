@@ -28,7 +28,7 @@ use std::collections::BTreeMap;
 
 use super::artists::{self, Credit, Own, upsert_artist};
 use super::hands_off::hold_replacements;
-use super::held_scopes;
+use super::held_scopes::{self, held_back};
 use super::retag_pairs::{self, RetagPairReason, RetagPairState};
 use super::*;
 use crate::corrections::artist_convergence::converge_artists;
@@ -107,18 +107,29 @@ struct Place<'a> {
     directory: &'a str,
 }
 
+/// A track this run walked past: a scope of the run whose discovery
+/// completed covers its path, and the walk did not see the file.
+macro_rules! walked_past {
+    () => {
+        "(EXISTS (SELECT 1 FROM library_scan_run_scopes s WHERE s.run_id = ?1 \
+          AND s.root_id = t.root_id AND s.discovery_state = 'completed' \
+          AND (s.relative_path = '.' OR t.relative_path = s.relative_path \
+            OR substr(t.relative_path, 1, length(s.relative_path) + 1) = s.relative_path || '/')) \
+        AND NOT EXISTS (SELECT 1 FROM library_scan_inventory i WHERE i.run_id = ?1 \
+          AND i.root_id = t.root_id AND i.relative_path = t.relative_path))"
+    };
+}
+
 /// A track still counts as present unless it is missing or this run
-/// walked its folder to the end without seeing it.
-const TRACK_PRESENT: &str = "(t.availability = 'indexed' \
-    AND NOT (EXISTS (SELECT 1 FROM library_scan_run_scopes s WHERE s.run_id = ?1 \
-      AND s.root_id = t.root_id AND s.discovery_state = 'completed' \
-      AND NOT EXISTS (SELECT 1 FROM library_scan_failures f WHERE f.run_id = ?1 \
-        AND f.root_id = s.root_id AND f.relative_path = s.relative_path \
-        AND f.failure_code = 'MASS_MISSING_GUARD') \
-      AND (s.relative_path = '.' OR t.relative_path = s.relative_path \
-        OR substr(t.relative_path, 1, length(s.relative_path) + 1) = s.relative_path || '/')) \
-    AND NOT EXISTS (SELECT 1 FROM library_scan_inventory i WHERE i.run_id = ?1 \
-      AND i.root_id = t.root_id AND i.relative_path = t.relative_path)))";
+/// walked its folder to the end without seeing it, and did not hold back a
+/// folder covering it.
+const TRACK_PRESENT: &str = concat!(
+    "(t.availability = 'indexed' AND NOT (",
+    walked_past!(),
+    " AND NOT ",
+    held_back!("?1", "t"),
+    "))"
+);
 
 /// Where an album's tracks are, seen from one folder.
 #[derive(Default)]
@@ -282,38 +293,19 @@ struct TrackKey<'a> {
     duration_seconds: Option<f64>,
 }
 
-/// A track this run walked past: a scope of the run whose discovery
-/// completed covers its path, and the walk did not see the file. `$guard`
-/// is added to the scope's conditions.
-macro_rules! walked_past {
-    ($guard:literal) => {
-        concat!(
-            "(EXISTS (SELECT 1 FROM library_scan_run_scopes s WHERE s.run_id = ?1 \
-              AND s.root_id = t.root_id AND s.discovery_state = 'completed' ",
-            $guard,
-            " AND (s.relative_path = '.' OR t.relative_path = s.relative_path \
-                OR substr(t.relative_path, 1, length(s.relative_path) + 1) = s.relative_path || '/')) \
-            AND NOT EXISTS (SELECT 1 FROM library_scan_inventory i WHERE i.run_id = ?1 \
-              AND i.root_id = t.root_id AND i.relative_path = t.relative_path))"
-        )
-    };
-}
-
 /// A track this run walked past, whether or not the mass-missing guard
 /// held its scope back.
-pub(super) const WALKED_PAST: &str = walked_past!("");
+pub(super) const WALKED_PAST: &str = walked_past!();
 
 /// A track is gone when it is already marked missing, or when this run
-/// walked its folder to the end without seeing the file. A scope the
-/// mass-missing guard held back (an unmounted share looks like that)
-/// does not count as walked.
+/// walked its folder to the end without seeing the file. A folder the
+/// mass-missing guard held back (an unmounted share looks like that), a
+/// scope or a mount found empty, does not count as walked.
 pub(super) const TRACK_GONE: &str = concat!(
     "(t.availability = 'missing' OR (t.availability = 'indexed' AND ",
-    walked_past!(
-        "AND NOT EXISTS (SELECT 1 FROM library_scan_failures f WHERE f.run_id = ?1 \
-          AND f.root_id = s.root_id AND f.relative_path = s.relative_path \
-          AND f.failure_code = 'MASS_MISSING_GUARD')"
-    ),
+    walked_past!(),
+    " AND NOT ",
+    held_back!("?1", "t"),
     "))"
 );
 

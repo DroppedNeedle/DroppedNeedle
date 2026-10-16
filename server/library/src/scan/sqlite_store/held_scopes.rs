@@ -21,12 +21,12 @@
 //! hand or outlast the scan history before it does.
 //!
 //! A hold lifts at the end of a completed run that walked a folder
-//! covering it to the end without holding that folder back, unless a
-//! file under it went missing in that run from an album that holds no
-//! indexed file and is not merged into another: the retag join may still
-//! take such an album over after its one-scan wait, so the hold stays one
-//! more clean run. Nothing is lifted when the judging failed. Albums
-//! parked on the hold are then looked at again.
+//! covering it to the end without holding back a folder covering it or
+//! inside it, unless a file under it went missing in that run from an
+//! album that holds no indexed file and is not merged into another: the
+//! retag join may still take such an album over after its one-scan wait,
+//! so the hold stays one more clean run. Nothing is lifted when the judging
+//! failed. Albums parked on the hold are then looked at again.
 //!
 //! A held album is never held for its match. When a hold lifts, the held
 //! rows of every album it lets go that is not left unmanaged and has no
@@ -50,12 +50,37 @@ use crate::management::takeover::{self, Cause};
 /// Whether the folder at the SQL expression `ancestor` covers the path at
 /// `descendant`: `.` covers everything, otherwise the path itself or
 /// anything below it ([`scope_covers_path`](crate::scan::models::scope_covers_path)).
-fn covers(ancestor: &str, descendant: &str) -> String {
+pub(super) fn covers(ancestor: &str, descendant: &str) -> String {
     format!(
         "({ancestor} = '.' OR {descendant} = {ancestor} \
          OR substr({descendant}, 1, length({ancestor}) + 1) = {ancestor} || '/')"
     )
 }
+
+/// Whether run `$run` held back a folder covering the row aliased `$row`: a
+/// mass-missing guard failure on its root at a folder that [`covers`] its
+/// path, a scan scope or a mount found empty. Nothing under a held-back
+/// folder counts as walked: it is not missing, gone or moved. The guard
+/// index is named: SQLite would otherwise read every failure of the run on
+/// the root through the primary key, since that one covers the query.
+macro_rules! held_back {
+    ($run:literal, $row:literal) => {
+        concat!(
+            "EXISTS (SELECT 1 FROM library_scan_failures g \
+             INDEXED BY idx_scan_failures_guard WHERE g.run_id = ",
+            $run,
+            " AND g.root_id = ",
+            $row,
+            ".root_id AND g.failure_code = 'MASS_MISSING_GUARD' \
+             AND (g.relative_path = '.' OR ",
+            $row,
+            ".relative_path = g.relative_path OR substr(",
+            $row,
+            ".relative_path, 1, length(g.relative_path) + 1) = g.relative_path || '/'))"
+        )
+    };
+}
+pub(super) use held_back;
 
 /// Whether the track row aliased `track` is held by the held folder
 /// aliased `hold`: indexed, found by a scan, in that folder of its root,
@@ -76,28 +101,34 @@ fn held(track: &str, hold: &str) -> String {
 }
 
 /// Whether run `?1` lifts the hold aliased `hold`: the run completed and
-/// walked a folder covering it to the end without holding that folder
-/// back, and no file under it went missing in the run from an album that
-/// holds no indexed file and is not merged into another. `?2` is now, for
-/// a run with no start.
+/// walked a folder covering it to the end, held back no folder covering it
+/// or inside it, and no file under it went missing in the run from an album
+/// that holds no indexed file and is not merged into another. `?2` is now,
+/// for a run with no start.
 fn lifts(hold: &str) -> String {
     format!(
-        "EXISTS (SELECT 1 FROM library_scan_runs r \
-           JOIN library_scan_run_scopes s ON s.run_id = r.id \
-           WHERE r.id = ?1 AND r.state = 'completed' AND s.root_id = {hold}.root_id \
-           AND s.discovery_state = 'completed' AND {scope_covers_held} \
-           AND NOT EXISTS (SELECT 1 FROM library_scan_failures f WHERE f.run_id = r.id \
-             AND f.root_id = s.root_id AND f.relative_path = s.relative_path \
-             AND f.failure_code = 'MASS_MISSING_GUARD')) \
-         AND NOT EXISTS (SELECT 1 FROM local_tracks t \
-           JOIN local_albums a ON a.id = t.local_album_id \
-           WHERE t.availability = 'missing' AND t.root_id = {hold}.root_id \
-           AND t.missing_since >= (SELECT COALESCE(started_at, ?2) \
-             FROM library_scan_runs WHERE id = ?1) \
-           AND {held_covers_track} AND a.retired_into_album_id IS NULL \
-           AND NOT EXISTS (SELECT 1 FROM local_tracks k \
-             WHERE k.local_album_id = a.id AND k.availability = 'indexed'))",
+        concat!(
+            "EXISTS (SELECT 1 FROM library_scan_runs r \
+               JOIN library_scan_run_scopes s ON s.run_id = r.id \
+               WHERE r.id = ?1 AND r.state = 'completed' AND s.root_id = {hold}.root_id \
+               AND s.discovery_state = 'completed' AND {scope_covers_held}) \
+             AND NOT ",
+            held_back!("?1", "{hold}"),
+            " AND NOT EXISTS (SELECT 1 FROM library_scan_failures g WHERE g.run_id = ?1 \
+               AND g.root_id = {hold}.root_id AND g.failure_code = 'MASS_MISSING_GUARD' \
+               AND {held_covers_failure}) \
+             AND NOT EXISTS (SELECT 1 FROM local_tracks t \
+               JOIN local_albums a ON a.id = t.local_album_id \
+               WHERE t.availability = 'missing' AND t.root_id = {hold}.root_id \
+               AND t.missing_since >= (SELECT COALESCE(started_at, ?2) \
+                 FROM library_scan_runs WHERE id = ?1) \
+               AND {held_covers_track} AND a.retired_into_album_id IS NULL \
+               AND NOT EXISTS (SELECT 1 FROM local_tracks k \
+                 WHERE k.local_album_id = a.id AND k.availability = 'indexed'))"
+        ),
+        hold = hold,
         scope_covers_held = covers("s.relative_path", &format!("{hold}.relative_path")),
+        held_covers_failure = covers(&format!("{hold}.relative_path"), "g.relative_path"),
         held_covers_track = covers(&format!("{hold}.relative_path"), "t.relative_path"),
     )
 }

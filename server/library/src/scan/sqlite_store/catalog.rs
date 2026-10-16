@@ -220,17 +220,19 @@ impl SqliteScanStore {
 
     /// Catalog paths under `scope_relative_path` that the run's current
     /// inventory does not contain: the missing set for one cleanly-walked
-    /// scope. Only indexed catalog rows qualify, and scope matching is the
-    /// exact [`scope_covers_path`] rule, answered in one query.
+    /// scope, each with whether the run held back a folder covering it
+    /// (a mount found empty), where nothing is marked. Only indexed catalog
+    /// rows qualify, and scope matching is the exact [`scope_covers_path`]
+    /// rule, answered in one query.
     pub fn missing_catalog_paths(
         &self,
         run_id: &str,
         root_id: &str,
         scope_relative_path: &str,
-    ) -> Vec<String> {
+    ) -> Vec<(String, bool)> {
         let guard = self.lock();
         let sql = format!(
-            "SELECT t.relative_path FROM local_tracks t \
+            "SELECT t.relative_path, {} FROM local_tracks t \
              WHERE t.root_id = ?1 AND t.availability = 'indexed' AND {IN_SCOPE} \
              AND NOT EXISTS ( \
              SELECT 1 FROM library_scan_inventory i \
@@ -238,7 +240,8 @@ impl SqliteScanStore {
              AND s.root_id = i.root_id AND s.relative_path = i.scope_relative_path \
              WHERE i.run_id = ?3 AND i.root_id = ?1 AND i.relative_path = t.relative_path \
              AND s.discovery_generation = i.discovery_generation) \
-             ORDER BY t.relative_path"
+             ORDER BY t.relative_path",
+            super::held_scopes::held_back!("?3", "t"),
         );
         let mut stmt = match guard.conn.prepare(&sql) {
             Ok(stmt) => stmt,
@@ -248,7 +251,7 @@ impl SqliteScanStore {
             }
         };
         stmt.query_map(params![root_id, scope_relative_path, run_id], |row| {
-            row.get::<_, String>(0)
+            Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
         })
         .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
         .unwrap_or_else(|error| {

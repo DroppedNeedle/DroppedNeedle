@@ -237,6 +237,9 @@ enum WalkMessage {
     File(DiscoveredFile),
     Skips(Vec<(String, String)>),
     WalkError(WalkErrorInfo),
+    /// A folder on another filesystem than the folder above it, as its
+    /// inventory key.
+    Mount(String),
     Done,
 }
 
@@ -793,6 +796,7 @@ impl InventoryScanner {
                         &sender,
                         &producer_stopped,
                         &producer_heartbeat,
+                        &folder_device,
                     )
                 })
                 .await;
@@ -894,6 +898,10 @@ impl InventoryScanner {
             last_item_at = Instant::now();
             match item {
                 WalkMessage::Done => break,
+                // Recorded however the run ends.
+                WalkMessage::Mount(relative_path) => {
+                    self.store.record_mount(&scope.root_id, &relative_path);
+                }
                 _ if discard_remaining => continue,
                 WalkMessage::Skips(skips) => {
                     for (relative_path, failure_code) in skips {
@@ -1176,16 +1184,70 @@ impl Drop for StopGuard {
     }
 }
 
+/// The filesystem a folder is on, or `None` when it cannot be read. Follows
+/// a symlink, so a root reached through one reads as its target.
+#[cfg(unix)]
+fn folder_device(path: &Path) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt as _;
+    std::fs::metadata(path).ok().map(|meta| meta.dev())
+}
+
+/// Mounts are found on unix only.
+#[cfg(not(unix))]
+fn folder_device(_path: &Path) -> Option<u64> {
+    None
+}
+
+/// A folder is a mount when it is on another filesystem than the folder
+/// above it. A folder whose filesystem cannot be read counts as on its
+/// parent's.
+fn is_mount(parent: Option<u64>, folder: Option<u64>) -> bool {
+    matches!((parent, folder), (Some(parent), Some(folder)) if parent != folder)
+}
+
+/// The filesystem of `selected`, reporting each folder from below the root
+/// down to it that is a mount, so a scan of one folder still finds the
+/// mount above it. The root is the base: it is never compared with its own
+/// parent.
+fn scope_device(
+    selected: &Path,
+    root: &Path,
+    device: &dyn Fn(&Path) -> Option<u64>,
+    report: &mut dyn FnMut(&Path),
+) -> Option<u64> {
+    let mut current = device(root);
+    let Ok(below) = selected.strip_prefix(root) else {
+        return current;
+    };
+    let mut folder = root.to_owned();
+    for part in below.components() {
+        folder.push(part);
+        let own = device(&folder);
+        if is_mount(current, own) {
+            report(&folder);
+        }
+        current = own.or(current);
+    }
+    current
+}
+
 /// Blocking walk producing inventory messages (v2 `producer`). Runs on the
-/// pool: stat-only, symlink-cautious, skip-and-report.
+/// pool: stat-only, symlink-cautious, skip-and-report. `device` reads the
+/// filesystem of each folder the walk descends into, once, to report mounts.
 fn produce_inventory(
     selected: &Path,
     root: &Path,
     sender: &mpsc::Sender<WalkMessage>,
     stopped: &AtomicBool,
     heartbeat: &WalkHeartbeat,
+    device: &dyn Fn(&Path) -> Option<u64>,
 ) {
-    let mut stack = vec![selected.to_owned()];
+    let report_mount = |folder: &Path| {
+        let key = inventory_key(folder, root);
+        if !key.is_empty() && key != "." {
+            send_with_stop(sender, stopped, WalkMessage::Mount(key));
+        }
+    };
     // Symlink targets resolve to canonical paths; compare them against the
     // canonical root so a root reached through a symlink (`/music` ->
     // `/mnt/nas/music`) still recognizes its own files.
@@ -1206,7 +1268,10 @@ fn produce_inventory(
             return;
         }
     }
-    while let Some(directory) = stack.pop() {
+    let base = scope_device(selected, root, device, &mut |folder| report_mount(folder));
+    // Each folder carries its filesystem, for its subfolders to compare.
+    let mut stack = vec![(selected.to_owned(), base)];
+    while let Some((directory, directory_device)) = stack.pop() {
         if stopped.load(Ordering::Relaxed) {
             break;
         }
@@ -1250,7 +1315,11 @@ fn produce_inventory(
             let path = entry.path();
             if file_type.is_dir() {
                 if !is_management_artifact(&path) {
-                    stack.push(path);
+                    let own = device(&path);
+                    if is_mount(directory_device, own) {
+                        report_mount(&path);
+                    }
+                    stack.push((path, own.or(directory_device)));
                 }
                 continue;
             }
@@ -1381,5 +1450,57 @@ mod tests {
         let nfd: String = "cafe\u{301}.flac".to_owned();
         let key = inventory_key(&Path::new("/music").join(&nfd), root);
         assert_eq!(key, "caf\u{e9}.flac");
+    }
+
+    /// The mounts a walk of `selected` under `root` reports.
+    fn mounts_walked(
+        selected: &Path,
+        root: &Path,
+        device: &dyn Fn(&Path) -> Option<u64>,
+    ) -> Vec<String> {
+        let (sender, mut receiver) = mpsc::channel(INVENTORY_QUEUE_SIZE);
+        let stopped = AtomicBool::new(false);
+        produce_inventory(
+            selected,
+            root,
+            &sender,
+            &stopped,
+            &WalkHeartbeat::new(),
+            device,
+        );
+        let mut mounts = Vec::new();
+        while let Ok(message) = receiver.try_recv() {
+            if let WalkMessage::Mount(folder) = message {
+                mounts.push(folder);
+            }
+        }
+        mounts
+    }
+
+    /// A folder on another filesystem than the folder above it is reported
+    /// once, by its path in the root, also by a walk of a folder below it.
+    /// The root is never compared with its own parent, so a root reached
+    /// through a symlink reports nothing.
+    #[test]
+    fn a_walk_reports_the_folders_on_another_filesystem() {
+        let scratch =
+            droppedneedle_kernel::db::scratch::ScratchDir::new("walk-mounts").expect("scratch");
+        let root = scratch.join("music");
+        for file in ["local/1.flac", "nas/x/2.flac", "nas/y/z/3.flac"] {
+            let path = root.join(file);
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+            std::fs::write(path, b"x").expect("write");
+        }
+        let nas = root.join("nas");
+        let device = |path: &Path| Some(if path.starts_with(&nas) { 2 } else { 1 });
+        assert_eq!(mounts_walked(&root, &root, &device), ["nas"]);
+        assert_eq!(mounts_walked(&root.join("nas/x"), &root, &device), ["nas"]);
+
+        #[cfg(unix)]
+        {
+            let link = scratch.join("link");
+            std::os::unix::fs::symlink(&root, &link).expect("symlink");
+            assert!(mounts_walked(&link, &link, &folder_device).is_empty());
+        }
     }
 }

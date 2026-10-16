@@ -61,7 +61,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 155);
+    assert_eq!(table_names(&pool).await.len(), 156);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -2183,6 +2183,66 @@ async fn unjudged_tracks_arrive_empty_and_strict() {
             "id".to_owned(),
             "CASCADE".to_owned()
         )]
+    );
+}
+
+/// Migration 0056 adds the folders scans found to be mounts, empty and
+/// strict, keyed by root and path, and the index the guard check reads.
+#[tokio::test]
+async fn scan_mounts_arrive_empty_with_the_guard_index() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 56)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(stamped >= 56 && stamped == latest_version(), "{stamped}");
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_scan_mounts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+    let strict: i64 = sqlx::query_scalar(
+        "SELECT strict FROM pragma_table_list WHERE name = 'library_scan_mounts'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(strict, 1);
+    let key: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM pragma_table_info('library_scan_mounts') WHERE pk > 0 ORDER BY pk",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(key, ["root_id", "relative_path"]);
+    let index: Option<String> = sqlx::query_scalar(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_scan_failures_guard'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    let index = index.expect("the guard index exists");
+    assert!(
+        index.contains("WHERE failure_code = 'MASS_MISSING_GUARD'"),
+        "{index}"
     );
 }
 

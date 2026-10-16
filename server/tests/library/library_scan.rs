@@ -4485,6 +4485,151 @@ async fn an_album_is_not_joined_without_proof_it_was_replaced() {
     assert_eq!(rig.album_of("a/t000.flac"), old, "{case}");
 }
 
+impl RegroupRig {
+    /// Record `a/` as a drive or share mounted inside the library folder,
+    /// as a scan that found it on its own filesystem would.
+    fn mount_a(&self) {
+        self.run("INSERT INTO library_scan_mounts (root_id, relative_path) VALUES ('music', 'a');");
+    }
+
+    /// Empty `a/` of the old album's files, leaving the folder.
+    fn empty_a(&self, count: usize) {
+        for n in 0..count {
+            std::fs::remove_file(self.root.join(format!("a/t{n:03}.flac"))).expect("removed");
+        }
+    }
+
+    /// The latest scan held `a/` back, and the old album is untouched: its
+    /// rows indexed at their paths with their ids, nothing joined or
+    /// recorded, the star on its first row.
+    fn assert_share_kept(&self, old: &str, rows: &[String], case: &str) {
+        self.assert_apart(old, &rows[0], case);
+        for (n, row) in rows.iter().enumerate() {
+            assert_eq!(
+                self.coordinator
+                    .store()
+                    .track_at("music", &format!("a/t{n:03}.flac"))
+                    .as_ref(),
+                Some(row),
+                "{case}: the old row stays indexed at its path"
+            );
+        }
+        let latest = self.runs().pop().expect("a scan ran");
+        assert_eq!(
+            self.count(&format!(
+                "SELECT COUNT(*) FROM library_scan_failures WHERE run_id = '{latest}' \
+                 AND root_id = 'music' AND relative_path = 'a' \
+                 AND failure_code = 'MASS_MISSING_GUARD'"
+            )),
+            1,
+            "{case}: the share is held back"
+        );
+    }
+}
+
+/// A drive or share mounted inside a library folder that a scan finds
+/// empty is held back: nothing under it is marked missing or moved, and its
+/// album is never joined into a copy added elsewhere, whether the copy came
+/// in the same scan, came first, or carries the old album's own tags. Back
+/// again, the share lets the hold go and the two albums stay apart. With a
+/// file left on the share it was not dropped, and the album is joined.
+#[tokio::test]
+async fn a_share_that_goes_empty_keeps_its_album() {
+    let case = "a copy in the scan the share drops";
+    let (mut rig, old, old_rows) = mapped_album("share-same-scan", 2).await;
+    rig.mount_a();
+    let after = rig.after.clone();
+    let new_rows = rig.replace(&[0, 1], "b", &after).await;
+    rig.assert_share_kept(&old, &old_rows, case);
+    let new = rig.album_of("b/t000.flac");
+    rig.match_rows(&new, REL_R, &[(&new_rows[0], 0), (&new_rows[1], 1)]);
+    rig.scan().await;
+    rig.assert_share_kept(&old, &old_rows, case);
+    let first = &rig.runs()[1];
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM library_scan_held_scopes WHERE root_id = 'music' \
+             AND relative_path = 'a' AND held_at = (SELECT CAST(started_at * 1000 AS INTEGER) \
+             FROM library_scan_runs WHERE id = '{first}')"
+        )),
+        1,
+        "{case}: held since the first scan"
+    );
+    assert_eq!(
+        rig.count("SELECT COUNT(*) FROM library_scan_held_scopes"),
+        1
+    );
+    let before = rig.before.clone();
+    rig.tag(
+        &["a/t000.flac".to_owned(), "a/t001.flac".to_owned()],
+        &before,
+    );
+    rig.scan().await;
+    let latest = rig.runs().pop().expect("a scan ran");
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM library_scan_failures WHERE run_id = '{latest}' \
+             AND failure_code = 'MASS_MISSING_GUARD'"
+        )),
+        0,
+        "{case}: back again"
+    );
+    assert_eq!(
+        rig.count("SELECT COUNT(*) FROM library_scan_held_scopes"),
+        0
+    );
+    rig.assert_apart(&old, &old_rows[0], case);
+    assert_eq!(rig.album_of("a/t000.flac"), old, "{case}");
+    assert_eq!(rig.album_of("b/t000.flac"), new, "{case}");
+
+    let case = "a copy that came first";
+    let (mut rig, old, old_rows) = mapped_album("share-copy-first", 2).await;
+    rig.mount_a();
+    let files = vec!["b/t000.flac".to_owned(), "b/t001.flac".to_owned()];
+    let after = rig.after.clone();
+    rig.tag(&files, &after);
+    rig.scan_folder("b").await;
+    let new = rig.album_of("b/t000.flac");
+    let new_rows = rig.rows_at(&files);
+    rig.match_rows(&new, REL_R, &[(&new_rows[0], 0), (&new_rows[1], 1)]);
+    rig.empty_a(2);
+    rig.scan().await;
+    rig.assert_share_kept(&old, &old_rows, case);
+    rig.scan().await;
+    rig.assert_share_kept(&old, &old_rows, case);
+
+    let case = "a copy with the old album's own tags";
+    let (mut rig, old, old_rows) = mapped_album("share-own-tags", 2).await;
+    rig.mount_a();
+    let before = rig.before.clone();
+    rig.tag(&files, &before);
+    rig.empty_a(2);
+    rig.scan().await;
+    for copy in rig.rows_at(&files) {
+        assert!(!old_rows.contains(&copy), "{case}: the copy is a new track");
+    }
+    rig.assert_share_kept(&old, &old_rows, case);
+
+    let case = "a file left on the share";
+    let (mut rig, old, old_rows) = mapped_album("share-up", 2).await;
+    rig.mount_a();
+    rig.tag(&["a/z000.flac".to_owned()], "share-up bystander");
+    let after = rig.after.clone();
+    let new_rows = rig.replace(&[0, 1], "b", &after).await;
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM local_tracks WHERE local_album_id = '{old}' \
+             AND availability = 'missing'"
+        )),
+        2,
+        "{case}: marked missing"
+    );
+    let new = rig.album_of("b/t000.flac");
+    rig.match_rows(&new, REL_R, &[(&new_rows[0], 0), (&new_rows[1], 1)]);
+    rig.scan().await;
+    rig.assert_joined(&old, &new, (&old_rows[0], &new_rows[0]), case);
+}
+
 /// A join waits as a follow waits. A track of the old album deleted in the
 /// same go holds it for a scan; when no more tracks were replaced than
 /// stayed, the rest must have been gone a day, the replaced rows aside.

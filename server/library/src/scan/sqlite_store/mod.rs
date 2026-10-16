@@ -560,6 +560,7 @@ mod commit;
 mod hands_off;
 mod held_scopes;
 mod inventory;
+mod mounts;
 pub mod retag_pairs;
 mod runs;
 
