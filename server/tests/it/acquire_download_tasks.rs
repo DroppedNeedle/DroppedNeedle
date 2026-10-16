@@ -9,19 +9,19 @@ use axum::{
     body::Body,
     http::{Method, Request, StatusCode},
 };
-use droppedneedle::acquire::db::AcquireDb;
-use droppedneedle::acquire::dispatch::{Journal, UnifiedDispatch};
-use droppedneedle::acquire::downloads::watchdog::RetryPolicy;
-use droppedneedle::acquire::downloads::{
+use droppedneedle_acquire::db::AcquireDb;
+use droppedneedle_acquire::dispatch::{Journal, UnifiedDispatch};
+use droppedneedle_acquire::downloads::watchdog::RetryPolicy;
+use droppedneedle_acquire::downloads::{
     http::downloads_router,
     state::{AttemptState, TaskStatus},
     store::NewTask,
 };
-use droppedneedle::acquire::landing::{LandingService, LandingSettings, LibrarySlot};
-use droppedneedle::acquire::requests::dispatch::{
+use droppedneedle_acquire::landing::{LandingService, LandingSettings, LibrarySlot};
+use droppedneedle_acquire::requests::dispatch::{
     DispatchOrigin, DispatchOutcome, DispatchRequest, DownloadDispatch as _,
 };
-use droppedneedle::acquire::worker::{DownloadWorker, WorkerConfig};
+use droppedneedle_acquire::worker::{DownloadWorker, WorkerConfig};
 use droppedneedle_kernel::ids::UuidGenerator;
 use serde_json::Value;
 use tower::ServiceExt as _;
@@ -336,8 +336,8 @@ fn get(uri: &str, identity: &str) -> Request<Body> {
 // finished rows, and the blocklist stays admin only.
 #[tokio::test]
 async fn queue_journey_scopes_explains_retries_and_clears() {
-    use droppedneedle::acquire::downloads::QUARANTINE_TTL_SECONDS;
-    use droppedneedle::acquire::downloads::landing_rows::ImportDecisionRow;
+    use droppedneedle_acquire::downloads::QUARANTINE_TTL_SECONDS;
+    use droppedneedle_acquire::downloads::landing_rows::ImportDecisionRow;
 
     let db = AcquireDb::scratch().unwrap();
     db.add_user("u-ada", "Ada", "user").await.unwrap();

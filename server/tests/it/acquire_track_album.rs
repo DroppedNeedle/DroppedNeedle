@@ -7,23 +7,23 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use droppedneedle::acquire::db::AcquireDb;
-use droppedneedle::acquire::dispatch::{Journal, UnifiedDispatch};
-use droppedneedle::acquire::downloads::manifest::{ManifestCodec, TrackPosition};
-use droppedneedle::acquire::downloads::sources::SourceHandle;
-use droppedneedle::acquire::downloads::watchdog::RetryPolicy;
-use droppedneedle::acquire::requests::dispatch::{
+use droppedneedle_acquire::db::AcquireDb;
+use droppedneedle_acquire::dispatch::{Journal, UnifiedDispatch};
+use droppedneedle_acquire::downloads::manifest::{ManifestCodec, TrackPosition};
+use droppedneedle_acquire::downloads::sources::SourceHandle;
+use droppedneedle_acquire::downloads::watchdog::RetryPolicy;
+use droppedneedle_acquire::requests::dispatch::{
     DispatchOrigin, DispatchOutcome, DispatchRequest, DownloadDispatch,
 };
-use droppedneedle::acquire::slskd::{
+use droppedneedle_acquire::slskd::{
     DownloadPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository,
 };
-use droppedneedle::acquire::sources::SlskdSource;
-use droppedneedle::acquire::target::Targets;
-use droppedneedle::acquire::target::lookup::{
+use droppedneedle_acquire::sources::SlskdSource;
+use droppedneedle_acquire::target::Targets;
+use droppedneedle_acquire::target::lookup::{
     AlbumRelease, AlbumTrack, FixedAlbums, ReleaseCandidate,
 };
-use droppedneedle::acquire::worker::{DownloadWorker, Source, WorkerConfig};
+use droppedneedle_acquire::worker::{DownloadWorker, Source, WorkerConfig};
 use droppedneedle_kernel::ids::UuidGenerator;
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use serde_json::{Value, json};

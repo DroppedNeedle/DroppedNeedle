@@ -8,8 +8,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use droppedneedle::acquire::db::AcquireDb;
-use droppedneedle::acquire::flows::{
+use droppedneedle_acquire::db::AcquireDb;
+use droppedneedle_acquire::flows::{
     self,
     loops::{
         FollowDeps, LoopState, ManualSleeper, PruneDeps, PruneSettings, SYNC_INITIAL_DELAY,
@@ -24,12 +24,12 @@ use droppedneedle::acquire::flows::{
         AdminDirectory, FollowStore, LibraryPresence, MemoryWorklist, UpgradeItem, UpgradePolicy,
     },
 };
-use droppedneedle::acquire::requests::{
+use droppedneedle_acquire::requests::{
     ledger::{BeginOutcome, RequestRecord},
     models::RequestKind,
     sqlite::{RequestStore, WantedStore},
 };
-use droppedneedle::acquire::search_jobs::store::JobStore;
+use droppedneedle_acquire::search_jobs::store::JobStore;
 use droppedneedle_kernel::db::{DbRuntime, JobState};
 use droppedneedle_kernel::runtime_config::sections::UserPreferences;
 

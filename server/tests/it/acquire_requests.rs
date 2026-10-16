@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use droppedneedle::acquire::requests::mix::{
+use droppedneedle_acquire::requests::mix::{
     MixGrantHooks, MixSources, PersonalMixBuilder, SkipReason,
 };
 use droppedneedle_catalog::reads::collections::db::CollectionsDb;
@@ -31,9 +31,9 @@ use axum::{
     body::Body,
     http::{Method, Request, StatusCode},
 };
-use droppedneedle::acquire::db::AcquireDb;
-use droppedneedle::acquire::downloads::manifest::{PlannedAlbum, ReplaceVersion};
-use droppedneedle::acquire::requests::{
+use droppedneedle_acquire::db::AcquireDb;
+use droppedneedle_acquire::downloads::manifest::{PlannedAlbum, ReplaceVersion};
+use droppedneedle_acquire::requests::{
     self, RequestsState,
     dispatch::{DispatchTaskState, RetrySchedule, ScriptedDispatch},
     ledger::{WATCH_WATCHING, WantedWatch},
@@ -888,7 +888,7 @@ async fn edition_setup() -> (RequestsState, AcquireDb, Arc<ScriptedDispatch>) {
         state
             .upgrade_policy
             .set(Arc::new(|| {
-                droppedneedle::acquire::flows::stores::UpgradePolicy {
+                droppedneedle_acquire::flows::stores::UpgradePolicy {
                     upgrade_allowed: true,
                     cutoff: "lossless".into(),
                     ..Default::default()

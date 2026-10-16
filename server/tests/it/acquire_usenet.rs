@@ -6,7 +6,7 @@
 //! multipart add; Newznab's 202 fallback; Prowlarr's never-logged key).
 //! Transport is real HTTP over `127.0.0.1` only: no live contact, ever.
 
-use droppedneedle::acquire::usenet;
+use droppedneedle_acquire::usenet;
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -1516,10 +1516,10 @@ fn usenet_secrets_never_logged() {
 /// runs and reports no candidate.
 #[tokio::test]
 async fn usenet_enqueue_reattaches_to_existing_job() {
-    use droppedneedle::acquire::dispatch::Journal;
-    use droppedneedle::acquire::downloads::sources::{DownloadSource, SourceError};
-    use droppedneedle::acquire::downloads::store::NewTask;
-    use droppedneedle::acquire::sources::SabnzbdSource;
+    use droppedneedle_acquire::dispatch::Journal;
+    use droppedneedle_acquire::downloads::sources::{DownloadSource, SourceError};
+    use droppedneedle_acquire::downloads::store::NewTask;
+    use droppedneedle_acquire::sources::SabnzbdSource;
     use droppedneedle_kernel::runtime_config::sections::UsenetBackendSetting;
     use std::sync::Arc;
     use usenet::prowlarr::ProwlarrIndexer;
@@ -1530,7 +1530,7 @@ async fn usenet_enqueue_reattaches_to_existing_job() {
     mock.queue_job("nzo-1", &job_name, "Downloading", "100.0", "50.0", "50");
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
 
-    let db = droppedneedle::acquire::db::AcquireDb::scratch().expect("scratch db");
+    let db = droppedneedle_acquire::db::AcquireDb::scratch().expect("scratch db");
     db.add_user("u1", "U", "user").await.expect("user seeds");
     let journal = Arc::new(Journal::new(db));
     journal

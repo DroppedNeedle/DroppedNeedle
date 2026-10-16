@@ -6,7 +6,7 @@
 //! past the lease, and orphan/quarantine sweeps fail closed. Nothing here
 //! touches the real library.
 
-use droppedneedle::acquire::downloads;
+use droppedneedle_acquire::downloads;
 
 use std::path::PathBuf;
 use std::time::SystemTime;

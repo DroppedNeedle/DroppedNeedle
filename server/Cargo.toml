@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = [".", "auth", "catalog", "kernel", "library", "media", "plugins", "providers", "testkit"]
+members = [".", "acquire", "auth", "catalog", "kernel", "library", "media", "plugins", "providers", "testkit"]
 
 [workspace.package]
 version = "3.0.0"
@@ -9,6 +9,7 @@ rust-version = "1.89"
 license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
+droppedneedle-acquire = { path = "acquire", version = "3.0.0" }
 droppedneedle-auth = { path = "auth", version = "3.0.0" }
 droppedneedle-catalog = { path = "catalog", version = "3.0.0" }
 droppedneedle-kernel = { path = "kernel", version = "3.0.0" }
@@ -75,6 +76,7 @@ description = "DroppedNeedle v3 backend"
 license.workspace = true
 
 [dependencies]
+droppedneedle-acquire.workspace = true
 droppedneedle-auth.workspace = true
 droppedneedle-catalog.workspace = true
 droppedneedle-kernel.workspace = true
@@ -98,21 +100,18 @@ socket2.workspace = true
 sha2.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
-unicode-normalization.workspace = true
 tokio.workspace = true
 tower.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 utoipa.workspace = true
 uuid.workspace = true
-zip.workspace = true
 aes.workspace = true
 cbc.workspace = true
 hmac.workspace = true
 toml.workspace = true
 time.workspace = true
 image.workspace = true
-quick-xml.workspace = true
 
 [features]
 # Fakes, mocks, memory stores and test constructors for the test suite.
@@ -124,6 +123,7 @@ test-support = [
     "droppedneedle-plugins/test-support",
     "droppedneedle-media/test-support",
     "droppedneedle-catalog/test-support",
+    "droppedneedle-acquire/test-support",
 ]
 
 [dev-dependencies]
@@ -136,6 +136,7 @@ lofty.workspace = true
 regex.workspace = true
 ring.workspace = true
 tracing-subscriber.workspace = true
+zip.workspace = true
 
 # Debug builds carry line tables for this crate and no debug info for
 # dependencies. Full debug info nearly doubled the time of a clean test

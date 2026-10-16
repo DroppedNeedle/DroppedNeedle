@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use droppedneedle::acquire::drop_import::Viewer;
-use droppedneedle::acquire::drop_import::store::JobRecord;
-use droppedneedle::acquire::landing::library::LibraryLanding;
+use droppedneedle_acquire::drop_import::Viewer;
+use droppedneedle_acquire::drop_import::store::JobRecord;
+use droppedneedle_acquire::landing::library::LibraryLanding;
 use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use droppedneedle_library::identify::sources::{
@@ -150,7 +150,7 @@ fn length_ms(bytes: &[u8], scratch: &Path) -> Option<u64> {
 /// curator and asker users and a `music` root, and the scratch folder.
 /// The reads bundle is returned only to live as long as the others.
 async fn bundles() -> (
-    droppedneedle::acquire::AcquireSetup,
+    droppedneedle_acquire::AcquireSetup,
     LibrarySetup,
     PathBuf,
     droppedneedle_catalog::reads::ReadsSetup,
@@ -160,7 +160,7 @@ async fn bundles() -> (
     let mut reads =
         droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
             .expect("reads bundle");
-    let acquire = droppedneedle::acquire::AcquireSetup::for_tests(
+    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
         auth.users.clone(),
         ids.clone(),
         &mut reads.collections,
@@ -498,7 +498,7 @@ async fn a_hand_match_finds_the_edition_in_a_large_group() {
 
 /// Upload one zip of `entries` and wait for its job to settle.
 async fn drop_zip(
-    acquire: &droppedneedle::acquire::AcquireSetup,
+    acquire: &droppedneedle_acquire::AcquireSetup,
     curator: &Viewer,
     name: &str,
     entries: &[(&str, &Vec<u8>)],

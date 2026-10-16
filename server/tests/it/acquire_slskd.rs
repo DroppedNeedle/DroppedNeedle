@@ -10,7 +10,7 @@
 //! and policy tests (recipe validation/ranking, lossless ladder, query
 //! construction). No live contact ever.
 
-use droppedneedle::acquire::slskd;
+use droppedneedle_acquire::slskd;
 
 use std::time::Duration;
 
@@ -735,12 +735,12 @@ fn slskd_http_debug_redacts_key() {
 // result shrinks, so no candidate is skipped.
 #[tokio::test]
 async fn failover_walks_every_peer() {
-    use droppedneedle::acquire::db::AcquireDb;
-    use droppedneedle::acquire::dispatch::Journal;
-    use droppedneedle::acquire::downloads::sources::DownloadSource as _;
-    use droppedneedle::acquire::downloads::state::AttemptState;
-    use droppedneedle::acquire::downloads::store::NewTask;
-    use droppedneedle::acquire::sources::SlskdSource;
+    use droppedneedle_acquire::db::AcquireDb;
+    use droppedneedle_acquire::dispatch::Journal;
+    use droppedneedle_acquire::downloads::sources::DownloadSource as _;
+    use droppedneedle_acquire::downloads::state::AttemptState;
+    use droppedneedle_acquire::downloads::store::NewTask;
+    use droppedneedle_acquire::sources::SlskdSource;
 
     let mock = MockSlskd::start().await.expect("mock starts");
     let db = AcquireDb::scratch().expect("scratch db");
@@ -789,7 +789,7 @@ async fn failover_walks_every_peer() {
                 for file in &files {
                     store.record_quarantine(
                         "soulseek",
-                        &droppedneedle::acquire::downloads::quarantine::canonical_soulseek_identity(
+                        &droppedneedle_acquire::downloads::quarantine::canonical_soulseek_identity(
                             &format!("{user}/{file}"),
                         ),
                         "failed",

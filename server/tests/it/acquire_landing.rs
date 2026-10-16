@@ -8,15 +8,15 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use droppedneedle::acquire::downloads::state::TaskStatus;
-use droppedneedle::acquire::downloads::store::NewTask;
-use droppedneedle::acquire::landing::library::LibraryLanding;
-use droppedneedle::acquire::landing::specs::{Disposition, Rejection};
-use droppedneedle::acquire::landing::{
+use droppedneedle_acquire::downloads::state::TaskStatus;
+use droppedneedle_acquire::downloads::store::NewTask;
+use droppedneedle_acquire::landing::library::LibraryLanding;
+use droppedneedle_acquire::landing::specs::{Disposition, Rejection};
+use droppedneedle_acquire::landing::{
     Landed, LandingReport, LandingResult, OUTSIDE_DOWNLOADS, Reported,
 };
-use droppedneedle::acquire::wiring::settled_hook;
-use droppedneedle::acquire::worker::{DownloadWorker, FixedSource, Source, WorkerConfig};
+use droppedneedle_acquire::wiring::settled_hook;
+use droppedneedle_acquire::worker::{DownloadWorker, FixedSource, Source, WorkerConfig};
 use droppedneedle_kernel::ids::{IdGenerator, UuidGenerator};
 use droppedneedle_kernel::runtime_config::{ConfigStore, Crypto};
 use droppedneedle_library::identify::sources::{ReleaseHit, ReleaseSource, SourceError};
@@ -171,7 +171,7 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
     let mut reads =
         droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
             .expect("reads bundle");
-    let acquire = droppedneedle::acquire::AcquireSetup::for_tests(
+    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
         auth.users.clone(),
         ids.clone(),
         &mut reads.collections,
@@ -422,7 +422,7 @@ async fn held_call(
         .header("x-slice-principal", identity)
         .body(axum::body::Body::empty())
         .expect("request");
-    let response = droppedneedle::acquire::downloads::downloads_router(worker.clone())
+    let response = droppedneedle_acquire::downloads::downloads_router(worker.clone())
         .oneshot(request)
         .await
         .expect("response");
@@ -459,7 +459,7 @@ async fn held_files_import_as_upgrades_or_discard() {
     let mut reads =
         droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
             .expect("reads bundle");
-    let acquire = droppedneedle::acquire::AcquireSetup::for_tests(
+    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
         auth.users.clone(),
         ids.clone(),
         &mut reads.collections,
@@ -650,13 +650,13 @@ async fn held_files_import_as_upgrades_or_discard() {
 }
 
 /// An acquire bundle with no library attached, and its scratch folder.
-async fn bare_acquire() -> (droppedneedle::acquire::AcquireSetup, PathBuf) {
+async fn bare_acquire() -> (droppedneedle_acquire::AcquireSetup, PathBuf) {
     let auth = droppedneedle_auth::wiring::AuthSetup::for_tests().expect("test auth");
     let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
     let mut reads =
         droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
             .expect("reads bundle");
-    let acquire = droppedneedle::acquire::AcquireSetup::for_tests(
+    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
         auth.users.clone(),
         ids,
         &mut reads.collections,
@@ -678,7 +678,7 @@ async fn bare_acquire() -> (droppedneedle::acquire::AcquireSetup, PathBuf) {
 
 /// Land `landed` for a fresh task and return the rejection code, if any.
 async fn rejection_code(
-    acquire: &droppedneedle::acquire::AcquireSetup,
+    acquire: &droppedneedle_acquire::AcquireSetup,
     task_id: &'static str,
     landed: Landed,
 ) -> Option<&'static str> {
@@ -689,7 +689,7 @@ async fn rejection_code(
 
 /// Land `landed` for a fresh task and return the rejection, if any.
 async fn rejection(
-    acquire: &droppedneedle::acquire::AcquireSetup,
+    acquire: &droppedneedle_acquire::AcquireSetup,
     task_id: &'static str,
     landed: Landed,
     patient: bool,
@@ -789,9 +789,9 @@ async fn a_download_outside_its_clients_folder_is_refused() {
 /// the plugin itself names.
 #[tokio::test]
 async fn a_plugin_download_is_confined_to_the_plugins_folders() {
-    use droppedneedle::acquire::downloads::SourceHandle;
-    use droppedneedle::acquire::plugin_source::{PluginDownloadSource, ReleasePolicy};
-    use droppedneedle::acquire::usenet::policy::UsenetPolicy;
+    use droppedneedle_acquire::downloads::SourceHandle;
+    use droppedneedle_acquire::plugin_source::{PluginDownloadSource, ReleasePolicy};
+    use droppedneedle_acquire::usenet::policy::UsenetPolicy;
     use droppedneedle_plugins::fakes::FakeLauncher;
     use droppedneedle_plugins::host::PluginHost;
     use droppedneedle_plugins::protocol::methods;
@@ -901,14 +901,14 @@ async fn a_plugin_download_is_confined_to_the_plugins_folders() {
 /// write is done.
 #[tokio::test]
 async fn orphan_cleanup_waits_for_the_publish_to_finish() {
-    use droppedneedle::acquire::landing::ports::{
+    use droppedneedle_acquire::landing::ports::{
         ImportFile, ImportOrigin, ImportRequest, LandingLibrary,
     };
-    use droppedneedle::acquire::sources::SabnzbdSource;
-    use droppedneedle::acquire::usenet::newznab::NewznabIndexer;
-    use droppedneedle::acquire::usenet::policy::UsenetPolicy;
-    use droppedneedle::acquire::usenet::prowlarr::ProwlarrIndexer;
-    use droppedneedle::acquire::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
+    use droppedneedle_acquire::sources::SabnzbdSource;
+    use droppedneedle_acquire::usenet::newznab::NewznabIndexer;
+    use droppedneedle_acquire::usenet::policy::UsenetPolicy;
+    use droppedneedle_acquire::usenet::prowlarr::ProwlarrIndexer;
+    use droppedneedle_acquire::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
     use droppedneedle_kernel::runtime_config::sections::UsenetBackendSetting;
     use droppedneedle_testkit::usenet::{SabnzbdMock, serve_loopback};
     use std::time::{Duration, SystemTime};
@@ -920,7 +920,7 @@ async fn orphan_cleanup_waits_for_the_publish_to_finish() {
     let mut reads =
         droppedneedle_catalog::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
             .expect("reads bundle");
-    let acquire = droppedneedle::acquire::AcquireSetup::for_tests(
+    let acquire = droppedneedle_acquire::AcquireSetup::for_tests(
         auth.users.clone(),
         ids.clone(),
         &mut reads.collections,
@@ -1157,15 +1157,15 @@ fn fixture_lengths() -> Vec<Option<u64>> {
 /// Acquisition's view of the same releases, for the album target rewrite.
 struct Lookup(Vec<Release>);
 
-impl droppedneedle::acquire::target::lookup::AlbumLookup for Lookup {
+impl droppedneedle_acquire::target::lookup::AlbumLookup for Lookup {
     fn recording_releases<'a>(
         &'a self,
         _recording_mbid: &'a str,
     ) -> BoxFuture<
         'a,
         Result<
-            Option<Vec<droppedneedle::acquire::target::lookup::ReleaseCandidate>>,
-            droppedneedle::acquire::target::lookup::LookupError,
+            Option<Vec<droppedneedle_acquire::target::lookup::ReleaseCandidate>>,
+            droppedneedle_acquire::target::lookup::LookupError,
         >,
     > {
         Box::pin(async { Ok(None) })
@@ -1177,11 +1177,11 @@ impl droppedneedle::acquire::target::lookup::AlbumLookup for Lookup {
     ) -> BoxFuture<
         'a,
         Result<
-            Option<droppedneedle::acquire::target::lookup::AlbumRelease>,
-            droppedneedle::acquire::target::lookup::LookupError,
+            Option<droppedneedle_acquire::target::lookup::AlbumRelease>,
+            droppedneedle_acquire::target::lookup::LookupError,
         >,
     > {
-        use droppedneedle::acquire::target::lookup::{AlbumRelease, AlbumTrack};
+        use droppedneedle_acquire::target::lookup::{AlbumRelease, AlbumTrack};
         let found = self
             .0
             .iter()
@@ -1213,9 +1213,9 @@ impl droppedneedle::acquire::target::lookup::AlbumLookup for Lookup {
 /// The real worker, landing, publisher and catalog over one scratch
 /// database, with scripted MusicBrainz.
 struct JoinRig {
-    acquire: droppedneedle::acquire::AcquireSetup,
+    acquire: droppedneedle_acquire::AcquireSetup,
     library: LibrarySetup,
-    targets: Arc<droppedneedle::acquire::target::Targets>,
+    targets: Arc<droppedneedle_acquire::target::Targets>,
     music: PathBuf,
     downloads: PathBuf,
 }
@@ -1242,7 +1242,7 @@ async fn join_rig(releases: Vec<Release>) -> JoinRig {
             EffectivePolicy::Automatic,
         )
         .expect("root adds");
-    let targets = Arc::new(droppedneedle::acquire::target::Targets::new(
+    let targets = Arc::new(droppedneedle_acquire::target::Targets::new(
         acquire.journal.clone(),
         acquire.staging_root.clone(),
     ));
@@ -1428,7 +1428,7 @@ impl JoinRig {
             origin: origin.to_owned(),
             ..new_task(task_id, group)
         };
-        let details = droppedneedle::acquire::downloads::store::TaskDetails {
+        let details = droppedneedle_acquire::downloads::store::TaskDetails {
             release_mbid: release.map(str::to_owned),
             ..Default::default()
         };
@@ -1465,7 +1465,7 @@ impl JoinRig {
                         .collect::<Vec<_>>(),
                 },
             });
-            let path = droppedneedle::acquire::downloads::ManifestCodec::path(
+            let path = droppedneedle_acquire::downloads::ManifestCodec::path(
                 &self.acquire.staging_root,
                 task_id,
             );
@@ -1476,7 +1476,7 @@ impl JoinRig {
         }
     }
 
-    async fn task(&self, task_id: &str) -> droppedneedle::acquire::downloads::store::TaskRow {
+    async fn task(&self, task_id: &str) -> droppedneedle_acquire::downloads::store::TaskRow {
         self.acquire
             .journal
             .read_task(task_id)
@@ -1486,7 +1486,7 @@ impl JoinRig {
     }
 
     fn manifest(&self, task_id: &str) -> serde_json::Value {
-        let path = droppedneedle::acquire::downloads::ManifestCodec::path(
+        let path = droppedneedle_acquire::downloads::ManifestCodec::path(
             &self.acquire.staging_root,
             task_id,
         );
@@ -1533,7 +1533,7 @@ impl JoinRig {
     }
 
     fn worker(&self, paths: Vec<PathBuf>, retry: bool) -> Arc<DownloadWorker> {
-        let retry = droppedneedle::acquire::downloads::watchdog::RetryPolicy {
+        let retry = droppedneedle_acquire::downloads::watchdog::RetryPolicy {
             enabled: retry,
             base_interval_minutes: 0.0,
             ..Default::default()
@@ -2159,7 +2159,7 @@ async fn a_joined_import_recovers_joined() {
         ));
         let landed = rig.landed(task, &eds.new, 1, FIXTURES[1]);
         let row = rig.task(task).await;
-        let manifest = droppedneedle::acquire::downloads::ManifestCodec
+        let manifest = droppedneedle_acquire::downloads::ManifestCodec
             .decode(&serde_json::to_vec(&rig.manifest(task)).expect("bytes"))
             .expect("manifest");
         let landing = |paths: Vec<PathBuf>| Landed {
@@ -2227,7 +2227,7 @@ async fn a_joined_import_recovers_joined() {
 // keeps its place.
 #[tokio::test]
 async fn a_held_release_track_is_not_given_away() {
-    use droppedneedle::acquire::landing::ports::{
+    use droppedneedle_acquire::landing::ports::{
         ImportFile, ImportOrigin, ImportRequest, LandingLibrary,
     };
     let lengths = fixture_lengths();
@@ -2355,7 +2355,7 @@ impl VersionCase {
     /// Land `file` for the task through the landing alone.
     async fn land_directly(&self, task_id: &str, file: PathBuf) -> LandingReport {
         let row = self.rig.task(task_id).await;
-        let manifest = droppedneedle::acquire::downloads::ManifestCodec
+        let manifest = droppedneedle_acquire::downloads::ManifestCodec
             .decode(&serde_json::to_vec(&self.rig.manifest(task_id)).expect("bytes"))
             .expect("manifest");
         self.rig
@@ -2646,7 +2646,7 @@ async fn the_album_target_keeps_the_planned_copy_only_for_its_release() {
         &[(sour, "tr-1")],
     )
     .await;
-    let details = droppedneedle::acquire::downloads::store::TaskDetails {
+    let details = droppedneedle_acquire::downloads::store::TaskDetails {
         release_mbid: Some(e.new2.id.clone()),
         ..Default::default()
     };
@@ -2658,10 +2658,8 @@ async fn the_album_target_keeps_the_planned_copy_only_for_its_release() {
         .await
         .expect("details");
     let manifest = rig.manifest("t-other");
-    let path = droppedneedle::acquire::downloads::ManifestCodec::path(
-        &rig.acquire.staging_root,
-        "t-other",
-    );
+    let path =
+        droppedneedle_acquire::downloads::ManifestCodec::path(&rig.acquire.staging_root, "t-other");
     let mut stale = manifest.clone();
     stale["expected_tracks"] = serde_json::json!([]);
     std::fs::write(&path, stale.to_string()).expect("manifest written");

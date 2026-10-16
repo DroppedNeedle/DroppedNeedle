@@ -509,12 +509,12 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
     // Spotify keeps v2's field names, sealed whole like the media servers,
     // and v3's Spotify store reads the carried link as it is.
     let spotify = {
-        use droppedneedle::acquire::imports::spotify::SpotifyConnectionStore as _;
+        use droppedneedle_acquire::imports::spotify::SpotifyConnectionStore as _;
         let lane =
             WriteLane::open(&v3_root.join("cache").join("library.db")).expect("writer lane opens");
         let key = Crypto::load(&v3_root.join("config")).expect("v3 key loads");
-        droppedneedle::acquire::imports::spotify_store::SqliteSpotifyLinks::new(
-            droppedneedle::acquire::db::AcquireDb::new(pool.clone(), lane),
+        droppedneedle_acquire::imports::spotify_store::SqliteSpotifyLinks::new(
+            droppedneedle_acquire::db::AcquireDb::new(pool.clone(), lane),
             std::sync::Arc::new(key),
         )
         .get(&fixture.bob_id)

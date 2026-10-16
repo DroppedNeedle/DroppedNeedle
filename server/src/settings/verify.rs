@@ -523,7 +523,7 @@ impl VerifyProbes for LiveProbes {
 
     fn slskd<'a>(&'a self, url: &'a str, key: &'a str) -> BoxFuture<'a, VersionVerdict> {
         Box::pin(async move {
-            use crate::acquire::slskd::{
+            use droppedneedle_acquire::slskd::{
                 ReqwestSlskdHttp, SlskdClient, policy::DownloadPolicy as SlskdPolicy,
                 repository::SlskdRepository,
             };
@@ -560,7 +560,7 @@ impl VerifyProbes for LiveProbes {
         downloads_mount: &'a str,
     ) -> BoxFuture<'a, SabnzbdVerdict> {
         Box::pin(async move {
-            use crate::acquire::usenet::{
+            use droppedneedle_acquire::usenet::{
                 policy::UsenetPolicy,
                 sabnzbd::{SabnzbdClient, SabnzbdQueue},
             };
@@ -646,7 +646,7 @@ impl VerifyProbes for LiveProbes {
 
     fn prowlarr<'a>(&'a self, url: &'a str, key: &'a str) -> BoxFuture<'a, ProwlarrVerdict> {
         Box::pin(async move {
-            use crate::acquire::usenet::prowlarr::ProwlarrClient;
+            use droppedneedle_acquire::usenet::prowlarr::ProwlarrClient;
             if url.trim().is_empty() || key.is_empty() {
                 return ProwlarrVerdict {
                     valid: false,
@@ -687,7 +687,7 @@ impl VerifyProbes for LiveProbes {
 
     fn newznab<'a>(&'a self, url: &'a str, key: &'a str) -> BoxFuture<'a, NewznabVerdict> {
         Box::pin(async move {
-            use crate::acquire::usenet::newznab::NewznabClient;
+            use droppedneedle_acquire::usenet::newznab::NewznabClient;
             if url.trim().is_empty() {
                 return NewznabVerdict {
                     valid: false,
@@ -830,8 +830,10 @@ async fn newznab_failure(
 /// Prowlarr failure mapping: auth and rate-limit verdicts name the
 /// cause; anything else is a reachability verdict. The URL is never
 /// echoed.
-fn prowlarr_failure(error: &crate::acquire::usenet::prowlarr::ProwlarrError) -> ProwlarrVerdict {
-    use crate::acquire::usenet::prowlarr::ProwlarrError as Source;
+fn prowlarr_failure(
+    error: &droppedneedle_acquire::usenet::prowlarr::ProwlarrError,
+) -> ProwlarrVerdict {
+    use droppedneedle_acquire::usenet::prowlarr::ProwlarrError as Source;
     let message = match error {
         Source::Auth { .. } => {
             "Prowlarr rejected the API key. Check the key in Prowlarr.".to_owned()
@@ -908,7 +910,7 @@ fn api_path_suggestion(url: &str) -> Option<String> {
 /// auth error, or a rate limit all mean the API was reached; anything
 /// else means the suggestion is wrong too.
 async fn reaches_newznab(http: &reqwest::Client, url: &str, key: &str) -> bool {
-    use crate::acquire::usenet::newznab::{NewznabClient, NewznabError};
+    use droppedneedle_acquire::usenet::newznab::{NewznabClient, NewznabError};
     let client = NewznabClient::new(http.clone(), url, key, "", "");
     match client.caps(PROBE_TIMEOUT).await {
         Ok(caps) => !caps_are_empty(&caps),
@@ -919,7 +921,7 @@ async fn reaches_newznab(http: &reqwest::Client, url: &str, key: &str) -> bool {
 
 /// Empty caps (no server, no searching, no categories) mean the URL
 /// answered something other than a caps document.
-fn caps_are_empty(caps: &crate::acquire::usenet::newznab::NewznabCaps) -> bool {
+fn caps_are_empty(caps: &droppedneedle_acquire::usenet::newznab::NewznabCaps) -> bool {
     caps.server_title.is_none()
         && caps.server_version.is_none()
         && !caps.supports_audio_search

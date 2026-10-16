@@ -13,7 +13,6 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
-pub mod acquire;
 pub mod admin;
 pub mod app;
 pub mod bootstrap;

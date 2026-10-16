@@ -7,23 +7,23 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use droppedneedle::acquire::db::AcquireDb;
-use droppedneedle::acquire::dispatch::Journal;
-use droppedneedle::acquire::downloads::manifest::ManifestCodec;
-use droppedneedle::acquire::downloads::sources::SourceHandle;
-use droppedneedle::acquire::downloads::store::{NewTask, TaskDetails};
-use droppedneedle::acquire::requests::auth::{Principal, Role};
-use droppedneedle::acquire::requests::quota::QuotaLedger;
-use droppedneedle::acquire::search_jobs::candidates::CandidateTier;
-use droppedneedle::acquire::search_jobs::store::JobStore;
-use droppedneedle::acquire::search_jobs::{AlbumSearch, SearchJobError, SearchJobs, StartOutcome};
-use droppedneedle::acquire::slskd::{
+use droppedneedle_acquire::db::AcquireDb;
+use droppedneedle_acquire::dispatch::Journal;
+use droppedneedle_acquire::downloads::manifest::ManifestCodec;
+use droppedneedle_acquire::downloads::sources::SourceHandle;
+use droppedneedle_acquire::downloads::store::{NewTask, TaskDetails};
+use droppedneedle_acquire::requests::auth::{Principal, Role};
+use droppedneedle_acquire::requests::quota::QuotaLedger;
+use droppedneedle_acquire::search_jobs::candidates::CandidateTier;
+use droppedneedle_acquire::search_jobs::store::JobStore;
+use droppedneedle_acquire::search_jobs::{AlbumSearch, SearchJobError, SearchJobs, StartOutcome};
+use droppedneedle_acquire::slskd::{
     DownloadPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository,
 };
-use droppedneedle::acquire::sources::SlskdSource;
-use droppedneedle::acquire::target::Targets;
-use droppedneedle::acquire::target::lookup::{AlbumRelease, AlbumTrack, FixedAlbums};
-use droppedneedle::acquire::worker::{DownloadWorker, Source, WorkerConfig};
+use droppedneedle_acquire::sources::SlskdSource;
+use droppedneedle_acquire::target::Targets;
+use droppedneedle_acquire::target::lookup::{AlbumRelease, AlbumTrack, FixedAlbums};
+use droppedneedle_acquire::worker::{DownloadWorker, Source, WorkerConfig};
 use droppedneedle_kernel::events::{EventHub, EventSink};
 use droppedneedle_testkit::slskd::{MOCK_API_KEY, MockSlskd};
 use serde_json::{Value, json};

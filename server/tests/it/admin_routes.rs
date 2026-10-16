@@ -31,7 +31,7 @@ struct Rig {
     admin_id: String,
     user_id: String,
     cache: Arc<droppedneedle_providers::InMemoryProviderCache>,
-    quota: Arc<droppedneedle::acquire::requests::quota::QuotaLedger>,
+    quota: Arc<droppedneedle_acquire::requests::quota::QuotaLedger>,
     jobs: droppedneedle::bootstrap::jobs::JobsSetup,
     _scratch: crate::common::ScratchDir,
 }
@@ -52,8 +52,8 @@ impl Rig {
         let admin_user = rig.seed_user("brenda", Role::Admin).await;
         let plain_user = rig.seed_user("molly", Role::User).await;
         let quota = Arc::new(
-            droppedneedle::acquire::requests::quota::QuotaLedger::unlimited(
-                droppedneedle::acquire::db::AcquireDb::from_runtime(&runtime),
+            droppedneedle_acquire::requests::quota::QuotaLedger::unlimited(
+                droppedneedle_acquire::db::AcquireDb::from_runtime(&runtime),
             ),
         );
         let cache = Arc::new(droppedneedle_providers::InMemoryProviderCache::new());

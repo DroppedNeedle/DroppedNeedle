@@ -77,7 +77,7 @@ pub struct AdminSetup {
     /// Account rows for gating and quota identity.
     pub users: UsersDeps,
     /// Live quota ledger (shared with acquisition enforcement).
-    pub quota: Arc<crate::acquire::requests::quota::QuotaLedger>,
+    pub quota: Arc<droppedneedle_acquire::requests::quota::QuotaLedger>,
     /// Provider byte cache (shared with the provider clients).
     pub cache: Arc<InMemoryProviderCache>,
     /// Provider limiters and slot lanes for provider stats.
@@ -101,7 +101,7 @@ impl AdminSetup {
     /// `with_*` builders; production wires all three.
     pub fn new(
         users: UsersDeps,
-        quota: Arc<crate::acquire::requests::quota::QuotaLedger>,
+        quota: Arc<droppedneedle_acquire::requests::quota::QuotaLedger>,
         cache: Arc<InMemoryProviderCache>,
         providers: Arc<Providers>,
     ) -> Self {
@@ -161,7 +161,7 @@ impl AdminSetup {
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(
         users: UsersDeps,
-        quota: Arc<crate::acquire::requests::quota::QuotaLedger>,
+        quota: Arc<droppedneedle_acquire::requests::quota::QuotaLedger>,
         cache: Arc<InMemoryProviderCache>,
         providers: Arc<Providers>,
     ) -> Self {

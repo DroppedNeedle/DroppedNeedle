@@ -198,8 +198,8 @@ fn test_acquire(
     auth: &droppedneedle_auth::wiring::AuthSetup,
     ids: Arc<dyn IdGenerator>,
     reads: &mut droppedneedle_catalog::reads::ReadsSetup,
-) -> droppedneedle::acquire::AcquireSetup {
-    droppedneedle::acquire::AcquireSetup::for_tests(auth.users.clone(), ids, &mut reads.collections)
+) -> droppedneedle_acquire::AcquireSetup {
+    droppedneedle_acquire::AcquireSetup::for_tests(auth.users.clone(), ids, &mut reads.collections)
         .expect("test acquire bundle builds")
 }
 

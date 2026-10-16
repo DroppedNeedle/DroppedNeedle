@@ -26,7 +26,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::models::{QuotaOverrideView, QuotaResponse};
 use super::{AdminDb, error::AdminError, models::QuotaOverrideBody};
-use crate::acquire::requests::quota::{QuotaLedger, QuotaOverride};
+use droppedneedle_acquire::requests::quota::{QuotaLedger, QuotaOverride};
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_kernel::db::writer::Lane;
 
@@ -105,7 +105,9 @@ pub async fn set_quota(
     // drift apart, which stays 400.
     write_override(db, &user.id, &row).await?;
     if let Err(error) = ledger.set_override(&user.id, row.clone()) {
-        if let crate::acquire::requests::error::RequestsError::InvalidInput { message } = error {
+        if let droppedneedle_acquire::requests::error::RequestsError::InvalidInput { message } =
+            error
+        {
             return Err(AdminError::InvalidInput { message });
         }
         return Err(AdminError::internal(&format_args!(

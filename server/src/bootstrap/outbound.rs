@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use crate::acquire::wiring::{SPOTIFY_ACCOUNTS_BASE, SPOTIFY_API_BASE, SpotifyEndpoints};
+use droppedneedle_acquire::wiring::{SPOTIFY_ACCOUNTS_BASE, SPOTIFY_API_BASE, SpotifyEndpoints};
 use droppedneedle_auth::{users::hibp::RANGE_URL_PREFIX, wiring::Upstreams};
 use droppedneedle_library::{contrib::ContribProviders, identify::providers::IdentifyProviders};
 use droppedneedle_plugins::install::GitHubHosts;

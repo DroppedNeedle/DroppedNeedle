@@ -6,8 +6,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use droppedneedle::acquire::requests::RequestsState;
-use droppedneedle::acquire::requests::discovery::DiscoveryBatchRequests;
+use droppedneedle_acquire::requests::RequestsState;
+use droppedneedle_acquire::requests::discovery::DiscoveryBatchRequests;
 use droppedneedle_auth::sqlite::{AuthDb, SqliteUserStore};
 use droppedneedle_catalog::reads::discover::adapters::batches::{
     BatchAlbum, BatchCaller, BatchRequests, LiveBatches, RequestsSlot,

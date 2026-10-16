@@ -26,7 +26,6 @@ use jobs::JobsSetup;
 
 use crate::{
     AppState,
-    acquire::AcquireSetup,
     admin::{AdminDb, AdminSetup, quota::reload_overrides},
     app::create_app_with_web,
     compat::{
@@ -41,6 +40,7 @@ use crate::{
     },
     web::{WebError, WebUi},
 };
+use droppedneedle_acquire::AcquireSetup;
 use droppedneedle_auth::{
     federated::MediaLinks, prod::ProdAuth, users::stores::SystemClock, wiring::AuthSetup,
 };
@@ -369,7 +369,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
         .engine
         .attach_plugins(plugin_host.clone(), http.direct_no_redirect().clone());
     let acquire = AcquireSetup::build(
-        crate::acquire::db::AcquireDb::from_runtime(&runtime),
+        droppedneedle_acquire::db::AcquireDb::from_runtime(&runtime),
         &config,
         auth.users.clone(),
         &http,
@@ -380,20 +380,18 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     )
     .map_err(stage("acquire setup"))?
     .with_plugins(plugin_host.clone())
-    .with_release_poll(Arc::new(crate::acquire::search::live_release_poll(
+    .with_release_poll(Arc::new(droppedneedle_acquire::search::live_release_poll(
         &http,
         providers.clone(),
         mb_source.clone(),
     )))
-    .with_album_lookup(Arc::new(crate::acquire::target::lookup::live_albums(
-        &http,
-        providers.clone(),
-        mb_source,
-    )));
+    .with_album_lookup(Arc::new(
+        droppedneedle_acquire::target::lookup::live_albums(&http, providers.clone(), mb_source),
+    ));
     // Finished downloads reach the library through its import seam.
     let acquire = match library.releases.clone() {
         Some(releases) => acquire.with_library(Arc::new(
-            crate::acquire::landing::library::LibraryLanding::new(
+            droppedneedle_acquire::landing::library::LibraryLanding::new(
                 library.clone(),
                 releases,
                 runtime.pool().clone(),
@@ -417,7 +415,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     if library
         .removal_hook
         .set(Arc::new(
-            crate::acquire::library_removal::AcquireAlbumCleanup::new(
+            droppedneedle_acquire::library_removal::AcquireAlbumCleanup::new(
                 acquire.journal.clone(),
                 acquire.requests.wanted.clone(),
             ),
@@ -430,7 +428,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     if reads
         .discover_requests
         .set(Arc::new(
-            crate::acquire::requests::discovery::DiscoveryBatchRequests::new(
+            droppedneedle_acquire::requests::discovery::DiscoveryBatchRequests::new(
                 acquire.requests.clone(),
                 Some(library.clone()),
             ),
@@ -502,7 +500,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     // loop and the scrobble-settings toggle.
     let mix_events = droppedneedle_kernel::events::EventSink::default();
     mix_events.attach(&events);
-    if let Some(builder) = crate::acquire::requests::mix_sources::live_builder(
+    if let Some(builder) = droppedneedle_acquire::requests::mix_sources::live_builder(
         &acquire.requests,
         providers.clone(),
         http.shared().clone(),
@@ -524,7 +522,7 @@ pub async fn build_with(config: AppConfig, outbound: Outbound) -> Result<Built, 
     {
         tracing::warn!("personal mix builder was already set");
     }
-    let mix_hooks = Arc::new(crate::acquire::requests::mix::MixGrantHooks::new(
+    let mix_hooks = Arc::new(droppedneedle_acquire::requests::mix::MixGrantHooks::new(
         acquire.requests.mixer.clone(),
     ));
     // The one registry every background job registers on.

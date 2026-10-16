@@ -6,9 +6,9 @@
 
 use std::sync::Arc;
 
-use droppedneedle::acquire::db::AcquireDb;
-use droppedneedle::acquire::requests::sqlite::FollowApprovalStore;
-use droppedneedle::acquire::settings::{ApprovalSeedBridge, RequestsPendingSource};
+use droppedneedle_acquire::db::AcquireDb;
+use droppedneedle_acquire::requests::sqlite::FollowApprovalStore;
+use droppedneedle_acquire::settings::{ApprovalSeedBridge, RequestsPendingSource};
 use droppedneedle_catalog::reads::collections::{self, CollectionsState, db::CollectionsDb};
 use droppedneedle_kernel::db::{DbConfig, DbRuntime, open_runtime};
 

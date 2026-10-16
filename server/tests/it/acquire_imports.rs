@@ -8,7 +8,7 @@
 //! Lidarr, Spotify, slskd, SABnzbd, or indexer.
 
 use crate::common;
-use droppedneedle::acquire::imports;
+use droppedneedle_acquire::imports;
 
 use std::sync::Arc;
 
@@ -1145,7 +1145,7 @@ async fn spotify_v2_registered_app_links_and_disconnects() {
 /// playlist rows, replaced wholesale on re-import.
 #[tokio::test]
 async fn spotify_sqlite_stores_persist_and_expire() {
-    let db = droppedneedle::acquire::db::AcquireDb::scratch().expect("scratch db");
+    let db = droppedneedle_acquire::db::AcquireDb::scratch().expect("scratch db");
     db.add_user("u1", "Una", "user").await.expect("user row");
 
     let states = SqliteSpotifyStates::new(db.clone());

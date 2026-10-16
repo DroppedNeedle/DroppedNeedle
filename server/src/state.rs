@@ -7,9 +7,10 @@
 use std::sync::Arc;
 
 use crate::{
-    acquire::AcquireSetup, admin::AdminSetup, bootstrap::jobs::JobsSetup, compat::CompatSetup,
+    admin::AdminSetup, bootstrap::jobs::JobsSetup, compat::CompatSetup,
     settings::wiring::SettingsSetup,
 };
+use droppedneedle_acquire::AcquireSetup;
 use droppedneedle_auth::wiring::AuthSetup;
 use droppedneedle_catalog::{concerts::ConcertsSetup, reads::ReadsSetup};
 use droppedneedle_kernel::{
