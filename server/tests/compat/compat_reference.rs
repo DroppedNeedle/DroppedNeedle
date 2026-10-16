@@ -605,9 +605,8 @@ fn library_refs(
     refs
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn compat_answers_have_the_shape_navidrome_returns() {
-    let rig = CompatApp::start("compat-reference-navidrome").await;
+/// What the layout's keys stand for on the app's Subsonic side.
+async fn navidrome_refs(rig: &CompatApp) -> BTreeMap<String, String> {
     let auth = rig.subsonic_auth("dn-ref");
     let (_, everything) = rig
         .app
@@ -621,15 +620,20 @@ async fn compat_answers_have_the_shape_navidrome_returns() {
         )
         .await;
     let everything = &everything["subsonic-response"]["searchResult3"];
-    let refs = library_refs(
+    library_refs(
         &everything["song"],
         &everything["artist"],
         ("title", "id", "albumId"),
-    );
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compat_answers_have_the_shape_navidrome_returns() {
+    let rig = CompatApp::start("compat-reference-navidrome").await;
     let mut comparison = Comparison {
         rig: &rig,
         server: "navidrome",
-        refs,
+        refs: navidrome_refs(&rig).await,
         found: Found::new(),
     };
     comparison.replay("navidrome-0.62.0", "").await;
@@ -639,7 +643,15 @@ async fn compat_answers_have_the_shape_navidrome_returns() {
     comparison
         .replay("navidrome-0.62.0-arpeggi", "arpeggi/")
         .await;
+    // The ratings were recorded on a fresh server, so a fresh app answers.
+    let fresh = CompatApp::start("compat-reference-navidrome-ratings").await;
+    comparison.rig = &fresh;
+    comparison.refs = navidrome_refs(&fresh).await;
+    comparison
+        .replay("navidrome-0.62.0-ratings", "ratings/")
+        .await;
     comparison.settle();
+    fresh.stop().await;
     rig.stop().await;
 }
 

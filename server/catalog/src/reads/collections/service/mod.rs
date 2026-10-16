@@ -11,6 +11,7 @@ mod favorites;
 mod follows;
 mod pins;
 mod playlists;
+mod ratings;
 
 pub use playlists::{LOCAL_SOURCE, Visible};
 

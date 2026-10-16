@@ -11,6 +11,9 @@
 # album onto its old row):
 #   library_user_favorites        catalog   moved to the surviving row
 #   library_user_favorite_names   catalog   moved with their favorite
+#   library_user_ratings          catalog   moved to the surviving row; a
+#                                           user who rated both keeps the
+#                                           surviving row's rating
 #   library_play_history          media     moved to the surviving row
 #   playlist_tracks               catalog   album_id set to the surviving
 #                                           album (a followed retag, or a
@@ -20,6 +23,7 @@
 # (the same release track of the same album):
 #   library_user_favorites        catalog   moved to the track it continues
 #   library_user_favorite_names   catalog   moved with their favorite
+#   library_user_ratings          catalog   moved to the track it continues
 #   library_play_history          media     moved to the track it continues
 #   playlist_tracks               catalog   library_file_id and
 #                                           track_source_id of local entries
@@ -112,6 +116,7 @@ library_genre_artwork_revisions
 library_track_format_stats
 library_user_favorite_names
 library_user_favorites
+library_user_ratings
 live_event_feed
 mbid_resolution_map
 new_release_feed

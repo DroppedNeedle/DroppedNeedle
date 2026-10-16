@@ -288,12 +288,6 @@ pub async fn album_list_query<P: Principal, S: Store, B: AudioBackend>(
     validate_music_folder(&ctx.params)?;
     let list_type = ctx.params.one_of("type", ALBUMLIST_TYPES, None)?;
     let list_type = list_type.ok_or_else(|| SubsonicError::missing("type"))?;
-    if list_type == "highest" {
-        return Err(SubsonicError::new(
-            0,
-            "Album list type 'highest' is not supported",
-        ));
-    }
     let size = ctx
         .pint("size", Some(10), Some(1), Some(500))?
         .unwrap_or(10)
@@ -314,6 +308,15 @@ pub async fn album_list_query<P: Principal, S: Store, B: AudioBackend>(
         return ctx
             .store
             .get_starred_albums(&user_id, size, offset)
+            .await
+            .map_err(Ctx::<P, S, B>::store_err);
+    }
+    // The albums the caller rated, as Navidrome 0.62.0 lists them
+    // (recorded `getAlbumList2.highest`): an unrated album is left out.
+    if list_type == "highest" {
+        return ctx
+            .store
+            .get_highest_albums(&user_id, size, offset)
             .await
             .map_err(Ctx::<P, S, B>::store_err);
     }

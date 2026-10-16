@@ -113,6 +113,8 @@ impl Verifier for FakeVerifier {
 pub struct FakeInner {
     /// Starred targets.
     pub favorites: Vec<(IdKind, String)>,
+    /// Rated targets with their rating, 1 to 5.
+    pub ratings: Vec<(IdKind, String, u8)>,
     /// Saved queue.
     pub queue: QueueState,
     /// Bookmarks.
@@ -221,6 +223,7 @@ impl FakeStore {
                 album_count: Some(2),
                 track_count: Some(3),
                 starred_at: None,
+                rating: None,
                 musicbrainz_artist_id: None,
                 provider_identity_projected: false,
             },
@@ -230,6 +233,7 @@ impl FakeStore {
                 album_count: Some(0),
                 track_count: Some(0),
                 starred_at: None,
+                rating: None,
                 musicbrainz_artist_id: None,
                 provider_identity_projected: false,
             },
@@ -511,6 +515,29 @@ impl Store for FakeStore {
         Ok(Self::albums()
             .into_iter()
             .filter(|album| starred.contains(&album.rg_mbid))
+            .skip(offset)
+            .take(limit)
+            .collect())
+    }
+
+    async fn get_highest_albums(
+        &self,
+        _user_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<ViewAlbum>, Infallible> {
+        let mut rated: Vec<(String, u8)> = self
+            .lock()
+            .ratings
+            .iter()
+            .filter(|(kind, _, _)| *kind == IdKind::Album)
+            .map(|(_, id, rating)| (id.clone(), *rating))
+            .collect();
+        rated.sort_by(|a, b| b.1.cmp(&a.1));
+        let albums = Self::albums();
+        Ok(rated
+            .iter()
+            .filter_map(|(id, _)| albums.iter().find(|album| &album.rg_mbid == id).cloned())
             .skip(offset)
             .take(limit)
             .collect())
@@ -804,6 +831,23 @@ impl Store for FakeStore {
             .filter(|(fav_kind, _)| *fav_kind == kind)
             .map(|(_, id)| (id.clone(), NOW_UNIX as i64 - 100))
             .collect())
+    }
+
+    async fn set_rating(
+        &self,
+        _user_id: &str,
+        kind: IdKind,
+        id: &str,
+        rating: u8,
+    ) -> Result<(), Infallible> {
+        let mut inner = self.lock();
+        inner
+            .ratings
+            .retain(|(rated, rated_id, _)| (*rated, rated_id.as_str()) != (kind, id));
+        if rating > 0 {
+            inner.ratings.push((kind, id.to_owned(), rating));
+        }
+        Ok(())
     }
 
     async fn scrobble(

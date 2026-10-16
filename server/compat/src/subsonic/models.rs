@@ -14,6 +14,23 @@ pub trait Render {
     fn render(&self) -> Val;
 }
 
+/// `averageRating`, rounded to two places. A whole mean is sent as an
+/// integer, as Navidrome 0.62.0 sends it (recorded
+/// `navidrome-0.62.0-ratings`).
+fn average_rating(average: Option<f64>) -> Val {
+    match average {
+        Some(mean) if mean.is_finite() => {
+            let mean = (mean * 100.0).round() / 100.0;
+            if mean.fract() == 0.0 {
+                Val::Int(mean as i64)
+            } else {
+                Val::Float(mean)
+            }
+        }
+        _ => Val::Null,
+    }
+}
+
 /// ID3 artist (detail contexts).
 #[derive(Debug, Clone, Default)]
 pub struct SArtistID3 {
@@ -25,6 +42,10 @@ pub struct SArtistID3 {
     pub coverArt: Option<String>,
     /// Album count.
     pub albumCount: Option<i64>,
+    /// The caller's rating, sent only when set.
+    pub userRating: Option<i64>,
+    /// Every user's mean rating, sent only when anyone rated.
+    pub averageRating: Option<f64>,
     /// Open picture link (artist lists and details only).
     pub artistImageUrl: Option<String>,
     /// Starred timestamp ISO, if starred.
@@ -46,6 +67,8 @@ impl Render for SArtistID3 {
             ("name", self.name.as_str().into_val()),
             ("coverArt", self.coverArt.clone().into_val()),
             ("albumCount", self.albumCount.into_val()),
+            ("userRating", self.userRating.into_val()),
+            ("averageRating", average_rating(self.averageRating)),
             ("artistImageUrl", self.artistImageUrl.clone().into_val()),
             ("starred", self.starred.clone().into_val()),
             ("musicBrainzId", self.musicBrainzId.clone().into_val()),
@@ -97,11 +120,12 @@ impl Render for SArtist {
 
 /// ID3 album.
 ///
-/// The keys after `discTitles`, `releaseDate` aside, are ones Navidrome
-/// 0.62.0 sends on every album and the app holds nothing for: no rating is
-/// stored, and no label, mood, explicit flag or version is read from the
-/// tags. Each carries what Navidrome sends for "none" (checked against its
-/// recorded `getAlbum` answer).
+/// The keys after `discTitles`, the ratings and `releaseDate` aside, are
+/// ones Navidrome 0.62.0 sends on every album and the app holds nothing
+/// for: no label, mood, explicit flag or version is read from the tags.
+/// Each carries what Navidrome sends for "none" (checked against its
+/// recorded `getAlbum` answer). `userRating` is sent on every album, 0
+/// when the caller has not rated it.
 #[derive(Debug, Clone, Default)]
 pub struct SAlbumID3 {
     /// Prefixed album id.
@@ -150,6 +174,10 @@ pub struct SAlbumID3 {
     pub releaseDate: Option<SItemDate>,
     /// Per-disc titles, empty when no disc has one.
     pub discTitles: Vec<SDiscTitle>,
+    /// The caller's rating, 0 when none.
+    pub userRating: i64,
+    /// Every user's mean rating, sent only when anyone rated.
+    pub averageRating: Option<f64>,
     /// Populated by getAlbum only.
     pub song: Option<Vec<SChild>>,
 }
@@ -202,7 +230,8 @@ impl Render for SAlbumID3 {
                 "discTitles",
                 Val::List(self.discTitles.iter().map(Render::render).collect()),
             ),
-            ("userRating", Val::Int(0)),
+            ("userRating", Val::Int(self.userRating)),
+            ("averageRating", average_rating(self.averageRating)),
             (
                 "releaseDate",
                 self.releaseDate
@@ -354,6 +383,10 @@ pub struct SChild {
     pub artistId: Option<String>,
     /// Always "music" on songs.
     pub type_: Option<String>,
+    /// The caller's rating, sent only when set.
+    pub userRating: Option<i64>,
+    /// Every user's mean rating, sent only when anyone rated.
+    pub averageRating: Option<f64>,
     /// Play count.
     pub playCount: Option<i64>,
     /// Always "song" on songs.
@@ -439,6 +472,8 @@ impl Render for SChild {
             ("albumId", self.albumId.clone().into_val()),
             ("artistId", self.artistId.clone().into_val()),
             ("type", self.type_.clone().into_val()),
+            ("userRating", self.userRating.into_val()),
+            ("averageRating", average_rating(self.averageRating)),
             ("playCount", self.playCount.into_val()),
             ("mediaType", self.mediaType.clone().into_val()),
             ("bitDepth", self.bitDepth.into_val()),

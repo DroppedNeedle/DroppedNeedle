@@ -16,6 +16,7 @@ use droppedneedle_catalog::reads::collections::service::{
     CollectionsService, LOCAL_SOURCE, Visible,
 };
 use droppedneedle_catalog::reads::collections::store::playlists::NewEntry;
+use droppedneedle_catalog::reads::collections::store::ratings::{ItemRating, RatedKind};
 use droppedneedle_catalog::reads::collections::{CollectionsState, error::CollectionsError};
 use droppedneedle_catalog::reads::library::player::{
     AlbumOrder, AlbumQuery, PlayStat, PlayerAlbum, PlayerCatalog, PlayerIds, PlayerTrack,
@@ -403,6 +404,36 @@ impl CompatLibrary {
             .map(|(kind, id)| (kind.clone(), id.clone(), None))
             .collect::<Vec<_>>();
         Ok(self.service().set_favorites(user_id, &targets, add).await?)
+    }
+
+    /// The user's and everyone's ratings of some ids of one kind.
+    pub async fn ratings(
+        &self,
+        user_id: &str,
+        kind: RatedKind,
+        ids: &[String],
+    ) -> Result<HashMap<String, ItemRating>, CompatError> {
+        Ok(self.service().ratings(user_id, kind, ids).await?)
+    }
+
+    /// Set the user's rating of one item, or clear it with 0.
+    pub async fn set_rating(
+        &self,
+        user_id: &str,
+        kind: RatedKind,
+        id: &str,
+        rating: u8,
+    ) -> Result<(), CompatError> {
+        Ok(self.service().set_rating(user_id, kind, id, rating).await?)
+    }
+
+    /// The ids of one kind the user rated, highest first.
+    pub async fn rated_ids(
+        &self,
+        user_id: &str,
+        kind: RatedKind,
+    ) -> Result<Vec<String>, CompatError> {
+        Ok(self.service().rated_ids(user_id, kind).await?)
     }
 
     /// The user's play counts for some ids of one kind.

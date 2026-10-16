@@ -22,7 +22,7 @@
 //! | getMusicFolders | musicFolders | yes | only folder 1; others 70 |
 //! | getArtists/getIndexes | artists/indexes | yes | article-stripped A-Z buckets |
 //! | getArtist/getAlbum/getSong | artist/album/song | yes | artist embeds albums, album embeds songs |
-//! | getAlbumList2/getAlbumList | albumList2/albumList | yes | `highest` -> 0; byYear needs from+to |
+//! | getAlbumList2/getAlbumList | albumList2/albumList | yes | `highest` = caller's rated, best first; byYear needs from+to |
 //! | getRandomSongs | randomSongs | yes | filters |
 //! | getMusicDirectory | directory | yes | 1 -> artists; artist -> albums; album -> songs |
 //! | search3/search2 | searchResult3/2 | yes | missing/empty/`""` query = match-all |
@@ -35,7 +35,7 @@
 //! | updatePlaylist/deletePlaylist | ok | yes | rename/public/add/remove-by-index |
 //! | star/unstar | ok | yes | prefix-routed, deduped; empty -> 10 |
 //! | getStarred2/getStarred | starred2/starred | yes | ID3 vs file shapes |
-//! | setRating | ok | yes | validated no-op |
+//! | setRating | ok | yes | per user, 1-5; 0 clears; unknown target 70 |
 //! | scrobble | ok | yes | parallel time[]; submission=false -> now-playing |
 //! | getNowPlaying | nowPlaying | yes | presence |
 //! | reportPlayback | ok | yes | GET/form/JSON; extension playbackReport:1 |
@@ -70,6 +70,12 @@
 //!   every format; a `stream` failure with code 70 (an unknown id, or no
 //!   audio behind a known one) is the envelope over HTTP 200. `download`
 //!   and `getCoverArt` misses were not recorded, so they stay text 404s.
+//! - Navidrome 0.62.0 ratings (recording `navidrome-0.62.0-ratings`): a
+//!   song, album or ID3 artist carries the caller's `userRating` and the
+//!   mean of every user's as `averageRating` (whole means as integers).
+//!   Each is left out when there is none, except an album's
+//!   `userRating`, which is 0. `highest` lists only the albums the
+//!   caller rated.
 //! - Streamable-only playlist counts (#181).
 //! - getAvatar 403-as-text for non-self usernames: the only 403-as-text;
 //!   code 50 anywhere in the dispatch path stays enveloped.

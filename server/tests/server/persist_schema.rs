@@ -61,7 +61,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 154);
+    assert_eq!(table_names(&pool).await.len(), 155);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -2380,6 +2380,107 @@ async fn edition_hints_keep_their_rows_and_gain_a_release_date() {
             None
         )
     );
+}
+
+/// Migration 0059 adds users' ratings, empty and strict. A database from
+/// before keeps its users and favorites, and a rating goes with its user.
+#[tokio::test]
+async fn user_ratings_arrive_empty_and_go_with_their_user() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 59)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('u1', 'T', 'user', 'now'); \
+         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('u1', 'track', 't1', 1.5);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+
+    let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(stamped >= 59 && stamped == latest_version(), "{stamped}");
+    let kept: (String, String) = sqlx::query_as(
+        "SELECT u.id, f.item_id FROM auth_users u \
+         JOIN library_user_favorites f ON f.user_id = u.id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, ("u1".to_owned(), "t1".to_owned()));
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_user_ratings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+    let strict: i64 = sqlx::query_scalar(
+        "SELECT strict FROM pragma_table_list WHERE name = 'library_user_ratings'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(strict, 1);
+    let key: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM pragma_table_info('library_user_ratings') WHERE pk > 0 ORDER BY pk",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(key, ["user_id", "item_kind", "item_id"]);
+    let indexed: Vec<String> = sqlx::query_scalar(
+        "SELECT c.name FROM pragma_index_info('idx_user_ratings_item') c ORDER BY c.seqno",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(indexed, ["item_kind", "item_id"]);
+
+    for refused in [
+        "INSERT INTO library_user_ratings VALUES ('u1', 'track', 't1', 0, 1)",
+        "INSERT INTO library_user_ratings VALUES ('u1', 'track', 't1', 6, 1)",
+        "INSERT INTO library_user_ratings VALUES ('u1', 'playlist', 'p1', 3, 1)",
+    ] {
+        assert!(
+            sqlx::query(refused).execute(&pool).await.is_err(),
+            "{refused}"
+        );
+    }
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO library_user_ratings VALUES ('u1', 'track', 't1', 4, 1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM auth_users WHERE id = 'u1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_user_ratings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
 }
 
 /// Every table in the migrated schema is listed once in

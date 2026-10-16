@@ -2350,3 +2350,153 @@ fn library_goldens_carry_no_credentials() {
         }
     }
 }
+
+/// One Subsonic call as `auth`, answered 200: its `subsonic-response`.
+async fn subsonic(rig: &CompatApp, call: &str, auth: &str) -> Value {
+    let (status, body) = rig.app.call("GET", &rest(call, auth), &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{call}: {body}");
+    body["subsonic-response"].clone()
+}
+
+/// `(userRating, averageRating)` of a song or album, null where absent.
+async fn ratings(rig: &CompatApp, call: &str, key: &str, auth: &str) -> (Value, Value) {
+    let item = &subsonic(rig, call, auth).await[key];
+    (item["userRating"].clone(), item["averageRating"].clone())
+}
+
+/// A rating set in a Subsonic app is the user's own: another user sees
+/// their own, and an average that counts both. It survives a restart, 0
+/// clears it, and a merged album's ratings move to the album it went
+/// into, where a user who rated both keeps the survivor's. A rating on an
+/// unknown id is 70, and nothing is stored without sign-in.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn subsonic_ratings_are_per_user_and_follow_a_merge() {
+    let mut rig = CompatApp::start("compat-ratings").await;
+    let mine = rig.subsonic_auth("ratings");
+    let login = rig.app.login_user("listener").await;
+    let theirs = format!(
+        "u=listener&p={}&v=1.16.1&c=ratings&f=json",
+        rig.app_password(&login.authorization).await
+    );
+    let all = subsonic(&rig, "search3?query=&songCount=500", &mine).await;
+    let song = |title: &str, key: &str| -> String {
+        all["searchResult3"]["song"]
+            .as_array()
+            .expect("songs")
+            .iter()
+            .find(|song| song["title"] == title)
+            .expect("the song")[key]
+            .as_str()
+            .expect("an id")
+            .to_owned()
+    };
+    let (track, kept, merged) = (
+        song("Airbag", "id"),
+        song("Airbag", "albumId"),
+        song("Teardrop", "albumId"),
+    );
+    let teardrop = song("Teardrop", "id");
+    let rate = |id: &str, rating: u8| format!("setRating?id={id}&rating={rating}");
+    let ok = |answer: &Value| assert_eq!(answer["status"], "ok", "{answer}");
+    let get_song = format!("getSong?id={track}");
+
+    ok(&subsonic(&rig, &rate(&track, 4), &mine).await);
+    ok(&subsonic(&rig, &rate(&track, 2), &theirs).await);
+    assert_eq!(
+        ratings(&rig, &get_song, "song", &mine).await,
+        (json!(4), json!(3))
+    );
+    assert_eq!(
+        ratings(&rig, &get_song, "song", &theirs).await,
+        (json!(2), json!(3))
+    );
+    ok(&subsonic(&rig, &rate(&track, 0), &theirs).await);
+    assert_eq!(
+        ratings(&rig, &get_song, "song", &mine).await,
+        (json!(4), json!(4))
+    );
+    assert_eq!(
+        ratings(&rig, &get_song, "song", &theirs).await,
+        (Value::Null, json!(4))
+    );
+
+    rig.app = rig.app.restart().await;
+    assert_eq!(
+        ratings(&rig, &get_song, "song", &mine).await,
+        (json!(4), json!(4)),
+        "after a restart"
+    );
+
+    let refused = subsonic(&rig, &rate("tr-no-such-track", 3), &mine).await;
+    assert_eq!(refused["error"]["code"], 70, "{refused}");
+    let (status, anonymous) = rig
+        .app
+        .call(
+            "GET",
+            &format!(
+                "/subsonic/rest/{}&v=1.16.1&c=ratings&f=json",
+                rate(&kept, 1)
+            ),
+            &[],
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{anonymous}");
+    assert_eq!(
+        anonymous["subsonic-response"]["error"]["code"], 10,
+        "{anonymous}"
+    );
+
+    ok(&subsonic(&rig, &rate(&merged, 2), &mine).await);
+    ok(&subsonic(&rig, &rate(&merged, 3), &theirs).await);
+    ok(&subsonic(&rig, &rate(&kept, 5), &theirs).await);
+    let local = |id: &str| id[3..].to_owned();
+    let admin = rig.app.login_admin().await;
+    let headers = [("authorization", admin.as_str())];
+    let selection = json!({"track_ids": [local(&teardrop)], "target_album_id": local(&kept)});
+    let (status, preview) = rig
+        .app
+        .call(
+            "POST",
+            "/api/v3/library/albums/merge-preview",
+            &headers,
+            Some(selection.clone()),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    let mut apply = selection;
+    apply["preview_token"] = preview["preview_token"].clone();
+    let (status, body) = rig
+        .app
+        .call(
+            "POST",
+            "/api/v3/library/albums/merge",
+            &headers,
+            Some(apply),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let get_album = format!("getAlbum?id={kept}");
+    assert_eq!(
+        ratings(&rig, &get_album, "album", &mine).await,
+        (json!(2), json!(3.5))
+    );
+    assert_eq!(
+        ratings(&rig, &get_album, "album", &theirs).await,
+        (json!(5), json!(3.5))
+    );
+    let highest = subsonic(&rig, "getAlbumList2?type=highest", &mine).await;
+    assert_eq!(highest["albumList2"]["album"][0]["id"], json!(kept));
+    let left: i64 = rig
+        .app
+        .db()
+        .query_row(
+            "SELECT COUNT(*) FROM library_user_ratings WHERE item_id = ?1",
+            [local(&merged)],
+            |row| row.get(0),
+        )
+        .expect("ratings read");
+    assert_eq!(left, 0);
+    rig.stop().await;
+}

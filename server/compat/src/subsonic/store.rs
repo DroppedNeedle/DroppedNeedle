@@ -370,6 +370,14 @@ pub trait Store: Clone + Send + Sync {
         offset: usize,
     ) -> impl Future<Output = Result<Vec<ViewAlbum>, Self::Error>> + Send;
 
+    /// Albums the user rated, highest first.
+    fn get_highest_albums(
+        &self,
+        user_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> impl Future<Output = Result<Vec<ViewAlbum>, Self::Error>> + Send;
+
     /// All genres.
     fn get_genres(&self) -> impl Future<Output = Result<Vec<ViewGenre>, Self::Error>> + Send;
 
@@ -506,6 +514,16 @@ pub trait Store: Clone + Send + Sync {
         user_id: &str,
         kind: IdKind,
     ) -> impl Future<Output = Result<Vec<(String, i64)>, Self::Error>> + Send;
+
+    /// Set the user's rating of an artist, album or track, 1 to 5, or
+    /// clear it with 0.
+    fn set_rating(
+        &self,
+        user_id: &str,
+        kind: IdKind,
+        id: &str,
+        rating: u8,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
     /// Record a scrobble.
     fn scrobble(

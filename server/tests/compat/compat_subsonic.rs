@@ -182,14 +182,13 @@ async fn error_codes() {
     let good_key = request("ping", &[("apiKey", "key-1"), ("c", "golden")], false);
     assert_ok(&run(&settings(), &store, &good_key).await, "apiKey alone");
 
-    let authed: [Case; 35] = [
+    let authed: [Case; 34] = [
         ("ping", &[("f", "yaml")], 10),
         ("getArtists", &[("musicFolderId", "2")], 70),
         ("getArtist", &[("id", "tr-f1")], 70),
         ("getArtist", &[("id", "xx-1")], 70),
         ("getSong", &[("id", "tr-nope")], 70),
         ("getAlbumList2", &[], 10),
-        ("getAlbumList2", &[("type", "highest")], 0),
         (
             "getAlbumList2",
             &[("type", "byYear"), ("fromYear", "2020")],

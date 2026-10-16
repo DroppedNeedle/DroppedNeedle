@@ -21,9 +21,10 @@ use crate::subsonic::store::{
     PlaylistDetail, PlaylistEntry, PlaylistRecord, PlaylistSummary, QueueState, ScanStatusData,
     Store, TranscodeDecisionData,
 };
-use crate::subsonic::views::{ViewAlbum, ViewArtist, ViewGenre, ViewTrack};
+use crate::subsonic::views::{ViewAlbum, ViewArtist, ViewGenre, ViewRating, ViewTrack};
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_catalog::reads::collections::service::Visible;
+use droppedneedle_catalog::reads::collections::store::ratings::{ItemRating, RatedKind};
 use droppedneedle_catalog::reads::library::player::{
     AlbumIds, AlbumOrder, AlbumQuery, PlayerAlbum, PlayerIds, PlayerTrack, TrackOrder, TrackQuery,
 };
@@ -44,6 +45,23 @@ fn scan_kind_name(kind: ScanKind) -> &'static str {
         ScanKind::Incremental => "incremental",
         ScanKind::RescanFiles => "rescan_files",
         ScanKind::PolicyReconcile => "policy_reconcile",
+    }
+}
+
+fn view_rating(rating: &ItemRating) -> ViewRating {
+    ViewRating {
+        own: rating.own,
+        average: rating.average,
+    }
+}
+
+/// The ratings table's kind for an id kind, None for kinds nobody rates.
+fn rated_kind(kind: IdKind) -> Option<RatedKind> {
+    match kind {
+        IdKind::Artist => Some(RatedKind::Artist),
+        IdKind::Album => Some(RatedKind::Album),
+        IdKind::Track => Some(RatedKind::Track),
+        IdKind::Playlist | IdKind::Genre => None,
     }
 }
 
@@ -78,6 +96,7 @@ fn view_track(track: PlayerTrack) -> ViewTrack {
         bitrate: track.bit_rate,
         created_at: whole(track.date_added),
         starred_at: None,
+        rating: None,
         play_count: None,
         bit_depth: track.bit_depth,
         sample_rate: track.sample_rate,
@@ -123,6 +142,7 @@ fn view_album(album: PlayerAlbum, ids: &PlayerIds) -> ViewAlbum {
         play_count: None,
         date_added: whole(record.date_added),
         starred_at: None,
+        rating: None,
         year: record.year,
         genre: album.genre,
         is_compilation: Some(record.is_compilation),
@@ -146,6 +166,7 @@ fn view_artist(artist: ArtistRecord, ids: &PlayerIds) -> ViewArtist {
         album_count: Some(artist.album_count as i64),
         track_count: Some(artist.track_count as i64),
         starred_at: None,
+        rating: None,
         musicbrainz_artist_id,
         provider_identity_projected: true,
     }
@@ -214,9 +235,14 @@ impl SubsonicStore {
                 .map(|view| view.file_id.clone())
                 .collect::<Vec<_>>();
             let starred = self.library.starred(user_id, "track", &ids).await?;
+            let rated = self
+                .library
+                .ratings(user_id, RatedKind::Track, &ids)
+                .await?;
             let plays = self.library.plays(user_id, "track", &ids).await?;
             for view in &mut views {
                 view.starred_at = starred.get(&view.file_id).copied();
+                view.rating = rated.get(&view.file_id).map(view_rating);
                 if let Some((count, last)) = plays.get(&view.file_id) {
                     view.play_count = Some(*count as i64);
                     view.played_at = whole(*last).and_then(|at| iso_text(at.max(0) as u64));
@@ -241,9 +267,14 @@ impl SubsonicStore {
             .collect::<Vec<_>>();
         if let Some(user_id) = &self.caller {
             let starred = self.library.starred(user_id, "album", &ids).await?;
+            let rated = self
+                .library
+                .ratings(user_id, RatedKind::Album, &ids)
+                .await?;
             let plays = self.library.plays(user_id, "album", &ids).await?;
             for view in &mut views {
                 view.starred_at = starred.get(&view.rg_mbid).copied();
+                view.rating = rated.get(&view.rg_mbid).map(view_rating);
                 if let Some((count, last)) = plays.get(&view.rg_mbid) {
                     view.play_count = Some(*count as i64);
                     view.played_at = whole(*last).and_then(|at| iso_text(at.max(0) as u64));
@@ -268,8 +299,13 @@ impl SubsonicStore {
             .collect::<Vec<_>>();
         if let Some(user_id) = &self.caller {
             let starred = self.library.starred(user_id, "artist", &ids).await?;
+            let rated = self
+                .library
+                .ratings(user_id, RatedKind::Artist, &ids)
+                .await?;
             for view in &mut views {
                 view.starred_at = starred.get(&view.artist_mbid).copied();
+                view.rating = rated.get(&view.artist_mbid).map(view_rating);
             }
         }
         Ok(views)
@@ -540,6 +576,24 @@ impl Store for SubsonicStore {
             .skip(offset)
             .take(limit)
             .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+        let albums = self.library.albums_in_order(&ids).await?;
+        self.albums_for_caller(albums).await
+    }
+
+    async fn get_highest_albums(
+        &self,
+        user_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<ViewAlbum>, CompatError> {
+        let ids = self
+            .library
+            .rated_ids(user_id, RatedKind::Album)
+            .await?
+            .into_iter()
+            .skip(offset)
+            .take(limit)
             .collect::<Vec<_>>();
         let albums = self.library.albums_in_order(&ids).await?;
         self.albums_for_caller(albums).await
@@ -826,6 +880,17 @@ impl Store for SubsonicStore {
         kind: IdKind,
     ) -> Result<Vec<(String, i64)>, CompatError> {
         self.library.favorite_ids(user_id, kind_name(kind)).await
+    }
+
+    async fn set_rating(
+        &self,
+        user_id: &str,
+        kind: IdKind,
+        id: &str,
+        rating: u8,
+    ) -> Result<(), CompatError> {
+        let kind = rated_kind(kind).ok_or(CompatError::NotFound)?;
+        self.library.set_rating(user_id, kind, id, rating).await
     }
 
     async fn scrobble(

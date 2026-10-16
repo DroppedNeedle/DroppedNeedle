@@ -523,25 +523,31 @@ pub async fn starred<P: Principal, S: Store, B: AudioBackend>(
     ))
 }
 
-/// Validated no-op: the target and 0-5 range are checked, then
-/// nothing is persisted.
+/// Set the caller's rating of an artist, album or track at its current
+/// id, 1 to 5, or clear it with 0. An unknown target is 70.
 pub async fn set_rating<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
-    let rating = ctx.pint("rating", None, Some(0), Some(5))?;
-    if rating.is_none() {
-        return Err(SubsonicError::missing("rating"));
-    }
+    let rating = ctx
+        .pint("rating", None, Some(0), Some(5))?
+        .ok_or_else(|| SubsonicError::missing("rating"))?;
     let (kind, internal) = decode(&ctx.p("id")?.unwrap_or_default())?;
     let internal = current_id(ctx, kind, internal).await?;
     let missing = ctx
         .store
-        .missing_targets(&[(kind, internal)])
+        .missing_targets(&[(kind, internal.clone())])
         .await
         .map_err(Ctx::<P, S, B>::store_err)?;
     if !FAVORITE_KINDS.contains(&kind) || !missing.is_empty() {
         return Err(SubsonicError::new(NOT_FOUND, "Rating target not found"));
     }
+    let rating =
+        u8::try_from(rating).map_err(|_| SubsonicError::new(10, "Rating must be 0 to 5"))?;
+    let user_id = ctx.user()?.user_id().to_owned();
+    ctx.store
+        .set_rating(&user_id, kind, &internal, rating)
+        .await
+        .map_err(Ctx::<P, S, B>::store_err)?;
     Ok(Outcome::ok())
 }
 

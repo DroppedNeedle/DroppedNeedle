@@ -122,6 +122,27 @@ pub fn song_path(relative: &str) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("/"))
 }
 
+/// An item's ratings, from 1 to 5.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ViewRating {
+    /// The caller's rating, None when they have not rated it.
+    pub own: Option<u8>,
+    /// The mean of every user's rating.
+    pub average: f64,
+}
+
+impl ViewRating {
+    /// The caller's rating, None when they have not rated it.
+    fn own(rating: Option<&Self>) -> Option<i64> {
+        rating.and_then(|rating| rating.own).map(i64::from)
+    }
+
+    /// The mean of every user's rating, None when nobody rated it.
+    fn average(rating: Option<&Self>) -> Option<f64> {
+        rating.map(|rating| rating.average)
+    }
+}
+
 /// Artist row seen by the converters.
 #[derive(Debug, Clone, Default)]
 pub struct ViewArtist {
@@ -135,6 +156,8 @@ pub struct ViewArtist {
     pub track_count: Option<i64>,
     /// Starred unix seconds.
     pub starred_at: Option<i64>,
+    /// The caller's and everyone's rating, when anyone rated it.
+    pub rating: Option<ViewRating>,
     /// Projected MusicBrainz id, if identity projection ran.
     pub musicbrainz_artist_id: Option<String>,
     /// True when provider identity was projected.
@@ -162,6 +185,8 @@ pub struct ViewAlbum {
     pub date_added: Option<i64>,
     /// Starred unix seconds.
     pub starred_at: Option<i64>,
+    /// The caller's and everyone's rating, when anyone rated it.
+    pub rating: Option<ViewRating>,
     /// Release year.
     pub year: Option<i64>,
     /// Genre name.
@@ -230,6 +255,8 @@ pub struct ViewTrack {
     pub created_at: Option<i64>,
     /// Starred unix seconds.
     pub starred_at: Option<i64>,
+    /// The caller's and everyone's rating, when anyone rated it.
+    pub rating: Option<ViewRating>,
     /// Play count.
     pub play_count: Option<i64>,
     /// Bit depth.
@@ -314,6 +341,8 @@ pub fn to_artist_id3(view: &ViewArtist, image_url: Option<String>) -> SArtistID3
         name: view.name.clone(),
         coverArt: Some(aid),
         albumCount: view.album_count,
+        userRating: ViewRating::own(view.rating.as_ref()),
+        averageRating: ViewRating::average(view.rating.as_ref()),
         artistImageUrl: image_url,
         starred: iso(view.starred_at),
         musicBrainzId: musicbrainz_id(
@@ -417,6 +446,8 @@ pub fn to_album_id3(view: &ViewAlbum) -> SAlbumID3 {
                 coverArt: None,
             })
             .collect(),
+        userRating: ViewRating::own(view.rating.as_ref()).unwrap_or(0),
+        averageRating: ViewRating::average(view.rating.as_ref()),
         song: None,
     }
 }
@@ -486,6 +517,8 @@ pub fn to_child(view: &ViewTrack, transcode_hint: Option<(&str, &str)>) -> SChil
             .as_ref()
             .map(|mbid| encode(IdKind::Artist, mbid)),
         type_: Some("music".to_owned()),
+        userRating: ViewRating::own(view.rating.as_ref()),
+        averageRating: ViewRating::average(view.rating.as_ref()),
         playCount: view.play_count,
         mediaType: Some("song".to_owned()),
         bitDepth: Some(view.bit_depth.unwrap_or(0)),

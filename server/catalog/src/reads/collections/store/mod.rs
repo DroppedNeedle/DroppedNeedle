@@ -6,11 +6,13 @@ pub mod favorites;
 pub mod follows;
 pub mod pins;
 pub mod playlists;
+pub mod ratings;
 
 pub use favorites::FavoriteStore;
 pub use follows::FollowStore;
 pub use pins::PinStore;
 pub use playlists::PlaylistStore;
+pub use ratings::RatingStore;
 
 use super::db::CollectionsDb;
 
@@ -25,6 +27,8 @@ pub struct Stores {
     pub follows: FollowStore,
     /// Edition pins.
     pub pins: PinStore,
+    /// Star ratings.
+    pub ratings: RatingStore,
 }
 
 impl Stores {
@@ -35,6 +39,7 @@ impl Stores {
             favorites: FavoriteStore::new(db.clone()),
             follows: FollowStore::new(db.clone()),
             pins: PinStore::new(db.clone()),
+            ratings: RatingStore::new(db.clone()),
         }
     }
 }

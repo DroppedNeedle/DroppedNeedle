@@ -1221,8 +1221,8 @@ impl SqliteIdentifyStore {
 }
 
 /// Point what people made of a merged album, artist or track (favorites,
-/// play history) at the record it merged into.
-/// A person who already favorited the survivor keeps one row.
+/// ratings, play history) at the record it merged into.
+/// A person who already favorited or rated the survivor keeps one row.
 pub(crate) fn retarget_references(
     tx: &Connection,
     item_kind: &str,
@@ -1251,6 +1251,17 @@ pub(crate) fn retarget_references(
     )?;
     tx.execute(
         "DELETE FROM library_user_favorites WHERE item_kind = ?1 AND item_id = ?2",
+        params![item_kind, retired_id],
+    )?;
+    // A person who rated both keeps the survivor's rating.
+    tx.execute(
+        "INSERT OR IGNORE INTO library_user_ratings (user_id, item_kind, item_id, rating, \
+         rated_at) SELECT user_id, item_kind, ?1, rating, rated_at FROM library_user_ratings \
+         WHERE item_kind = ?2 AND item_id = ?3",
+        params![surviving_id, item_kind, retired_id],
+    )?;
+    tx.execute(
+        "DELETE FROM library_user_ratings WHERE item_kind = ?1 AND item_id = ?2",
         params![item_kind, retired_id],
     )?;
     tx.execute(
