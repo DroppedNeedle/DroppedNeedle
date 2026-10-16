@@ -1,7 +1,7 @@
 <!--
 	What DroppedNeedle did by itself to a library album: history moved to new
-	files, and albums joined into this one. Nothing shows while it loads or
-	when there is nothing to tell.
+	files, tracks whose paths other music took, and albums joined into this
+	one. Nothing shows while it loads or when there is nothing to tell.
 -->
 <script lang="ts">
 	import { History } from 'lucide-svelte';
@@ -55,6 +55,10 @@
 				return one
 					? `${one} was replaced by the edition's version, and its ${MOVED} moved to the new file.`
 					: `${entry.track_count} tracks were replaced by the edition's version, and their ${MOVED} moved to the new files${trackList(entry)}`;
+			case 'tracks_other_music':
+				return one
+					? `${one} was replaced by other music, which is now a new track. Its ${MOVED} stayed with the old track, which shows as missing.`
+					: `${entry.track_count} tracks were replaced by other music, which came in as new tracks. Their ${MOVED} stayed with the old tracks, which show as missing${trackList(entry)}`;
 			case 'retag_joined':
 				if (entry.by === 'you') return `You merged ${old} into this album.`;
 				if (entry.by === 'person') return `An admin merged ${old} into this album.`;

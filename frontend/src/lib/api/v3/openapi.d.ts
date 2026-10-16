@@ -10442,7 +10442,7 @@ export interface components {
          * @description What one history entry tells.
          * @enum {string}
          */
-        AlbumHistoryKindView: "tracks_continued" | "tracks_replaced" | "retag_joined" | "retag_half_left_alone" | "leftover_joined";
+        AlbumHistoryKindView: "tracks_continued" | "tracks_replaced" | "retag_joined" | "retag_half_left_alone" | "leftover_joined" | "tracks_other_music";
         /**
          * @description An album's history, newest first: at most ten entries, none older than
          *     180 days.

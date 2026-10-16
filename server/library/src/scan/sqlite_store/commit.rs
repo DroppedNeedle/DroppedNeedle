@@ -20,7 +20,9 @@
 //! of an album is retagged into a new album in one run, the old row takes
 //! the new name instead of being left behind. When the retag is seen by
 //! more than one run, the end of the run that sees the rest merges the old
-//! row into the new one.
+//! row into the new one. Other music at a track's path (a length more than
+//! five seconds off, and a recording id or tagged title that differs) is a
+//! new track: the old row stays on its album, missing, with its history.
 
 use std::collections::BTreeMap;
 
@@ -40,6 +42,7 @@ use crate::identify::sqlite::{
 };
 use crate::management::{automatic, takeover};
 use crate::operations::decisions::{CatalogAction, bump_catalog, record_action};
+use crate::publish::HIDDEN_PREFIX;
 use crate::scan::naming::{
     album_grouping_key, album_name_key, grouping_directory, parse_names_for_row,
 };
@@ -317,6 +320,113 @@ pub(super) const TRACK_GONE: &str = concat!(
 /// Durations closer than this are the same recording.
 pub(super) const DURATION_TOLERANCE_SECONDS: f64 = 1.0;
 
+/// A file at a track's path whose length moved by more than this may be
+/// other music. A retag or re-encode moves it by less than the tolerance
+/// above; a re-rip by the gap between tracks the ripper put on one side or
+/// the other, 2 seconds on most discs.
+const OTHER_MUSIC_SECONDS: f64 = 5.0;
+
+/// Audit kind of the tracks whose paths other music took.
+const OTHER_MUSIC_KIND: &str = "other_music_at_path";
+
+/// The row at a file's path, as read before the file is written.
+struct AtPath {
+    id: String,
+    album_id: String,
+    availability: String,
+    duration_seconds: Option<f64>,
+    recording_mbid: Option<String>,
+    title_folded: String,
+    title_provenance: String,
+}
+
+/// A track whose path now holds other music, and the track that took it.
+struct OtherMusic {
+    old_track_id: String,
+    old_album_id: String,
+    new_track_id: String,
+    old_seconds: Option<f64>,
+    new_seconds: Option<f64>,
+}
+
+/// What writing one file did.
+struct Written {
+    track_id: String,
+    album_id: String,
+    /// The album the track left, if it changed albums.
+    moved_from: Option<String>,
+    /// The track whose path the file took, when it is other music.
+    other_music: Option<OtherMusic>,
+}
+
+/// Whether the file now at `row`'s path is other music, not the track the
+/// row describes: the row is indexed or missing, both lengths are known and
+/// differ by more than [`OTHER_MUSIC_SECONDS`], and the file contradicts the
+/// row. It does when both carry a recording id and the ids differ, or, when
+/// either has none, both titles came from tags and they differ. A title
+/// read from a path or a file name is never a contradiction, and nothing
+/// else counts: not album names, artists, numbers, format or a match.
+fn other_music(row: &AtPath, item: &CommitIndexedItem) -> bool {
+    if row.availability != "indexed" && row.availability != "missing" {
+        return false;
+    }
+    let lengths_apart = match (row.duration_seconds, item.tags.header.duration_seconds) {
+        (Some(old), Some(new)) if old > 0.0 && new > 0.0 => (old - new).abs() > OTHER_MUSIC_SECONDS,
+        _ => false,
+    };
+    if !lengths_apart {
+        return false;
+    }
+    let recording = |mbid: Option<&str>| {
+        mbid.map(|mbid| mbid.trim().to_lowercase())
+            .filter(|mbid| !mbid.is_empty())
+    };
+    let tag = &item.tags.tag;
+    match (
+        recording(row.recording_mbid.as_deref()),
+        recording(tag.musicbrainz_recording_id.as_deref()),
+    ) {
+        (Some(old), Some(new)) => old != new,
+        _ => {
+            let title = tag.title.trim();
+            row.title_provenance == "tag"
+                && !title.is_empty()
+                && row.title_folded != fold_text(title)
+        }
+    }
+}
+
+/// Retire the track whose path now holds other music. It is missing from
+/// the file's read time, or keeps the time it went missing, and gives its
+/// path up for the hidden name the publisher gives a row whose file is
+/// gone (`gone/{id}/{path}`), so the file can take the real one. Its album,
+/// matches, history and management record stay on it.
+fn give_up_path(tx: &Connection, track_id: &str, item: &CommitIndexedItem) -> rusqlite::Result<()> {
+    let hidden = format!("{HIDDEN_PREFIX}gone/{track_id}/{}", item.relative_path);
+    let depth = std::path::Path::new(&item.relative_path)
+        .components()
+        .count();
+    let root_dir = std::path::Path::new(&item.absolute_path)
+        .ancestors()
+        .nth(depth)
+        .ok_or_else(|| rusqlite::Error::InvalidPath(item.absolute_path.clone().into()))?;
+    let file_path = root_dir.join(&hidden).to_string_lossy().into_owned();
+    tx.prepare_cached(
+        "UPDATE local_tracks SET availability = 'missing', \
+         missing_since = CASE WHEN availability = 'missing' THEN missing_since ELSE ?2 END, \
+         relative_path = ?3, file_path = ?4, path_hash = ?5, row_revision = row_revision + 1 \
+         WHERE id = ?1",
+    )?
+    .execute(params![
+        track_id,
+        item.tags_read_at,
+        hidden,
+        file_path,
+        sha256_hex(&hidden)
+    ])?;
+    Ok(())
+}
+
 /// The gone track a newly seen file continues, as (track id, album id):
 /// the same album names, disc and track number, plus the same recording
 /// MBID, or else the same title and duration. Only an unambiguous match
@@ -480,14 +590,13 @@ pub(crate) struct Adopted<'a> {
     pub album_id: Option<&'a str>,
 }
 
-/// Write one file's catalog rows. Returns the track id, its album id, and
-/// the album it left, if it changed albums.
+/// Write one file's catalog rows.
 fn write_item(
     tx: &Connection,
     run_id: Option<&str>,
     item: &CommitIndexedItem,
     adopted: Option<&Adopted<'_>>,
-) -> rusqlite::Result<(String, String, Option<String>)> {
+) -> rusqlite::Result<Written> {
     let tag = &item.tags.tag;
     let header = &item.tags.header;
     let now = item.tags_read_at;
@@ -580,17 +689,39 @@ fn write_item(
     let disc_number = i64::from(tag.disc_number.max(1));
     let title_folded = fold_text(&title);
 
-    // The row at this path keeps its id. A new path continues a track
-    // whose file went away when the keys agree: the old row moves here
-    // and the upsert below refreshes it.
-    let mut previous: Option<(String, String)> = tx
+    // The row at this path keeps its id, unless the scan reads other music
+    // there: that row is retired with everything attached to it, its
+    // record included, and the file is indexed as at a new path. A new
+    // path continues a track whose file went away when the keys agree:
+    // the old row moves here and the upsert below refreshes it.
+    let at_path: Option<AtPath> = tx
         .prepare_cached(
-            "SELECT id, local_album_id FROM local_tracks WHERE root_id = ?1 AND relative_path = ?2",
+            "SELECT id, local_album_id, availability, duration_seconds, \
+             embedded_recording_mbid, title_folded, title_provenance \
+             FROM local_tracks WHERE root_id = ?1 AND relative_path = ?2",
         )?
         .query_row(params![item.root_id, item.relative_path], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+            Ok(AtPath {
+                id: row.get(0)?,
+                album_id: row.get(1)?,
+                availability: row.get(2)?,
+                duration_seconds: row.get(3)?,
+                recording_mbid: row.get(4)?,
+                title_folded: row.get(5)?,
+                title_provenance: row.get(6)?,
+            })
         })
         .optional()?;
+    let mut replaced: Option<AtPath> = None;
+    let mut previous: Option<(String, String)> = match at_path {
+        Some(row) if run_id.is_some() && adopted.is_none() && other_music(&row, item) => {
+            give_up_path(tx, &row.id, item)?;
+            replaced = Some(row);
+            None
+        }
+        Some(row) => Some((row.id, row.album_id)),
+        None => None,
+    };
     if previous.is_none()
         && let Some(run_id) = run_id
     {
@@ -934,7 +1065,19 @@ fn write_item(
             left
         ])?;
     }
-    Ok((track_id, stored_album, moved_from))
+    let other_music = replaced.map(|row| OtherMusic {
+        old_track_id: row.id,
+        old_album_id: row.album_id,
+        new_track_id: track_id.clone(),
+        old_seconds: row.duration_seconds,
+        new_seconds: header.duration_seconds,
+    });
+    Ok(Written {
+        track_id,
+        album_id: stored_album,
+        moved_from,
+        other_music,
+    })
 }
 
 /// Whether a track row still holds its album, as SQL over the track alias
@@ -1216,6 +1359,13 @@ fn holds_only_its_retag(
 /// ([`LONG_GONE_SECONDS`]; a missing row with no time counts as long gone).
 /// The rows in `moved_ids` moved but still sit on the album, and are not
 /// read.
+///
+/// A row whose path other music took stays behind for good: an
+/// `other_music_at_path` action of the album names it, and it is still at
+/// its hidden name. It is never read as excluded or long gone, so the
+/// album goes ahead only when more of its tracks moved than stayed or were
+/// replaced by other music. A row put back at a real path since no longer
+/// counts.
 pub(crate) fn waits_for_the_rest(
     tx: &Connection,
     album_id: &str,
@@ -1229,14 +1379,24 @@ pub(crate) fn waits_for_the_rest(
     }
     let moved_ids = serde_json::to_string(moved_ids)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-    tx.prepare_cached(
-        "SELECT EXISTS(SELECT 1 FROM local_tracks WHERE local_album_id = ?1 \
-         AND id NOT IN (SELECT value FROM json_each(?3)) \
-         AND availability != 'excluded' AND NOT (availability = 'missing' \
-         AND (missing_since IS NULL OR missing_since <= ?2)))",
-    )?
+    tx.prepare_cached(&format!(
+        "SELECT EXISTS(SELECT 1 FROM local_tracks t WHERE t.local_album_id = ?1 \
+         AND t.id NOT IN (SELECT value FROM json_each(?3)) \
+         AND ((substr(t.relative_path, 1, length(?4) + length(t.id) + 1) = ?4 || t.id || '/' \
+           AND EXISTS (SELECT 1 FROM library_catalog_actions a, \
+             json_each(a.after_json, '$.pairs') p \
+             WHERE a.local_album_id = ?1 AND a.action_kind = '{OTHER_MUSIC_KIND}' \
+             AND json_extract(p.value, '$.old_track_id') = t.id)) \
+         OR (t.availability != 'excluded' AND NOT (t.availability = 'missing' \
+           AND (t.missing_since IS NULL OR t.missing_since <= ?2)))))"
+    ))?
     .query_row(
-        params![album_id, now - LONG_GONE_SECONDS, moved_ids],
+        params![
+            album_id,
+            now - LONG_GONE_SECONDS,
+            moved_ids,
+            format!("{HIDDEN_PREFIX}gone/")
+        ],
         |row| row.get(0),
     )
 }
@@ -2079,6 +2239,47 @@ fn mark_window(
     Ok(())
 }
 
+/// Record the tracks of one album whose paths now hold other music: one
+/// audit action naming each old track and the new track at its path, and
+/// one log line.
+fn record_other_music(
+    tx: &rusqlite::Transaction<'_>,
+    album_id: &str,
+    pairs: &[OtherMusic],
+    now: f64,
+) -> rusqlite::Result<()> {
+    let listed: Vec<serde_json::Value> = pairs
+        .iter()
+        .map(|pair| {
+            serde_json::json!({
+                "old_track_id": pair.old_track_id,
+                "new_track_id": pair.new_track_id,
+                "old_seconds": pair.old_seconds,
+                "new_seconds": pair.new_seconds,
+            })
+        })
+        .collect();
+    record_action(
+        tx,
+        CatalogAction {
+            actor: "system",
+            kind: OTHER_MUSIC_KIND,
+            album_id,
+            job_id: None,
+            before: serde_json::json!({}),
+            after: serde_json::json!({ "pairs": listed }),
+            reason: "OTHER_MUSIC_AT_PATH",
+        },
+        now,
+    )?;
+    tracing::info!(
+        album_id,
+        tracks = pairs.len(),
+        "other music took the paths of an album's tracks; they stay on it as missing"
+    );
+    Ok(())
+}
+
 /// Write items, offer albums, and mark the window. With `isolate`, each
 /// item runs in its own savepoint and a failing one is reported instead of
 /// failing the window.
@@ -2100,6 +2301,7 @@ fn write_window(
     // management looks at them soon, to see who changed it.
     let mut changed: Vec<String> = Vec::new();
     let mut emptied: Vec<String> = Vec::new();
+    let mut other_music: BTreeMap<String, Vec<OtherMusic>> = BTreeMap::new();
     for item in &window.items {
         let written = if isolate {
             tx.execute("SAVEPOINT item", [])?;
@@ -2118,11 +2320,30 @@ fn write_window(
             write_item(tx, Some(&window.run_id), item, None)
         };
         match written {
-            Ok((track_id, album_id, moved_from)) => {
-                if item.verdict_counter == counter_names::CHANGED
-                    && takeover::has_record(tx, &track_id)?
-                {
+            Ok(Written {
+                track_id,
+                album_id,
+                moved_from,
+                other_music: replaced,
+            }) => {
+                let changed_on_record = item.verdict_counter == counter_names::CHANGED
+                    && takeover::has_record(tx, &track_id)?;
+                // Other music on the album of a track the app wrote: the
+                // album's files changed, as when the file itself changed.
+                let replaced_on_record = match &replaced {
+                    Some(old) => {
+                        old.old_album_id == album_id && takeover::has_record(tx, &old.old_track_id)?
+                    }
+                    None => false,
+                };
+                if changed_on_record || replaced_on_record {
                     changed.push(album_id.clone());
+                }
+                if let Some(old) = replaced {
+                    other_music
+                        .entry(old.old_album_id.clone())
+                        .or_default()
+                        .push(old);
                 }
                 indexed.push((item.root_id.clone(), item.relative_path.clone(), track_id));
                 if item.effective_policy == EffectivePolicy::Automatic {
@@ -2145,6 +2366,11 @@ fn write_window(
             }
             Err(error) => return Err(error),
         }
+    }
+    // Written before the follow below, so it and the join at the run end
+    // read the same marker (`waits_for_the_rest`).
+    for (album_id, pairs) in &other_music {
+        record_other_music(tx, album_id, pairs, window.now)?;
     }
     emptied.sort();
     emptied.dedup();
@@ -2405,5 +2631,5 @@ pub(crate) fn adopt_file(
     item: &CommitIndexedItem,
     adopted: &Adopted<'_>,
 ) -> rusqlite::Result<String> {
-    write_item(tx, None, item, Some(adopted)).map(|(track_id, _, _)| track_id)
+    write_item(tx, None, item, Some(adopted)).map(|written| written.track_id)
 }

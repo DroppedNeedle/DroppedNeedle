@@ -31,6 +31,8 @@ pub enum HistoryKind {
     RetagHalfLeftAlone,
     /// A leftover album of an earlier version was folded into this one.
     LeftoverJoined,
+    /// Other music took the paths of tracks, which stayed behind as missing.
+    TracksOtherMusic,
 }
 
 /// Who asked for an entry, as the caller may know it.
@@ -72,6 +74,17 @@ struct Continued {
     pairs: Vec<Pair>,
 }
 
+/// One pair of an `other_music_at_path` row.
+#[derive(Deserialize)]
+struct Replaced {
+    old_track_id: String,
+}
+
+#[derive(Deserialize)]
+struct OtherMusic {
+    pairs: Vec<Replaced>,
+}
+
 /// The other album of a join, under whichever name its writer used.
 #[derive(Deserialize)]
 struct OtherAlbum {
@@ -85,7 +98,7 @@ const ROWS: &str = "SELECT a.id, a.actor_user_id, a.action_kind, a.reason_code, 
     WHERE (a.local_album_id = ?1 OR a.local_album_id IN \
       (SELECT r.id FROM local_albums r WHERE r.retired_into_album_id = ?1)) \
     AND a.created_at >= ?2 \
-    AND (a.action_kind = 'continue_tracks' \
+    AND (a.action_kind IN ('continue_tracks', 'other_music_at_path') \
       OR (a.action_kind = 'merge_album' AND a.reason_code IN ('RETAG_JOINED_ACROSS_SCANS', \
         'RETAG_JOINED_SAME_RELEASE', 'AUTOMATIC_EMPTY_ALBUM_SHELL_CONVERGENCE', \
         'AUTOMATIC_PROVIDER_CONTRADICTION_CATALOG_REPAIR')) \
@@ -167,6 +180,32 @@ pub fn album_history(
                     other_album_title: None,
                 });
             }
+            continue;
+        }
+        if row.kind == "other_music_at_path" {
+            let Ok(replaced) = serde_json::from_str::<OtherMusic>(&row.after) else {
+                tracing::warn!(
+                    action_id = row.id,
+                    "album history skips an unreadable action"
+                );
+                continue;
+            };
+            let tracks: BTreeSet<&str> = replaced
+                .pairs
+                .iter()
+                .map(|pair| pair.old_track_id.as_str())
+                .collect();
+            if tracks.is_empty() {
+                continue;
+            }
+            entries.push(HistoryEntry {
+                kind: HistoryKind::TracksOtherMusic,
+                at,
+                by: None,
+                track_count: tracks.len(),
+                track_titles: titles(conn, &tracks)?,
+                other_album_title: None,
+            });
             continue;
         }
         let kind = match (row.kind.as_str(), row.reason.as_deref()) {

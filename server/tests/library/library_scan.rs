@@ -561,6 +561,9 @@ struct RetagReader {
     meanwhile: std::sync::Mutex<Option<(String, Meanwhile)>>,
     /// The length a file reads as, when it has one.
     lengths: std::sync::Mutex<HashMap<String, f64>>,
+    /// The title tag a file carries instead of its file name; empty for
+    /// none.
+    titles: std::sync::Mutex<HashMap<String, String>>,
     root: PathBuf,
 }
 
@@ -592,7 +595,13 @@ impl TagReader for RetagReader {
             act();
         }
         let mut read = ScannedTags::default();
-        read.tag.title = name.into_owned();
+        read.tag.title = self
+            .titles
+            .lock()
+            .expect("titles")
+            .get(&relative)
+            .cloned()
+            .unwrap_or_else(|| name.into_owned());
         read.tag.artist = "Artist".to_owned();
         read.tag.album_artist = Some("Artist".to_owned());
         read.tag.album = self.albums.lock().expect("albums")[&relative].clone();
@@ -643,6 +652,7 @@ impl RegroupRig {
             ids: std::sync::Mutex::default(),
             meanwhile: std::sync::Mutex::default(),
             lengths: std::sync::Mutex::default(),
+            titles: std::sync::Mutex::default(),
             root: root.clone(),
         });
         let registry = RootRegistry::new(
@@ -6687,4 +6697,453 @@ async fn a_taken_over_album_is_still_joined_on_proof() {
             assert_eq!(rig.hands_off_pairs(), vec![pair(&old, &new)]);
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Other music put at a track's path.
+// ---------------------------------------------------------------------------
+
+/// What one file says about itself: its title tag and recording id (empty
+/// for none) and its length.
+#[derive(Clone, Copy)]
+struct Says {
+    title: &'static str,
+    recording: &'static str,
+    length: Option<f64>,
+}
+
+const fn says(title: &'static str, recording: &'static str, length: Option<f64>) -> Says {
+    Says {
+        title,
+        recording,
+        length,
+    }
+}
+
+impl RegroupRig {
+    /// Write each file anew as track `n` of `album`, saying what `says`
+    /// gives.
+    fn say(&mut self, files: &[(&str, u32, Says)], album: &str) {
+        for (file, n, says) in files {
+            self.reader
+                .titles
+                .lock()
+                .expect("titles")
+                .insert((*file).to_owned(), says.title.to_owned());
+            self.reader
+                .ids
+                .lock()
+                .expect("ids")
+                .insert((*file).to_owned(), ids("", "", says.recording, 1, *n));
+            let mut lengths = self.reader.lengths.lock().expect("lengths");
+            match says.length {
+                Some(length) => lengths.insert((*file).to_owned(), length),
+                None => lengths.remove(*file),
+            };
+        }
+        let names: Vec<String> = files
+            .iter()
+            .map(|(file, _, _)| (*file).to_owned())
+            .collect();
+        self.tag(&names, album);
+    }
+
+    /// The row at a path, whatever its state.
+    fn row_at(&self, relative: &str) -> String {
+        self.text(&format!(
+            "SELECT id FROM local_tracks WHERE relative_path = '{relative}'"
+        ))
+        .unwrap_or_else(|| panic!("a row at {relative}"))
+    }
+
+    /// Whether `track` is missing at the hidden name it gave its path
+    /// `relative` up for.
+    fn retired_at(&self, track: &str, relative: &str) -> bool {
+        self.count(&format!(
+            "SELECT COUNT(*) FROM local_tracks WHERE id = '{track}' \
+             AND availability = 'missing' \
+             AND relative_path = '{HIDDEN_PREFIX}gone/{track}/{relative}'"
+        )) == 1
+    }
+
+    /// Every pair the `other_music_at_path` actions name, as (album, old
+    /// track, new track), in the order written.
+    fn other_music(&self) -> Vec<(String, String, String)> {
+        let conn = droppedneedle_kernel::db::open_connection(&self.db()).expect("opens");
+        let mut stmt = conn
+            .prepare(
+                "SELECT a.local_album_id, json_extract(p.value, '$.old_track_id'), \
+                 json_extract(p.value, '$.new_track_id') FROM library_catalog_actions a, \
+                 json_each(a.after_json, '$.pairs') p \
+                 WHERE a.action_kind = 'other_music_at_path' \
+                 AND a.reason_code = 'OTHER_MUSIC_AT_PATH' AND a.actor_user_id IS NULL \
+                 ORDER BY a.created_at, a.rowid, p.key",
+            )
+            .expect("prepares");
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .expect("reads")
+            .collect::<rusqlite::Result<_>>()
+            .expect("rows")
+    }
+
+    fn other_music_actions(&self, album: &str) -> i64 {
+        self.count(&format!(
+            "SELECT COUNT(*) FROM library_catalog_actions \
+             WHERE action_kind = 'other_music_at_path' AND local_album_id = '{album}'"
+        ))
+    }
+}
+
+use droppedneedle_library::publish::HIDDEN_PREFIX;
+
+/// When the latest scan run started.
+const LATEST_START: &str = "(SELECT MAX(started_at) FROM library_scan_runs)";
+
+/// Another album copied over an old one with the same file names: the
+/// three files whose length moved more than five seconds come in as new
+/// tracks on a new album, and the old tracks stay on the old album,
+/// missing, with everything people made of them. The fourth, within five
+/// seconds, keeps its track and moves. The old album is not handed to the
+/// new music, not even a scan later when the old tracks have been gone a
+/// day, and its history says what happened.
+#[tokio::test]
+async fn another_album_copied_over_an_old_one_comes_in_as_new_tracks() {
+    let mut rig = RegroupRig::new("scan-other-music-album");
+    let files = ["a/01.flac", "a/02.flac", "a/03.flac", "a/04.flac"];
+    let before = rig.before.clone();
+    rig.say(
+        &[
+            (files[0], 1, says("Old One", "rec-a1", Some(200.0))),
+            (files[1], 2, says("Old Two", "rec-a2", Some(210.0))),
+            (files[2], 3, says("Old Three", "rec-a3", Some(220.0))),
+            (files[3], 4, says("Old Four", "rec-a4", Some(230.0))),
+        ],
+        &before,
+    );
+    rig.scan().await;
+    let album = rig.album_of(files[0]);
+    let tracks: Vec<String> = files.iter().map(|file| rig.row_at(file)).collect();
+    let mut setup = format!(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_at) \
+         VALUES ('{album}', 'musicbrainz', 'rg-r', '{REL_R}', 'manual', 0); \
+         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('listener', 'album', '{album}', 1); \
+         INSERT INTO library_play_history (id, user_id, local_track_id, local_album_id, \
+         track_name, artist_name, played_at) VALUES ('play-1', 'listener', '{}', '{album}', \
+         'Old Two', 'Artist', '2026-01-01T00:00:00Z'); \
+         INSERT INTO playlists (id, name, created_at, updated_at) VALUES ('list', 'List', '', ''); \
+         INSERT INTO playlist_tracks (id, playlist_id, position, track_name, artist_name, \
+         album_name, album_id, track_source_id, source_type, created_at) VALUES ('entry', \
+         'list', 0, 'Old One', 'Artist', 'Before', '{album}', '{}', 'local', ''); \
+         INSERT INTO library_track_management_state (local_track_id, written_sha256) \
+         VALUES ('{}', 'sha');",
+        tracks[1], tracks[0], tracks[2]
+    );
+    setup += &star(&tracks[0]);
+    for (n, track) in tracks.iter().enumerate() {
+        setup += &map_track(track, Some(REL_R), Some(&format!("rt-{n}")));
+    }
+    rig.run(&setup);
+
+    let new_album = "Another Album";
+    rig.say(
+        &[
+            (files[0], 1, says("New One", "rec-c1", Some(230.0))),
+            (files[1], 2, says("New Two", "rec-c2", Some(240.0))),
+            (files[2], 3, says("New Three", "rec-c3", Some(250.0))),
+            (files[3], 4, says("New Four", "rec-c4", Some(233.0))),
+        ],
+        new_album,
+    );
+    rig.scan().await;
+
+    let new_rows: Vec<String> = files[..3].iter().map(|file| rig.row_at(file)).collect();
+    let b = rig.album_of(files[0]);
+    assert_ne!(b, album, "the old album row is not handed to the new music");
+    for (n, file) in files[..3].iter().enumerate() {
+        let (old, new) = (&tracks[n], &new_rows[n]);
+        assert_ne!(old, new, "{file} is a new track");
+        assert!(rig.retired_at(old, file), "{file}'s old track is retired");
+        assert_eq!(rig.album_of(file), b, "{file} is on the new album");
+        assert_eq!(
+            rig.count(&format!(
+                "SELECT COUNT(*) FROM local_tracks WHERE id = '{old}' \
+                 AND local_album_id = '{album}' AND missing_since >= {LATEST_START}"
+            )),
+            1,
+            "{file}'s old track went missing in this run, on the old album"
+        );
+        assert_eq!(
+            rig.count(&format!(
+                "SELECT (SELECT COUNT(*) FROM local_track_external_identities \
+                   WHERE local_track_id = '{old}' AND release_track_mbid = 'rt-{n}') \
+                 + 10 * (SELECT COUNT(*) FROM local_track_external_identities \
+                   WHERE local_track_id = '{new}') \
+                 + 100 * (SELECT COUNT(*) FROM library_track_management_state \
+                   WHERE local_track_id = '{new}')"
+            )),
+            1,
+            "{file}: the mapping stays on the old track; the new one has none and no record"
+        );
+    }
+    assert_eq!(rig.stars_and_aliases(&tracks[0]), (1, 0));
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT (SELECT COUNT(*) FROM library_play_history \
+               WHERE local_track_id = '{}' AND local_album_id = '{album}') \
+             + (SELECT COUNT(*) FROM playlist_tracks WHERE track_source_id = '{}') \
+             + (SELECT COUNT(*) FROM library_track_management_state \
+               WHERE local_track_id = '{}' AND written_sha256 = 'sha')",
+            tracks[1], tracks[0], tracks[2]
+        )),
+        3,
+        "the play, the playlist entry and the record stay"
+    );
+    assert_eq!(rig.row_at(files[3]), tracks[3], "within five seconds");
+    assert_eq!(rig.album_of(files[3]), b);
+    assert_eq!(
+        rig.text(&format!("SELECT title FROM local_albums WHERE id = '{b}'")),
+        Some(new_album.to_owned())
+    );
+
+    let expected: Vec<(String, String, String)> = (0..3)
+        .map(|n| (album.clone(), tracks[n].clone(), new_rows[n].clone()))
+        .collect();
+    assert_eq!(rig.other_music(), expected);
+    assert_eq!(rig.other_music_actions(&album), 1);
+    let conn = droppedneedle_kernel::db::open_connection(&rig.db()).expect("opens");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after 1970")
+        .as_secs_f64();
+    use droppedneedle_library::operations::history::{HistoryKind, album_history};
+    let told: Vec<(HistoryKind, usize, Vec<String>)> =
+        album_history(&conn, &album, "listener", now)
+            .expect("history reads")
+            .expect("album live")
+            .into_iter()
+            .map(|entry| (entry.kind, entry.track_count, entry.track_titles))
+            .collect();
+    let titles = ["Old One", "Old Two", "Old Three"]
+        .map(str::to_owned)
+        .to_vec();
+    assert_eq!(told, vec![(HistoryKind::TracksOtherMusic, 3, titles)]);
+
+    let still_apart = |rig: &RegroupRig, when: &str| {
+        assert_eq!(rig.retired_into(&album), None, "{when}");
+        assert_eq!(
+            rig.text(&format!(
+                "SELECT title FROM local_albums WHERE id = '{album}'"
+            )),
+            Some(before.clone()),
+            "{when}"
+        );
+        assert_eq!(
+            rig.count(&format!(
+                "SELECT (SELECT COUNT(*) FROM library_user_favorites \
+                   WHERE item_kind = 'album' AND item_id = '{album}') \
+                 + (SELECT COUNT(*) FROM local_album_external_identities \
+                   WHERE local_album_id = '{album}' AND release_mbid = '{REL_R}')"
+            )),
+            2,
+            "{when}: the star and the match stay"
+        );
+    };
+    still_apart(&rig, "after the scan");
+
+    rig.age_missing(2 * 86_400);
+    rig.scan().await;
+    still_apart(&rig, "a scan later");
+    assert_eq!(
+        rig.count("SELECT COUNT(*) FROM library_catalog_actions WHERE action_kind = 'merge_album'"),
+        0
+    );
+    assert!(retag_pairs(&rig).is_empty());
+    assert_eq!(rig.other_music_actions(&album), 1);
+}
+
+/// Where the line is between the same track and other music at its path:
+/// a length change of more than five seconds and a recording id that
+/// differs, or, when either file lacks one, titles from both files' tags
+/// that differ. One file per folder; each row is a row of the task's
+/// table.
+#[tokio::test]
+async fn other_music_at_a_path_needs_a_length_gap_and_a_contradiction() {
+    struct Line {
+        old: Says,
+        new: Says,
+        exclude: bool,
+        lose_first: bool,
+        new_track: bool,
+    }
+    const SONG: Says = says("Song", "x", Some(200.0));
+    const UNNAMED: Says = says("Song", "", Some(200.0));
+    let line = |old: Says, new: Says, new_track: bool| Line {
+        old,
+        new,
+        exclude: false,
+        lose_first: false,
+        new_track,
+    };
+    let lines = [
+        line(SONG, says("Song", "y", Some(230.0)), true),
+        line(UNNAMED, says("Other", "y", Some(230.0)), true),
+        line(UNNAMED, says("Other", "", Some(230.0)), true),
+        line(SONG, says("Other", "y", Some(205.5)), true),
+        line(SONG, says("Other", "y", Some(204.5)), false),
+        line(SONG, says("Other", "y", Some(200.0)), false),
+        line(SONG, says("Other", "x", Some(230.0)), false),
+        line(UNNAMED, says("Song", "", Some(230.0)), false),
+        line(
+            says("Song", "x", None),
+            says("Other", "y", Some(230.0)),
+            false,
+        ),
+        line(SONG, says("Other", "y", None), false),
+        Line {
+            exclude: true,
+            ..line(SONG, says("Other", "y", Some(230.0)), false)
+        },
+        Line {
+            lose_first: true,
+            ..line(SONG, says("Other", "y", Some(230.0)), true)
+        },
+        line(UNNAMED, says("", "", Some(230.0)), false),
+        line(
+            says("", "", Some(200.0)),
+            says("Other", "y", Some(230.0)),
+            false,
+        ),
+    ];
+    let mut rig = RegroupRig::new("scan-other-music-line");
+    let file = |n: usize| format!("line{:02}/t.flac", n + 1);
+    for (n, line) in lines.iter().enumerate() {
+        rig.say(&[(&file(n), 1, line.old)], &format!("Line {}", n + 1));
+    }
+    rig.scan().await;
+    let old: Vec<String> = (0..lines.len()).map(|n| rig.row_at(&file(n))).collect();
+    let since = |rig: &RegroupRig, track: &str| {
+        rig.text(&format!(
+            "SELECT CAST(missing_since AS TEXT) FROM local_tracks WHERE id = '{track}'"
+        ))
+    };
+    let mut missing_since = BTreeMap::new();
+    for (n, line) in lines.iter().enumerate() {
+        if line.exclude {
+            rig.run(&format!(
+                "UPDATE local_tracks SET manual_excluded = 1, availability = 'excluded', \
+                 excluded_at = 1 WHERE id = '{}';",
+                old[n]
+            ));
+        }
+        if line.lose_first {
+            rig.lose(&[file(n)]).await;
+            missing_since.insert(n, since(&rig, &old[n]).expect("missing since"));
+        }
+    }
+    for (n, line) in lines.iter().enumerate() {
+        rig.say(&[(&file(n), 1, line.new)], &format!("Line {}", n + 1));
+    }
+    rig.scan().await;
+
+    let pairs = rig.other_music();
+    for (n, line) in lines.iter().enumerate() {
+        let row = n + 1;
+        let path = file(n);
+        let now = rig.row_at(&path);
+        let named: Vec<&(String, String, String)> =
+            pairs.iter().filter(|(_, was, _)| *was == old[n]).collect();
+        if line.new_track {
+            assert_ne!(now, old[n], "row {row}: a new track");
+            assert!(rig.retired_at(&old[n], &path), "row {row}: retired");
+            assert_eq!(named.len(), 1, "row {row}: one pair");
+            assert_eq!(named[0].2, now, "row {row}: the pair names the new track");
+        } else {
+            assert_eq!(now, old[n], "row {row}: the same track");
+            assert!(named.is_empty(), "row {row}: no action");
+        }
+        if line.exclude {
+            assert_eq!(
+                rig.text(&format!(
+                    "SELECT availability FROM local_tracks WHERE id = '{now}'"
+                ))
+                .as_deref(),
+                Some("excluded"),
+                "row {row}: still excluded"
+            );
+        }
+        if let Some(kept) = missing_since.get(&n) {
+            assert_eq!(
+                since(&rig, &old[n]).as_ref(),
+                Some(kept),
+                "row {row}: keeps its own missing_since"
+            );
+        }
+    }
+    assert_eq!(pairs.len(), 5);
+}
+
+/// The old file put back at its path after other music took it: the old
+/// track comes back with its id and star, the other music's track is
+/// retired in turn, and the old track no longer counts as replaced.
+#[tokio::test]
+async fn the_old_file_put_back_brings_the_old_track_back() {
+    let mut rig = RegroupRig::new("scan-other-music-back");
+    let before = rig.before.clone();
+    let original = says("Song", "rec-song", Some(200.0));
+    rig.say(
+        &[
+            ("a/01.flac", 1, original),
+            ("a/02.flac", 2, says("Next", "rec-next", Some(210.0))),
+        ],
+        &before,
+    );
+    rig.scan().await;
+    let album = rig.album_of("a/01.flac");
+    let old = rig.row_at("a/01.flac");
+    rig.run(&star(&old));
+
+    rig.say(
+        &[("a/01.flac", 1, says("Other", "rec-other", Some(230.0)))],
+        &before,
+    );
+    rig.scan().await;
+    let other = rig.row_at("a/01.flac");
+    assert_ne!(other, old);
+    assert!(rig.retired_at(&old, "a/01.flac"));
+
+    rig.say(&[("a/01.flac", 1, original)], &before);
+    rig.scan().await;
+    assert_eq!(rig.row_at("a/01.flac"), old, "the old track is back");
+    assert_eq!(
+        rig.text(&format!(
+            "SELECT availability FROM local_tracks WHERE id = '{old}'"
+        ))
+        .as_deref(),
+        Some("indexed")
+    );
+    assert_eq!(rig.stars_and_aliases(&old), (1, 0));
+    assert!(rig.retired_at(&other, "a/01.flac"));
+    assert_eq!(
+        rig.other_music(),
+        vec![
+            (album.clone(), old.clone(), other.clone()),
+            (album.clone(), other.clone(), old.clone()),
+        ]
+    );
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM local_tracks t WHERE t.id = '{old}' \
+             AND EXISTS (SELECT 1 FROM library_catalog_actions a, \
+               json_each(a.after_json, '$.pairs') p \
+               WHERE a.local_album_id = t.local_album_id \
+               AND a.action_kind = 'other_music_at_path' \
+               AND json_extract(p.value, '$.old_track_id') = t.id) \
+             AND substr(t.relative_path, 1, length('{HIDDEN_PREFIX}gone/' || t.id || '/')) \
+               = '{HIDDEN_PREFIX}gone/' || t.id || '/'"
+        )),
+        0,
+        "the old track no longer counts as replaced by other music"
+    );
 }

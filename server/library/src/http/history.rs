@@ -39,6 +39,9 @@ pub enum AlbumHistoryKindView {
     RetagHalfLeftAlone,
     /// A leftover album of an earlier version was folded into this one.
     LeftoverJoined,
+    /// Other music took the paths of tracks, which came in as new tracks;
+    /// what people made stayed with the old tracks, now missing.
+    TracksOtherMusic,
 }
 
 /// Who asked for a join.
@@ -83,6 +86,7 @@ impl From<HistoryEntry> for AlbumHistoryEntryView {
                 HistoryKind::RetagJoined => AlbumHistoryKindView::RetagJoined,
                 HistoryKind::RetagHalfLeftAlone => AlbumHistoryKindView::RetagHalfLeftAlone,
                 HistoryKind::LeftoverJoined => AlbumHistoryKindView::LeftoverJoined,
+                HistoryKind::TracksOtherMusic => AlbumHistoryKindView::TracksOtherMusic,
             },
             at: entry.at,
             by: entry.by.map(|by| match by {
