@@ -19,11 +19,23 @@
 //! | arranger | TIPL:arranger | IPLS:arranger | ARRANGER | none |
 //! | remixer | TPE4 | TPE4 | REMIXER | ----:REMIXER |
 //! | producer | TIPL:producer | IPLS:producer | PRODUCER | ----:PRODUCER |
+//! | engineer | TIPL:engineer | IPLS:engineer | ENGINEER | ----:ENGINEER |
+//! | mixer | TIPL:mix | IPLS:mix | MIXER | ----:MIXER |
+//! | dj_mixer | TIPL:DJ-mix | IPLS:DJ-mix | DJMIXER | ----:DJMIXER |
+//! | writer | TXXX:Writer | same | WRITER | ----:writer |
+//! | director | TXXX:DIRECTOR | same | DIRECTOR | ©dir |
 //! | comment | COMM, empty description | same | COMMENT | ©cmt |
 //! | copyright | TCOP | TCOP | COPYRIGHT | cprt |
 //! | encoded_by | TENC | TENC | ENCODEDBY, ENCODED-BY | ©too |
 //! | acoustid_id | TXXX:Acoustid Id | same | ACOUSTID_ID | ----:Acoustid Id |
 //! | acoustid_fingerprint | TXXX:Acoustid Fingerprint | same | ACOUSTID_FINGERPRINT | ----:Acoustid Fingerprint |
+//!
+//! The engineer, mixer, DJ-mixer, writer and director homes are Picard
+//! 2.13.3's (`picard/formats/id3.py:187-221`, `vorbis.py:295`,
+//! `mp4.py:85, 138-140, 289-292`, checked against tag `release-2.13.3`
+//! on 2026-10-16). MP4 keeps
+//! Picard's lower-case `writer`, its fallback for a name it has no
+//! freeform for.
 
 /// One writable field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -84,6 +96,11 @@ pub enum TagField {
     EncodedBy,
     AcoustIdId,
     AcoustIdFingerprint,
+    Engineer,
+    Mixer,
+    DjMixer,
+    Writer,
+    Director,
 }
 
 /// How a new value for a field must look. Values replayed from a file
@@ -170,7 +187,7 @@ pub const MP4_MEAN: &str = "com.apple.iTunes";
 pub const MUSICBRAINZ_UFID_OWNER: &str = "http://musicbrainz.org";
 
 impl TagField {
-    pub const ALL: [TagField; 56] = [
+    pub const ALL: [TagField; 61] = [
         TagField::Title,
         TagField::TitleSort,
         TagField::Artist,
@@ -227,6 +244,11 @@ impl TagField {
         TagField::EncodedBy,
         TagField::AcoustIdId,
         TagField::AcoustIdFingerprint,
+        TagField::Engineer,
+        TagField::Mixer,
+        TagField::DjMixer,
+        TagField::Writer,
+        TagField::Director,
     ];
 
     /// The managed-field name publish requests and documents use.
@@ -288,6 +310,11 @@ impl TagField {
             TagField::EncodedBy => "encoded_by",
             TagField::AcoustIdId => "acoustid_id",
             TagField::AcoustIdFingerprint => "acoustid_fingerprint",
+            TagField::Engineer => "engineer",
+            TagField::Mixer => "mixer",
+            TagField::DjMixer => "dj_mixer",
+            TagField::Writer => "writer",
+            TagField::Director => "director",
         }
     }
 
@@ -409,6 +436,11 @@ impl TagField {
             TagField::EncodedBy => &["ENCODEDBY", "ENCODED-BY"],
             TagField::AcoustIdId => &["ACOUSTID_ID"],
             TagField::AcoustIdFingerprint => &["ACOUSTID_FINGERPRINT"],
+            TagField::Engineer => &["ENGINEER"],
+            TagField::Mixer => &["MIXER"],
+            TagField::DjMixer => &["DJMIXER"],
+            TagField::Writer => &["WRITER"],
+            TagField::Director => &["DIRECTOR"],
         }
     }
 
@@ -484,6 +516,14 @@ impl TagField {
             TagField::Arranger => Id3Target::People("TIPL", Role::Named("arranger")),
             TagField::Producer if v23 => Id3Target::People("IPLS", Role::Named("producer")),
             TagField::Producer => Id3Target::People("TIPL", Role::Named("producer")),
+            TagField::Engineer if v23 => Id3Target::People("IPLS", Role::Named("engineer")),
+            TagField::Engineer => Id3Target::People("TIPL", Role::Named("engineer")),
+            TagField::Mixer if v23 => Id3Target::People("IPLS", Role::Named("mix")),
+            TagField::Mixer => Id3Target::People("TIPL", Role::Named("mix")),
+            TagField::DjMixer if v23 => Id3Target::People("IPLS", Role::Named("DJ-mix")),
+            TagField::DjMixer => Id3Target::People("TIPL", Role::Named("DJ-mix")),
+            TagField::Writer => Id3Target::User("Writer"),
+            TagField::Director => Id3Target::User("DIRECTOR"),
             TagField::Comment => Id3Target::Comment,
             TagField::Copyright => Id3Target::Text("TCOP"),
             TagField::EncodedBy => Id3Target::Text("TENC"),
@@ -556,6 +596,11 @@ impl TagField {
             TagField::EncodedBy => Mp4Target::Text(*b"\xa9too"),
             TagField::AcoustIdId => Mp4Target::Freeform("Acoustid Id"),
             TagField::AcoustIdFingerprint => Mp4Target::Freeform("Acoustid Fingerprint"),
+            TagField::Engineer => Mp4Target::Freeform("ENGINEER"),
+            TagField::Mixer => Mp4Target::Freeform("MIXER"),
+            TagField::DjMixer => Mp4Target::Freeform("DJMIXER"),
+            TagField::Writer => Mp4Target::Freeform("writer"),
+            TagField::Director => Mp4Target::Text(*b"\xa9dir"),
             TagField::Performer | TagField::Arranger => return None,
         })
     }

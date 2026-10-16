@@ -1521,6 +1521,131 @@ fn older_baselines_keep_the_credit_tags() {
     }
 }
 
+/// A restore from a version 5 document, recorded before engineer, mixer,
+/// DJ-mixer, writer and director were fields, never removes their tags,
+/// whatever spelling the file holds: it listed their Vorbis, `TXXX` and
+/// MP4 tags as native items and their `TIPL` and `IPLS` pairs not at
+/// all. A native item a later run changed goes back to its value.
+#[test]
+fn version_5_baselines_keep_the_other_role_tags() {
+    use droppedneedle_library::publish::staging;
+    let other_roles = [
+        TagField::Engineer,
+        TagField::Mixer,
+        TagField::DjMixer,
+        TagField::Writer,
+        TagField::Director,
+    ];
+    // Restores `path` from its document as the version 5 reader recorded
+    // it (`native` names the items it listed), after `later` was saved.
+    let restore = |path: &Path, native: &[(TagField, &str)], later: &[TagEdit]| {
+        let mut baseline = staging::document_from_file(path).unwrap();
+        for field in other_roles {
+            let values = baseline.managed.remove(field.name());
+            if let Some((_, key)) = native.iter().find(|(owned, _)| *owned == field) {
+                baseline
+                    .custom
+                    .insert((*key).to_owned(), values.expect("the file holds it"));
+            }
+        }
+        baseline.version = 5;
+        let mut edits = vec![TagEdit::set_title("Later")];
+        edits.extend_from_slice(later);
+        tags::save_tags(path, &edits).unwrap();
+        let current = staging::document_from_file(path).unwrap();
+        let name = path.file_name().unwrap().to_str().unwrap();
+        let updates = staging::restore_updates(&baseline, &current, name);
+        let edits = staging::check_managed_updates(&updates).unwrap();
+        tags::save_tags(path, &edits).unwrap();
+    };
+
+    // MP3 v2.4: TIPL engineer and mix pairs, and Picard's TXXX:Writer.
+    let (_scratch, mp3) = temp_copy("management_full.mp3", "v5-other-roles");
+    let audio = mp3_audio_tail(&std::fs::read(&mp3).unwrap()).to_vec();
+    let mut frames: Vec<(String, Vec<u8>)> = id3_frames(&mp3)
+        .1
+        .into_iter()
+        .filter(|(id, _)| id != "TIPL")
+        .collect();
+    frames.push((
+        "TIPL".to_owned(),
+        b"\x03producer\x00Example Producer\x00engineer\x00Eve Engineer\x00mix\x00Max Mixer\x00"
+            .to_vec(),
+    ));
+    frames.push(("TXXX".to_owned(), b"\x03Writer\x00Wanda Writer".to_vec()));
+    let refs: Vec<(&str, &[u8])> = frames
+        .iter()
+        .map(|(id, payload)| (id.as_str(), payload.as_slice()))
+        .collect();
+    let mut bytes = id3v24_raw(&refs);
+    bytes.extend_from_slice(&audio);
+    std::fs::write(&mp3, &bytes).unwrap();
+    let tipl = id3_people(&mp3, "TIPL");
+    restore(&mp3, &[(TagField::Writer, "id3:TXXX:Writer")], &[]);
+    assert_eq!(id3_people(&mp3, "TIPL"), tipl);
+    assert_eq!(id3_txxx_values(&mp3, "Writer"), texts(&["Wanda Writer"]));
+    assert_eq!(id3_text_values(&mp3, "TIT2"), texts(&["Management Track"]));
+
+    // Another tagger's TXXX:WRITER.
+    let (_scratch, upper) = temp_copy("management_full.mp3", "v5-other-roles-upper");
+    id3_inject_frames(&upper, &[("TXXX", b"\x03WRITER\x00Other Writer")]);
+    restore(&upper, &[(TagField::Writer, "id3:TXXX:WRITER")], &[]);
+    assert_eq!(id3_txxx_values(&upper, "WRITER"), texts(&["Other Writer"]));
+
+    // MP3 v2.3: IPLS engineer pairs beside a musician credit.
+    let ipls = latin1(&["engineer", "Eve Engineer", "guitar", "A"]);
+    let (_scratch, v23) = v23_file(
+        "v5-other-roles-v23",
+        &[("TIT2", b"\x00Old Title"), ("IPLS", &ipls)],
+    );
+    restore(&v23, &[], &[]);
+    assert_eq!(
+        id3_people(&v23, "IPLS"),
+        vec![pair("engineer", "Eve Engineer"), pair("guitar", "A")]
+    );
+
+    // FLAC: ENGINEER, which a later run changed, and WRITER.
+    let (_scratch, flac) = temp_copy("management_full.flac", "v5-other-roles");
+    flac_inject_pairs(
+        &flac,
+        &[("ENGINEER", "Eve Engineer"), ("WRITER", "Wanda Writer")],
+    );
+    restore(
+        &flac,
+        &[
+            (TagField::Engineer, "vorbis:ENGINEER"),
+            (TagField::Writer, "vorbis:WRITER"),
+        ],
+        &[TagEdit::new(TagField::Engineer, texts(&["Changed"]))],
+    );
+    assert_eq!(
+        vorbis_key_values(&flac, "ENGINEER"),
+        texts(&["Eve Engineer"])
+    );
+    assert_eq!(vorbis_key_values(&flac, "WRITER"), texts(&["Wanda Writer"]));
+
+    // M4A: ----:ENGINEER and ©dir.
+    let (_scratch, m4a) = temp_copy("management_full.m4a", "v5-other-roles");
+    tags::save_tags(
+        &m4a,
+        &[
+            TagEdit::new(TagField::Engineer, texts(&["Eve Engineer"])),
+            TagEdit::new(TagField::Director, texts(&["Dora Director"])),
+        ],
+    )
+    .unwrap();
+    restore(
+        &m4a,
+        &[
+            (TagField::Engineer, "mp4:----:ENGINEER"),
+            (TagField::Director, "mp4:\u{a9}dir"),
+        ],
+        &[],
+    );
+    assert_eq!(mp4_freeform(&m4a, "ENGINEER"), texts(&["Eve Engineer"]));
+    assert_eq!(mp4_text(&m4a, b"\xa9dir"), texts(&["Dora Director"]));
+}
+
 /// Values no new edit could carry (a `3/12` track number, a free-text
 /// date) are written back exactly when replayed verbatim.
 #[test]
@@ -1647,6 +1772,11 @@ fn picard_edits() -> Vec<TagEdit> {
         one(TagField::ReplayGainAlbumGain, "-7.01 dB"),
         one(TagField::ReplayGainAlbumPeak, "1.000000"),
         one(TagField::Lyrics, "First line\nSecond line"),
+        one(TagField::Engineer, "Eve Engineer"),
+        one(TagField::Mixer, "Max Mixer"),
+        one(TagField::DjMixer, "Dee Jay"),
+        one(TagField::Writer, "Wanda Writer"),
+        one(TagField::Director, "Dora Director"),
     ]
     .into_iter()
     .chain(credit_edits())
@@ -2183,7 +2313,7 @@ pub(crate) fn id3_txxx_values(path: &Path, description: &str) -> Vec<String> {
 }
 
 /// The role and name pairs of a `TIPL`, `TMCL` or `IPLS` frame.
-fn id3_people(path: &Path, id: &str) -> Vec<(String, String)> {
+pub(crate) fn id3_people(path: &Path, id: &str) -> Vec<(String, String)> {
     let frames: Vec<Vec<u8>> = id3_frames(path)
         .1
         .into_iter()
@@ -3051,6 +3181,220 @@ fn credit_edits_leave_neighbours_alone() {
         texts(&["opaque local value"])
     );
     assert_eq!(mp4_freeform(&m4a, "PRODUCER"), texts(&["New Producer"]));
+}
+
+/// Engineer, mixer, DJ-mixer, writer and director land in Picard's home
+/// for each format and read back as written; a later title edit leaves
+/// them, and the audio, as they were.
+#[test]
+fn other_role_fields_land_in_their_homes() {
+    let many = |field: TagField, values: &[&str]| TagEdit::new(field, texts(values));
+    let edits = vec![
+        many(TagField::Engineer, &["Eve Engineer", "Ed Engineer"]),
+        many(TagField::Mixer, &["Max Mixer"]),
+        many(TagField::DjMixer, &["Dee Jay"]),
+        many(TagField::Writer, &["Wanda Writer", "Will Writer"]),
+        many(TagField::Director, &["Dora Director"]),
+    ];
+    let read_back = |path: &Path| {
+        let fields = tags::read_fields(path).unwrap();
+        for edit in &edits {
+            assert_eq!(
+                fields.get(&edit.field),
+                Some(&edit.values),
+                "{}: {:?}",
+                path.display(),
+                edit.field
+            );
+        }
+    };
+    let people = |role_of: &dyn Fn(TagField) -> &'static str| {
+        let mut pairs = Vec::new();
+        for field in [TagField::Engineer, TagField::Mixer, TagField::DjMixer] {
+            for name in value_of(&edits, field) {
+                pairs.push((role_of(field).to_owned(), name));
+            }
+        }
+        pairs
+    };
+    let role_of = |field: TagField| match field {
+        TagField::Engineer => "engineer",
+        TagField::Mixer => "mix",
+        _ => "DJ-mix",
+    };
+
+    for name in ["management_full.flac", "management_full.ogg"] {
+        let (_scratch, path) = temp_copy(name, "other-roles-vorbis");
+        let check = |path: &Path| {
+            for (key, field) in [
+                ("ENGINEER", TagField::Engineer),
+                ("MIXER", TagField::Mixer),
+                ("DJMIXER", TagField::DjMixer),
+                ("WRITER", TagField::Writer),
+                ("DIRECTOR", TagField::Director),
+            ] {
+                assert_eq!(
+                    vorbis_key_values(path, key),
+                    value_of(&edits, field),
+                    "{name}: {key}"
+                );
+            }
+        };
+        credits_round_trip(&path, &edits, &check);
+        read_back(&path);
+    }
+
+    let (_scratch, mp3) = temp_copy("management_full.mp3", "other-roles-v24");
+    let check = |path: &Path| {
+        assert_eq!(id3_frames(path).0, 4);
+        let mut tipl = vec![pair("producer", "Example Producer")];
+        tipl.extend(people(&role_of));
+        assert_eq!(id3_people(path, "TIPL"), tipl);
+        assert_eq!(
+            id3_txxx_values(path, "Writer"),
+            value_of(&edits, TagField::Writer)
+        );
+        assert_eq!(
+            id3_txxx_values(path, "DIRECTOR"),
+            value_of(&edits, TagField::Director)
+        );
+    };
+    credits_round_trip(&mp3, &edits, &check);
+    read_back(&mp3);
+
+    // ID3v2.3: the pairs in IPLS, and writer as one "/"-joined value.
+    let (_scratch, v23) = pure_v23_copy("other-roles-v23");
+    let check = |path: &Path| {
+        assert_eq!(id3_frames(path).0, 3);
+        assert_eq!(id3_people(path, "IPLS"), people(&role_of));
+        assert_eq!(
+            id3_txxx_values(path, "Writer"),
+            texts(&["Wanda Writer/Will Writer"])
+        );
+        assert_eq!(
+            id3_txxx_values(path, "DIRECTOR"),
+            value_of(&edits, TagField::Director)
+        );
+    };
+    credits_round_trip(&v23, &edits, &check);
+
+    let (_scratch, m4a) = temp_copy("management_full.m4a", "other-roles-m4a");
+    let check = |path: &Path| {
+        for (name, field) in [
+            ("ENGINEER", TagField::Engineer),
+            ("MIXER", TagField::Mixer),
+            ("DJMIXER", TagField::DjMixer),
+            ("writer", TagField::Writer),
+        ] {
+            assert_eq!(mp4_freeform(path, name), value_of(&edits, field), "{name}");
+        }
+        assert_eq!(
+            mp4_text(path, b"\xa9dir"),
+            value_of(&edits, TagField::Director)
+        );
+    };
+    credits_round_trip(&m4a, &edits, &check);
+    read_back(&m4a);
+}
+
+/// An engineer edit replaces only the engineer pairs: a `mastering`
+/// pair, a producer, v2.3 musician credits and an unknown `TXXX` stay as
+/// they were, and so does the audio. A writer edit updates another
+/// tagger's `TXXX:WRITER` in place, as one frame.
+#[test]
+fn other_role_edits_leave_neighbours_alone() {
+    let engineer = TagEdit::new(TagField::Engineer, texts(&["New Engineer"]));
+    let writer = TagEdit::new(TagField::Writer, texts(&["New Writer"]));
+
+    let (_scratch, mp3) = temp_copy("management_full.mp3", "other-roles-neighbours");
+    let audio = mp3_audio_tail(&std::fs::read(&mp3).unwrap()).to_vec();
+    let mut frames: Vec<(String, Vec<u8>)> = id3_frames(&mp3)
+        .1
+        .into_iter()
+        .filter(|(id, _)| id != "TIPL")
+        .collect();
+    frames.push((
+        "TIPL".to_owned(),
+        b"\x03mastering\x00Mo Master\x00engineer\x00Old Engineer\x00producer\x00Example Producer\x00"
+            .to_vec(),
+    ));
+    frames.push(("TXXX".to_owned(), b"\x03ZZZ_UNHEARD_OF\x00mystery".to_vec()));
+    frames.push(("TXXX".to_owned(), b"\x03WRITER\x00Old Writer".to_vec()));
+    let refs: Vec<(&str, &[u8])> = frames
+        .iter()
+        .map(|(id, payload)| (id.as_str(), payload.as_slice()))
+        .collect();
+    let mut bytes = id3v24_raw(&refs);
+    bytes.extend_from_slice(&audio);
+    std::fs::write(&mp3, &bytes).unwrap();
+    let writer_frames = |path: &Path| -> Vec<Vec<String>> {
+        id3_frames(path)
+            .1
+            .iter()
+            .filter(|(id, _)| id == "TXXX")
+            .map(|(_, payload)| id3_strings(payload))
+            .filter(|strings| strings[0].eq_ignore_ascii_case("writer"))
+            .collect()
+    };
+    let untouched = |path: &Path| {
+        let mut frames: Vec<(String, Vec<String>)> = id3_frames(path)
+            .1
+            .into_iter()
+            .filter(|(id, payload)| {
+                id != "TIPL"
+                    && !(id == "TXXX" && id3_strings(payload)[0].eq_ignore_ascii_case("writer"))
+            })
+            .map(|(id, payload)| {
+                let decoded = if id.starts_with('T') {
+                    id3_strings(&payload)
+                } else {
+                    vec![format!("{payload:?}")]
+                };
+                (id, decoded)
+            })
+            .collect();
+        frames.sort();
+        frames
+    };
+    let before = untouched(&mp3);
+    tags::save_tags(&mp3, &[engineer.clone(), writer]).unwrap();
+    assert_eq!(
+        id3_people(&mp3, "TIPL"),
+        vec![
+            pair("mastering", "Mo Master"),
+            pair("engineer", "New Engineer"),
+            pair("producer", "Example Producer"),
+        ]
+    );
+    assert_eq!(writer_frames(&mp3), vec![texts(&["WRITER", "New Writer"])]);
+    assert_eq!(id3_txxx_values(&mp3, "ZZZ_UNHEARD_OF"), texts(&["mystery"]));
+    assert_eq!(untouched(&mp3), before);
+    assert_eq!(audio_bytes(&mp3), audio);
+
+    let ipls = latin1(&[
+        "guitar",
+        "A",
+        "engineer",
+        "Old Engineer",
+        "lead vocals",
+        "B",
+    ]);
+    let (_scratch, v23) = v23_file(
+        "other-roles-neighbours-v23",
+        &[("TIT2", b"\x00Title"), ("IPLS", &ipls)],
+    );
+    let audio = audio_bytes(&v23);
+    tags::save_tags(&v23, std::slice::from_ref(&engineer)).unwrap();
+    assert_eq!(
+        id3_people(&v23, "IPLS"),
+        vec![
+            pair("guitar", "A"),
+            pair("engineer", "New Engineer"),
+            pair("lead vocals", "B"),
+        ]
+    );
+    assert_eq!(id3_frames(&v23).0, 3);
+    assert_eq!(audio_bytes(&v23), audio);
 }
 
 /// An undo recorded before these fields existed names their tags as

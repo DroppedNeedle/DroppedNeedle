@@ -40,8 +40,9 @@ pub struct TagDocument {
     /// held (and its opaque fields); older documents held a subset, so
     /// a restore never infers from them that a field was absent. Version
     /// 3 adds ISRC, version 4 adds ReplayGain, lyrics, pictures and
-    /// native custom items, and version 5 the credit, work and AcoustID
-    /// fields (see [`recorded_since`]).
+    /// native custom items, version 5 the credit, work and AcoustID
+    /// fields, and version 6 engineer, mixer, DJ-mixer, writer and
+    /// director (see [`recorded_since`]).
     #[serde(default)]
     pub version: u32,
     /// The embedded pictures, in file order, by the hash of their bytes
@@ -132,7 +133,7 @@ impl PictureRef {
 pub const PICTURES_KEY: &str = "pictures";
 
 /// The current [`TagDocument`] shape.
-pub const TAG_DOCUMENT_VERSION: u32 = 5;
+pub const TAG_DOCUMENT_VERSION: u32 = 6;
 
 /// The first shape that records every writable field it knew of.
 pub const FULL_FIELDS_VERSION: u32 = 2;
@@ -166,6 +167,11 @@ pub fn recorded_since(field: crate::tags::fields::TagField) -> u32 {
         | TagField::EncodedBy
         | TagField::AcoustIdId
         | TagField::AcoustIdFingerprint => CREDIT_FIELDS_VERSION,
+        TagField::Engineer
+        | TagField::Mixer
+        | TagField::DjMixer
+        | TagField::Writer
+        | TagField::Director => OTHER_ROLES_VERSION,
         _ => FULL_FIELDS_VERSION,
     }
 }
@@ -180,6 +186,12 @@ pub const RICH_FIELDS_VERSION: u32 = 4;
 /// them as native items and some not at all, so a restore from one
 /// leaves these fields as the file holds them.
 pub const CREDIT_FIELDS_VERSION: u32 = 5;
+
+/// The first shape that records engineer, mixer, DJ-mixer, writer and
+/// director. Older documents held their Vorbis, `TXXX` and MP4 tags as
+/// native items and their `TIPL` pairs not at all, so a restore from one
+/// leaves these fields as the file holds them.
+pub const OTHER_ROLES_VERSION: u32 = 6;
 
 impl TagDocument {
     /// Empty document.

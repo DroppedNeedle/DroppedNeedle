@@ -236,12 +236,71 @@ pub fn complete_fields(settings: &mut LibraryManagement) -> bool {
     true
 }
 
+/// The fields every profile lists once each field has its own entry,
+/// frozen as they were then. A profile missing one of them was saved
+/// before that; one missing only a field added later was not.
+const FIELDS_WITH_OWN_ENTRIES: [&str; 50] = [
+    "title",
+    "title_sort",
+    "album",
+    "album_sort",
+    "artist",
+    "artists",
+    "artist_sort",
+    "album_artist",
+    "album_artists",
+    "album_artist_sort",
+    "track_number",
+    "total_tracks",
+    "disc_number",
+    "total_discs",
+    "disc_subtitle",
+    "date",
+    "original_date",
+    "release_status",
+    "release_country",
+    "release_type",
+    "compilation",
+    "asin",
+    "media",
+    "label",
+    "catalog_number",
+    "barcode",
+    "isrc",
+    "musicbrainz_recording_id",
+    "musicbrainz_release_track_id",
+    "musicbrainz_release_id",
+    "musicbrainz_release_group_id",
+    "musicbrainz_artist_id",
+    "musicbrainz_album_artist_id",
+    "work",
+    "musicbrainz_work_id",
+    "movement",
+    "movement_number",
+    "movement_count",
+    "composer",
+    "lyricist",
+    "conductor",
+    "performer",
+    "arranger",
+    "remixer",
+    "producer",
+    "comment",
+    "copyright",
+    "encoded_by",
+    "acoustid_id",
+    "acoustid_fingerprint",
+];
+
 /// Complete one profile's field list and preserved fields:
 ///
 /// - alias spellings fold onto their field, with the strongest mode of
 ///   the entries (clear when any replace entry cleared);
 /// - `genre` and `publisher` entries, which never wrote anything, go;
 /// - a field once written under another entry takes that entry's mode;
+/// - a missing "Other roles" field (engineer, mixer and the rest) is
+///   added as replace when the profile's Relationships write Other, so
+///   ticking Other keeps meaning what it says;
 /// - every other missing field is added as off;
 /// - a preserved parent also preserves the fields that just took its
 ///   mode, which it used to cover.
@@ -252,14 +311,16 @@ fn complete_profile(profile: &mut LibraryManagementProfile) -> bool {
     );
     // A profile saved before every field had its own entry. Its clear on
     // a field with no source never removed anything, and its merge on
-    // comment wrote nothing; neither starts doing so now.
-    let stored_shape = MANAGED_FIELDS.iter().any(|spec| {
+    // comment wrote nothing; neither starts doing so now. Fields added
+    // since then never make a profile read as that shape.
+    let stored_shape = FIELDS_WITH_OWN_ENTRIES.iter().any(|name| {
         !profile
             .metadata
             .fields
             .iter()
-            .any(|field| field.field == spec.name)
+            .any(|field| field.field == *name)
     });
+    let other_roles = crate::management::enrich::other_roles(profile);
     let mut fields: Vec<ManagedField> = Vec::new();
     for entry in std::mem::take(&mut profile.metadata.fields) {
         if matches!(entry.field.as_str(), "genre" | "publisher") {
@@ -320,9 +381,14 @@ fn complete_profile(profile: &mut LibraryManagementProfile) -> bool {
     }
     for spec in MANAGED_FIELDS {
         if !fields.iter().any(|field| field.field == spec.name) {
+            let writes = other_roles && crate::management::enrich::other_role_field(spec.name);
             fields.push(ManagedField {
                 field: spec.name.to_owned(),
-                mode: FieldMode::Disabled,
+                mode: if writes {
+                    FieldMode::Replace
+                } else {
+                    FieldMode::Disabled
+                },
                 clear_when_canonical_missing: false,
             });
         }

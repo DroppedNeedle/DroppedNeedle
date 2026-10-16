@@ -1987,7 +1987,14 @@ const MOVED_FIELDS: &[(TagField, &str)] = &[
 ];
 
 /// The credits read from people frames, checked pair by pair instead.
-const PEOPLE_FIELDS: &[TagField] = &[TagField::Performer, TagField::Arranger, TagField::Producer];
+const PEOPLE_FIELDS: &[TagField] = &[
+    TagField::Performer,
+    TagField::Arranger,
+    TagField::Producer,
+    TagField::Engineer,
+    TagField::Mixer,
+    TagField::DjMixer,
+];
 
 fn is_mixed_v23(tag: &DeepId3) -> bool {
     tag.major == 3

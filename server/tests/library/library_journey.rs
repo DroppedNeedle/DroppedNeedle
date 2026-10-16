@@ -5313,11 +5313,14 @@ async fn library_management_tools_journey() {
     // No MusicBrainz credits are scripted here, so the profile writes none.
     let mut settings = lm::initial_settings("");
     for profile in &mut settings.profiles {
-        profile.metadata.fields.retain(|field| {
-            !droppedneedle_library::management::enrich::CREDIT_FIELDS
+        for field in &mut profile.metadata.fields {
+            if droppedneedle_library::management::enrich::CREDIT_FIELDS
                 .iter()
                 .any(|(name, _)| *name == field.field)
-        });
+            {
+                field.mode = droppedneedle_kernel::runtime_config::sections::FieldMode::Disabled;
+            }
+        }
     }
     library.config.save(settings).expect("settings saved");
     // The settings page reads them first, which stores them normalized.
@@ -7755,11 +7758,15 @@ async fn a_replaced_picture_counts_only_where_pictures_are_managed() {
         let managed = ManagedLibrary::start(tag, |profile| {
             profile.artwork.embedded_enabled = artwork;
             // No credits are scripted here.
-            profile.metadata.fields.retain(|field| {
-                !droppedneedle_library::management::enrich::CREDIT_FIELDS
+            for field in &mut profile.metadata.fields {
+                if droppedneedle_library::management::enrich::CREDIT_FIELDS
                     .iter()
                     .any(|(name, _)| *name == field.field)
-            });
+                {
+                    field.mode =
+                        droppedneedle_kernel::runtime_config::sections::FieldMode::Disabled;
+                }
+            }
         })
         .await;
         assert!(
@@ -12689,11 +12696,45 @@ fn probe_credits(
     fixture: &str,
     track_id: &str,
 ) -> droppedneedle_library::matching::model::RecordingRelations {
+    retyped_credits(fixture, track_id, &[])
+}
+
+/// [`probe_credits`] with the relationships listed as `(artist, recorded
+/// type, new type)` retyped in the JSON first: a type the recordings
+/// lack, made from a recorded shape.
+fn retyped_credits(
+    fixture: &str,
+    track_id: &str,
+    retype: &[(&str, &str, &str)],
+) -> droppedneedle_library::matching::model::RecordingRelations {
+    fn retype_in(value: &mut Value, retype: &[(&str, &str, &str)]) {
+        match value {
+            Value::Object(map) => {
+                let artist = map
+                    .get("artist")
+                    .and_then(|artist| artist.get("name"))
+                    .and_then(Value::as_str);
+                let kind = map.get("type").and_then(Value::as_str);
+                if let Some((_, _, to)) = retype
+                    .iter()
+                    .find(|(name, from, _)| Some(*name) == artist && Some(*from) == kind)
+                {
+                    map.insert("type".to_owned(), Value::from(*to));
+                }
+                map.values_mut().for_each(|child| retype_in(child, retype));
+            }
+            Value::Array(items) => items.iter_mut().for_each(|item| retype_in(item, retype)),
+            _ => {}
+        }
+    }
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/musicbrainz")
         .join(fixture);
+    let mut value: Value =
+        serde_json::from_slice(&std::fs::read(path).expect("probe reads")).expect("probe parses");
+    retype_in(&mut value, retype);
     let wire: droppedneedle_providers::musicbrainz::MbRelease =
-        serde_json::from_slice(&std::fs::read(path).expect("probe reads")).expect("probe decodes");
+        serde_json::from_value(value).expect("probe decodes");
     droppedneedle_library::identify::sources::relations_from_wire(&wire, 0)
         .tracks
         .remove(track_id)
@@ -12714,6 +12755,19 @@ fn remix_credits() -> droppedneedle_library::matching::model::RecordingRelations
     probe_credits(
         "release_relations_pop.json",
         "aa235c36-5662-3709-ab97-06a1b4757d7e",
+    )
+}
+
+/// A remix of "Telephone" (remixer, the work's writers), its two vocals
+/// retyped to an engineer and a mix credit.
+fn engineered_credits() -> droppedneedle_library::matching::model::RecordingRelations {
+    retyped_credits(
+        "release_relations_pop.json",
+        "bb546d4a-8eb4-3fec-b554-667a448ff053",
+        &[
+            ("Beyoncé", "vocal", "engineer"),
+            ("Lady Gaga", "vocal", "mix"),
+        ],
     )
 }
 
@@ -12744,12 +12798,14 @@ impl ManagedLibrary {
 }
 
 /// The Picard profile writes MusicBrainz credits in every format's home
-/// from a recorded answer: composer, performer with the instrument,
-/// producer, work and work id. M4A says it cannot hold a performer. The
-/// credits are fetched once and kept on the stored edition: a second
-/// plan asks MusicBrainz nothing.
+/// from a recorded answer: composer, performer with the instrument (and
+/// the performing orchestra), producer, work and work id, and the other
+/// roles: engineer, mixer and writer. M4A says it cannot hold a
+/// performer. The credits are fetched once and kept on the stored
+/// edition: a second plan asks MusicBrainz nothing and changes nothing.
 #[tokio::test]
 async fn the_picard_profile_writes_musicbrainz_credits() {
+    use crate::library_tags::{id3_people, id3_txxx_values, mp4_freeform, vorbis_key_values};
     use droppedneedle_library::management::enrich::ScriptedEnrichment;
     use droppedneedle_library::management::models::SelectionKind;
     use droppedneedle_library::tags::{TagField, read_fields};
@@ -12764,15 +12820,19 @@ async fn the_picard_profile_writes_musicbrainz_credits() {
         v23.as_str(),
         "management_full.m4a",
     ];
-    let fixtures: Vec<&str> = formats.iter().chain(formats.iter()).copied().collect();
+    let fixtures: Vec<&str> = formats
+        .iter()
+        .chain(formats.iter())
+        .chain(formats.iter())
+        .copied()
+        .collect();
     let (album, tracks) = managed.add_album_from("credits", &fixtures, |_| {}).await;
-    *scripted.relations.lock().expect("script") = Some(managed.scripted_credits(&tracks, |n| {
-        if n < 4 {
-            concerto_credits()
-        } else {
-            remix_credits()
-        }
-    }));
+    *scripted.relations.lock().expect("script") =
+        Some(managed.scripted_credits(&tracks, |n| match n {
+            0..4 => concerto_credits(),
+            4..8 => remix_credits(),
+            _ => engineered_credits(),
+        }));
 
     let (handle, items) = managed
         .preview(SelectionKind::Albums, &[&album], "credits")
@@ -12828,9 +12888,19 @@ async fn the_picard_profile_writes_musicbrainz_credits() {
             let performer = if m4a {
                 vec![]
             } else {
-                owned(&["Glenn Gould (piano)"])
+                owned(&["Glenn Gould (piano)", "Berliner Philharmoniker (orchestra)"])
             };
             assert_eq!(get(TagField::Performer), performer, "{name}");
+            let musicians = vec![
+                ("piano".to_owned(), "Glenn Gould".to_owned()),
+                ("orchestra".to_owned(), "Berliner Philharmoniker".to_owned()),
+            ];
+            match index {
+                0 => assert_eq!(vorbis_key_values(&file, "PERFORMER"), performer),
+                1 => assert_eq!(id3_people(&file, "TMCL"), musicians),
+                2 => assert_eq!(id3_people(&file, "IPLS"), musicians),
+                _ => {}
+            }
             assert_eq!(
                 get(TagField::Work),
                 owned(&[
@@ -12843,7 +12913,7 @@ async fn the_picard_profile_writes_musicbrainz_credits() {
                 owned(&["d6843235-961a-37ab-85a4-a0e7e027f752"]),
                 "{name}"
             );
-        } else {
+        } else if index < 8 {
             // ID3v2.3 holds several names in one frame, joined by "/".
             assert_eq!(
                 get(TagField::Producer).join("/"),
@@ -12861,25 +12931,61 @@ async fn the_picard_profile_writes_musicbrainz_credits() {
                 "{name}"
             );
             assert_eq!(get(TagField::Work), owned(&["Alejandro"]), "{name}");
+        } else {
+            // "Release credits" style writes the work's writers as
+            // credited there.
+            let writers = [
+                "Beyoncé Knowles",
+                "LaShawn Daniels",
+                "Lazonate Franklin",
+                "Rodney Jerkins",
+                "Lady Gaga",
+            ];
+            let (engineer, mixer) = ("Beyoncé", "Lady Gaga");
+            match index {
+                8 => {
+                    assert_eq!(vorbis_key_values(&file, "ENGINEER"), owned(&[engineer]));
+                    assert_eq!(vorbis_key_values(&file, "MIXER"), owned(&[mixer]));
+                    assert_eq!(vorbis_key_values(&file, "WRITER"), owned(&writers));
+                }
+                9 | 10 => {
+                    let (frame, writer) = if index == 9 {
+                        ("TIPL", owned(&writers))
+                    } else {
+                        ("IPLS", vec![writers.join("/")])
+                    };
+                    let pairs = id3_people(&file, frame);
+                    for pair in [("engineer", engineer), ("mix", mixer)] {
+                        assert!(
+                            pairs.contains(&(pair.0.to_owned(), pair.1.to_owned())),
+                            "{name}: {pairs:?}"
+                        );
+                    }
+                    assert_eq!(id3_txxx_values(&file, "Writer"), writer, "{name}");
+                }
+                _ => {
+                    assert_eq!(mp4_freeform(&file, "ENGINEER"), owned(&[engineer]));
+                    assert_eq!(mp4_freeform(&file, "MIXER"), owned(&[mixer]));
+                    assert_eq!(mp4_freeform(&file, "writer"), owned(&writers));
+                }
+            }
+            assert_eq!(get(TagField::Performer), owned(&[]), "{name}");
         }
     }
 
     // The credits are on the stored edition now; a second plan asks
-    // nothing.
+    // nothing and finds nothing to change. ID3v2.3 holds several names
+    // as one "/"-joined value; read back that way, it is no change.
     let (_, again) = managed
         .preview(SelectionKind::Albums, &[&album], "credits-again")
         .await;
     assert_eq!(scripted.lookups.lock().expect("calls").len(), 1);
-    // ID3v2.3 holds several names as one "/"-joined value; read back that
-    // way, it is no change.
-    for index in [2, 6] {
-        let item = again
-            .iter()
-            .find(|item| item.track_id.as_deref() == Some(tracks[index].as_str()))
-            .expect("the v2.3 file is planned");
+    assert_eq!(again.len(), tracks.len());
+    for item in &again {
         assert!(
             item.diff.field_mutations.is_empty(),
-            "{:?}",
+            "{:?}: {:?}",
+            item.track_id,
             item.diff.field_mutations
         );
     }

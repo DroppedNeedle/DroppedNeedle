@@ -222,6 +222,11 @@ fn target(name: &str) -> Option<TagField> {
         "arranger" => Arranger,
         "remixer" => Remixer,
         "producer" => Producer,
+        "engineer" => Engineer,
+        "mixer" => Mixer,
+        "dj_mixer" => DjMixer,
+        "writer" => Writer,
+        "director" => Director,
         "movement" => Movement,
         "movement_number" => MovementNumber,
         "movement_count" => MovementCount,
@@ -487,8 +492,18 @@ pub fn plan_tags(
             release.track_relations(track)
         };
         if let Some(relations) = relations {
-            canonical.extend(picard::credit_tags(relations, &naming));
+            canonical.extend(picard::credit_tags(
+                relations,
+                &naming,
+                super::enrich::other_roles(profile),
+            ));
         }
+        // Credits stored before the "Other roles" were fetched (used when
+        // their refetch failed) do not say the track has none.
+        let other_roles_fetched = release
+            .recording_relations
+            .as_ref()
+            .is_some_and(|stored| stored.version >= super::enrich::OTHER_ROLES_RELATIONS_VERSION);
         // AcoustID values come from the file's audio. These fields never
         // clear, so a value not worked out leaves the file's alone.
         if let Some(found) = file_extras {
@@ -542,6 +557,9 @@ pub fn plan_tags(
                 if relations.is_none() {
                     credits_missing |= extras.credits != super::enrich::Credits::NotAsked
                         && !matches!(managed.mode, FieldMode::Disabled | FieldMode::Preserve);
+                    continue;
+                }
+                if !other_roles_fetched && super::enrich::other_role_field(&managed.field) {
                     continue;
                 }
                 // A medley's work has no one title: the file keeps its own.
@@ -1220,10 +1238,47 @@ mod tests {
     /// The classical probe: Gould and Karajan's Beethoven concerto, then
     /// Sibelius and a spoken track that performs no work.
     fn classical() -> (Release, ReleaseRelations) {
-        let wire: droppedneedle_providers::musicbrainz::MbRelease = serde_json::from_str(
-            include_str!("../../../tests/fixtures/musicbrainz/release_relations_classical.json"),
-        )
-        .expect("probe decodes");
+        recorded("release_relations_classical.json", &[])
+    }
+
+    /// Relationships to retype, each `(artist, recorded type, new type)`.
+    type Retype = [(&'static str, &'static str, &'static str)];
+
+    /// A recorded relations answer as planning sees it, with the
+    /// relationships in `retype` retyped in the JSON first: the types the
+    /// recordings lack, made from recorded shapes.
+    fn recorded(fixture: &str, retype: &Retype) -> (Release, ReleaseRelations) {
+        fn retype_in(value: &mut serde_json::Value, retype: &Retype) {
+            match value {
+                serde_json::Value::Object(map) => {
+                    let artist = map
+                        .get("artist")
+                        .and_then(|artist| artist.get("name"))
+                        .and_then(serde_json::Value::as_str);
+                    let kind = map.get("type").and_then(serde_json::Value::as_str);
+                    if let Some((_, _, to)) = retype
+                        .iter()
+                        .find(|(name, from, _)| Some(*name) == artist && Some(*from) == kind)
+                    {
+                        map.insert("type".to_owned(), serde_json::Value::from(*to));
+                    }
+                    map.values_mut().for_each(|child| retype_in(child, retype));
+                }
+                serde_json::Value::Array(items) => {
+                    items.iter_mut().for_each(|item| retype_in(item, retype));
+                }
+                _ => {}
+            }
+        }
+        let path = format!(
+            "{}/../tests/fixtures/musicbrainz/{fixture}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).expect("probe reads")).expect("parses");
+        retype_in(&mut value, retype);
+        let wire: droppedneedle_providers::musicbrainz::MbRelease =
+            serde_json::from_value(value).expect("probe decodes");
         let relations = crate::identify::sources::relations_from_wire(&wire, 1);
         let tracks = wire.media[0]
             .tracks
@@ -1280,6 +1335,11 @@ mod tests {
             "arranger",
             "remixer",
             "producer",
+            "engineer",
+            "mixer",
+            "dj_mixer",
+            "writer",
+            "director",
             "work",
             "musicbrainz_work_id",
         ]
@@ -1349,7 +1409,10 @@ mod tests {
         let plan = plan_credits(&pinned, &release, 0, &ready).expect("planned");
         assert_eq!(value(&plan, "composer"), owned(&["Ludwig van Beethoven"]));
         assert_eq!(value(&plan, "conductor"), owned(&["Herbert von Karajan"]));
-        assert_eq!(value(&plan, "performer"), owned(&["Glenn Gould (piano)"]));
+        assert_eq!(
+            value(&plan, "performer"),
+            owned(&["Glenn Gould (piano)", "Berliner Philharmoniker (orchestra)"])
+        );
         assert_eq!(
             value(&plan, "work"),
             owned(&[
@@ -1452,6 +1515,183 @@ mod tests {
         }
         let plan = plan_credits(&pinned, &release, 2, &ready).expect("planned");
         assert_eq!(value(&plan, "composer"), old("composer"));
+    }
+
+    /// Picard 2.13.3's other relationship types (`_ARTIST_REL_TYPES`), on
+    /// the recorded answers and on recorded relationships retyped to the
+    /// types they lack. With "Other roles" off, every track plans what the
+    /// main roles alone gave. With it on, engineer, mixer, DJ-mixer,
+    /// writer and director are written, and a folded type only under a
+    /// main role that is ticked too. Credits stored before these roles
+    /// were fetched leave the five as the file has them.
+    #[test]
+    fn other_roles_follow_picard() {
+        use droppedneedle_kernel::runtime_config::sections::RelationshipCreditSettings;
+        /// The types parsed before "Other roles".
+        const MAIN_TYPES: [&str; 9] = [
+            "arranger",
+            "composer",
+            "conductor",
+            "instrument",
+            "performer",
+            "vocal",
+            "lyricist",
+            "producer",
+            "remixer",
+        ];
+        fn without(kind: RelationshipType) -> impl Fn(&mut RelationshipCreditSettings) {
+            move |relationships| relationships.types.retain(|held| *held != kind)
+        }
+        let main_only = |relations: &ReleaseRelations| {
+            let mut kept = relations.clone();
+            for track in kept.tracks.values_mut() {
+                track
+                    .credits
+                    .retain(|credit| MAIN_TYPES.contains(&credit.relation_type.as_str()));
+            }
+            kept
+        };
+        let ready = AlbumExtras {
+            credits: Credits::Ready,
+            ..AlbumExtras::default()
+        };
+        let desired = |pinned: &PinnedProfile, release: &Release, index: usize| {
+            plan_credits(pinned, release, index, &ready)
+                .expect("planned")
+                .desired
+        };
+        let get = |desired: &BTreeMap<String, Vec<String>>, name: &str| {
+            desired.get(name).cloned().unwrap_or_default()
+        };
+        let owned = |values: &[&str]| values.iter().map(|v| (*v).to_owned()).collect::<Vec<_>>();
+        let none = Vec::<String>::new();
+        let old = |name: &str| vec![format!("Old {name}")];
+        let grafted = |(mut release, relations): (Release, ReleaseRelations)| {
+            release.graft_relations(&relations);
+            (release, relations)
+        };
+
+        let classical = "release_relations_classical.json";
+        let pop = "release_relations_pop.json";
+        let (karajan, gould, berlin, beethoven) = (
+            "Herbert von Karajan",
+            "Glenn Gould",
+            "Berliner Philharmoniker",
+            "Ludwig van Beethoven",
+        );
+        let engineer_mix_librettist = [
+            (karajan, "conductor", "engineer"),
+            (gould, "instrument", "mix-DJ"),
+            (berlin, "performing orchestra", "mix"),
+            (beethoven, "composer", "librettist"),
+        ];
+        let dj_director_folded = [
+            (karajan, "conductor", "mix-DJ"),
+            (berlin, "performing orchestra", "audio director"),
+            (gould, "instrument", "orchestrator"),
+            (beethoven, "composer", "chorus master"),
+        ];
+        let unmapped = [
+            (karajan, "conductor", "mastering"),
+            (berlin, "performing orchestra", "recording"),
+        ];
+        let variants: [(&str, &Retype); 5] = [
+            (classical, &[]),
+            (pop, &[]),
+            (classical, &engineer_mix_librettist),
+            (classical, &dj_director_folded),
+            (classical, &unmapped),
+        ];
+
+        // Other off: exactly what the main roles alone plan, every track.
+        let off = credit_profile(true, without(RelationshipType::Other));
+        for (fixture, retype) in variants {
+            let (release, relations) = grafted(recorded(fixture, retype));
+            let mut today = release.clone();
+            today.graft_relations(&main_only(&relations));
+            for index in 0..release.tracks.len() {
+                assert_eq!(
+                    desired(&off, &release, index),
+                    desired(&off, &today, index),
+                    "{fixture} {retype:?} track {index}"
+                );
+            }
+        }
+
+        let on = credit_profile(true, |_| {});
+        let (release, _) = grafted(recorded(classical, &[]));
+        assert_eq!(
+            get(&desired(&on, &release, 0), "performer"),
+            owned(&["Glenn Gould (piano)", "Berliner Philharmoniker (orchestra)"])
+        );
+        let no_performer = credit_profile(true, without(RelationshipType::Performer));
+        assert_eq!(
+            get(&desired(&no_performer, &release, 0), "performer"),
+            old("performer")
+        );
+        let (release, _) = grafted(recorded(pop, &[]));
+        let bad_romance = release
+            .tracks
+            .iter()
+            .position(|track| track.id == "9ab08ef5-1ed9-3175-bcf4-aa232008a5f2")
+            .expect("Bad Romance");
+        assert_eq!(
+            get(&desired(&on, &release, bad_romance), "writer"),
+            owned(&["Stefani Germanotta", "Nadir Khayat"])
+        );
+
+        let (release, _) = grafted(recorded(classical, &engineer_mix_librettist));
+        let planned = desired(&on, &release, 0);
+        assert_eq!(get(&planned, "engineer"), owned(&[karajan]));
+        assert_eq!(get(&planned, "mixer"), owned(&[berlin]));
+        assert_eq!(get(&planned, "dj_mixer"), none, "a DJ-mix with attributes");
+        assert_eq!(get(&planned, "lyricist"), owned(&[beethoven]));
+        let no_lyricist = credit_profile(true, without(RelationshipType::Lyricist));
+        assert_eq!(
+            get(&desired(&no_lyricist, &release, 0), "lyricist"),
+            old("lyricist")
+        );
+
+        let (release, _) = grafted(recorded(classical, &dj_director_folded));
+        let planned = desired(&on, &release, 0);
+        assert_eq!(get(&planned, "dj_mixer"), owned(&[karajan]));
+        assert_eq!(get(&planned, "director"), owned(&[berlin]));
+        assert_eq!(get(&planned, "arranger"), owned(&[gould]));
+        assert_eq!(
+            get(&planned, "performer"),
+            owned(&["Ludwig van Beethoven (chorus master)"])
+        );
+        let no_arranger = credit_profile(true, without(RelationshipType::Arranger));
+        assert_eq!(
+            get(&desired(&no_arranger, &release, 0), "arranger"),
+            old("arranger")
+        );
+
+        let (release, _) = grafted(recorded(classical, &unmapped));
+        let planned = desired(&on, &release, 0);
+        for name in [
+            "engineer",
+            "mixer",
+            "dj_mixer",
+            "writer",
+            "director",
+            "conductor",
+        ] {
+            assert_eq!(get(&planned, name), none, "{name}");
+        }
+        assert_eq!(get(&planned, "performer"), owned(&["Glenn Gould (piano)"]));
+
+        // Credits stored before these roles were fetched (a failed
+        // refetch): the five keep the file's values, clear or not.
+        let (mut release, relations) = recorded(classical, &engineer_mix_librettist);
+        let mut stored = main_only(&relations);
+        stored.version = 1;
+        release.graft_relations(&stored);
+        let planned = desired(&on, &release, 0);
+        for name in ["engineer", "mixer", "dj_mixer", "writer", "director"] {
+            assert_eq!(get(&planned, name), old(name), "{name}");
+        }
+        assert_eq!(get(&planned, "performer"), none);
     }
 
     /// ID3v2.3 holds several values as one "/"-joined value. Planned in

@@ -61,6 +61,11 @@ const LIST_FIELDS: &[TagField] = &[
     TagField::Arranger,
     TagField::Remixer,
     TagField::Producer,
+    TagField::Engineer,
+    TagField::Mixer,
+    TagField::DjMixer,
+    TagField::Writer,
+    TagField::Director,
 ];
 
 /// `album` or `track`.

@@ -525,17 +525,31 @@ pub const RELATION_INCLUDES: [&str; 5] = [
     "work-rels",
 ];
 
-/// The tag role a MusicBrainz artist relationship credits (v2's
-/// `_RELATIONSHIP_ROLE`); other types write no tag.
+/// The tag role a MusicBrainz artist relationship credits: Picard
+/// 2.13.3's `_ARTIST_REL_TYPES` (`picard/mbjson.py:48-73`) plus v2's
+/// `performer` and `vocal`. `mastering` and `recording` stay unmapped, as
+/// in Picard; other types write no tag. A folded type (librettist,
+/// orchestrator, chorus master and the rest) takes the main role it is
+/// written under and keeps its own type in [`RoleCredit::relation_type`].
 fn credit_role(relation_type: &str) -> Option<&'static str> {
     Some(match relation_type {
-        "arranger" => "arranger",
+        "arranger" | "orchestrator" | "instrument arranger" | "vocal arranger" => "arranger",
         "composer" => "composer",
         "conductor" => "conductor",
-        "instrument" | "performer" | "vocal" => "performer",
-        "lyricist" => "lyricist",
+        "instrument"
+        | "performer"
+        | "vocal"
+        | "chorus master"
+        | "concertmaster"
+        | "performing orchestra" => "performer",
+        "lyricist" | "librettist" => "lyricist",
         "producer" => "producer",
         "remixer" => "remixer",
+        "audio" | "engineer" | "live sound" | "sound" => "engineer",
+        "mix" => "mixer",
+        "mix-DJ" => "dj_mixer",
+        "writer" => "writer",
+        "audio director" | "video director" => "director",
         _ => return None,
     })
 }
@@ -546,6 +560,11 @@ fn role_credits(relations: &[Relation]) -> Vec<RoleCredit> {
         .iter()
         .filter_map(|relation| {
             let role = credit_role(&relation.rel_type)?;
+            // A DJ-mix with attributes credits one disc, which Picard
+            // reads from release relationships; those are not fetched.
+            if role == "dj_mixer" && !relation.attributes.is_empty() {
+                return None;
+            }
             let artist = relation.artist.as_ref()?;
             let credited = relation
                 .target_credit

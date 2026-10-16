@@ -454,6 +454,7 @@ async fn profile_create_export_preview_import_round_trip() {
 mod fields {
     use std::collections::BTreeMap;
 
+    use droppedneedle_kernel::runtime_config::sections::RelationshipType;
     use droppedneedle_kernel::runtime_config::sections::{
         FieldMode, LibraryManagement, LibraryManagementRootAssignment, ManagedField, TaggingScript,
     };
@@ -463,7 +464,9 @@ mod fields {
     use droppedneedle_library::management::settings::{
         self as lm, PICARD_ORGANIZER_PROFILE_ID, StructuralCompiler,
     };
-    use droppedneedle_library::matching::model::ReleaseMedium;
+    use droppedneedle_library::matching::model::{
+        RELATIONS_VERSION, RecordingRelations, ReleaseMedium, ReleaseRelations, RoleCredit,
+    };
     use droppedneedle_library::matching::{CreditedArtist, Release, ReleaseTrack};
     use droppedneedle_library::publish::TagDocument;
     use droppedneedle_library::tags::{TagField, picard};
@@ -645,15 +648,52 @@ mod fields {
         settings: &LibraryManagement,
         overrides: &Overrides,
     ) -> BTreeMap<String, Vec<String>> {
+        plan_release(settings, overrides, &release())
+    }
+
+    /// [`plan`] for a release whose track MusicBrainz credits an engineer
+    /// and a composer.
+    fn plan_engineered(settings: &LibraryManagement) -> BTreeMap<String, Vec<String>> {
+        let mut release = release();
+        let credit = |role: &str, name: &str| RoleCredit {
+            role: role.to_owned(),
+            relation_type: role.to_owned(),
+            name: name.to_owned(),
+            artist_id: format!("{name}-id"),
+            ..RoleCredit::default()
+        };
+        let mut relations = ReleaseRelations {
+            version: RELATIONS_VERSION,
+            ..ReleaseRelations::default()
+        };
+        relations.tracks.insert(
+            release.tracks[0].id.clone(),
+            RecordingRelations {
+                recording_id: release.tracks[0].recording_id.clone(),
+                credits: vec![
+                    credit("engineer", "Eve Engineer"),
+                    credit("composer", "Cy Composer"),
+                ],
+                works: Vec::new(),
+            },
+        );
+        release.graft_relations(&relations);
+        plan_release(settings, &Overrides::default(), &release)
+    }
+
+    fn plan_release(
+        settings: &LibraryManagement,
+        overrides: &Overrides,
+        release: &Release,
+    ) -> BTreeMap<String, Vec<String>> {
         let pinned = profile::pin(settings, PICARD_ORGANIZER_PROFILE_ID, None).expect("pinned");
         let scripts = CompiledScripts::new(&pinned);
-        let release = release();
         let doc = file();
         let plan = profile::plan_tags(
             &pinned,
             &scripts,
             &FileInput {
-                release: &release,
+                release,
                 track: &release.tracks[0],
                 doc: &doc,
                 format: "flac",
@@ -785,17 +825,16 @@ mod fields {
     /// A folder activated under the stored profile stays activated once
     /// the completed settings are read, and once a client saves the
     /// stored shape back.
-    #[test]
-    fn an_activation_survives_completion() {
-        let mut stored = stored_v4(&[]);
+    /// Activate the folder `music` under the stored Picard profile.
+    fn activate(stored: &mut LibraryManagement) {
         let assignment = LibraryManagementRootAssignment {
             root_id: "music".to_owned(),
             profile_id: Some(PICARD_ORGANIZER_PROFILE_ID.to_owned()),
             enabled: true,
             ..LibraryManagementRootAssignment::default()
         };
-        let profile = lm::pin_profile(&stored, &assignment).expect("profile");
-        let (standard, multi_disc) = lm::pin_naming_scripts(&stored, &profile).expect("scripts");
+        let profile = lm::pin_profile(stored, &assignment).expect("profile");
+        let (standard, multi_disc) = lm::pin_naming_scripts(stored, &profile).expect("scripts");
         stored
             .root_assignments
             .push(LibraryManagementRootAssignment {
@@ -810,9 +849,17 @@ mod fields {
                 activation_confirmed_at: Some(1.0),
                 ..assignment
             });
-        let current = |settings: &LibraryManagement| {
-            lm::activation_is_current(settings, &settings.root_assignments[0], "policy")
-        };
+    }
+
+    /// Whether the folder [`activate`] activated is still current.
+    fn current(settings: &LibraryManagement) -> bool {
+        lm::activation_is_current(settings, &settings.root_assignments[0], "policy")
+    }
+
+    #[test]
+    fn an_activation_survives_completion() {
+        let mut stored = stored_v4(&[]);
+        activate(&mut stored);
         assert!(current(&stored));
 
         let mut read = stored.clone();
@@ -825,6 +872,100 @@ mod fields {
         lm::normalize(&mut saved, &StructuralCompiler).expect("valid");
         assert!(invalidated.is_empty(), "{invalidated:?}");
         assert!(current(&saved), "current after a save");
+    }
+
+    /// The fields "Other roles" writes.
+    const OTHER_ROLE_FIELDS: [&str; 5] = ["engineer", "mixer", "dj_mixer", "writer", "director"];
+
+    /// Fresh settings whose Picard profile was saved before the "Other
+    /// roles" fields: every other field has its own entry, and Other is
+    /// ticked or not.
+    fn without_other_role_fields(other: bool) -> LibraryManagement {
+        let mut settings = lm::initial_settings("");
+        let picard = settings
+            .profiles
+            .iter_mut()
+            .find(|profile| profile.id == PICARD_ORGANIZER_PROFILE_ID)
+            .expect("picard preset");
+        picard
+            .metadata
+            .fields
+            .retain(|field| !OTHER_ROLE_FIELDS.contains(&field.field.as_str()));
+        if !other {
+            picard
+                .metadata
+                .relationships
+                .types
+                .retain(|kind| *kind != RelationshipType::Other);
+        }
+        picard.preset_version = Some(5);
+        picard.revision = lm::profile_revision(picard);
+        settings
+    }
+
+    /// A clear on a field with no source, set once each field had its own
+    /// entry, survives the completion that adds the newer fields.
+    #[test]
+    fn a_clear_on_a_field_with_no_source_is_kept() {
+        let mut settings = without_other_role_fields(false);
+        for profile in &mut settings.profiles {
+            for field in &mut profile.metadata.fields {
+                if field.field == "comment" {
+                    field.mode = FieldMode::Replace;
+                    field.clear_when_canonical_missing = true;
+                }
+            }
+        }
+        lm::normalize(&mut settings, &StructuralCompiler).expect("valid");
+        assert_eq!(
+            modes(&settings).get("comment"),
+            Some(&(FieldMode::Replace, true))
+        );
+    }
+
+    /// With Other off, the new fields read as off and the profile plans
+    /// what it planned before, an engineer credit included.
+    #[test]
+    fn without_other_the_new_fields_read_as_off() {
+        let stored = without_other_role_fields(false);
+        let mut read = stored.clone();
+        lm::normalize(&mut read, &StructuralCompiler).expect("valid");
+        let modes = modes(&read);
+        for name in OTHER_ROLE_FIELDS {
+            assert_eq!(
+                modes.get(name),
+                Some(&(FieldMode::Disabled, false)),
+                "{name}"
+            );
+        }
+        let planned = plan_engineered(&read);
+        assert_eq!(planned, plan_engineered(&stored));
+        assert!(!planned.contains_key("engineer"), "{planned:?}");
+    }
+
+    /// With Other ticked, the new fields read as replace without clear,
+    /// so the profile starts writing them, and a folder activated under it
+    /// stays current.
+    #[test]
+    fn with_other_the_new_fields_read_as_replace() {
+        let mut stored = without_other_role_fields(true);
+        activate(&mut stored);
+        assert!(current(&stored));
+        let mut read = stored.clone();
+        lm::normalize(&mut read, &StructuralCompiler).expect("valid");
+        let modes = modes(&read);
+        for name in OTHER_ROLE_FIELDS {
+            assert_eq!(
+                modes.get(name),
+                Some(&(FieldMode::Replace, false)),
+                "{name}"
+            );
+        }
+        assert!(current(&read), "current after a read");
+        assert_eq!(
+            plan_engineered(&read)["engineer"],
+            vec!["Eve Engineer".to_owned()]
+        );
     }
 
     /// A tagging script that sets the older spellings still validates.

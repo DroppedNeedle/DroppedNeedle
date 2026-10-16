@@ -1466,9 +1466,10 @@ async fn lookup_relations(
 
 /// The credit lookup decodes both recorded answers, takes the
 /// recording's credits and those of each work it performs, and maps
-/// MusicBrainz's types to tag roles as v2 did (a performing orchestra or
-/// a writer is no tag). A recording or work that came without its
-/// relationship list is left out, never read as "no credits".
+/// MusicBrainz's types to tag roles as Picard does (a performing
+/// orchestra is a performer, a writer its own role). A recording or work
+/// that came without its relationship list is left out, never read as
+/// "no credits".
 #[tokio::test]
 async fn credits_decode_from_the_recorded_answers() {
     let relations = lookup_relations(&relations_probe("release_relations_classical.json")).await;
@@ -1492,6 +1493,11 @@ async fn credits_decode_from_the_recorded_answers() {
         vec![
             ("conductor", "conductor", "Herbert von Karajan"),
             ("performer", "instrument", "Glenn Gould"),
+            (
+                "performer",
+                "performing orchestra",
+                "Berliner Philharmoniker"
+            ),
             ("composer", "composer", "Ludwig van Beethoven"),
             ("composer", "composer", "Ludwig van Beethoven"),
         ]
@@ -1520,6 +1526,26 @@ async fn credits_decode_from_the_recorded_answers() {
     assert_eq!(names("remixer"), vec!["The Sound of Arrows"]);
     assert_eq!(names("composer"), vec!["Lady Gaga", "RedOne"]);
     assert_eq!(names("lyricist"), vec!["Lady Gaga", "RedOne"]);
+    let bad_romance = &pop.tracks["9ab08ef5-1ed9-3175-bcf4-aa232008a5f2"];
+    let writers: Vec<(&str, &str, Option<&str>)> = bad_romance
+        .credits
+        .iter()
+        .map(|credit| {
+            (
+                credit.role.as_str(),
+                credit.name.as_str(),
+                credit.credited.as_deref(),
+            )
+        })
+        .filter(|(role, _, _)| *role == "writer")
+        .collect();
+    assert_eq!(
+        writers,
+        vec![
+            ("writer", "Lady Gaga", Some("Stefani Germanotta")),
+            ("writer", "RedOne", Some("Nadir Khayat")),
+        ]
+    );
 
     let mut body = relations_probe("release_relations_classical.json");
     let tracks = body["media"][0]["tracks"].as_array_mut().expect("tracks");

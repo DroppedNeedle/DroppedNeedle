@@ -11,7 +11,8 @@ use super::revision::{naming_script_revision, profile_revision};
 use droppedneedle_kernel::runtime_config::sections::{
     ArtworkImageType, DEFAULT_NAMING_TEMPLATE, FieldMode, GenreSource, LibraryManagement,
     LibraryManagementProfile, ManagedField, MetadataManagementSettings, NamingScript,
-    OrganizationManagementSettings, ReplayGainMode, SourceCleanupMode,
+    OrganizationManagementSettings, RelationshipCreditSettings, RelationshipType, ReplayGainMode,
+    SourceCleanupMode,
 };
 
 /// Management settings schema version.
@@ -19,7 +20,7 @@ pub const MANAGEMENT_SCHEMA_VERSION: i64 = 1;
 /// Preset catalog version.
 pub const PRESET_CATALOG_VERSION: i64 = 1;
 /// Picard organizer preset version.
-pub const PICARD_ORGANIZER_PRESET_VERSION: i64 = 5;
+pub const PICARD_ORGANIZER_PRESET_VERSION: i64 = 6;
 /// Picard organizer profile id.
 pub const PICARD_ORGANIZER_PROFILE_ID: &str = "c2741223-da7c-5231-bcf5-7cead27b07d9";
 /// Complete organizer profile id.
@@ -271,6 +272,26 @@ pub const MANAGED_FIELDS: &[ManagedFieldSpec] = &[
         Some("Recording and work credits"),
         true,
     ),
+    field(
+        "engineer",
+        "Engineer",
+        Some("Recording and work credits"),
+        true,
+    ),
+    field("mixer", "Mixer", Some("Recording and work credits"), true),
+    field(
+        "dj_mixer",
+        "DJ-mixer",
+        Some("Recording and work credits"),
+        true,
+    ),
+    field("writer", "Writer", Some("Recording and work credits"), true),
+    field(
+        "director",
+        "Director",
+        Some("Recording and work credits"),
+        true,
+    ),
     field("comment", "Comment", None, false),
     field("copyright", "Copyright", None, false),
     field("encoded_by", "Encoded by", None, false),
@@ -351,6 +372,14 @@ pub fn picard_style_organizer_profile() -> LibraryManagementProfile {
         preset_version: Some(PICARD_ORGANIZER_PRESET_VERSION),
         metadata: MetadataManagementSettings {
             fields,
+            relationships: RelationshipCreditSettings {
+                types: RelationshipCreditSettings::default()
+                    .types
+                    .into_iter()
+                    .chain([RelationshipType::Other])
+                    .collect(),
+                ..RelationshipCreditSettings::default()
+            },
             ..MetadataManagementSettings::default()
         },
         organization: OrganizationManagementSettings {
@@ -374,7 +403,7 @@ pub fn complete_library_organizer_profile() -> LibraryManagementProfile {
         "Best-effort metadata, genres, artwork, lyrics, ReplayGain, and same-root organization."
             .to_owned();
     profile.preset_origin = Some("complete_library_organizer".to_owned());
-    profile.preset_version = Some(2);
+    profile.preset_version = Some(3);
     profile.genres.sources = vec![
         GenreSource::Musicbrainz,
         GenreSource::Listenbrainz,

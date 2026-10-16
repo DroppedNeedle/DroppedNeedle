@@ -379,9 +379,15 @@ fn ids(artists: &[CreditedArtist]) -> Vec<String> {
 /// - The work is the performed work's title, only when the recording
 ///   performs exactly one (a medley's would be wrong); the work id lists
 ///   every performed work.
+/// - With `other` ("Other roles" ticked), engineer, mixer, DJ-mixer,
+///   writer and director are written, and so are the [`FOLDED_TYPES`]
+///   under their main role, as Picard's `_ARTIST_REL_TYPES` does. A
+///   folded performer reads `Name (orchestra)` and the like, whatever its
+///   attributes. Without it, both are left out.
 pub fn credit_tags(
     relations: &RecordingRelations,
     naming: &ArtistNaming<'_>,
+    other: bool,
 ) -> BTreeMap<String, Vec<String>> {
     let mut tags: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut add = |field: TagField, value: String| {
@@ -395,6 +401,10 @@ pub fn credit_tags(
         }
     };
     for credit in &relations.credits {
+        let folded = FOLDED_TYPES.contains(&credit.relation_type.as_str());
+        if folded && !other {
+            continue;
+        }
         let field = match credit.role.as_str() {
             "composer" => TagField::Composer,
             "lyricist" => TagField::Lyricist,
@@ -403,13 +413,24 @@ pub fn credit_tags(
             "arranger" => TagField::Arranger,
             "remixer" => TagField::Remixer,
             "producer" => TagField::Producer,
+            "engineer" if other => TagField::Engineer,
+            "mixer" if other => TagField::Mixer,
+            "dj_mixer" if other => TagField::DjMixer,
+            "writer" if other => TagField::Writer,
+            "director" if other => TagField::Director,
             _ => continue,
         };
         let name = naming.relationship(credit);
         let value = if field == TagField::Performer {
-            match performer_role(&credit.attributes, &credit.relation_type) {
-                role if role.is_empty() => name,
-                role => format!("{name} ({role})"),
+            let role = match credit.relation_type.as_str() {
+                "performing orchestra" => "orchestra".to_owned(),
+                kind if folded => kind.to_owned(),
+                kind => performer_role(&credit.attributes, kind),
+            };
+            if role.is_empty() {
+                name
+            } else {
+                format!("{name} ({role})")
             }
         } else {
             name
@@ -426,6 +447,21 @@ pub fn credit_tags(
     }
     tags
 }
+
+/// The MusicBrainz relationship types Picard 2.13.3 writes under one of
+/// the main roles (`picard/mbjson.py`, `_ARTIST_REL_TYPES`): librettist
+/// as lyricist; orchestrator and instrument and vocal arranger as
+/// arranger; chorus master, concertmaster and performing orchestra as a
+/// performer. Written only when "Other roles" is ticked too.
+pub const FOLDED_TYPES: [&str; 7] = [
+    "librettist",
+    "orchestrator",
+    "instrument arranger",
+    "vocal arranger",
+    "chorus master",
+    "concertmaster",
+    "performing orchestra",
+];
 
 /// Picard's performer role text from a relationship's attributes.
 fn performer_role(attributes: &[String], relation_type: &str) -> String {
@@ -770,7 +806,7 @@ mod tests {
             works: Vec::new(),
         };
         let tags = |settings: &ArtistCreditSettings| {
-            let found = credit_tags(&relations, &ArtistNaming::new(settings, None));
+            let found = credit_tags(&relations, &ArtistNaming::new(settings, None), false);
             (
                 found[TagField::Performer.name()].clone(),
                 found[TagField::Composer.name()].clone(),

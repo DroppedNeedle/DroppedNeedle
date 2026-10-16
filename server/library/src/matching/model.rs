@@ -204,7 +204,9 @@ pub struct Release {
 /// What [`ReleaseRelations::version`] new lookups write. Stored credits
 /// below it are fetched again; until then they are used as they are.
 /// 1: credits carry the name they are credited as.
-pub const RELATIONS_VERSION: u32 = 1;
+/// 2: credits also carry Picard's other roles (engineer, mixer, DJ-mixer,
+/// writer, director) and the types folded into the main roles.
+pub const RELATIONS_VERSION: u32 = 2;
 
 /// The credits MusicBrainz gave for a release's recordings, and when.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -234,9 +236,12 @@ pub struct RecordingRelations {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct RoleCredit {
     /// The tag role: composer, lyricist, conductor, performer, arranger,
-    /// remixer or producer.
+    /// remixer, producer, engineer, mixer, dj_mixer, writer or director.
+    /// A folded type (`librettist`, `orchestrator`, `performing
+    /// orchestra`, ...) has the main role it is written under.
     pub role: String,
-    /// MusicBrainz's relationship type (`instrument`, `vocal`, ...).
+    /// MusicBrainz's relationship type (`instrument`, `vocal`, ...),
+    /// which tells a folded credit from the main role's own.
     pub relation_type: String,
     /// The artist's MusicBrainz name, else the name credited.
     pub name: String,

@@ -130,7 +130,7 @@
 		{ value: 'arranger', label: 'Arranger' },
 		{ value: 'remixer', label: 'Remixer' },
 		{ value: 'producer', label: 'Producer' },
-		{ value: 'other', label: 'Other relationships' }
+		{ value: 'other', label: 'Other roles (engineer, mixer, DJ-mixer, writer, director)' }
 	];
 	const genreSources: Array<{ value: GenreSource; label: string }> = [
 		{ value: 'musicbrainz', label: 'MusicBrainz' },

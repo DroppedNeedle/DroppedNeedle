@@ -141,7 +141,7 @@ impl ReleaseParts {
 /// The profile fields filled from MusicBrainz credits, with the
 /// Relationships type each needs (`None`: work fields, which ignore those
 /// settings).
-pub const CREDIT_FIELDS: [(&str, Option<RelationshipType>); 9] = [
+pub const CREDIT_FIELDS: [(&str, Option<RelationshipType>); 14] = [
     ("composer", Some(RelationshipType::Composer)),
     ("lyricist", Some(RelationshipType::Lyricist)),
     ("conductor", Some(RelationshipType::Conductor)),
@@ -149,9 +149,35 @@ pub const CREDIT_FIELDS: [(&str, Option<RelationshipType>); 9] = [
     ("arranger", Some(RelationshipType::Arranger)),
     ("remixer", Some(RelationshipType::Remixer)),
     ("producer", Some(RelationshipType::Producer)),
+    ("engineer", Some(RelationshipType::Other)),
+    ("mixer", Some(RelationshipType::Other)),
+    ("dj_mixer", Some(RelationshipType::Other)),
+    ("writer", Some(RelationshipType::Other)),
+    ("director", Some(RelationshipType::Other)),
     ("work", None),
     ("musicbrainz_work_id", None),
 ];
+
+/// The first [`ReleaseRelations`](crate::matching::model::ReleaseRelations)
+/// version that carries the "Other roles" credits. Older stored credits
+/// never do, so with them those fields keep the file's values.
+pub const OTHER_ROLES_RELATIONS_VERSION: u32 = 2;
+
+/// Whether a profile field is one of the "Other roles" credit fields.
+pub fn other_role_field(field: &str) -> bool {
+    CREDIT_FIELDS
+        .iter()
+        .any(|(name, kind)| *name == field && *kind == Some(RelationshipType::Other))
+}
+
+/// Whether the profile writes "Other roles": the Relationships switch is
+/// on and Other is ticked.
+pub fn other_roles(
+    profile: &droppedneedle_kernel::runtime_config::sections::LibraryManagementProfile,
+) -> bool {
+    let relationships = &profile.metadata.relationships;
+    relationships.enabled && relationships.types.contains(&RelationshipType::Other)
+}
 
 /// Whether the profile asks for a credit field: `None` when the name is
 /// not one, `Some(false)` when its Relationships type or switch is off.
