@@ -37,6 +37,10 @@ make frontend-install
 make frontend-dev
 ```
 
+### Where the code is
+
+`server/` is a Cargo workspace. Each area is a crate in `server/<name>`, from the bottom: `kernel`, `providers`, `auth`, `library`, `plugins`, `media`, `catalog`, `acquire`, `compat`, then the server crate in `server/src` and the migration tool in `server/tool`. A crate uses only crates below it. Integration tests are split into one binary per area (`library`, `acquire`, `compat`, `catalog`, `media` and `server` for the rest) sharing `server/tests/common`, plus `tool` in `server/tool/tests`. Run one module with `cd server && cargo test --test <binary> <module>` (`cargo test -p droppedneedle-tool --test tool <module>` for the tool), and a crate's unit tests with `cargo test -p droppedneedle-<crate>`.
+
 ### Running tests and checks
 
 ```bash
@@ -45,9 +49,11 @@ make server-lint            # clippy, warnings are errors
 make server-fmt-check       # rustfmt
 make contract-check         # OpenAPI snapshot and generated TypeScript are in sync
 make frontend-check         # svelte-check
+make frontend-lint          # eslint
+make frontend-format-check  # prettier
 make frontend-test-server   # vitest, node project
 make frontend-test-client   # vitest, browser project
-make check                  # all of the above, plus lint and format checks
+make check                  # all of the above (not cargo audit, cargo deny or the container test)
 ```
 
 Browser tests use Playwright. Install the browser once with `make frontend-browser-install`.
@@ -78,7 +84,7 @@ You're still responsible for understanding and testing the code you submit.
 
 ## Releases
 
-Maintainers cut releases. A release is a version tag, `v3.1.0` or `v3.1.0-rc.1` for a pre-release, on a commit of the release branch that CI has passed on. Bump `version` in `server/Cargo.toml` to the same version, without the `v`, before tagging: the workflow rejects a tag that does not match it. Pushing the tag starts the Release workflow, which checks the tag, the branch and CI, then waits for a maintainer to approve the `release` environment before it publishes `droppedneedle/droppedneedle:<tag>`. `:latest` only moves forward: a pre-release never moves it, and neither does a patch to an older line once a higher full version is tagged.
+Maintainers cut releases. A release is a version tag, `v3.1.0` or `v3.1.0-rc.1` for a pre-release, on a commit of the release branch that CI has passed on. Bump `version` under `[workspace.package]` in `server/Cargo.toml` to the same version, without the `v`, before tagging: the workflow rejects a tag that does not match it. Pushing the tag starts the Release workflow, which checks the tag, the branch and CI, then waits for a maintainer to approve the `release` environment before it publishes `droppedneedle/droppedneedle:<tag>`. `:latest` only moves forward: a pre-release never moves it, and neither does a patch to an older line once a higher full version is tagged.
 
 CI skips commits that change no code. If the commit you want to tag has no v3 CI run, start v3 CI by hand on the release branch first.
 

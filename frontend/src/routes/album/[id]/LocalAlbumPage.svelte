@@ -1,23 +1,23 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import {
-		ChevronLeft,
-		Disc3,
-		ExternalLink,
-		FileUp,
-		ListMusic,
-		Play,
-		Shuffle
-	} from 'lucide-svelte';
+	import { ChevronLeft, Disc3, FileUp, ListMusic, Play, Shuffle } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import LibraryFormatBadge from '$lib/components/library/LibraryFormatBadge.svelte';
 	import LocalIdentityBadge from '$lib/components/library/LocalIdentityBadge.svelte';
-	import AlbumIdentificationPanel from '$lib/components/library/AlbumIdentificationPanel.svelte';
-	import EditionPanel from '$lib/components/library/EditionPanel.svelte';
+	import ManagementHoldSection from '$lib/components/library/ManagementHoldSection.svelte';
+	import AlbumHistory from '$lib/components/library/AlbumHistory.svelte';
+	import RetagPairCard from '$lib/components/library/RetagPairCard.svelte';
+	import EditionPlate from '$lib/components/library/edition/EditionPlate.svelte';
 	import AlbumOrganizationDialog from '$lib/components/library/AlbumOrganizationDialog.svelte';
 	import LocalAlbumTrackList from '$lib/components/library/LocalAlbumTrackList.svelte';
 	import AlbumDownloadButton from './AlbumDownloadButton.svelte';
 	import { getDownloadAccessQuery } from '$lib/queries/local/DownloadAccessQuery.svelte';
+	import {
+		getAlbumEditionStatusQuery,
+		getEditionPlanQuery
+	} from '$lib/queries/albums/EditionQueries.svelte';
+	import { getRetagPairsQuery } from '$lib/queries/library/LibraryRetagPairQueries.svelte';
+	import { notesByFile } from './albumEdition';
 	import AddToPlaylistModal from '$lib/components/AddToPlaylistModal.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 	import { getTrackContextMenuItems } from './albumPlaybackHandlers';
@@ -29,7 +29,6 @@
 		getLibraryAlbumDetailQuery,
 		getLibraryAlbumTracksQuery
 	} from '$lib/queries/library/LibraryQueries.svelte';
-	import { getAlbumEditionsQuery } from '$lib/queries/albums/EditionQueries.svelte';
 	import type {
 		AlbumBasicInfo,
 		LocalTrackInfo,
@@ -54,13 +53,29 @@
 	const downloadAllowed = $derived(
 		album?.download_allowed !== false && downloadAccessQuery.data?.allowed !== false
 	);
-	const editionsQuery = getAlbumEditionsQuery(
-		() => authStore.user?.id,
-		() => album?.musicbrainz_release_group_id ?? '',
-		() => Boolean(album?.musicbrainz_release_group_id)
-	);
-	const editions = $derived(editionsQuery.data?.items ?? []);
 	const contributionMutation = createLibraryContributionMutation();
+
+	// The edition plan's word on single files, read under the plate's keys.
+	const userId = () => authStore.user?.id;
+	const editionStatusQuery = getAlbumEditionStatusQuery(userId, () => albumId);
+	const editionPlanQuery = getEditionPlanQuery(
+		userId,
+		() => albumId,
+		() => null,
+		() =>
+			editionStatusQuery.data?.album_id === albumId &&
+			editionStatusQuery.data.edition_kind === 'release'
+	);
+	const fileNotes = $derived(
+		editionPlanQuery.data?.album_id === albumId ? notesByFile(editionPlanQuery.data) : undefined
+	);
+
+	const retagPairsQuery = getRetagPairsQuery(() => authStore.isAdmin);
+	const retagPairs = $derived(
+		(retagPairsQuery.data?.pairs ?? []).filter(
+			(pair) => pair.old_album.id === albumId || pair.new_album.id === albumId
+		)
+	);
 
 	const reviewLabel = $derived(
 		album?.identification_status === 'needs_review'
@@ -82,25 +97,6 @@
 		album?.album_identity_state === 'release_group_linked' && album.pick_basis
 			? (pickBasisQualifier[album.pick_basis] ?? null)
 			: null
-	);
-	const managementIdentityAttention = $derived(
-		album?.management_identity_readiness === 'exact_release_required'
-			? 'Exact MusicBrainz edition required'
-			: album?.management_identity_readiness === 'track_mapping_required'
-				? 'Exact track map required'
-				: album?.management_identity_readiness === 'custom_manifest_stale'
-					? 'Custom edition review required'
-					: album?.identification_status === 'needs_review' ||
-						  album?.identification_status === 'manual_identity_needs_review'
-						? 'Identity review required'
-						: null
-	);
-	const musicbrainzUrl = $derived(
-		album?.musicbrainz_release_id
-			? `https://musicbrainz.org/release/${album.musicbrainz_release_id}`
-			: album?.musicbrainz_release_group_id
-				? `https://musicbrainz.org/release-group/${album.musicbrainz_release_group_id}`
-				: null
 	);
 
 	function play(shuffle: boolean): void {
@@ -219,6 +215,9 @@
 						>
 					{/if}
 				</p>
+				<div class="mt-4">
+					<EditionPlate copies={[album]} />
+				</div>
 				<div class="mt-5 flex flex-wrap items-center gap-2">
 					<button
 						class="btn btn-primary gap-2"
@@ -245,10 +244,7 @@
 							{album.contribution_id ? 'Contribution in progress' : 'Contribute to MusicBrainz'}
 						</button>
 					{/if}
-					{#if authStore.isAdmin}<AlbumIdentificationPanel
-							{album}
-							attentionLabel={managementIdentityAttention}
-						/><AlbumOrganizationDialog {album} {tracks} />{/if}
+					{#if authStore.isAdmin}<AlbumOrganizationDialog {album} {tracks} />{/if}
 				</div>
 				{#if album.review_id && authStore.isAdmin}
 					<a
@@ -259,6 +255,14 @@
 				{/if}
 			</div>
 		</header>
+
+		{#if authStore.isAdmin}
+			<div class="mt-6"><ManagementHoldSection {album} /></div>
+		{/if}
+
+		{#each retagPairs as pair (`${pair.old_album.id}/${pair.new_album.id}`)}
+			<div class="mt-6"><RetagPairCard {pair} currentAlbumId={albumId} /></div>
+		{/each}
 
 		<section class="mt-8" aria-labelledby="local-tracks-title">
 			<div class="flex items-center gap-2">
@@ -277,74 +281,16 @@
 					<p class="mt-2">No playable tracks are attached to this album.</p>
 				</div>
 			{:else}
-				<LocalAlbumTrackList {tracks} getTrackMenuItems={getLocalTrackMenuItems} />
+				<LocalAlbumTrackList
+					{tracks}
+					notes={fileNotes}
+					getTrackMenuItems={getLocalTrackMenuItems}
+				/>
 			{/if}
 		</section>
 
-		<div class="mt-6">
-			<EditionPanel
-				albumId={album.id}
-				albumTitle={album.title}
-				groupMbid={album.musicbrainz_release_group_id ?? ''}
-				onchanged={() => void albumQuery.refetch()}
-			/>
-		</div>
+		<AlbumHistory {albumId} />
 
-		<section
-			class="mt-6 rounded-box border border-base-content/10 bg-base-200/35 p-4"
-			aria-labelledby="provider-features-title"
-		>
-			<div class="flex flex-wrap items-center justify-between gap-3">
-				<h2 id="provider-features-title" class="font-semibold">MusicBrainz editions</h2>
-				{#if musicbrainzUrl}
-					<a
-						class="btn btn-ghost btn-sm gap-2"
-						href={musicbrainzUrl}
-						target="_blank"
-						rel="noreferrer">Open in MusicBrainz <ExternalLink class="h-3.5 w-3.5" /></a
-					>
-				{/if}
-			</div>
-			{#if album.musicbrainz_release_group_id}
-				{#if editionsQuery.isLoading}
-					<div class="mt-3 grid gap-2 sm:grid-cols-2">
-						<div class="skeleton h-12"></div>
-						<div class="skeleton h-12"></div>
-					</div>
-				{:else if editionsQuery.isError}
-					<p class="mt-3 text-sm text-base-content/55">
-						MusicBrainz edition details are temporarily unavailable.
-					</p>
-				{:else if editions.length}
-					<ul class="mt-3 grid gap-2 sm:grid-cols-2">
-						{#each editions.slice(0, 6) as edition (edition.release_mbid)}
-							<li>
-								<a
-									class="flex h-full items-center justify-between gap-3 rounded-box border border-base-content/10 bg-base-100 px-3 py-2 text-sm transition-colors hover:border-primary/35 hover:bg-base-100/70"
-									href={`https://musicbrainz.org/release/${edition.release_mbid}`}
-									target="_blank"
-									rel="noreferrer"
-								>
-									<span class="min-w-0">
-										<span class="block truncate font-medium">{edition.title ?? album.title}</span>
-										<span class="block truncate text-xs text-base-content/50">
-											{[edition.date?.slice(0, 4), edition.country, edition.packaging]
-												.filter(Boolean)
-												.join(' · ') || `${edition.track_count} tracks`}
-										</span>
-									</span>
-									<ExternalLink class="h-3.5 w-3.5 shrink-0 text-base-content/35" />
-								</a>
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			{:else}
-				<p class="mt-2 text-sm text-base-content/60">
-					Link a MusicBrainz release group to compare editions.
-				</p>
-			{/if}
-		</section>
 		<AddToPlaylistModal bind:this={playlistModal} />
 	{/if}
 </main>

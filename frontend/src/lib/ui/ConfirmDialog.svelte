@@ -9,6 +9,8 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import AsyncButton from './AsyncButton.svelte';
+	import Button from './Button.svelte';
+	import Input from './Input.svelte';
 	import Modal from './Modal.svelte';
 
 	interface Props {
@@ -87,9 +89,10 @@
 		<label class="mt-4 block text-sm" for={phraseId}>
 			Type <strong>{phrase}</strong> to continue
 		</label>
-		<input
+		<Input
 			id={phraseId}
-			class="input mt-1 w-full"
+			label="Type {phrase} to continue"
+			class="mt-1 w-full"
 			autocomplete="off"
 			spellcheck="false"
 			bind:value={typed}
@@ -104,11 +107,11 @@
 	{/if}
 
 	{#snippet actions()}
-		<button type="button" class="btn btn-ghost" onclick={() => (open = false)} disabled={busy}>
+		<Button variant="ghost" onclick={() => (open = false)} disabled={busy}>
 			{cancelLabel}
-		</button>
+		</Button>
 		<AsyncButton
-			class="btn {tone === 'danger' ? 'btn-error' : 'btn-primary'}"
+			variant={tone === 'danger' ? 'danger' : 'primary'}
 			onclick={confirm}
 			pending={busy}
 			disabled={phrase !== undefined && typed !== phrase}

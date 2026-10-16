@@ -8,6 +8,7 @@
 	import { toAuthUser } from '$lib/queries/auth/types';
 	import { onMount } from 'svelte';
 	import { Music } from 'lucide-svelte';
+	import Button from '$lib/ui/Button.svelte';
 
 	let error = $state<string | null>(null);
 
@@ -48,7 +49,7 @@
 		{#if error}
 			<div class="flex flex-col items-center gap-3 max-w-sm">
 				<p class="text-base-content/70 text-sm">{error}</p>
-				<a href={withBasePath('/login')} class="btn btn-primary btn-sm">Back to sign in</a>
+				<Button href={withBasePath('/login')} variant="primary" size="sm">Back to sign in</Button>
 			</div>
 		{:else}
 			<p class="text-base-content/60 text-sm">Completing sign-in…</p>

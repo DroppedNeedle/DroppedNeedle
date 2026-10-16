@@ -259,31 +259,48 @@
             "Container": "mp3",
             "DefaultAudioStreamIndex": 0,
             "DirectStreamUrl": "http://localhost/jellyfin/Audio/2dcdb5c8d11e199ad036df869476ad2e/stream.mp3?static=true&mediaSourceId=2dcdb5c8d11e199ad036df869476ad2e&api_key=***",
+            "ETag": "91e1f3c54a730adc3294bc1a9fe23a25",
+            "Formats": [],
             "GenPtsInput": false,
+            "HasSegments": false,
             "Id": "2dcdb5c8d11e199ad036df869476ad2e",
             "IgnoreDts": false,
             "IgnoreIndex": false,
             "IsInfiniteStream": false,
             "IsRemote": false,
+            "MediaAttachments": [],
             "MediaStreams": [
               {
+                "AudioSpatialFormat": "None",
                 "BitRate": 320000,
                 "ChannelLayout": "stereo",
                 "Channels": 2,
                 "Codec": "mp3",
+                "DisplayTitle": "MP3 - Stereo",
                 "Index": 0,
+                "IsAVC": false,
                 "IsDefault": true,
                 "IsExternal": false,
                 "IsForced": false,
+                "IsHearingImpaired": false,
                 "IsInterlaced": false,
                 "IsTextSubtitleStream": false,
+                "Level": 0,
+                "LocalizedDefault": "Default",
+                "LocalizedExternal": "External",
                 "SampleRate": 44100,
                 "SupportsExternalStream": false,
-                "Type": "Audio"
+                "TimeBase": "1/44100",
+                "Type": "Audio",
+                "VideoRange": "Unknown",
+                "VideoRangeType": "Unknown"
               }
             ],
+            "Name": "Opener",
+            "Path": "",
             "Protocol": "File",
             "ReadAtNativeFramerate": false,
+            "RequiredHttpHeaders": {},
             "RequiresClosing": false,
             "RequiresLooping": false,
             "RequiresOpening": false,
@@ -293,13 +310,15 @@
             "SupportsDirectStream": true,
             "SupportsProbing": false,
             "SupportsTranscoding": true,
-            "Type": "Default"
+            "TranscodingSubProtocol": "http",
+            "Type": "Default",
+            "UseMostCompatibleTranscodingProfile": false
           }
         ],
         "PlaySessionId": "re:[0-9a-f]{32}"
       },
       "headers": {
-        "content-length": "1000",
+        "content-length": "1463",
         "content-type": "application/json"
       },
       "request": "GET /jellyfin/Items/2dcdb5c8d11e199ad036df869476ad2e/PlaybackInfo",

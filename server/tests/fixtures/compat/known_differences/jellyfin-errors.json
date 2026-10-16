@@ -1,8 +1,0 @@
-{
-  "differences": [
-    {"server": "jellyfin", "object": "error.unknown-item", "key": "body", "kind": "type", "rows": ["error.unknown-item"], "reason": "For an item that does not exist both answer 404. The app's answer has no body, Jellyfin's has a JSON one."},
-    {"server": "jellyfin", "object": "image.primary", "key": "body", "kind": "type", "rows": ["image.primary"], "reason": "For an album with no cover both answer 404. The app's answer has no body, Jellyfin's has a JSON one."},
-    {"server": "jellyfin", "object": "stream.range-past-end", "key": "headers.accept-ranges", "kind": "missing", "rows": ["stream.range-past-end"], "reason": "For a range past the end of the file both answer 416. The app's answer leaves out the content type and Accept-Ranges, Jellyfin's keeps them."},
-    {"server": "jellyfin", "object": "stream.range-past-end", "key": "headers.content-type", "kind": "value", "rows": ["stream.range-past-end"], "reason": "For a range past the end of the file both answer 416. The app's answer leaves out the content type and Accept-Ranges, Jellyfin's keeps them."}
-  ]
-}

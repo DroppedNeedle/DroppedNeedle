@@ -120,6 +120,8 @@
             "PremiereDate": "0000-00-00T00:00:00.0000000Z",
             "ProductionYear": 1997,
             "ProviderIds": {
+              "MusicBrainzAlbum": "<id-9>",
+              "MusicBrainzReleaseGroup": "<id-10>",
               "MusicBrainzTrack": "rec-airbag-0001"
             },
             "RunTimeTicks": 3000000,
@@ -140,14 +142,14 @@
             "AlbumArtist": "U2",
             "AlbumArtists": [
               {
-                "Id": "<id-9>",
+                "Id": "<id-11>",
                 "Name": "U2"
               }
             ],
-            "AlbumId": "<id-10>",
+            "AlbumId": "<id-12>",
             "ArtistItems": [
               {
-                "Id": "<id-9>",
+                "Id": "<id-11>",
                 "Name": "U2"
               }
             ],
@@ -161,7 +163,7 @@
               "Rock"
             ],
             "HasLyrics": false,
-            "Id": "<id-11>",
+            "Id": "<id-13>",
             "ImageBlurHashes": {},
             "ImageTags": {},
             "IndexNumber": 3,
@@ -169,7 +171,7 @@
             "LocationType": "FileSystem",
             "MediaType": "Audio",
             "Name": "One",
-            "ParentId": "<id-10>",
+            "ParentId": "<id-12>",
             "ParentIndexNumber": 1,
             "PremiereDate": "0000-00-00T00:00:00.0000000Z",
             "ProductionYear": 1991,
@@ -182,8 +184,8 @@
             "Type": "Audio",
             "UserData": {
               "IsFavorite": false,
-              "ItemId": "<id-11>",
-              "Key": "<id-11>",
+              "ItemId": "<id-13>",
+              "Key": "<id-13>",
               "PlayCount": 0,
               "PlaybackPositionTicks": 0,
               "Played": false
@@ -213,7 +215,7 @@
             "DateCreated": "0000-00-00T00:00:00.0000000Z",
             "Genres": [],
             "HasLyrics": false,
-            "Id": "<id-12>",
+            "Id": "<id-14>",
             "ImageBlurHashes": {},
             "ImageTags": {},
             "IndexNumber": 2,
@@ -226,6 +228,8 @@
             "PremiereDate": "0000-00-00T00:00:00.0000000Z",
             "ProductionYear": 1997,
             "ProviderIds": {
+              "MusicBrainzAlbum": "<id-9>",
+              "MusicBrainzReleaseGroup": "<id-10>",
               "MusicBrainzTrack": "rec-paranoid-0002"
             },
             "RunTimeTicks": 3000000,
@@ -234,8 +238,8 @@
             "Type": "Audio",
             "UserData": {
               "IsFavorite": false,
-              "ItemId": "<id-12>",
-              "Key": "<id-12>",
+              "ItemId": "<id-14>",
+              "Key": "<id-14>",
               "PlayCount": 0,
               "PlaybackPositionTicks": 0,
               "Played": false
@@ -246,14 +250,14 @@
             "AlbumArtist": "Various Artists",
             "AlbumArtists": [
               {
-                "Id": "<id-13>",
+                "Id": "<id-15>",
                 "Name": "Various Artists"
               }
             ],
-            "AlbumId": "<id-14>",
+            "AlbumId": "<id-16>",
             "ArtistItems": [
               {
-                "Id": "<id-15>",
+                "Id": "<id-17>",
                 "Name": "Artist One"
               }
             ],
@@ -265,7 +269,7 @@
             "DateCreated": "0000-00-00T00:00:00.0000000Z",
             "Genres": [],
             "HasLyrics": false,
-            "Id": "<id-16>",
+            "Id": "<id-18>",
             "ImageBlurHashes": {},
             "ImageTags": {},
             "IndexNumber": 1,
@@ -273,7 +277,7 @@
             "LocationType": "FileSystem",
             "MediaType": "Audio",
             "Name": "Song A",
-            "ParentId": "<id-14>",
+            "ParentId": "<id-16>",
             "ParentIndexNumber": 1,
             "PremiereDate": "0000-00-00T00:00:00.0000000Z",
             "ProductionYear": 2001,
@@ -286,8 +290,8 @@
             "Type": "Audio",
             "UserData": {
               "IsFavorite": false,
-              "ItemId": "<id-16>",
-              "Key": "<id-16>",
+              "ItemId": "<id-18>",
+              "Key": "<id-18>",
               "PlayCount": 0,
               "PlaybackPositionTicks": 0,
               "Played": false
@@ -298,14 +302,14 @@
             "AlbumArtist": "Massive Attack",
             "AlbumArtists": [
               {
-                "Id": "<id-17>",
+                "Id": "<id-19>",
                 "Name": "Massive Attack"
               }
             ],
-            "AlbumId": "<id-18>",
+            "AlbumId": "<id-20>",
             "ArtistItems": [
               {
-                "Id": "<id-17>",
+                "Id": "<id-19>",
                 "Name": "Massive Attack"
               }
             ],
@@ -317,7 +321,7 @@
             "DateCreated": "0000-00-00T00:00:00.0000000Z",
             "Genres": [],
             "HasLyrics": false,
-            "Id": "<id-19>",
+            "Id": "<id-21>",
             "ImageBlurHashes": {},
             "ImageTags": {},
             "IndexNumber": 4,
@@ -325,7 +329,7 @@
             "LocationType": "FileSystem",
             "MediaType": "Audio",
             "Name": "Teardrop",
-            "ParentId": "<id-18>",
+            "ParentId": "<id-20>",
             "ParentIndexNumber": 1,
             "PremiereDate": "0000-00-00T00:00:00.0000000Z",
             "ProductionYear": 1998,
@@ -338,8 +342,8 @@
             "Type": "Audio",
             "UserData": {
               "IsFavorite": false,
-              "ItemId": "<id-19>",
-              "Key": "<id-19>",
+              "ItemId": "<id-21>",
+              "Key": "<id-21>",
               "PlayCount": 0,
               "PlaybackPositionTicks": 0,
               "Played": false
@@ -350,14 +354,14 @@
             "AlbumArtist": "ユキ",
             "AlbumArtists": [
               {
-                "Id": "<id-20>",
+                "Id": "<id-22>",
                 "Name": "ユキ"
               }
             ],
-            "AlbumId": "<id-21>",
+            "AlbumId": "<id-23>",
             "ArtistItems": [
               {
-                "Id": "<id-20>",
+                "Id": "<id-22>",
                 "Name": "ユキ"
               }
             ],
@@ -369,7 +373,7 @@
             "DateCreated": "0000-00-00T00:00:00.0000000Z",
             "Genres": [],
             "HasLyrics": false,
-            "Id": "<id-22>",
+            "Id": "<id-24>",
             "ImageBlurHashes": {},
             "ImageTags": {},
             "IndexNumber": 1,
@@ -377,7 +381,7 @@
             "LocationType": "FileSystem",
             "MediaType": "Audio",
             "Name": "桃源へ",
-            "ParentId": "<id-21>",
+            "ParentId": "<id-23>",
             "ParentIndexNumber": 1,
             "PremiereDate": "0000-00-00T00:00:00.0000000Z",
             "ProductionYear": 2015,
@@ -390,8 +394,8 @@
             "Type": "Audio",
             "UserData": {
               "IsFavorite": false,
-              "ItemId": "<id-22>",
-              "Key": "<id-22>",
+              "ItemId": "<id-24>",
+              "Key": "<id-24>",
               "PlayCount": 0,
               "PlaybackPositionTicks": 0,
               "Played": false
@@ -402,7 +406,7 @@
         "TotalRecordCount": 6
       },
       "headers": {
-        "content-length": "6256",
+        "content-length": "6502",
         "content-type": "application/json"
       },
       "request": "GET /jellyfin/Users/<id-5>/Items?includeItemTypes=Audio",
@@ -415,32 +419,49 @@
             "Bitrate": 344000,
             "Container": "mp3",
             "DefaultAudioStreamIndex": 0,
-            "DirectStreamUrl": "http://test.local/jellyfin/Audio/<id-11>/stream.mp3?static=true&mediaSourceId=<id-11>&api_key=***",
+            "DirectStreamUrl": "http://test.local/jellyfin/Audio/<id-13>/stream.mp3?static=true&mediaSourceId=<id-13>&api_key=***",
+            "ETag": "<id-25>",
+            "Formats": [],
             "GenPtsInput": false,
-            "Id": "<id-11>",
+            "HasSegments": false,
+            "Id": "<id-13>",
             "IgnoreDts": false,
             "IgnoreIndex": false,
             "IsInfiniteStream": false,
             "IsRemote": false,
+            "MediaAttachments": [],
             "MediaStreams": [
               {
+                "AudioSpatialFormat": "None",
                 "BitRate": 344000,
                 "ChannelLayout": "stereo",
                 "Channels": 2,
                 "Codec": "mp3",
+                "DisplayTitle": "MP3 - Stereo",
                 "Index": 0,
+                "IsAVC": false,
                 "IsDefault": true,
                 "IsExternal": false,
                 "IsForced": false,
+                "IsHearingImpaired": false,
                 "IsInterlaced": false,
                 "IsTextSubtitleStream": false,
+                "Level": 0,
+                "LocalizedDefault": "Default",
+                "LocalizedExternal": "External",
                 "SampleRate": 44100,
                 "SupportsExternalStream": false,
-                "Type": "Audio"
+                "TimeBase": "1/44100",
+                "Type": "Audio",
+                "VideoRange": "Unknown",
+                "VideoRangeType": "Unknown"
               }
             ],
+            "Name": "03 One",
+            "Path": "U2/Achtung Baby/03 One.mp3",
             "Protocol": "File",
             "ReadAtNativeFramerate": false,
+            "RequiredHttpHeaders": {},
             "RequiresClosing": false,
             "RequiresLooping": false,
             "RequiresOpening": false,
@@ -450,16 +471,18 @@
             "SupportsDirectStream": true,
             "SupportsProbing": false,
             "SupportsTranscoding": false,
-            "Type": "Default"
+            "TranscodingSubProtocol": "http",
+            "Type": "Default",
+            "UseMostCompatibleTranscodingProfile": false
           }
         ],
-        "PlaySessionId": "<id-23>"
+        "PlaySessionId": "<id-26>"
       },
       "headers": {
-        "content-length": "1028",
+        "content-length": "1517",
         "content-type": "application/json"
       },
-      "request": "GET /jellyfin/Items/<id-11>/PlaybackInfo",
+      "request": "GET /jellyfin/Items/<id-13>/PlaybackInfo",
       "status": 200
     },
     {
@@ -481,7 +504,7 @@
         "content-length": "16008",
         "content-type": "audio/mpeg"
       },
-      "request": "GET /jellyfin/Audio/<id-11>/stream.mp3?static=true&mediaSourceId=<id-11>&api_key=***",
+      "request": "GET /jellyfin/Audio/<id-13>/stream.mp3?static=true&mediaSourceId=<id-13>&api_key=***",
       "status": 200
     },
     {
@@ -504,14 +527,14 @@
         "content-range": "bytes 0-99/16008",
         "content-type": "audio/mpeg"
       },
-      "request": "GET /jellyfin/Audio/<id-11>/stream.mp3?static=true&mediaSourceId=<id-11>&api_key=***",
+      "request": "GET /jellyfin/Audio/<id-13>/stream.mp3?static=true&mediaSourceId=<id-13>&api_key=***",
       "status": 206
     },
     {
       "body": {
         "IsFavorite": true,
-        "ItemId": "<id-11>",
-        "Key": "<id-11>",
+        "ItemId": "<id-13>",
+        "Key": "<id-13>",
         "PlayCount": 0,
         "PlaybackPositionTicks": 0,
         "Played": false
@@ -520,7 +543,7 @@
         "content-length": "159",
         "content-type": "application/json"
       },
-      "request": "POST /jellyfin/Users/<id-5>/FavoriteItems/<id-11>",
+      "request": "POST /jellyfin/Users/<id-5>/FavoriteItems/<id-13>",
       "status": 200
     },
     {
@@ -531,14 +554,14 @@
             "AlbumArtist": "U2",
             "AlbumArtists": [
               {
-                "Id": "<id-9>",
+                "Id": "<id-11>",
                 "Name": "U2"
               }
             ],
-            "AlbumId": "<id-10>",
+            "AlbumId": "<id-12>",
             "ArtistItems": [
               {
-                "Id": "<id-9>",
+                "Id": "<id-11>",
                 "Name": "U2"
               }
             ],
@@ -552,7 +575,7 @@
               "Rock"
             ],
             "HasLyrics": false,
-            "Id": "<id-11>",
+            "Id": "<id-13>",
             "ImageBlurHashes": {},
             "ImageTags": {},
             "IndexNumber": 3,
@@ -560,7 +583,7 @@
             "LocationType": "FileSystem",
             "MediaType": "Audio",
             "Name": "One",
-            "ParentId": "<id-10>",
+            "ParentId": "<id-12>",
             "ParentIndexNumber": 1,
             "PremiereDate": "0000-00-00T00:00:00.0000000Z",
             "ProductionYear": 1991,
@@ -573,8 +596,8 @@
             "Type": "Audio",
             "UserData": {
               "IsFavorite": true,
-              "ItemId": "<id-11>",
-              "Key": "<id-11>",
+              "ItemId": "<id-13>",
+              "Key": "<id-13>",
               "PlayCount": 0,
               "PlaybackPositionTicks": 0,
               "Played": false
@@ -593,7 +616,7 @@
     },
     {
       "body": {
-        "Id": "<id-24>"
+        "Id": "<id-27>"
       },
       "headers": {
         "content-length": "41",
@@ -610,14 +633,14 @@
             "AlbumArtist": "U2",
             "AlbumArtists": [
               {
-                "Id": "<id-9>",
+                "Id": "<id-11>",
                 "Name": "U2"
               }
             ],
-            "AlbumId": "<id-10>",
+            "AlbumId": "<id-12>",
             "ArtistItems": [
               {
-                "Id": "<id-9>",
+                "Id": "<id-11>",
                 "Name": "U2"
               }
             ],
@@ -631,7 +654,7 @@
               "Rock"
             ],
             "HasLyrics": false,
-            "Id": "<id-11>",
+            "Id": "<id-13>",
             "ImageBlurHashes": {},
             "ImageTags": {},
             "IndexNumber": 3,
@@ -639,9 +662,9 @@
             "LocationType": "FileSystem",
             "MediaType": "Audio",
             "Name": "One",
-            "ParentId": "<id-10>",
+            "ParentId": "<id-12>",
             "ParentIndexNumber": 1,
-            "PlaylistItemId": "<id-25>",
+            "PlaylistItemId": "<id-28>",
             "PremiereDate": "0000-00-00T00:00:00.0000000Z",
             "ProductionYear": 1991,
             "ProviderIds": {
@@ -653,8 +676,8 @@
             "Type": "Audio",
             "UserData": {
               "IsFavorite": true,
-              "ItemId": "<id-11>",
-              "Key": "<id-11>",
+              "ItemId": "<id-13>",
+              "Key": "<id-13>",
               "PlayCount": 0,
               "PlaybackPositionTicks": 0,
               "Played": false
@@ -668,7 +691,7 @@
         "content-length": "1100",
         "content-type": "application/json"
       },
-      "request": "GET /jellyfin/Playlists/<id-24>/Items",
+      "request": "GET /jellyfin/Playlists/<id-27>/Items",
       "status": 200
     },
     {

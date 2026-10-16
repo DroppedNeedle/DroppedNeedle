@@ -13,6 +13,9 @@
 		createPlexLinkPollMutation
 	} from '$lib/queries/connections/ConnectionsMutations.svelte';
 	import type { ProfileServiceConnection } from '$lib/queries/profile/types';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import Input from '$lib/ui/Input.svelte';
 
 	interface Props {
 		services: ProfileServiceConnection[];
@@ -155,6 +158,54 @@
 	}
 </script>
 
+{#snippet credentialForm(
+	form: CredentialFormState,
+	label: string,
+	note: string,
+	pending: boolean,
+	link: () => Promise<void>,
+	cancel: () => void
+)}
+	<Card variant="bordered" padding="sm" class="mt-2 animate-fade-in-up">
+		<div class="space-y-2">
+			<p class="text-xs text-base-content/60">{note}</p>
+			<Input
+				label="{label} username"
+				size="sm"
+				class="w-full"
+				placeholder="{label} username"
+				autocomplete="off"
+				bind:value={form.username}
+			/>
+			<Input
+				type="password"
+				label="{label} password"
+				size="sm"
+				class="w-full"
+				placeholder="Password"
+				autocomplete="off"
+				bind:value={form.password}
+			/>
+			{#if form.error}
+				<p class="text-xs text-error">{form.error}</p>
+			{/if}
+			<div class="flex justify-end gap-2">
+				<Button variant="ghost" size="xs" pill onclick={cancel}>Cancel</Button>
+				<Button
+					variant="primary"
+					size="xs"
+					pill
+					loading={pending}
+					disabled={!form.username.trim() || !form.password}
+					onclick={link}
+				>
+					Link account
+				</Button>
+			</div>
+		</div>
+	</Card>
+{/snippet}
+
 {#if anyEnabled}
 	<section>
 		<h2
@@ -164,205 +215,128 @@
 			Media Server Accounts
 		</h2>
 
-		<div
-			class="glow-primary-soft space-y-3 rounded-2xl border border-base-300/50 bg-base-200/40 p-4 backdrop-blur-sm sm:p-5"
-		>
-			<p class="text-xs text-base-content/60">
-				Link your own account on each server so plays and scrobbles count as you rather than the
-				shared account.
-			</p>
+		<Card variant="bordered" padding="md">
+			<div class="space-y-3">
+				<p class="text-xs text-base-content/60">
+					Link your own account on each server so plays and scrobbles count as you rather than the
+					shared account.
+				</p>
 
-			{#if connectionsQuery.isPending}
-				<div class="flex items-center justify-center py-10">
-					<LoaderCircle class="h-5 w-5 animate-spin text-base-content/40" />
-				</div>
-			{:else}
-				{#each rows as row (row.service)}
-					{@const linked = linkedConnection(row.service)}
-					{@const Icon = row.icon}
-					<div>
-						<div
-							class="crate-card flex items-center justify-between gap-3 rounded-xl border border-base-300/40 bg-base-300/20 p-3"
-						>
-							<div class="flex min-w-0 items-center gap-3">
-								<div
-									class="flex h-10 w-10 items-center justify-center rounded-xl ring-1 {row.tint}"
-								>
-									<Icon class="h-[1.15rem] w-[1.15rem]" />
-								</div>
-								<div class="min-w-0">
-									<div class="flex items-center gap-2">
-										<span class="text-sm font-semibold">{row.label}</span>
-										<span class="status {linked ? 'status-success' : 'status-error'} status-sm"
-										></span>
-									</div>
-									{#if linked}
-										<p class="truncate text-xs text-base-content/50">
-											Plays count as @{linked.username || 'your account'}
-										</p>
-									{:else}
-										<p class="text-xs text-base-content/30">Plays use the shared account</p>
-									{/if}
-								</div>
-							</div>
-							<div class="shrink-0">
-								{#if linked}
-									<button
-										type="button"
-										class="btn btn-ghost btn-xs rounded-full"
-										onclick={() => disconnect(row.service)}
-										disabled={disconnectMutation.isPending}
-									>
-										Disconnect
-									</button>
-								{:else if row.service === 'navidrome'}
-									<button
-										type="button"
-										class="btn btn-primary btn-xs gap-1 rounded-full px-3 shadow-sm transition-transform hover:scale-[1.03]"
-										onclick={() => (navidromeForm.open = !navidromeForm.open)}
-									>
-										Connect
-									</button>
-								{:else if row.service === 'jellyfin'}
-									<button
-										type="button"
-										class="btn btn-primary btn-xs gap-1 rounded-full px-3 shadow-sm transition-transform hover:scale-[1.03]"
-										onclick={() => (jellyfinForm.open = !jellyfinForm.open)}
-									>
-										Connect
-									</button>
-								{:else if plexPinId !== null}
-									<div class="flex items-center gap-2">
-										<button
-											type="button"
-											class="btn btn-ghost btn-xs rounded-full"
-											onclick={cancelPlexLink}
-										>
-											Cancel
-										</button>
-										<span class="flex items-center gap-1 text-xs text-base-content/50">
-											<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
-											Waiting for Plex…
-										</span>
-									</div>
-								{:else}
-									<button
-										type="button"
-										class="btn btn-primary btn-xs gap-1 rounded-full px-3 shadow-sm transition-transform hover:scale-[1.03]"
-										onclick={startPlexLink}
-										disabled={plexPinMutation.isPending}
-									>
-										Connect
-									</button>
-								{/if}
-							</div>
-						</div>
-
-						{#if row.service === 'navidrome' && !linked && navidromeForm.open}
-							<div
-								class="mt-2 space-y-2 rounded-xl border border-base-300/40 bg-base-100/40 p-3 animate-fade-in-up"
-							>
-								<p class="text-xs text-base-content/60">
-									Sign in with your own Navidrome username and password.
-								</p>
-								<input
-									type="text"
-									class="input input-sm input-soft w-full"
-									placeholder="Navidrome username"
-									bind:value={navidromeForm.username}
-									autocomplete="off"
-								/>
-								<input
-									type="password"
-									class="input input-sm input-soft w-full"
-									placeholder="Password"
-									bind:value={navidromeForm.password}
-									autocomplete="off"
-								/>
-								{#if navidromeForm.error}
-									<p class="text-xs text-error">{navidromeForm.error}</p>
-								{/if}
-								<div class="flex justify-end gap-2">
-									<button
-										type="button"
-										class="btn btn-ghost btn-xs rounded-full"
-										onclick={() => (navidromeForm = emptyForm())}
-									>
-										Cancel
-									</button>
-									<button
-										type="button"
-										class="btn btn-primary btn-xs gap-1 rounded-full"
-										onclick={linkNavidrome}
-										disabled={connectNavidromeMutation.isPending ||
-											!navidromeForm.username.trim() ||
-											!navidromeForm.password}
-									>
-										{#if connectNavidromeMutation.isPending}
-											<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
-										{/if}
-										Link account
-									</button>
-								</div>
-							</div>
-						{/if}
-
-						{#if row.service === 'jellyfin' && !linked && jellyfinForm.open}
-							<div
-								class="mt-2 space-y-2 rounded-xl border border-base-300/40 bg-base-100/40 p-3 animate-fade-in-up"
-							>
-								<p class="text-xs text-base-content/60">
-									Sign in with your own Jellyfin username and password. The password is exchanged
-									for an access token and never stored.
-								</p>
-								<input
-									type="text"
-									class="input input-sm input-soft w-full"
-									placeholder="Jellyfin username"
-									bind:value={jellyfinForm.username}
-									autocomplete="off"
-								/>
-								<input
-									type="password"
-									class="input input-sm input-soft w-full"
-									placeholder="Password"
-									bind:value={jellyfinForm.password}
-									autocomplete="off"
-								/>
-								{#if jellyfinForm.error}
-									<p class="text-xs text-error">{jellyfinForm.error}</p>
-								{/if}
-								<div class="flex justify-end gap-2">
-									<button
-										type="button"
-										class="btn btn-ghost btn-xs rounded-full"
-										onclick={() => (jellyfinForm = emptyForm())}
-									>
-										Cancel
-									</button>
-									<button
-										type="button"
-										class="btn btn-primary btn-xs gap-1 rounded-full"
-										onclick={linkJellyfin}
-										disabled={connectJellyfinMutation.isPending ||
-											!jellyfinForm.username.trim() ||
-											!jellyfinForm.password}
-									>
-										{#if connectJellyfinMutation.isPending}
-											<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
-										{/if}
-										Link account
-									</button>
-								</div>
-							</div>
-						{/if}
-
-						{#if row.service === 'plex' && !linked && plexError}
-							<p class="mt-2 text-xs text-error">{plexError}</p>
-						{/if}
+				{#if connectionsQuery.isPending}
+					<div class="flex items-center justify-center py-10">
+						<LoaderCircle class="h-5 w-5 animate-spin text-base-content/40" />
 					</div>
-				{/each}
-			{/if}
-		</div>
+				{:else}
+					{#each rows as row (row.service)}
+						{@const linked = linkedConnection(row.service)}
+						{@const Icon = row.icon}
+						<div>
+							<Card variant="bordered" padding="sm">
+								<div class="flex items-center justify-between gap-3">
+									<div class="flex min-w-0 items-center gap-3">
+										<div
+											class="flex h-10 w-10 items-center justify-center rounded-xl ring-1 {row.tint}"
+										>
+											<Icon class="h-[1.15rem] w-[1.15rem]" />
+										</div>
+										<div class="min-w-0">
+											<div class="flex items-center gap-2">
+												<span class="text-sm font-semibold">{row.label}</span>
+												<span class="status {linked ? 'status-success' : 'status-error'} status-sm"
+												></span>
+											</div>
+											{#if linked}
+												<p class="truncate text-xs text-base-content/50">
+													Plays count as @{linked.username || 'your account'}
+												</p>
+											{:else}
+												<p class="text-xs text-base-content/30">Plays use the shared account</p>
+											{/if}
+										</div>
+									</div>
+									<div class="shrink-0">
+										{#if linked}
+											<Button
+												variant="ghost"
+												size="xs"
+												pill
+												onclick={() => disconnect(row.service)}
+												disabled={disconnectMutation.isPending}
+											>
+												Disconnect
+											</Button>
+										{:else if row.service === 'navidrome'}
+											<Button
+												variant="primary"
+												size="xs"
+												pill
+												onclick={() => (navidromeForm.open = !navidromeForm.open)}
+											>
+												Connect
+											</Button>
+										{:else if row.service === 'jellyfin'}
+											<Button
+												variant="primary"
+												size="xs"
+												pill
+												onclick={() => (jellyfinForm.open = !jellyfinForm.open)}
+											>
+												Connect
+											</Button>
+										{:else if plexPinId !== null}
+											<div class="flex items-center gap-2">
+												<Button variant="ghost" size="xs" pill onclick={cancelPlexLink}>
+													Cancel
+												</Button>
+												<span class="flex items-center gap-1 text-xs text-base-content/50">
+													<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
+													Waiting for Plex…
+												</span>
+											</div>
+										{:else}
+											<Button
+												variant="primary"
+												size="xs"
+												pill
+												onclick={startPlexLink}
+												disabled={plexPinMutation.isPending}
+											>
+												Connect
+											</Button>
+										{/if}
+									</div>
+								</div>
+							</Card>
+
+							{#if row.service === 'navidrome' && !linked && navidromeForm.open}
+								{@render credentialForm(
+									navidromeForm,
+									'Navidrome',
+									'Sign in with your own Navidrome username and password.',
+									connectNavidromeMutation.isPending,
+									linkNavidrome,
+									() => (navidromeForm = emptyForm())
+								)}
+							{/if}
+
+							{#if row.service === 'jellyfin' && !linked && jellyfinForm.open}
+								{@render credentialForm(
+									jellyfinForm,
+									'Jellyfin',
+									'Sign in with your own Jellyfin username and password. The password is exchanged for an access token and never stored.',
+									connectJellyfinMutation.isPending,
+									linkJellyfin,
+									() => (jellyfinForm = emptyForm())
+								)}
+							{/if}
+
+							{#if row.service === 'plex' && !linked && plexError}
+								<p class="mt-2 text-xs text-error">{plexError}</p>
+							{/if}
+						</div>
+					{/each}
+				{/if}
+			</div>
+		</Card>
 	</section>
 {/if}

@@ -13,6 +13,11 @@
 		KeyRound,
 		ShieldCheck
 	} from 'lucide-svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import Field from '$lib/ui/Field.svelte';
+	import Input from '$lib/ui/Input.svelte';
+	import TextField from '$lib/ui/TextField.svelte';
 
 	const resetPassword = createPasswordRecoveryResetMutation();
 
@@ -95,126 +100,132 @@
 			<p class="recovery-kicker">Account recovery</p>
 		</div>
 
-		<div class="overflow-hidden rounded-box border border-base-300 bg-base-200 shadow-xl">
-			{#if complete}
-				<div class="p-7 text-center sm:p-9" aria-live="polite">
-					<div
-						class="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-success/10"
-					>
-						<Check class="h-7 w-7 text-success" aria-hidden="true" />
-					</div>
-					<h2 class="font-display text-2xl font-bold">Password changed</h2>
-					<p class="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-base-content/60">
-						All other DroppedNeedle browser sessions have been signed out. Sign in with your new
-						password.
-					</p>
-					<p class="mx-auto mt-3 max-w-sm text-xs leading-relaxed text-base-content/45">
-						Connect Apps passwords were not changed. Review them after signing in if you suspect
-						that someone accessed your account.
-					</p>
-					<a href={withBasePath('/login')} class="btn btn-primary mt-7 w-full sm:w-auto"
-						>Return to sign in</a
-					>
-				</div>
-			{:else}
-				<div class="border-b border-base-300 p-6 sm:p-7">
-					<div class="flex items-start gap-4">
+		<Card variant="bordered" padding="none" class="overflow-hidden">
+			<div>
+				{#if complete}
+					<div class="p-7 text-center sm:p-9" aria-live="polite">
 						<div
-							class="flex h-11 w-11 shrink-0 items-center justify-center rounded-box bg-primary/10"
+							class="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-success/10"
 						>
-							<KeyRound class="h-5 w-5 text-primary" aria-hidden="true" />
+							<Check class="h-7 w-7 text-success" aria-hidden="true" />
 						</div>
-						<div>
-							<h2 class="font-display text-xl font-bold">Recover your local account</h2>
-							<p class="mt-1 text-sm leading-relaxed text-base-content/60">
-								Enter the one-time code from your DroppedNeedle administrator.
-							</p>
+						<h2 class="font-display text-2xl font-bold">Password changed</h2>
+						<p class="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-base-content/60">
+							All other DroppedNeedle browser sessions have been signed out. Sign in with your new
+							password.
+						</p>
+						<p class="mx-auto mt-3 max-w-sm text-xs leading-relaxed text-base-content/45">
+							Connect Apps passwords were not changed. Review them after signing in if you suspect
+							that someone accessed your account.
+						</p>
+						<Button href={withBasePath('/login')} variant="primary" class="mt-7 w-full sm:w-auto">
+							Return to sign in
+						</Button>
+					</div>
+				{:else}
+					<div class="border-b border-base-300 p-6 sm:p-7">
+						<div class="flex items-start gap-4">
+							<div
+								class="flex h-11 w-11 shrink-0 items-center justify-center rounded-box bg-primary/10"
+							>
+								<KeyRound class="h-5 w-5 text-primary" aria-hidden="true" />
+							</div>
+							<div>
+								<h2 class="font-display text-xl font-bold">Recover your local account</h2>
+								<p class="mt-1 text-sm leading-relaxed text-base-content/60">
+									Enter the one-time code from your DroppedNeedle administrator.
+								</p>
+							</div>
 						</div>
 					</div>
-				</div>
 
-				<form
-					class="space-y-4 p-6 sm:p-7"
-					onsubmit={(event) => {
-						event.preventDefault();
-						void handleReset();
-					}}
-				>
-					<fieldset class="fieldset">
-						<legend class="fieldset-legend">Username</legend>
-						<input
-							type="text"
-							class="input input-bordered w-full"
+					<form
+						class="space-y-4 p-6 sm:p-7"
+						onsubmit={(event) => {
+							event.preventDefault();
+							void handleReset();
+						}}
+					>
+						<TextField
+							label="Username"
 							bind:value={username}
-							aria-label="Username"
 							autocomplete="username"
 							required
 							placeholder="Your DroppedNeedle username"
 						/>
-					</fieldset>
 
-					<fieldset class="fieldset">
-						<legend class="fieldset-legend">Recovery code</legend>
-						<input
-							type="text"
-							class="input input-bordered recovery-code w-full"
-							bind:value={recoveryCode}
-							aria-label="Recovery code"
-							autocomplete="one-time-code"
-							autocapitalize="characters"
-							spellcheck="false"
-							required
-							placeholder="XXXX-XXXX-XXXX-XXXX-XXXX"
-						/>
-						<p class="mt-1 text-xs text-base-content/45">Codes expire after 15 minutes.</p>
-					</fieldset>
+						<Field label="Recovery code" help="Codes expire after 15 minutes.">
+							{#snippet children(control)}
+								<Input
+									{...control}
+									label="Recovery code"
+									mono
+									class="w-full uppercase tracking-[0.08em]"
+									bind:value={recoveryCode}
+									autocomplete="one-time-code"
+									autocapitalize="characters"
+									spellcheck="false"
+									required
+									placeholder="XXXX-XXXX-XXXX-XXXX-XXXX"
+								/>
+							{/snippet}
+						</Field>
 
-					<div class="grid gap-4 sm:grid-cols-2">
-						<fieldset class="fieldset">
-							<legend class="fieldset-legend">New password</legend>
-							<input
-								type={showPasswords ? 'text' : 'password'}
-								class="input input-bordered w-full"
-								bind:value={newPassword}
-								aria-label="New password"
-								autocomplete="new-password"
-								minlength="12"
-								required
-							/>
-						</fieldset>
-						<fieldset class="fieldset">
-							<legend class="fieldset-legend">Confirm password</legend>
-							<input
-								type={showPasswords ? 'text' : 'password'}
-								class="input input-bordered w-full"
-								bind:value={confirmPassword}
-								aria-label="Confirm password"
-								autocomplete="new-password"
-								minlength="12"
-								required
-							/>
-						</fieldset>
-					</div>
+						<div class="grid gap-4 sm:grid-cols-2">
+							<Field label="New password">
+								{#snippet children(control)}
+									<Input
+										{...control}
+										label="New password"
+										type={showPasswords ? 'text' : 'password'}
+										class="w-full"
+										bind:value={newPassword}
+										autocomplete="new-password"
+										minlength={12}
+										required
+									/>
+								{/snippet}
+							</Field>
+							<Field label="Confirm password">
+								{#snippet children(control)}
+									<Input
+										{...control}
+										label="Confirm password"
+										type={showPasswords ? 'text' : 'password'}
+										class="w-full"
+										bind:value={confirmPassword}
+										autocomplete="new-password"
+										minlength={12}
+										required
+									/>
+								{/snippet}
+							</Field>
+						</div>
 
-					<label class="flex cursor-pointer items-center gap-2 text-xs text-base-content/55">
-						<input type="checkbox" class="checkbox checkbox-xs" bind:checked={showPasswords} />
-						{#if showPasswords}<EyeOff class="h-3.5 w-3.5" />{:else}<Eye class="h-3.5 w-3.5" />{/if}
-						Show passwords
-					</label>
+						<label class="flex cursor-pointer items-center gap-2 text-xs text-base-content/55">
+							<input type="checkbox" class="checkbox checkbox-sm" bind:checked={showPasswords} />
+							{#if showPasswords}<EyeOff class="h-3.5 w-3.5" />{:else}<Eye
+									class="h-3.5 w-3.5"
+								/>{/if}
+							Show passwords
+						</label>
 
-					{#if error}
-						<div class="alert alert-error py-2 text-sm" role="alert">{error}</div>
-					{/if}
-
-					<button class="btn btn-primary w-full" type="submit" disabled={resetPassword.isPending}>
-						{#if resetPassword.isPending}
-							<span class="loading loading-spinner loading-sm"></span>
+						{#if error}
+							<div class="alert alert-error py-2 text-sm" role="alert">{error}</div>
 						{/if}
-						Reset password
-					</button>
-				</form>
-			{/if}
-		</div>
+
+						<Button
+							type="submit"
+							variant="primary"
+							class="w-full"
+							loading={resetPassword.isPending}
+						>
+							Reset password
+						</Button>
+					</form>
+				{/if}
+			</div>
+		</Card>
 
 		{#if !complete}
 			<details
@@ -238,15 +249,17 @@
 					<div class="mt-3 flex items-start gap-2 rounded-box bg-base-300/70 p-3">
 						<code class="min-w-0 flex-1 break-all font-mono text-xs leading-relaxed">{command}</code
 						>
-						<button
-							type="button"
-							class="btn btn-ghost btn-xs shrink-0 gap-1"
+						<Button
+							variant="ghost"
+							size="xs"
+							class="shrink-0"
+							icon={copied ? Check : Copy}
 							onclick={() => void copyCommand()}
 							disabled={!commandReady}
 							aria-label="Copy recovery command"
 						>
-							{#if copied}<Check class="h-3.5 w-3.5" /> Copied{:else}<Copy class="h-3.5 w-3.5" /> Copy{/if}
-						</button>
+							{copied ? 'Copied' : 'Copy'}
+						</Button>
 					</div>
 					{#if !commandReady}
 						<p class="mt-2 text-xs text-base-content/50">
@@ -336,12 +349,6 @@
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
 		color: oklch(from var(--color-base-content) l c h / 0.45);
-	}
-
-	.recovery-code {
-		font-family: var(--font-mono);
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
 	}
 
 	.owner-help[open] {

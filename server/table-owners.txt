@@ -11,6 +11,9 @@
 # album onto its old row):
 #   library_user_favorites        catalog   moved to the surviving row
 #   library_user_favorite_names   catalog   moved with their favorite
+#   library_user_ratings          catalog   moved to the surviving row; a
+#                                           user who rated both keeps the
+#                                           surviving row's rating
 #   library_play_history          media     moved to the surviving row
 #   playlist_tracks               catalog   album_id set to the surviving
 #                                           album (a followed retag, or a
@@ -20,6 +23,7 @@
 # (the same release track of the same album):
 #   library_user_favorites        catalog   moved to the track it continues
 #   library_user_favorite_names   catalog   moved with their favorite
+#   library_user_ratings          catalog   moved to the track it continues
 #   library_play_history          media     moved to the track it continues
 #   playlist_tracks               catalog   library_file_id and
 #                                           track_source_id of local entries
@@ -112,6 +116,7 @@ library_genre_artwork_revisions
 library_track_format_stats
 library_user_favorite_names
 library_user_favorites
+library_user_ratings
 live_event_feed
 mbid_resolution_map
 new_release_feed
@@ -147,10 +152,8 @@ library_edition_choice_undo
 library_edition_remap_queue
 library_event_stream_revisions
 library_identification_attempts
-library_identify_credit_proofs
 library_identify_jobs
 library_identify_reviews
-library_identify_track_credits
 library_identity_repair_findings
 library_management_automatic_queue
 library_management_baseline_purges
@@ -181,9 +184,13 @@ library_retag_pairs
 library_review_exclusions
 library_scan_album_moves
 library_scan_failures
+library_scan_held_scopes
 library_scan_inventory
+library_scan_mounts
 library_scan_run_scopes
 library_scan_runs
+library_scan_unjudged_tracks
+library_track_hand_matches
 library_track_management_identity
 library_track_management_state
 library_work_control

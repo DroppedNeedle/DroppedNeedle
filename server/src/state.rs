@@ -6,13 +6,18 @@
 
 use std::sync::Arc;
 
-use crate::{
-    acquire::AcquireSetup, admin::AdminSetup, auth::wiring::AuthSetup, compat::CompatSetup,
-    concerts::ConcertsSetup, config::AppConfig, events::EventHub, http_client::HttpClientFactory,
-    ids::IdGenerator, jobs::wiring::JobsSetup, library::wiring::LibrarySetup, media::MediaSetup,
-    plugins::wiring::PluginsSetup, providers::Providers, reads::ReadsSetup,
-    settings::wiring::SettingsSetup,
+use crate::{admin::AdminSetup, bootstrap::jobs::JobsSetup, settings::wiring::SettingsSetup};
+use droppedneedle_acquire::AcquireSetup;
+use droppedneedle_auth::wiring::AuthSetup;
+use droppedneedle_catalog::{concerts::ConcertsSetup, reads::ReadsSetup};
+use droppedneedle_compat::CompatSetup;
+use droppedneedle_kernel::{
+    config::AppConfig, events::EventHub, http_client::HttpClientFactory, ids::IdGenerator,
 };
+use droppedneedle_library::wiring::LibrarySetup;
+use droppedneedle_media::MediaSetup;
+use droppedneedle_plugins::wiring::PluginsSetup;
+use droppedneedle_providers::Providers;
 
 /// All long-lived server dependencies.
 #[derive(Clone)]

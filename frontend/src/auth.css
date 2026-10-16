@@ -4,6 +4,7 @@
 @source './routes/setup/+page.svelte';
 @source './routes/recover-password/+page.svelte';
 @source './routes/auth/callback/+page.svelte';
+@source './lib/ui';
 
 /* Auth-free routes keep the established DroppedNeedle type system without loading app.css. */
 @font-face {

@@ -12,6 +12,8 @@
 	} from 'lucide-svelte';
 
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import type { ManagementAuditDossier, ManagementAuditEntry } from './LibraryManagementAuditTypes';
 	import {
 		managementReasonLabel,
@@ -150,16 +152,20 @@
 
 <div class="management-audit-toolbar" aria-label="Audit display controls">
 	<div class="flex flex-wrap items-center gap-1">
-		<button class="btn btn-ghost btn-xs" onclick={expandAll}>Expand releases</button>
-		<button class="btn btn-ghost btn-xs" onclick={collapseAll}>Collapse releases</button>
+		<Button variant="ghost" size="xs" onclick={expandAll}>Expand releases</Button>
+		<Button variant="ghost" size="xs" onclick={collapseAll}>Collapse releases</Button>
 	</div>
 	<div class="flex flex-wrap items-center gap-3">
 		<label class="management-audit-toggle">
-			<input type="checkbox" class="toggle toggle-xs" bind:checked={onlyExceptions} />
+			<input
+				type="checkbox"
+				class="toggle toggle-sm toggle-primary"
+				bind:checked={onlyExceptions}
+			/>
 			<span>Only exceptions</span>
 		</label>
 		<label class="management-audit-toggle">
-			<input type="checkbox" class="toggle toggle-xs" bind:checked={showFullPaths} />
+			<input type="checkbox" class="toggle toggle-sm toggle-primary" bind:checked={showFullPaths} />
 			<span>Show full paths</span>
 		</label>
 	</div>
@@ -261,18 +267,15 @@
 								</p>
 							{/if}
 						</div>
-						<button
-							class="btn btn-ghost btn-sm btn-square shrink-0"
-							aria-label={`${collapsed ? 'Expand' : 'Collapse'} ${dossier.title}`}
+						<IconButton
+							size="sm"
+							shape="square"
+							class="shrink-0"
+							icon={collapsed ? ChevronRight : ChevronDown}
+							label={`${collapsed ? 'Expand' : 'Collapse'} ${dossier.title}`}
 							aria-expanded={!collapsed}
 							onclick={() => toggleBundle(dossier.bundleOrdinal)}
-						>
-							{#if collapsed}
-								<ChevronRight class="h-4 w-4" />
-							{:else}
-								<ChevronDown class="h-4 w-4" />
-							{/if}
-						</button>
+						/>
 					</header>
 
 					{#if !collapsed}

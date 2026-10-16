@@ -11,6 +11,8 @@
 	import DownloadSourceStatus from './DownloadSourceStatus.svelte';
 	import DownloadStatusBadge from './DownloadStatusBadge.svelte';
 	import VinylProgress from './VinylProgress.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	let { task, showEyebrow = true }: { task: DownloadTask; showEyebrow?: boolean } = $props();
 
@@ -31,8 +33,10 @@
 	const showBar = $derived(task.status === 'downloading' || task.status === 'processing');
 </script>
 
-<section
-	class="now-pressing relative overflow-hidden rounded-3xl border border-base-content/10 bg-base-200/40 p-5 backdrop-blur-sm sm:p-6"
+<Card
+	as="section"
+	variant="bordered"
+	class="now-pressing overflow-hidden"
 	aria-label="Now pressing"
 >
 	<div class="now-pressing-glow" aria-hidden="true"></div>
@@ -77,22 +81,25 @@
 				bytesDownloaded={progress?.bytes_downloaded ?? task.downloaded_bytes}
 			/>
 			{#if canCancel(task)}
-				<button
-					type="button"
-					class="btn btn-ghost btn-xs mt-2 text-error/70 hover:text-error"
+				<Button
+					variant="danger-ghost"
+					size="xs"
+					icon={X}
+					class="mt-2"
 					onclick={() => cancel.mutate(task.id)}
 					disabled={cancel.isPending}
 					aria-label="Cancel download"
 				>
-					<X class="size-3.5" aria-hidden="true" /> Cancel
-				</button>
+					Cancel
+				</Button>
 			{/if}
 		</div>
 	</div>
-</section>
+</Card>
 
 <style>
-	.now-pressing {
+	/* the glow pulse rides on the kit Card, outside this component's scope */
+	:global(.now-pressing) {
 		--hero-glow-color: var(--color-primary-rgb);
 		animation: hero-glow 4s ease-in-out infinite;
 	}
@@ -112,7 +119,7 @@
 		pointer-events: none;
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.now-pressing {
+		:global(.now-pressing) {
 			animation: none;
 		}
 	}

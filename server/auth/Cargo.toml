@@ -1,0 +1,41 @@
+[package]
+name = "droppedneedle-auth"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "DroppedNeedle sign-in, sessions and users"
+publish = false
+
+[dependencies]
+droppedneedle-kernel.workspace = true
+droppedneedle-providers.workspace = true
+argon2.workspace = true
+axum.workspace = true
+base64.workspace = true
+bcrypt.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
+hmac.workspace = true
+md5.workspace = true
+reqwest.workspace = true
+ring.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+utoipa.workspace = true
+uuid.workspace = true
+
+[features]
+# Fakes, memory stores and test constructors for the test suites above.
+test-support = [
+    "droppedneedle-kernel/test-support",
+    "droppedneedle-providers/test-support",
+]

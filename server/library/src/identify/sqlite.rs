@@ -1,0 +1,2115 @@
+//! Durable identify state over the application database.
+//!
+//! One store implements every identify port. Accepted identities live in
+//! the external-identity tables with their `decision_source`, so manual
+//! and legacy decisions outlive rescans, moves, and restarts. The queue
+//! and reviews use the 0011 tables; pins and aliases use their 0001
+//! tables. Album facts come straight from the catalog the scan writes, so
+//! a restart never strands an album without facts. Release documents go
+//! in `library_management_metadata_snapshots` (immutable rows, one per
+//! distinct payload); expired ones no identity names are pruned on each
+//! save.
+//!
+//! Every call is a short synchronous transaction on one connection behind
+//! a mutex. A store failure logs and reads as absence (or `false`), never
+//! a panic; the queue keeps its failures visible through `Option`.
+
+use std::path::Path;
+use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
+use sha2::{Digest as _, Sha256};
+
+use super::artist_links;
+use super::models::{
+    AlbumIdentity, Alias, AliasKind, AutomaticSeal, CandidateEvidence, DecisionSource, IdentifyJob,
+    IdentifyKind, JobState, LocalAlbumFacts, LocalTrackFacts, MatchFlag, MatchFlagState,
+    PriorAlbumIdentity, PriorTrackIdentity, ReviewItem, ReviewState, TrackIdentity,
+};
+use super::queue::PRIORITY_NEW_OR_CHANGED;
+use super::stores::{Approval, RELEASE_FRESH_SECS, StoreError};
+use crate::corrections::artist_convergence::converge_ids;
+use crate::corrections::continuation::{Scope, continue_tracks};
+use crate::corrections::release_join::join_replaced;
+use crate::matching::Release;
+use crate::operations::choice::RemapOrigin;
+
+const PROVIDER: &str = "musicbrainz";
+/// Snapshot kind for stored release documents.
+const RELEASE_KIND: &str = "release";
+/// Shape version of the stored document; a new shape is a new input hash.
+/// v2 adds MusicBrainz genres: older documents are fetched again.
+const RELEASE_DOCUMENT_VERSION: &str = "matching-release-v2";
+
+fn now_secs() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|span| span.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
+fn now_ms() -> i64 {
+    (now_secs() * 1000.0) as i64
+}
+
+fn kind_str(kind: IdentifyKind) -> &'static str {
+    match kind {
+        IdentifyKind::Automatic => "automatic",
+        IdentifyKind::Manual => "manual",
+        IdentifyKind::Historical => "historical",
+    }
+}
+
+fn kind_from(raw: &str) -> IdentifyKind {
+    match raw {
+        "manual" => IdentifyKind::Manual,
+        "historical" => IdentifyKind::Historical,
+        _ => IdentifyKind::Automatic,
+    }
+}
+
+fn state_str(state: JobState) -> &'static str {
+    match state {
+        JobState::Queued => "queued",
+        JobState::Running => "running",
+        JobState::Deferred => "deferred",
+        JobState::Succeeded => "succeeded",
+        JobState::Failed => "failed",
+        JobState::Attention => "attention",
+    }
+}
+
+fn state_from(raw: &str) -> JobState {
+    match raw {
+        "running" => JobState::Running,
+        "deferred" => JobState::Deferred,
+        "succeeded" => JobState::Succeeded,
+        "failed" => JobState::Failed,
+        "attention" => JobState::Attention,
+        _ => JobState::Queued,
+    }
+}
+
+fn review_state_str(state: ReviewState) -> &'static str {
+    match state {
+        ReviewState::Pending => "pending",
+        ReviewState::Approved => "approved",
+        ReviewState::Rejected => "rejected",
+        ReviewState::Dismissed => "dismissed",
+        ReviewState::Excluded => "excluded",
+    }
+}
+
+fn review_state_from(raw: &str) -> ReviewState {
+    match raw {
+        "approved" => ReviewState::Approved,
+        "rejected" => ReviewState::Rejected,
+        "dismissed" => ReviewState::Dismissed,
+        "excluded" => ReviewState::Excluded,
+        _ => ReviewState::Pending,
+    }
+}
+
+/// `embedded` rows (tags carried the ids) are revisable like automatic ones.
+fn decision_from(raw: &str) -> DecisionSource {
+    match raw {
+        "manual" => DecisionSource::Manual,
+        "legacy_import" => DecisionSource::LegacyImport,
+        _ => DecisionSource::Automatic,
+    }
+}
+
+fn idempotency_key(local_album_id: &str, input_revision: &str) -> String {
+    format!("{local_album_id}:{input_revision}")
+}
+
+const JOB_COLUMNS: &str = "id, local_album_id, kind, priority, state, attempts, not_before_ms, \
+     input_revision, requested_by_user_id, failure_code";
+
+fn map_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<IdentifyJob> {
+    Ok(IdentifyJob {
+        id: row.get(0)?,
+        local_album_id: row.get(1)?,
+        kind: kind_from(&row.get::<_, String>(2)?),
+        priority: row.get::<_, i64>(3)? as u32,
+        state: state_from(&row.get::<_, String>(4)?),
+        attempts: row.get::<_, i64>(5)? as u32,
+        not_before_ms: row.get::<_, i64>(6)?.max(0) as u64,
+        input_revision: row.get(7)?,
+        requested_by_user_id: row.get(8)?,
+        failure_code: row.get(9)?,
+    })
+}
+
+/// Content revision of one album: a hash over its indexed members and
+/// their stat revisions. Any added, removed, or changed file moves it.
+pub fn album_input_revision(conn: &Connection, local_album_id: &str) -> rusqlite::Result<String> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT id, stat_revision FROM local_tracks \
+         WHERE local_album_id = ?1 AND availability = 'indexed' ORDER BY id",
+    )?;
+    let mut hasher = Sha256::new();
+    let mut rows = stmt.query(params![local_album_id])?;
+    while let Some(row) = rows.next()? {
+        hasher.update(row.get::<_, String>(0)?.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(row.get::<_, String>(1)?.as_bytes());
+        hasher.update(b"\n");
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .take(16)
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+/// Offer one album to identification after the scan changed it. A job
+/// already waiting for the album takes the new revision (its attempt reads
+/// facts fresh from the catalog anyway); otherwise a job is queued unless
+/// one is running on, or already finished, this exact revision. Returns
+/// true when a new job was queued. Runs inside the caller's transaction so
+/// the offer lands with the catalog rows that caused it.
+pub fn offer_album(conn: &Connection, local_album_id: &str, now_ms: i64) -> rusqlite::Result<bool> {
+    let revision = album_input_revision(conn, local_album_id)?;
+    let key = idempotency_key(local_album_id, &revision);
+    let waiting: Option<String> = conn
+        .query_row(
+            "SELECT id FROM library_identify_jobs \
+             WHERE local_album_id = ?1 AND state IN ('queued','deferred') \
+             ORDER BY created_ms LIMIT 1",
+            params![local_album_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(job_id) = waiting {
+        conn.execute(
+            "UPDATE OR IGNORE library_identify_jobs SET input_revision = ?1, \
+             idempotency_key = ?2, updated_ms = ?3 WHERE id = ?4",
+            params![revision, key, now_ms, job_id],
+        )?;
+        return Ok(false);
+    }
+    let settled: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM library_identify_jobs \
+             WHERE idempotency_key = ?1 AND state IN ('running','succeeded'))",
+        params![key],
+        |row| row.get(0),
+    )?;
+    if settled {
+        return Ok(false);
+    }
+    let inserted = conn.execute(
+        "INSERT INTO library_identify_jobs (id, local_album_id, kind, priority, state, \
+         attempts, not_before_ms, input_revision, idempotency_key, created_ms, updated_ms) \
+         VALUES (?1, ?2, 'automatic', ?3, 'queued', 0, ?4, ?5, ?6, ?4, ?4) \
+         ON CONFLICT DO NOTHING",
+        params![
+            uuid::Uuid::new_v4().to_string(),
+            local_album_id,
+            PRIORITY_NEW_OR_CHANGED as i64,
+            now_ms,
+            revision,
+            key,
+        ],
+    )?;
+    if inserted == 1 {
+        bump_identification_stream(conn)?;
+    }
+    Ok(inserted == 1)
+}
+
+/// Move the `identification` activity revision. Every change to the queue
+/// or the review list calls this inside its own transaction, so the
+/// revision poller sends `activity.changed` and open tabs refetch.
+pub(crate) fn bump_identification_stream(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO library_event_stream_revisions (stream_kind, value) \
+         VALUES ('identification', 1) \
+         ON CONFLICT (stream_kind) DO UPDATE SET value = value + 1",
+        [],
+    )?;
+    Ok(())
+}
+
+/// SQLite identify store.
+pub struct SqliteIdentifyStore {
+    conn: Mutex<Connection>,
+    /// Where the sweep of the app's artist links goes on from.
+    link_cursor: Mutex<String>,
+    /// When an album sweep last found nothing to do, and the database's
+    /// version then.
+    swept: Mutex<Option<Swept>>,
+}
+
+/// After an album sweep finds nothing stale, the next one waits this long
+/// while only other connections write. Plays, sessions and scans write
+/// all the time and seldom change a match; a match changed through this
+/// store wakes the sweep at once.
+const SWEEP_FLOOR: Duration = Duration::from_secs(60);
+
+/// An album sweep that found nothing stale.
+#[derive(Clone, Copy)]
+struct Swept {
+    /// `PRAGMA data_version`: moves when another connection commits.
+    data_version: i64,
+    /// This connection's own changes so far.
+    own_changes: u64,
+    at: Instant,
+}
+
+impl SqliteIdentifyStore {
+    /// Open against the migrated application database through the
+    /// database factory.
+    pub fn open(path: &Path) -> Result<Self, String> {
+        let conn =
+            droppedneedle_kernel::db::open_connection(path).map_err(|error| error.to_string())?;
+        Ok(Self {
+            conn: Mutex::new(conn),
+            link_cursor: Mutex::new(String::new()),
+            swept: Mutex::new(None),
+        })
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Connection> {
+        self.conn
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Run one read; a failure logs and reads as `None`.
+    fn read<T>(
+        &self,
+        what: &str,
+        op: impl FnOnce(&Connection) -> rusqlite::Result<T>,
+    ) -> Option<T> {
+        match op(&self.lock()) {
+            Ok(value) => Some(value),
+            Err(error) => {
+                tracing::error!(%error, what, "identify store read failed");
+                None
+            }
+        }
+    }
+
+    /// Run one write in an immediate transaction; a failure logs and
+    /// reads as `None`.
+    fn write<T>(
+        &self,
+        what: &str,
+        op: impl FnOnce(&rusqlite::Transaction<'_>) -> rusqlite::Result<T>,
+    ) -> Option<T> {
+        let mut conn = self.lock();
+        let outcome = (|| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let value = op(&tx)?;
+            tx.commit()?;
+            Ok(value)
+        })();
+        match outcome {
+            Ok(value) => Some(value),
+            Err(error) => {
+                let error: rusqlite::Error = error;
+                tracing::error!(%error, what, "identify store write failed");
+                None
+            }
+        }
+    }
+
+    /// Queue an identification for one album the catalog holds, reusing a
+    /// live job on the same revision. `None` when the album is unknown or
+    /// the store failed.
+    pub fn offer(&self, local_album_id: &str) -> Option<bool> {
+        self.write("offer album", |tx| {
+            offer_album(tx, local_album_id, now_ms())
+        })
+    }
+
+    /// Current input revision of one album.
+    pub fn input_revision(&self, local_album_id: &str) -> Option<String> {
+        self.read("album revision", |conn| {
+            album_input_revision(conn, local_album_id)
+        })
+    }
+
+    /// Run `op` on the store's connection. Library operation jobs live in
+    /// the same database and change the same identity rows, so they take
+    /// turns with identification on this connection. `op` must not call
+    /// back into this store (the lock is not reentrant) or block on
+    /// anything but SQLite.
+    pub(crate) fn with_connection<T>(&self, op: impl FnOnce(&mut Connection) -> T) -> T {
+        op(&mut self.lock())
+    }
+}
+
+/// Durable identity rows plus the facts the matcher reads.
+impl SqliteIdentifyStore {
+    pub fn album_identity(&self, local_album_id: &str) -> Option<AlbumIdentity> {
+        self.read("album identity", |conn| {
+            conn.query_row(
+                "SELECT release_group_mbid, release_mbid, decision_source, row_revision \
+                 FROM local_album_external_identities \
+                 WHERE local_album_id = ?1 AND provider = ?2",
+                params![local_album_id, PROVIDER],
+                |row| {
+                    Ok(AlbumIdentity {
+                        local_album_id: local_album_id.to_owned(),
+                        provider: PROVIDER.to_owned(),
+                        release_group_mbid: Some(row.get(0)?),
+                        release_mbid: row.get(1)?,
+                        decision_source: decision_from(&row.get::<_, String>(2)?),
+                        row_revision: row.get::<_, i64>(3)? as u64,
+                    })
+                },
+            )
+            .optional()
+        })
+        .flatten()
+    }
+
+    pub fn save_album_identity(&self, identity: AlbumIdentity) {
+        let Some(group) = identity.release_group_mbid.clone() else {
+            tracing::warn!(
+                album = identity.local_album_id,
+                "album identity without a release group not stored"
+            );
+            return;
+        };
+        // The write itself refuses to put an automatic or embedded row
+        // over a person's: the caller's own check may have read nothing.
+        let written = self.write("save album identity", |tx| {
+            tx.execute(
+                &format!(
+                    "INSERT INTO local_album_external_identities (local_album_id, provider, \
+                     release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+                     ON CONFLICT (local_album_id, provider) DO UPDATE SET \
+                     release_group_mbid = excluded.release_group_mbid, \
+                     release_mbid = excluded.release_mbid, \
+                     decision_source = excluded.decision_source, \
+                     selected_at = excluded.selected_at, row_revision = excluded.row_revision \
+                     WHERE excluded.decision_source NOT IN {REVISABLE} \
+                     OR local_album_external_identities.decision_source IN {REVISABLE}"
+                ),
+                params![
+                    identity.local_album_id,
+                    PROVIDER,
+                    group,
+                    identity.release_mbid,
+                    identity.decision_source.as_str(),
+                    now_secs(),
+                    identity.row_revision.max(1) as i64,
+                ],
+            )
+        });
+        if written == Some(0) {
+            tracing::warn!(
+                album = identity.local_album_id,
+                "automatic identity not written over a person's album identity"
+            );
+        }
+    }
+
+    pub fn clear_album_identity(&self, local_album_id: &str) {
+        // Only automatic passes retract; a curator's row is never removed
+        // here, even if one landed after the attempt read the album.
+        self.write("clear album identity", |tx| {
+            tx.execute(
+                &format!(
+                    "DELETE FROM local_album_external_identities \
+                     WHERE local_album_id = ?1 AND provider = ?2 \
+                     AND decision_source IN {REVISABLE}"
+                ),
+                params![local_album_id, PROVIDER],
+            )
+        });
+    }
+
+    pub fn track_identity(&self, local_track_id: &str) -> Option<TrackIdentity> {
+        self.read("track identity", |conn| {
+            conn.query_row(
+                "SELECT recording_mbid, release_track_mbid, decision_source, row_revision \
+                 FROM local_track_external_identities \
+                 WHERE local_track_id = ?1 AND provider = ?2",
+                params![local_track_id, PROVIDER],
+                |row| {
+                    Ok(TrackIdentity {
+                        local_track_id: local_track_id.to_owned(),
+                        provider: PROVIDER.to_owned(),
+                        recording_mbid: Some(row.get(0)?),
+                        release_track_mbid: row.get(1)?,
+                        decision_source: decision_from(&row.get::<_, String>(2)?),
+                        row_revision: row.get::<_, i64>(3)? as u64,
+                    })
+                },
+            )
+            .optional()
+        })
+        .flatten()
+    }
+
+    pub fn save_track_identity(&self, identity: TrackIdentity) {
+        let Some(recording) = identity.recording_mbid.clone() else {
+            tracing::warn!(
+                track = identity.local_track_id,
+                "track identity without a recording not stored"
+            );
+            return;
+        };
+        // Guarded like the album row.
+        let written = self.write("save track identity", |tx| {
+            let written = tx.execute(
+                &format!(
+                    "INSERT INTO local_track_external_identities (local_track_id, provider, \
+                     recording_mbid, release_track_mbid, decision_source, selected_at, row_revision) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+                     ON CONFLICT (local_track_id, provider) DO UPDATE SET \
+                     recording_mbid = excluded.recording_mbid, \
+                     release_track_mbid = excluded.release_track_mbid, \
+                     decision_source = excluded.decision_source, \
+                     selected_at = excluded.selected_at, row_revision = excluded.row_revision \
+                     WHERE excluded.decision_source NOT IN {REVISABLE} \
+                     OR local_track_external_identities.decision_source IN {REVISABLE}"
+                ),
+                params![
+                    identity.local_track_id,
+                    PROVIDER,
+                    recording,
+                    identity.release_track_mbid,
+                    identity.decision_source.as_str(),
+                    now_secs(),
+                    identity.row_revision.max(1) as i64,
+                ],
+            )?;
+            if written == 1 {
+                let album: String = tx.query_row(
+                    "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+                    params![identity.local_track_id],
+                    |row| row.get(0),
+                )?;
+                continue_tracks(tx, Scope::Album(&album), now_secs())?;
+            }
+            Ok(written)
+        });
+        if written == Some(0) {
+            tracing::warn!(
+                track = identity.local_track_id,
+                "automatic identity not written over a person's track identity"
+            );
+        }
+    }
+
+    /// Seal an automatic win: the album row and the given track rows, never
+    /// over a curator's row, in one transaction. For an exact edition it
+    /// keeps what it replaced so an administrator can undo it. `false`
+    /// when a curator's row holds the album (nothing is written).
+    pub fn seal_automatic(&self, seal: &AutomaticSeal) -> bool {
+        self.write("seal automatic identity", |tx| seal_automatic_tx(tx, seal))
+            .unwrap_or(false)
+    }
+
+    /// The album's match flag, if identification is unsure of it.
+    pub fn match_flag(&self, local_album_id: &str) -> Option<MatchFlag> {
+        self.read("match flag", |conn| {
+            conn.query_row(
+                "SELECT state, reason_code, release_mbid, candidates_json \
+                 FROM library_album_match_state WHERE local_album_id = ?1",
+                params![local_album_id],
+                |row| {
+                    let state: String = row.get(0)?;
+                    let candidates: String = row.get(3)?;
+                    Ok(MatchFlag {
+                        state: if state == "unmatched" {
+                            MatchFlagState::Unmatched
+                        } else {
+                            MatchFlagState::Unconfirmed
+                        },
+                        reason_code: row.get(1)?,
+                        release_mbid: row.get(2)?,
+                        candidates: serde_json::from_str(&candidates).unwrap_or_default(),
+                    })
+                },
+            )
+            .optional()
+        })
+        .flatten()
+    }
+
+    /// Record (or with `None`, clear) the album's match flag.
+    pub fn set_match_flag(
+        &self,
+        local_album_id: &str,
+        flag: Option<&MatchFlag>,
+    ) -> Result<(), StoreError> {
+        self.write("match flag", |tx| {
+            write_match_flag(tx, local_album_id, flag)
+        })
+        .map(|_| ())
+        .ok_or_else(|| StoreError {
+            cause: format!("match flag for album {local_album_id} not written"),
+        })
+    }
+}
+
+/// The raw album identity row, every column the undo puts back.
+pub fn album_identity_row(
+    conn: &Connection,
+    local_album_id: &str,
+) -> rusqlite::Result<Option<PriorAlbumIdentity>> {
+    conn.query_row(
+        "SELECT release_group_mbid, release_mbid, decision_source, matcher_version, \
+         attempt_id, selected_by_user_id, selected_at, row_revision \
+         FROM local_album_external_identities WHERE local_album_id = ?1 AND provider = ?2",
+        params![local_album_id, PROVIDER],
+        |row| {
+            Ok(PriorAlbumIdentity {
+                release_group_mbid: row.get(0)?,
+                release_mbid: row.get(1)?,
+                decision_source: row.get(2)?,
+                matcher_version: row.get(3)?,
+                attempt_id: row.get(4)?,
+                selected_by_user_id: row.get(5)?,
+                selected_at: row.get(6)?,
+                row_revision: row.get(7)?,
+            })
+        },
+    )
+    .optional()
+}
+
+/// The raw identity rows of the album's indexed tracks, by track id.
+pub fn track_identity_rows(
+    conn: &Connection,
+    local_album_id: &str,
+) -> rusqlite::Result<Vec<PriorTrackIdentity>> {
+    let mut stmt = conn.prepare(
+        "SELECT i.local_track_id, i.recording_mbid, i.release_mbid, i.release_track_mbid, \
+         i.medium_position, i.release_track_position, i.decision_source, i.attempt_id, \
+         i.selected_at FROM local_track_external_identities i \
+         JOIN local_tracks t ON t.id = i.local_track_id \
+         WHERE t.local_album_id = ?1 AND t.availability = 'indexed' AND i.provider = ?2 \
+         ORDER BY i.local_track_id",
+    )?;
+    stmt.query_map(params![local_album_id, PROVIDER], |row| {
+        Ok(PriorTrackIdentity {
+            local_track_id: row.get(0)?,
+            recording_mbid: row.get(1)?,
+            release_mbid: row.get(2)?,
+            release_track_mbid: row.get(3)?,
+            medium_position: row.get(4)?,
+            release_track_position: row.get(5)?,
+            decision_source: row.get(6)?,
+            attempt_id: row.get(7)?,
+            selected_at: row.get(8)?,
+        })
+    })?
+    .collect()
+}
+
+/// Decision sources an automatic pass may replace: its own rows and ids
+/// the tags carried.
+const REVISABLE: &str = "('automatic','embedded')";
+
+fn to_json<T: serde::Serialize>(value: &T) -> rusqlite::Result<String> {
+    serde_json::to_string(value)
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))
+}
+
+/// Record (or with `None`, clear) one album's match flag.
+fn write_match_flag(
+    tx: &rusqlite::Transaction<'_>,
+    local_album_id: &str,
+    flag: Option<&MatchFlag>,
+) -> rusqlite::Result<usize> {
+    match flag {
+        None => tx.execute(
+            "DELETE FROM library_album_match_state WHERE local_album_id = ?1",
+            params![local_album_id],
+        ),
+        Some(flag) => tx.execute(
+            "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+             release_mbid, candidates_json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+             ON CONFLICT (local_album_id) DO UPDATE SET state = excluded.state, \
+             reason_code = excluded.reason_code, release_mbid = excluded.release_mbid, \
+             candidates_json = excluded.candidates_json, updated_at = excluded.updated_at",
+            params![
+                local_album_id,
+                flag.state.as_str(),
+                flag.reason_code,
+                flag.release_mbid,
+                to_json(&flag.candidates)?,
+                now_ms() as f64 / 1000.0,
+            ],
+        ),
+    }
+}
+
+/// One automatic seal in one transaction: read what is there, refuse a
+/// curator's album row, write the album and the revisable track rows, and
+/// for an exact edition keep the rows it replaced for undo.
+fn seal_automatic_tx(
+    tx: &rusqlite::Transaction<'_>,
+    seal: &AutomaticSeal,
+) -> rusqlite::Result<bool> {
+    let album = &seal.local_album_id;
+    let prior = album_identity_row(tx, album)?;
+    let revisable = |source: Option<&str>| matches!(source, Some("automatic" | "embedded"));
+    if prior
+        .as_ref()
+        .is_some_and(|row| !revisable(row.decision_source.as_deref()))
+    {
+        return Ok(false);
+    }
+    let prior_tracks = track_identity_rows(tx, album)?;
+    let now = now_secs();
+    let written = tx.execute(
+        &format!(
+            "INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
+             VALUES (?1, ?2, ?3, ?4, 'automatic', ?5, 1) \
+             ON CONFLICT (local_album_id, provider) DO UPDATE SET \
+             release_group_mbid = excluded.release_group_mbid, \
+             release_mbid = excluded.release_mbid, decision_source = 'automatic', \
+             matcher_version = NULL, attempt_id = NULL, selected_by_user_id = NULL, \
+             selected_at = excluded.selected_at, row_revision = row_revision + 1 \
+             WHERE local_album_external_identities.decision_source IN {REVISABLE}"
+        ),
+        params![
+            album,
+            PROVIDER,
+            seal.release_group_mbid,
+            seal.release_mbid,
+            now
+        ],
+    )?;
+    if written != 1 {
+        return Ok(false);
+    }
+    // The flag lands with the seal, so a best guess is never applied
+    // without it (and a confident match never keeps a stale one).
+    write_match_flag(tx, album, seal.flag.as_ref())?;
+    for track in &seal.tracks {
+        let Some(recording) = track.recording_mbid.as_deref() else {
+            continue;
+        };
+        tx.execute(
+            &format!(
+                "INSERT INTO local_track_external_identities (local_track_id, provider, \
+                 recording_mbid, release_mbid, release_track_mbid, decision_source, \
+                 selected_at, row_revision) VALUES (?1, ?2, ?3, ?4, ?5, 'automatic', ?6, 1) \
+                 ON CONFLICT (local_track_id, provider) DO UPDATE SET \
+                 recording_mbid = excluded.recording_mbid, \
+                 release_mbid = excluded.release_mbid, \
+                 release_track_mbid = excluded.release_track_mbid, \
+                 medium_position = NULL, release_track_position = NULL, \
+                 decision_source = 'automatic', attempt_id = NULL, \
+                 selected_at = excluded.selected_at, row_revision = row_revision + 1 \
+                 WHERE local_track_external_identities.decision_source IN {REVISABLE}"
+            ),
+            params![
+                track.local_track_id,
+                PROVIDER,
+                recording,
+                seal.release_mbid,
+                track.release_track_mbid,
+                now,
+            ],
+        )?;
+    }
+    if seal.release_mbid.is_some() {
+        keep_automatic_undo(tx, album, prior.as_ref(), &prior_tracks, now)?;
+    }
+    join_replaced(tx, Scope::Album(album), now)?;
+    continue_tracks(tx, Scope::Album(album), now)?;
+    Ok(true)
+}
+
+/// One live undo per album: a later automatic seal replaces it.
+fn keep_automatic_undo(
+    tx: &rusqlite::Transaction<'_>,
+    album: &str,
+    prior: Option<&PriorAlbumIdentity>,
+    prior_tracks: &[PriorTrackIdentity],
+    now: f64,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO library_automatic_edition_undo (id, local_album_id, \
+         prior_identity_json, prior_track_identities_json, expected_post_album_revision, \
+         expected_post_identity_revision, reason_code, created_at) \
+         SELECT ?1, a.id, ?2, ?3, a.row_revision, i.row_revision, \
+         'AUTOMATIC_EXACT_EDITION', ?4 FROM local_albums a \
+         JOIN local_album_external_identities i \
+         ON i.local_album_id = a.id AND i.provider = ?6 WHERE a.id = ?5 \
+         ON CONFLICT (local_album_id) DO UPDATE SET id = excluded.id, \
+         job_id = NULL, evidence_id = NULL, \
+         prior_identity_json = excluded.prior_identity_json, \
+         prior_track_identities_json = excluded.prior_track_identities_json, \
+         expected_post_album_revision = excluded.expected_post_album_revision, \
+         expected_post_identity_revision = excluded.expected_post_identity_revision, \
+         reason_code = excluded.reason_code, created_at = excluded.created_at, \
+         consumed_at = NULL, consumed_action_id = NULL",
+        params![
+            uuid::Uuid::new_v4().to_string(),
+            prior.map(to_json).transpose()?,
+            to_json(&prior_tracks)?,
+            now,
+            album,
+            PROVIDER,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Local album facts the matcher reads, from the catalog the scan
+/// writes.
+impl SqliteIdentifyStore {
+    /// `None` means the album does not exist.
+    pub fn album_facts(&self, local_album_id: &str) -> Option<LocalAlbumFacts> {
+        self.read("album facts", |conn| {
+            let album = conn
+                .query_row(
+                    "SELECT title, COALESCE(album_artist_name, ''), is_compilation, year \
+                     FROM local_albums WHERE id = ?1",
+                    params![local_album_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, i64>(2)? != 0,
+                            row.get::<_, Option<i64>>(3)?,
+                        ))
+                    },
+                )
+                .optional()?;
+            let Some((title, album_artist_name, is_compilation, year)) = album else {
+                return Ok(None);
+            };
+            let mut stmt = conn.prepare(
+                "SELECT t.id, t.title, COALESCE(t.artist_name, ''), t.track_number, \
+                 t.disc_number, t.duration_seconds, t.embedded_recording_mbid, \
+                 t.embedded_release_track_mbid, t.embedded_release_mbid, \
+                 t.embedded_release_group_mbid, t.membership_locked, t.root_id, \
+                 t.relative_path, t.stat_revision, h.media, h.barcode, h.catalog_number, \
+                 h.release_country, h.total_discs \
+                 FROM local_tracks t LEFT JOIN local_track_edition_tags h \
+                 ON h.local_track_id = t.id \
+                 WHERE t.local_album_id = ?1 AND t.availability = 'indexed' \
+                 ORDER BY t.disc_number, t.track_number, t.relative_path",
+            )?;
+            let mut tracks = Vec::new();
+            let mut locked = Vec::new();
+            let rows = stmt.query_map(params![local_album_id], |row| {
+                Ok((
+                    LocalTrackFacts {
+                        local_track_id: row.get(0)?,
+                        title: row.get(1)?,
+                        artist_name: row.get(2)?,
+                        track_number: row.get::<_, i64>(3)?.max(0) as u32,
+                        disc_number: row.get::<_, i64>(4)?.max(0) as u32,
+                        duration_secs: row
+                            .get::<_, Option<f64>>(5)?
+                            .map(|seconds| seconds.max(0.0) as u64),
+                        recording_mbid: row.get(6)?,
+                        release_track_mbid: row.get(7)?,
+                        release_mbid: row.get(8)?,
+                        release_group_mbid: row.get(9)?,
+                        root_id: row.get(11)?,
+                        relative_path: row.get(12)?,
+                        stat_revision: row.get(13)?,
+                        duration_exact: row
+                            .get::<_, Option<f64>>(5)?
+                            .filter(|seconds| *seconds > 0.0),
+                        media: row.get(14)?,
+                        barcode: row.get(15)?,
+                        catalog_number: row.get(16)?,
+                        release_country: row.get(17)?,
+                        total_discs: row
+                            .get::<_, Option<i64>>(18)?
+                            .and_then(|total| u32::try_from(total).ok()),
+                    },
+                    row.get::<_, i64>(10)? != 0,
+                ))
+            })?;
+            for row in rows {
+                let (track, membership_locked) = row?;
+                if membership_locked {
+                    locked.push(track.local_track_id.clone());
+                }
+                tracks.push(track);
+            }
+            Ok(Some(LocalAlbumFacts {
+                local_album_id: local_album_id.to_owned(),
+                title,
+                album_artist_name,
+                year: year.and_then(|year| i32::try_from(year).ok()),
+                tracks,
+                locked_track_ids: locked,
+                is_compilation,
+            }))
+        })
+        .flatten()
+    }
+}
+
+/// Version tag for stored prints: the Chromaprint pipeline in
+/// `tags::fingerprint` (test2 preset, 120 s window).
+///
+/// `audio_fingerprint_outcomes` references `local_tracks` with
+/// `ON DELETE RESTRICT`: a future purge of missing tracks must delete a
+/// track's rows here before the track itself.
+const FINGERPRINTER_VERSION: &str = "chromaprint-test2-120s";
+
+/// Fingerprints already taken, keyed by track and its file's stat
+/// revision, so an unchanged file is never decoded twice.
+impl SqliteIdentifyStore {
+    /// The stored print and its duration in seconds.
+    pub fn fingerprint(&self, local_track_id: &str, stat_revision: &str) -> Option<(String, u32)> {
+        self.read("stored fingerprint", |conn| {
+            conn.query_row(
+                "SELECT fingerprint, duration_seconds FROM audio_fingerprint_outcomes \
+                 WHERE local_track_id = ?1 AND stat_revision = ?2 \
+                 AND fingerprinter_version = ?3 AND fingerprint IS NOT NULL",
+                params![local_track_id, stat_revision, FINGERPRINTER_VERSION],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<f64>>(1)?.unwrap_or(0.0).max(0.0) as u32,
+                    ))
+                },
+            )
+            .optional()
+        })
+        .flatten()
+    }
+
+    /// Keep a print; `matched` says whether AcoustID knew it.
+    pub fn save_fingerprint(
+        &self,
+        local_track_id: &str,
+        stat_revision: &str,
+        fingerprint: &str,
+        duration_seconds: u32,
+        matched: bool,
+    ) {
+        let now = now_secs();
+        self.write("save fingerprint", |tx| {
+            // One print per track: older file revisions are stale.
+            tx.execute(
+                "DELETE FROM audio_fingerprint_outcomes WHERE local_track_id = ?1 \
+                 AND (stat_revision != ?2 OR fingerprinter_version != ?3)",
+                params![local_track_id, stat_revision, FINGERPRINTER_VERSION],
+            )?;
+            tx.execute(
+                "INSERT INTO audio_fingerprint_outcomes (id, local_track_id, stat_revision, \
+                 fingerprinter_version, state, fingerprint, duration_seconds, \
+                 first_attempt_at, last_attempt_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
+                 ON CONFLICT (local_track_id, stat_revision, fingerprinter_version) DO UPDATE SET \
+                 state = excluded.state, fingerprint = excluded.fingerprint, \
+                 duration_seconds = excluded.duration_seconds, \
+                 last_attempt_at = excluded.last_attempt_at, attempt_count = attempt_count + 1",
+                params![
+                    hex_sha256(
+                        format!("{local_track_id}\0{stat_revision}\0{FINGERPRINTER_VERSION}")
+                            .as_bytes()
+                    ),
+                    local_track_id,
+                    stat_revision,
+                    FINGERPRINTER_VERSION,
+                    if matched { "matched" } else { "no_match" },
+                    fingerprint,
+                    f64::from(duration_seconds),
+                    now,
+                ],
+            )
+        });
+    }
+}
+
+/// Artists linked to MusicBrainz from their album's accepted match
+/// (`artist_links`).
+impl SqliteIdentifyStore {
+    /// Work out what the album's match proves about its artists and settle
+    /// their links, with no merge. Library Management runs this before it
+    /// plans an album. `false` when it failed (logged).
+    pub fn link_album_artists(&self, local_album_id: &str) -> bool {
+        self.artist_pass(local_album_id, false)
+    }
+
+    /// [`Self::link_album_artists`], then merge what the links it made
+    /// prove to be one artist. Identification runs this after each
+    /// attempt and for each album a sweep finds stale.
+    pub fn link_and_merge_album_artists(&self, local_album_id: &str) -> bool {
+        self.artist_pass(local_album_id, true)
+    }
+
+    fn artist_pass(&self, album: &str, converge: bool) -> bool {
+        let mut conn = self.lock();
+        let outcome = (|| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let now = now_ms();
+            let linked = artist_links::link_album(&tx, album, now)?;
+            if converge && !linked.is_empty() {
+                converge_ids(&tx, &linked, now as f64 / 1000.0)?;
+            }
+            tx.commit()
+        })();
+        match outcome {
+            Ok(()) => true,
+            Err(error) => {
+                let error: rusqlite::Error = error;
+                tracing::warn!(
+                    %error,
+                    album_id = album,
+                    "the album's artist links could not be worked out; a later sweep tries again"
+                );
+                false
+            }
+        }
+    }
+
+    /// One sweep: up to [`artist_links::SWEEP_BATCH`] albums whose match
+    /// or track mappings changed since their last pass, each in its own
+    /// transaction, then up to as many of the app's links, in id order
+    /// from where the last sweep stopped, each settled again.
+    pub fn sweep_artist_links(&self) {
+        let version = self.read("database version", |conn| {
+            let data: i64 = conn.query_row("PRAGMA data_version", [], |row| row.get(0))?;
+            Ok((data, conn.total_changes()))
+        });
+        let quiet = match (version, *self.swept_guard()) {
+            (Some((data, own)), Some(last)) => {
+                own == last.own_changes
+                    && (data == last.data_version || last.at.elapsed() < SWEEP_FLOOR)
+            }
+            _ => false,
+        };
+        if !quiet {
+            let stale = self
+                .read("stale albums", |conn| {
+                    artist_links::stale_albums(conn, artist_links::SWEEP_BATCH)
+                })
+                .unwrap_or_default();
+            for album in &stale {
+                self.link_and_merge_album_artists(album);
+            }
+            *self.swept_guard() =
+                version
+                    .filter(|_| stale.is_empty())
+                    .map(|(data_version, own_changes)| Swept {
+                        data_version,
+                        own_changes,
+                        at: Instant::now(),
+                    });
+        }
+        let cursor = self.cursor_guard().clone();
+        let rows = self
+            .read("linked artists", |conn| {
+                artist_links::automatic_links_after(conn, &cursor, artist_links::SWEEP_BATCH)
+            })
+            .unwrap_or_default();
+        *self.cursor_guard() = match rows.last() {
+            Some(last) if rows.len() == artist_links::SWEEP_BATCH => last.clone(),
+            _ => String::new(),
+        };
+        for artist in rows {
+            let one = std::slice::from_ref(&artist);
+            let due = self.read("artist link", |conn| {
+                Ok(!artist_links::plan(conn, one)?.is_empty())
+            });
+            if due == Some(true) {
+                self.write("settle artist link", |tx| {
+                    artist_links::settle(tx, one, now_ms())
+                });
+            }
+        }
+    }
+
+    fn swept_guard(&self) -> MutexGuard<'_, Option<Swept>> {
+        self.swept
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn cursor_guard(&self) -> MutexGuard<'_, String> {
+        self.link_cursor
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// Release documents identification fetched or sealed against. Recall
+/// reuses fresh ones instead of asking MusicBrainz again, and the
+/// publisher tags files from the one an album's identity names.
+impl SqliteIdentifyStore {
+    /// The stored document for one release, if it was saved no more than
+    /// `max_age_secs` ago (`None` accepts any age).
+    pub fn release(&self, release_mbid: &str, max_age_secs: Option<u64>) -> Option<Release> {
+        let oldest = max_age_secs.map_or(0.0, |age| now_secs() - age as f64);
+        self.read("release document", |conn| {
+            stored_release(conn, release_mbid, oldest)
+        })
+        .flatten()
+    }
+
+    pub fn save_release(&self, release: &Release) {
+        // A refetch by the canonical id carries no redirect, so it would
+        // forget the merged ids an earlier lookup learned: keep them.
+        let canonical = release.id.trim().to_ascii_lowercase();
+        let mut release = release.clone();
+        if let Some(stored) = self.release(&canonical, None) {
+            for old in stored.old_ids {
+                if !release
+                    .old_ids
+                    .iter()
+                    .any(|known| known.eq_ignore_ascii_case(&old))
+                {
+                    release.old_ids.push(old);
+                }
+            }
+        }
+        let release = &release;
+        let payload = match serde_json::to_string(release) {
+            Ok(payload) => payload,
+            Err(error) => {
+                tracing::error!(%error, release = release.id, "release document did not encode");
+                return;
+            }
+        };
+        let payload_sha = hex_sha256(payload.as_bytes());
+        // The release's own id plus every merged id that redirects to it:
+        // each gets a row with the same payload, so a lookup by any of them
+        // stays a plain indexed match on entity_id.
+        let mut entities = vec![canonical];
+        for old in &release.old_ids {
+            let old = old.trim().to_ascii_lowercase();
+            if !old.is_empty() && !entities.contains(&old) {
+                entities.push(old);
+            }
+        }
+        let now = now_secs();
+        self.write("save release document", |tx| {
+            for entity in &entities {
+                // Rows are immutable, so a refetch replaces the old row.
+                tx.execute(
+                    "DELETE FROM library_management_metadata_snapshots \
+                     WHERE provider = ?1 AND entity_kind = ?2 AND entity_id = ?3",
+                    params![PROVIDER, RELEASE_KIND, entity],
+                )?;
+                tx.execute(
+                    "INSERT INTO library_management_metadata_snapshots (id, provider, \
+                     entity_kind, entity_id, input_hash, canonical_payload_json, payload_sha256, \
+                     fetched_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    params![
+                        hex_sha256(format!("{entity}\0{payload_sha}").as_bytes()),
+                        PROVIDER,
+                        RELEASE_KIND,
+                        entity,
+                        release_input_hash(),
+                        payload,
+                        payload_sha,
+                        now,
+                        now + RELEASE_FRESH_SECS as f64,
+                    ],
+                )?;
+            }
+            // Expired documents stay while an identity names them or a
+            // pending review offers them to a curator. Merged-id rows share
+            // their document's payload hash, so they go and stay with it.
+            tx.execute(
+                "DELETE FROM library_management_metadata_snapshots \
+                 WHERE provider = ?1 AND entity_kind = ?2 AND expires_at < ?3 \
+                 AND payload_sha256 NOT IN (SELECT kept.payload_sha256 \
+                 FROM library_management_metadata_snapshots AS kept \
+                 WHERE kept.provider = ?1 AND kept.entity_kind = ?2 AND kept.entity_id IN ( \
+                 SELECT lower(release_mbid) FROM local_album_external_identities \
+                 WHERE release_mbid IS NOT NULL \
+                 UNION SELECT lower(json_extract(candidate.value, '$.release_mbid')) \
+                 FROM library_identify_reviews, json_each(candidates_json) AS candidate \
+                 WHERE state = ?4 AND json_extract(candidate.value, '$.release_mbid') IS NOT NULL))",
+                params![PROVIDER, RELEASE_KIND, now, review_state_str(ReviewState::Pending)],
+            )?;
+            Ok(())
+        });
+    }
+}
+
+impl SqliteIdentifyStore {
+    /// Graft fetched parts (credits, artist names) onto the stored
+    /// document for a release, in one transaction: the current row is
+    /// read, grafted and written back under every id that shares its
+    /// payload (merged ids too), keeping when the document was fetched and
+    /// when it expires. Returns the grafted document, or `None` when none
+    /// is stored or the write failed.
+    pub fn graft_extras(
+        &self,
+        release_mbid: &str,
+        fetched: &crate::matching::model::ReleaseExtras,
+    ) -> Option<Release> {
+        let entity = release_mbid.trim().to_ascii_lowercase();
+        self.write("graft release extras", |tx| {
+            let current: Option<(String, String)> = tx
+                .query_row(
+                    "SELECT canonical_payload_json, payload_sha256 \
+                     FROM library_management_metadata_snapshots \
+                     WHERE provider = ?1 AND entity_kind = ?2 AND entity_id = ?3 \
+                     AND input_hash = ?4 ORDER BY fetched_at DESC LIMIT 1",
+                    params![PROVIDER, RELEASE_KIND, entity, release_input_hash()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            let Some((payload, old_sha)) = current else {
+                return Ok(None);
+            };
+            let mut release: Release = match serde_json::from_str(&payload) {
+                Ok(release) => release,
+                Err(error) => {
+                    tracing::warn!(%error, release_mbid, "stored release document did not decode");
+                    return Ok(None);
+                }
+            };
+            release.graft_extras(fetched);
+            let payload = match serde_json::to_string(&release) {
+                Ok(payload) => payload,
+                Err(error) => {
+                    tracing::error!(%error, release_mbid, "release document did not encode");
+                    return Ok(None);
+                }
+            };
+            let payload_sha = hex_sha256(payload.as_bytes());
+            let rows: Vec<(String, String, f64, Option<f64>)> = {
+                let mut statement = tx.prepare(
+                    "SELECT entity_id, input_hash, fetched_at, expires_at \
+                     FROM library_management_metadata_snapshots \
+                     WHERE provider = ?1 AND entity_kind = ?2 AND payload_sha256 = ?3",
+                )?;
+                statement
+                    .query_map(params![PROVIDER, RELEASE_KIND, old_sha], |row| {
+                        Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                    })?
+                    .collect::<rusqlite::Result<_>>()?
+            };
+            // Rows are immutable, so each is replaced.
+            tx.execute(
+                "DELETE FROM library_management_metadata_snapshots \
+                 WHERE provider = ?1 AND entity_kind = ?2 AND payload_sha256 = ?3",
+                params![PROVIDER, RELEASE_KIND, old_sha],
+            )?;
+            for (entity, input_hash, fetched_at, expires_at) in rows {
+                tx.execute(
+                    "INSERT INTO library_management_metadata_snapshots (id, provider, \
+                     entity_kind, entity_id, input_hash, canonical_payload_json, payload_sha256, \
+                     fetched_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    params![
+                        hex_sha256(format!("{entity}\0{payload_sha}").as_bytes()),
+                        PROVIDER,
+                        RELEASE_KIND,
+                        entity,
+                        input_hash,
+                        payload,
+                        payload_sha,
+                        fetched_at,
+                        expires_at,
+                    ],
+                )?;
+            }
+            Ok(Some(release))
+        })
+        .flatten()
+    }
+}
+
+/// Point what people made of a merged album, artist or track (favorites,
+/// ratings, play history) at the record it merged into.
+/// A person who already favorited or rated the survivor keeps one row.
+pub(crate) fn retarget_references(
+    tx: &Connection,
+    item_kind: &str,
+    retired_id: &str,
+    surviving_id: &str,
+) -> rusqlite::Result<()> {
+    let column = match item_kind {
+        "album" => "local_album_id",
+        "artist" => "local_artist_id",
+        _ => "local_track_id",
+    };
+    // Copy, then delete: favorite names reference the favorite's key
+    // without ON UPDATE, so the key cannot change in place. Deleting the
+    // old favorite cascades to its name.
+    tx.execute(
+        "INSERT OR IGNORE INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         SELECT user_id, item_kind, ?1, created_at FROM library_user_favorites \
+         WHERE item_kind = ?2 AND item_id = ?3",
+        params![surviving_id, item_kind, retired_id],
+    )?;
+    tx.execute(
+        "INSERT OR IGNORE INTO library_user_favorite_names (user_id, item_kind, item_id, \
+         display_name) SELECT user_id, item_kind, ?1, display_name \
+         FROM library_user_favorite_names WHERE item_kind = ?2 AND item_id = ?3",
+        params![surviving_id, item_kind, retired_id],
+    )?;
+    tx.execute(
+        "DELETE FROM library_user_favorites WHERE item_kind = ?1 AND item_id = ?2",
+        params![item_kind, retired_id],
+    )?;
+    // A person who rated both keeps the survivor's rating.
+    tx.execute(
+        "INSERT OR IGNORE INTO library_user_ratings (user_id, item_kind, item_id, rating, \
+         rated_at) SELECT user_id, item_kind, ?1, rating, rated_at FROM library_user_ratings \
+         WHERE item_kind = ?2 AND item_id = ?3",
+        params![surviving_id, item_kind, retired_id],
+    )?;
+    tx.execute(
+        "DELETE FROM library_user_ratings WHERE item_kind = ?1 AND item_id = ?2",
+        params![item_kind, retired_id],
+    )?;
+    tx.execute(
+        &format!("UPDATE library_play_history SET {column} = ?1 WHERE {column} = ?2"),
+        params![surviving_id, retired_id],
+    )?;
+    Ok(())
+}
+
+/// An album's match, as far as settling two rows of one album reads it.
+struct AlbumMatch {
+    release_group: String,
+    /// `None` for a match that names only the release group.
+    release: Option<String>,
+    source: String,
+}
+
+impl AlbumMatch {
+    fn of(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Self>> {
+        conn.query_row(
+            "SELECT lower(release_group_mbid), lower(NULLIF(trim(release_mbid), '')), \
+             decision_source FROM local_album_external_identities \
+             WHERE local_album_id = ?1 AND provider = ?2",
+            params![album_id, PROVIDER],
+            |row| {
+                Ok(Self {
+                    release_group: row.get(0)?,
+                    release: row.get(1)?,
+                    source: row.get(2)?,
+                })
+            },
+        )
+        .optional()
+    }
+
+    /// Automatic and embedded matches stay revisable. A person's is one
+    /// made by hand or one carried over from v2.
+    fn revisable(&self) -> bool {
+        matches!(self.source.as_str(), "automatic" | "embedded")
+    }
+
+    /// Whether this match and `other`, both a person's, are two different
+    /// choices.
+    ///
+    /// A match carried over from v2 may name only the release group: a
+    /// release of that group on the other row is the same album, said more
+    /// exactly. A match a person made with no release is "leave unmanaged"
+    /// or a custom edition, a decision of its own: a release on the other
+    /// row is a different choice even within the group. Otherwise the two
+    /// are the same when they name the same group and the same release.
+    fn differs_from(&self, other: &Self) -> bool {
+        if self.release_group != other.release_group {
+            return true;
+        }
+        let imported = |chosen: &Self| chosen.source == "legacy_import";
+        match (&self.release, &other.release) {
+            (None, Some(_)) => !imported(self),
+            (Some(_), None) => !imported(other),
+            (mine, theirs) => mine != theirs,
+        }
+    }
+}
+
+/// Whether two rows of one album each hold a match a person chose (or an
+/// imported one) and the two are different choices
+/// ([`AlbumMatch::differs_from`]). Nothing automatic picks between two
+/// people's choices.
+pub(crate) fn chosen_matches_differ(
+    conn: &Connection,
+    album_id: &str,
+    other_album_id: &str,
+) -> rusqlite::Result<bool> {
+    let (Some(one), Some(other)) = (
+        AlbumMatch::of(conn, album_id)?,
+        AlbumMatch::of(conn, other_album_id)?,
+    ) else {
+        return Ok(false);
+    };
+    Ok(!one.revisable() && !other.revisable() && one.differs_from(&other))
+}
+
+/// The release document on file for `mbid`, fetched at or after `oldest`
+/// (seconds). `None` when there is none, or it does not decode.
+pub(crate) fn stored_release(
+    conn: &Connection,
+    mbid: &str,
+    oldest: f64,
+) -> rusqlite::Result<Option<Release>> {
+    let payload: Option<String> = conn
+        .prepare_cached(
+            "SELECT canonical_payload_json FROM library_management_metadata_snapshots \
+             WHERE provider = ?1 AND entity_kind = ?2 AND entity_id = ?3 \
+             AND input_hash = ?4 AND fetched_at >= ?5 \
+             ORDER BY fetched_at DESC LIMIT 1",
+        )?
+        .query_row(
+            params![
+                PROVIDER,
+                RELEASE_KIND,
+                mbid.trim().to_ascii_lowercase(),
+                release_input_hash(),
+                oldest,
+            ],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(payload) = payload else {
+        return Ok(None);
+    };
+    match serde_json::from_str(&payload) {
+        Ok(release) => Ok(Some(release)),
+        Err(error) => {
+            tracing::warn!(%error, release_mbid = mbid, "stored release document did not decode");
+            Ok(None)
+        }
+    }
+}
+
+/// Whether the album's match is a release someone chose: made by a person
+/// or carried over from v2, and naming a release. An automatic match does
+/// not count, though it names a release too.
+pub(crate) fn release_chosen(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
+    Ok(AlbumMatch::of(conn, album_id)?.is_some_and(|chosen| {
+        matches!(chosen.source.as_str(), "manual" | "legacy_import") && chosen.release.is_some()
+    }))
+}
+
+/// Whether the album's match is one a person chose or v2 carried, naming
+/// a release or not ("leave unmanaged" and a custom edition name none).
+pub(crate) fn match_chosen(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
+    Ok(AlbumMatch::of(conn, album_id)?.is_some_and(|chosen| !chosen.revisable()))
+}
+
+/// Settle the matches of two rows of one album before `gone` is deleted
+/// and `kept` carries on: a scan made `gone` for the album while it was
+/// being retagged, and a match or a review landed on it before the scan
+/// had read the rest. When each row holds a match a person chose and the
+/// two differ ([`chosen_matches_differ`]) it is refused with an error,
+/// before anything is written: the caller keeps both rows.
+///
+/// - A person's match on `kept` stays, untouched. The match on `gone`
+///   (automatic, or the same choice made again) goes with its row.
+/// - Otherwise the match on `gone` becomes the match of `kept`, with its
+///   source and its "unsure" flag. It replaces an automatic one, as the
+///   later verdict on the files as they are now tagged or a person's. It
+///   also replaces an imported one that names only the release group,
+///   when a person chose a release of that group for `gone`.
+/// - A review still waiting on `gone` goes with it. One a person closed
+///   moves to `kept`.
+///
+/// Rows made for a match that is no longer there are dropped, never
+/// pointed at another match: both kinds of edition undo name the
+/// revisions of the match they were made for. The moved match takes a
+/// revision neither row has had, so nothing kept from either row reads as
+/// current against it. An artist proof names the album revision it was
+/// made at, so after the move it stops counting until the album's next
+/// pass replaces it. A chosen edition still waiting to be placed on the
+/// files is queued again for `kept`, and automatic management looks at
+/// `kept` afresh. When the match `kept` ends with is a person's release
+/// and a file is not on it yet, the files are queued to be placed on it,
+/// changing nothing else
+/// ([`queue_placement`](crate::operations::choice::queue_placement)).
+pub(crate) fn settle_followed_match(
+    tx: &rusqlite::Transaction<'_>,
+    gone: &str,
+    kept: &str,
+    now: f64,
+) -> rusqlite::Result<()> {
+    let arriving = AlbumMatch::of(tx, gone)?;
+    let staying = AlbumMatch::of(tx, kept)?;
+    if let (Some(arriving), Some(staying)) = (&arriving, &staying)
+        && !arriving.revisable()
+        && !staying.revisable()
+        && arriving.differs_from(staying)
+    {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "the two rows hold different chosen matches".to_owned(),
+        ));
+    }
+    // Of two equal choices the one that names the release is kept: the
+    // one on `kept`, unless it names only the group and the other one
+    // names the release.
+    let arriving_names_release = arriving
+        .as_ref()
+        .is_some_and(|arriving| !arriving.revisable() && arriving.release.is_some());
+    let kept_stays = staying.as_ref().is_some_and(|staying| {
+        !staying.revisable() && (staying.release.is_some() || !arriving_names_release)
+    });
+    let managed: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM library_management_automatic_queue \
+         WHERE local_album_id = ?1)",
+        params![gone],
+        |row| row.get(0),
+    )?;
+    let mut reviews = tx.execute(
+        "UPDATE library_identify_reviews SET local_album_id = ?2 \
+         WHERE local_album_id = ?1 AND state <> 'pending'",
+        params![gone, kept],
+    )?;
+    reviews += tx.execute(
+        "DELETE FROM library_identify_reviews WHERE local_album_id = ?1",
+        params![gone],
+    )?;
+    let moved = match arriving {
+        None => false,
+        Some(_) if kept_stays => {
+            tx.execute(
+                "DELETE FROM local_album_external_identities WHERE local_album_id = ?1",
+                params![gone],
+            )?;
+            false
+        }
+        Some(arriving) => {
+            carry_match(tx, gone, kept, !arriving.revisable(), now)?;
+            true
+        }
+    };
+    if managed || moved {
+        crate::management::automatic::queue(tx, kept, now)?;
+    }
+    if reviews > 0 {
+        bump_identification_stream(tx)?;
+    }
+    crate::operations::choice::queue_placement(tx, kept, now)?;
+    Ok(())
+}
+
+/// Put the match of `from` on `to`, with its source, its chooser and its
+/// "unsure" flag, at a revision neither row has had. The match on `to` and
+/// what was made for it go. A person's match (`chosen`) keeps the remap
+/// still waiting to place it on the files. What is left on `from` is the
+/// caller's.
+fn carry_match(
+    tx: &rusqlite::Transaction<'_>,
+    from: &str,
+    to: &str,
+    chosen: bool,
+    now: f64,
+) -> rusqlite::Result<()> {
+    let remap: Option<(String, Option<String>, RemapOrigin)> = tx
+        .query_row(
+            "SELECT release_mbid, chosen_by_user_id, origin \
+             FROM library_edition_remap_queue WHERE local_album_id = ?1",
+            params![from],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?
+        .filter(|_| chosen);
+    let revision: i64 = tx.query_row(
+        "SELECT MAX(row_revision) + 1 FROM local_album_external_identities \
+         WHERE local_album_id IN (?1, ?2)",
+        params![from, to],
+        |row| row.get(0),
+    )?;
+    for table in [
+        "local_album_external_identities",
+        "library_album_match_state",
+        "library_edition_choice_undo",
+        "library_automatic_edition_undo",
+        "library_edition_remap_queue",
+    ] {
+        tx.execute(
+            &format!("DELETE FROM {table} WHERE local_album_id = ?1"),
+            params![to],
+        )?;
+    }
+    tx.execute(
+        "UPDATE local_album_external_identities SET local_album_id = ?2, \
+         row_revision = ?3 WHERE local_album_id = ?1",
+        params![from, to, revision],
+    )?;
+    tx.execute(
+        "UPDATE library_album_match_state SET local_album_id = ?2 WHERE local_album_id = ?1",
+        params![from, to],
+    )?;
+    if let Some((release, chosen_by, origin)) = remap {
+        crate::operations::choice::queue_remap(tx, to, &release, chosen_by.as_deref(), now)?;
+        tx.execute(
+            "UPDATE library_edition_remap_queue SET origin = ?2 WHERE local_album_id = ?1",
+            params![to, origin.as_str()],
+        )?;
+    }
+    Ok(())
+}
+
+/// Whether merging `old` into `new` puts the old row's match on `new`
+/// ([`settle_merged_match`]): `old` has a match, and `new` has none, or an
+/// automatic one where the old row's is a person's.
+pub(crate) fn merge_moves_match(conn: &Connection, old: &str, new: &str) -> rusqlite::Result<bool> {
+    let Some(arriving) = AlbumMatch::of(conn, old)? else {
+        return Ok(false);
+    };
+    Ok(match AlbumMatch::of(conn, new)? {
+        None => true,
+        Some(staying) => !arriving.revisable() && staying.revisable(),
+    })
+}
+
+/// Settle the matches of two rows of one album when `old` is merged into
+/// `new` across two scans: the files left `old` in an earlier scan and sit
+/// on `new`, which stays. When each row holds a match a person chose and
+/// the two differ ([`chosen_matches_differ`]) it is refused with an error,
+/// before anything is written.
+///
+/// - When [`merge_moves_match`]: the match on `old` becomes the match of
+///   `new`, with its source, its chooser and its "unsure" flag, and a
+///   person's keeps the remap still waiting to place it on the files. The
+///   match on `new` and what was made for it go. A review waiting on `new`
+///   is closed as a choice by hand closes one when a person's match
+///   arrives (dismissed, by nobody), and goes when an automatic one does:
+///   the offer after the merge judges the whole album.
+/// - Otherwise the match on `new` stays as it is.
+///
+/// A review a person closed on `old` moves to `new`; one still waiting on
+/// it goes. The moved match takes a revision neither row has had. When
+/// the match `new` ends with is a person's release and a file on `new` is
+/// not on it yet, the files are queued to be placed on it, changing
+/// nothing else. What is left on `old` of its match is the caller's to
+/// clear. Returns whether the match on `new` changed.
+pub(crate) fn settle_merged_match(
+    tx: &rusqlite::Transaction<'_>,
+    old: &str,
+    new: &str,
+    now: f64,
+) -> rusqlite::Result<bool> {
+    if chosen_matches_differ(tx, old, new)? {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "the two rows hold different chosen matches".to_owned(),
+        ));
+    }
+    let moves = merge_moves_match(tx, old, new)?;
+    let mut reviews = tx.execute(
+        "UPDATE library_identify_reviews SET local_album_id = ?2 \
+         WHERE local_album_id = ?1 AND state <> 'pending'",
+        params![old, new],
+    )?;
+    reviews += tx.execute(
+        "DELETE FROM library_identify_reviews WHERE local_album_id = ?1",
+        params![old],
+    )?;
+    if let (true, Some(arriving)) = (moves, AlbumMatch::of(tx, old)?) {
+        reviews += if arriving.revisable() {
+            tx.execute(
+                "DELETE FROM library_identify_reviews WHERE local_album_id = ?1 \
+                 AND state = 'pending'",
+                params![new],
+            )?
+        } else {
+            tx.execute(
+                "UPDATE library_identify_reviews SET state = 'dismissed', \
+                 resolved_by_user_id = NULL, updated_ms = ?2 \
+                 WHERE local_album_id = ?1 AND state = 'pending'",
+                params![new, now_ms()],
+            )?
+        };
+        carry_match(tx, old, new, !arriving.revisable(), now)?;
+    }
+    if reviews > 0 {
+        bump_identification_stream(tx)?;
+    }
+    crate::operations::choice::queue_placement(tx, new, now)?;
+    Ok(moves)
+}
+
+fn release_input_hash() -> String {
+    hex_sha256(RELEASE_DOCUMENT_VERSION.as_bytes())
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Alias table and owner column for one alias kind.
+fn alias_table(kind: AliasKind) -> (&'static str, &'static str) {
+    match kind {
+        AliasKind::MergedAlbum => ("local_album_aliases", "local_album_id"),
+        AliasKind::MergedArtist => ("local_artist_aliases", "local_artist_id"),
+    }
+}
+
+const ALIAS_KINDS: [AliasKind; 2] = [AliasKind::MergedAlbum, AliasKind::MergedArtist];
+
+/// Retired-id aliases.
+impl SqliteIdentifyStore {
+    pub fn aliases_for(&self, surviving_id: &str) -> Vec<Alias> {
+        let mut out = Vec::new();
+        for kind in ALIAS_KINDS {
+            let (table, owner) = alias_table(kind);
+            let retired: Vec<String> = self
+                .read("aliases", |conn| {
+                    let mut stmt = conn.prepare(&format!(
+                        "SELECT alias FROM {table} WHERE {owner} = ?1 ORDER BY alias"
+                    ))?;
+                    let rows = stmt.query_map(params![surviving_id], |row| row.get(0))?;
+                    rows.collect()
+                })
+                .unwrap_or_default();
+            out.extend(retired.into_iter().map(|retired_id| Alias {
+                retired_id,
+                surviving_id: surviving_id.to_owned(),
+                kind,
+            }));
+        }
+        out
+    }
+}
+
+/// Durable identification queue.
+impl SqliteIdentifyStore {
+    /// Store a job. When a live job already holds the same album and
+    /// input revision, that job comes back instead; `None` means the
+    /// store could not record anything.
+    pub fn enqueue(&self, job: IdentifyJob) -> Option<IdentifyJob> {
+        let key = idempotency_key(&job.local_album_id, &job.input_revision);
+        self.write("enqueue identify job", |tx| {
+            let now = now_ms();
+            let inserted = tx.execute(
+                "INSERT INTO library_identify_jobs (id, local_album_id, kind, priority, state, \
+                 attempts, not_before_ms, input_revision, idempotency_key, \
+                 requested_by_user_id, failure_code, created_ms, updated_ms) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12) \
+                 ON CONFLICT DO NOTHING",
+                params![
+                    job.id,
+                    job.local_album_id,
+                    kind_str(job.kind),
+                    job.priority as i64,
+                    state_str(job.state),
+                    job.attempts as i64,
+                    job.not_before_ms as i64,
+                    job.input_revision,
+                    key,
+                    job.requested_by_user_id,
+                    job.failure_code,
+                    now,
+                ],
+            )?;
+            if inserted == 1 {
+                bump_identification_stream(tx)?;
+                return Ok(job.clone());
+            }
+            tx.query_row(
+                &format!(
+                    "SELECT {JOB_COLUMNS} FROM library_identify_jobs \
+                     WHERE idempotency_key = ?1 AND state IN ('queued','running','deferred')"
+                ),
+                params![key],
+                map_job,
+            )
+        })
+    }
+
+    pub fn claim(&self, now_ms: u64, lease_ms: u64) -> Option<IdentifyJob> {
+        self.write("claim identify job", |tx| {
+            let now = now_ms as i64;
+            // While identification is paused nothing is claimed, lapsed
+            // leases included; the check sits in the same statement so a
+            // pause can never race a claim.
+            let job = tx
+                .query_row(
+                    &format!(
+                        "SELECT {JOB_COLUMNS} FROM library_identify_jobs \
+                         WHERE ((state IN ('queued','deferred') AND not_before_ms <= ?1) \
+                         OR (state = 'running' AND lease_expires_ms <= ?1)) \
+                         AND NOT EXISTS (SELECT 1 FROM library_work_control \
+                             WHERE queue_kind = 'identification' AND state = 'paused') \
+                         ORDER BY priority, created_ms, rowid LIMIT 1"
+                    ),
+                    params![now],
+                    map_job,
+                )
+                .optional()?;
+            let Some(mut job) = job else {
+                return Ok(None);
+            };
+            tx.execute(
+                "UPDATE library_identify_jobs SET state = 'running', lease_expires_ms = ?1, \
+                 updated_ms = ?2 WHERE id = ?3",
+                params![now + lease_ms as i64, now, job.id],
+            )?;
+            bump_identification_stream(tx)?;
+            job.state = JobState::Running;
+            Ok(Some(job))
+        })
+        .flatten()
+    }
+
+    pub fn update(&self, job: IdentifyJob) {
+        let key = idempotency_key(&job.local_album_id, &job.input_revision);
+        self.write("update identify job", |tx| {
+            tx.execute(
+                "UPDATE library_identify_jobs SET state = ?1, attempts = ?2, \
+                 not_before_ms = ?3, input_revision = ?4, idempotency_key = ?5, \
+                 failure_code = ?6, priority = ?7, updated_ms = ?8, \
+                 lease_expires_ms = CASE WHEN ?1 = 'running' THEN lease_expires_ms END \
+                 WHERE id = ?9",
+                params![
+                    state_str(job.state),
+                    job.attempts as i64,
+                    job.not_before_ms as i64,
+                    job.input_revision,
+                    key,
+                    job.failure_code,
+                    job.priority as i64,
+                    now_ms(),
+                    job.id,
+                ],
+            )?;
+            bump_identification_stream(tx)
+        });
+    }
+
+    pub fn job(&self, job_id: &str) -> Option<IdentifyJob> {
+        self.read("identify job", |conn| {
+            conn.query_row(
+                &format!("SELECT {JOB_COLUMNS} FROM library_identify_jobs WHERE id = ?1"),
+                params![job_id],
+                map_job,
+            )
+            .optional()
+        })
+        .flatten()
+    }
+
+    pub fn jobs_for_album(&self, local_album_id: &str) -> Vec<IdentifyJob> {
+        self.read("album jobs", |conn| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {JOB_COLUMNS} FROM library_identify_jobs \
+                 WHERE local_album_id = ?1 ORDER BY created_ms, rowid"
+            ))?;
+            let rows = stmt.query_map(params![local_album_id], map_job)?;
+            rows.collect()
+        })
+        .unwrap_or_default()
+    }
+
+    /// Boot recovery: jobs a previous process left running go back to
+    /// the queue. Returns how many.
+    pub fn recover(&self) -> usize {
+        self.write("recover identify jobs", |tx| {
+            let requeued = tx.execute(
+                "UPDATE library_identify_jobs SET state = 'queued', lease_expires_ms = NULL, \
+                 updated_ms = ?1 WHERE state = 'running'",
+                params![now_ms()],
+            )?;
+            if requeued > 0 {
+                bump_identification_stream(tx)?;
+            }
+            Ok(requeued)
+        })
+        .unwrap_or(0)
+    }
+}
+
+/// Curator review queue.
+impl SqliteIdentifyStore {
+    pub fn file(&self, review: ReviewItem) {
+        let candidates = match serde_json::to_string(&review.candidates) {
+            Ok(json) => json,
+            Err(error) => {
+                tracing::error!(%error, review = review.id, "review candidates did not encode");
+                return;
+            }
+        };
+        self.write("file review", |tx| {
+            let now = now_ms();
+            tx.execute(
+                "INSERT OR REPLACE INTO library_identify_reviews (id, local_album_id, \
+                 reason_code, candidates_json, state, resolved_by_user_id, \
+                 selected_candidate_key, created_ms, updated_ms) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                params![
+                    review.id,
+                    review.local_album_id,
+                    review.reason_code,
+                    candidates,
+                    review_state_str(review.state),
+                    review.resolved_by_user_id,
+                    review.selected_candidate_key,
+                    now,
+                ],
+            )?;
+            bump_identification_stream(tx)
+        });
+    }
+
+    pub fn get(&self, review_id: &str) -> Option<ReviewItem> {
+        self.read("review", |conn| {
+            conn.query_row(
+                &format!("SELECT {REVIEW_COLUMNS} FROM library_identify_reviews WHERE id = ?1"),
+                params![review_id],
+                map_review,
+            )
+            .optional()
+        })
+        .flatten()
+        .flatten()
+    }
+
+    pub fn pending_for_album(&self, local_album_id: &str) -> Vec<ReviewItem> {
+        self.read("pending reviews", |conn| {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {REVIEW_COLUMNS} FROM library_identify_reviews \
+                 WHERE local_album_id = ?1 AND state = 'pending' ORDER BY created_ms, id"
+            ))?;
+            let rows = stmt.query_map(params![local_album_id], map_review)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .flatten()
+        .collect()
+    }
+
+    pub fn set_state(
+        &self,
+        review_id: &str,
+        state: ReviewState,
+        by_user_id: Option<&str>,
+        selected_key: Option<&str>,
+    ) -> bool {
+        self.write("settle review", |tx| {
+            let changed = tx.execute(
+                "UPDATE library_identify_reviews SET state = ?1, resolved_by_user_id = ?2, \
+                 selected_candidate_key = ?3, updated_ms = ?4 WHERE id = ?5",
+                params![
+                    review_state_str(state),
+                    by_user_id,
+                    selected_key,
+                    now_ms(),
+                    review_id
+                ],
+            )?;
+            if changed == 1 {
+                bump_identification_stream(tx)?;
+            }
+            Ok(changed)
+        })
+        .is_some_and(|changed| changed == 1)
+    }
+
+    /// Settle a pending review as approved and seal the identities it
+    /// chose, all or nothing. `Ok(false)` when the review is no longer
+    /// pending. Each sealed row takes its stored revision plus one.
+    pub fn approve(&self, approval: &Approval) -> Result<bool, StoreError> {
+        let mut conn = self.lock();
+        let outcome = (|| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let settled = tx.execute(
+                "UPDATE library_identify_reviews SET state = 'approved', \
+                 resolved_by_user_id = ?1, selected_candidate_key = ?2, updated_ms = ?3 \
+                 WHERE id = ?4 AND state = 'pending'",
+                params![
+                    approval.by_user_id,
+                    approval.candidate_key,
+                    now_ms(),
+                    approval.review_id
+                ],
+            )?;
+            if settled != 1 {
+                return Ok(false);
+            }
+            // A review approval can be taken back like any edition choice.
+            let point = crate::operations::choice::undo_point(&tx, &approval.album.local_album_id)?;
+            seal_album_identity(&tx, &approval.album)?;
+            for track in &approval.tracks {
+                seal_track_identity(&tx, track)?;
+            }
+            // A curator's approval confirms the album: an unconfirmed flag
+            // left by an earlier best guess must not keep holding its files
+            // back from management (an edition choice clears it the same way).
+            tx.execute(
+                "DELETE FROM library_album_match_state WHERE local_album_id = ?1",
+                params![approval.album.local_album_id],
+            )?;
+            // A candidate without track evidence (an edition a catalog
+            // correction dropped, restored from its review) names the
+            // release only: the remap worker places the files on it.
+            if approval.tracks.is_empty()
+                && let Some(release) = approval.album.release_mbid.as_deref()
+            {
+                crate::operations::choice::queue_remap(
+                    &tx,
+                    &approval.album.local_album_id,
+                    release,
+                    Some(&approval.by_user_id),
+                    crate::clock::now_unix(),
+                )?;
+            }
+            crate::operations::choice::keep_undo_point(
+                &tx,
+                &approval.album.local_album_id,
+                &point,
+                &approval.by_user_id,
+                "review_approve",
+                "REVIEW_APPROVED",
+                crate::clock::now_unix(),
+            )
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+            bump_identification_stream(&tx)?;
+            let now = crate::clock::now_unix();
+            join_replaced(&tx, Scope::Album(&approval.album.local_album_id), now)?;
+            continue_tracks(&tx, Scope::Album(&approval.album.local_album_id), now)?;
+            tx.commit()?;
+            Ok(true)
+        })();
+        outcome.map_err(|error: rusqlite::Error| StoreError {
+            cause: format!("approve review {}: {error}", approval.review_id),
+        })
+    }
+}
+
+/// Seal one album identity inside the caller's transaction. A new row
+/// starts at revision 1; an existing one moves to its revision plus one.
+fn seal_album_identity(tx: &Connection, identity: &AlbumIdentity) -> rusqlite::Result<()> {
+    let Some(group) = identity.release_group_mbid.as_deref() else {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "album identity without a release group".to_owned(),
+        ));
+    };
+    tx.execute(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1) \
+         ON CONFLICT (local_album_id, provider) DO UPDATE SET \
+         release_group_mbid = excluded.release_group_mbid, \
+         release_mbid = excluded.release_mbid, \
+         decision_source = excluded.decision_source, \
+         selected_at = excluded.selected_at, \
+         row_revision = local_album_external_identities.row_revision + 1",
+        params![
+            identity.local_album_id,
+            PROVIDER,
+            group,
+            identity.release_mbid,
+            identity.decision_source.as_str(),
+            now_secs(),
+        ],
+    )?;
+    Ok(())
+}
+
+/// Seal one track identity inside the caller's transaction, revisions as
+/// for albums.
+fn seal_track_identity(tx: &Connection, identity: &TrackIdentity) -> rusqlite::Result<()> {
+    let Some(recording) = identity.recording_mbid.as_deref() else {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "track identity without a recording".to_owned(),
+        ));
+    };
+    tx.execute(
+        "INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_track_mbid, decision_source, selected_at, row_revision) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1) \
+         ON CONFLICT (local_track_id, provider) DO UPDATE SET \
+         recording_mbid = excluded.recording_mbid, \
+         release_track_mbid = excluded.release_track_mbid, \
+         decision_source = excluded.decision_source, \
+         selected_at = excluded.selected_at, \
+         row_revision = local_track_external_identities.row_revision + 1",
+        params![
+            identity.local_track_id,
+            PROVIDER,
+            recording,
+            identity.release_track_mbid,
+            identity.decision_source.as_str(),
+            now_secs(),
+        ],
+    )?;
+    Ok(())
+}
+
+const REVIEW_COLUMNS: &str = "id, local_album_id, reason_code, candidates_json, state, \
+     resolved_by_user_id, selected_candidate_key";
+
+/// One review row. Candidates that no longer decode drop the review with
+/// a log line instead of failing the whole listing.
+pub(crate) fn map_review(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<ReviewItem>> {
+    let id: String = row.get(0)?;
+    let json: String = row.get(3)?;
+    let candidates: Vec<CandidateEvidence> = match serde_json::from_str(&json) {
+        Ok(candidates) => candidates,
+        Err(error) => {
+            tracing::error!(%error, review = id, "stored review candidates did not decode");
+            return Ok(None);
+        }
+    };
+    Ok(Some(ReviewItem {
+        id,
+        local_album_id: row.get(1)?,
+        reason_code: row.get(2)?,
+        candidates,
+        state: review_state_from(&row.get::<_, String>(4)?),
+        resolved_by_user_id: row.get(5)?,
+        selected_candidate_key: row.get(6)?,
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two rows of one album each hold a release a person chose, and the
+    /// two differ. Settling them is refused before anything is written:
+    /// neither match and no review changes.
+    #[test]
+    fn settling_two_different_chosen_matches_is_refused() {
+        let dir = droppedneedle_kernel::db::scratch::ScratchDir::new("settle-match").unwrap();
+        let path = dir.path().join("app.db");
+        droppedneedle_kernel::schema::template::copy_to(&path).unwrap();
+        let mut conn = droppedneedle_kernel::db::open_connection(&path).unwrap();
+        conn.execute_batch(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_id, grouping_source, created_at, updated_at) VALUES \
+             ('old', 'r', 'old', 'T', 't', '00000000-0000-4000-8000-000000000002', \
+              'automatic', 1, 1), \
+             ('new', 'r', 'new', 'T', 't', '00000000-0000-4000-8000-000000000002', \
+              'automatic', 1, 1); \
+             INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, release_mbid, decision_source, selected_at) VALUES \
+             ('old', 'musicbrainz', 'rg', 'rel-1', 'manual', 0), \
+             ('new', 'musicbrainz', 'rg', 'rel-2', 'legacy_import', 0); \
+             INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
+             candidates_json, state, created_ms, updated_ms) VALUES \
+             ('waiting', 'new', 'R', '[]', 'pending', 0, 0), \
+             ('closed', 'new', 'R', '[]', 'dismissed', 0, 0);",
+        )
+        .unwrap();
+        let state = |conn: &Connection| -> Vec<(String, String)> {
+            conn.prepare(
+                "SELECT local_album_id, release_mbid || ' ' || decision_source || ' ' \
+                 || row_revision FROM local_album_external_identities \
+                 UNION ALL SELECT local_album_id, id FROM library_identify_reviews ORDER BY 1, 2",
+            )
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+        };
+        let before = state(&conn);
+        assert_eq!(before.len(), 4);
+
+        let tx = conn.transaction().unwrap();
+        assert!(settle_followed_match(&tx, "new", "old", 1.0).is_err());
+        assert_eq!(state(&tx), before);
+    }
+}

@@ -1,0 +1,48 @@
+[package]
+name = "droppedneedle-media"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "DroppedNeedle remote media servers, playback reporting and streaming"
+publish = false
+
+[dependencies]
+droppedneedle-auth.workspace = true
+droppedneedle-kernel.workspace = true
+droppedneedle-library.workspace = true
+droppedneedle-plugins.workspace = true
+droppedneedle-providers.workspace = true
+axum.workspace = true
+caseless.workspace = true
+flate2.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
+libc.workspace = true
+md5.workspace = true
+reqwest.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+utoipa.workspace = true
+uuid.workspace = true
+
+[features]
+# Fakes, memory stores and test constructors for the test suites above.
+test-support = [
+    "droppedneedle-kernel/test-support",
+    "droppedneedle-providers/test-support",
+    "droppedneedle-auth/test-support",
+    "droppedneedle-library/test-support",
+    "droppedneedle-plugins/test-support",
+]
+
+[dev-dependencies]
+droppedneedle-kernel = { workspace = true, features = ["test-support"] }
+zip.workspace = true

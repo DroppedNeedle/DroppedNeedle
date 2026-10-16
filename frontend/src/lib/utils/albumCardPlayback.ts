@@ -9,7 +9,7 @@ import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 import { integrationStore } from '$lib/stores/integration';
 import { playerStore } from '$lib/stores/player.svelte';
 import { playbackToast } from '$lib/stores/playbackToast.svelte';
-import { normalizeCodec } from '$lib/player/queueHelpers';
+import { normalizeCodec, recordingFor } from '$lib/player/queueHelpers';
 import { getCoverUrl } from '$lib/utils/errorHandling';
 import type { QueueItem } from '$lib/player/types';
 import type {
@@ -59,7 +59,8 @@ function buildNavidromeItems(tracks: NavidromeTrackInfo[], meta: AlbumCardMeta):
 		sourceType: 'navidrome' as const,
 		artistId: meta.artistId,
 		streamUrl: gatewayStreamUrl('navidrome', t.navidrome_id),
-		format: normalizeCodec(t.codec)
+		format: normalizeCodec(t.codec),
+		recordingIds: recordingFor('navidrome', t.recording_mbid)
 	}));
 }
 
@@ -76,7 +77,8 @@ function buildJellyfinItems(tracks: JellyfinTrackInfo[], meta: AlbumCardMeta): Q
 		sourceType: 'jellyfin' as const,
 		artistId: meta.artistId,
 		streamUrl: gatewayStreamUrl('jellyfin', t.jellyfin_id),
-		format: normalizeCodec(t.codec)
+		format: normalizeCodec(t.codec),
+		recordingIds: recordingFor('jellyfin', t.recording_mbid)
 	}));
 }
 
@@ -97,6 +99,7 @@ function buildPlexItems(tracks: PlexTrackInfo[], meta: AlbumCardMeta): QueueItem
 				artistId: meta.artistId,
 				streamUrl: gatewayStreamUrl('plex', t.part_key!),
 				format: normalizeCodec(t.codec),
+				recordingIds: recordingFor('plex', t.recording_mbid),
 				plexRatingKey: t.plex_id
 			};
 		});

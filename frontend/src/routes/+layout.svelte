@@ -3,6 +3,7 @@
 	import { AUTH_FREE_PATHS } from '$lib/constants';
 	import { loadAuthenticatedAppShell } from '$lib/components/lazyComponentLoaders';
 	import QueryProvider from '$lib/queries/QueryProvider.svelte';
+	import Button from '$lib/ui/Button.svelte';
 	import { withoutBasePath } from '$lib/utils/basePath';
 	import type { Component, Snippet } from 'svelte';
 
@@ -50,7 +51,7 @@
 							<p class="font-semibold">DroppedNeedle did not finish loading.</p>
 							<p class="mt-1 text-sm opacity-80">Check your connection, then try again.</p>
 						</div>
-						<button class="btn btn-sm" type="button" onclick={retryShellLoad}>Try again</button>
+						<Button size="sm" onclick={retryShellLoad}>Try again</Button>
 					</div>
 				</main>
 			{:else}

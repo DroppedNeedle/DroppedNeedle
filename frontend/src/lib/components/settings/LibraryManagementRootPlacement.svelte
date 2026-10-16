@@ -59,7 +59,7 @@
 					</p>
 					<p class="text-xs">{checkNote}</p>
 				</div>
-				<AsyncButton class="btn btn-sm" pending={checking} onclick={() => check.mutate(rootId)}
+				<AsyncButton size="sm" pending={checking} onclick={() => check.mutate(rootId)}
 					>Check again</AsyncButton
 				>
 			</div>
@@ -67,7 +67,8 @@
 			<p class="mt-3 flex flex-wrap items-center gap-2 text-xs text-base-content/60">
 				<span>Overwrite check: Not checked yet</span>
 				<AsyncButton
-					class="btn btn-ghost btn-xs"
+					variant="ghost"
+					size="xs"
 					pending={checking}
 					onclick={() => check.mutate(rootId)}>Check again</AsyncButton
 				>

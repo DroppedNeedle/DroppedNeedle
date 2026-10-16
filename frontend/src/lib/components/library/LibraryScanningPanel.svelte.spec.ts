@@ -16,7 +16,6 @@ const h = vi.hoisted(() => ({
 		data: { scan_frequency: 'daily', daily_scan_time: '09:00', server_timezone: 'Europe/London' }
 	} as Record<string, unknown>,
 	detail: { data: undefined } as Record<string, unknown>,
-	operation: { data: undefined } as Record<string, unknown>,
 	settings: {
 		data: {
 			policy_revision: 'policy-1',
@@ -78,11 +77,6 @@ vi.mock('$lib/queries/library/LibraryActivityQueries.svelte', () => ({
 vi.mock('$lib/queries/library/LibraryOperationQueries.svelte', () => ({
 	getCurrentLibraryRunsQuery: () => h.runs,
 	getLibraryRunQuery: () => h.detail,
-	getLibraryOperationQuery: (getId: () => string | null) => ({
-		get data() {
-			return getId() ? h.operation.data : undefined;
-		}
-	}),
 	getLibraryRunHistoryQuery: () => h.history,
 	getLibraryRunFailuresQuery: () => h.failures,
 	getLibraryRunEstimateQuery: () => ({ data: { estimated_file_count: 100 }, isFetching: false })
@@ -235,7 +229,6 @@ beforeEach(() => {
 		data: { scan_frequency: 'daily', daily_scan_time: '09:00', server_timezone: 'Europe/London' }
 	};
 	h.detail = { data: undefined };
-	h.operation = { data: undefined };
 	h.reviews = { data: 12 };
 	h.pauseRun.mockResolvedValue({});
 	h.resumeRun.mockResolvedValue({});

@@ -3,7 +3,7 @@
     "openSubsonic": true,
     "playlist": {
       "changed": "0000-00-00T00:00:00Z",
-      "coverArt": "pl-<id-12>",
+      "coverArt": "pl-<id-13>",
       "created": "0000-00-00T00:00:00Z",
       "duration": 0,
       "entry": [
@@ -46,7 +46,7 @@
             }
           ],
           "groupings": [],
-          "id": "tr-<id-11>",
+          "id": "tr-<id-12>",
           "isDir": false,
           "isrc": [],
           "mediaType": "song",
@@ -66,7 +66,7 @@
           "year": 1991
         }
       ],
-      "id": "pl-<id-12>",
+      "id": "pl-<id-13>",
       "name": "Journey Mix",
       "owner": "alice",
       "public": false,

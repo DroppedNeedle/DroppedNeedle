@@ -1,0 +1,149 @@
+{
+  "requests": [
+    {
+      "name": "getMusicFolders",
+      "file": "getMusicFolders.json",
+      "method": "GET",
+      "path": "/rest/getMusicFolders",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "search3.artist-sync",
+      "file": "search3.artist-sync.json",
+      "method": "GET",
+      "path": "/rest/search3",
+      "query": [
+        [
+          "artistCount",
+          "500"
+        ],
+        [
+          "artistOffset",
+          "0"
+        ],
+        [
+          "albumCount",
+          "0"
+        ],
+        [
+          "albumOffset",
+          "0"
+        ],
+        [
+          "songCount",
+          "0"
+        ],
+        [
+          "songOffset",
+          "0"
+        ],
+        [
+          "musicFolderId",
+          "1"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getArtists.folder-1",
+      "file": "getArtists.folder-1.json",
+      "method": "GET",
+      "path": "/rest/getArtists",
+      "query": [
+        [
+          "musicFolderId",
+          "1"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getIndexes.if-modified-since",
+      "file": "getIndexes.if-modified-since.json",
+      "method": "GET",
+      "path": "/rest/getIndexes",
+      "query": [
+        [
+          "musicFolderId",
+          "1"
+        ],
+        [
+          "ifModifiedSince",
+          "1760000000000"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getArtist.no-mbid",
+      "file": "getArtist.no-mbid.json",
+      "method": "GET",
+      "path": "/rest/getArtist",
+      "query": [
+        [
+          "id",
+          "{artist.yuki}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getArtists.folder-0",
+      "file": "getArtists.folder-0.json",
+      "method": "GET",
+      "path": "/rest/getArtists",
+      "query": [
+        [
+          "musicFolderId",
+          "0"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "search3.folder-0",
+      "file": "search3.folder-0.json",
+      "method": "GET",
+      "path": "/rest/search3",
+      "query": [
+        [
+          "artistCount",
+          "500"
+        ],
+        [
+          "artistOffset",
+          "0"
+        ],
+        [
+          "albumCount",
+          "0"
+        ],
+        [
+          "albumOffset",
+          "0"
+        ],
+        [
+          "songCount",
+          "0"
+        ],
+        [
+          "songOffset",
+          "0"
+        ],
+        [
+          "musicFolderId",
+          "0"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    }
+  ]
+}

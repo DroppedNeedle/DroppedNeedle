@@ -15,6 +15,8 @@ run, and no file is ever edited by hand.
 | `library.json` | The six fixture tracks every server was given, and the keys requests use to name them |
 | `navidrome-0.62.0/` | Navidrome 0.62.0, requests that only read |
 | `navidrome-0.62.0-writes/` | The same server after one star, one playlist and one scrobble |
+| `navidrome-0.62.0-arpeggi/` | Navidrome 0.62.0 again, fresh, for Arpeggi's artist browsing: its library sync, the artist list and index, one artist, and music folder 0 |
+| `navidrome-0.62.0-ratings/` | Navidrome 0.62.0 again, fresh, after one rating each on a track, an album and an artist |
 | `jellyfin-10.10.6/` | Jellyfin 10.10.6, requests that only read |
 | `jellyfin-10.10.6-writes/` | The same server after one favourite, one playlist and one play report |
 
@@ -36,6 +38,10 @@ Each folder has:
 
 A folder ending in `-writes` continues the run of the folder beside it:
 its first three requests are the writes, the rest read what they changed.
+A folder named for a client, such as `-arpeggi`, is a run of its own on a
+fresh server. So is `-ratings`: its first three requests rate a track, an
+album and an artist, the rest read them, and its last two clear the
+track's rating and read the track again.
 
 ## What was removed
 
@@ -90,6 +96,11 @@ refuses to run in CI. The steps, one server at a time:
    records, and writes both folders only when every file has passed the
    scrubbing checks.
 5. Stop the container, then `clean <checkout>/dn-ref-tmp`.
+
+A request set of its own (`arpeggi`, `ratings`) is recorded the same way
+on a fresh container, with
+`navidrome <this folder> --image-id <id> --set <set>`. It writes only
+`navidrome-<version>-<set>/` and refuses if that folder exists.
 
 The notes beside the setup code in the script say what was confirmed
 against each recorded version. Confirm them again for a new one.

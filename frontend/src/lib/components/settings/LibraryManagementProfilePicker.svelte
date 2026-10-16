@@ -3,6 +3,8 @@
 
 	import type { LibraryManagementProfile } from '$lib/queries/library-management/types';
 
+	import { profileAspects } from './managementSettingsDraft.svelte';
+
 	interface Props {
 		id: string;
 		eyebrow: string;
@@ -35,19 +37,6 @@
 			profiles[0] ??
 			null
 	);
-
-	function profileAspects(profile: LibraryManagementProfile): string[] {
-		const aspects: string[] = [];
-		if (profile.metadata.enabled) aspects.push('tags');
-		if (profile.genres.enabled) aspects.push('genres');
-		if (profile.artwork.embedded_enabled || profile.artwork.external_enabled)
-			aspects.push('artwork');
-		if (profile.enrichment.lyrics.enabled) aspects.push('lyrics');
-		if (profile.enrichment.replaygain.enabled) aspects.push('ReplayGain');
-		if (profile.organization.rename_enabled) aspects.push('rename');
-		if (profile.organization.move_enabled) aspects.push('move');
-		return aspects;
-	}
 
 	function choose(profileId: string): void {
 		onselect(profileId);

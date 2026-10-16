@@ -2,6 +2,7 @@
 	import { House, RotateCw } from 'lucide-svelte';
 	import { page } from '$app/state';
 	import { withBasePath } from '$lib/utils/basePath';
+	import Button from '$lib/ui/Button.svelte';
 
 	const status = $derived(page.status);
 	const isNotFound = $derived(status === 404);
@@ -24,14 +25,10 @@
 	<h1 class="err-head">{heading}</h1>
 	<p class="err-blurb">{blurb}</p>
 	<div class="err-actions">
-		<a href={withBasePath('/')} class="btn btn-ghost btn-sm">
-			<House class="h-4 w-4" />
-			Home
-		</a>
-		<button class="btn btn-accent btn-sm" onclick={() => location.reload()}>
-			<RotateCw class="h-4 w-4" />
+		<Button variant="ghost" size="sm" href={withBasePath('/')} icon={House}>Home</Button>
+		<Button variant="accent" size="sm" icon={RotateCw} onclick={() => location.reload()}>
 			Retry
-		</button>
+		</Button>
 	</div>
 </div>
 

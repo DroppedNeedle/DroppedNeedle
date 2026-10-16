@@ -3,6 +3,7 @@
 
 	import { discardLibraryManagementPreviewMutation } from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 	import { forgetLibraryManagementPreviewToken } from '$lib/queries/library-management/LibraryManagementPreviewTokens';
+	import Button from '$lib/ui/Button.svelte';
 
 	interface Props {
 		jobId: string;
@@ -15,13 +16,13 @@
 	let { jobId, expectedRevision, profileName, compact = false, ondiscard }: Props = $props();
 	let dialog: HTMLDialogElement;
 	let heading: HTMLHeadingElement;
-	let opener: HTMLButtonElement | null = null;
+	let opener: HTMLElement | null = null;
 	let errorMessage = $state('');
 
 	const discardPreview = discardLibraryManagementPreviewMutation();
 	const titleId = $derived(`discard-management-preview-${jobId}`);
 
-	function open(button: HTMLButtonElement): void {
+	function open(button: HTMLElement): void {
 		opener = button;
 		errorMessage = '';
 		dialog.showModal();
@@ -45,16 +46,17 @@
 	}
 </script>
 
-<button
-	type="button"
-	class={compact ? 'btn btn-ghost btn-sm shrink-0 text-error' : 'btn btn-ghost btn-sm text-error'}
+<Button
+	variant="danger-ghost"
+	size="sm"
+	class={compact ? 'shrink-0' : ''}
+	icon={Trash2}
 	aria-label={compact ? `Discard preview for ${profileName}` : undefined}
 	disabled={discardPreview.isPending}
 	onclick={(event) => open(event.currentTarget)}
 >
-	<Trash2 class="h-4 w-4" />
 	{compact ? 'Discard' : 'Discard preview...'}
-</button>
+</Button>
 
 <dialog
 	bind:this={dialog}
@@ -91,21 +93,15 @@
 				{errorMessage}
 			</div>{/if}
 		<div class="modal-action">
-			<button
-				type="button"
-				class="btn btn-ghost"
-				disabled={discardPreview.isPending}
-				onclick={() => dialog.close()}>Keep preview</button
+			<Button variant="ghost" disabled={discardPreview.isPending} onclick={() => dialog.close()}
+				>Keep preview</Button
 			>
-			<button
-				type="button"
-				class="btn btn-error"
-				disabled={discardPreview.isPending}
-				onclick={() => void discard()}
+			<Button
+				variant="danger"
+				icon={Trash2}
+				loading={discardPreview.isPending}
+				onclick={() => void discard()}>Discard preview</Button
 			>
-				{#if discardPreview.isPending}<span class="loading loading-spinner loading-sm"></span>{/if}
-				<Trash2 class="h-4 w-4" /> Discard preview
-			</button>
 		</div>
 	</div>
 	<form method="dialog" class="modal-backdrop">

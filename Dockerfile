@@ -42,7 +42,7 @@ ARG COMMIT_TAG=dev
 ARG BUILD_DATE=unknown
 ENV COMMIT_TAG=${COMMIT_TAG} BUILD_DATE=${BUILD_DATE}
 
-RUN cargo build --release --locked --manifest-path server/Cargo.toml --bins
+RUN cargo build --release --locked --manifest-path server/Cargo.toml --bins -p droppedneedle -p droppedneedle-tool
 
 FROM debian:bookworm-slim
 

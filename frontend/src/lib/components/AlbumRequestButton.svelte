@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Download } from 'lucide-svelte';
 	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	interface Props {
 		mbid: string;
@@ -38,19 +39,12 @@
 	}
 </script>
 
-<button
-	type="button"
-	class="btn btn-circle btn-sm {size === 'sm'
-		? 'min-h-[36px] min-w-[36px]'
-		: 'min-h-[44px] min-w-[44px]'} border-none bg-accent text-accent-content shadow-sm active:scale-[0.95]"
-	title={requesting ? 'Requesting...' : 'Request album'}
-	aria-label="Request {albumName}"
-	disabled={requesting}
+<IconButton
+	variant="accent"
+	{size}
+	icon={Download}
+	label="Request {albumName}"
+	class={size === 'sm' ? 'min-h-[36px] min-w-[36px]' : 'min-h-[44px] min-w-[44px]'}
+	loading={requesting}
 	onclick={handleRequest}
->
-	{#if requesting}
-		<span class="loading loading-spinner loading-xs"></span>
-	{:else}
-		<Download class={size === 'sm' ? 'h-4 w-4' : 'h-5 w-5'} />
-	{/if}
-</button>
+/>

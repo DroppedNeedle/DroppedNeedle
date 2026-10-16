@@ -42,8 +42,6 @@ use axum::{Router, extract::Request, middleware, response::IntoResponse, routing
 use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
 
 use crate::{
-    auth::session::{middleware::require_session, rate_limit::rate_limit},
-    compat::http::fallback_redispatch,
     handlers,
     middleware::request_scope,
     security_headers::{
@@ -52,6 +50,8 @@ use crate::{
     state::AppState,
     web::WebUi,
 };
+use droppedneedle_auth::session::{middleware::require_session, rate_limit::rate_limit};
+use droppedneedle_compat::http::fallback_redispatch;
 
 /// Build the application router without a web UI.
 pub fn create_app(state: AppState) -> Router {
@@ -134,9 +134,11 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
                 .merge(state.settings.me_router())
                 .merge(state.jobs.settings_router())
                 .merge(state.concerts.gated_router())
-                .merge(crate::events::router(
+                .merge(droppedneedle_auth::session::event_stream::router(
                     state.events.clone(),
-                    crate::events::session_check(state.auth.session_auth.store.clone()),
+                    droppedneedle_auth::session::event_stream::session_check(
+                        state.auth.session_auth.store.clone(),
+                    ),
                 )),
         )
         .merge(state.reads.search_router())
@@ -192,10 +194,14 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
     // compiles this mount out of release binaries entirely, so no
     // production process can serve tooling however it was configured.
     #[cfg(debug_assertions)]
-    let app = if crate::tooling::covers_debug::tooling_routes_enabled(&state.config) {
-        app.merge(crate::tooling::covers_debug::router(
-            state.reads.platform.covers.clone(),
-        ))
+    let app = if droppedneedle_catalog::reads::platform::covers_debug::tooling_routes_enabled(
+        &state.config,
+    ) {
+        app.merge(
+            droppedneedle_catalog::reads::platform::covers_debug::router(
+                state.reads.platform.covers.clone(),
+            ),
+        )
     } else {
         app
     };
@@ -226,7 +232,7 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
         let compat_router = compat_router.clone();
         move |request: Request| async move {
             let path = request.uri().path().to_owned();
-            let compat_path = crate::compat::shared::path_case::is_compat_path(&path);
+            let compat_path = droppedneedle_compat::shared::path_case::is_compat_path(&path);
             let method = request.method().clone();
             let headers = web.as_ref().map(|_| request.headers().clone());
             if let Some(redispatch) = fallback_redispatch(&compat_router, request).await {
@@ -240,7 +246,7 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
             }
             let mut response = handlers::fallback_404().await.into_response();
             if compat_path {
-                crate::compat::http::stamp_cors(&mut response);
+                droppedneedle_compat::http::stamp_cors(&mut response);
             }
             response
         }
@@ -259,7 +265,7 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
             let is_options = request.method() == axum::http::Method::OPTIONS;
             let origin = request.headers().get(axum::http::header::ORIGIN).cloned();
             let compat_path =
-                crate::compat::shared::path_case::is_compat_path(request.uri().path());
+                droppedneedle_compat::shared::path_case::is_compat_path(request.uri().path());
             if let Some(redispatch) = fallback_redispatch(&compat_router, request).await {
                 return redispatch;
             }
@@ -271,7 +277,7 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
             }
             let mut response = handlers::fallback_405().await.into_response();
             if compat_path {
-                crate::compat::http::stamp_cors(&mut response);
+                droppedneedle_compat::http::stamp_cors(&mut response);
             }
             response
         }
@@ -312,7 +318,7 @@ fn compression_layer() -> tower_http::compression::CompressionLayer<impl Predica
 fn debug_cors_layer() -> tower_http::cors::CorsLayer {
     use tower_http::cors::AllowOrigin;
 
-    use crate::auth::session::cors::DEBUG_CORS_ORIGINS;
+    use droppedneedle_auth::session::cors::DEBUG_CORS_ORIGINS;
 
     let origins: Vec<axum::http::HeaderValue> = DEBUG_CORS_ORIGINS
         .iter()
@@ -353,7 +359,7 @@ fn debug_cors_layer() -> tower_http::cors::CorsLayer {
 fn debug_preflight_response(
     origin: Option<&axum::http::HeaderValue>,
 ) -> Option<axum::response::Response> {
-    use crate::auth::session::cors::DEBUG_CORS_ORIGINS;
+    use droppedneedle_auth::session::cors::DEBUG_CORS_ORIGINS;
 
     let origin = origin?;
     let allowed = DEBUG_CORS_ORIGINS

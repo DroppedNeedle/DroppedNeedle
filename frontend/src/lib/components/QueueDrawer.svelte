@@ -3,8 +3,10 @@
 	import { fly, fade } from 'svelte/transition';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { playbackToast } from '$lib/stores/playbackToast.svelte';
-	import { getCoverUrl } from '$lib/utils/errorHandling';
-	import { X, GripVertical, ListMusic, Disc3, Shuffle, Trash2 } from 'lucide-svelte';
+	import { X, GripVertical, ListMusic, Shuffle, Trash2 } from 'lucide-svelte';
+	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import LocalFilesIcon from '$lib/components/LocalFilesIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
@@ -205,27 +207,19 @@
 			</div>
 			<div class="flex items-center gap-1">
 				{#if queue.length > 0}
-					<button
-						class="btn btn-ghost btn-sm btn-circle"
-						class:text-accent={playerStore.shuffleEnabled}
-						class:opacity-50={!playerStore.shuffleEnabled}
+					<IconButton
+						size="sm"
+						icon={Shuffle}
+						label="Toggle shuffle"
+						active={playerStore.shuffleEnabled}
+						aria-pressed={playerStore.shuffleEnabled}
 						onclick={() => playerStore.toggleShuffle()}
-						aria-label="Toggle shuffle"
-					>
-						<Shuffle class="h-3.5 w-3.5" />
-					</button>
-					<button class="btn btn-ghost btn-sm gap-1 text-error" onclick={handleClearQueue}>
-						<Trash2 class="h-3.5 w-3.5" />
+					/>
+					<Button variant="danger-ghost" size="sm" icon={Trash2} onclick={handleClearQueue}>
 						Clear
-					</button>
+					</Button>
 				{/if}
-				<button
-					class="btn btn-ghost btn-sm btn-circle"
-					onclick={handleClose}
-					aria-label="Close queue"
-				>
-					<X class="h-4 w-4" />
-				</button>
+				<IconButton size="sm" icon={X} label="Close queue" onclick={handleClose} />
 			</div>
 		</div>
 
@@ -243,7 +237,6 @@
 						{@const isCurrent = queueIndex === currentIndex}
 						{@const isPlayed = displayPosition < currentDisplayPosition}
 						{@const isReorderable = displayPosition > currentDisplayPosition}
-						{@const coverUrl = getCoverUrl(item.coverUrl, item.albumId)}
 						{#if displayPosition === currentDisplayPosition + 1}
 							<div class="flex items-center gap-2 px-4 py-1.5">
 								<span class="text-[0.65rem] font-semibold uppercase tracking-wider opacity-40"
@@ -290,15 +283,15 @@
 								<div class="shrink-0 w-4 h-4"></div>
 							{/if}
 
-							<div class="shrink-0 w-10 h-10 rounded overflow-hidden">
-								{#if coverUrl}
-									<img src={coverUrl} alt={item.albumName} class="w-full h-full object-cover" />
-								{:else}
-									<div class="w-full h-full bg-base-200 flex items-center justify-center">
-										<Disc3 class="h-4 w-4 text-base-content/20" />
-									</div>
-								{/if}
-							</div>
+							<AlbumImage
+								mbid={item.albumId}
+								customUrl={item.coverUrl ?? null}
+								alt={item.albumName}
+								size="full"
+								requestSize={250}
+								rounded="sm"
+								className="w-10 h-10"
+							/>
 
 							<div class="flex-1 min-w-0">
 								<p class="text-sm font-medium truncate {isCurrent ? 'text-accent' : ''}">
@@ -313,21 +306,21 @@
 
 							<div class="shrink-0">
 								{#if item.sourceType === 'jellyfin'}
-									<span title="Jellyfin" style="color: rgb(var(--brand-jellyfin));">
+									<span title="Jellyfin" class="text-[rgb(var(--brand-jellyfin))]">
 										<JellyfinIcon class="h-3.5 w-3.5" />
 									</span>
 								{:else if item.sourceType === 'navidrome'}
-									<span title="Navidrome" style="color: rgb(var(--brand-navidrome));">
+									<span title="Navidrome" class="text-[rgb(var(--brand-navidrome))]">
 										<NavidromeIcon class="h-3.5 w-3.5" />
 									</span>
 								{:else if item.sourceType === 'local'}
-									<span title="Local" style="color: rgb(var(--brand-localfiles));">
+									<span title="Local" class="text-[rgb(var(--brand-localfiles))]">
 										<LocalFilesIcon class="h-3.5 w-3.5" />
 									</span>
 								{:else if item.sourceType === 'youtube'}
 									<span class="badge badge-xs badge-ghost">YT</span>
 								{:else if item.sourceType === 'plex'}
-									<span title="Plex" style="color: rgb(var(--brand-plex));">
+									<span title="Plex" class="text-[rgb(var(--brand-plex))]">
 										<PlexIcon class="h-3.5 w-3.5" />
 									</span>
 								{/if}
@@ -337,13 +330,13 @@
 								{#if isCurrent && playerStore.isPlaying}
 									<NowPlayingIndicator />
 								{:else}
-									<button
-										class="btn btn-ghost btn-xs btn-circle opacity-0 group-hover/item:opacity-60 transition-opacity"
-										onclick={(e) => removeTrack(queueIndex, e)}
-										aria-label="Remove from queue"
-									>
-										<X class="h-3.5 w-3.5" />
-									</button>
+									<IconButton
+										size="xs"
+										icon={X}
+										label="Remove from queue"
+										class="opacity-0 transition-opacity group-hover/item:opacity-60 focus-visible:opacity-100"
+										onclick={(e: MouseEvent) => removeTrack(queueIndex, e)}
+									/>
 								{/if}
 							</div>
 						</div>

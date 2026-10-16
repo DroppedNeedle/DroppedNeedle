@@ -1,0 +1,17 @@
+{
+  "request": "GET /rest/setRating?u=reference&p=***&v=1.16.1&c=dn-ref&f=json&id=0000000000000000000007&rating=4",
+  "status": 200,
+  "headers": {
+    "content-length": "131",
+    "content-type": "application/json"
+  },
+  "body": {
+    "subsonic-response": {
+      "status": "ok",
+      "version": "1.16.1",
+      "type": "navidrome",
+      "serverVersion": "0.62.0 (1b46b977)",
+      "openSubsonic": true
+    }
+  }
+}

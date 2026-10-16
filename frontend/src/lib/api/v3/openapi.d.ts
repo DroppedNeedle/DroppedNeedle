@@ -656,8 +656,10 @@ export interface paths {
         put?: never;
         /**
          * Fill the selected edition's missing tracks and upgrade its below-cutoff
-         *     owned tracks, in one download. `POST /api/v3/albums/{album_id}/edition/acquire`.
-         *     Curator only. Never retags existing files.
+         *     owned tracks, in one download; with `replace_versions`, also fetch this
+         *     edition's version of each track the copy holds in another version.
+         *     `POST /api/v3/albums/{album_id}/edition/acquire`. Curator only. Never
+         *     retags existing files.
          */
         post: operations["acquire_edition_handler"];
         delete?: never;
@@ -1081,7 +1083,10 @@ export interface paths {
         put?: never;
         /**
          * Logout. Public so a stale client can always clear its cookie: revokes the
-         *     presented token when it resolves, always clears the cookie, always 204.
+         *     presented sessions that resolve, always clears the cookie under both its
+         *     names, always 204. A Bearer token is the only one presented when sent;
+         *     otherwise the session under each cookie name the request carries ends,
+         *     so a sign-out at the https address leaves no plain cookie signed in.
          */
         post: operations["logout_handler"];
         delete?: never;
@@ -3218,6 +3223,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/albums/{album_id}/edition/files/{track_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Match one file to a track of the album's edition by hand.
+         * @description A file the edition did not place goes on a track no file holds, and
+         *     then counts as that track. On an edition the app picked, the edition
+         *     becomes the person's, as "Looks right" makes it. No file is read or
+         *     written.
+         */
+        put: operations["match_edition_file"];
+        post?: never;
+        /**
+         * Undo a file's match by hand.
+         * @description The file's identity goes back to what it was before the match. Plays
+         *     and favorites that moved to it stay.
+         */
+        delete: operations["unmatch_edition_file"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/albums/{album_id}/edition/leave-unmanaged": {
         parameters: {
             query?: never;
@@ -3273,6 +3306,26 @@ export interface paths {
         put?: never;
         /** Take back the album's last edition change. */
         post: operations["undo_edition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What the app did by itself to the album's tracks and to the albums it
+         *     is made of.
+         */
+        get: operations["get_album_history"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -8760,6 +8813,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/settings/lyrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the online lyrics lookup switch. */
+        get: operations["get_lyrics_settings"];
+        /** Save the online lyrics lookup switch. */
+        put: operations["put_lyrics_settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/settings/musicbrainz": {
         parameters: {
             query?: never;
@@ -10391,6 +10462,39 @@ export interface components {
             artist_name?: string;
             /** @description Provider release-group id. */
             musicbrainz_id: string;
+        };
+        /**
+         * @description Who asked for a join.
+         * @enum {string}
+         */
+        AlbumHistoryByView: "you" | "person";
+        /** @description One line of an album's history. */
+        AlbumHistoryEntryView: {
+            /**
+             * Format: int64
+             * @description Unix milliseconds.
+             */
+            at: number;
+            by?: null | components["schemas"]["AlbumHistoryByView"];
+            kind: components["schemas"]["AlbumHistoryKindView"];
+            /** @description The other album's title, null when its row is gone. */
+            other_album_title?: string | null;
+            /** @description How many tracks the entry is about; 0 for album entries. */
+            track_count: number;
+            /** @description The first five of those tracks' titles, in album order. */
+            track_titles: string[];
+        };
+        /**
+         * @description What one history entry tells.
+         * @enum {string}
+         */
+        AlbumHistoryKindView: "tracks_continued" | "tracks_replaced" | "retag_joined" | "retag_half_left_alone" | "leftover_joined" | "tracks_other_music";
+        /**
+         * @description An album's history, newest first: at most ten entries, none older than
+         *     180 days.
+         */
+        AlbumHistoryView: {
+            items: components["schemas"]["AlbumHistoryEntryView"][];
         };
         /** @description TheAudioDB album images. Every field is optional. */
         AlbumImages: {
@@ -13498,7 +13602,8 @@ export interface components {
             release_mbid?: string | null;
             /**
              * Format: int32
-             * @description Missing tracks asked for.
+             * @description Missing tracks asked for: edition tracks no file holds and no file
+             *     is another version of.
              */
             requested?: number | null;
             /** @description `started`, `already_in_progress`, or `already_complete`. */
@@ -13517,6 +13622,13 @@ export interface components {
              *     the same download; each is replaced only by a strictly better file.
              */
             upgrades?: number | null;
+            /**
+             * Format: int32
+             * @description Tracks a file of the copy is another version of, asked for in this
+             *     edition's version with `replace_versions`; each replaces that file
+             *     when it is as good or better.
+             */
+            versions?: number | null;
         };
         /** @description One candidate the matcher scored, as the edition picker shows it. */
         EditionCandidateView: {
@@ -13651,6 +13763,18 @@ export interface components {
              */
             length_ms?: number | null;
             local_track_id: string;
+            /**
+             * @description DroppedNeedle has written this file since a person matched it by
+             *     hand, so "Undo match" is refused until that write is undone from
+             *     History. False whenever `matched_by_hand` is false.
+             */
+            match_written: boolean;
+            /**
+             * @description A person matched this file to its edition track by hand, and the
+             *     match stands: "Undo match" can take it back.
+             */
+            matched_by_hand: boolean;
+            note?: null | components["schemas"]["ReasonView"];
             title: string;
             /** Format: int32 */
             track_number: number;
@@ -13677,6 +13801,12 @@ export interface components {
             edition: components["schemas"]["EditionFactsView"];
             extra_count: number;
             files: components["schemas"]["EditionPlanFileView"][];
+            /**
+             * Format: int64
+             * @description The album identity's row revision the plan was read at, 0 when the
+             *     album has none. Matching a file by hand echoes it.
+             */
+            identity_revision: number;
             /** @description The edition is already the album's edition. */
             is_current: boolean;
             kept_count: number;
@@ -16583,6 +16713,14 @@ export interface components {
              */
             write_synced: boolean;
         };
+        /** @description Lyrics settings: the switch for the online LRCLIB lookup. */
+        LyricsSettings: {
+            /**
+             * @description Look up lyrics on LRCLIB when the server has none for a track.
+             * @default true
+             */
+            enabled: boolean;
+        };
         /** @description Stored lyrics for one track. Missing lyrics read as 404, never empty. */
         LyricsView: {
             /** @description True when lines carry timestamps. */
@@ -16753,11 +16891,6 @@ export interface components {
              *     or replace with clear removes it.
              */
             source?: string | null;
-            /**
-             * @description Whether a profile writes the field yet; when not, the file keeps
-             *     its value.
-             */
-            written: boolean;
         };
         /** @description Save settings with the dry runs that confirm them. */
         ManagementActivationConfirmBody: {
@@ -16884,8 +17017,10 @@ export interface components {
              * @description `your_choice` when a person chose to leave the album unmanaged.
              *     Otherwise why DroppedNeedle stepped back by itself: `files_changed`
              *     (its files were changed outside DroppedNeedle), `retag_followed`
-             *     (it was retagged outside DroppedNeedle) or `run_undone` (a person
-             *     undid DroppedNeedle's changes to it).
+             *     (it was retagged outside DroppedNeedle), `run_undone` (a person
+             *     undid DroppedNeedle's changes to it) or `replaced_hands_off` (its
+             *     files appeared beside a hands-off album in the scan that saw that
+             *     album's files go).
              */
             kind: string;
         };
@@ -17356,7 +17491,10 @@ export interface components {
             album_id: string;
             album_title: string;
             artist_name?: string | null;
-            /** @description `files_changed`, `retag_followed` or `run_undone`. */
+            /**
+             * @description `files_changed`, `retag_followed`, `run_undone` or
+             *     `replaced_hands_off`.
+             */
             cause: string;
             /**
              * Format: int64
@@ -17369,6 +17507,16 @@ export interface components {
             /** Format: int64 */
             expected_operation_row_revision: number;
             idempotency_key: string;
+        };
+        /** @description Match a file by hand. */
+        MatchFileBody: {
+            /**
+             * Format: int64
+             * @description The `identity_revision` the edition plan showed.
+             */
+            expected_identity_revision: number;
+            /** @description A track of the album's current edition that no file holds. */
+            release_track_mbid: string;
         };
         /** @description MBID match result: the remote album behind a MusicBrainz id. */
         MatchView: {
@@ -18038,7 +18186,9 @@ export interface components {
             classification: string;
             /**
              * @description What ties the file to the release track (`embedded_id`, `acoustid`,
-             *     `title_position_length`), or why it does not.
+             *     `title_position_length`, or `track_id_elsewhere`: the recording ID,
+             *     on a file whose track ID belongs to another edition), or why it does
+             *     not.
              */
             evidence_kinds: string[];
             local_track_id: string;
@@ -20620,7 +20770,7 @@ export interface components {
          * @description Why the scan left a retag pair for a person.
          * @enum {string}
          */
-        RetagPairReasonView: "chosen_matches_differ" | "tracks_elsewhere" | "custom_edition";
+        RetagPairReasonView: "chosen_matches_differ" | "tracks_elsewhere" | "custom_edition" | "replaced_hands_off";
         /**
          * @description Two album rows that look like one retagged album, which the scan would
          *     not join by itself.
@@ -20887,7 +21037,10 @@ export interface components {
              *     tracks take no new managed writes until then.
              */
             held_publish_bundles: string[];
-            /** @description Opaque policy revision running scans checkpoint against. */
+            /**
+             * @description Policy revision of the roots and rules, as the library settings
+             *     show it. Send it back as `expected_policy_revision`.
+             */
             policy_revision: string;
             /** @description Configured roots. */
             roots: components["schemas"]["RootView"][];
@@ -21343,6 +21496,12 @@ export interface components {
              * @description Play time, unix seconds.
              */
             timestamp: number;
+            /**
+             * @description The library track played. Files the play under that track, whose own
+             *     recording and release group replace any sent. Only for a play from
+             *     the library (source `local` or none).
+             */
+            track_id?: string | null;
             /** @description Track title. */
             track_name: string;
         };
@@ -24720,14 +24879,23 @@ export interface operations {
     };
     acquire_edition_handler: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query?: {
                 /**
                  * @description Local album id of the copy the edition picker planned; the chosen
                  *     copy of the release group when absent.
                  */
-                album_id: string | null;
+                album_id?: string;
+                /**
+                 * @description Also fetch this edition's version of each track a file of the copy
+                 *     is another version of, and replace that file with it (the default).
+                 *     With `false` those files stay and their tracks are not fetched.
+                 */
+                replace_versions?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Release-group MBID */
+                album_id: string;
             };
             cookie?: never;
         };
@@ -29924,6 +30092,130 @@ export interface operations {
             };
         };
     };
+    match_edition_file: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+                /** @description Local track id of the file */
+                track_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MatchFileBody"];
+            };
+        };
+        responses: {
+            /** @description The album's edition */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionStatusView"];
+                };
+            };
+            /** @description The album has no edition, or the track is not on it */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album, or the file is not one of its files */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The edition changed (STALE_REVISION), the file is already on a track, another file holds the track, or the album is a custom edition */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description MusicBrainz is not answering */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    unmatch_edition_file: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+                /** @description Local track id of the file */
+                track_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The album's edition */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionStatusView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album, not one of its files, or no match to undo */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The match changed since (STALE_REVISION), or the app has written the file since */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     leave_unmanaged: {
         parameters: {
             query?: never;
@@ -30084,6 +30376,43 @@ export interface operations {
             };
             /** @description The edition changed again since */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_album_history: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The album's history */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumHistoryView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -33121,14 +33450,14 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Admin role required */
+            /** @description Curator role required */
             403: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description Unknown bundle id */
+            /** @description Unknown bundle id, or one a curator did not apply */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -43351,6 +43680,50 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    get_lyrics_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Lyrics lookup switch */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LyricsSettings"];
+                };
+            };
+        };
+    };
+    put_lyrics_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LyricsSettings"];
+            };
+        };
+        responses: {
+            /** @description Saved switch */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LyricsSettings"];
+                };
             };
         };
     };

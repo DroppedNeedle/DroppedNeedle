@@ -10,40 +10,42 @@ use axum::{
     extract::{Extension, Path, State},
 };
 
-use super::error::{SettingsError, ValidJson, ValidQuery};
-use super::management::{ActivationHealth, ChangeImpact, PresetDiff};
 use super::models::{
     AdvancedSettingsForm, DownloadPolicyView, FrontendCacheTTLs, IndexerReorderRequest,
     IndexerSavedResponse, IndexerTestResponse, JellyfinVerifyResponse,
     LibraryManagementProfileCopyRequest, LibraryManagementProfileCreateRequest,
     LibraryManagementProfileDeleteRequest, LibraryManagementProfileExportRequest,
-    LibraryManagementProfileExportResponse, LibraryManagementProfileImportPreviewRequest,
-    LibraryManagementProfileImportPreviewResponse, LibraryManagementProfileImportRequest,
-    LibraryManagementProfileImportResponse, LibraryManagementProfileMutationResponse,
+    LibraryManagementProfileImportPreviewRequest, LibraryManagementProfileImportRequest,
     LibraryManagementProfileUpdateRequest, LibraryManagementSaveRequest,
-    LibraryManagementSettingsImpactRequest, LibraryManagementSettingsResponse,
-    LibraryPathMappingReport, LibraryPathQuery, LibraryPathRequest,
-    LibraryPolicyApplyPreviewResponse, LibraryPolicyApplyRequest, LibraryPolicyImpactRequest,
-    LibraryPolicyImpactResponse, LibraryPolicyTreeResponse, LibraryRestorableRootsResponse,
-    LibraryRestoreRootsRequest, LibraryScanScheduleResponse, LibrarySettingsResponse,
-    LibrarySettingsSaveRequest, MusicBrainzBindingRequest, MusicBrainzSettingsUpdate,
-    MusicBrainzSettingsView, MusicBrainzVerifyRequest, OperationResult, PlexLibrarySectionInfo,
-    PlexVerifyResponse, PolicyImpactResponse, PolicySummaryResponse, ProwlarrTestResponse,
-    SabnzbdTestResponse, SectionPrefsResponse, SectionPrefsUpdate, SourcePriorityOrder,
-    TestConnectionResponse, UsenetSearchBackend, VerifyConnectionResponse,
+    LibraryManagementSettingsImpactRequest, LibraryPathQuery, LibraryPathRequest,
+    LibraryPolicyApplyRequest, LibraryPolicyImpactRequest, LibraryRestorableRootsResponse,
+    LibraryRestoreRootsRequest, LibraryScanScheduleResponse, LibrarySettingsSaveRequest,
+    MusicBrainzBindingRequest, MusicBrainzSettingsUpdate, MusicBrainzSettingsView,
+    MusicBrainzVerifyRequest, OperationResult, PlexLibrarySectionInfo, PlexVerifyResponse,
+    PolicyImpactResponse, PolicySummaryResponse, ProwlarrTestResponse, SabnzbdTestResponse,
+    SectionPrefsResponse, SectionPrefsUpdate, SourcePriorityOrder, TestConnectionResponse,
+    UsenetSearchBackend, VerifyConnectionResponse,
 };
 use super::wiring::{AdminUser, SettingsSetup};
-use crate::auth::session::middleware::CurrentSession;
-use crate::runtime_config::Masked;
-use crate::runtime_config::secret_sections::{
+use droppedneedle_auth::session::middleware::CurrentSession;
+use droppedneedle_kernel::runtime_config::Masked;
+use droppedneedle_kernel::runtime_config::secret_sections::{
     EventsSettings, JellyfinConnection, LastFmSettings, ListenBrainzConnection,
     NavidromeConnection, NewznabIndexer, OidcConnection, PlexConnection, ProwlarrConnection,
     SabnzbdConnection, SlskdConnection, WrappedSettings, YouTubeConnection,
 };
-use crate::runtime_config::sections::{
+use droppedneedle_kernel::runtime_config::sections::{
     ConnectApps, DownloadPolicy, EditionPreferences, FilesystemWatcher, GetIt, HomeSettings,
-    LibraryManagementProfile, LibraryScanSchedule, PrimaryMusicSource, PublicAddress,
-    ScrobbleSettings, SecuritySettings, UserPreferences, WantedWatcher,
+    LibraryManagementProfile, LibraryScanSchedule, LyricsSettings, PrimaryMusicSource,
+    PublicAddress, ScrobbleSettings, SecuritySettings, UserPreferences, WantedWatcher,
+};
+use droppedneedle_kernel::runtime_config::settings_error::{SettingsError, ValidJson, ValidQuery};
+use droppedneedle_library::management::settings::{ActivationHealth, ChangeImpact, PresetDiff};
+use droppedneedle_library::settings_models::{
+    LibraryManagementProfileExportResponse, LibraryManagementProfileImportPreviewResponse,
+    LibraryManagementProfileImportResponse, LibraryManagementProfileMutationResponse,
+    LibraryManagementSettingsResponse, LibraryPathMappingReport, LibraryPolicyApplyPreviewResponse,
+    LibraryPolicyImpactResponse, LibraryPolicyTreeResponse, LibrarySettingsResponse,
 };
 
 type JsonResult<T> = Result<Json<T>, SettingsError>;
@@ -53,6 +55,7 @@ type JsonResult<T> = Result<Json<T>, SettingsError>;
 /// Read the release-type filters.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/preferences",
     responses((status = 200, description = "Release-type filters", body = UserPreferences))
 )]
@@ -63,6 +66,7 @@ pub async fn get_preferences(State(settings): State<SettingsSetup>) -> JsonResul
 /// Save the release-type filters.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/preferences",
     request_body = UserPreferences,
     responses((status = 200, description = "Saved filters", body = UserPreferences))
@@ -77,6 +81,7 @@ pub async fn put_preferences(
 /// Read the scan schedule plus the server timezone label.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/library/schedule",
     responses((status = 200, description = "Scan schedule", body = LibraryScanScheduleResponse))
 )]
@@ -89,6 +94,7 @@ pub async fn get_schedule(
 /// Save the scan schedule.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/library/schedule",
     request_body = LibraryScanSchedule,
     responses((status = 200, description = "Saved schedule", body = LibraryScanScheduleResponse))
@@ -103,6 +109,7 @@ pub async fn put_schedule(
 /// Read the filesystem poller knobs.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/library/watcher",
     responses((status = 200, description = "Filesystem poller knobs", body = FilesystemWatcher))
 )]
@@ -113,6 +120,7 @@ pub async fn get_watcher(State(settings): State<SettingsSetup>) -> JsonResult<Fi
 /// Save the filesystem poller knobs.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/library/watcher",
     request_body = FilesystemWatcher,
     responses((status = 200, description = "Saved poller knobs", body = FilesystemWatcher))
@@ -127,6 +135,7 @@ pub async fn put_watcher(
 /// Read the scrobble targets.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/scrobble",
     responses((status = 200, description = "Scrobble targets", body = ScrobbleSettings))
 )]
@@ -137,6 +146,7 @@ pub async fn get_scrobble(State(settings): State<SettingsSetup>) -> JsonResult<S
 /// Save the scrobble targets.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/scrobble",
     request_body = ScrobbleSettings,
     responses((status = 200, description = "Saved targets", body = ScrobbleSettings))
@@ -148,9 +158,38 @@ pub async fn put_scrobble(
     settings.service().save(body).await.map(Json)
 }
 
+/// Read the online lyrics lookup switch.
+#[utoipa::path(
+    get,
+    tag = "settings",
+    path = "/api/v3/settings/lyrics",
+    responses((status = 200, description = "Lyrics lookup switch", body = LyricsSettings))
+)]
+pub async fn get_lyrics_settings(
+    State(settings): State<SettingsSetup>,
+) -> JsonResult<LyricsSettings> {
+    settings.service().get().map(Json)
+}
+
+/// Save the online lyrics lookup switch.
+#[utoipa::path(
+    put,
+    tag = "settings",
+    path = "/api/v3/settings/lyrics",
+    request_body = LyricsSettings,
+    responses((status = 200, description = "Saved switch", body = LyricsSettings))
+)]
+pub async fn put_lyrics_settings(
+    State(settings): State<SettingsSetup>,
+    ValidJson(body): ValidJson<LyricsSettings>,
+) -> JsonResult<LyricsSettings> {
+    settings.service().save(body).await.map(Json)
+}
+
 /// Read the primary music source.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/primary-source",
     responses((status = 200, description = "Primary music source", body = PrimaryMusicSource))
 )]
@@ -163,6 +202,7 @@ pub async fn get_primary_source(
 /// Save the primary music source.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/primary-source",
     request_body = PrimaryMusicSource,
     responses((status = 200, description = "Saved source", body = PrimaryMusicSource))
@@ -178,6 +218,7 @@ pub async fn put_primary_source(
 /// unset).
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/lastfm",
     responses((status = 200, description = "Last.fm settings", body = LastFmSettings))
 )]
@@ -191,6 +232,7 @@ pub async fn get_lastfm(
 /// keeps the stored one).
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/lastfm",
     request_body = LastFmSettings,
     responses((status = 200, description = "Saved settings", body = LastFmSettings))
@@ -205,6 +247,7 @@ pub async fn put_lastfm(
 /// Read the store-region settings.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/get-it",
     responses((status = 200, description = "Store-region settings", body = GetIt))
 )]
@@ -215,6 +258,7 @@ pub async fn get_get_it(State(settings): State<SettingsSetup>) -> JsonResult<Get
 /// Save the store-region settings.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/get-it",
     request_body = GetIt,
     responses((status = 200, description = "Saved settings", body = GetIt))
@@ -229,6 +273,7 @@ pub async fn put_get_it(
 /// Read the edition preferences.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/edition-preferences",
     responses((status = 200, description = "Edition preferences", body = EditionPreferences))
 )]
@@ -241,6 +286,7 @@ pub async fn get_edition_preferences(
 /// Save the edition preferences.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/edition-preferences",
     request_body = EditionPreferences,
     responses((status = 200, description = "Saved settings", body = EditionPreferences))
@@ -255,6 +301,7 @@ pub async fn put_edition_preferences(
 /// Read the home page settings.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/home",
     operation_id = "get_home_settings",
     responses((status = 200, description = "Home page settings", body = HomeSettings))
@@ -266,6 +313,7 @@ pub async fn get_home(State(settings): State<SettingsSetup>) -> JsonResult<HomeS
 /// Save the home page settings. The save clears the cached home rows.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/home",
     request_body = HomeSettings,
     responses(
@@ -283,6 +331,7 @@ pub async fn put_home(
 /// Read the security posture settings.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/security",
     responses((status = 200, description = "Security settings", body = SecuritySettings))
 )]
@@ -293,6 +342,7 @@ pub async fn get_security(State(settings): State<SettingsSetup>) -> JsonResult<S
 /// Save the security posture settings.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/security",
     request_body = SecuritySettings,
     responses((status = 200, description = "Saved settings", body = SecuritySettings))
@@ -308,6 +358,7 @@ pub async fn put_security(
 /// a `40-char-SHA1:count` line).
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/security/verify-hibp",
     request_body = SecuritySettings,
     responses((status = 200, description = "Verify verdict", body = VerifyConnectionResponse))
@@ -322,6 +373,7 @@ pub async fn verify_hibp(
 /// Read the addresses stated as this server's own.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/public-address",
     responses((status = 200, description = "Stated public addresses", body = PublicAddress))
 )]
@@ -335,6 +387,7 @@ pub async fn get_public_address(
 /// check accepts a change from a page at one of them.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/public-address",
     request_body = PublicAddress,
     responses(
@@ -352,6 +405,7 @@ pub async fn put_public_address(
 /// Read the inbound Connect Apps config.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/connect-apps",
     responses((status = 200, description = "Connect Apps config", body = ConnectApps))
 )]
@@ -362,6 +416,7 @@ pub async fn get_connect_apps(State(settings): State<SettingsSetup>) -> JsonResu
 /// Save the inbound Connect Apps config.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/connect-apps",
     request_body = ConnectApps,
     responses((status = 200, description = "Saved config", body = ConnectApps))
@@ -376,6 +431,7 @@ pub async fn put_connect_apps(
 /// Read the wanted watcher toggles.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/download-clients/wanted",
     responses((status = 200, description = "Wanted watcher toggles", body = WantedWatcher))
 )]
@@ -386,6 +442,7 @@ pub async fn get_wanted(State(settings): State<SettingsSetup>) -> JsonResult<Wan
 /// Save the wanted watcher toggles.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/download-clients/wanted",
     request_body = WantedWatcher,
     responses((status = 200, description = "Saved toggles", body = WantedWatcher))
@@ -400,6 +457,7 @@ pub async fn put_wanted(
 /// Read the acquisition source try-order.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/download-clients/source-priority",
     responses((status = 200, description = "Source try-order", body = SourcePriorityOrder))
 )]
@@ -412,6 +470,7 @@ pub async fn get_source_priority(
 /// Save the acquisition source try-order.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/download-clients/source-priority",
     request_body = SourcePriorityOrder,
     responses((status = 200, description = "Saved try-order", body = SourcePriorityOrder))
@@ -430,6 +489,7 @@ pub async fn put_source_priority(
 /// Read the active Usenet search backend.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/indexers/search-backend",
     responses((status = 200, description = "Search backend", body = UsenetSearchBackend))
 )]
@@ -442,6 +502,7 @@ pub async fn get_search_backend(
 /// Save the active Usenet search backend. Unknown values are a 400.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/indexers/search-backend",
     request_body = UsenetSearchBackend,
     responses((status = 200, description = "Saved backend", body = UsenetSearchBackend))
@@ -458,6 +519,7 @@ pub async fn put_search_backend(
 /// Read the typed library settings with the policy revision.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/library",
     responses((status = 200, description = "Library settings", body = LibrarySettingsResponse))
 )]
@@ -472,6 +534,7 @@ pub async fn get_library(
 /// catalog holds tracks is a 400.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/library",
     request_body = LibrarySettingsSaveRequest,
     responses(
@@ -491,6 +554,7 @@ pub async fn put_library(
 /// machine; re-adding is a silent no-op.
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/library/paths",
     request_body = LibraryPathRequest,
     responses((status = 200, description = "Library settings", body = LibrarySettingsResponse))
@@ -510,6 +574,7 @@ pub async fn add_library_path(
 /// no-op; removing the last root while the catalog holds tracks is a 400.
 #[utoipa::path(
     delete,
+    tag = "settings",
     path = "/api/v3/settings/library/paths",
     params(("path" = String, Query, description = "Directory to remove")),
     responses(
@@ -532,6 +597,7 @@ pub async fn remove_library_path(
 /// counts per node.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/library/policy-tree",
     responses((status = 200, description = "Policy tree", body = LibraryPolicyTreeResponse))
 )]
@@ -545,6 +611,7 @@ pub async fn get_library_policy_tree(
 /// is saved; a stale expected revision only sets `stale`.
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/library/policy-impact",
     request_body = LibraryPolicyImpactRequest,
     responses(
@@ -567,6 +634,7 @@ pub async fn preview_library_policy_impact(
 /// it would revisit.
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/library/policy-apply-preview",
     request_body = LibraryPolicyApplyRequest,
     responses(
@@ -591,6 +659,7 @@ pub async fn preview_library_policy_apply(
 /// list.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/library/restorable-roots",
     responses(
         (status = 200, description = "Restorable roots", body = LibraryRestorableRootsResponse),
@@ -606,6 +675,7 @@ pub async fn get_restorable_library_roots(
 /// Put every removed root back into the settings.
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/library/restore-roots",
     request_body = LibraryRestoreRootsRequest,
     responses(
@@ -629,6 +699,7 @@ pub async fn restore_library_roots(
 /// Dry run: map every catalog file path to a saved root.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/library/path-mapping",
     responses(
         (status = 200, description = "Path mapping report", body = LibraryPathMappingReport),
@@ -646,6 +717,7 @@ pub async fn get_library_path_mapping(
 /// Read the advanced tunables in form units.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/advanced",
     responses((status = 200, description = "Advanced tunables", body = AdvancedSettingsForm))
 )]
@@ -659,6 +731,7 @@ pub async fn get_advanced(
 /// closed allowlist.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/advanced",
     request_body = AdvancedSettingsForm,
     responses((status = 200, description = "Saved tunables", body = AdvancedSettingsForm))
@@ -673,6 +746,7 @@ pub async fn put_advanced(
 /// Read the frontend cache TTLs in stored units (milliseconds).
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/cache-ttls",
     responses((status = 200, description = "Frontend cache TTLs", body = FrontendCacheTTLs))
 )]
@@ -687,6 +761,7 @@ pub async fn get_cache_ttls(
 /// Read the Jellyfin connection (key masked unless unset).
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/jellyfin",
     responses((status = 200, description = "Jellyfin connection", body = JellyfinConnection))
 )]
@@ -699,6 +774,7 @@ pub async fn get_jellyfin(
 /// Save the Jellyfin connection (a masked key keeps the stored one).
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/jellyfin",
     request_body = JellyfinConnection,
     responses((status = 200, description = "Saved connection", body = JellyfinConnection))
@@ -714,6 +790,7 @@ pub async fn put_jellyfin(
 /// one). The user list rides along on success for the admin picker.
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/jellyfin/verify",
     request_body = JellyfinConnection,
     responses((status = 200, description = "Verify verdict", body = JellyfinVerifyResponse))
@@ -728,6 +805,7 @@ pub async fn verify_jellyfin(
 /// Read the Navidrome connection (password masked unless unset).
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/navidrome",
     responses((status = 200, description = "Navidrome connection", body = NavidromeConnection))
 )]
@@ -740,6 +818,7 @@ pub async fn get_navidrome(
 /// Save the Navidrome connection (a masked password keeps the stored one).
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/navidrome",
     request_body = NavidromeConnection,
     responses((status = 200, description = "Saved connection", body = NavidromeConnection))
@@ -755,6 +834,7 @@ pub async fn put_navidrome(
 /// stored one).
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/navidrome/verify",
     request_body = NavidromeConnection,
     responses((status = 200, description = "Verify verdict", body = VerifyConnectionResponse))
@@ -769,6 +849,7 @@ pub async fn verify_navidrome(
 /// Read the Plex connection (token masked unless unset).
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/plex",
     responses((status = 200, description = "Plex connection", body = PlexConnection))
 )]
@@ -779,6 +860,7 @@ pub async fn get_plex(State(settings): State<SettingsSetup>) -> JsonResult<Maske
 /// Save the Plex connection (a masked token keeps the stored one).
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/plex",
     request_body = PlexConnection,
     responses((status = 200, description = "Saved connection", body = PlexConnection))
@@ -794,6 +876,7 @@ pub async fn put_plex(
 /// one). Music libraries ride along on success.
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/plex/verify",
     request_body = PlexConnection,
     responses((status = 200, description = "Verify verdict", body = PlexVerifyResponse))
@@ -809,6 +892,7 @@ pub async fn verify_plex(
 /// is a 400; an unreachable Plex is a 502.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/plex/libraries",
     responses(
         (status = 200, description = "Music libraries", body = Vec<PlexLibrarySectionInfo>),
@@ -825,6 +909,7 @@ pub async fn get_plex_libraries(
 /// Read the ListenBrainz connection (token masked unless unset).
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/listenbrainz",
     responses((status = 200, description = "ListenBrainz connection", body = ListenBrainzConnection))
 )]
@@ -837,6 +922,7 @@ pub async fn get_listenbrainz(
 /// Save the ListenBrainz connection (a masked token keeps the stored one).
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/listenbrainz",
     request_body = ListenBrainzConnection,
     responses((status = 200, description = "Saved connection", body = ListenBrainzConnection))
@@ -852,6 +938,7 @@ pub async fn put_listenbrainz(
 /// stored one). Rate limiting answers 429.
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/listenbrainz/verify",
     request_body = ListenBrainzConnection,
     responses(
@@ -869,6 +956,7 @@ pub async fn verify_listenbrainz(
 /// Read the YouTube connection (key masked unless unset).
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/youtube",
     responses((status = 200, description = "YouTube connection", body = YouTubeConnection))
 )]
@@ -881,6 +969,7 @@ pub async fn get_youtube(
 /// Save the YouTube connection (a masked key keeps the stored one).
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/youtube",
     request_body = YouTubeConnection,
     responses((status = 200, description = "Saved connection", body = YouTubeConnection))
@@ -895,6 +984,7 @@ pub async fn put_youtube(
 /// Test the submitted YouTube key (a masked key tests the stored one).
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/youtube/verify",
     request_body = YouTubeConnection,
     responses((status = 200, description = "Verify verdict", body = VerifyConnectionResponse))
@@ -909,6 +999,7 @@ pub async fn verify_youtube(
 /// Read the events sources (keys masked unless unset).
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/events",
     responses((status = 200, description = "Events sources", body = EventsSettings))
 )]
@@ -922,6 +1013,7 @@ pub async fn get_events(
 /// the sweep.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/events",
     request_body = EventsSettings,
     responses((status = 200, description = "Saved sources", body = EventsSettings))
@@ -936,6 +1028,7 @@ pub async fn put_events(
 /// Test the submitted Ticketmaster key (a masked key tests the stored one).
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/events/test-ticketmaster",
     request_body = EventsSettings,
     responses((status = 200, description = "Verify verdict", body = VerifyConnectionResponse))
@@ -950,6 +1043,7 @@ pub async fn test_ticketmaster(
 /// Test the submitted Skiddle key (a masked key tests the stored one).
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/events/test-skiddle",
     request_body = EventsSettings,
     responses((status = 200, description = "Verify verdict", body = VerifyConnectionResponse))
@@ -964,6 +1058,7 @@ pub async fn test_skiddle(
 /// Read the wrapped settings (key masked unless unset).
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/wrapped",
     responses((status = 200, description = "Wrapped settings", body = WrappedSettings))
 )]
@@ -976,6 +1071,7 @@ pub async fn get_wrapped(
 /// Save the wrapped settings (a masked key keeps the stored one).
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/wrapped",
     request_body = WrappedSettings,
     responses((status = 200, description = "Saved settings", body = WrappedSettings))
@@ -990,6 +1086,7 @@ pub async fn put_wrapped(
 /// Read the OIDC connection (secret masked unless unset).
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/oidc",
     responses((status = 200, description = "OIDC connection", body = OidcConnection))
 )]
@@ -1000,6 +1097,7 @@ pub async fn get_oidc(State(settings): State<SettingsSetup>) -> JsonResult<Maske
 /// Save the OIDC connection (a masked secret keeps the stored one).
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/oidc",
     request_body = OidcConnection,
     responses((status = 200, description = "Saved connection", body = OidcConnection))
@@ -1014,6 +1112,7 @@ pub async fn put_oidc(
 /// Test the submitted OIDC issuer (fetches its discovery document).
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/oidc/verify",
     request_body = OidcConnection,
     responses((status = 200, description = "Verify verdict", body = VerifyConnectionResponse))
@@ -1028,6 +1127,7 @@ pub async fn verify_oidc(
 /// Read the slskd connection (key masked unless unset).
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/download-client/config",
     responses((status = 200, description = "slskd connection", body = SlskdConnection))
 )]
@@ -1040,6 +1140,7 @@ pub async fn get_slskd(
 /// Save the slskd connection (a masked key keeps the stored one).
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/download-client/config",
     request_body = SlskdConnection,
     responses((status = 200, description = "Saved connection", body = SlskdConnection))
@@ -1054,6 +1155,7 @@ pub async fn put_slskd(
 /// Test the submitted slskd values (a masked key tests the stored one).
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/download-client/test",
     request_body = SlskdConnection,
     responses((status = 200, description = "Verify verdict", body = TestConnectionResponse))
@@ -1068,6 +1170,7 @@ pub async fn test_slskd(
 /// Read the SABnzbd connection (key masked unless unset).
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/download-clients/sabnzbd",
     responses((status = 200, description = "SABnzbd connection", body = SabnzbdConnection))
 )]
@@ -1080,6 +1183,7 @@ pub async fn get_sabnzbd(
 /// Save the SABnzbd connection (a masked key keeps the stored one).
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/download-clients/sabnzbd",
     request_body = SabnzbdConnection,
     responses((status = 200, description = "Saved connection", body = SabnzbdConnection))
@@ -1095,6 +1199,7 @@ pub async fn put_sabnzbd(
 /// one). The submitted downloads mount is diagnosed, not the stored one.
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/download-clients/sabnzbd/test",
     request_body = SabnzbdConnection,
     responses((status = 200, description = "Verify verdict", body = SabnzbdTestResponse))
@@ -1109,6 +1214,7 @@ pub async fn test_sabnzbd(
 /// Read the Prowlarr connection (key masked unless unset).
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/prowlarr/config",
     responses((status = 200, description = "Prowlarr connection", body = ProwlarrConnection))
 )]
@@ -1121,6 +1227,7 @@ pub async fn get_prowlarr(
 /// Save the Prowlarr connection (a masked key keeps the stored one).
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/prowlarr/config",
     request_body = ProwlarrConnection,
     responses((status = 200, description = "Saved connection", body = ProwlarrConnection))
@@ -1135,6 +1242,7 @@ pub async fn put_prowlarr(
 /// Test the submitted Prowlarr values (a masked key tests the stored one).
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/prowlarr/test",
     request_body = ProwlarrConnection,
     responses((status = 200, description = "Verify verdict", body = ProwlarrTestResponse))
@@ -1151,6 +1259,7 @@ pub async fn test_prowlarr(
 /// Read the acquisition policy plus its recipe verdict.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/download-clients/policy",
     responses((status = 200, description = "Acquisition policy", body = DownloadPolicyView))
 )]
@@ -1162,6 +1271,7 @@ pub async fn get_policy(State(settings): State<SettingsSetup>) -> JsonResult<Dow
 /// ignored.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/download-clients/policy",
     request_body = DownloadPolicy,
     responses((status = 200, description = "Saved policy", body = DownloadPolicyView))
@@ -1177,6 +1287,7 @@ pub async fn put_policy(
 /// plus the source-mode label only.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/download-clients/policy-summary",
     responses((status = 200, description = "Policy summary", body = PolicySummaryResponse))
 )]
@@ -1190,6 +1301,7 @@ pub async fn get_policy_summary(
 /// Needs the database; unwired states answer 503.
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/download-clients/policy/impact",
     request_body = DownloadPolicy,
     responses(
@@ -1218,6 +1330,7 @@ pub async fn post_policy_impact(
 /// List the configured Newznab indexers (keys masked unless unset).
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/indexers",
     responses((status = 200, description = "Configured indexers", body = Vec<NewznabIndexer>))
 )]
@@ -1230,6 +1343,7 @@ pub async fn list_indexers(
 /// Save one indexer (create when the id is blank, else update).
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/indexers",
     request_body = NewznabIndexer,
     responses((status = 200, description = "Saved indexer id", body = IndexerSavedResponse))
@@ -1244,6 +1358,7 @@ pub async fn create_indexer(
 /// Save one indexer; the path id wins over the body id.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/indexers/{id}",
     params(("id" = String, Path, description = "Indexer id")),
     request_body = NewznabIndexer,
@@ -1264,6 +1379,7 @@ pub async fn update_indexer(
 /// Delete one indexer. Unknown ids are a silent no-op.
 #[utoipa::path(
     delete,
+    tag = "settings",
     path = "/api/v3/settings/indexers/{id}",
     params(("id" = String, Path, description = "Indexer id")),
     responses((status = 200, description = "Deleted", body = OperationResult))
@@ -1279,6 +1395,7 @@ pub async fn delete_indexer(
 /// Persist a dragged-card priority order.
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/indexers/reorder",
     request_body = IndexerReorderRequest,
     responses((status = 200, description = "Reordered", body = OperationResult))
@@ -1298,6 +1415,7 @@ pub async fn reorder_indexers(
 /// tests the stored one).
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/indexers/test",
     request_body = NewznabIndexer,
     responses((status = 200, description = "Caps verdict", body = IndexerTestResponse))
@@ -1314,6 +1432,7 @@ pub async fn test_indexer(
 /// Read the settled MusicBrainz connection plus the transient pending echo.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/musicbrainz",
     responses((status = 200, description = "MusicBrainz settings", body = MusicBrainzSettingsView))
 )]
@@ -1327,6 +1446,7 @@ pub async fn get_musicbrainz(
 /// consent-bound flow, never a direct update).
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/musicbrainz",
     request_body = MusicBrainzSettingsUpdate,
     responses((status = 200, description = "Saved settings", body = MusicBrainzSettingsView))
@@ -1341,6 +1461,7 @@ pub async fn put_musicbrainz(
 /// Stage a BrainzMash proposal without probing upstream.
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/musicbrainz/brainzmash/stage",
     responses((status = 200, description = "Staged settings", body = MusicBrainzSettingsView))
 )]
@@ -1358,6 +1479,7 @@ pub async fn stage_brainzmash(
 /// an outdated disclosure is a 409.
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/musicbrainz/brainzmash/consent",
     request_body = MusicBrainzBindingRequest,
     responses(
@@ -1380,6 +1502,7 @@ pub async fn consent_brainzmash(
 /// a 502; alternative probes are a 409 while BrainzMash is active.
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/musicbrainz/verify",
     request_body = MusicBrainzVerifyRequest,
     responses(
@@ -1402,6 +1525,7 @@ pub async fn verify_musicbrainz(
 /// Promote the exact verified proposal to the active binding.
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/musicbrainz/activate",
     request_body = MusicBrainzBindingRequest,
     responses(
@@ -1421,6 +1545,7 @@ pub async fn activate_brainzmash(
 /// Read the Library Management settings with their revision.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/library-management",
     responses((status = 200, description = "Library Management settings", body = LibraryManagementSettingsResponse))
 )]
@@ -1437,6 +1562,7 @@ pub async fn get_library_management(
 /// root new write scope needs a current confirmed dry run.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/library-management",
     request_body = LibraryManagementSaveRequest,
     responses(
@@ -1460,6 +1586,7 @@ pub async fn put_library_management(
 /// Dry-run activation health for the active automatic roots.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/library-management/activation-health",
     responses((status = 200, description = "Activation health", body = ActivationHealth))
 )]
@@ -1475,6 +1602,7 @@ pub async fn get_library_management_activation_health(
 /// Classify a candidate without saving it.
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/library-management/impact",
     request_body = LibraryManagementSettingsImpactRequest,
     responses((status = 200, description = "Change impact", body = ChangeImpact))
@@ -1495,6 +1623,7 @@ pub async fn preview_library_management_impact(
 /// preview (v2 serves both paths).
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/library-management/validate",
     request_body = LibraryManagementSettingsImpactRequest,
     responses((status = 200, description = "Change impact", body = ChangeImpact))
@@ -1509,6 +1638,7 @@ pub async fn validate_library_management(
 /// Read one profile.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/library-management/profiles/{profile_id}",
     params(("profile_id" = String, Path, description = "Profile id")),
     responses((status = 200, description = "Profile", body = LibraryManagementProfile))
@@ -1526,6 +1656,7 @@ pub async fn get_library_management_profile(
 /// Create a profile as a copy of the default profile.
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/library-management/profiles",
     request_body = LibraryManagementProfileCreateRequest,
     responses((status = 200, description = "Created profile", body = LibraryManagementProfileMutationResponse))
@@ -1549,6 +1680,7 @@ pub async fn create_library_management_profile(
 /// Copy one profile under a new name.
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/library-management/profiles/{profile_id}/copy",
     params(("profile_id" = String, Path, description = "Profile id")),
     request_body = LibraryManagementProfileCopyRequest,
@@ -1570,6 +1702,7 @@ pub async fn copy_library_management_profile(
 /// Replace one profile. The body id must match the path id.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/library-management/profiles/{profile_id}",
     params(("profile_id" = String, Path, description = "Profile id")),
     request_body = LibraryManagementProfileUpdateRequest,
@@ -1591,6 +1724,7 @@ pub async fn update_library_management_profile(
 /// Delete one custom profile that is neither the default nor assigned.
 #[utoipa::path(
     delete,
+    tag = "settings",
     path = "/api/v3/settings/library-management/profiles/{profile_id}",
     params(("profile_id" = String, Path, description = "Profile id")),
     request_body = LibraryManagementProfileDeleteRequest,
@@ -1612,6 +1746,7 @@ pub async fn delete_library_management_profile(
 /// Which groups of a preset-tracking profile differ from the preset.
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/library-management/profiles/{profile_id}/preset-diff",
     params(("profile_id" = String, Path, description = "Profile id")),
     responses((status = 200, description = "Preset diff", body = PresetDiff))
@@ -1629,6 +1764,7 @@ pub async fn get_library_management_preset_diff(
 /// Export one profile as a share bundle.
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/library-management/profiles/{profile_id}/export",
     params(("profile_id" = String, Path, description = "Profile id")),
     request_body = LibraryManagementProfileExportRequest,
@@ -1650,6 +1786,7 @@ pub async fn export_library_management_profile(
 /// Preview importing a shared profile (document or share code).
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/library-management/profile-imports/preview",
     request_body = LibraryManagementProfileImportPreviewRequest,
     responses((status = 200, description = "Import preview", body = LibraryManagementProfileImportPreviewResponse))
@@ -1669,6 +1806,7 @@ pub async fn preview_library_management_profile_import(
 /// Import a reviewed shared profile.
 #[utoipa::path(
     post,
+    tag = "settings",
     path = "/api/v3/settings/library-management/profile-imports",
     request_body = LibraryManagementProfileImportRequest,
     responses(
@@ -1698,6 +1836,7 @@ pub async fn import_library_management_profile(
 /// The legacy catalog-sync section is gone (one-shot import only now).
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/settings/library/sync",
     responses((status = 410, description = "Section dropped in v3"))
 )]
@@ -1709,6 +1848,7 @@ pub async fn dropped_library_sync() -> JsonResult<serde_json::Value> {
 /// PUT twin of the dropped catalog-sync route: gone, not moved.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/settings/library/sync",
     responses((status = 410, description = "Section dropped in v3"))
 )]
@@ -1721,6 +1861,7 @@ pub async fn dropped_library_sync_put() -> JsonResult<serde_json::Value> {
 /// Read the caller's section visibility prefs (all three pages).
 #[utoipa::path(
     get,
+    tag = "settings",
     path = "/api/v3/me/section-prefs",
     responses((status = 200, description = "Section prefs", body = SectionPrefsResponse))
 )]
@@ -1751,6 +1892,7 @@ pub async fn get_section_prefs(
 /// unknown keys are a 400; only the updated page is returned.
 #[utoipa::path(
     put,
+    tag = "settings",
     path = "/api/v3/me/section-prefs",
     request_body = SectionPrefsUpdate,
     responses(

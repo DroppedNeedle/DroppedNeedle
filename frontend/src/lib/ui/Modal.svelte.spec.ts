@@ -2,6 +2,7 @@ import { page, userEvent } from '@vitest/browser/context';
 import { describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
+import '../../app.css';
 import ModalTestHarness from './ModalTestHarness.svelte';
 
 const opener = () => page.getByRole('button', { name: 'Open settings' });
@@ -51,6 +52,34 @@ describe('Modal', () => {
 
 		await expect.element(page.getByText('Dialog is open')).toBeVisible();
 		await expect.element(dialog()).toBeVisible();
+	});
+
+	it('as a sheet fills a phone screen, with its action bar on screen', async () => {
+		await page.viewport(390, 844);
+		await render(ModalTestHarness, {
+			size: 'sheet',
+			description: 'Pick a name your friends will recognise.'
+		});
+		await opener().click();
+
+		await expect.element(dialog()).toHaveAccessibleDescription(/friends will recognise/);
+		const box = () => page.getByTestId('modal-sheet').element().getBoundingClientRect();
+		// The box scales up as it opens.
+		await expect.poll(() => box().width).toBe(390);
+		expect(box().height).toBe(844);
+		await expect.element(page.getByRole('button', { name: 'Cancel' })).toBeInViewport();
+	});
+
+	it('as a sheet on a desktop is a centred box shorter than the window', async () => {
+		await page.viewport(1440, 900);
+		await render(ModalTestHarness, { size: 'sheet' });
+		await opener().click();
+		await expect.element(dialog()).toBeVisible();
+
+		const box = () => page.getByTestId('modal-sheet').element().getBoundingClientRect();
+		await expect.poll(() => box().width).toBe(1152);
+		expect(box().height).toBeLessThanOrEqual(900 * 0.88);
+		expect(box().left).toBe((1440 - 1152) / 2);
 	});
 
 	it('returns focus to the opener when it is removed while open', async () => {

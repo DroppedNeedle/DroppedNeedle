@@ -2,6 +2,7 @@
 	import { serviceStatusStore } from '$lib/stores/serviceStatus';
 	import { fromStore } from 'svelte/store';
 	import { TriangleAlert, X } from 'lucide-svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	const status = fromStore(serviceStatusStore);
 
@@ -31,13 +32,7 @@
 		>
 			<TriangleAlert class="h-4 w-4 shrink-0" />
 			<span>{sourceLabel} {verb} unavailable, so some results may be missing</span>
-			<button
-				class="btn btn-ghost btn-xs btn-circle"
-				onclick={() => (dismissed = true)}
-				aria-label="Dismiss"
-			>
-				<X class="h-3 w-3" />
-			</button>
+			<IconButton size="xs" icon={X} label="Dismiss" onclick={() => (dismissed = true)} />
 		</div>
 	</div>
 {/if}

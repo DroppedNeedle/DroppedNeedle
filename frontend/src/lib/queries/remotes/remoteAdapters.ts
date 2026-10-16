@@ -30,7 +30,8 @@ export function toJellyfinTrack(track: TrackView): JellyfinTrackInfo {
 		album_name: track.album_name,
 		artist_name: track.artist_name,
 		album_id: track.album_id ?? undefined,
-		image_url: track.image_url ?? null
+		image_url: track.image_url ?? null,
+		recording_mbid: track.recording_mbid ?? null
 	};
 }
 
@@ -43,7 +44,8 @@ export function toNavidromeTrack(track: TrackView): NavidromeTrackInfo {
 		duration_seconds: track.duration_secs ?? 0,
 		album_name: track.album_name,
 		artist_name: track.artist_name,
-		image_url: track.image_url ?? null
+		image_url: track.image_url ?? null,
+		recording_mbid: track.recording_mbid ?? null
 	};
 }
 
@@ -57,7 +59,8 @@ export function toPlexTrack(track: TrackView): PlexTrackInfo {
 		album_name: track.album_name,
 		artist_name: track.artist_name,
 		part_key: track.part_key ?? null,
-		image_url: track.image_url ?? null
+		image_url: track.image_url ?? null,
+		recording_mbid: track.recording_mbid ?? null
 	};
 }
 

@@ -3,6 +3,7 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { describeServiceError } from '$lib/utils/serviceError';
+	import Button from '$lib/ui/Button.svelte';
 
 	interface Props {
 		error: unknown;
@@ -29,12 +30,10 @@
 	<p class="mt-1 max-w-md text-base-content/70">{view.message}</p>
 	<div class="mt-4 flex gap-2">
 		{#if view.settingsHref && authStore.isAdmin}
-			<a class="btn btn-primary" href={withBasePath(view.settingsHref)}>Open settings</a>
+			<Button variant="primary" href={withBasePath(view.settingsHref)}>Open settings</Button>
 		{/if}
 		{#if view.canRetry && onretry}
-			<button class="btn {view.settingsHref ? 'btn-ghost' : 'btn-primary'}" onclick={onretry}
-				>Try again</button
-			>
+			<Button variant={view.settingsHref ? 'ghost' : 'primary'} onclick={onretry}>Try again</Button>
 		{/if}
 	</div>
 	{#if view.settingsHref && !authStore.isAdmin}

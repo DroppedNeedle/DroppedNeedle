@@ -14,20 +14,20 @@
 use std::sync::Mutex;
 
 use super::effects::{SaveEffects, SavedSection};
-use super::error::SettingsError;
 use super::models::{
     BrainzmashPendingProposal, MusicBrainzBindingRequest, MusicBrainzSettingsUpdate,
     MusicBrainzSettingsView, MusicBrainzVerifyRequest,
 };
 use super::verify::{VerifyProbes, require_service_url};
 use crate::bootstrap::Outbound;
-use crate::ids::IdGenerator;
-use crate::runtime_config::ConfigStore;
-use crate::runtime_config::sections::{
+use droppedneedle_kernel::ids::IdGenerator;
+use droppedneedle_kernel::runtime_config::ConfigStore;
+use droppedneedle_kernel::runtime_config::sections::{
     BRAINZMASH_CONCURRENT_SEARCHES, BRAINZMASH_ENDPOINT, BRAINZMASH_RATE_LIMIT, MbSourceMode,
     MusicBrainzSettings, OFFICIAL_MB_API_BASE, OFFICIAL_MB_CONCURRENT_SEARCHES,
-    OFFICIAL_MB_RATE_LIMIT,
+    OFFICIAL_MB_RATE_LIMIT, exact_nonblank,
 };
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// BrainzMash disclosure version. A proposal carrying any other version
 /// is outdated and cannot proceed.
@@ -86,22 +86,6 @@ impl PendingProposal {
     }
 }
 
-fn exact_nonblank(value: &str) -> bool {
-    !value.is_empty() && value == value.trim()
-}
-
-/// Whether the pinned built-in BrainzMash source may serve traffic: the
-/// mode is brainzmash, the endpoint is the approved origin, the
-/// generation is positive, and the source id is exact nonblank. The
-/// interactive binding is optional for the default; these checks fence
-/// caches and transport to the approved origin.
-pub fn is_brainzmash_active_binding_valid(settings: &MusicBrainzSettings) -> bool {
-    settings.source_mode == MbSourceMode::Brainzmash
-        && settings.api_url == BRAINZMASH_ENDPOINT
-        && settings.generation > 0
-        && exact_nonblank(&settings.source_id)
-}
-
 /// The lifecycle service: settled state in config, the pending proposal
 /// in memory. The op mutex serializes whole lifecycle operations like
 /// v2's coordinator lock (always taken before the pending mutex; never
@@ -140,7 +124,7 @@ impl MusicBrainzLifecycle {
         }
     }
 
-    fn config(&self, error: crate::runtime_config::ConfigError) -> SettingsError {
+    fn config(&self, error: droppedneedle_kernel::runtime_config::ConfigError) -> SettingsError {
         SettingsError::from_config(error, self.ids.as_ref())
     }
 
@@ -353,10 +337,10 @@ impl MusicBrainzLifecycle {
             }
         }
         drop(guard);
-        let mut internal: crate::runtime_config::sections::InternalState =
+        let mut internal: droppedneedle_kernel::runtime_config::sections::InternalState =
             self.store.get().map_err(|e| self.config(e))?;
         internal.brainzmash_consent_admin = Some(admin_id.to_owned());
-        let _: crate::runtime_config::sections::InternalState =
+        let _: droppedneedle_kernel::runtime_config::sections::InternalState =
             self.store.save(internal).map_err(|e| self.config(e))?;
         let stored: MusicBrainzSettings = self.store.get().map_err(|e| self.config(e))?;
         Ok(self.view(stored))
@@ -477,15 +461,17 @@ impl MusicBrainzLifecycle {
             selected_source_mode: MbSourceMode::Brainzmash,
             source_id: proposal.source_id.clone(),
             generation: proposal.generation,
-            active_brainzmash: Some(crate::runtime_config::sections::BrainzmashActiveBinding {
-                endpoint: proposal.endpoint.clone(),
-                access_revision: proposal.access_revision.clone(),
-                source_id: proposal.source_id.clone(),
-                generation: proposal.generation,
-                disclosure_version: proposal.disclosure_version.clone(),
-                consented: true,
-                verified: true,
-            }),
+            active_brainzmash: Some(
+                droppedneedle_kernel::runtime_config::sections::BrainzmashActiveBinding {
+                    endpoint: proposal.endpoint.clone(),
+                    access_revision: proposal.access_revision.clone(),
+                    source_id: proposal.source_id.clone(),
+                    generation: proposal.generation,
+                    disclosure_version: proposal.disclosure_version.clone(),
+                    consented: true,
+                    verified: true,
+                },
+            ),
             clamped_to_official_limits: false,
         };
         let saved: MusicBrainzSettings = self.store.save(promoted).map_err(|e| self.config(e))?;
@@ -539,7 +525,7 @@ impl MusicBrainzLifecycle {
             }
             MusicBrainzVerifyRequest::Update(update) => {
                 let stored: MusicBrainzSettings = self.store.get().map_err(|e| self.config(e))?;
-                if is_brainzmash_active_binding_valid(&stored) {
+                if stored.brainzmash_binding_valid() {
                     return Err(SettingsError::Conflict {
                         message: "Alternative MusicBrainz tests are disabled while BrainzMash is \
                                   active; save to switch sources."

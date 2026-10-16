@@ -20,6 +20,7 @@
 	import LibraryRootPolicyEditor from '$lib/components/library/LibraryRootPolicyEditor.svelte';
 	import LibraryNamingPreview from '$lib/components/library/LibraryNamingPreview.svelte';
 	import LibraryScanScheduleControl from '$lib/components/library/LibraryScanScheduleControl.svelte';
+	import SettingsLyrics from './SettingsLyrics.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -488,6 +489,7 @@
 		</section>
 
 		{#if authStore.isAdmin}
+			<SettingsLyrics />
 			<section class="management-settings-portal">
 				<div class="management-write-mark"><FolderCog class="h-6 w-6" /></div>
 				<div class="min-w-0 flex-1">

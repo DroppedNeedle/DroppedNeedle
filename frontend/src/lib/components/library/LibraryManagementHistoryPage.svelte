@@ -10,6 +10,9 @@
 		getLibraryManagementOperationsQuery,
 		getLibraryManagementSettingsQuery
 	} from '$lib/queries/library-management/LibraryManagementQueries.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import Input from '$lib/ui/Input.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { isRecord, titleManagementValue } from './LibraryManagementDisplay';
 
@@ -109,16 +112,11 @@
 			</div>
 		</header>
 
-		<section
-			class="management-operation-panel space-y-4"
-			aria-labelledby="management-history-filters"
-		>
+		<Card as="section" variant="bordered" padding="md" aria-labelledby="management-history-filters">
 			<h2 id="management-history-filters" class="font-semibold">Filter write-system history</h2>
-			<div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+			<div class="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
 				<label class="grid gap-1 text-xs"
-					><span>Origin</span><select
-						class="select select-bordered select-sm bg-base-100"
-						bind:value={origin}
+					><span>Origin</span><select class="select select-sm" bind:value={origin}
 						><option value="">All origins</option><option value="manual">Manual</option><option
 							value="acquisition">Acquisition</option
 						><option value="drop_import">Drop import</option><option value="scan_discovered"
@@ -127,9 +125,7 @@
 					></label
 				>
 				<label class="grid gap-1 text-xs"
-					><span>Profile</span><select
-						class="select select-bordered select-sm bg-base-100"
-						bind:value={profileId}
+					><span>Profile</span><select class="select select-sm" bind:value={profileId}
 						><option value="">All profiles</option
 						>{#each settingsQuery.data?.profiles ?? [] as profile (profile.id)}<option
 								value={profile.id}>{profile.name}</option
@@ -137,18 +133,14 @@
 					></label
 				>
 				<label class="grid gap-1 text-xs"
-					><span>Root scope</span><select
-						class="select select-bordered select-sm bg-base-100"
-						bind:value={rootId}
+					><span>Root scope</span><select class="select select-sm" bind:value={rootId}
 						><option value="">All roots</option>{#each roots as root (root.id)}<option
 								value={root.id}>{root.label}</option
 							>{/each}</select
 					></label
 				>
 				<label class="grid gap-1 text-xs"
-					><span>State</span><select
-						class="select select-bordered select-sm bg-base-100"
-						bind:value={operationState}
+					><span>State</span><select class="select select-sm" bind:value={operationState}
 						><option value="">All states</option
 						>{#each ['queued', 'running', 'paused', 'ready', 'succeeded', 'failed', 'cancelled', 'stopped'] as option (option)}<option
 								value={option}>{titleManagementValue(option)}</option
@@ -156,9 +148,7 @@
 					></label
 				>
 				<label class="grid gap-1 text-xs"
-					><span>Mode</span><select
-						class="select select-bordered select-sm bg-base-100"
-						bind:value={mode}
+					><span>Mode</span><select class="select select-sm" bind:value={mode}
 						><option value="">All modes</option
 						>{#each ['preview', 'apply', 'automatic_apply', 'undo', 'baseline_restore', 'duplicate_resolution'] as option (option)}<option
 								value={option}>{titleManagementValue(option)}</option
@@ -166,22 +156,25 @@
 					></label
 				>
 				<label class="grid gap-1 text-xs"
-					><span>From date</span><input
+					><span>From date</span><Input
 						type="date"
-						class="input input-bordered input-sm bg-base-100"
+						size="sm"
+						label="From date"
 						bind:value={createdFrom}
 					/></label
 				>
 				<label class="grid gap-1 text-xs"
-					><span>To date</span><input
+					><span>To date</span><Input
 						type="date"
-						class="input input-bordered input-sm bg-base-100"
+						size="sm"
+						label="To date"
 						bind:value={createdTo}
 					/></label
 				>
 				<div class="flex items-end">
-					<button
-						class="btn btn-ghost btn-sm"
+					<Button
+						variant="ghost"
+						size="sm"
 						onclick={() => {
 							origin = '';
 							profileId = '';
@@ -190,11 +183,11 @@
 							mode = '';
 							createdFrom = '';
 							createdTo = '';
-						}}>Clear filters</button
+						}}>Clear filters</Button
 					>
 				</div>
 			</div>
-		</section>
+		</Card>
 
 		{#if historyQuery.isLoading || settingsQuery.isLoading || policyQuery.isLoading}
 			<div class="space-y-2" role="status" aria-label="Loading organization history">
@@ -275,12 +268,11 @@
 					>
 				{/each}
 			</div>
-			{#if historyQuery.hasNextPage}<button
-					class="btn btn-outline w-full"
-					disabled={historyQuery.isFetchingNextPage}
-					onclick={() => void historyQuery.fetchNextPage()}
-					>{#if historyQuery.isFetchingNextPage}<span class="loading loading-spinner loading-sm"
-						></span>{/if} Load older history</button
+			{#if historyQuery.hasNextPage}<Button
+					variant="outline"
+					class="w-full"
+					loading={historyQuery.isFetchingNextPage}
+					onclick={() => void historyQuery.fetchNextPage()}>Load older history</Button
 				>{/if}
 		{/if}
 	</main>

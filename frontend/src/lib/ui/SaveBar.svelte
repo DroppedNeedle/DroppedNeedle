@@ -7,6 +7,7 @@
 <script lang="ts">
 	import { CircleCheck, CircleX, Info } from 'lucide-svelte';
 	import AsyncButton from './AsyncButton.svelte';
+	import Button from './Button.svelte';
 
 	interface Status {
 		tone: 'success' | 'error' | 'info';
@@ -47,7 +48,7 @@
 
 <div class="flex flex-wrap items-center gap-3">
 	{#if ontest}
-		<AsyncButton class="btn btn-sm" onclick={ontest} pending={testing} {disabled}>
+		<AsyncButton size="sm" onclick={ontest} pending={testing} {disabled}>
 			{testLabel}
 		</AsyncButton>
 	{/if}
@@ -67,12 +68,11 @@
 		{/if}
 	</p>
 	{#if ondiscard && dirty}
-		<button type="button" class="btn btn-ghost btn-sm" onclick={ondiscard} disabled={saving}>
-			Discard
-		</button>
+		<Button variant="ghost" size="sm" onclick={ondiscard} disabled={saving}>Discard</Button>
 	{/if}
 	<AsyncButton
-		class="btn btn-primary btn-sm"
+		variant="primary"
+		size="sm"
 		onclick={onsave}
 		pending={saving}
 		disabled={disabled || !dirty}

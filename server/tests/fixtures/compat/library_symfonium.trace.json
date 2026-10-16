@@ -40,6 +40,7 @@
                 "id": "al-<id-2>",
                 "isCompilation": false,
                 "moods": [],
+                "musicBrainzId": "",
                 "name": "望厚",
                 "originalReleaseDate": {},
                 "recordLabels": [],
@@ -72,6 +73,7 @@
                 "id": "al-<id-4>",
                 "isCompilation": true,
                 "moods": [],
+                "musicBrainzId": "",
                 "name": "Now Thats Music",
                 "originalReleaseDate": {},
                 "recordLabels": [],
@@ -109,6 +111,7 @@
                 "id": "al-<id-6>",
                 "isCompilation": false,
                 "moods": [],
+                "musicBrainzId": "",
                 "name": "Achtung Baby",
                 "originalReleaseDate": {},
                 "recordLabels": [],
@@ -146,6 +149,7 @@
                 "id": "al-<id-8>",
                 "isCompilation": false,
                 "moods": [],
+                "musicBrainzId": "<id-9>",
                 "name": "OK Computer",
                 "originalReleaseDate": {},
                 "recordLabels": [],
@@ -161,27 +165,30 @@
               },
               {
                 "artist": "Massive Attack",
-                "artistId": "ar-<id-9>",
+                "artistId": "ar-<id-10>",
                 "artists": [
                   {
-                    "id": "ar-<id-9>",
+                    "id": "ar-<id-10>",
                     "name": "Massive Attack"
                   }
                 ],
-                "coverArt": "al-<id-10>",
+                "coverArt": "al-<id-11>",
                 "created": "0000-00-00T00:00:00Z",
                 "discTitles": [],
                 "displayArtist": "Massive Attack",
                 "duration": 0,
                 "explicitStatus": "",
                 "genres": [],
-                "id": "al-<id-10>",
+                "id": "al-<id-11>",
                 "isCompilation": false,
                 "moods": [],
+                "musicBrainzId": "",
                 "name": "Mezzanine",
                 "originalReleaseDate": {},
                 "recordLabels": [],
-                "releaseDate": {},
+                "releaseDate": {
+                  "year": 1998
+                },
                 "releaseTypes": [
                   "album"
                 ],
@@ -233,6 +240,7 @@
             "id": "al-<id-6>",
             "isCompilation": false,
             "moods": [],
+            "musicBrainzId": "",
             "name": "Achtung Baby",
             "originalReleaseDate": {},
             "recordLabels": [],
@@ -280,7 +288,7 @@
                   }
                 ],
                 "groupings": [],
-                "id": "tr-<id-11>",
+                "id": "tr-<id-12>",
                 "isDir": false,
                 "isrc": [],
                 "mediaType": "song",
@@ -337,7 +345,7 @@
         "content-length": "16008",
         "content-type": "audio/mpeg"
       },
-      "request": "GET /subsonic/rest/stream?id=tr-<id-11>&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "request": "GET /subsonic/rest/stream?id=tr-<id-12>&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
       "status": 200
     },
     {
@@ -360,7 +368,7 @@
         "content-range": "bytes 0-49/16008",
         "content-type": "audio/mpeg"
       },
-      "request": "GET /subsonic/rest/stream?id=tr-<id-11>&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "request": "GET /subsonic/rest/stream?id=tr-<id-12>&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
       "status": 206
     },
     {
@@ -376,7 +384,7 @@
       "headers": {
         "content-type": "application/json"
       },
-      "request": "GET /subsonic/rest/star?id=tr-<id-11>&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "request": "GET /subsonic/rest/star?id=tr-<id-12>&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
       "status": 200
     },
     {
@@ -427,7 +435,7 @@
                   }
                 ],
                 "groupings": [],
-                "id": "tr-<id-11>",
+                "id": "tr-<id-12>",
                 "isDir": false,
                 "isrc": [],
                 "mediaType": "song",
@@ -465,7 +473,7 @@
           "openSubsonic": true,
           "playlist": {
             "changed": "0000-00-00T00:00:00Z",
-            "coverArt": "pl-<id-12>",
+            "coverArt": "pl-<id-13>",
             "created": "0000-00-00T00:00:00Z",
             "duration": 0,
             "entry": [
@@ -508,7 +516,7 @@
                   }
                 ],
                 "groupings": [],
-                "id": "tr-<id-11>",
+                "id": "tr-<id-12>",
                 "isDir": false,
                 "isrc": [],
                 "mediaType": "song",
@@ -528,7 +536,7 @@
                 "year": 1991
               }
             ],
-            "id": "pl-<id-12>",
+            "id": "pl-<id-13>",
             "name": "Journey Mix",
             "owner": "alice",
             "public": false,
@@ -544,7 +552,7 @@
       "headers": {
         "content-type": "application/json"
       },
-      "request": "GET /subsonic/rest/createPlaylist?name=Journey+Mix&songId=tr-<id-11>&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "request": "GET /subsonic/rest/createPlaylist?name=Journey+Mix&songId=tr-<id-12>&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
       "status": 200
     },
     {
@@ -553,7 +561,7 @@
           "openSubsonic": true,
           "playlist": {
             "changed": "0000-00-00T00:00:00Z",
-            "coverArt": "pl-<id-12>",
+            "coverArt": "pl-<id-13>",
             "created": "0000-00-00T00:00:00Z",
             "duration": 0,
             "entry": [
@@ -596,7 +604,7 @@
                   }
                 ],
                 "groupings": [],
-                "id": "tr-<id-11>",
+                "id": "tr-<id-12>",
                 "isDir": false,
                 "isrc": [],
                 "mediaType": "song",
@@ -616,7 +624,7 @@
                 "year": 1991
               }
             ],
-            "id": "pl-<id-12>",
+            "id": "pl-<id-13>",
             "name": "Journey Mix",
             "owner": "alice",
             "public": false,
@@ -632,7 +640,7 @@
       "headers": {
         "content-type": "application/json"
       },
-      "request": "GET /subsonic/rest/getPlaylist?id=pl-<id-12>&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "request": "GET /subsonic/rest/getPlaylist?id=pl-<id-13>&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
       "status": 200
     },
     {
@@ -648,7 +656,7 @@
       "headers": {
         "content-type": "application/json"
       },
-      "request": "GET /subsonic/rest/scrobble?id=tr-<id-11>&submission=false&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "request": "GET /subsonic/rest/scrobble?id=tr-<id-12>&submission=false&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
       "status": 200
     },
     {
@@ -695,7 +703,7 @@
                   }
                 ],
                 "groupings": [],
-                "id": "tr-<id-11>",
+                "id": "tr-<id-12>",
                 "isDir": false,
                 "isrc": [],
                 "mediaType": "song",
@@ -746,7 +754,7 @@
       "headers": {
         "content-type": "application/json"
       },
-      "request": "GET /subsonic/rest/scrobble?id=tr-<id-11>&submission=true&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
+      "request": "GET /subsonic/rest/scrobble?id=tr-<id-12>&submission=true&u=alice&p=***&v=1.16.1&c=symfonium&f=json",
       "status": 200
     }
   ]

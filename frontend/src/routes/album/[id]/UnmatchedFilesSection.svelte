@@ -4,24 +4,29 @@
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 	import { removeLibraryTrack } from '$lib/queries/library/LibraryMutations.svelte';
+	import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
+	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 	import { albumSourceMatchCacheKey } from '$lib/utils/albumDetailCache';
 	import { formatCountdown } from '$lib/queries/downloads/downloadStatus';
+	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
-	import type { LibraryTrack } from '$lib/types';
+	import type { UnmatchedFile } from './albumEdition';
 
 	interface Props {
-		orphans: LibraryTrack[];
+		files: UnmatchedFile[];
 		albumMbid: string;
+		/** The local album the files sit under. */
+		albumId: string;
 		canRemove?: boolean;
 	}
 
-	let { orphans, albumMbid, canRemove = false }: Props = $props();
+	let { files, albumMbid, albumId, canRemove = false }: Props = $props();
 
 	const remove = removeLibraryTrack();
 	// two-step inline confirm: first click arms THIS row, second click removes
 	let confirmingId = $state<string | null>(null);
 
-	function handleRemove(file: LibraryTrack): void {
+	function handleRemove(file: UnmatchedFile): void {
 		if (confirmingId !== file.id) {
 			confirmingId = file.id;
 			return;
@@ -31,7 +36,12 @@
 		remove.mutate(
 			{ fileId: file.id, albumMbid, albumCacheKey: albumSourceMatchCacheKey(albumMbid) },
 			{
-				onSuccess: () => toastStore.show({ message: 'File removed', type: 'success' }),
+				onSuccess: () => {
+					void invalidateQueriesWithPersister({
+						queryKey: LibraryQueryKeyFactory.catalog.editionPlanPrefix(authStore.user?.id, albumId)
+					});
+					toastStore.show({ message: 'File removed', type: 'success' });
+				},
 				onError: () => toastStore.show({ message: "Couldn't remove this file", type: 'error' })
 			}
 		);
@@ -55,7 +65,7 @@
 		mediaDuration = 0;
 	}
 
-	function togglePreview(file: LibraryTrack): void {
+	function togglePreview(file: UnmatchedFile): void {
 		if (!audioEl) return;
 		failed = false;
 		if (activeId === file.id) {
@@ -77,27 +87,24 @@
 		currentTime = value;
 	}
 
-	function basename(path: string): string {
-		return path.replace(/\\/g, '/').split('/').pop() ?? path;
-	}
-
 	const fmt = (s: number) => formatCountdown(Number.isFinite(s) ? s : 0);
+	const seconds = (file: UnmatchedFile) => (file.lengthMs ? file.lengthMs / 1000 : 0);
 </script>
 
-{#if orphans.length > 0}
+{#if files.length > 0}
 	<section class="card bg-base-200 border-l-4 border-warning">
 		<div class="card-body gap-3 p-4 sm:p-5">
 			<div class="flex flex-wrap items-center gap-2">
 				<TriangleAlert class="h-4 w-4 text-warning" />
 				<h2 class="text-sm font-bold">Unmatched files</h2>
-				<span class="badge badge-sm badge-warning">{orphans.length}</span>
+				<span class="badge badge-sm badge-warning">{files.length}</span>
 				<p class="w-full text-xs opacity-60 sm:w-auto sm:ml-1">
-					Stored under this album, but they don't match any of its tracks.
+					Stored under this album, but not on any track of its edition.
 				</p>
 			</div>
 
 			<ul class="divide-y divide-base-300">
-				{#each orphans as file (file.id)}
+				{#each files as file (file.id)}
 					<li class="py-2.5">
 						<div class="flex flex-wrap items-center gap-3">
 							<button
@@ -113,19 +120,20 @@
 							</button>
 							<div class="min-w-0 flex-1">
 								<p class="truncate text-sm font-medium">
-									{file.artist_name ? `${file.artist_name} - ` : ''}{file.track_title ||
-										basename(file.file_path)}
+									{file.artistName ? `${file.artistName} - ` : ''}{file.title}
 								</p>
 								<p class="truncate text-xs opacity-60">
-									{file.file_format?.toUpperCase() ?? '?'}
-									{#if file.duration_seconds}
-										• {fmt(file.duration_seconds)}
+									{file.format?.toUpperCase() ?? '?'}
+									{#if file.lengthMs}
+										• {fmt(seconds(file))}
 									{/if}
-									• {basename(file.file_path)}
 								</p>
+								{#if file.note}
+									<p class="text-xs text-info">{file.note}</p>
+								{/if}
 							</div>
 							<span class="badge badge-sm badge-warning badge-outline whitespace-nowrap">
-								Doesn't match
+								{file.label}
 							</span>
 							{#if canRemove}
 								{#if confirmingId === file.id}
@@ -165,13 +173,13 @@
 									class="range range-xs range-warning flex-1"
 									aria-label="Scrub preview"
 									min="0"
-									max={mediaDuration || file.duration_seconds || 0}
+									max={mediaDuration || seconds(file)}
 									step="1"
 									value={currentTime}
 									oninput={seek}
 								/>
 								<span class="text-xs tabular-nums opacity-60">
-									{fmt(currentTime)} / {fmt(mediaDuration || file.duration_seconds || 0)}
+									{fmt(currentTime)} / {fmt(mediaDuration || seconds(file))}
 								</span>
 							</div>
 							{#if failed}

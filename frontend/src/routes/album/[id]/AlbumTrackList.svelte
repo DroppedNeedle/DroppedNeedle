@@ -14,6 +14,7 @@
 	} from '$lib/types';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 	import type { RenderedTrackSection } from './albumTrackResolvers';
+	import type { EditionTrackRow } from './albumEdition';
 	import { resolveSourceTrack } from './albumTrackResolvers';
 	import { normalizeDiscNumber, getDiscTrackKey } from '$lib/player/queueHelpers';
 	import { formatBytes, formatDuration } from '$lib/utils/formatting';
@@ -68,6 +69,8 @@
 		heldByRecording?: Map<string, HeldImport>;
 		heldByPosition?: Map<string, HeldImport>;
 		trackDownloadTasks?: Map<string, DownloadTask>;
+		/** The current edition's plan by disc and position; it decides which file holds a track. */
+		editionRows?: Map<string, EditionTrackRow> | null;
 		releaseGroupMbid?: string;
 		releaseMbid?: string | null;
 		onPlaySourceTrack: (
@@ -115,6 +118,7 @@
 		heldByRecording = new Map(),
 		heldByPosition = new Map(),
 		trackDownloadTasks = new Map(),
+		editionRows = null,
 		releaseGroupMbid = '',
 		releaseMbid = null,
 		onPlaySourceTrack,
@@ -231,11 +235,16 @@
 					navidromeTrack !== null ||
 					plexTrack !== null}
 				{@const showPreview = !hasAnySource}
-				{@const libMeta =
-					(track.recording_id ? libraryTracksByRecording.get(track.recording_id) : undefined) ??
-					libraryTracksByPosition.get(
+				{@const editionRow =
+					editionRows?.get(
 						getDiscTrackKey({ disc_number: trackDiscNumber, track_number: track.position })
-					)}
+					) ?? null}
+				{@const libMeta = editionRow
+					? (editionRow.file ?? undefined)
+					: ((track.recording_id ? libraryTracksByRecording.get(track.recording_id) : undefined) ??
+						libraryTracksByPosition.get(
+							getDiscTrackKey({ disc_number: trackDiscNumber, track_number: track.position })
+						))}
 				{@const heldMeta = libMeta
 					? undefined
 					: ((track.recording_id ? heldByRecording.get(track.recording_id) : undefined) ??
@@ -293,8 +302,11 @@
 							{/if}
 						</div>
 
+						{#if editionRow?.missing}
+							<span class="badge badge-sm badge-warning badge-outline shrink-0">Missing</span>
+						{/if}
 						<div class="text-base-content/60 text-sm shrink-0">
-							{formatDuration(track.length)}
+							{formatDuration(editionRow ? editionRow.lengthMs : track.length)}
 						</div>
 
 						<div class="text-base-content/40 text-xs tabular-nums shrink-0 w-16 text-right">
@@ -464,6 +476,19 @@
 							</button>
 						{/if}
 					</div>
+					{#if editionRow?.yourVersionMs || editionRow?.note}
+						<!-- Under the title, on a line of its own so a phone keeps it readable. -->
+						<div class="list-col-wrap -mt-2 flex flex-col pl-12 text-xs">
+							{#if editionRow.yourVersionMs}
+								<span class="text-base-content/60"
+									>Your version {formatDuration(editionRow.yourVersionMs)}</span
+								>
+							{/if}
+							{#if editionRow.note}
+								<span class="text-info">{editionRow.note}</span>
+							{/if}
+						</div>
+					{/if}
 				</li>
 				{#if libMeta && expandedRows.has(row.globalIndex)}
 					<li class="list-row p-0">

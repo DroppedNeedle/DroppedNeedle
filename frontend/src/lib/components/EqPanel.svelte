@@ -11,6 +11,7 @@
 	} from '$lib/stores/eqPresets';
 	import { X, RotateCcw } from 'lucide-svelte';
 	import { fly } from 'svelte/transition';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	let { open = $bindable(), onclose }: { open: boolean; onclose: () => void } = $props();
 
@@ -79,6 +80,25 @@
 		onclose();
 	}
 
+	// Arrow keys step a band by half a decibel, Home and End jump to the limits.
+	function handleBandKeydown(index: number, e: KeyboardEvent): void {
+		if (isYouTube || !eqStore.enabled) return;
+		const steps: Record<string, number> = {
+			ArrowUp: 0.5,
+			ArrowRight: 0.5,
+			ArrowDown: -0.5,
+			ArrowLeft: -0.5
+		};
+		let gain: number;
+		if (e.key in steps) gain = eqStore.gains[index] + steps[e.key];
+		else if (e.key === 'Home') gain = EQ_MIN_GAIN;
+		else if (e.key === 'End') gain = EQ_MAX_GAIN;
+		else return;
+		e.preventDefault();
+		e.stopPropagation();
+		eqStore.setBandGain(index, Math.max(EQ_MIN_GAIN, Math.min(EQ_MAX_GAIN, gain)));
+	}
+
 	function handleKeydown(e: KeyboardEvent): void {
 		if (e.key === 'Escape') {
 			handleClose();
@@ -94,10 +114,12 @@
 		tabindex="-1"
 	></button>
 
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="fixed bottom-24.5 right-4 z-70 w-120 max-w-[calc(100vw-2rem)]
 			   rounded-box bg-base-300 shadow-[0_-8px_40px_rgba(0,0,0,0.45)] border border-base-content/5"
+		role="dialog"
+		aria-label="Equalizer"
+		tabindex="-1"
 		transition:fly={{ y: 20, duration: 200 }}
 		onkeydown={handleKeydown}
 	>
@@ -106,20 +128,14 @@
 				<h3 class="text-sm font-bold tracking-wide uppercase opacity-80">Equalizer</h3>
 				<input
 					type="checkbox"
-					class="toggle toggle-accent toggle-sm"
+					class="toggle toggle-sm toggle-primary"
 					checked={eqStore.enabled}
 					disabled={isYouTube}
 					onchange={() => eqStore.toggleEq()}
 					aria-label="Toggle equalizer"
 				/>
 			</div>
-			<button
-				class="btn btn-ghost btn-xs btn-circle opacity-60 hover:opacity-100"
-				onclick={handleClose}
-				aria-label="Close equalizer"
-			>
-				<X class="h-3.5 w-3.5" />
-			</button>
+			<IconButton size="xs" icon={X} label="Close equalizer" onclick={handleClose} />
 		</div>
 
 		{#if isYouTube}
@@ -130,7 +146,8 @@
 
 		<div class="flex items-center gap-2 px-4 pb-3">
 			<select
-				class="select select-sm select-bordered flex-1 rounded-full text-xs"
+				class="select select-sm flex-1"
+				aria-label="Equalizer preset"
 				value={eqStore.activePreset ?? ''}
 				onchange={handlePresetChange}
 				disabled={isYouTube || !eqStore.enabled}
@@ -142,16 +159,13 @@
 					<option value={name}>{name}</option>
 				{/each}
 			</select>
-			<div class="tooltip tooltip-left" data-tip="Reset to flat">
-				<button
-					class="btn btn-ghost btn-sm btn-circle"
-					onclick={() => eqStore.resetToFlat()}
-					disabled={isYouTube || !eqStore.enabled}
-					aria-label="Reset equalizer to flat"
-				>
-					<RotateCcw class="h-3.5 w-3.5" />
-				</button>
-			</div>
+			<IconButton
+				size="sm"
+				icon={RotateCcw}
+				label="Reset equalizer to flat"
+				disabled={isYouTube || !eqStore.enabled}
+				onclick={() => eqStore.resetToFlat()}
+			/>
 		</div>
 
 		<div
@@ -186,7 +200,6 @@
 								)}
 							</span>
 
-							<!-- svelte-ignore a11y_interactive_supports_focus -->
 							<div
 								class="relative w-full cursor-pointer touch-none"
 								style="height: {TRACK_HEIGHT}px;"
@@ -195,11 +208,14 @@
 								onpointermove={(e) => handlePointerMove(i, e)}
 								onpointerup={handlePointerUp}
 								onpointercancel={handlePointerUp}
+								onkeydown={(e) => handleBandKeydown(i, e)}
 								role="slider"
+								tabindex={isYouTube || !eqStore.enabled ? -1 : 0}
 								aria-label="{EQ_FREQUENCY_LABELS[i]} Hz"
 								aria-valuemin={EQ_MIN_GAIN}
 								aria-valuemax={EQ_MAX_GAIN}
 								aria-valuenow={eqStore.gains[i]}
+								aria-valuetext="{eqStore.gains[i]} dB"
 							>
 								<div
 									class="absolute left-1/2 -translate-x-1/2 w-0.75 h-full rounded-full bg-base-content/8"

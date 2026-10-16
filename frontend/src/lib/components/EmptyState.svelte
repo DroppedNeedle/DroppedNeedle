@@ -2,6 +2,7 @@
 	import type { ComponentType } from 'svelte';
 
 	import { withBasePath } from '$lib/utils/basePath';
+	import Button from '$lib/ui/Button.svelte';
 	interface Props {
 		icon: ComponentType;
 		title: string;
@@ -24,7 +25,8 @@
 		<p class="es-desc">{description}</p>
 	{/if}
 	{#if ctaLabel && ctaHref}
-		<a href={withBasePath(ctaHref)} class="btn btn-primary btn-sm mt-5">{ctaLabel}</a>
+		<Button variant="primary" size="sm" href={withBasePath(ctaHref)} class="mt-5">{ctaLabel}</Button
+		>
 	{/if}
 </div>
 

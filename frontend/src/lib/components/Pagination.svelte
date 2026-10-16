@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { ChevronLeft, ChevronRight } from 'lucide-svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
+
 	interface Props {
 		current: number;
 		total: number;
@@ -10,22 +13,22 @@
 
 {#if total > 1}
 	<div class="flex items-center gap-2">
-		<button
-			class="btn btn-sm btn-circle"
-			onclick={() => onchange(Math.max(1, current - 1))}
+		<IconButton
+			variant="neutral"
+			size="sm"
+			icon={ChevronLeft}
+			label="Previous page"
 			disabled={current === 1}
-			aria-label="Previous page"
-		>
-			«
-		</button>
+			onclick={() => onchange(Math.max(1, current - 1))}
+		/>
 		<span class="text-sm">{current} / {total}</span>
-		<button
-			class="btn btn-sm btn-circle"
-			onclick={() => onchange(Math.min(total, current + 1))}
+		<IconButton
+			variant="neutral"
+			size="sm"
+			icon={ChevronRight}
+			label="Next page"
 			disabled={current === total}
-			aria-label="Next page"
-		>
-			»
-		</button>
+			onclick={() => onchange(Math.min(total, current + 1))}
+		/>
 	</div>
 {/if}

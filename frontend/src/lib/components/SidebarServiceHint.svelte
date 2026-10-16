@@ -18,6 +18,7 @@
 		href={withBasePath(`/settings?tab=${settingsTab}`)}
 		class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 		data-tip="Connect {label}"
+		aria-label="Connect {label}"
 	>
 		<div class="relative">
 			{@render icon()}

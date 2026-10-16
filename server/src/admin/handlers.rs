@@ -9,7 +9,7 @@ use axum::{
 };
 use serde::de::DeserializeOwned;
 
-use crate::error::{
+use droppedneedle_kernel::error::{
     CONFLICT, FIXED_INTERNAL_MESSAGE, FORBIDDEN, INTERNAL_ERROR, INVALID_INPUT, NOT_FOUND,
     NOT_FOUND_MESSAGE, UPSTREAM_ERROR, envelope_response, fault_response, unauthorized_response,
 };
@@ -88,6 +88,7 @@ impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidJson<T> {
 /// Backup listing, oldest first.
 #[utoipa::path(
     get,
+    tag = "admin",
     path = "/api/v3/admin/backups",
     responses((status = 200, description = "Backups on disk", body = BackupListResponse))
 )]
@@ -108,6 +109,7 @@ pub async fn list_backups(
 /// Run one backup now.
 #[utoipa::path(
     post,
+    tag = "admin",
     path = "/api/v3/admin/backups",
     responses((status = 201, description = "Backup completed", body = BackupRunResponse))
 )]
@@ -122,6 +124,7 @@ pub async fn run_backup(
 /// Pre-restore verification report for one backup. Read-only.
 #[utoipa::path(
     get,
+    tag = "admin",
     path = "/api/v3/admin/backups/{name}/restore-report",
     params(("name" = String, Path, description = "Backup file name")),
     responses((status = 200, description = "Verification report", body = RestoreReport))
@@ -144,6 +147,7 @@ pub async fn restore_report(
 /// Provider-cache counters.
 #[utoipa::path(
     get,
+    tag = "admin",
     path = "/api/v3/admin/cache/stats",
     responses((status = 200, description = "Cache counters", body = CacheStatsResponse))
 )]
@@ -154,6 +158,7 @@ pub async fn cache_stats(State(admin): State<AdminSetup>) -> Json<CacheStatsResp
 /// Clear the provider cache: everything, or one source's keys.
 #[utoipa::path(
     post,
+    tag = "admin",
     path = "/api/v3/admin/cache/clear",
     request_body = CacheClearBody,
     responses((status = 200, description = "Clear counts", body = CacheClearResponse))
@@ -171,6 +176,7 @@ pub async fn clear_cache(
 /// Queue demand plus the job registry.
 #[utoipa::path(
     get,
+    tag = "admin",
     path = "/api/v3/admin/queue-stats",
     responses((status = 200, description = "Queue snapshot", body = QueueStatsResponse))
 )]
@@ -184,6 +190,7 @@ pub async fn queue_stats(
 /// Provider limiter posture plus slot lanes.
 #[utoipa::path(
     get,
+    tag = "admin",
     path = "/api/v3/admin/provider-stats",
     responses((status = 200, description = "Provider snapshot", body = ProviderStatsResponse))
 )]
@@ -194,6 +201,7 @@ pub async fn provider_stats(State(admin): State<AdminSetup>) -> Json<ProviderSta
 /// One user's quota standing.
 #[utoipa::path(
     get,
+    tag = "admin",
     path = "/api/v3/admin/users/{id}/quota",
     params(("id" = String, Path, description = "User id")),
     responses((status = 200, description = "Quota standing", body = QuotaResponse))
@@ -213,6 +221,7 @@ pub async fn get_quota(
 /// under the `precache-library` job name.
 #[utoipa::path(
     post,
+    tag = "admin",
     path = "/api/v3/admin/precache/run",
     responses(
         (status = 202, description = "Precache run started", body = PrecacheRunResponse),
@@ -221,7 +230,7 @@ pub async fn get_quota(
 )]
 pub async fn run_precache(
     State(admin): State<AdminSetup>,
-    session: Option<axum::Extension<crate::auth::session::middleware::CurrentSession>>,
+    session: Option<axum::Extension<droppedneedle_auth::session::middleware::CurrentSession>>,
 ) -> Result<(StatusCode, Json<PrecacheRunResponse>), AdminHttpError> {
     let trigger = admin.precache.as_ref().ok_or_else(unwired_precache)?;
     let user_id = session.map(|axum::Extension(session)| session.user_id);
@@ -229,7 +238,7 @@ pub async fn run_precache(
         Ok(_) => Ok((
             StatusCode::ACCEPTED,
             Json(PrecacheRunResponse {
-                job: crate::jobs::precache::JOB_NAME.to_owned(),
+                job: droppedneedle_kernel::jobs::precache::JOB_NAME.to_owned(),
                 status: "started".to_owned(),
             }),
         )),
@@ -244,12 +253,13 @@ pub async fn run_precache(
 /// as the `cache.sync` event.
 #[utoipa::path(
     get,
+    tag = "admin",
     path = "/api/v3/cache/sync/status",
-    responses((status = 200, description = "Precache progress", body = crate::events::CacheSyncProgress))
+    responses((status = 200, description = "Precache progress", body = droppedneedle_kernel::events::CacheSyncProgress))
 )]
 pub async fn cache_sync_status(
     State(admin): State<AdminSetup>,
-) -> Json<crate::events::CacheSyncProgress> {
+) -> Json<droppedneedle_kernel::events::CacheSyncProgress> {
     Json(
         admin
             .precache
@@ -264,6 +274,7 @@ pub async fn cache_sync_status(
 /// running too.
 #[utoipa::path(
     post,
+    tag = "admin",
     path = "/api/v3/cache/sync/cancel",
     responses((status = 200, description = "Precache stopped", body = CacheSyncCancelResponse))
 )]
@@ -279,6 +290,7 @@ pub async fn cancel_cache_sync(State(admin): State<AdminSetup>) -> Json<CacheSyn
 /// Set (or, with all-`None`, clear) one user's quota overrides.
 #[utoipa::path(
     put,
+    tag = "admin",
     path = "/api/v3/admin/users/{id}/quota",
     request_body = QuotaOverrideBody,
     params(("id" = String, Path, description = "User id")),

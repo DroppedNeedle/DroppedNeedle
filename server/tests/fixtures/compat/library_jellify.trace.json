@@ -168,7 +168,10 @@
           "Name": "OK Computer",
           "PremiereDate": "0000-00-00T00:00:00.0000000Z",
           "ProductionYear": 1997,
-          "ProviderIds": {},
+          "ProviderIds": {
+            "MusicBrainzAlbum": "<id-10>",
+            "MusicBrainzReleaseGroup": "<id-11>"
+          },
           "RunTimeTicks": 6000000,
           "ServerId": "<id-3>",
           "SortName": "OK Computer",
@@ -186,13 +189,13 @@
           "AlbumArtist": "Massive Attack",
           "AlbumArtists": [
             {
-              "Id": "<id-10>",
+              "Id": "<id-12>",
               "Name": "Massive Attack"
             }
           ],
           "ArtistItems": [
             {
-              "Id": "<id-10>",
+              "Id": "<id-12>",
               "Name": "Massive Attack"
             }
           ],
@@ -203,7 +206,7 @@
           "ChildCount": 1,
           "DateCreated": "0000-00-00T00:00:00.0000000Z",
           "Genres": [],
-          "Id": "<id-11>",
+          "Id": "<id-13>",
           "ImageBlurHashes": {},
           "ImageTags": {},
           "IsFolder": true,
@@ -219,8 +222,8 @@
           "Type": "MusicAlbum",
           "UserData": {
             "IsFavorite": false,
-            "ItemId": "<id-11>",
-            "Key": "<id-11>",
+            "ItemId": "<id-13>",
+            "Key": "<id-13>",
             "PlayCount": 0,
             "PlaybackPositionTicks": 0,
             "Played": false
@@ -228,10 +231,10 @@
         }
       ],
       "headers": {
-        "content-length": "4205",
+        "content-length": "4327",
         "content-type": "application/json"
       },
-      "request": "GET /jellyfin/UserItems/Latest",
+      "request": "GET /jellyfin/Items/Latest",
       "status": 200
     },
     {
@@ -242,14 +245,14 @@
             "AlbumArtist": "Massive Attack",
             "AlbumArtists": [
               {
-                "Id": "<id-10>",
+                "Id": "<id-12>",
                 "Name": "Massive Attack"
               }
             ],
-            "AlbumId": "<id-11>",
+            "AlbumId": "<id-13>",
             "ArtistItems": [
               {
-                "Id": "<id-10>",
+                "Id": "<id-12>",
                 "Name": "Massive Attack"
               }
             ],
@@ -261,7 +264,7 @@
             "DateCreated": "0000-00-00T00:00:00.0000000Z",
             "Genres": [],
             "HasLyrics": false,
-            "Id": "<id-12>",
+            "Id": "<id-14>",
             "ImageBlurHashes": {},
             "ImageTags": {},
             "IndexNumber": 4,
@@ -269,7 +272,7 @@
             "LocationType": "FileSystem",
             "MediaType": "Audio",
             "Name": "Teardrop",
-            "ParentId": "<id-11>",
+            "ParentId": "<id-13>",
             "ParentIndexNumber": 1,
             "PremiereDate": "0000-00-00T00:00:00.0000000Z",
             "ProductionYear": 1998,
@@ -282,8 +285,8 @@
             "Type": "Audio",
             "UserData": {
               "IsFavorite": false,
-              "ItemId": "<id-12>",
-              "Key": "<id-12>",
+              "ItemId": "<id-14>",
+              "Key": "<id-14>",
               "PlayCount": 0,
               "PlaybackPositionTicks": 0,
               "Played": false
@@ -297,7 +300,7 @@
         "content-length": "1099",
         "content-type": "application/json"
       },
-      "request": "GET /jellyfin/Users/<id-13>/Items?parentId=<id-11>&includeItemTypes=Audio",
+      "request": "GET /jellyfin/Users/<id-15>/Items?parentId=<id-13>&includeItemTypes=Audio",
       "status": 200
     },
     {
@@ -319,7 +322,7 @@
         "content-length": "2563",
         "content-type": "audio/mp4"
       },
-      "request": "GET /jellyfin/Audio/<id-12>/stream.mp3?static=true&api_key=***",
+      "request": "GET /jellyfin/Audio/<id-14>/stream.mp3?static=true&api_key=***",
       "status": 200
     },
     {
@@ -342,7 +345,7 @@
         "content-range": "bytes 100-199/2563",
         "content-type": "audio/mp4"
       },
-      "request": "GET /jellyfin/Audio/<id-12>/stream.mp3?static=true&api_key=***",
+      "request": "GET /jellyfin/Audio/<id-14>/stream.mp3?static=true&api_key=***",
       "status": 206
     },
     {
@@ -352,7 +355,7 @@
         "content-length": "2563",
         "content-type": "audio/mp4"
       },
-      "request": "HEAD /jellyfin/Audio/<id-12>/stream.mp3?static=true&api_key=***",
+      "request": "HEAD /jellyfin/Audio/<id-14>/stream.mp3?static=true&api_key=***",
       "status": 200
     },
     {
@@ -374,7 +377,7 @@
         "content-length": "2563",
         "content-type": "audio/mp4"
       },
-      "request": "GET /jellyfin/Audio/<id-12>/universal?static=true&api_key=***",
+      "request": "GET /jellyfin/Audio/<id-14>/universal?static=true&api_key=***",
       "status": 200
     }
   ]

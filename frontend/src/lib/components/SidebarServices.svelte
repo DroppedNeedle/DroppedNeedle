@@ -51,6 +51,7 @@
 				href={withBasePath('/library/youtube')}
 				class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 				data-tip="YouTube"
+				aria-label="YouTube"
 			>
 				<YouTubeIcon class="h-6 w-6 text-error" />
 				<span class="is-drawer-close:hidden">YouTube</span>
@@ -70,6 +71,7 @@
 				href={withBasePath('/library/jellyfin')}
 				class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 				data-tip="Jellyfin"
+				aria-label="Jellyfin"
 			>
 				<div class="relative inline-flex">
 					<JellyfinIcon class="h-6 w-6 text-info" />
@@ -100,6 +102,7 @@
 				href={withBasePath('/library/navidrome')}
 				class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 				data-tip="Navidrome"
+				aria-label="Navidrome"
 			>
 				<div class="relative inline-flex">
 					<NavidromeIcon class="h-6 w-6 text-primary" />
@@ -130,9 +133,10 @@
 				href={withBasePath('/library/plex')}
 				class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 				data-tip="Plex"
+				aria-label="Plex"
 			>
 				<div class="relative inline-flex">
-					<PlexIcon class="h-6 w-6" style="color: rgb(var(--brand-plex))" />
+					<PlexIcon class="h-6 w-6 text-[rgb(var(--brand-plex))]" />
 					{#if nowPlayingMerged.isSourcePlaying('plex')}
 						<span class="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary animate-pulse"
 						></span>
@@ -148,7 +152,7 @@
 		</li>
 	{:else if integrations.current.loaded && authStore.isAdmin}
 		<SidebarServiceHint label="Plex" settingsTab="plex">
-			{#snippet icon()}<PlexIcon class="h-6 w-6" style="color: rgb(var(--brand-plex))" />{/snippet}
+			{#snippet icon()}<PlexIcon class="h-6 w-6 text-[rgb(var(--brand-plex))]" />{/snippet}
 		</SidebarServiceHint>
 	{/if}
 {/if}
@@ -160,6 +164,7 @@
 				href={withBasePath('/library/local')}
 				class="is-drawer-close:tooltip is-drawer-close:tooltip-right"
 				data-tip="Local Files"
+				aria-label="Local Files"
 			>
 				<div class="relative inline-flex">
 					<Headphones class="h-6 w-6 text-accent" />

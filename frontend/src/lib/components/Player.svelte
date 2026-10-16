@@ -12,7 +12,8 @@
 	import LyricsPanel from '$lib/components/LyricsPanel.svelte';
 	import AudioQualityBadge from '$lib/components/AudioQualityBadge.svelte';
 	import NowPlayingIndicator from '$lib/components/NowPlayingIndicator.svelte';
-	import { getCoverUrl } from '$lib/utils/errorHandling';
+	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { getLyricsQuery } from '$lib/queries/lyrics/LyricsQuery.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -20,12 +21,12 @@
 	import {
 		X,
 		Music,
-		Disc3,
 		Shuffle,
 		SkipBack,
 		CircleAlert,
 		Pause,
 		Play,
+		LoaderCircle,
 		SkipForward,
 		Volume2,
 		ExternalLink,
@@ -36,8 +37,6 @@
 		Music2
 	} from 'lucide-svelte';
 
-	let coverImgError = $state(false);
-	let lastCoverKey = '';
 	let eqPanelOpen = $state(false);
 	let queueDrawerOpen = $state(false);
 
@@ -90,55 +89,44 @@
 		}
 	}
 
-	const nowPlayingCoverUrl = $derived.by(() => {
-		const np = playerStore.nowPlaying;
-		if (!np) return null;
-		return getCoverUrl(np.coverUrl, np.albumId);
-	});
+	const isYouTube = $derived(playerStore.nowPlaying?.sourceType === 'youtube');
 
-	$effect(() => {
-		const np = playerStore.nowPlaying;
-		if (!np) return;
-		const key = `${np.albumId}:${np.coverUrl ?? ''}`;
-		if (key !== lastCoverKey) {
-			lastCoverKey = key;
-			coverImgError = false;
-		}
-	});
+	const playPauseIcon = $derived(
+		playerStore.playbackState === 'error'
+			? CircleAlert
+			: playerStore.isBuffering
+				? LoaderCircle
+				: playerStore.isPlaying
+					? Pause
+					: Play
+	);
 </script>
 
 {#if playerStore.isPlayerVisible && playerStore.nowPlaying && !deckFocus.inView}
 	<div
 		class="droppedneedle-player-bar fixed left-0 right-0 z-50 bg-base-300/95 backdrop-blur-md shadow-[0_-4px_20px_rgba(0,0,0,0.3)] transition-transform duration-300"
 	>
-		<button
-			class="btn btn-ghost btn-xs btn-circle absolute top-1.5 right-1.5 opacity-60 hover:opacity-100"
+		<IconButton
+			size="xs"
+			icon={X}
+			label="Close player"
+			class="absolute top-1.5 right-1.5"
 			onclick={() => playerStore.stop()}
-			aria-label="Close player"
-		>
-			<X class="h-3.5 w-3.5" />
-		</button>
+		/>
 
 		<div
 			class="droppedneedle-player-inner flex items-center gap-2 px-3 pr-9 sm:gap-4 sm:px-4 sm:pr-10 max-w-screen-2xl mx-auto"
 		>
 			<div class="flex min-w-0 flex-1 items-center gap-2 sm:gap-3 lg:w-1/4 lg:flex-none">
-				{#if nowPlayingCoverUrl && !coverImgError}
-					<img
-						src={nowPlayingCoverUrl}
-						alt={playerStore.nowPlaying.albumName}
-						class="w-12 h-12 sm:w-15 sm:h-15 rounded-lg shadow-lg ring-1 ring-base-content/10 object-cover shrink-0"
-						onerror={() => {
-							coverImgError = true;
-						}}
-					/>
-				{:else}
-					<div
-						class="w-12 h-12 sm:w-15 sm:h-15 rounded-lg shadow-lg bg-base-200 flex items-center justify-center shrink-0"
-					>
-						<Disc3 class="h-6 w-6 text-base-content/20" />
-					</div>
-				{/if}
+				<AlbumImage
+					mbid={playerStore.nowPlaying.albumId}
+					customUrl={playerStore.nowPlaying.coverUrl ?? null}
+					alt={playerStore.nowPlaying.albumName}
+					size="full"
+					requestSize={250}
+					lazy={false}
+					className="w-12 h-12 sm:w-15 sm:h-15 shadow-lg ring-1 ring-base-content/10"
+				/>
 				{#if playerStore.isPlaying}
 					<div class="hidden sm:block">
 						<NowPlayingIndicator size="md" />
@@ -205,59 +193,52 @@
 			<div class="flex shrink-0 flex-col items-center justify-center gap-1 sm:flex-1">
 				<div class="flex items-center gap-1 sm:gap-3">
 					{#if playerStore.hasQueue}
-						<button
-							class="btn btn-ghost btn-sm btn-circle hidden sm:inline-flex"
-							class:text-accent={playerStore.shuffleEnabled}
-							class:opacity-50={!playerStore.shuffleEnabled}
+						<IconButton
+							size="sm"
+							icon={Shuffle}
+							label="Toggle shuffle"
+							active={playerStore.shuffleEnabled}
+							aria-pressed={playerStore.shuffleEnabled}
+							class="hidden sm:inline-flex"
 							onclick={() => playerStore.toggleShuffle()}
-							aria-label="Toggle shuffle"
-						>
-							<Shuffle class="h-4 w-4" />
-						</button>
+						/>
 					{/if}
 
-					<button
-						class="btn btn-ghost btn-sm btn-circle"
-						class:opacity-30={!playerStore.hasPrevious}
-						class:cursor-not-allowed={!playerStore.hasPrevious}
+					<IconButton
+						size="sm"
+						icon={SkipBack}
+						label="Previous"
+						class="[&_svg]:fill-current"
 						disabled={!playerStore.hasPrevious}
 						onclick={() => playerStore.previousTrack()}
-						aria-label="Previous"
-					>
-						<SkipBack class="h-4 w-4 fill-current" />
-					</button>
+					/>
 
-					<button
-						class="btn btn-circle btn-accent shadow-md w-10 h-10"
-						onclick={() =>
-							playerStore.playbackState === 'error' ? playerStore.stop() : playerStore.togglePlay()}
-						aria-label={playerStore.playbackState === 'error'
+					<!-- Buffering shows a spinning icon rather than `loading`, which would block a pause. -->
+					<IconButton
+						variant="accent"
+						icon={playPauseIcon}
+						label={playerStore.playbackState === 'error'
 							? 'Close'
 							: playerStore.isPlaying
 								? 'Pause'
 								: 'Play'}
-					>
-						{#if playerStore.playbackState === 'error'}
-							<CircleAlert class="h-5 w-5" />
-						{:else if playerStore.isBuffering}
-							<span class="loading loading-spinner loading-sm"></span>
-						{:else if playerStore.isPlaying}
-							<Pause class="h-5 w-5 fill-current" />
-						{:else}
-							<Play class="h-5 w-5 ml-0.5 fill-current" />
-						{/if}
-					</button>
+						class={playerStore.playbackState === 'error'
+							? ''
+							: playerStore.isBuffering
+								? 'motion-safe:[&_svg]:animate-spin'
+								: '[&_svg]:fill-current'}
+						onclick={() =>
+							playerStore.playbackState === 'error' ? playerStore.stop() : playerStore.togglePlay()}
+					/>
 
-					<button
-						class="btn btn-ghost btn-sm btn-circle"
-						class:opacity-30={!playerStore.hasNext}
-						class:cursor-not-allowed={!playerStore.hasNext}
+					<IconButton
+						size="sm"
+						icon={SkipForward}
+						label="Next"
+						class="[&_svg]:fill-current"
 						disabled={!playerStore.hasNext}
 						onclick={() => playerStore.nextTrack()}
-						aria-label="Next"
-					>
-						<SkipForward class="h-4 w-4 fill-current" />
-					</button>
+					/>
 				</div>
 
 				<div class="hidden sm:flex items-center gap-2 w-full max-w-lg">
@@ -274,6 +255,10 @@
 						value={playerStore.progress}
 						disabled={!playerStore.isSeekable}
 						oninput={handleSeek}
+						aria-label="Seek"
+						aria-valuetext="{formatTime(playerStore.progress)} of {formatTime(
+							playerStore.duration
+						)}"
 					/>
 					<span class="text-xs opacity-60 w-10 tabular-nums"
 						>{formatTime(playerStore.duration)}</span
@@ -287,54 +272,45 @@
 			</div>
 
 			<div class="hidden md:flex items-center gap-3 lg:gap-7 lg:w-1/4 justify-end">
-				<div class="tooltip tooltip-left" data-tip="Queue">
-					<button
-						class="btn btn-ghost btn-sm btn-circle relative"
-						class:text-accent={queueDrawerOpen}
+				<span class="relative inline-flex">
+					<IconButton
+						size="sm"
+						icon={ListMusic}
+						label="Toggle queue"
+						active={queueDrawerOpen}
+						aria-pressed={queueDrawerOpen}
 						onclick={() => (queueDrawerOpen = !queueDrawerOpen)}
-						aria-label="Toggle queue"
-					>
-						<ListMusic class="h-4 w-4" />
-						{#if playerStore.upcomingQueueLength > 0}
-							<span class="badge badge-xs badge-accent absolute -top-1 -right-1"
-								>{playerStore.upcomingQueueLength}</span
-							>
-						{/if}
-					</button>
-				</div>
+					/>
+					{#if playerStore.upcomingQueueLength > 0}
+						<span
+							class="pointer-events-none badge badge-xs badge-accent absolute -top-1 -right-1"
+							aria-label="{playerStore.upcomingQueueLength} upcoming"
+							>{playerStore.upcomingQueueLength}</span
+						>
+					{/if}
+				</span>
 
 				{#if supportsLyrics}
-					<div class="tooltip tooltip-left" data-tip="Lyrics">
-						<button
-							class="btn btn-ghost btn-sm btn-circle"
-							class:text-accent={lyricsPanelOpen}
-							onclick={toggleLyrics}
-							aria-label="Toggle lyrics"
-						>
-							<Music2 class="h-4 w-4" />
-						</button>
-					</div>
+					<IconButton
+						size="sm"
+						icon={Music2}
+						label="Toggle lyrics"
+						active={lyricsPanelOpen}
+						aria-pressed={lyricsPanelOpen}
+						onclick={toggleLyrics}
+					/>
 				{/if}
 
-				<div
-					class="tooltip tooltip-left"
-					data-tip={playerStore.nowPlaying?.sourceType === 'youtube'
-						? 'EQ unavailable for YouTube'
-						: 'Equalizer'}
-				>
-					<button
-						class="btn btn-ghost btn-sm btn-circle"
-						class:text-accent={eqStore.enabled && playerStore.nowPlaying?.sourceType !== 'youtube'}
-						class:opacity-30={playerStore.nowPlaying?.sourceType === 'youtube'}
-						onclick={() => (eqPanelOpen = !eqPanelOpen)}
-						aria-label="Toggle equalizer"
-					>
-						<SlidersHorizontal class="h-4 w-4" />
-					</button>
-				</div>
+				<IconButton
+					size="sm"
+					icon={SlidersHorizontal}
+					label={isYouTube ? 'Equalizer (unavailable for YouTube)' : 'Toggle equalizer'}
+					active={eqStore.enabled && !isYouTube}
+					onclick={() => (eqPanelOpen = !eqPanelOpen)}
+				/>
 
 				<div class="hidden sm:flex items-center gap-1.5">
-					<Volume2 class="h-4 w-4 opacity-60 shrink-0" />
+					<Volume2 class="h-4 w-4 opacity-60 shrink-0" aria-hidden="true" />
 					<input
 						type="range"
 						class="range range-xs w-20"
@@ -342,6 +318,7 @@
 						max="100"
 						value={playerStore.volume}
 						oninput={handleVolume}
+						aria-label="Volume"
 					/>
 				</div>
 
@@ -363,35 +340,29 @@
 				{#if playerStore.nowPlaying.sourceType === 'youtube'}
 					<YouTubePlayer />
 
-					<div class="tooltip tooltip-left" data-tip="Open in YouTube">
-						<button
-							class="btn btn-ghost btn-sm btn-circle"
-							onclick={openInYouTube}
-							aria-label="Open in YouTube"
-						>
-							<ExternalLink class="h-4 w-4" />
-						</button>
-					</div>
+					<IconButton
+						size="sm"
+						icon={ExternalLink}
+						label="Open in YouTube"
+						onclick={openInYouTube}
+					/>
 				{:else if playerStore.nowPlaying.sourceType === 'jellyfin'}
-					<div class="hidden sm:flex items-center gap-2" style="color: rgb(var(--brand-jellyfin))">
+					<div class="hidden sm:flex items-center gap-2 text-[rgb(var(--brand-jellyfin))]">
 						<JellyfinIcon class="h-5 w-5" />
 						<span class="text-sm font-medium">Jellyfin</span>
 					</div>
 				{:else if playerStore.nowPlaying.sourceType === 'navidrome'}
-					<div class="hidden sm:flex items-center gap-2" style="color: rgb(var(--brand-navidrome))">
+					<div class="hidden sm:flex items-center gap-2 text-[rgb(var(--brand-navidrome))]">
 						<NavidromeIcon class="h-5 w-5" />
 						<span class="text-sm font-medium">Navidrome</span>
 					</div>
 				{:else if playerStore.nowPlaying.sourceType === 'plex'}
-					<div class="hidden sm:flex items-center gap-2" style="color: rgb(var(--brand-plex))">
+					<div class="hidden sm:flex items-center gap-2 text-[rgb(var(--brand-plex))]">
 						<PlexIcon class="h-5 w-5" />
 						<span class="text-sm font-medium">Plex</span>
 					</div>
 				{:else if playerStore.nowPlaying.sourceType === 'local'}
-					<div
-						class="hidden sm:flex items-center gap-2"
-						style="color: rgb(var(--brand-localfiles))"
-					>
+					<div class="hidden sm:flex items-center gap-2 text-[rgb(var(--brand-localfiles))]">
 						<Music class="h-5 w-5" />
 						<span class="text-sm font-medium"
 							>Local{#if playerStore.currentQueueItem?.format}<span

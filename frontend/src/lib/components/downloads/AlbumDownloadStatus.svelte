@@ -15,6 +15,8 @@
 	} from '$lib/queries/downloads/downloadStatus';
 	import { downloadStatusConfig } from '$lib/queries/downloads/downloadStatusConfig';
 	import type { DownloadTask, HeldImport } from '$lib/types';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 
 	import DownloadProgressBar from './DownloadProgressBar.svelte';
@@ -73,97 +75,103 @@
 	const isRetrying = $derived(stream.state.status === 'retrying');
 </script>
 
-<div
-	class="press-strip flex items-center gap-3 rounded-2xl border border-base-content/5 bg-base-200/60 p-2.5 pr-3 backdrop-blur-sm"
-	role="status"
-	aria-live="polite"
->
-	<div class="shrink-0">
-		{#if showVinyl}
-			<VinylProgress percent={livePct} {indeterminate} spinning size={44} />
-		{:else}
-			<div class="grid size-11 place-items-center rounded-full bg-base-300/70 text-base-content/70">
-				{#if isManagementHold}
-					<FolderLock class="h-5 w-5 text-warning" aria-hidden="true" />
-				{:else}
-					<cfg.icon class="h-5 w-5" aria-hidden="true" />
-				{/if}
-			</div>
-		{/if}
-	</div>
-
-	<div class="min-w-0 flex-1">
-		{#if isManagementHold}
-			<p class="text-xs font-bold text-warning">Organizer paused · {securedFileLabel}</p>
-			{#if managementDetail}
-				<p class="mt-1 line-clamp-2 text-xs leading-relaxed text-base-content/65">
-					{managementDetail}
-				</p>
+<Card variant="bordered" padding="sm" role="status" aria-live="polite">
+	<div class="flex items-center gap-3">
+		<div class="shrink-0">
+			{#if showVinyl}
+				<VinylProgress percent={livePct} {indeterminate} spinning size={44} />
+			{:else}
+				<div
+					class="grid size-11 place-items-center rounded-full bg-base-300/70 text-base-content/70"
+				>
+					{#if isManagementHold}
+						<FolderLock class="h-5 w-5 text-warning" aria-hidden="true" />
+					{:else}
+						<cfg.icon class="h-5 w-5" aria-hidden="true" />
+					{/if}
+				</div>
 			{/if}
-		{:else}
-			<DownloadStatusBadge {task} />
-		{/if}
-		{#if showBar}
-			<div class="mt-1.5 max-w-sm">
-				<DownloadProgressBar
-					percent={livePct}
-					bytesDownloaded={progress?.bytes_downloaded ?? task.downloaded_bytes}
-					bytesTotal={progress?.bytes_total ?? task.total_size_bytes ?? 0}
-					filesCompleted={progress?.files_completed ?? task.files_completed}
-					filesTotal={progress?.files_total ?? task.files_total}
-				/>
-			</div>
-		{/if}
-		{#if isRetrying}
-			<p class="mt-1 text-xs text-base-content/60">Trying another source…</p>
-		{/if}
-		{#if !isReview}
-			<DownloadSourceStatus
-				{task}
-				live={stream.state.source}
-				bytesDownloaded={progress?.bytes_downloaded ?? task.downloaded_bytes}
-				compact
-			/>
-			<DownloadReasonNote {task} />
-		{/if}
-	</div>
+		</div>
 
-	<div class="flex shrink-0 items-center gap-1.5">
-		{#if isReview}
-			<a href={withBasePath('/downloads')} class="btn btn-primary btn-xs">
-				{isManagementHold ? 'Review organizer' : 'Review'}
-			</a>
-		{/if}
-		{#if canCancel(task)}
-			<button
-				class="btn btn-ghost btn-xs text-error/70 hover:text-error"
-				onclick={() => cancel.mutate(task.id)}
-				disabled={cancel.isPending}
-				aria-label="Cancel download"
-			>
-				<X class="h-3.5 w-3.5" /> Cancel
-			</button>
-		{/if}
-		{#if canRetry(task)}
-			<button
-				class="btn btn-ghost btn-primary btn-xs"
-				onclick={() => retry.mutate(task.id)}
-				disabled={retry.isPending}
-				aria-label="Retry download"
-			>
-				<RotateCcw class="h-3.5 w-3.5" /> Retry
-			</button>
-		{/if}
-		{#if isScheduledRetry}
-			<button
-				class="btn btn-ghost btn-xs text-base-content/60 hover:text-error"
-				onclick={() => stopRetry.mutate(task.id)}
-				disabled={stopRetry.isPending}
-				title="Stop auto-retrying - it won't be watched for later either"
-				aria-label="Stop auto-retrying this download"
-			>
-				<TimerOff class="h-3.5 w-3.5" /> Stop retrying
-			</button>
-		{/if}
+		<div class="min-w-0 flex-1">
+			{#if isManagementHold}
+				<p class="text-xs font-bold text-warning">Organizer paused · {securedFileLabel}</p>
+				{#if managementDetail}
+					<p class="mt-1 line-clamp-2 text-xs leading-relaxed text-base-content/65">
+						{managementDetail}
+					</p>
+				{/if}
+			{:else}
+				<DownloadStatusBadge {task} />
+			{/if}
+			{#if showBar}
+				<div class="mt-1.5 max-w-sm">
+					<DownloadProgressBar
+						percent={livePct}
+						bytesDownloaded={progress?.bytes_downloaded ?? task.downloaded_bytes}
+						bytesTotal={progress?.bytes_total ?? task.total_size_bytes ?? 0}
+						filesCompleted={progress?.files_completed ?? task.files_completed}
+						filesTotal={progress?.files_total ?? task.files_total}
+					/>
+				</div>
+			{/if}
+			{#if isRetrying}
+				<p class="mt-1 text-xs text-base-content/60">Trying another source…</p>
+			{/if}
+			{#if !isReview}
+				<DownloadSourceStatus
+					{task}
+					live={stream.state.source}
+					bytesDownloaded={progress?.bytes_downloaded ?? task.downloaded_bytes}
+					compact
+				/>
+				<DownloadReasonNote {task} />
+			{/if}
+		</div>
+
+		<div class="flex shrink-0 items-center gap-1.5">
+			{#if isReview}
+				<Button variant="primary" size="xs" href={withBasePath('/downloads')}>
+					{isManagementHold ? 'Review organizer' : 'Review'}
+				</Button>
+			{/if}
+			{#if canCancel(task)}
+				<Button
+					variant="danger-ghost"
+					size="xs"
+					icon={X}
+					onclick={() => cancel.mutate(task.id)}
+					disabled={cancel.isPending}
+					aria-label="Cancel download"
+				>
+					Cancel
+				</Button>
+			{/if}
+			{#if canRetry(task)}
+				<Button
+					variant="ghost"
+					size="xs"
+					icon={RotateCcw}
+					onclick={() => retry.mutate(task.id)}
+					disabled={retry.isPending}
+					aria-label="Retry download"
+				>
+					Retry
+				</Button>
+			{/if}
+			{#if isScheduledRetry}
+				<Button
+					variant="ghost"
+					size="xs"
+					icon={TimerOff}
+					onclick={() => stopRetry.mutate(task.id)}
+					disabled={stopRetry.isPending}
+					title="Stop auto-retrying - it won't be watched for later either"
+					aria-label="Stop auto-retrying this download"
+				>
+					Stop retrying
+				</Button>
+			{/if}
+		</div>
 	</div>
-</div>
+</Card>

@@ -14,6 +14,7 @@ export type JellyfinTrackInfo = {
 	codec?: string | null;
 	bitrate?: number | null;
 	image_url?: string | null;
+	recording_mbid?: string | null;
 };
 
 export type LocalTrackInfo = {
@@ -39,6 +40,7 @@ export type NavidromeTrackInfo = {
 	codec?: string | null;
 	bitrate?: number | null;
 	image_url?: string | null;
+	recording_mbid?: string | null;
 };
 
 export type PlexTrackInfo = {
@@ -55,6 +57,7 @@ export type PlexTrackInfo = {
 	container?: string | null;
 	part_key?: string | null;
 	image_url?: string | null;
+	recording_mbid?: string | null;
 };
 
 export type YouTubeTrackLink = {
@@ -178,6 +181,8 @@ export interface NowPlaying {
 	playlistTrackId?: string;
 	/** 30s preview stream (radio preview tier): never scrobbled/reported, fades out. */
 	isPreview?: boolean;
+	/** MusicBrainz recording the playing source gave for this file. */
+	recordingMbid?: string;
 }
 
 export type PlaybackMeta = {
@@ -206,6 +211,8 @@ export interface QueueItem {
 	format?: string;
 	availableSources?: SourceType[];
 	sourceIds?: Partial<Record<SourceType, string>>;
+	/** MusicBrainz recording each source gave for its file, kept per source. */
+	recordingIds?: Partial<Record<SourceType, string>>;
 	duration?: number;
 	playSessionId?: string;
 	/** Plex ratingKey used for scrobble and now-playing calls. Streaming uses part_key in trackSourceId. */

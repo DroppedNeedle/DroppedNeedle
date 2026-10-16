@@ -15,6 +15,7 @@
 	import { bucketSections, collapseRetryChains } from '$lib/queries/downloads/downloadStatus';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import type { DownloadTask, HeldImport } from '$lib/types';
+	import Button from '$lib/ui/Button.svelte';
 
 	import DownloadItem from './DownloadItem.svelte';
 	import HeldTrackCard from './HeldTrackCard.svelte';
@@ -155,14 +156,16 @@
 						Still hunting <span class="text-base-content/35">· auto-retrying</span>
 						<span class="dl-count">{sections.wanted.length}</span>
 					</h2>
-					<button
-						class="btn btn-ghost btn-xs text-base-content/60 hover:text-error"
+					<Button
+						variant="ghost"
+						size="xs"
+						icon={TimerOff}
 						onclick={() => stopAll.mutate()}
 						disabled={stopAll.isPending}
 						title="Stop auto-retrying every still-hunting album - they won't be watched for later either"
 					>
-						<TimerOff class="h-3.5 w-3.5" /> Stop all
-					</button>
+						Stop all
+					</Button>
 				</div>
 				<div class="space-y-3">
 					{#each sections.wanted as task (task.id)}
@@ -205,18 +208,16 @@
 						Couldn't verify <span class="text-base-content/35">· your call</span>
 						<span class="dl-count">{verificationHeld.length}</span>
 					</h2>
-					<button
-						class="btn btn-ghost btn-primary btn-xs"
+					<Button
+						variant="ghost"
+						size="xs"
+						icon={RotateCcw}
+						loading={reverifyBulk.isPending}
 						onclick={() => reverifyBulk.mutate({ held_ids: verificationHeldIds })}
-						disabled={reverifyBulk.isPending}
 						title="Run the fingerprint check again on these tracks. Confident matches import automatically"
 					>
-						{#if reverifyBulk.isPending}
-							<span class="loading loading-spinner loading-xs" aria-hidden="true"></span> Checking...
-						{:else}
-							<RotateCcw class="h-3.5 w-3.5" /> Re-check all
-						{/if}
-					</button>
+						{reverifyBulk.isPending ? 'Checking...' : 'Re-check all'}
+					</Button>
 				</div>
 				<div class="space-y-3">
 					{#each verdictGroups as group (group.task.id)}
@@ -261,23 +262,27 @@
 					{#if historyOpen}
 						<div class="flex items-center gap-1">
 							{#if hasFailed}
-								<button
-									class="btn btn-ghost btn-primary btn-xs"
+								<Button
+									variant="ghost"
+									size="xs"
+									icon={RotateCcw}
 									onclick={() => retryAll.mutate()}
 									disabled={retryAll.isPending}
 									title="Retry every failed download"
 								>
-									<RotateCcw class="h-3.5 w-3.5" /> Retry all failed
-								</button>
+									Retry all failed
+								</Button>
 							{/if}
-							<button
-								class="btn btn-ghost btn-xs text-base-content/60 hover:text-error"
+							<Button
+								variant="ghost"
+								size="xs"
+								icon={Trash2}
 								onclick={() => clear.mutate()}
 								disabled={clear.isPending}
 								title="Remove completed and cancelled downloads from this list"
 							>
-								<Trash2 class="h-3.5 w-3.5" /> Clear
-							</button>
+								Clear
+							</Button>
 						</div>
 					{/if}
 				</div>

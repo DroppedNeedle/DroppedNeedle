@@ -4,6 +4,8 @@
 	import { PersistedState } from 'runed';
 	import { CircleArrowUp, X } from 'lucide-svelte';
 	import { withBasePath } from '$lib/utils/basePath';
+	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	interface Props {
 		updateAvailable: boolean;
@@ -46,14 +48,9 @@
 					<span class="font-semibold">({latestVersion})</span>
 				{/if}
 			</span>
-			<a href={withBasePath('/settings?tab=about')} class="btn btn-info btn-xs">Details</a>
-			<button
-				class="btn btn-ghost btn-sm btn-circle"
-				onclick={dismiss}
-				aria-label="Dismiss update notification"
+			<Button variant="info" size="xs" href={withBasePath('/settings?tab=about')}>Details</Button
 			>
-				<X class="h-3 w-3" />
-			</button>
+			<IconButton size="sm" icon={X} label="Dismiss update notification" onclick={dismiss} />
 		</div>
 	</div>
 {/if}

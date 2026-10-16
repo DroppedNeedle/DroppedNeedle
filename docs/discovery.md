@@ -1,0 +1,70 @@
+# Discovery, apps and accounts
+
+Home, Discover, radio and mixes, where covers and artist pictures come from, and how Last.fm, ListenBrainz, Spotify and music apps connect.
+
+## Contents
+
+- [Home](#home)
+- [Discover](#discover)
+- [Genres](#genres)
+- [The discover queue](#the-discover-queue)
+- [Radio](#radio)
+- [Playlist suggestions](#playlist-suggestions)
+- [Download all](#download-all)
+- [Weekly Mix](#weekly-mix)
+- [Covers and artist pictures](#covers-and-artist-pictures)
+- [Last.fm and ListenBrainz](#lastfm-and-listenbrainz)
+- [Music apps](#music-apps)
+- [Spotify playlist import](#spotify-playlist-import)
+
+## Home
+
+The Home page shows your library first: recently added albums, your albums, the artists you have the most albums by, what you played lately in DroppedNeedle, and a Browse by Genre grid. Those come straight from the database, so the page is up as soon as you open it. Trending artists and popular albums (from ListenBrainz, or Last.fm if that is your main source), your top albums and loved tracks, your own genres and your ListenBrainz weekly exploration load in the background and slide in a few seconds later. After that the page is kept for an hour and quietly rebuilt when it is more than five minutes old. If you also use Discover, Home shows a teaser from your Discover page.
+
+## Discover
+
+The Discover page fills its shelves from your listening history: top picks for you, "because you listen to" rows, artists you might like, fresh releases, albums missing from your favourite artists, artists to rediscover from your Jellyfin plays, popular albums in your genres, daily mixes, radio stations, your ListenBrainz weekly exploration and what listeners like you play, anniversaries and new releases from artists you follow, plus global trends and your Last.fm weekly charts when Last.fm is linked. Albums you own are marked. The page is built in the background, so opening it never waits: you see the last page right away, and a page older than five minutes rebuilds while you look at it and swaps in when it is done. The Refresh button starts a fresh build. The last good page is saved, so it survives a restart. While you keep using Discover, the server rebuilds your page and your discover queue every six hours in the background; it stops a day after your last visit. Set `DISCOVER_WARMER_ENABLED=false` to turn that background work off. How many top picks you get and how much your genres weigh in them are under Settings > Advanced.
+
+## Genres
+
+Genre tiles on Home and Discover use covers from your own albums in that genre: up to four, picked from different artists, and only art your library actually has (a cover image in the album folder or one embedded in the files). Genres you have nothing in get a plain colour. Click a genre to see the artists and albums you own in it next to the popular ones on MusicBrainz, with "more" buttons to page through them. While you look, the server fetches pictures for those popular artists and albums in the background, slowly, so the page is quicker next time.
+
+## The discover queue
+
+The discover queue on the Discover page deals you albums one at a time. It is built in the background from what you listen to: artists similar to your top artists, your genres, fresh releases, artists you love on ListenBrainz and lesser-played albums by your favourites, with a couple of trending picks mixed in. Last.fm users get similar artists and charts from Last.fm instead, and your Jellyfin most played and favourite artists fill in when ListenBrainz has too little history. Without any of them the queue is trending albums. Albums already in your library are left out. Ignore an album and it stays out of every future queue for a year. An admin can change that retention through the advanced settings API (`ignored_releases_retention_days`); Settings > Advanced does not show it. To hide the queue, switch it off under Settings > Discover. A built queue survives a restart and counts as stale after its freshness window (24 hours by default), after which the page builds a new one.
+
+## Radio
+
+Radio plays a station from an artist, an album, a genre or a whole shelf. An artist station uses that artist and up to seven similar ones; a genre station starts from artists in your library tagged with that genre (the same ones all day) and tops up with Last.fm's top artists for the tag. In library mode it plays only your own tracks. In hybrid mode, the default, about half the tracks are popular songs by those artists that you don't own. Songs you don't own play through YouTube when it is set up and are skipped otherwise. No artist gets more than four tracks, and never three in a row. Playing a shelf plays its albums in order: your own tracks where you have the album, and its first few songs where you don't. Radio shelves of albums work the same way: similar artists' albums for an artist, similar albums and more by the same artist for an album. They follow ListenBrainz, or Last.fm while ListenBrainz is having trouble, and need one of the two linked for your account.
+
+## Playlist suggestions
+
+A playlist can suggest albums to add: albums by artists similar to the ones on it, plus albums in their genres. Artists already on the playlist are left out. It works for your own playlists and public ones.
+
+## Download all
+
+"Download all" on a Discover shelf creates a discovery batch: every album on it that you don't have and nobody has asked for yet becomes a normal album request. Your quota and the approval rules apply as they would for one album, so a plain user's batch waits for an admin, and a batch that would go over your quota is refused as a whole. Albums you already own or that are already requested are listed as skipped. A batch holds up to 30 albums. Your batches are listed with how many albums have arrived and how many are still pending. Removing a batch withdraws your pending requests from it; if someone else asked for the same album, their request carries on. When an admin removes a batch, the albums it brought in also go to the recycle bin, unless another user asked for, favourited or played them. It never touches albums that were already yours or already requested. If a step fails, that album stays in the batch so you can try again. You can also remove just the batch and keep the albums. Pages can send an `idempotency_key` (a UUID) when creating a batch, so a retried "Download all" never files it twice.
+
+## Weekly Mix
+
+Your Weekly Mix is a playlist built for each user with a linked ListenBrainz account. It takes your ListenBrainz weekly-jams and weekly-exploration playlists and tops them up to 100 tracks with songs from artists similar to the ones in them. Songs you already own play from your library. The server rebuilds every mix once a day if it is more than six days old, and you can rebuild yours any time with Refresh under Profile > Scrobbling & Discovery. If you switch on "auto-request" there, each build also requests up to five albums from the mix you don't have yet. Admins get this straight away; other users wait for an admin to approve it on the Requests page. An admin can reject or later revoke it, which also switches the toggle off.
+
+## Covers and artist pictures
+
+Album covers come from your own files first: an image in the album folder (`cover.jpg`, `folder.png`, `front.jpg` and the like) or a picture embedded in a track. The library picks these up after each scan, and large pictures are scaled down for the grid. Albums without local art get their cover from the Cover Art Archive, cached on disk. To prefer the Cover Art Archive over your files, turn off "Prefer local cover art" under Settings > Advanced.
+
+Artist pictures come from TheAudioDB, or from Wikidata when TheAudioDB has none. The first time an artist shows up the picture is fetched in the background, so a grid of new artists fills in over a few seconds instead of holding the page up. Pictures are kept on disk with the covers. AudioDB album thumbnails stand in for albums that have no cover anywhere else.
+
+The server also fetches everything for your library ahead of time: two minutes after a library scan finishes, a library image refresh starts on its own (unless one is already running). An admin can start one any time with "Refresh library images" under Settings > Cache. It goes through your artists (page details and pictures), their similar artists and top tracks, your albums (details and covers) and finally anything TheAudioDB has not been asked about yet. It skips what is already cached, so running it again picks up where the last run stopped. A progress pill at the bottom of the page shows where it is; admins and trusted users can stop it from there. How hard it works the providers is under Settings > Advanced (Library Image Caching). Settings > Cache shows how many images are cached and clears them, or the cached provider answers, when you want a fresh start.
+
+## Last.fm and ListenBrainz
+
+Last.fm works like this: the admin registers one Last.fm API application at last.fm/api/account/create, saves its key and shared secret under Settings > Last.fm and switches Last.fm on, once for the whole server. Each user then clicks Connect under Profile > Scrobbling & Discovery, approves DroppedNeedle on last.fm, and clicks Finish. Their scrobbles go to their own Last.fm account. Users can also bring their own API application: if the server has no key saved, Connect asks for the user's own key and secret first, and a user can always store a pair through the API (`PUT /api/v3/me/connections/lastfm`). A user's own pair replaces the server's key for that user only. The Last.fm sections on artist and album pages follow the same rule: they read with the user's own key when one is saved, and with the server's key otherwise. Last.fm charts on the home page need the server's key; "your top albums" from Last.fm read your linked account. If the admin later changes the server's key, everyone who linked with the old one has to click Connect again: Last.fm sessions belong to the key that created them. Link ListenBrainz with the token from your ListenBrainz profile. Artist pages show photos from Wikidata and AudioDB (AudioDB is on by default, free key rate limits apply), with proxying and TTLs under Settings > Advanced. Artist thumbnails across the app use the same pictures.
+
+## Music apps
+
+Music apps (Subsonic and Jellyfin) sign in with an app password from Settings > Connect Apps. What you play in an app counts like a play in the web player: it shows in the app's recently played and most played lists, with play counts and last-played times. A play in the web player counts, whether or not you scrobble, once you have heard half the track or four minutes of it (tracks under 30 seconds never count). A play through a connected server or a radio YouTube pick counts as your library's track when it carries that track's MusicBrainz recording id. Previews never count. Subsonic apps get each album's and artist's MusicBrainz ids, and Jellyfin apps each album's and track's, from DroppedNeedle's match, or, before it has one, the ids the files' tags agree on; tag ids are passed to apps only and never become an album's or artist's identity. A track is only transcoded when the app asks for another format or a lower bitrate. If the app names no bitrate, Opus streams at 128 kbps and MP3 at 192 kbps, never above the max bitrate you set. Each user can run two transcodes at once, so gapless players can load the next track early. Finamp's transcoded playback uses HLS, which needs transcoding on and ffmpeg installed. Only sign-in attempts are rate limited per IP address, and a run of wrong passwords locks that address out for a short while. Album and artist pictures in Subsonic apps come from signed links under `/subsonic/img` that open without signing in, so an app's picture loader can show them; playlist covers and music always need sign-in. A link is the same for every user and does not expire. It stops working when the album or artist leaves the library, while the Subsonic API is off, or if the server's data key is replaced, and the app gets a new link the next time it reads the album or artist. Apps may keep an opened picture for a day, so a changed cover reaches them within a day. Jellyfin apps load album and artist pictures without signing in too, as they would from a real Jellyfin server, but only by ids that this server alone can make: album and artist ids are made with the server's data key, so nobody without an account can work one out or test whether an album is in your library. Song pictures come from the song's album. The ids are tied to `config/data_enc.key`, so keep that file with your backups; if it is replaced, album and artist ids change and Jellyfin apps read the library again.
+
+## Spotify playlist import
+
+Spotify playlist import needs an app from the Spotify developer dashboard. Add the redirect URI that Settings > Spotify shows (it ends in `/api/v3/acquire/spotify/auth/callback`) to the app, then save the app's client ID and secret there. With "Redirect Origin" left empty, that address is the one DroppedNeedle works out for itself, which is right when you reach it directly or through a reverse proxy listed in `TRUSTED_PROXY_IPS` that sends `X-Forwarded-Proto`; if it is not the address in your browser's address bar, fill in Redirect Origin. Each user then clicks Connect on the Spotify card in their profile, and Disconnect there unlinks it again. If you set up Spotify on v2 and imported your settings, nothing changes in the dashboard: DroppedNeedle keeps using the old address the app already lists, and Settings > Spotify shows that one. Saving a different client ID switches to the new address.

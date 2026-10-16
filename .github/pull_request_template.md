@@ -20,6 +20,6 @@ If any part of this PR was generated or assisted by AI (Copilot, ChatGPT, etc.),
 - [ ] Frontend type check passes (`make frontend-check`)
 - [ ] No `any` in TypeScript
 - [ ] No hardcoded colors (design tokens only)
-- [ ] Outbound HTTP uses a client from `server/src/http_client.rs`
+- [ ] Outbound HTTP uses a client from `server/kernel/src/http_client.rs`
 - [ ] TanStack Query used for all new data fetching
 - [ ] No secrets, tokens, or credentials in source

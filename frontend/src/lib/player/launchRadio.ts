@@ -17,6 +17,7 @@ import {
 	resolveRadioPatch,
 	startRadioHydration
 } from '$lib/player/radioQueueHydrator';
+import { recordingFor } from '$lib/player/queueHelpers';
 import type { QueueItem } from '$lib/player/types';
 import type { RadioPlanRequest, RadioPlanResponse, RadioPlanTrack } from '$lib/types';
 
@@ -67,6 +68,7 @@ export function planTrackToQueueItem(
 			coverUrl,
 			sourceType: 'youtube',
 			artistId: track.artist_mbid || undefined,
+			recordingIds: recordingFor('youtube', track.recording_mbid),
 			queueOrigin: 'context',
 			playlistTrackId: radioTrackKey(track)
 		};

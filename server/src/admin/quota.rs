@@ -26,11 +26,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::models::{QuotaOverrideView, QuotaResponse};
 use super::{AdminDb, error::AdminError, models::QuotaOverrideBody};
-use crate::{
-    acquire::requests::quota::{QuotaLedger, QuotaOverride},
-    auth::users::UsersDeps,
-    db::writer::Lane,
-};
+use droppedneedle_acquire::requests::quota::{QuotaLedger, QuotaOverride};
+use droppedneedle_auth::users::UsersDeps;
+use droppedneedle_kernel::db::writer::Lane;
 
 /// Top of every quota bound (the v2 1M ceiling).
 const QUOTA_MAX: u64 = 1_000_000;
@@ -107,7 +105,9 @@ pub async fn set_quota(
     // drift apart, which stays 400.
     write_override(db, &user.id, &row).await?;
     if let Err(error) = ledger.set_override(&user.id, row.clone()) {
-        if let crate::acquire::requests::error::RequestsError::InvalidInput { message } = error {
+        if let droppedneedle_acquire::requests::error::RequestsError::InvalidInput { message } =
+            error
+        {
             return Err(AdminError::InvalidInput { message });
         }
         return Err(AdminError::internal(&format_args!(
@@ -124,7 +124,7 @@ pub async fn set_quota(
 pub async fn reload_overrides(
     pool: &sqlx::SqlitePool,
     ledger: &QuotaLedger,
-) -> Result<usize, crate::db::error::DbError> {
+) -> Result<usize, droppedneedle_kernel::db::error::DbError> {
     let rows: Vec<OverrideRow> =
         sqlx::query_as("SELECT user_id, request_quota_count, request_quota_days, storage_quota_gb FROM user_quotas")
             .fetch_all(pool)
@@ -200,7 +200,7 @@ async fn write_override(
         })
         .await
         .map_err(|error| match error {
-            crate::db::error::DbError::WriteFailed { cause, .. }
+            droppedneedle_kernel::db::error::DbError::WriteFailed { cause, .. }
                 if cause.contains("FOREIGN KEY") =>
             {
                 AdminError::NotFound

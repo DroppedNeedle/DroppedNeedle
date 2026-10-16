@@ -7,7 +7,7 @@
 //! [`SettingsError::Dropped`] (410 Gone), never a silent ignore: a client
 //! holding a v2-era key must learn it is gone, not believe it saved.
 
-use super::error::SettingsError;
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// One dropped key with the reason it is gone.
 pub struct DroppedKey {

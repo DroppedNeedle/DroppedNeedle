@@ -1,0 +1,49 @@
+[package]
+name = "droppedneedle-acquire"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "DroppedNeedle requests, downloads, sources and imports"
+publish = false
+
+[dependencies]
+droppedneedle-auth.workspace = true
+droppedneedle-catalog.workspace = true
+droppedneedle-kernel.workspace = true
+droppedneedle-library.workspace = true
+droppedneedle-media.workspace = true
+droppedneedle-plugins.workspace = true
+droppedneedle-providers.workspace = true
+axum.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
+libc.workspace = true
+quick-xml.workspace = true
+reqwest.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+unicode-normalization.workspace = true
+utoipa.workspace = true
+uuid.workspace = true
+zip.workspace = true
+
+[features]
+# Fakes, memory stores and test constructors for the test suites above.
+test-support = [
+    "droppedneedle-kernel/test-support",
+    "droppedneedle-providers/test-support",
+    "droppedneedle-auth/test-support",
+    "droppedneedle-library/test-support",
+    "droppedneedle-plugins/test-support",
+    "droppedneedle-media/test-support",
+    "droppedneedle-catalog/test-support",
+]
+
+[dev-dependencies]
+droppedneedle-kernel = { workspace = true, features = ["test-support"] }

@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use futures_util::future::BoxFuture;
 use sqlx::Row;
 
-use super::library_policy::{
+use droppedneedle_library::policy::{
     CatalogPath, CatalogRoot, LibraryPolicyCatalog, ScopeCounts, ScopeTotals,
 };
 

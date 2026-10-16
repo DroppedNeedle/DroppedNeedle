@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
 
-use crate::jobs::events_kick::EventsKick;
-use crate::providers::cache::{ProviderCache, invalidate_source};
+use droppedneedle_kernel::jobs::events_kick::EventsKick;
+use droppedneedle_providers::cache::{ProviderCache, invalidate_source};
 
 /// Sections whose save invalidates provider caches, the events section,
 /// which kicks the sweep, and the download sources, which wake the

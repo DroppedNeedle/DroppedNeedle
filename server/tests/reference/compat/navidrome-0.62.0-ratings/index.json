@@ -1,0 +1,177 @@
+{
+  "requests": [
+    {
+      "name": "setRating.track",
+      "file": "setRating.track.json",
+      "write": true,
+      "method": "GET",
+      "path": "/rest/setRating",
+      "query": [
+        [
+          "id",
+          "{track.airbag}"
+        ],
+        [
+          "rating",
+          "4"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "setRating.album",
+      "file": "setRating.album.json",
+      "write": true,
+      "method": "GET",
+      "path": "/rest/setRating",
+      "query": [
+        [
+          "id",
+          "{album.ok_computer}"
+        ],
+        [
+          "rating",
+          "3"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "setRating.artist",
+      "file": "setRating.artist.json",
+      "write": true,
+      "method": "GET",
+      "path": "/rest/setRating",
+      "query": [
+        [
+          "id",
+          "{artist.radiohead}"
+        ],
+        [
+          "rating",
+          "5"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getSong",
+      "file": "getSong.json",
+      "method": "GET",
+      "path": "/rest/getSong",
+      "query": [
+        [
+          "id",
+          "{track.airbag}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getAlbum",
+      "file": "getAlbum.json",
+      "method": "GET",
+      "path": "/rest/getAlbum",
+      "query": [
+        [
+          "id",
+          "{album.ok_computer}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getArtist",
+      "file": "getArtist.json",
+      "method": "GET",
+      "path": "/rest/getArtist",
+      "query": [
+        [
+          "id",
+          "{artist.radiohead}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getArtists",
+      "file": "getArtists.json",
+      "method": "GET",
+      "path": "/rest/getArtists",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "search3",
+      "file": "search3.json",
+      "method": "GET",
+      "path": "/rest/search3",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getStarred2",
+      "file": "getStarred2.json",
+      "method": "GET",
+      "path": "/rest/getStarred2",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getAlbumList2.highest",
+      "file": "getAlbumList2.highest.json",
+      "method": "GET",
+      "path": "/rest/getAlbumList2",
+      "query": [
+        [
+          "type",
+          "highest"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "setRating.track-cleared",
+      "file": "setRating.track-cleared.json",
+      "write": true,
+      "method": "GET",
+      "path": "/rest/setRating",
+      "query": [
+        [
+          "id",
+          "{track.airbag}"
+        ],
+        [
+          "rating",
+          "0"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "getSong.cleared",
+      "file": "getSong.cleared.json",
+      "method": "GET",
+      "path": "/rest/getSong",
+      "query": [
+        [
+          "id",
+          "{track.airbag}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    }
+  ]
+}

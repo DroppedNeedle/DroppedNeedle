@@ -11,6 +11,7 @@
 
 <script lang="ts">
 	import { EllipsisVertical } from 'lucide-svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import type { Component, SvelteComponent } from 'svelte';
 
 	const MENU_WIDTH = 208;
@@ -119,15 +120,15 @@
 	class="dropdown {position === 'start' ? 'dropdown-start' : 'dropdown-end'}"
 	ontoggle={handleToggle}
 >
-	<summary
-		bind:this={summaryEl}
-		class="btn btn-ghost btn-circle {size === 'xs' ? 'btn-xs' : 'btn-sm'}"
+	<IconButton
+		as="summary"
+		bind:ref={summaryEl}
+		size={size === 'xs' ? 'xs' : 'sm'}
+		icon={EllipsisVertical}
+		label="More actions"
 		aria-haspopup="menu"
-		aria-label="More actions"
 		onclick={(e: MouseEvent) => e.stopPropagation()}
-	>
-		<EllipsisVertical class={size === 'xs' ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
-	</summary>
+	/>
 </details>
 
 {#if isOpen}

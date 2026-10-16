@@ -1,0 +1,21 @@
+{
+  "request": "GET /rest/search3?u=reference&p=***&v=1.16.1&c=dn-ref&f=json&artistCount=500&artistOffset=0&albumCount=0&albumOffset=0&songCount=0&songOffset=0&musicFolderId=0",
+  "status": 200,
+  "headers": {
+    "content-length": "205",
+    "content-type": "application/json"
+  },
+  "body": {
+    "subsonic-response": {
+      "status": "failed",
+      "version": "1.16.1",
+      "type": "navidrome",
+      "serverVersion": "0.62.0 (1b46b977)",
+      "openSubsonic": true,
+      "error": {
+        "code": 70,
+        "message": "Library 0 not found or not accessible"
+      }
+    }
+  }
+}

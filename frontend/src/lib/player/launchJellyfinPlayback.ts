@@ -3,7 +3,7 @@ import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 import type { PlaybackMeta, QueueItem } from '$lib/player/types';
 import type { JellyfinTrackInfo } from '$lib/player/types';
 import { getCoverUrl } from '$lib/utils/errorHandling';
-import { normalizeCodec } from '$lib/player/queueHelpers';
+import { normalizeCodec, recordingFor } from '$lib/player/queueHelpers';
 
 export function launchJellyfinPlayback(
 	tracks: JellyfinTrackInfo[],
@@ -27,7 +27,8 @@ export function launchJellyfinPlayback(
 			sourceType: 'jellyfin' as const,
 			artistId: meta.artistId,
 			streamUrl: gatewayStreamUrl('jellyfin', t.jellyfin_id),
-			format
+			format,
+			recordingIds: recordingFor('jellyfin', t.recording_mbid)
 		};
 	});
 

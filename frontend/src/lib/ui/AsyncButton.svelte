@@ -6,10 +6,13 @@
 	`saving`/`removing` flags around buttons.
 -->
 <script lang="ts">
-	import type { Snippet } from 'svelte';
-	import type { HTMLButtonAttributes } from 'svelte/elements';
+	import type { ComponentProps, Snippet } from 'svelte';
+	import Button from './Button.svelte';
 
-	interface Props extends Omit<HTMLButtonAttributes, 'onclick'> {
+	interface Props extends Omit<
+		ComponentProps<typeof Button>,
+		'onclick' | 'loading' | 'href' | 'as' | 'children'
+	> {
 		onclick?: () => unknown;
 		pending?: boolean;
 		/** Shown in place of the label while pending, e.g. "Saving...". */
@@ -21,9 +24,7 @@
 		onclick,
 		pending = false,
 		pendingLabel,
-		disabled = false,
-		type = 'button',
-		class: className = 'btn btn-primary',
+		ref = $bindable(null),
 		children,
 		...rest
 	}: Props = $props();
@@ -42,20 +43,10 @@
 	}
 </script>
 
-<button
-	{...rest}
-	{type}
-	class={className}
-	disabled={disabled || busy}
-	aria-busy={busy}
-	onclick={handleClick}
->
-	{#if busy}
-		<span class="loading loading-spinner loading-sm" aria-hidden="true"></span>
-	{/if}
+<Button {...rest} bind:ref loading={busy} onclick={handleClick}>
 	{#if busy && pendingLabel}
 		{pendingLabel}
 	{:else}
 		{@render children()}
 	{/if}
-</button>
+</Button>

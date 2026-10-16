@@ -1,0 +1,1944 @@
+//! Download worker: startup recovery plus the poll loop.
+//!
+//! [`run_startup_recovery`] classifies every active task before serving
+//! traffic (queued tasks re-dispatch through the first worker pass,
+//! manifest-backed tasks resume polling, the rest restart clean under the
+//! same idempotency keys, so a double resume cannot double-enqueue).
+//! [`DownloadWorker`] then runs the steady-state passes on one cadence:
+//!
+//! - enqueue: queued tasks below the concurrency cap search and enqueue
+//!   through the source order, journaling each attempt;
+//! - poll: live attempts report progress through the [`Watchdog`], whose
+//!   verdicts complete, fail over, or requeue their tasks;
+//! - retry: terminal tasks whose backoff elapsed spawn successors;
+//! - cleanup: claimed journal rows abort and discard client records and
+//!   settle;
+//! - orphans (hourly): complete-dir debris with no owner is removed.
+//!
+//! Sources and tuning are resolved at the start of every pass, so saved
+//! settings take effect on the next pass without a restart. The loop
+//! registers as the durable `download-worker` job, heartbeats every pass
+//! and stops on the shared shutdown watch. Journal failures are logged and
+//! skip the affected item; a read error never stands in for "no rows".
+
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use super::dispatch::Journal;
+use super::downloads::manifest::{DownloadManifest, ExpectedFile, ManifestCodec};
+use super::downloads::orphans::{
+    OrphanDecision, OrphanEvidence, RecycleBin, evaluate_orphan, job_name_parts,
+};
+use super::downloads::quarantine::{
+    QUARANTINE_TTL_SECONDS, QuarantineReason, failover_identities, is_local_fault,
+};
+use super::downloads::recovery::{
+    FAILOVER_CLAIM_LIMIT, FAILOVER_LEASE_SECONDS, StartupAction, StartupCtx, classify_startup,
+    plan_retry,
+};
+use super::downloads::sources::OrphanOwnership;
+use super::downloads::sources::{DownloadSource, SourceError, SourceHandle};
+use super::downloads::state::{AttemptState, TaskStatus};
+use super::downloads::store::{AttemptRow, NewTask, StoreError, TaskRow};
+use super::downloads::watchdog::{PollSample, RetryPolicy, Watchdog, WatchdogConfig};
+use super::landing::LandingService;
+use super::plugin_source::PluginDownloadSource;
+use super::search_jobs::review::ReviewMode;
+use super::sources::{JournalOwnership, SabnzbdSource, SlskdSource};
+use super::target::Targets;
+use super::target::reasons::TrackReason;
+use droppedneedle_kernel::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
+
+mod controls;
+mod landings;
+mod review;
+
+pub use controls::{NextSourceError, RetryError};
+pub use landings::ReimportError;
+
+/// Registry name for the worker loop.
+pub const DOWNLOAD_WORKER_JOB: &str = "download-worker";
+
+/// Steady-state pass cadence.
+pub const WORKER_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Orphan sweep runs every Nth pass (hourly at the 30s cadence).
+const ORPHAN_EVERY_NTH_PASS: u64 = 120;
+
+/// Enqueue backoff after a pass where no source could serve a task.
+const ENQUEUE_BACKOFF_SECONDS: f64 = 15.0 * 60.0;
+
+/// Current unix time as float seconds.
+fn now_unix_f64() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|span| span.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
+/// What startup recovery did, for the boot log and tests.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecoveryReport {
+    /// Queued rows the first worker pass will dispatch.
+    pub redispatched: usize,
+    /// Manifest-backed rows resuming polling.
+    pub resumed: usize,
+    /// Rows restarted clean (back to queued, same keys).
+    pub restarted: usize,
+}
+
+/// Classify every active task and restart the clean ones. Never fails a
+/// task: queued rows stay queued for the first pass, manifest-backed rows
+/// keep polling, and anything else returns to queued under its existing
+/// idempotency keys. Re-running after a clean shutdown is a no-op.
+pub async fn run_startup_recovery(
+    journal: &Journal,
+    staging_root: &Path,
+) -> Result<RecoveryReport, String> {
+    let tasks = journal
+        .run("downloads.recovery.list", |store| {
+            store.list_active(&[
+                TaskStatus::Queued,
+                TaskStatus::Downloading,
+                TaskStatus::Processing,
+            ])
+        })
+        .await?;
+    let mut report = RecoveryReport::default();
+    for task in tasks {
+        let manifest = read_manifest(staging_root, &task.id).await;
+        let manifest_matches_attempt = match manifest.as_ref().and_then(|m| m.attempt_id.clone()) {
+            None => None,
+            Some(linked) => {
+                let task_id = task.id.clone();
+                journal
+                    .run("downloads.recovery.attempts", move |store| {
+                        store.list_attempts(&task_id)
+                    })
+                    .await
+                    .ok()
+                    .map(|attempts| attempts.iter().any(|attempt| attempt.id == linked))
+            }
+        };
+        if task.status == TaskStatus::Processing
+            && let Ok(attempts) = {
+                let task_id = task.id.clone();
+                journal
+                    .run("downloads.recovery.landing", move |store| {
+                        store.list_attempts(&task_id)
+                    })
+                    .await
+            }
+            && attempts.iter().any(|attempt| {
+                matches!(
+                    attempt.state,
+                    AttemptState::Acquiring
+                        | AttemptState::InUse
+                        | AttemptState::Preserved
+                        | AttemptState::CleanupPending
+                )
+            })
+        {
+            // Processing means a landing was running: it resumes on the
+            // first poll pass from the files its attempt names, whether
+            // or not the manifest survived. Never a fresh download.
+            report.resumed += 1;
+            continue;
+        }
+        match classify_startup(StartupCtx {
+            status: task.status,
+            manifest_present: manifest.is_some(),
+            manifest_matches_attempt,
+        }) {
+            StartupAction::Redispatch => report.redispatched += 1,
+            StartupAction::ResumePoll => report.resumed += 1,
+            StartupAction::RestartClean => {
+                let task_id = task.id.clone();
+                journal
+                    .run("downloads.recovery.restart", move |store| {
+                        store.transition_task(&task_id, TaskStatus::Queued, now_unix_f64(), None)
+                    })
+                    .await?;
+                report.restarted += 1;
+            }
+            StartupAction::Noop => {}
+        }
+    }
+    Ok(report)
+}
+
+/// A retry's manifest skeleton, from its source's manifest: the release
+/// it fetches, the tracks it asks for and the library copy it is for, so
+/// the retry fetches and files the same as the first attempt. Nothing
+/// when the source has no manifest. Best effort, like the dispatch
+/// skeleton.
+async fn write_successor_manifest(staging_root: &Path, source_id: &str, successor: &NewTask) {
+    let Some(from) = read_manifest(staging_root, source_id).await else {
+        return;
+    };
+    let task_id = successor.id.clone();
+    let manifest = DownloadManifest {
+        task_id: successor.id.clone(),
+        release_group_mbid: from.release_group_mbid,
+        artist_name: from.artist_name,
+        album_title: from.album_title,
+        naming_template: String::new(),
+        target_files: Vec::new(),
+        source_username: None,
+        handle: None,
+        expected_tracks: Vec::new(),
+        release_mbid: from.release_mbid,
+        artist_mbid: None,
+        year: None,
+        is_track: from.is_track,
+        hold_on_wrong_track: false,
+        origin: successor.origin.clone(),
+        requested_by_user_id: None,
+        attempt_id: None,
+        track_album: None,
+        album_wanted: from.album_wanted,
+        planned_album: from.planned_album,
+    };
+    let root = staging_root.to_path_buf();
+    match tokio::task::spawn_blocking(move || ManifestCodec.write(&root, &manifest)).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => {
+            tracing::warn!(%task_id, %error, "retry manifest write failed");
+        }
+        Err(error) => {
+            tracing::warn!(%task_id, %error, "retry manifest write did not run");
+        }
+    }
+}
+
+/// A task's manifest, when present and readable.
+async fn read_manifest(staging_root: &Path, task_id: &str) -> Option<DownloadManifest> {
+    let path = ManifestCodec::checked_path(staging_root, task_id)?;
+    let bytes = tokio::fs::read(path).await.ok()?;
+    ManifestCodec.decode(&bytes).ok()
+}
+
+/// One download source behind the fetch seam. Cheap to clone, so each
+/// pass can add the plugin sources enabled right now to the built-in ones.
+#[derive(Clone)]
+pub enum Source {
+    /// Soulseek via slskd.
+    Slskd(Arc<SlskdSource>),
+    /// Usenet via SABnzbd.
+    Sab(Arc<SabnzbdSource>),
+    /// A plugin's download client (`plugin:<name>`).
+    Plugin(Arc<PluginDownloadSource>),
+    /// Files already on disk, finished at once (tests only).
+    #[cfg(any(test, feature = "test-support"))]
+    Fixed(Arc<FixedSource>),
+}
+
+/// A test source whose every download is finished at once and landed at
+/// fixed paths, so journeys can drive the worker end to end.
+#[cfg(any(test, feature = "test-support"))]
+pub struct FixedSource {
+    mount: PathBuf,
+    paths: Vec<PathBuf>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl FixedSource {
+    /// Downloads land at `paths`, inside the downloads folder `mount`.
+    pub fn new(mount: PathBuf, paths: Vec<PathBuf>) -> Self {
+        Self { mount, paths }
+    }
+
+    fn names(&self) -> Vec<String> {
+        self.paths
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect()
+    }
+}
+
+impl Source {
+    fn name(&self) -> &str {
+        match self {
+            Self::Slskd(_) => "slskd",
+            Self::Sab(_) => "sabnzbd",
+            Self::Plugin(source) => source.key(),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fixed(_) => "fixed",
+        }
+    }
+
+    /// A manual search on this source: its ranked candidates for the
+    /// target's album.
+    pub async fn search_candidates(
+        &self,
+        target: &super::target::SearchTarget,
+    ) -> Result<Vec<super::search_jobs::candidates::Candidate>, SourceError> {
+        match self {
+            Self::Slskd(source) => source.search_candidates(target).await,
+            Self::Sab(source) => Ok(source.search_candidates(target).await),
+            Self::Plugin(source) => source.search_candidates(target).await,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fixed(_) => Ok(Vec::new()),
+        }
+    }
+
+    /// Journal source tag (`soulseek`, `usenet`, `plugin:<name>`).
+    pub fn journal_source(&self) -> &str {
+        match self {
+            Self::Slskd(_) => "soulseek",
+            Self::Sab(_) => "usenet",
+            Self::Plugin(source) => source.key(),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fixed(_) => "plugin:fixed",
+        }
+    }
+
+    async fn enqueue(
+        &self,
+        task_id: &str,
+        candidate_index: i64,
+    ) -> Result<SourceHandle, SourceError> {
+        match self {
+            Self::Slskd(source) => source.enqueue(task_id, candidate_index).await,
+            Self::Sab(source) => source.enqueue(task_id, candidate_index).await,
+            Self::Plugin(source) => source.enqueue(task_id, candidate_index).await,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fixed(source) => Ok(SourceHandle {
+                source: "plugin:fixed".to_owned(),
+                filenames: source.names(),
+                job_name: format!("fixed-{task_id}-{candidate_index}"),
+                ..SourceHandle::default()
+            }),
+        }
+    }
+
+    async fn poll(
+        &self,
+        handle: &SourceHandle,
+    ) -> Result<super::downloads::sources::TransferProgress, SourceError> {
+        match self {
+            Self::Slskd(source) => source.poll(handle).await,
+            Self::Sab(source) => source.poll(handle).await,
+            Self::Plugin(source) => source.poll(handle).await,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fixed(source) => Ok(super::downloads::sources::TransferProgress {
+                all_terminal: true,
+                all_succeeded: true,
+                has_active_transfer: false,
+                downloaded_bytes: 1,
+                succeeded_filenames: source.names(),
+                ..Default::default()
+            }),
+        }
+    }
+
+    async fn discard(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
+        match self {
+            Self::Slskd(source) => source.discard(handle).await,
+            Self::Sab(source) => source.discard(handle).await,
+            Self::Plugin(source) => source.discard(handle).await,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fixed(_) => Ok(true),
+        }
+    }
+
+    async fn abort(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
+        match self {
+            Self::Slskd(source) => source.abort(handle).await,
+            Self::Sab(source) => source.abort(handle).await,
+            Self::Plugin(source) => source.abort(handle).await,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fixed(_) => Ok(true),
+        }
+    }
+
+    /// The landed files (or job folder) for a finished handle, with the
+    /// downloads folders the landing confines them to.
+    async fn landed_paths(
+        &self,
+        handle: &SourceHandle,
+    ) -> Result<crate::landing::Landed, SourceError> {
+        match self {
+            Self::Slskd(source) => source.landed(handle).await,
+            Self::Sab(source) => source.landed(handle).await,
+            Self::Plugin(source) => source.landed_paths(handle).await,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fixed(source) => Ok(crate::landing::Landed {
+                mounts: vec![source.mount.clone()],
+                files: source
+                    .paths
+                    .iter()
+                    .cloned()
+                    .map(crate::landing::Reported::path)
+                    .collect(),
+            }),
+        }
+    }
+
+    /// Whether the client still owns one job (orphan evidence). `None`
+    /// means the lookup failed and the folder must stay.
+    async fn job_active(&self, handle: &SourceHandle) -> Option<bool> {
+        match self {
+            Self::Slskd(_) | Self::Plugin(_) => None,
+            Self::Sab(source) => source.job_present(handle).await.ok(),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fixed(_) => None,
+        }
+    }
+
+    /// Client-side mount health for orphan evidence. `None` fails closed
+    /// (the folder stays). Soulseek has no cheap mount probe and its
+    /// folders always keep anyway, so it answers `None`.
+    async fn mount_healthy(&self, handle: &SourceHandle) -> Option<bool> {
+        match self {
+            Self::Slskd(_) => None,
+            Self::Sab(source) => source
+                .inspect(handle)
+                .await
+                .map(|seen| seen.mount_healthy)
+                .ok(),
+            Self::Plugin(source) => source
+                .inspect(handle)
+                .await
+                .map(|seen| seen.mount_healthy)
+                .ok(),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fixed(_) => None,
+        }
+    }
+}
+
+/// Worker tuning, read at the start of every pass.
+#[derive(Debug, Clone)]
+pub struct WorkerConfig {
+    /// Pass cadence.
+    pub interval: Duration,
+    /// Concurrent live downloads.
+    pub max_concurrent_downloads: usize,
+    /// Failover attempts per task across all sources.
+    pub max_failover_attempts: i64,
+    /// Auto-retry timing.
+    pub retry: RetryPolicy,
+    /// Watchdog timing.
+    pub watchdog: WatchdogConfig,
+    /// Journal source tags in try order (`soulseek`, `usenet`).
+    pub source_order: Vec<String>,
+    /// Per-task staging root (manifests live beneath it).
+    pub staging_root: PathBuf,
+    /// Recycle bins to prune: the configured one, when resolvable, plus
+    /// the `.recycle` folder of every library root (library removals land
+    /// there). All share one retention window.
+    pub recycle: Vec<RecycleBin>,
+    /// Complete dirs to walk as `(journal source, dir)`.
+    pub orphan_roots: Vec<(String, PathBuf)>,
+    /// Lease owner name for cleanup claims.
+    pub worker_id: String,
+    /// When an album waits for a hand pick instead of the best guess.
+    pub review: ReviewMode,
+}
+
+impl Default for WorkerConfig {
+    fn default() -> Self {
+        Self {
+            interval: WORKER_INTERVAL,
+            max_concurrent_downloads: 3,
+            max_failover_attempts: 3,
+            retry: RetryPolicy::default(),
+            watchdog: WatchdogConfig::default(),
+            source_order: vec!["soulseek".to_owned(), "usenet".to_owned()],
+            staging_root: PathBuf::from("staging"),
+            recycle: Vec::new(),
+            orphan_roots: Vec::new(),
+            worker_id: "download-worker".to_owned(),
+            review: ReviewMode::default(),
+        }
+    }
+}
+
+/// The configured sources for one pass.
+pub type SourceSet = Arc<Vec<Source>>;
+/// Resolves the configured sources; called once per pass.
+pub type SourceProvider = Arc<dyn Fn() -> SourceSet + Send + Sync>;
+/// Resolves the worker tuning; called once per pass.
+pub type ConfigProvider = Arc<dyn Fn() -> WorkerConfig + Send + Sync>;
+
+/// Everything one pass works with: settings and sources resolved once at
+/// the start of the pass.
+struct Pass {
+    config: WorkerConfig,
+    sources: SourceSet,
+    watchdog: Watchdog,
+    now: f64,
+}
+
+impl Pass {
+    /// Sources in configured try order.
+    fn ordered_sources(&self) -> Vec<&Source> {
+        in_try_order(&self.sources, &self.config.source_order)
+    }
+
+    /// The adapter for one journal source tag.
+    fn source_for(&self, tag: &str) -> Option<&Source> {
+        self.sources
+            .iter()
+            .find(|source| source.journal_source() == tag)
+    }
+}
+
+/// Sources in the configured try order; any the order does not name
+/// come last.
+fn in_try_order<'a>(sources: &'a [Source], order: &[String]) -> Vec<&'a Source> {
+    let mut ordered = Vec::with_capacity(sources.len());
+    for wanted in order {
+        for source in sources {
+            if source.journal_source() == wanted {
+                ordered.push(source);
+            }
+        }
+    }
+    for source in sources {
+        if !ordered.iter().any(|placed| std::ptr::eq(*placed, source)) {
+            ordered.push(source);
+        }
+    }
+    ordered
+}
+
+/// One attempt plus its decoded client handle, when it has one.
+#[derive(Debug, Clone)]
+struct Attempt {
+    row: AttemptRow,
+    handle: Option<SourceHandle>,
+}
+
+/// Per-task poll memory: byte progress across passes.
+#[derive(Debug, Clone)]
+struct PollMemory {
+    enqueued_at: f64,
+    last_bytes: u64,
+    last_move_at: f64,
+}
+
+/// The steady-state worker. All passes are idempotent and per-item
+/// isolated: one bad task never stops its siblings.
+pub struct DownloadWorker {
+    journal: Arc<Journal>,
+    sources: SourceProvider,
+    config: ConfigProvider,
+    ownership: JournalOwnership,
+    poll_cache: Mutex<HashMap<String, PollMemory>>,
+    enqueue_not_before: Mutex<HashMap<String, f64>>,
+    unsearchable_warned: Mutex<HashSet<String>>,
+    plugins: super::wiring::PluginSlot,
+    landing: Option<Arc<LandingService>>,
+    landing_waits: Mutex<HashMap<String, u32>>,
+    settled: Option<SettledHook>,
+    /// Tasks whose landing runs right now, off the pass. The poll and
+    /// enqueue passes leave them alone.
+    in_flight: Arc<Mutex<HashSet<String>>>,
+    /// Spawned landings, awaited on shutdown.
+    landing_tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// Live progress for the web UI (`download_progress`).
+    events: droppedneedle_kernel::events::EventSink,
+    /// Wakes the loop early after a queue action (retry, next source).
+    wake: tokio::sync::Notify,
+    /// Album targets for the look before an automatic grab; without them
+    /// every source grabs its own best guess.
+    targets: Option<Arc<Targets>>,
+    /// Looks running off the pass, and tasks already looked at.
+    reviews: review::Reviews,
+}
+
+/// Called after a landing settles a task, so its requests and wanted
+/// watches resolve right away instead of on the next status sync.
+pub type SettledHook =
+    Arc<dyn Fn(TaskRow, TaskStatus) -> futures_util::future::BoxFuture<'static, ()> + Send + Sync>;
+
+impl DownloadWorker {
+    /// Wire the worker over the shared journal plus live source and config
+    /// resolvers.
+    pub fn new(journal: Arc<Journal>, sources: SourceProvider, config: ConfigProvider) -> Self {
+        let ownership = JournalOwnership::new(journal.clone());
+        Self {
+            journal,
+            sources,
+            config,
+            ownership,
+            poll_cache: Mutex::new(HashMap::new()),
+            enqueue_not_before: Mutex::new(HashMap::new()),
+            unsearchable_warned: Mutex::new(HashSet::new()),
+            plugins: Default::default(),
+            landing: None,
+            landing_waits: Mutex::new(HashMap::new()),
+            settled: None,
+            in_flight: Arc::new(Mutex::new(HashSet::new())),
+            landing_tasks: Mutex::new(Vec::new()),
+            events: droppedneedle_kernel::events::EventSink::default(),
+            wake: tokio::sync::Notify::new(),
+            targets: None,
+            reviews: review::Reviews::default(),
+        }
+    }
+
+    /// Search every source and look over the candidates before an album's
+    /// first automatic attempt (search review).
+    pub fn with_targets(mut self, targets: Arc<Targets>) -> Self {
+        self.targets = Some(targets);
+        self
+    }
+
+    /// Send live progress through this sink.
+    pub fn with_events(mut self, events: droppedneedle_kernel::events::EventSink) -> Self {
+        self.events = events;
+        self
+    }
+
+    /// The download journal the worker writes.
+    pub fn journal(&self) -> &Arc<Journal> {
+        &self.journal
+    }
+
+    /// The worker tuning as saved right now.
+    pub fn current_config(&self) -> WorkerConfig {
+        (self.config)()
+    }
+
+    /// The sources turned on right now, in the configured try order.
+    pub fn sources_now(&self) -> Vec<Source> {
+        let sources = (self.sources)();
+        let order = (self.config)().source_order;
+        in_try_order(&sources, &order)
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Run the next pass now instead of at the next interval.
+    pub fn wake(&self) {
+        self.wake.notify_one();
+    }
+
+    /// Import finished downloads through the landing instead of settling
+    /// them as completed unseen.
+    pub fn with_landing(mut self, landing: Arc<LandingService>) -> Self {
+        self.ownership = self.ownership.with_library(landing.library_slot().clone());
+        self.landing = Some(landing);
+        self
+    }
+
+    /// The landing, when imports are wired.
+    pub fn landing(&self) -> Option<&Arc<LandingService>> {
+        self.landing.as_ref()
+    }
+
+    /// Resolve requests as soon as a landing settles a task.
+    pub fn with_settled(mut self, hook: SettledHook) -> Self {
+        self.settled = Some(hook);
+        self
+    }
+
+    /// Announce download starts, completions and failures to `subscriber`
+    /// plugins through this slot.
+    pub fn with_plugin_events(mut self, plugins: super::wiring::PluginSlot) -> Self {
+        self.plugins = plugins;
+        self
+    }
+
+    /// Worker over a fixed source list and fixed tuning.
+    pub fn fixed(journal: Arc<Journal>, sources: Vec<Source>, config: WorkerConfig) -> Self {
+        let sources: SourceSet = Arc::new(sources);
+        Self::new(
+            journal,
+            Arc::new(move || sources.clone()),
+            Arc::new(move || config.clone()),
+        )
+    }
+
+    /// Run every steady-state pass once, in order. The orphan sweep only
+    /// runs when `pass` hits its hourly slot. Landings the poll pass
+    /// starts run on their own tasks; [`Self::wait_for_landings`] awaits
+    /// them.
+    pub async fn run_once(self: &Arc<Self>, pass: u64) {
+        let config = (self.config)();
+        let pass_ctx = Pass {
+            watchdog: Watchdog::new(config.watchdog.clone()),
+            sources: (self.sources)(),
+            config,
+            now: now_unix_f64(),
+        };
+        self.enqueue_pass(&pass_ctx).await;
+        self.poll_pass(&pass_ctx).await;
+        self.retry_pass(&pass_ctx).await;
+        self.cleanup_pass(&pass_ctx).await;
+        if pass.is_multiple_of(ORPHAN_EVERY_NTH_PASS) {
+            self.orphan_pass(&pass_ctx).await;
+        }
+    }
+
+    /// Run one journal step, logging a failure with its name.
+    async fn step<R, F>(&self, name: &'static str, op: F) -> Option<R>
+    where
+        R: Send + 'static,
+        F: for<'a, 'b> FnOnce(
+                &'a super::downloads::store::DownloadStore<'b>,
+            ) -> Result<R, StoreError>
+            + Send
+            + 'static,
+    {
+        match self.journal.run(name, op).await {
+            Ok(value) => Some(value),
+            Err(error) => {
+                tracing::warn!(step = name, %error, "download journal step failed");
+                None
+            }
+        }
+    }
+
+    /// A task's attempts with their decoded handles, in one read.
+    async fn attempts(&self, task_id: &str) -> Option<Vec<Attempt>> {
+        let task_id = task_id.to_owned();
+        self.step("downloads.attempts", move |store| {
+            let rows = store.list_attempts(&task_id)?;
+            let mut out = Vec::with_capacity(rows.len());
+            for row in rows {
+                let handle = store
+                    .attempt_handle_json(&row.id)?
+                    .and_then(|json| serde_json::from_str::<SourceHandle>(&json).ok());
+                out.push(Attempt { row, handle });
+            }
+            Ok(out)
+        })
+        .await
+    }
+
+    /// Enqueue queued tasks while under the concurrency cap. With no
+    /// source on, the queue is held as it is.
+    async fn enqueue_pass(self: &Arc<Self>, pass: &Pass) {
+        if pass.sources.is_empty() {
+            // No source is on: queued tasks wait untouched, with no look,
+            // no enqueue key and no backoff spent, so the first pass after
+            // one is turned on starts them.
+            return;
+        }
+        let Some(live) = self
+            .step("downloads.live", |store| {
+                store.list_active(&[TaskStatus::Downloading, TaskStatus::Processing])
+            })
+            .await
+        else {
+            // Without the live count the cap cannot hold; skip this pass.
+            return;
+        };
+        let Some(queued) = self
+            .step("downloads.queued", |store| {
+                store.list_active(&[TaskStatus::Queued])
+            })
+            .await
+        else {
+            return;
+        };
+        self.prune_queue_memory(&queued);
+        let mut budget = pass
+            .config
+            .max_concurrent_downloads
+            .saturating_sub(live.len());
+        for task in queued {
+            if budget == 0 {
+                break;
+            }
+            if self.enqueue_one(pass, &task).await {
+                budget -= 1;
+            }
+        }
+    }
+
+    /// Forget backoff and warning marks for tasks that left the queue.
+    fn prune_queue_memory(&self, queued: &[TaskRow]) {
+        let ids: HashSet<&str> = queued.iter().map(|task| task.id.as_str()).collect();
+        if let Ok(mut backoff) = self.enqueue_not_before.lock() {
+            backoff.retain(|task_id, _| ids.contains(task_id.as_str()));
+        }
+        if let Ok(mut warned) = self.unsearchable_warned.lock() {
+            warned.retain(|task_id| ids.contains(task_id.as_str()));
+        }
+        if let Ok(mut looked) = self.reviews.looked.lock() {
+            looked.retain(|task_id| ids.contains(task_id.as_str()));
+        }
+    }
+
+    /// Enqueue one queued task. Answers whether a fetch started.
+    async fn enqueue_one(self: &Arc<Self>, pass: &Pass, task: &TaskRow) -> bool {
+        let now = pass.now;
+        if self.landing_in_flight(&task.id) || Self::parked(task) {
+            // A parked task waits for its owner's pick from its search.
+            return false;
+        }
+        if task.artist_name.trim().is_empty() && task.album_title.trim().is_empty() {
+            // Edition asks carry no searchable names until the catalog
+            // port lands; warn once per task and leave the row queued.
+            let fresh = self
+                .unsearchable_warned
+                .lock()
+                .map(|mut warned| warned.insert(task.id.clone()))
+                .unwrap_or(false);
+            if fresh {
+                tracing::warn!(
+                    task_id = %task.id,
+                    "download task has no searchable names; leaving queued"
+                );
+            }
+            return false;
+        }
+        if let Some(not_before) = self
+            .enqueue_not_before
+            .lock()
+            .ok()
+            .and_then(|backoff| backoff.get(&task.id).copied())
+            && now < not_before
+        {
+            return false;
+        }
+        let Some(attempts) = self.attempts(&task.id).await else {
+            // Without the attempt list the next index is unknown; never
+            // guess index 0 and re-post a transfer.
+            return false;
+        };
+        if live_attempt(&attempts).is_some() {
+            // A pollable attempt exists; the poll pass owns this task.
+            // Queued rows in that state just missed their transition.
+            let task_id = task.id.clone();
+            self.step("downloads.resume_live", move |store| {
+                store.transition_task(&task_id, TaskStatus::Downloading, now, None)
+            })
+            .await;
+            return false;
+        }
+        let handled = handled_count(&attempts, None);
+        if failover_exhausted(handled, pass.config.max_failover_attempts) {
+            self.fail_unserved(task, &attempts, now, None).await;
+            return false;
+        }
+        if handled == 0 && task.search_job_id.is_none() && self.start_review(pass, task) {
+            // The look runs off the pass; the next pass picks up its link,
+            // or leaves the task parked.
+            return false;
+        }
+        // The key marks the window between the client add and the attempt
+        // journal write. A repeat claim means a crash landed in it: the
+        // enqueue below re-attaches (usenet probes queue and history by the
+        // deterministic job name; slskd re-enqueues by content) instead of
+        // starting a second transfer.
+        let key = format!("enqueue:{}:{handled}", task.id);
+        let task_id = task.id.clone();
+        let Some(fresh) = self
+            .step("downloads.enqueue_key", move |store| {
+                store.claim_key(&key, &task_id, "enqueue", now)
+            })
+            .await
+        else {
+            return false;
+        };
+        if !fresh {
+            tracing::info!(task_id = %task.id, attempt = handled, "resuming an interrupted enqueue");
+        }
+        let mut every_source_refused = true;
+        // A source's reason (code, sentence, action) becomes the task's
+        // message when nothing can serve it.
+        let mut reason: Option<String> = None;
+        let mut sources = pass.ordered_sources();
+        // A task started from a manual pick tries the picked source first.
+        if handled == 0
+            && task.search_job_id.is_some()
+            && task.candidate_index.is_some()
+            && let Some(at) = sources
+                .iter()
+                .position(|source| source.journal_source() == task.source)
+        {
+            let picked = sources.remove(at);
+            sources.insert(0, picked);
+        }
+        for source in sources {
+            // Each source walks its own candidate list: the index is the
+            // number of attempts this source already handled.
+            let source_index = handled_count(&attempts, Some(source.journal_source()));
+            match source.enqueue(&task.id, source_index).await {
+                Ok(handle) => {
+                    self.journal_enqueued(pass, task, source, handled, source_index, &handle)
+                        .await;
+                    return true;
+                }
+                Err(SourceError::LocalFault(detail)) => {
+                    // Our side is broken (disk, mount): back off without
+                    // blocklisting a healthy release or trying the other
+                    // side onto the same broken mount.
+                    tracing::warn!(task_id = %task.id, %detail, "enqueue local fault");
+                    self.backoff(&task.id, now);
+                    return false;
+                }
+                Err(error) => {
+                    match &error {
+                        SourceError::Rejected(text) => {
+                            if let Some(found) = TrackReason::in_text(text) {
+                                reason = Some(found.to_string());
+                            }
+                        }
+                        _ => every_source_refused = false,
+                    }
+                    tracing::warn!(
+                        task_id = %task.id,
+                        source = source.name(),
+                        %error,
+                        "enqueue failed; trying the next source"
+                    );
+                }
+            }
+        }
+        if every_source_refused && !pass.sources.is_empty() {
+            // Every configured source answered that it has nothing for
+            // this release: the candidate lists are spent.
+            self.fail_unserved(task, &attempts, now, reason.as_deref())
+                .await;
+            return false;
+        }
+        self.backoff(&task.id, now);
+        false
+    }
+
+    /// Settle a task no source can serve any more, keeping its last
+    /// attempt. Earlier landings decide how: tracks imported along the way
+    /// make it partial, held files make it a failure held for review
+    /// (v2 `_settle_incomplete`), else the last source's reason (code,
+    /// sentence, action) or no source could serve it.
+    async fn fail_unserved(
+        &self,
+        task: &TaskRow,
+        attempts: &[Attempt],
+        now: f64,
+        reason: Option<&str>,
+    ) {
+        let task_id = task.id.clone();
+        let history = self
+            .step("downloads.landing_history", move |store| {
+                store.landing_history(&task_id)
+            })
+            .await
+            .unwrap_or_default();
+        let (status, error) = if history.files_imported > 0 {
+            (
+                TaskStatus::Partial,
+                "imported what was found; no source had the rest".to_owned(),
+            )
+        } else if let Some(detail) = history.held_detail {
+            (TaskStatus::Failed, format!("Held for review: {detail}"))
+        } else {
+            (
+                TaskStatus::Failed,
+                reason
+                    .unwrap_or("no source could serve this release")
+                    .to_owned(),
+            )
+        };
+        let task_id = task.id.clone();
+        let last_attempt = attempts.last().map(|attempt| attempt.row.id.clone());
+        let settled = self
+            .step("downloads.fail_unserved", move |store| {
+                store.finalize_task_and_attempt(
+                    &task_id,
+                    status,
+                    now,
+                    Some(&error),
+                    last_attempt.as_deref(),
+                    true,
+                )
+            })
+            .await;
+        let (kind, outcome) = if status == TaskStatus::Partial {
+            (
+                droppedneedle_plugins::runtime::EventKind::DownloadCompleted,
+                "partial",
+            )
+        } else {
+            (
+                droppedneedle_plugins::runtime::EventKind::DownloadFailed,
+                "failed",
+            )
+        };
+        super::plugin_events::download_event(&self.plugins, kind, task, &task.source, outcome);
+        if settled.is_some()
+            && let Some(hook) = &self.settled
+        {
+            hook(task.clone(), status).await;
+        }
+    }
+
+    /// Journal one successful enqueue: the attempt row plus the
+    /// Downloading transition in one write, then the manifest handle and
+    /// fresh poll memory. If the attempt id is already taken (another
+    /// writer journaled this slot), the new client job is aborted so it
+    /// never runs untracked.
+    async fn journal_enqueued(
+        &self,
+        pass: &Pass,
+        task: &TaskRow,
+        source: &Source,
+        attempt_number: i64,
+        source_index: i64,
+        handle: &SourceHandle,
+    ) {
+        let now = pass.now;
+        let handle_json = match serde_json::to_string(handle) {
+            Ok(json) => json,
+            Err(error) => {
+                tracing::error!(task_id = %task.id, %error, "client handle encode failed");
+                return;
+            }
+        };
+        let attempt_id = format!("{}-a{attempt_number}", task.id);
+        let task_id = task.id.clone();
+        let journal_source = source.journal_source().to_owned();
+        let job_name = handle.job_name.clone();
+        let row_id = attempt_id.clone();
+        let journaled = self
+            .step("downloads.enqueued", move |store| {
+                store.insert_attempt(
+                    &row_id,
+                    &task_id,
+                    &journal_source,
+                    source_index,
+                    &job_name,
+                    &handle_json,
+                    AttemptState::Acquiring,
+                    now,
+                )?;
+                store.transition_task(&task_id, TaskStatus::Downloading, now, None)
+            })
+            .await;
+        if journaled.is_none() {
+            if let Err(error) = source.abort(handle).await {
+                tracing::warn!(task_id = %task.id, %error, "untracked client job abort failed");
+            }
+            return;
+        }
+        self.write_manifest_handle(pass, task, handle, &attempt_id)
+            .await;
+        super::plugin_events::download_event(
+            &self.plugins,
+            droppedneedle_plugins::runtime::EventKind::DownloadStarted,
+            task,
+            source.journal_source(),
+            "started",
+        );
+        if let Ok(mut cache) = self.poll_cache.lock() {
+            cache.insert(
+                task.id.clone(),
+                PollMemory {
+                    enqueued_at: now,
+                    last_bytes: 0,
+                    last_move_at: now,
+                },
+            );
+        }
+    }
+
+    /// Merge the client handle, target files and attempt link into the
+    /// task manifest. Best-effort: a missing manifest only steers recovery
+    /// toward a clean restart.
+    async fn write_manifest_handle(
+        &self,
+        pass: &Pass,
+        task: &TaskRow,
+        handle: &SourceHandle,
+        attempt_id: &str,
+    ) {
+        let staging_root = pass.config.staging_root.clone();
+        let mut manifest = read_manifest(&staging_root, &task.id)
+            .await
+            .unwrap_or_else(|| DownloadManifest {
+                task_id: task.id.clone(),
+                release_group_mbid: task.release_group_mbid.clone(),
+                artist_name: task.artist_name.clone(),
+                album_title: task.album_title.clone(),
+                naming_template: String::new(),
+                target_files: Vec::new(),
+                source_username: None,
+                handle: None,
+                expected_tracks: Vec::new(),
+                release_mbid: None,
+                artist_mbid: None,
+                year: None,
+                is_track: task.download_type == "track",
+                hold_on_wrong_track: false,
+                origin: task.origin.clone(),
+                requested_by_user_id: None,
+                attempt_id: None,
+                track_album: None,
+                album_wanted: Vec::new(),
+                planned_album: None,
+            });
+        manifest.handle = Some(super::downloads::manifest::TaskHandle {
+            source: handle.source.clone(),
+            username: handle.username.clone(),
+            filenames: handle.filenames.clone(),
+            job_name: handle.job_name.clone(),
+        });
+        manifest.attempt_id = Some(attempt_id.to_owned());
+        // Each attempt's files, with the sizes the chosen candidate
+        // advertised (the import's size check reads them from the handle).
+        manifest.target_files = handle
+            .filenames
+            .iter()
+            .enumerate()
+            .map(|(index, filename)| ExpectedFile {
+                filename: filename.clone(),
+                size: handle.sizes.get(index).copied().unwrap_or(0),
+                duration: None,
+            })
+            .collect();
+        let task_id = task.id.clone();
+        let written =
+            tokio::task::spawn_blocking(move || ManifestCodec.write(&staging_root, &manifest))
+                .await;
+        match written {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(task_id, %error, "manifest handle write failed");
+            }
+            Err(error) => {
+                tracing::warn!(task_id, %error, "manifest handle write join failed");
+            }
+        }
+    }
+
+    /// Push one task's next enqueue attempt out by the backoff window.
+    fn backoff(&self, task_id: &str, now: f64) {
+        if let Ok(mut backoff) = self.enqueue_not_before.lock() {
+            backoff.insert(task_id.to_owned(), now + ENQUEUE_BACKOFF_SECONDS);
+        }
+    }
+
+    /// Poll every live task through the watchdog.
+    async fn poll_pass(self: &Arc<Self>, pass: &Pass) {
+        let Some(tasks) = self
+            .step("downloads.live", |store| {
+                store.list_active(&[TaskStatus::Downloading, TaskStatus::Processing])
+            })
+            .await
+        else {
+            return;
+        };
+        let live: HashSet<&str> = tasks.iter().map(|task| task.id.as_str()).collect();
+        if let Ok(mut cache) = self.poll_cache.lock() {
+            cache.retain(|task_id, _| live.contains(task_id.as_str()));
+        }
+        for task in &tasks {
+            self.poll_one(pass, task).await;
+        }
+    }
+
+    /// Poll one live task: judge the sample, then complete, fail over, or
+    /// keep waiting. Poll errors never fail the task directly; the stall
+    /// math ages a dead client out into failover instead.
+    async fn poll_one(self: &Arc<Self>, pass: &Pass, task: &TaskRow) {
+        let now = pass.now;
+        if self.landing_in_flight(&task.id) {
+            return;
+        }
+        // The pass listed its tasks before any of them were polled; a
+        // landing that settled since then must not be seen as live again.
+        let task = match self.journal.read_task(&task.id).await {
+            Ok(Some(fresh)) if fresh.status == task.status => fresh,
+            Ok(_) => return,
+            Err(error) => {
+                tracing::warn!(task_id = %task.id, %error, "task re-read failed; poll skipped");
+                return;
+            }
+        };
+        let task = &task;
+        let Some(attempts) = self.attempts(&task.id).await else {
+            // A read failure is not "no attempt": leave the task alone.
+            return;
+        };
+        if task.status == TaskStatus::Processing
+            && live_attempt(&attempts).is_none()
+            && self.resume_landing(pass, task, &attempts).await
+        {
+            // A landing the last process left running (a reimport whose
+            // attempt is no longer live) picks up again instead of the
+            // task being requeued for a fresh download.
+            return;
+        }
+        let Some(attempt) = live_attempt(&attempts).cloned() else {
+            // No pollable attempt: back to queued for a fresh enqueue.
+            let task_id = task.id.clone();
+            self.step("downloads.requeue", move |store| {
+                store.transition_task(&task_id, TaskStatus::Queued, now, None)
+            })
+            .await;
+            return;
+        };
+        let Some(handle) = attempt.handle.clone() else {
+            return;
+        };
+        let Some(source) = pass.source_for(&attempt.row.source) else {
+            // Plugin sources have no adapter yet; leave the row for a
+            // worker that knows them rather than failing it here.
+            return;
+        };
+        let mut memory = self.poll_memory(&task.id, task, now);
+        match source.poll(&handle).await {
+            Ok(progress) => {
+                if progress.downloaded_bytes > memory.last_bytes {
+                    memory.last_move_at = now;
+                    memory.last_bytes = progress.downloaded_bytes;
+                }
+                let sample = PollSample {
+                    elapsed_seconds: now - memory.enqueued_at,
+                    idle_seconds: now - memory.last_move_at,
+                    has_active_transfer: progress.has_active_transfer,
+                    downloaded_bytes: progress.downloaded_bytes,
+                    all_terminal: progress.all_terminal,
+                    all_succeeded: progress.all_succeeded,
+                    materialize_wait_seconds: if progress.downloaded_bytes == 0
+                        && !progress.has_active_transfer
+                    {
+                        now - memory.enqueued_at
+                    } else {
+                        0.0
+                    },
+                };
+                self.store_poll_memory(&task.id, &memory);
+                self.apply_verdict(pass, task, &attempt.row, source, &handle, progress, sample)
+                    .await;
+            }
+            Err(SourceError::Rejected(detail)) => {
+                self.fail_over(
+                    now,
+                    task,
+                    &attempt.row,
+                    source,
+                    &handle,
+                    &detail,
+                    Some(QuarantineReason::DownloadFailed),
+                )
+                .await;
+            }
+            Err(error) => {
+                // Unavailable or local fault: stamp the poll and let the
+                // stall math age the task out; a momentary outage must
+                // not fail a healthy transfer.
+                tracing::warn!(task_id = %task.id, %error, "download poll failed");
+                let task_id = task.id.clone();
+                self.step("downloads.touch_poll", move |store| {
+                    store.touch_poll(&task_id, now)
+                })
+                .await;
+            }
+        }
+    }
+
+    /// Cached poll memory, seeded from the task row on first sight.
+    fn poll_memory(&self, task_id: &str, task: &TaskRow, now: f64) -> PollMemory {
+        if let Ok(cache) = self.poll_cache.lock()
+            && let Some(memory) = cache.get(task_id)
+        {
+            return memory.clone();
+        }
+        PollMemory {
+            enqueued_at: task.started_at.unwrap_or(task.created_at),
+            last_bytes: 0,
+            last_move_at: task.last_polled_at.unwrap_or(now),
+        }
+    }
+
+    /// Store refreshed poll memory.
+    fn store_poll_memory(&self, task_id: &str, memory: &PollMemory) {
+        if let Ok(mut cache) = self.poll_cache.lock() {
+            cache.insert(task_id.to_owned(), memory.clone());
+        }
+    }
+
+    /// Apply one watchdog verdict to its task and attempt.
+    #[allow(clippy::too_many_arguments)]
+    async fn apply_verdict(
+        self: &Arc<Self>,
+        pass: &Pass,
+        task: &TaskRow,
+        attempt: &AttemptRow,
+        source: &Source,
+        handle: &SourceHandle,
+        progress: super::downloads::sources::TransferProgress,
+        sample: PollSample,
+    ) {
+        use super::downloads::watchdog::WatchdogOutcome;
+        let now = pass.now;
+        let reason = match pass.watchdog.evaluate(&sample) {
+            WatchdogOutcome::Continue => {
+                self.record_progress(pass, task, &progress).await;
+                return;
+            }
+            WatchdogOutcome::Completed if self.landing.is_some() => {
+                self.start_landing(task, attempt, source, handle, now).await;
+                return;
+            }
+            WatchdogOutcome::Completed => {
+                let task_id = task.id.clone();
+                let attempt_id = attempt.id.clone();
+                self.step("downloads.complete", move |store| {
+                    store.finalize_task_and_attempt(
+                        &task_id,
+                        TaskStatus::Completed,
+                        now,
+                        None,
+                        Some(&attempt_id),
+                        false,
+                    )
+                })
+                .await;
+                if let Ok(mut cache) = self.poll_cache.lock() {
+                    cache.remove(&task.id);
+                }
+                super::plugin_events::download_event(
+                    &self.plugins,
+                    droppedneedle_plugins::runtime::EventKind::DownloadCompleted,
+                    task,
+                    source.journal_source(),
+                    "completed",
+                );
+                return;
+            }
+            WatchdogOutcome::Terminal => format!(
+                "source batch terminal ({} files succeeded)",
+                progress.succeeded_filenames.len()
+            ),
+            WatchdogOutcome::Stalled => "transfer stalled".to_owned(),
+            WatchdogOutcome::QueuedTimeout => "stuck in the remote queue".to_owned(),
+            WatchdogOutcome::MaterializeTimeout => {
+                "no transfer materialized after enqueue".to_owned()
+            }
+            WatchdogOutcome::Deadline => "poll deadline hit".to_owned(),
+        };
+        self.fail_over(
+            now,
+            task,
+            attempt,
+            source,
+            handle,
+            &reason,
+            Some(QuarantineReason::DownloadFailed),
+        )
+        .await;
+    }
+
+    /// Fail one attempt over to the next candidate: blocklist the failed
+    /// release under `quarantine` (never on a local fault), discard client
+    /// records, then settle the attempt and requeue the task in one write
+    /// so the next pass enqueues the following candidate.
+    #[allow(clippy::too_many_arguments)]
+    async fn fail_over(
+        &self,
+        now: f64,
+        task: &TaskRow,
+        attempt: &AttemptRow,
+        source: &Source,
+        handle: &SourceHandle,
+        reason: &str,
+        quarantine: Option<QuarantineReason>,
+    ) {
+        if let Some(quarantine) = quarantine {
+            self.quarantine_failed(task, attempt, handle, reason, quarantine, now)
+                .await;
+        }
+        let settled_state = match source.discard(handle).await {
+            Ok(_) => AttemptState::Complete,
+            Err(error) => {
+                tracing::warn!(task_id = %task.id, %error, "discard failed; cleanup will retry");
+                AttemptState::CleanupPending
+            }
+        };
+        let attempt_id = attempt.id.clone();
+        let revision = attempt.row_revision;
+        let task_id = task.id.clone();
+        let reason = reason.to_owned();
+        self.step("downloads.fail_over", move |store| {
+            store.transition_attempt(
+                &attempt_id,
+                revision,
+                settled_state,
+                now,
+                Some("discard"),
+                None,
+                true,
+            )?;
+            store.transition_task(&task_id, TaskStatus::Queued, now, Some(&reason))
+        })
+        .await;
+        if let Ok(mut cache) = self.poll_cache.lock() {
+            cache.remove(&task.id);
+        }
+    }
+
+    /// Blocklist a failed release by source identity, scoped to the album
+    /// for retry-clearing. Local faults (disk, mount) are never
+    /// quarantined: the backoff'd retry re-grabs once the environment
+    /// recovers.
+    async fn quarantine_failed(
+        &self,
+        task: &TaskRow,
+        attempt: &AttemptRow,
+        handle: &SourceHandle,
+        reason: &str,
+        quarantine: QuarantineReason,
+        now: f64,
+    ) {
+        if is_local_fault(Some(reason)) {
+            return;
+        }
+        let identities = failover_identities(
+            &attempt.source,
+            &handle.username,
+            &handle.filenames,
+            &handle.job_name,
+        );
+        if identities.is_empty() {
+            return;
+        }
+        let source = attempt.source.clone();
+        let scope = if task.release_group_mbid.is_empty() {
+            None
+        } else {
+            Some(task.release_group_mbid.clone())
+        };
+        self.step("downloads.quarantine", move |store| {
+            for identity in &identities {
+                store.record_quarantine(
+                    &source,
+                    identity,
+                    quarantine.as_str(),
+                    scope.as_deref(),
+                    now,
+                    QUARANTINE_TTL_SECONDS,
+                )?;
+            }
+            Ok(())
+        })
+        .await;
+    }
+
+    /// Spawn successors for terminal tasks whose retry backoff elapsed.
+    /// The successor id is deterministic per (task, generation), and the
+    /// existence check, detail copy and insert share one write, so a crash
+    /// or a failed insert simply retries on the next pass.
+    async fn retry_pass(&self, pass: &Pass) {
+        let now = pass.now;
+        let max = i64::from(pass.config.retry.auto_retry_max());
+        if max == 0 {
+            return;
+        }
+        let retryable = match self.journal.read_retryable(max).await {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::warn!(%error, "retryable download read failed");
+                return;
+            }
+        };
+        for task in retryable {
+            let anchor = task.completed_at.unwrap_or(task.updated_at);
+            let due = pass.config.retry.next_retry_at(
+                u32::try_from(task.retry_count.max(0)).unwrap_or(u32::MAX),
+                anchor,
+                task.status.as_str(),
+            );
+            if due.is_none_or(|at| at > now) {
+                continue;
+            }
+            let Some(row) = successor_row(&task) else {
+                continue;
+            };
+            let successor = row.id.clone();
+            let next = row.clone();
+            let source = task.clone();
+            let spawned = self
+                .step("downloads.retry", move |store| {
+                    // Held tracks gate their task: re-downloading a held
+                    // track loops.
+                    if store.has_unresolved_held_for_task(&source.id)? {
+                        return Ok(false);
+                    }
+                    // The request follows its download onto the retry.
+                    let created = store.spawn_successor(&source, &row, now)?;
+                    if created {
+                        store.relink_request(&source.id, &row.id)?;
+                    }
+                    Ok(created)
+                })
+                .await;
+            if spawned == Some(true) {
+                write_successor_manifest(&pass.config.staging_root, &task.id, &next).await;
+                tracing::info!(
+                    task_id = %task.id,
+                    successor = %successor,
+                    "download auto-retry spawned"
+                );
+            }
+        }
+    }
+
+    /// Claim due cleanup rows and settle them: abort a cancelled task's
+    /// live transfer, discard client records, then mark complete; a
+    /// failure defers with backoff.
+    async fn cleanup_pass(&self, pass: &Pass) {
+        let now = pass.now;
+        let worker_id = pass.config.worker_id.clone();
+        let Some(claimed) = self
+            .step("downloads.cleanup_claim", move |store| {
+                store.claim_cleanup_attempts(
+                    &worker_id,
+                    now,
+                    FAILOVER_CLAIM_LIMIT,
+                    FAILOVER_LEASE_SECONDS,
+                )
+            })
+            .await
+        else {
+            return;
+        };
+        for attempt in claimed {
+            self.cleanup_one(pass, &attempt).await;
+        }
+    }
+
+    /// Settle one claimed cleanup row.
+    async fn cleanup_one(&self, pass: &Pass, attempt: &AttemptRow) {
+        let now = pass.now;
+        if self.landing_in_flight(&attempt.task_id) {
+            // A landing (a reimport) is reading these files: try later.
+            self.defer_cleanup(attempt, "landing_in_flight", now).await;
+            return;
+        }
+        let read = async {
+            Ok::<_, String>((
+                self.journal.read_attempt_handle(&attempt.id).await?,
+                self.journal.read_task(&attempt.task_id).await?,
+            ))
+        };
+        let (handle_json, task) = match read.await {
+            Ok(found) => found,
+            Err(error) => {
+                tracing::warn!(attempt_id = %attempt.id, %error, "cleanup read failed");
+                return;
+            }
+        };
+        let decoded = handle_json.and_then(|json| match serde_json::from_str(&json) {
+            Ok(handle) => Some(handle),
+            Err(error) => {
+                tracing::warn!(
+                    attempt_id = %attempt.id,
+                    %error,
+                    "stored client handle does not decode; cleaning by job name"
+                );
+                None
+            }
+        });
+        let handle: SourceHandle = decoded.unwrap_or(SourceHandle {
+            source: attempt.source.clone(),
+            username: String::new(),
+            filenames: Vec::new(),
+            job_name: attempt.job_name.clone(),
+            nzo_id: String::new(),
+            plugin_token: String::new(),
+            sizes: Vec::new(),
+        });
+        let Some(source) = pass.source_for(&attempt.source) else {
+            // No adapter for this source: defer with backoff rather than
+            // spinning on a row this worker can never settle.
+            self.defer_cleanup(attempt, "no_adapter", now).await;
+            return;
+        };
+        let cancelled = task.is_some_and(|task| task.status == TaskStatus::Cancelled);
+        if cancelled
+            && attempt.disposition == "discard"
+            && let Err(error) = source.abort(&handle).await
+        {
+            tracing::warn!(attempt_id = %attempt.id, %error, "cancelled transfer abort failed");
+            self.defer_cleanup(attempt, "abort_failed", now).await;
+            return;
+        }
+        match source.discard(&handle).await {
+            Ok(_) => {
+                let attempt_id = attempt.id.clone();
+                let revision = attempt.row_revision;
+                let disposition = attempt.disposition.clone();
+                self.step("downloads.cleanup_done", move |store| {
+                    store.transition_attempt(
+                        &attempt_id,
+                        revision,
+                        AttemptState::Complete,
+                        now,
+                        Some(&disposition),
+                        None,
+                        true,
+                    )
+                })
+                .await;
+            }
+            Err(error) => {
+                tracing::warn!(attempt_id = %attempt.id, %error, "cleanup discard failed");
+                self.defer_cleanup(attempt, "discard_failed", now).await;
+            }
+        }
+    }
+
+    /// Push one cleanup row out with backoff.
+    async fn defer_cleanup(&self, attempt: &AttemptRow, code: &'static str, now: f64) {
+        let attempt_id = attempt.id.clone();
+        let revision = attempt.row_revision;
+        self.step("downloads.cleanup_defer", move |store| {
+            store.record_cleanup_failure(&attempt_id, revision, code, now)
+        })
+        .await;
+    }
+
+    /// Walk the complete dirs and remove proven debris. Every ambiguous
+    /// answer keeps the folder; the recycle bin prunes expired entries.
+    async fn orphan_pass(&self, pass: &Pass) {
+        for (source_tag, root) in &pass.config.orphan_roots {
+            self.orphan_root(pass, source_tag, root).await;
+        }
+        for bin in &pass.config.recycle {
+            let bin = bin.clone();
+            let pruned = tokio::task::spawn_blocking(move || bin.prune(SystemTime::now())).await;
+            if let Err(error) = pruned
+                .map_err(|join| join.to_string())
+                .and_then(|r| r.map_err(|e| e.to_string()))
+            {
+                tracing::warn!(%error, "recycle bin prune failed");
+            }
+        }
+    }
+
+    /// Reconcile one complete dir.
+    async fn orphan_root(&self, pass: &Pass, source_tag: &str, root: &Path) {
+        let mut entries = match tokio::fs::read_dir(root).await {
+            Ok(entries) => entries,
+            Err(error) => {
+                tracing::warn!(root = %root.display(), %error, "orphan sweep cannot read root");
+                return;
+            }
+        };
+        loop {
+            let entry = match entries.next_entry().await {
+                Ok(Some(entry)) => entry,
+                Ok(None) => break,
+                Err(error) => {
+                    tracing::warn!(root = %root.display(), %error, "orphan sweep entry failed");
+                    continue;
+                }
+            };
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let is_symlink = entry
+                .file_type()
+                .await
+                .map(|kind| kind.is_symlink())
+                .unwrap_or(true);
+            let Some((task_id, job_name)) = job_name_parts(&name) else {
+                continue;
+            };
+            let evidence = self
+                .orphan_evidence(pass, source_tag, &task_id, &job_name, root, &entry.path())
+                .await;
+            match evaluate_orphan(&name, is_symlink, evidence) {
+                OrphanDecision::Remove => {
+                    self.remove_orphan(pass, source_tag, &task_id, &job_name, root, &entry.path())
+                        .await;
+                }
+                OrphanDecision::Keep | OrphanDecision::Ignore => {}
+            }
+        }
+    }
+
+    /// Gather ownership evidence for one candidate folder. `None` fails
+    /// closed (the folder stays).
+    async fn orphan_evidence(
+        &self,
+        pass: &Pass,
+        source_tag: &str,
+        task_id: &str,
+        job_name: &str,
+        root: &Path,
+        path: &Path,
+    ) -> Option<OrphanEvidence> {
+        let has_cleanup_debt = self
+            .ownership
+            .has_cleanup_debt(source_tag, task_id, job_name)
+            .await
+            .ok()?;
+        let task_status = self.ownership.task_status(task_id).await.ok()?;
+        let task_active = task_status.is_some_and(|status| {
+            matches!(status.as_str(), "queued" | "downloading" | "processing")
+        });
+        let bundles_settled = self.ownership.bundles_settled(task_id).await.ok()?;
+        let source = pass.source_for(source_tag)?;
+        let handle = SourceHandle {
+            source: source_tag.to_owned(),
+            username: String::new(),
+            filenames: Vec::new(),
+            job_name: job_name.to_owned(),
+            nzo_id: String::new(),
+            plugin_token: String::new(),
+            sizes: Vec::new(),
+        };
+        // Soulseek handles need the peer plus filenames, which the folder
+        // name does not carry: without them the client check cannot run,
+        // so slskd folders always keep (fail closed). Mount health still
+        // comes from a real readability probe, failing closed on error.
+        let client_job_active = if source_tag == "soulseek" {
+            let root_readable = tokio::fs::read_dir(root).await.is_ok();
+            if !root_readable {
+                return None;
+            }
+            return Some(OrphanEvidence {
+                has_cleanup_debt,
+                task_active,
+                bundles_settled,
+                mount_healthy: true,
+                client_job_active: true,
+                age_seconds: 0.0,
+            });
+        } else {
+            source.job_active(&handle).await?
+        };
+        // Real client-side mount truth; a lookup error fails closed.
+        let mount_healthy = source.mount_healthy(&handle).await?;
+        let age_seconds = tokio::fs::metadata(path)
+            .await
+            .ok()
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+            .map(|age| age.as_secs_f64())
+            .unwrap_or(0.0);
+        Some(OrphanEvidence {
+            has_cleanup_debt,
+            task_active,
+            bundles_settled,
+            mount_healthy,
+            client_job_active,
+            age_seconds,
+        })
+    }
+
+    /// Discard client records, then remove the folder. A discard failure
+    /// keeps the folder for the next sweep. Confinement is re-asserted
+    /// immediately before removal: the path must still sit under the
+    /// walked root and must not be a symlink.
+    async fn remove_orphan(
+        &self,
+        pass: &Pass,
+        source_tag: &str,
+        task_id: &str,
+        job_name: &str,
+        root: &Path,
+        path: &Path,
+    ) {
+        let is_symlink = tokio::fs::symlink_metadata(path)
+            .await
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(true);
+        if !orphan_remove_allowed(root, path, is_symlink) {
+            tracing::warn!(task_id, path = %path.display(), "orphan remove refused");
+            return;
+        }
+        let Some(source) = pass.source_for(source_tag) else {
+            return;
+        };
+        let handle = SourceHandle {
+            source: source_tag.to_owned(),
+            username: String::new(),
+            filenames: Vec::new(),
+            job_name: job_name.to_owned(),
+            nzo_id: String::new(),
+            plugin_token: String::new(),
+            sizes: Vec::new(),
+        };
+        if let Err(error) = source.discard(&handle).await {
+            tracing::warn!(task_id, %error, "orphan client discard failed; folder kept");
+            return;
+        }
+        if let Err(error) = tokio::fs::remove_dir_all(path).await {
+            tracing::warn!(task_id, %error, "orphan folder remove failed");
+        } else {
+            tracing::info!(task_id, path = %path.display(), "orphan folder removed");
+        }
+    }
+}
+
+/// Newest attempt with a client handle that is still acquiring or in use.
+fn live_attempt(attempts: &[Attempt]) -> Option<&Attempt> {
+    attempts.iter().rev().find(|attempt| {
+        matches!(
+            attempt.row.state,
+            AttemptState::Acquiring | AttemptState::InUse
+        ) && attempt.handle.is_some()
+    })
+}
+
+/// Attempts with a client handle, optionally for one source only.
+/// Handle-less rows never reached the client and do not consume a slot.
+fn handled_count(attempts: &[Attempt], source: Option<&str>) -> i64 {
+    attempts
+        .iter()
+        .filter(|attempt| attempt.handle.is_some())
+        .filter(|attempt| source.is_none_or(|tag| attempt.row.source == tag))
+        .count() as i64
+}
+
+/// Whether the failover walk is spent: `max` attempts occupy indices
+/// `0..max`, so a next index at or past `max` fails the task.
+fn failover_exhausted(handled: i64, max: i64) -> bool {
+    handled >= max
+}
+
+/// The retry successor row for a settled task: same ask, one generation
+/// on. `None` for a task that is not settled yet.
+fn successor_row(task: &TaskRow) -> Option<NewTask> {
+    let spawn = plan_retry(&task.id, task.status, &task.origin, task.retry_count)?;
+    // Successor ids keep the 32-hex shape the orphan parser recognises;
+    // the retry generation rides in `retry_count`.
+    Some(NewTask {
+        id: hex_task_id(&spawn.task_id),
+        user_id: task.user_id.clone(),
+        artist_name: task.artist_name.clone(),
+        album_title: task.album_title.clone(),
+        release_group_mbid: task.release_group_mbid.clone(),
+        origin: spawn.origin,
+        retry_count: spawn.retry_count,
+    })
+}
+
+/// Fold a retry successor id into the 32-hex shape: the planned
+/// `{task}-r{n}` suffix breaks the orphan parser, so hash it down while
+/// the generation rides in `retry_count`. FNV-1a, stable across processes
+/// (the std `DefaultHasher` is process-randomised, so a successor id must
+/// never depend on it).
+fn hex_task_id(planned: &str) -> String {
+    fn fnv1a(text: &str, seed: u64) -> u64 {
+        let mut hash = seed;
+        for byte in text.bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        hash
+    }
+    let first = fnv1a(planned, 0xcbf2_9ce4_8422_2325);
+    let second = fnv1a(planned, 0x8422_2325_cbf2_9ce4 ^ first);
+    format!("{first:016x}{second:016x}")
+}
+
+/// Spawn the worker loop: register the durable job, run passes on the
+/// configured cadence until shutdown, then mark the job stopped. The
+/// first pass runs immediately so redispatches do not wait a full
+/// interval after boot.
+pub async fn spawn_download_worker(
+    worker: Arc<DownloadWorker>,
+    wakeups: DurableWorkWakeups,
+    lane: WriteLane,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) -> Result<tokio::task::JoinHandle<()>, String> {
+    wakeups
+        .register_job(&lane, DOWNLOAD_WORKER_JOB, JobKind::Durable, None)
+        .await
+        .map_err(|error| error.to_string())?;
+    let task = tokio::spawn(async move {
+        // A pre-signaled shutdown skips the first pass entirely.
+        if *shutdown.borrow() {
+            mark(&wakeups, &lane, JobState::Stopped).await;
+            return;
+        }
+        mark(&wakeups, &lane, JobState::Running).await;
+        let mut pass: u64 = 0;
+        loop {
+            worker.run_once(pass).await;
+            if let Err(error) = wakeups.heartbeat(&lane, DOWNLOAD_WORKER_JOB).await {
+                tracing::warn!(%error, "download worker heartbeat failed");
+            }
+            pass += 1;
+            let interval = (worker.config)().interval;
+            tokio::select! {
+                () = tokio::time::sleep(jittered_interval(interval)) => {}
+                () = worker.wake.notified() => {}
+                _ = shutdown.changed() => break,
+            }
+            if *shutdown.borrow() {
+                break;
+            }
+        }
+        // A landing mid-publish finishes (or reaches a durable step)
+        // before the worker reports stopped.
+        worker.wait_for_landings().await;
+        mark(&wakeups, &lane, JobState::Stopped).await;
+    });
+    Ok(task)
+}
+
+/// Record the worker job's state, logging a failed write.
+async fn mark(wakeups: &DurableWorkWakeups, lane: &WriteLane, state: JobState) {
+    if let Err(error) = wakeups
+        .set_job_state(lane, DOWNLOAD_WORKER_JOB, state)
+        .await
+    {
+        tracing::warn!(%error, "download worker state write failed");
+    }
+}
+
+/// Pure removal gate: the folder must sit strictly under the walked
+/// root and must not be a symlink.
+fn orphan_remove_allowed(root: &Path, path: &Path, is_symlink: bool) -> bool {
+    !is_symlink && path != root && path.starts_with(root)
+}
+
+/// Pass cadence with ±10% jitter so a fleet of workers does not beat in
+/// lockstep after a shared restart.
+fn jittered_interval(base: Duration) -> Duration {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|span| span.subsec_nanos())
+        .unwrap_or(0);
+    let factor = 0.9 + f64::from(nanos % 201) / 1000.0;
+    Duration::from_secs_f64((base.as_secs_f64() * factor).max(1.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn successor_ids_are_stable_32_hex() {
+        let first = hex_task_id("task-r1");
+        assert_eq!(first.len(), 32);
+        assert!(first.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_eq!(first, hex_task_id("task-r1"));
+        assert_ne!(first, hex_task_id("task-r2"));
+    }
+
+    #[test]
+    fn orphan_removal_stays_confined() {
+        let root = Path::new("/data/complete");
+        assert!(orphan_remove_allowed(
+            root,
+            &root.join("droppedneedle-job"),
+            false
+        ));
+        assert!(!orphan_remove_allowed(root, root, false));
+        assert!(!orphan_remove_allowed(
+            root,
+            Path::new("/data/other/job"),
+            false
+        ));
+        assert!(!orphan_remove_allowed(
+            root,
+            &root.join("droppedneedle-job"),
+            true
+        ));
+    }
+}

@@ -190,28 +190,25 @@ report lists it too (`left_behind`). In short:
 ## What changed from v2
 
 Things v2 did that v3 does differently or no longer does. Read this before
-you upgrade: the first entry needs a change on your side first.
+you upgrade.
 
-### Do this before you upgrade
+### Before you upgrade
 
 - **Callback addresses.** v2 was called back on three `/api/v1` addresses.
-  v3 answers only on its own, so the old ones stop working with the
+  v3 still answers on all three, so nothing has to change with the
   upgrade:
-  - Single sign-on (OIDC): in your provider, change the redirect URI from
-    `/api/v1/auth/oidc/callback` to `/api/v3/auth/oidc/callback`, and check
-    that the redirect URI under Settings > Security matches. Until both
-    are changed, single sign-on fails.
+  - Single sign-on (OIDC): the redirect URI `/api/v1/auth/oidc/callback`
+    keeps working. To move to `/api/v3/auth/oidc/callback`, change it in
+    your provider and under Settings > Security together.
     Check before you upgrade that at least one admin can also sign in with
     a username and password. If single sign-on breaks and nobody can sign
     in, see [Locked out](#locked-out) below.
-  - Spotify playlist import: in the Spotify developer dashboard, add the
-    redirect URI ending in `/api/v3/acquire/spotify/auth/callback` to your
-    app. Until it is there, Connect on the Spotify card fails.
-  - MusicBrainz contributions: nothing is registered anywhere, but a
-    release editor tab opened from v2 returns to
-    `/api/v1/library/contributions/musicbrainz/callback`. Save or close
-    those tabs before you upgrade. Contributions started in v3 use the v3
-    address.
+  - Spotify playlist import: v3 goes on sending the redirect address v2
+    registered, so the Spotify dashboard needs no change (see
+    [After the upgrade](#after-the-upgrade)).
+  - MusicBrainz contributions: a release editor tab opened from v2 returns
+    to `/api/v1/library/contributions/musicbrainz/callback`, which v3 still
+    answers. Contributions started in v3 use the v3 address.
 
 ### Locked out
 
@@ -315,9 +312,9 @@ machine and its data folders can run it.
   The fix is to pass the browser's `Host` (or send it as
   `X-Forwarded-Host`) and `X-Forwarded-Proto` through. If you cannot
   change the proxy, state the address under Settings > Security > Public
-  address, or on the host with `droppedneedle-tool public-address`: the
-  reverse proxy paragraphs in the [README](../README.md#configuration)
-  have the steps.
+  address, or on the host with `droppedneedle-tool public-address`:
+  [Reverse proxy and security](reverse-proxy-and-security.md#public-address)
+  has the steps.
 - **Showing DroppedNeedle in a dashboard.** v2 could be shown in a frame
   by any page. v3 refuses that by default. If you open DroppedNeedle inside
   a dashboard such as Homarr or Organizr, add the dashboard's address under
@@ -330,6 +327,13 @@ machine and its data folders can run it.
   "Name (instrument)", and an instrument list in ID3. The first time v3
   writes performer credits to an album v2 managed, it rewrites the ones v2
   wrote in that form. Like every managed change, the run can be undone.
+- **MP3 tags that mix ID3v2.3 and v2.4.** An MP3 keeps its ID3 version,
+  except an ID3v2.3 tag that also holds ID3v2.4 frames. Picard and iTunes
+  write sort names that way, so most MP3s they tagged count as mixed. The
+  first time v3 writes such a file it saves the whole tag as ID3v2.4, so
+  every tag keeps its own frame; the preview says so for each file. There
+  is no switch to keep ID3v2.3, and a few old players read only ID3v2.3.
+  Undo and "Restore originals" put the values back; the tag stays ID3v2.4.
 
 ### Moved
 

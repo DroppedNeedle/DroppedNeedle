@@ -6,12 +6,15 @@ vi.mock('$lib/utils/errorHandling', () => ({
 
 import type { JellyfinTrackInfo, LocalTrackInfo, NativeTrackListItem } from '$lib/player/types';
 import type { PlaylistTrack } from '$lib/api/playlists';
+import type { components } from '$lib/api/v3/openapi';
 import type { TrackMeta, TrackSourceData } from './queueHelpers';
 import {
 	selectBestSource,
 	buildQueueItem,
 	buildQueueItemsFromJellyfin,
 	buildQueueItemsFromLocal,
+	buildQueueItemsFromNavidrome,
+	buildQueueItemsFromPlex,
 	buildDiscoveryQueueFromLocal,
 	buildQueueItemFromYouTube,
 	compareDiscTrack,
@@ -19,6 +22,11 @@ import {
 	normalizeCodec,
 	playlistTrackToQueueItem
 } from './queueHelpers';
+import {
+	toJellyfinTrack,
+	toNavidromeTrack,
+	toPlexTrack
+} from '$lib/queries/remotes/remoteAdapters';
 
 const baseMeta: TrackMeta = {
 	albumId: 'album-1',
@@ -343,5 +351,30 @@ describe('playlistTrackToQueueItem', () => {
 			library_file_id: null
 		};
 		expect(playlistTrackToQueueItem(track)).toBeNull();
+	});
+});
+
+describe('remote recording ids', () => {
+	type RemoteSource = components['schemas']['SourceName'];
+	const view = (source: RemoteSource): components['schemas']['RemotesTrackView'] => ({
+		id: 'item-1',
+		title: 'Song',
+		album_name: 'Album',
+		artist_name: 'Artist',
+		source,
+		part_key: source === 'plex' ? '/library/parts/1/file.flac' : null,
+		recording_mbid: 'rec-1'
+	});
+
+	it.each([
+		['jellyfin', () => buildQueueItemsFromJellyfin([toJellyfinTrack(view('jellyfin'))], baseMeta)],
+		[
+			'navidrome',
+			() => buildQueueItemsFromNavidrome([toNavidromeTrack(view('navidrome'))], baseMeta)
+		],
+		['plex', () => buildQueueItemsFromPlex([toPlexTrack(view('plex'))], baseMeta)]
+	] as const)('%s keeps the recording it gave under its own source', (source, build) => {
+		const [item] = build();
+		expect(item.recordingIds).toStrictEqual({ [source]: 'rec-1' });
 	});
 });

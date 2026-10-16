@@ -566,38 +566,35 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 name = "droppedneedle"
 version = "3.0.0"
 dependencies = [
- "aes",
- "argon2",
  "axum",
  "base64 0.22.1",
- "bcrypt",
- "caseless",
- "cbc",
- "chacha20poly1305",
  "droppedneedle",
+ "droppedneedle-acquire",
+ "droppedneedle-auth",
+ "droppedneedle-catalog",
+ "droppedneedle-compat",
+ "droppedneedle-kernel",
+ "droppedneedle-library",
+ "droppedneedle-media",
+ "droppedneedle-plugins",
+ "droppedneedle-providers",
+ "droppedneedle-testkit",
+ "droppedneedle-tool",
  "flate2",
  "futures-util",
- "getrandom 0.3.4",
- "hmac",
  "image",
  "libc",
  "lofty",
  "md5",
- "quick-xml",
  "regex",
  "reqwest",
  "ring",
- "rubato",
  "rusqlite",
- "rusty-chromaprint",
  "serde",
  "serde_json",
- "sha1",
  "sha2",
  "socket2",
  "sqlx",
- "symphonia",
- "symphonia-adapter-libopus",
  "thiserror",
  "time",
  "tokio",
@@ -606,10 +603,313 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "utoipa",
+ "uuid",
+ "zip",
+]
+
+[[package]]
+name = "droppedneedle-acquire"
+version = "3.0.0"
+dependencies = [
+ "axum",
+ "droppedneedle-auth",
+ "droppedneedle-catalog",
+ "droppedneedle-kernel",
+ "droppedneedle-library",
+ "droppedneedle-media",
+ "droppedneedle-plugins",
+ "droppedneedle-providers",
+ "futures-util",
+ "getrandom 0.3.4",
+ "libc",
+ "quick-xml",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tracing",
  "unicode-normalization",
  "utoipa",
  "uuid",
  "zip",
+]
+
+[[package]]
+name = "droppedneedle-auth"
+version = "3.0.0"
+dependencies = [
+ "argon2",
+ "axum",
+ "base64 0.22.1",
+ "bcrypt",
+ "droppedneedle-kernel",
+ "droppedneedle-providers",
+ "futures-util",
+ "getrandom 0.3.4",
+ "hmac",
+ "md5",
+ "reqwest",
+ "ring",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror",
+ "time",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "utoipa",
+ "uuid",
+]
+
+[[package]]
+name = "droppedneedle-catalog"
+version = "3.0.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "droppedneedle-auth",
+ "droppedneedle-kernel",
+ "droppedneedle-library",
+ "droppedneedle-media",
+ "droppedneedle-plugins",
+ "droppedneedle-providers",
+ "futures-util",
+ "image",
+ "md5",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror",
+ "time",
+ "tokio",
+ "tracing",
+ "utoipa",
+ "uuid",
+]
+
+[[package]]
+name = "droppedneedle-compat"
+version = "3.0.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "droppedneedle-auth",
+ "droppedneedle-catalog",
+ "droppedneedle-kernel",
+ "droppedneedle-library",
+ "droppedneedle-media",
+ "droppedneedle-providers",
+ "futures-util",
+ "image",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "time",
+ "tokio",
+ "tower",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "droppedneedle-kernel"
+version = "3.0.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "caseless",
+ "chacha20poly1305",
+ "futures-util",
+ "getrandom 0.3.4",
+ "hmac",
+ "libc",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror",
+ "time",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "unicode-normalization",
+ "utoipa",
+ "uuid",
+]
+
+[[package]]
+name = "droppedneedle-library"
+version = "3.0.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "caseless",
+ "droppedneedle-auth",
+ "droppedneedle-kernel",
+ "droppedneedle-providers",
+ "flate2",
+ "futures-util",
+ "getrandom 0.3.4",
+ "image",
+ "libc",
+ "lofty",
+ "regex",
+ "reqwest",
+ "rubato",
+ "rusqlite",
+ "rusty-chromaprint",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "symphonia",
+ "symphonia-adapter-libopus",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "unicode-normalization",
+ "utoipa",
+ "uuid",
+]
+
+[[package]]
+name = "droppedneedle-media"
+version = "3.0.0"
+dependencies = [
+ "axum",
+ "caseless",
+ "droppedneedle-auth",
+ "droppedneedle-kernel",
+ "droppedneedle-library",
+ "droppedneedle-plugins",
+ "droppedneedle-providers",
+ "flate2",
+ "futures-util",
+ "getrandom 0.3.4",
+ "libc",
+ "md5",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror",
+ "time",
+ "tokio",
+ "tracing",
+ "utoipa",
+ "uuid",
+ "zip",
+]
+
+[[package]]
+name = "droppedneedle-plugins"
+version = "3.0.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "droppedneedle-auth",
+ "droppedneedle-kernel",
+ "droppedneedle-library",
+ "droppedneedle-providers",
+ "futures-util",
+ "libc",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "utoipa",
+ "uuid",
+ "zip",
+]
+
+[[package]]
+name = "droppedneedle-providers"
+version = "3.0.0"
+dependencies = [
+ "caseless",
+ "droppedneedle-kernel",
+ "futures-util",
+ "md5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "time",
+ "tokio",
+ "tracing",
+ "unicode-normalization",
+]
+
+[[package]]
+name = "droppedneedle-testkit"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "droppedneedle-tool"
+version = "3.0.0"
+dependencies = [
+ "aes",
+ "argon2",
+ "axum",
+ "base64 0.22.1",
+ "bcrypt",
+ "cbc",
+ "chacha20poly1305",
+ "droppedneedle",
+ "droppedneedle-acquire",
+ "droppedneedle-auth",
+ "droppedneedle-catalog",
+ "droppedneedle-compat",
+ "droppedneedle-kernel",
+ "droppedneedle-library",
+ "droppedneedle-media",
+ "droppedneedle-plugins",
+ "droppedneedle-providers",
+ "droppedneedle-testkit",
+ "droppedneedle-tool",
+ "getrandom 0.3.4",
+ "hmac",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror",
+ "time",
+ "tokio",
+ "toml",
+ "tower",
+ "tracing",
+ "utoipa",
+ "uuid",
 ]
 
 [[package]]

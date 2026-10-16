@@ -2,6 +2,9 @@
 	import { syncStatus } from '$lib/stores/syncStatus.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import {
 		Users,
 		Disc3,
@@ -83,10 +86,7 @@
 				<ChevronUp class="h-3.5 w-3.5 opacity-50 shrink-0" />
 			</button>
 		{:else}
-			<!-- Expanded card -->
-			<div
-				class="bg-base-200 rounded-box shadow-xl border border-base-300 p-4 animate-slide-in-right"
-			>
+			<Card variant="bordered" padding="md" class="shadow-xl animate-slide-in-right">
 				<div class="flex items-center justify-between gap-2 mb-3">
 					<div class="flex items-center gap-2.5 min-w-0">
 						{#if isComplete}
@@ -116,22 +116,18 @@
 						{/if}
 					</div>
 					<div class="flex items-center gap-0.5 shrink-0">
-						<button
-							class="btn btn-ghost btn-xs btn-circle opacity-50 hover:opacity-100"
+						<IconButton
+							size="xs"
+							icon={Minus}
+							label="Minimize sync progress"
 							onclick={() => syncStatus.minimize()}
-							aria-label="Minimize sync progress"
-							title="Minimize"
-						>
-							<Minus class="h-3.5 w-3.5" />
-						</button>
-						<button
-							class="btn btn-ghost btn-xs btn-circle opacity-50 hover:opacity-100"
+						/>
+						<IconButton
+							size="xs"
+							icon={X}
+							label="Dismiss notification"
 							onclick={() => syncStatus.dismiss()}
-							aria-label="Dismiss notification"
-							title="Dismiss"
-						>
-							<X class="h-3.5 w-3.5" />
-						</button>
+						/>
 					</div>
 				</div>
 
@@ -167,12 +163,7 @@
 
 					{#if authStore.isTrusted}
 						<div class="flex justify-end mt-2">
-							<button class="btn btn-ghost btn-xs" onclick={stop} disabled={stopping}>
-								{#if stopping}
-									<span class="loading loading-spinner loading-xs"></span>
-								{/if}
-								Stop
-							</button>
+							<Button variant="ghost" size="xs" loading={stopping} onclick={stop}>Stop</Button>
 						</div>
 					{/if}
 				{/if}
@@ -180,7 +171,7 @@
 				{#if syncStatus.error}
 					<p class="text-xs text-error/70 truncate mt-1">{syncStatus.error}</p>
 				{/if}
-			</div>
+			</Card>
 		{/if}
 	</div>
 {/if}

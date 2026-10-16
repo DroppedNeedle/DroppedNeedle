@@ -29,6 +29,8 @@
 	} from '$lib/queries/downloads/downloadStatus';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import type { DownloadTask } from '$lib/types';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
 	import { EMPTY_STATE_COPY, classifyEmptyState } from '$lib/utils/acquisitionLabels';
 
@@ -115,9 +117,7 @@
 	}
 </script>
 
-<article
-	class="dl-item group rounded-2xl border border-base-content/5 bg-base-200/50 p-3 backdrop-blur-sm"
->
+<Card as="article" variant="bordered" padding="sm">
 	<div class="flex items-center gap-3 sm:gap-4">
 		<div class="shrink-0">
 			{#if isSearchingState}
@@ -223,90 +223,102 @@
 
 		<div class="flex shrink-0 flex-col items-end gap-1.5">
 			{#if parkedJobId}
-				<button
-					class="btn btn-primary btn-xs"
+				<Button
+					variant="primary"
+					size="xs"
 					onclick={() => (reviewOpen = !reviewOpen)}
 					aria-expanded={reviewOpen}
 				>
 					{reviewOpen ? 'Hide' : 'Review'}
-				</button>
+				</Button>
 			{/if}
 			{#if canCancel(task)}
-				<button
-					class="btn btn-ghost btn-xs text-error/70 hover:text-error"
+				<Button
+					variant="danger-ghost"
+					size="xs"
+					icon={X}
 					onclick={() => cancel.mutate(task.id)}
 					disabled={cancel.isPending}
 					title="Cancel download"
 					aria-label="Cancel download"
 				>
-					<X class="h-3.5 w-3.5" /> Cancel
-				</button>
+					Cancel
+				</Button>
 			{:else if isProcessing}
-				<button
-					class="btn btn-ghost btn-xs"
+				<Button
+					variant="ghost"
+					size="xs"
+					icon={X}
 					disabled
 					title="Can't cancel while processing files."
 					aria-label="Cancel unavailable while processing files"
 				>
-					<X class="h-3.5 w-3.5" /> Cancel
-				</button>
+					Cancel
+				</Button>
 			{/if}
 			{#if authStore.isAdmin && canReimport(task)}
-				<button
-					class="btn btn-ghost btn-xs"
+				<Button
+					variant="ghost"
+					size="xs"
+					icon={FileDown}
 					onclick={() =>
 						reimport.mutate({ id: task.id, release_group_mbid: task.release_group_mbid })}
 					disabled={reimport.isPending}
 					title="Already fixed this in slskd? Check the downloads mount again without re-searching."
 					aria-label="Retry import from slskd"
 				>
-					<FileDown class="h-3.5 w-3.5" />
 					{reimport.isPending ? 'Checking...' : 'Retry import'}
-				</button>
+				</Button>
 			{/if}
 			{#if canSearchManually}
-				<button
-					class="btn btn-ghost btn-xs"
+				<Button
+					variant="ghost"
+					size="xs"
+					icon={Search}
 					onclick={onSearchManually}
 					disabled={search.isPending || manualJobId !== null}
 					title="Search every download source for this album and choose the copy yourself"
 					aria-label="Search sources and pick a copy"
 				>
-					<Search class="h-3.5 w-3.5" />
 					{search.isPending ? 'Starting…' : 'Pick a source'}
-				</button>
+				</Button>
 			{/if}
 			{#if canRetry(task)}
-				<button
-					class="btn btn-ghost btn-primary btn-xs"
+				<Button
+					variant="ghost"
+					size="xs"
+					icon={RotateCcw}
 					onclick={onRetry}
 					disabled={retry.isPending || retried}
 					title="Retry"
 					aria-label="Retry download"
 				>
-					<RotateCcw class="h-3.5 w-3.5" />
 					{retried ? 'Retrying…' : 'Retry'}
-				</button>
+				</Button>
 			{/if}
 			{#if isScheduledRetry}
-				<button
-					class="btn btn-ghost btn-xs text-base-content/60 hover:text-error"
+				<Button
+					variant="ghost"
+					size="xs"
+					icon={TimerOff}
 					onclick={() => stopRetry.mutate(task.id)}
 					disabled={stopRetry.isPending}
 					title="Stop auto-retrying - it won't be watched for later either"
 					aria-label="Stop auto-retrying this download"
 				>
-					<TimerOff class="h-3.5 w-3.5" /> Stop retrying
-				</button>
+					Stop retrying
+				</Button>
 			{/if}
 			{#if isCompleted}
-				<a
+				<Button
+					variant="ghost"
+					size="xs"
+					icon={ExternalLink}
 					href={albumHref(task.release_group_mbid)}
-					class="btn btn-ghost btn-xs"
 					aria-label="View in library"
 				>
-					<ExternalLink class="h-3.5 w-3.5" /> View in Library
-				</a>
+					View in Library
+				</Button>
 			{/if}
 		</div>
 	</div>
@@ -316,26 +328,4 @@
 	{:else if manualJobId}
 		<ManualSearch jobId={manualJobId} onClose={() => (manualJobId = null)} />
 	{/if}
-</article>
-
-<style>
-	.dl-item {
-		transition:
-			transform 0.2s var(--ease-spring, ease-out),
-			box-shadow 0.2s var(--ease-spring, ease-out),
-			border-color 0.2s ease;
-	}
-	.dl-item:hover {
-		transform: translateY(-2px);
-		box-shadow: 0 12px 24px -14px oklch(from var(--color-base-100) l c h / 0.9);
-		border-color: oklch(from var(--color-primary) l c h / 0.2);
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.dl-item {
-			transition: none;
-		}
-		.dl-item:hover {
-			transform: none;
-		}
-	}
-</style>
+</Card>

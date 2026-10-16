@@ -18,8 +18,8 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 
-use super::error::SettingsError;
-use crate::http_client::read_capped;
+use droppedneedle_kernel::http_client::read_capped;
+use droppedneedle_kernel::runtime_config::settings_error::SettingsError;
 
 /// Per-probe HTTP budget, matching the v2 repositories.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -266,11 +266,11 @@ fn transport_kind(error: &reqwest::Error) -> &'static str {
 /// Map a media-adapter failure to a v2-shaped verdict message. The URL
 /// is never echoed.
 fn adapter_message(
-    error: &crate::remotes::adapter::AdapterError,
+    error: &droppedneedle_media::remotes::adapter::AdapterError,
     unconfigured: &str,
     auth: &str,
 ) -> String {
-    use crate::remotes::adapter::AdapterError as Source;
+    use droppedneedle_media::remotes::adapter::AdapterError as Source;
     match error {
         Source::NotConfigured => unconfigured.to_owned(),
         Source::Auth => auth.to_owned(),
@@ -293,7 +293,7 @@ fn adapter_message(
 impl VerifyProbes for LiveProbes {
     fn jellyfin<'a>(&'a self, url: &'a str, key: &'a str) -> BoxFuture<'a, JellyfinVerdict> {
         Box::pin(async move {
-            use crate::remotes::jellyfin::JellyfinAdapter;
+            use droppedneedle_media::remotes::jellyfin::JellyfinAdapter;
             if url.trim().is_empty() || key.is_empty() {
                 return JellyfinVerdict {
                     valid: false,
@@ -338,7 +338,7 @@ impl VerifyProbes for LiveProbes {
         password: &'a str,
     ) -> BoxFuture<'a, ProbeVerdict> {
         Box::pin(async move {
-            use crate::remotes::navidrome::NavidromeAdapter;
+            use droppedneedle_media::remotes::navidrome::NavidromeAdapter;
             let adapter = NavidromeAdapter::new(
                 self.http.clone(),
                 url.to_owned(),
@@ -358,7 +358,7 @@ impl VerifyProbes for LiveProbes {
 
     fn plex<'a>(&'a self, url: &'a str, token: &'a str) -> BoxFuture<'a, PlexVerdict> {
         Box::pin(async move {
-            use crate::remotes::plex::PlexAdapter;
+            use droppedneedle_media::remotes::plex::PlexAdapter;
             let adapter = PlexAdapter::new(
                 self.http.clone(),
                 url.to_owned(),
@@ -396,7 +396,7 @@ impl VerifyProbes for LiveProbes {
         token: &'a str,
     ) -> BoxFuture<'a, Result<Vec<(String, String)>, String>> {
         Box::pin(async move {
-            use crate::remotes::plex::PlexAdapter;
+            use droppedneedle_media::remotes::plex::PlexAdapter;
             if url.trim().is_empty() || token.is_empty() {
                 return Err("Plex is not configured.".to_owned());
             }
@@ -421,7 +421,7 @@ impl VerifyProbes for LiveProbes {
         token: &'a str,
     ) -> BoxFuture<'a, ListenBrainzVerdict> {
         Box::pin(async move {
-            use crate::providers::listenbrainz::{
+            use droppedneedle_providers::listenbrainz::{
                 HttpListenBrainzVerifier, ListenBrainzVerifier as _,
             };
             let verifier = HttpListenBrainzVerifier::new(self.http.clone(), base);
@@ -523,7 +523,7 @@ impl VerifyProbes for LiveProbes {
 
     fn slskd<'a>(&'a self, url: &'a str, key: &'a str) -> BoxFuture<'a, VersionVerdict> {
         Box::pin(async move {
-            use crate::acquire::slskd::{
+            use droppedneedle_acquire::slskd::{
                 ReqwestSlskdHttp, SlskdClient, policy::DownloadPolicy as SlskdPolicy,
                 repository::SlskdRepository,
             };
@@ -560,7 +560,7 @@ impl VerifyProbes for LiveProbes {
         downloads_mount: &'a str,
     ) -> BoxFuture<'a, SabnzbdVerdict> {
         Box::pin(async move {
-            use crate::acquire::usenet::{
+            use droppedneedle_acquire::usenet::{
                 policy::UsenetPolicy,
                 sabnzbd::{SabnzbdClient, SabnzbdQueue},
             };
@@ -646,7 +646,7 @@ impl VerifyProbes for LiveProbes {
 
     fn prowlarr<'a>(&'a self, url: &'a str, key: &'a str) -> BoxFuture<'a, ProwlarrVerdict> {
         Box::pin(async move {
-            use crate::acquire::usenet::prowlarr::ProwlarrClient;
+            use droppedneedle_acquire::usenet::prowlarr::ProwlarrClient;
             if url.trim().is_empty() || key.is_empty() {
                 return ProwlarrVerdict {
                     valid: false,
@@ -687,7 +687,7 @@ impl VerifyProbes for LiveProbes {
 
     fn newznab<'a>(&'a self, url: &'a str, key: &'a str) -> BoxFuture<'a, NewznabVerdict> {
         Box::pin(async move {
-            use crate::acquire::usenet::newznab::NewznabClient;
+            use droppedneedle_acquire::usenet::newznab::NewznabClient;
             if url.trim().is_empty() {
                 return NewznabVerdict {
                     valid: false,
@@ -766,14 +766,15 @@ impl VerifyProbes for LiveProbes {
                 return ProbeVerdict::failed("Issuer URL is required.");
             }
             // Same transport rule the login applies, so Test fails early.
-            if let Err(reason) = crate::auth::federated::transport::check_provider_url(issuer).await
+            if let Err(reason) =
+                droppedneedle_auth::federated::transport::check_provider_url(issuer).await
             {
                 return ProbeVerdict::failed(reason);
             }
             let url = format!(
                 "{}{}",
                 issuer.trim_end_matches('/'),
-                crate::auth::federated::oidc::DISCOVERY_SUFFIX
+                droppedneedle_auth::federated::oidc::DISCOVERY_SUFFIX
             );
             let response = self.http.get(&url).timeout(PROBE_TIMEOUT).send().await;
             match response {
@@ -829,8 +830,10 @@ async fn newznab_failure(
 /// Prowlarr failure mapping: auth and rate-limit verdicts name the
 /// cause; anything else is a reachability verdict. The URL is never
 /// echoed.
-fn prowlarr_failure(error: &crate::acquire::usenet::prowlarr::ProwlarrError) -> ProwlarrVerdict {
-    use crate::acquire::usenet::prowlarr::ProwlarrError as Source;
+fn prowlarr_failure(
+    error: &droppedneedle_acquire::usenet::prowlarr::ProwlarrError,
+) -> ProwlarrVerdict {
+    use droppedneedle_acquire::usenet::prowlarr::ProwlarrError as Source;
     let message = match error {
         Source::Auth { .. } => {
             "Prowlarr rejected the API key. Check the key in Prowlarr.".to_owned()
@@ -907,7 +910,7 @@ fn api_path_suggestion(url: &str) -> Option<String> {
 /// auth error, or a rate limit all mean the API was reached; anything
 /// else means the suggestion is wrong too.
 async fn reaches_newznab(http: &reqwest::Client, url: &str, key: &str) -> bool {
-    use crate::acquire::usenet::newznab::{NewznabClient, NewznabError};
+    use droppedneedle_acquire::usenet::newznab::{NewznabClient, NewznabError};
     let client = NewznabClient::new(http.clone(), url, key, "", "");
     match client.caps(PROBE_TIMEOUT).await {
         Ok(caps) => !caps_are_empty(&caps),
@@ -918,7 +921,7 @@ async fn reaches_newznab(http: &reqwest::Client, url: &str, key: &str) -> bool {
 
 /// Empty caps (no server, no searching, no categories) mean the URL
 /// answered something other than a caps document.
-fn caps_are_empty(caps: &crate::acquire::usenet::newznab::NewznabCaps) -> bool {
+fn caps_are_empty(caps: &droppedneedle_acquire::usenet::newznab::NewznabCaps) -> bool {
     caps.server_title.is_none()
         && caps.server_version.is_none()
         && !caps.supports_audio_search

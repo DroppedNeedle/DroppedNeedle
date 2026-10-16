@@ -2,6 +2,7 @@
 	import { Download } from 'lucide-svelte';
 
 	import { requestTrack } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	// orphan-track case (album not in library) is resolved by the backend
 	interface Props {
@@ -45,16 +46,11 @@
 	}
 </script>
 
-<button
-	class="btn btn-ghost btn-xs btn-circle"
+<IconButton
+	size="xs"
+	icon={Download}
+	label="Request this track"
+	loading={request.isPending}
+	disabled={requested}
 	onclick={handleClick}
-	disabled={request.isPending || requested}
-	aria-label="Request this track"
-	title="Request this track"
->
-	{#if request.isPending}
-		<span class="loading loading-spinner loading-xs"></span>
-	{:else}
-		<Download class="h-3.5 w-3.5" aria-hidden="true" />
-	{/if}
-</button>
+/>

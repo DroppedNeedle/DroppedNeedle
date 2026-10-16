@@ -1,19 +1,11 @@
 <script lang="ts">
-	import {
-		ArrowRight,
-		BookOpenCheck,
-		CirclePause,
-		CirclePlay,
-		Database,
-		OctagonX,
-		ShieldCheck,
-		Tags,
-		Trash2
-	} from 'lucide-svelte';
+	import { ArrowRight, BookOpenCheck, Database, ShieldCheck, Tags, Trash2 } from 'lucide-svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import IdentityFindingEditionButton from './IdentityFindingEditionButton.svelte';
 	import { controlLibraryOperation } from '$lib/queries/library/LibraryOperationMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import { withBasePath } from '$lib/utils/basePath';
+	import OperationJobStrip from './OperationJobStrip.svelte';
 	import {
 		applyLibraryIdentityPreparation,
 		createLibraryIdentityPreparation,
@@ -39,8 +31,8 @@
 	let confirmDialog: HTMLDialogElement;
 	let startHeading: HTMLHeadingElement;
 	let confirmHeading: HTMLHeadingElement;
-	let startOpener: HTMLButtonElement | null = null;
-	let confirmOpener: HTMLButtonElement | null = null;
+	let startOpener: HTMLElement | null = null;
+	let confirmOpener: HTMLElement | null = null;
 	let startOpen = $state(false);
 	let scopeMode = $state<'all' | 'selected'>('all');
 	let selectedRootIds = $state<string[]>([]);
@@ -125,7 +117,7 @@
 		{ id: 'unverifiable', label: 'Try again later' }
 	] as const;
 
-	function openStart(opener: HTMLButtonElement): void {
+	function openStart(opener: HTMLElement): void {
 		startOpener = opener;
 		scopeMode = 'all';
 		selectedRootIds = [];
@@ -180,7 +172,7 @@
 				: (counts[tab] ?? 0);
 	}
 
-	function openConfirmation(action: 'apply' | 'discard', opener: HTMLButtonElement): void {
+	function openConfirmation(action: 'apply' | 'discard', opener: HTMLElement): void {
 		confirmOpener = opener;
 		confirmAction = action;
 		confirmDialog.showModal();
@@ -255,11 +247,12 @@
 				never changes tags, paths, or audio.
 			</p>
 		</div>
-		<button
-			class="btn btn-outline btn-sm"
+		<Button
+			variant="outline"
+			size="sm"
+			icon={ShieldCheck}
 			disabled={Boolean(active)}
-			onclick={(event) => openStart(event.currentTarget)}
-			><ShieldCheck class="h-4 w-4" /> Prepare identities...</button
+			onclick={(event) => openStart(event.currentTarget)}>Prepare identities...</Button
 		>
 	</div>
 
@@ -304,33 +297,23 @@
 					releases checked
 				</p>
 			</div>
-			<div class="flex flex-wrap gap-1">
-				{#if active.state === 'running'}
-					<button
-						class="btn btn-ghost btn-xs"
-						onclick={() =>
-							void pause
-								.mutateAsync({ jobId: active.id, expectedRevision: active.row_revision })
-								.catch(() => undefined)}><CirclePause class="h-3.5 w-3.5" /> Pause</button
-					>
-				{:else if active.state === 'paused'}
-					<button
-						class="btn btn-ghost btn-xs"
-						onclick={() =>
-							void resume
-								.mutateAsync({ jobId: active.id, expectedRevision: active.row_revision })
-								.catch(() => undefined)}><CirclePlay class="h-3.5 w-3.5" /> Resume</button
-					>
-				{/if}
-				<button
-					class="btn btn-ghost btn-xs text-error"
-					disabled={active.control_request !== 'none'}
-					onclick={() =>
-						void stop
-							.mutateAsync({ jobId: active.id, expectedRevision: active.row_revision })
-							.catch(() => undefined)}><OctagonX class="h-3.5 w-3.5" /> Stop</button
-				>
-			</div>
+			<OperationJobStrip
+				size="xs"
+				status={active.state}
+				controlRequest={active.control_request}
+				onpause={() =>
+					pause
+						.mutateAsync({ jobId: active.id, expectedRevision: active.row_revision })
+						.catch(() => undefined)}
+				onresume={() =>
+					resume
+						.mutateAsync({ jobId: active.id, expectedRevision: active.row_revision })
+						.catch(() => undefined)}
+				onstop={() =>
+					stop
+						.mutateAsync({ jobId: active.id, expectedRevision: active.row_revision })
+						.catch(() => undefined)}
+			/>
 		</div>
 	{/if}
 
@@ -349,24 +332,29 @@
 				</div>
 				<div class="flex flex-wrap gap-1">
 					{#if report.state === 'ready' && !refreshRequired && (currentCounts?.mapping_ready ?? report.repair_summary.mapping_candidate_count) > 0}
-						<button
-							class="btn btn-primary btn-sm"
+						<Button
+							variant="primary"
+							size="sm"
+							icon={Database}
 							onclick={(event) => openConfirmation('apply', event.currentTarget)}
-							><Database class="h-4 w-4" /> Accept mappings...</button
+							>Accept mappings...</Button
 						>
 					{/if}
 					{#if report.state === 'ready' && !refreshRequired && suggestedCount > 0}
-						<button
-							class="btn btn-primary btn-sm"
+						<Button
+							variant="primary"
+							size="sm"
 							onclick={(event) => openConfirmation('apply', event.currentTarget)}
-							>Accept editions ({suggestedCount})...</button
+							>Accept editions ({suggestedCount})...</Button
 						>
 					{/if}
 					{#if report.state === 'ready'}
-						<button
-							class="btn btn-ghost btn-sm"
+						<Button
+							variant="ghost"
+							size="sm"
+							icon={Trash2}
 							onclick={(event) => openConfirmation('discard', event.currentTarget)}
-							><Trash2 class="h-4 w-4" /> Dismiss report</button
+							>Dismiss report</Button
 						>
 					{/if}
 				</div>
@@ -471,27 +459,33 @@
 								<div class="flex shrink-0 items-center gap-2">
 									<span class="badge badge-success badge-sm shrink-0">Auto-accepted</span>
 									{#if finding.automatic_undo}
-										<button
-											class="btn btn-outline btn-error btn-xs"
+										<Button
+											variant="danger-ghost"
+											size="xs"
 											disabled={undoEdition.isPending}
 											onclick={() => void undoAutoAccepted(finding.local_album_id)}
 										>
 											Undo
-										</button>
+										</Button>
 									{/if}
 								</div>
-							{:else if !refreshRequired && activeTab === 'exact_release_required'}
-								<IdentityFindingEditionButton albumId={finding.local_album_id} />
-							{:else if !refreshRequired && activeTab === 'needs_review'}
-								<IdentityFindingEditionButton
-									albumId={finding.local_album_id}
-									label="Re-identify"
-								/>
+							{:else if !refreshRequired && (activeTab === 'exact_release_required' || activeTab === 'needs_review')}
+								<Button
+									variant="ghost"
+									size="xs"
+									icon={ArrowRight}
+									iconPosition="end"
+									href={withBasePath(
+										`/album/${encodeURIComponent(finding.local_album_id)}?edition=choose`
+									)}>Choose edition</Button
+								>
 							{:else if !refreshRequired}
-								<a
-									class="btn btn-ghost btn-xs"
-									href={`/album/${encodeURIComponent(finding.local_album_id)}`}
-									>Open release <ArrowRight class="h-3.5 w-3.5" /></a
+								<Button
+									variant="ghost"
+									size="xs"
+									icon={ArrowRight}
+									iconPosition="end"
+									href={`/album/${encodeURIComponent(finding.local_album_id)}`}>Open release</Button
 								>
 							{/if}
 						</div>
@@ -499,11 +493,13 @@
 				</div>
 			{/if}
 			{#if findingsQuery.hasNextPage}
-				<button
-					class="btn btn-ghost btn-sm mt-3"
+				<Button
+					variant="ghost"
+					size="sm"
+					class="mt-3"
 					disabled={findingsQuery.isFetchingNextPage}
 					onclick={() => void findingsQuery.fetchNextPage()}
-					>{findingsQuery.isFetchingNextPage ? 'Loading...' : 'Load more releases'}</button
+					>{findingsQuery.isFetchingNextPage ? 'Loading...' : 'Load more releases'}</Button
 				>
 			{/if}
 		</div>
@@ -591,18 +587,16 @@
 			</p>
 		{/if}
 		<div class="modal-action">
-			<form method="dialog"><button class="btn btn-ghost">Cancel</button></form>
-			<button
-				class="btn btn-primary"
-				disabled={createPreparation.isPending ||
-					startEstimate.isLoading ||
+			<form method="dialog"><Button variant="ghost" type="submit">Cancel</Button></form>
+			<Button
+				variant="primary"
+				loading={createPreparation.isPending}
+				disabled={startEstimate.isLoading ||
 					(scopeMode === 'selected' && selectedRootIds.length === 0)}
 				onclick={() => void startPreparation()}
 			>
-				{#if createPreparation.isPending}<span class="loading loading-spinner loading-sm"
-					></span>{/if}
 				Start read-only check
-			</button>
+			</Button>
 		</div>
 	</div>
 	<form method="dialog" class="modal-backdrop"><button>Close</button></form>
@@ -637,19 +631,14 @@
 			</p>
 		{/if}
 		<div class="modal-action">
-			<form method="dialog"><button class="btn btn-ghost">Cancel</button></form>
-			<button
-				class:btn-primary={confirmAction === 'apply'}
-				class:btn-error={confirmAction === 'discard'}
-				class="btn"
-				disabled={applyPreparation.isPending || discardPreparation.isPending}
+			<form method="dialog"><Button variant="ghost" type="submit">Cancel</Button></form>
+			<Button
+				variant={confirmAction === 'apply' ? 'primary' : 'danger'}
+				loading={applyPreparation.isPending || discardPreparation.isPending}
 				onclick={() => void confirmReportAction()}
 			>
-				{#if applyPreparation.isPending || discardPreparation.isPending}<span
-						class="loading loading-spinner loading-sm"
-					></span>{/if}
 				{confirmAction === 'apply' ? 'Accept identities' : 'Dismiss report'}
-			</button>
+			</Button>
 		</div>
 	</div>
 	<form method="dialog" class="modal-backdrop"><button>Close</button></form>

@@ -206,8 +206,10 @@ export const getLibraryAlbumDetailQuery = (getAlbumId: Getter<string>) =>
 		};
 	});
 
-// Album pages are reachable by local id and by release-group id; once the
-// canonical id is known the detail is stored under it too.
+// Album pages are reachable by local id and by release-group id. Before a
+// local album's page moves to its release group's address, its detail is
+// stored (and persisted) under its own local id, where the matched page that
+// follows reads it.
 export const cacheCanonicalLibraryAlbumDetail = (album: LibraryAlbumDetail) =>
 	setQueryDataWithPersister<LibraryAlbumDetail>(
 		LibraryQueryKeyFactory.catalog.albumDetail(userId(), album.id),

@@ -2,6 +2,8 @@
 	import { goto } from '$app/navigation';
 	import { isWhatsNewDismissed, dismissWhatsNew } from '$lib/stores/version.svelte';
 	import SafeHtml from '$lib/components/SafeHtml.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { X, Sparkles, ExternalLink } from 'lucide-svelte';
 	import type { GitHubRelease } from '$lib/queries/VersionQuery.svelte';
@@ -70,13 +72,14 @@
 	<div
 		class="modal-box whats-new-box max-w-2xl animate-fade-in-up border border-accent/10 p-5 sm:p-8"
 	>
-		<button
-			class="whats-new-close absolute right-2 top-2 flex h-11 w-11 items-center justify-center rounded-lg text-base-content/60 transition-all duration-200 hover:bg-base-content/8 hover:text-base-content/80"
+		<IconButton
+			size="sm"
+			shape="square"
+			icon={X}
+			label="Close"
+			class="absolute right-2 top-2"
 			onclick={handleDismiss}
-			aria-label="Close"
-		>
-			<X class="h-3.5 w-3.5" />
-		</button>
+		/>
 
 		<div class="mb-6 flex items-center gap-4">
 			<div
@@ -120,16 +123,16 @@
 		{/if}
 
 		<div class="modal-action mt-6 gap-3">
-			<button
-				class="btn btn-ghost btn-sm text-base-content/60 hover:text-base-content/80 gap-1.5"
+			<Button
+				variant="ghost"
+				size="sm"
+				icon={ExternalLink}
+				iconPosition="end"
 				onclick={handleViewChangelog}
 			>
 				View full changelog
-				<ExternalLink class="h-3 w-3" />
-			</button>
-			<button class="btn btn-accent btn-sm px-6 shadow-sm shadow-accent/15" onclick={handleDismiss}
-				>Got it</button
-			>
+			</Button>
+			<Button variant="accent" size="sm" onclick={handleDismiss}>Got it</Button>
 		</div>
 	</div>
 	<form method="dialog" class="modal-backdrop">

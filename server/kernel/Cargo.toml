@@ -1,0 +1,36 @@
+[package]
+name = "droppedneedle-kernel"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "DroppedNeedle kernel: config, database, settings store, errors, events and jobs"
+publish = false
+
+[dependencies]
+axum.workspace = true
+base64.workspace = true
+caseless.workspace = true
+chacha20poly1305.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
+hmac.workspace = true
+libc.workspace = true
+reqwest.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+unicode-normalization.workspace = true
+utoipa.workspace = true
+uuid.workspace = true
+
+[features]
+# Fakes, memory stores and test constructors for the test suites above.
+test-support = []

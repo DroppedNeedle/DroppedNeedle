@@ -92,7 +92,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           crate="$(awk '
-            /^\[/ { in_package = ($0 == "[package]") }
+            /^\[/ { in_package = ($0 == "[workspace.package]") }
             in_package && /^version[[:space:]]*=/ {
               gsub(/^[^"]*"|".*$/, "")
               print

@@ -32,14 +32,12 @@ use axum::{
 };
 use sqlx::SqlitePool;
 
-use crate::{
-    auth::{
-        session::middleware::CurrentSession,
-        users::{UsersDeps, models::UserRecord, roles::Role},
-    },
-    db::{BackupService, CheckpointService, DurableWorkWakeups, WriteLane},
-    providers::{InMemoryProviderCache, Providers},
+use droppedneedle_auth::{
+    session::middleware::CurrentSession,
+    users::{UsersDeps, models::UserRecord, roles::Role},
 };
+use droppedneedle_kernel::db::{BackupService, CheckpointService, DurableWorkWakeups, WriteLane};
+use droppedneedle_providers::{InMemoryProviderCache, Providers};
 
 pub use error::AdminError;
 pub use handlers::AdminHttpError;
@@ -79,7 +77,7 @@ pub struct AdminSetup {
     /// Account rows for gating and quota identity.
     pub users: UsersDeps,
     /// Live quota ledger (shared with acquisition enforcement).
-    pub quota: Arc<crate::acquire::requests::quota::QuotaLedger>,
+    pub quota: Arc<droppedneedle_acquire::requests::quota::QuotaLedger>,
     /// Provider byte cache (shared with the provider clients).
     pub cache: Arc<InMemoryProviderCache>,
     /// Provider limiters and slot lanes for provider stats.
@@ -92,10 +90,10 @@ pub struct AdminSetup {
     pub checkpoint: Option<CheckpointService>,
     /// Precache trigger over the shared jobs registry. `None` on unwired
     /// test states.
-    pub precache: Option<crate::jobs::wiring::PrecacheTrigger>,
+    pub precache: Option<crate::bootstrap::jobs::PrecacheTrigger>,
     /// Cover and artist image cache, for its stats and clears. `None` on
     /// states without one.
-    pub covers: Option<crate::reads::platform::artwork::cache::ArtworkCache>,
+    pub covers: Option<droppedneedle_catalog::reads::platform::artwork::cache::ArtworkCache>,
 }
 
 impl AdminSetup {
@@ -103,7 +101,7 @@ impl AdminSetup {
     /// `with_*` builders; production wires all three.
     pub fn new(
         users: UsersDeps,
-        quota: Arc<crate::acquire::requests::quota::QuotaLedger>,
+        quota: Arc<droppedneedle_acquire::requests::quota::QuotaLedger>,
         cache: Arc<InMemoryProviderCache>,
         providers: Arc<Providers>,
     ) -> Self {
@@ -143,7 +141,7 @@ impl AdminSetup {
 
     /// Attach the precache trigger.
     #[must_use]
-    pub fn with_precache(mut self, precache: crate::jobs::wiring::PrecacheTrigger) -> Self {
+    pub fn with_precache(mut self, precache: crate::bootstrap::jobs::PrecacheTrigger) -> Self {
         self.precache = Some(precache);
         self
     }
@@ -152,7 +150,7 @@ impl AdminSetup {
     #[must_use]
     pub fn with_covers(
         mut self,
-        covers: crate::reads::platform::artwork::cache::ArtworkCache,
+        covers: droppedneedle_catalog::reads::platform::artwork::cache::ArtworkCache,
     ) -> Self {
         self.covers = Some(covers);
         self
@@ -163,7 +161,7 @@ impl AdminSetup {
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(
         users: UsersDeps,
-        quota: Arc<crate::acquire::requests::quota::QuotaLedger>,
+        quota: Arc<droppedneedle_acquire::requests::quota::QuotaLedger>,
         cache: Arc<InMemoryProviderCache>,
         providers: Arc<Providers>,
     ) -> Self {

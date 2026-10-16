@@ -1,4 +1,10 @@
-//! DroppedNeedle v3 backend.
+//! DroppedNeedle v3 backend: the app that sits on the area crates.
+//!
+//! This crate holds the router, startup and wiring, `AppState`, the admin
+//! and settings routes, the API document, the web UI and the server
+//! binary. The areas are crates below it, from the bottom: kernel,
+//! providers, auth, library, plugins, media, catalog, then acquire and
+//! compat. The offline migration tool, `droppedneedle-tool`, sits above it.
 //!
 //! Layers: handlers (thin Axum handlers) call services holding domain logic;
 //! services reach the outside world through trait ports implemented by
@@ -13,44 +19,16 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
-pub mod acquire;
 pub mod admin;
 pub mod app;
-pub mod auth;
 pub mod bootstrap;
-pub mod client_ip;
-pub mod compat;
-pub mod concerts;
-pub mod config;
-pub mod db;
 pub mod docs;
-pub mod error;
-pub mod events;
-pub mod export;
 pub mod handlers;
-pub mod http_client;
-pub mod ids;
-pub mod import;
-pub mod jobs;
-pub mod library;
-pub mod media;
 pub mod middleware;
-pub mod observability;
-pub mod playback;
-pub mod plugins;
-pub mod provider_policy;
-pub mod providers;
-pub mod reads;
-pub mod remotes;
-pub mod runtime_config;
-pub mod schema;
 pub mod security_headers;
 pub mod settings;
 pub mod state;
-pub mod stream;
-pub mod tooling;
 pub mod web;
 
 pub use app::{create_app, create_app_with_web};
-pub use config::AppConfig;
 pub use state::AppState;

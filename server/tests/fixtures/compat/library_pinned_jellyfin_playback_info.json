@@ -4,32 +4,49 @@
       "Bitrate": 2000,
       "Container": "m4a",
       "DefaultAudioStreamIndex": 0,
-      "DirectStreamUrl": "http://test.local/jellyfin/Audio/<id-16>/stream.m4a?static=true&mediaSourceId=<id-16>&api_key=***",
+      "DirectStreamUrl": "http://test.local/jellyfin/Audio/<id-18>/stream.m4a?static=true&mediaSourceId=<id-18>&api_key=***",
+      "ETag": "<id-19>",
+      "Formats": [],
       "GenPtsInput": false,
-      "Id": "<id-16>",
+      "HasSegments": false,
+      "Id": "<id-18>",
       "IgnoreDts": false,
       "IgnoreIndex": false,
       "IsInfiniteStream": false,
       "IsRemote": false,
+      "MediaAttachments": [],
       "MediaStreams": [
         {
+          "AudioSpatialFormat": "None",
           "BitRate": 2000,
           "ChannelLayout": "stereo",
           "Channels": 2,
-          "Codec": "m4a",
+          "Codec": "aac",
+          "DisplayTitle": "AAC - Stereo",
           "Index": 0,
+          "IsAVC": false,
           "IsDefault": true,
           "IsExternal": false,
           "IsForced": false,
+          "IsHearingImpaired": false,
           "IsInterlaced": false,
           "IsTextSubtitleStream": false,
+          "Level": 0,
+          "LocalizedDefault": "Default",
+          "LocalizedExternal": "External",
           "SampleRate": 44100,
           "SupportsExternalStream": false,
-          "Type": "Audio"
+          "TimeBase": "1/44100",
+          "Type": "Audio",
+          "VideoRange": "Unknown",
+          "VideoRangeType": "Unknown"
         }
       ],
+      "Name": "04 Teardrop",
+      "Path": "Massive Attack/Mezzanine/04 Teardrop.m4a",
       "Protocol": "File",
       "ReadAtNativeFramerate": false,
+      "RequiredHttpHeaders": {},
       "RequiresClosing": false,
       "RequiresLooping": false,
       "RequiresOpening": false,
@@ -39,8 +56,10 @@
       "SupportsDirectStream": true,
       "SupportsProbing": false,
       "SupportsTranscoding": false,
-      "Type": "Default"
+      "TranscodingSubProtocol": "http",
+      "Type": "Default",
+      "UseMostCompatibleTranscodingProfile": false
     }
   ],
-  "PlaySessionId": "<id-17>"
+  "PlaySessionId": "<id-20>"
 }

@@ -3,6 +3,7 @@
 
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import type { HeldImport } from '$lib/types';
+	import Card from '$lib/ui/Card.svelte';
 	import { albumHref } from '$lib/utils/entityRoutes';
 
 	import HeldTrackReview from './HeldTrackReview.svelte';
@@ -10,7 +11,7 @@
 	let { held }: { held: HeldImport } = $props();
 </script>
 
-<article class="rounded-2xl border border-warning/20 bg-base-200/50 p-3 backdrop-blur-sm sm:p-4">
+<Card as="article" variant="bordered" padding="sm" class="border-warning/20">
 	<div class="flex items-start gap-3 sm:gap-4">
 		<div class="size-14 shrink-0 overflow-hidden rounded-lg ring-1 ring-base-content/10 sm:size-16">
 			{#if held.release_group_mbid}
@@ -49,4 +50,4 @@
 			<div class="mt-1.5"><HeldTrackReview {held} /></div>
 		</div>
 	</div>
-</article>
+</Card>

@@ -69,6 +69,11 @@ import {
 	buildSourceCallbacks
 } from './albumPlaybackHandlers';
 import { getLibraryAlbumStatusQuery } from '$lib/queries/library/LibraryQueries.svelte';
+import {
+	getAlbumEditionStatusQuery,
+	getEditionPlanQuery
+} from '$lib/queries/albums/EditionQueries.svelte';
+import { editionTrackRows, unmatchedFiles } from './albumEdition';
 import { getAlbumDownloadsQuery } from '$lib/queries/downloads/DownloadQueries.svelte';
 import { getHeldImportsQuery } from '$lib/queries/downloads/HeldQueries.svelte';
 import { isActiveDownloadStatus } from '$lib/queries/downloads/downloadStatus';
@@ -269,9 +274,42 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 	// expectedTracks === 0 -> tracklist unavailable, badge/Play All fall back to the
 	// presence-only reading (never block playback on a MusicBrainz hiccup).
 	const coverageExpected = $derived(libraryStatus?.expected_tracks ?? 0);
-	const coverageCovered = $derived(libraryStatus?.covered_tracks ?? 0);
 	const matchedFileIds = $derived(new SvelteSet(libraryStatus?.matched_file_ids ?? []));
-	const libraryOrphans = $derived(libraryStatus?.orphans ?? []);
+
+	// The local album that holds this release group, and its current edition's
+	// plan: the same reads, under the same keys, as the edition plate, so the
+	// track rows, the counts and the plate never disagree.
+	const localAlbumId = $derived(
+		libraryStatus && libraryStatus.album_id !== albumIdGetter() ? libraryStatus.album_id : ''
+	);
+	const userId = () => authStore.user?.id;
+	const editionStatusQuery = getAlbumEditionStatusQuery(userId, () => localAlbumId);
+	const editionPlanQuery = getEditionPlanQuery(
+		userId,
+		() => localAlbumId,
+		() => null,
+		() =>
+			editionStatusQuery.data?.album_id === localAlbumId &&
+			editionStatusQuery.data.edition_kind === 'release'
+	);
+	const editionPlan = $derived(
+		localAlbumId && editionPlanQuery.data?.album_id === localAlbumId ? editionPlanQuery.data : null
+	);
+	const libraryTracksById = $derived(
+		new SvelteMap((libraryStatus?.tracks ?? []).map((track) => [track.id, track]))
+	);
+	// The rows follow the plan only while the page lists the same edition.
+	const editionRows = $derived(
+		editionPlan && editionPlan.release_mbid === tracksInfo?.selected_release_mbid
+			? editionTrackRows(editionPlan, libraryTracksById)
+			: null
+	);
+	const editionCounts = $derived(
+		editionPlan ? { kept: editionPlan.kept_count, total: editionPlan.tracks.length } : null
+	);
+	const libraryUnmatchedFiles = $derived(
+		editionPlan ? unmatchedFiles(editionPlan, libraryTracksById) : []
+	);
 
 	function resetState() {
 		if (abortController) {
@@ -1073,17 +1111,20 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		get libraryBelowCutoff() {
 			return libraryBelowCutoff;
 		},
-		get coverageExpected() {
-			return coverageExpected;
-		},
 		get localMatchForPlayback() {
 			return localMatchForPlayback;
 		},
-		get coverageCovered() {
-			return coverageCovered;
+		get localAlbumId() {
+			return localAlbumId;
 		},
-		get libraryOrphans() {
-			return libraryOrphans;
+		get editionRows() {
+			return editionRows;
+		},
+		get editionCounts() {
+			return editionCounts;
+		},
+		get libraryUnmatchedFiles() {
+			return libraryUnmatchedFiles;
 		},
 		get refreshing() {
 			return refreshing;

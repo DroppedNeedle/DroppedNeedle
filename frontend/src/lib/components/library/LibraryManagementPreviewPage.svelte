@@ -4,50 +4,37 @@
 	import {
 		ArrowRight,
 		BookOpenCheck,
-		CircleCheckBig,
 		Clock3,
 		FolderCog,
 		HardDrive,
 		Layers,
 		ShieldAlert,
 		Sparkles,
-		Tags,
-		X
+		Tags
 	} from 'lucide-svelte';
 
 	import BackButton from '$lib/components/BackButton.svelte';
 	import LibraryManagementDiscardPreview from './LibraryManagementDiscardPreview.svelte';
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
-	import { getLibrarySearchQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { LIBRARY_MANAGEMENT_ENDPOINTS } from '$lib/queries/library-management/endpoints';
 	import { createLibraryManagementEvents } from '$lib/queries/library-management/LibraryManagementEvents';
-	import { LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE } from '$lib/queries/library-management/LibraryManagementConfirmation';
-	import {
-		applyLibraryManagementPreviewMutation,
-		createLibraryManagementDuplicateResolutionMutation,
-		reissueLibraryManagementPreviewMutation
-	} from '$lib/queries/library-management/LibraryManagementMutations.svelte';
 	import {
 		getLibraryManagementPlanItemsQuery,
 		getLibraryManagementPreviewQuery,
 		getLibraryManagementSettingsQuery
 	} from '$lib/queries/library-management/LibraryManagementQueries.svelte';
-	import {
-		forgetLibraryManagementPreviewToken,
-		readLibraryManagementPreviewToken,
-		rememberLibraryManagementPreviewToken
-	} from '$lib/queries/library-management/LibraryManagementPreviewTokens';
-	import { withBasePath } from '$lib/utils/basePath';
 	import type {
-		DuplicateResolutionAction,
 		LibraryManagementPlanItem,
-		ManagementChangeKind,
 		ManagementEligibility
 	} from '$lib/queries/library-management/types';
-	import { createUuid } from '$lib/utils/uuid';
+	import Button from '$lib/ui/Button.svelte';
+	import { withBasePath } from '$lib/utils/basePath';
 	import {
 		firstDeferredSource,
+		formatManagementBytes,
+		formatManagementDate,
+		managementApplyCopy,
 		managementAudioFormat,
 		managementAlbumArtworkVersion,
 		managementArtworkPreviewHash,
@@ -59,68 +46,37 @@
 		managementPlanIsExceptional,
 		managementPlanTitle,
 		managementPlanTrackLabel,
-		managementReasonLabel,
-		titleManagementValue,
-		type ManagementCollision
+		managementPreviewHeading,
+		managementProviderStatus,
+		managementQuantity,
+		managementRootLabel,
+		managementStaleBannerDetail,
+		qualifiedManagementReasonLabel,
+		titleManagementValue
 	} from './LibraryManagementDisplay';
+	import LibraryManagementApplyDialog from './LibraryManagementApplyDialog.svelte';
 	import LibraryManagementAuditDossiers from './LibraryManagementAuditDossiers.svelte';
+	import LibraryManagementCollisionDialog from './LibraryManagementCollisionDialog.svelte';
+	import LibraryManagementPlanFilterBar from './LibraryManagementPlanFilterBar.svelte';
 	import LibraryManagementPlanInspector from './LibraryManagementPlanInspector.svelte';
 	import {
 		groupManagementAuditEntries,
 		type ManagementAuditEntry,
 		type ManagementAuditTone
 	} from './LibraryManagementAuditTypes';
+	import { PreviewFilters } from './previewFilters.svelte';
+	import { createPreviewToken } from './previewToken.svelte';
 
 	interface Props {
 		jobId: string;
 	}
 
-	interface CollisionSelection {
-		item: LibraryManagementPlanItem;
-		collision: ManagementCollision;
-	}
-
-	interface ApplyActionCopy {
-		barTitle: string;
-		barDetail: string;
-		button: string;
-		kicker: string;
-		title: string;
-		detail: string;
-		confirmButton: string;
-	}
 	let { jobId }: Props = $props();
-	let eligibility = $state<ManagementEligibility | ''>('');
-	let reasonCode = $state('');
-	let rootId = $state('');
-	let artistId = $state('');
-	let artistLabel = $state('');
-	let albumId = $state('');
-	let albumLabel = $state('');
-	let catalogSearch = $state('');
-	let audioFormat = $state('');
-	let changeKind = $state<ManagementChangeKind | ''>('');
-	let collisionClass = $state('');
-	let hasPreservedValue = $state(false);
-	let hasRepresentationLoss = $state(false);
-	let reissuedToken = $state<string | null>(null);
-	let reissueAttemptedJobId = $state<string | null>(null);
-	let reissueFailed = $state(false);
-	let previewToken = $derived(reissuedToken ?? readLibraryManagementPreviewToken(jobId));
-	let confirmation = $state('');
-	let applyError = $state('');
-	let applyDialog: HTMLDialogElement;
-	let applyHeading: HTMLHeadingElement;
-	let applyOpener: HTMLButtonElement | null = null;
-	let collisionDialog: HTMLDialogElement;
-	let collisionHeading: HTMLHeadingElement;
-	let collisionOpener: HTMLButtonElement | null = null;
-	let collisionSelection = $state<CollisionSelection | null>(null);
-	let collisionAction = $state<DuplicateResolutionAction | ''>('');
-	let alternateRelativePath = $state('');
-	let collisionError = $state('');
+	let applyDialog = $state<ReturnType<typeof LibraryManagementApplyDialog> | null>(null);
+	let collisionDialog = $state<ReturnType<typeof LibraryManagementCollisionDialog> | null>(null);
 	let stickyFooterElement: HTMLElement | null = $state(null);
 	let stickyFooterHeight = $state(0);
+	const filters = new PreviewFilters();
 
 	const previewQuery = getLibraryManagementPreviewQuery(
 		() => authStore.user?.id,
@@ -131,27 +87,11 @@
 		() => authStore.isAdmin
 	);
 	const policyQuery = getTargetLibrarySettingsQuery(() => authStore.isAdmin);
-	const catalogSearchQuery = getLibrarySearchQuery(() => catalogSearch);
 	const itemsQuery = getLibraryManagementPlanItemsQuery(
 		() => authStore.user?.id,
 		() => jobId,
-		() => ({
-			limit: 50,
-			eligibility: eligibility || undefined,
-			reasonCode: reasonCode || undefined,
-			rootId: rootId || undefined,
-			artistId: artistId || undefined,
-			albumId: albumId || undefined,
-			audioFormat: audioFormat || undefined,
-			collisionClass: collisionClass || undefined,
-			hasPreservedValue: hasPreservedValue || undefined,
-			hasRepresentationLoss: hasRepresentationLoss || undefined,
-			changeKind: changeKind || undefined
-		})
+		() => filters.params(50)
 	);
-	const applyPreview = applyLibraryManagementPreviewMutation();
-	const reissuePreview = reissueLibraryManagementPreviewMutation();
-	const createResolution = createLibraryManagementDuplicateResolutionMutation();
 
 	const preview = $derived(previewQuery.data ?? null);
 	const items = $derived(itemsQuery.data?.pages.flatMap((page) => page.items) ?? []);
@@ -164,6 +104,11 @@
 	);
 	const activationPreview = $derived(
 		Boolean(preview && preview.proposed_settings_revision !== null)
+	);
+	const token = createPreviewToken(
+		() => jobId,
+		() => previewQuery.data ?? null,
+		() => activationPreview
 	);
 	const zeroAppliable = $derived(
 		Boolean(
@@ -185,93 +130,13 @@
 			.sort((left, right) => right[1] - left[1])
 			.slice(0, 3)
 	);
-
-	function qualifiedReasonLabel(code: string, deferredSource: string | null = null): string {
-		if (code !== 'OPTIONAL_ENRICHMENT_DEFERRED') return managementReasonLabel(code);
-		const base = 'Optional enrichment deferred · still applicable with warnings';
-		return deferredSource ? `${base} (${deferredSource})` : base;
-	}
-
-	function inspectorReasonLabel(code: string): string {
-		return qualifiedReasonLabel(code);
-	}
-
-	function staleBannerDetail(): string {
-		if (!preview) return '';
-		const labels = preview.stale_reasons.map((code) => qualifiedReasonLabel(code)).join(' · ');
-		// Persisted query-cache entries from before this fix lack the new keys.
-		const staleInputCount = preview.stale_input_count ?? 0;
-		if (!preview.stale_reasons.includes('FILE_CHANGED') || staleInputCount <= 0) return labels;
-		// Mirrors backend _STALE_INPUT_SAMPLE_LIMIT; the backend already caps.
-		const samples = (preview.stale_sample_relative_paths ?? []).slice(0, 5);
-		const shown = samples.join(', ');
-		const remaining = staleInputCount - samples.length;
-		const sampleText = shown
-			? `${shown}${remaining > 0 ? ` (+${remaining.toLocaleString()} more)` : ''}`
-			: '';
-		const fileText = `${staleInputCount.toLocaleString()} ${staleInputCount === 1 ? 'file' : 'files'}`;
-		return `${labels}. ${fileText} changed since planning${sampleText ? `: ${sampleText}` : ''}. Generate a fresh preview.`;
-	}
-
 	const culpritRelease = $derived.by(() => {
 		const top = topBlockers[0]?.[0];
 		if (!top) return null;
 		const item = items.find((candidate) => candidate.reason_code === top);
 		return item ? item.bundle_ordinal + 1 : null;
 	});
-	const sortedRoots = $derived(
-		Object.entries(preview?.summary.roots ?? {}).sort((left, right) => right[1] - left[1])
-	);
-	const sortedFormats = $derived(
-		Object.entries(preview?.summary.formats ?? {}).sort((left, right) => right[1] - left[1])
-	);
-	const applyFileLabel = $derived(`${applyCount} ${applyCount === 1 ? 'file' : 'files'}`);
-	const applyAction = $derived.by<ApplyActionCopy>(() => {
-		switch (preview?.mode) {
-			case 'undo':
-				return {
-					barTitle: 'Undo changes only after confirmation',
-					barDetail: 'Files changed again later, blocked rows, and expired snapshots are excluded.',
-					button: `Undo this operation for ${applyFileLabel}`,
-					kicker: 'Undo confirmation',
-					title: 'Undo this operation from this exact preview?',
-					detail: `DroppedNeedle will restore this operation's before-state for ${applyFileLabel}. Later edits are preserved and this does not restore the broader original baseline.`,
-					confirmButton: 'Undo operation'
-				};
-			case 'baseline_restore':
-				return {
-					barTitle: 'Baseline restore changes files only after confirmation',
-					barDetail:
-						'Restored files leave file organization and can be managed again only through a new preview.',
-					button: `Restore original state for ${applyFileLabel}`,
-					kicker: 'Original baseline confirmation',
-					title: 'Restore these original baselines?',
-					detail: `DroppedNeedle will restore ${applyFileLabel} to their earliest saved state from before it first managed them. This is broader than Undo and leaves those files unmanaged.`,
-					confirmButton: 'Restore original state'
-				};
-			case 'duplicate_resolution':
-				return {
-					barTitle: 'Collision resolution changes files only after confirmation',
-					barDetail:
-						'Only the explicitly selected resolution is included; no duplicate is deleted automatically.',
-					button: `Apply collision resolution for ${applyFileLabel}`,
-					kicker: 'Collision-resolution confirmation',
-					title: 'Apply this exact collision resolution?',
-					detail: `DroppedNeedle will carry out the explicitly previewed collision resolution for ${applyFileLabel}. No destination is overwritten and no duplicate is deleted automatically.`,
-					confirmButton: 'Apply collision resolution'
-				};
-			default:
-				return {
-					barTitle: 'Applying is the first write action',
-					barDetail: 'Blocked, stale, and no-change rows are excluded.',
-					button: `Write tags and organize ${applyFileLabel}`,
-					kicker: 'Write confirmation',
-					title: 'Apply this exact preview?',
-					detail: `DroppedNeedle will write tags and organize ${preview?.summary.eligible_count ?? 0} eligible files plus ${preview?.summary.warning_count ?? 0} files with warnings. No destination is overwritten automatically.`,
-					confirmButton: 'Apply exact preview'
-				};
-		}
-	});
+	const applyCopy = $derived(managementApplyCopy(preview));
 	const canApply = $derived(
 		Boolean(
 			preview?.ready_for_confirmation &&
@@ -279,76 +144,33 @@
 			!preview.stale &&
 			!preview.expired &&
 			preview.summary.eligible_count + preview.summary.warning_count > 0 &&
-			previewToken
+			token.value
 		)
-	);
-	const recycleAvailable = $derived(Boolean(settingsQuery.data?.recycle_bin_path.trim()));
-	// Dead previews (stale/expired/non-ready/terminal/zero items) must not claim pinned
-	// metadata. Neutral copy keeps the badge in place; hiding it would shift the header.
-	const isDeadPreview = $derived(
-		!preview ||
-			preview.stale ||
-			preview.expired ||
-			preview.state !== 'ready' ||
-			Boolean(preview.terminal_code) ||
-			preview.summary.item_count === 0
-	);
-	const providerStatus = $derived(
-		isDeadPreview
-			? 'Provider status unavailable'
-			: preview?.summary.reasons.METADATA_UNAVAILABLE
-				? 'Required metadata unavailable'
-				: deferredSources.length
-					? `Deferred: ${deferredSources[0][0]} ×${deferredSources[0][1].toLocaleString()}`
-					: preview?.summary.reasons.OPTIONAL_ENRICHMENT_DEFERRED
-						? qualifiedReasonLabel('OPTIONAL_ENRICHMENT_DEFERRED')
-						: 'Required metadata pinned'
 	);
 	const identityBlockerCount = $derived(
 		(preview?.summary.reasons.TRACK_NOT_MAPPED ?? 0) +
 			(preview?.summary.reasons.RELEASE_NOT_SELECTED ?? 0)
 	);
-	const sortedReasons = $derived(
-		Object.entries(preview?.summary.reasons ?? {}).sort((left, right) => right[1] - left[1])
-	);
-	const collisionRequestReady = $derived(
-		Boolean(
-			collisionSelection?.collision.requestKind &&
-			collisionSelection.collision.existingRootId &&
-			collisionSelection.collision.existingRelativePath &&
-			collisionAction &&
-			(!collisionAction.startsWith('recycle_') || recycleAvailable) &&
-			(collisionAction !== 'keep_incoming_alternate' || alternateRelativePath.trim())
-		)
-	);
+	const applyDisabledReason = $derived.by((): string | null => {
+		if (canApply || activationPreview || preview?.state !== 'ready') return null;
+		if (preview.stale)
+			return `Apply is disabled: this preview is stale (${preview.stale_reasons.map((code) => qualifiedManagementReasonLabel(code)).join(' · ') || 'inputs changed'}). Generate a fresh preview.`;
+		if (preview.expired)
+			return 'Apply is disabled: this preview expired. Generate a fresh preview.';
+		if (!preview.ready_for_confirmation)
+			return 'Apply is disabled: this preview is not awaiting confirmation.';
+		if (applyCount === 0) return 'Apply is disabled: no eligible files and no files with warnings.';
+		if (!token.value)
+			return token.failed
+				? 'Apply is disabled: the private apply token is missing and resuming it failed.'
+				: 'Apply is disabled: resuming your private apply token.';
+		return 'Apply is disabled for this preview.';
+	});
 
 	onMount(() => {
 		const events = createLibraryManagementEvents();
 		events.start();
 		return events.stop;
-	});
-
-	$effect(() => {
-		const currentJobId = jobId;
-		if (reissueAttemptedJobId !== null && reissueAttemptedJobId !== currentJobId) {
-			reissuedToken = null;
-			reissueFailed = false;
-			reissueAttemptedJobId = null;
-			return;
-		}
-		const detail = previewQuery.data ?? null;
-		if (
-			detail === null ||
-			reissueAttemptedJobId === currentJobId ||
-			activationPreview ||
-			detail.state !== 'ready' ||
-			detail.expired ||
-			detail.stale ||
-			(reissuedToken ?? readLibraryManagementPreviewToken(currentJobId)) !== null
-		)
-			return;
-		reissueAttemptedJobId = currentJobId;
-		void resumePreviewToken(currentJobId);
 	});
 
 	$effect(() => {
@@ -365,16 +187,6 @@
 		observer.observe(element);
 		return () => observer.disconnect();
 	});
-
-	function rootLabel(value: string | null): string {
-		return (
-			roots.find((root) => root.id === value)?.label ?? (value ? 'Unavailable root' : 'No root')
-		);
-	}
-
-	function displayPath(root: string | null, relative: string | null): string {
-		return `${rootLabel(root)} · ${relative ?? 'No path'}`;
-	}
 
 	function eligibilityTone(value: ManagementEligibility): ManagementAuditTone {
 		return value === 'eligible' ? 'success' : value === 'warning' ? 'warning' : 'error';
@@ -399,175 +211,19 @@
 			status: titleManagementValue(item.eligibility),
 			statusTone: eligibilityTone(item.eligibility),
 			reason: item.reason_code
-				? qualifiedReasonLabel(item.reason_code, firstDeferredSource(item))
+				? qualifiedManagementReasonLabel(item.reason_code, firstDeferredSource(item))
 				: null,
 			reasonCode: item.reason_code,
 			changes: managementPlanChanges(item),
 			exceptional: managementPlanIsExceptional(item),
-			sourceRoot: rootLabel(item.source_root_id),
+			sourceRoot: managementRootLabel(roots, item.source_root_id),
 			sourcePath: item.source_relative_path,
-			destinationRoot: rootLabel(item.destination_root_id),
+			destinationRoot: managementRootLabel(roots, item.destination_root_id),
 			destinationPath: item.destination_relative_path,
 			artworkUrl: artworkHash
 				? LIBRARY_MANAGEMENT_ENDPOINTS.previewArtwork(jobId, item.ordinal, artworkHash)
 				: null
 		};
-	}
-
-	function previewHeading(mode: string): string {
-		return mode === 'preview' ? 'Organization preview' : `${titleManagementValue(mode)} preview`;
-	}
-
-	function quantity(value: number, singular: string, plural = `${singular}s`): string {
-		return `${value.toLocaleString()} ${value === 1 ? singular : plural}`;
-	}
-
-	function formatBytes(value: number): string {
-		if (value < 1024) return `${value} B`;
-		if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KiB`;
-		if (value < 1024 ** 3) return `${(value / 1024 ** 2).toFixed(1)} MiB`;
-		return `${(value / 1024 ** 3).toFixed(1)} GiB`;
-	}
-
-	function formatDate(value: number | null): string {
-		return value ? new Date(value * 1000).toLocaleString() : 'No expiry';
-	}
-
-	function chooseArtist(id: string, label: string): void {
-		artistId = id;
-		artistLabel = label;
-		catalogSearch = '';
-	}
-
-	function chooseAlbum(id: string, label: string): void {
-		albumId = id;
-		albumLabel = label;
-		catalogSearch = '';
-	}
-
-	async function resumePreviewToken(currentJobId: string): Promise<void> {
-		try {
-			const handle = await reissuePreview.mutateAsync({ jobId: currentJobId });
-			rememberLibraryManagementPreviewToken(handle.job_id, handle.preview_token);
-			if (handle.job_id === jobId) reissuedToken = handle.preview_token;
-		} catch {
-			if (currentJobId === jobId) reissueFailed = true;
-		}
-	}
-
-	function retryTokenResume(): void {
-		if (!preview?.ready_for_confirmation) return;
-		reissueFailed = false;
-		reissueAttemptedJobId = null;
-	}
-
-	const applyDisabledReason = $derived.by((): string | null => {
-		if (canApply || activationPreview || preview?.state !== 'ready') return null;
-		if (preview.stale)
-			return `Apply is disabled: this preview is stale (${preview.stale_reasons.map((code) => qualifiedReasonLabel(code)).join(' · ') || 'inputs changed'}). Generate a fresh preview.`;
-		if (preview.expired)
-			return 'Apply is disabled: this preview expired. Generate a fresh preview.';
-		if (!preview.ready_for_confirmation)
-			return 'Apply is disabled: this preview is not awaiting confirmation.';
-		if (applyCount === 0) return 'Apply is disabled: no eligible files and no files with warnings.';
-		if (!previewToken)
-			return reissueFailed
-				? 'Apply is disabled: the private apply token is missing and resuming it failed.'
-				: 'Apply is disabled: resuming your private apply token.';
-		return 'Apply is disabled for this preview.';
-	});
-
-	function openApply(opener: HTMLButtonElement): void {
-		applyOpener = opener;
-		confirmation = '';
-		applyError = '';
-		applyDialog.showModal();
-		applyHeading.focus();
-	}
-
-	async function apply(): Promise<void> {
-		if (
-			!preview ||
-			!previewToken ||
-			confirmation !== LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE ||
-			!canApply
-		)
-			return;
-		applyError = '';
-		try {
-			const operation = await applyPreview.mutateAsync({
-				jobId,
-				request: {
-					preview_token: previewToken,
-					expected_operation_row_revision: preview.operation_row_revision,
-					idempotency_key: createUuid(),
-					confirmation: true
-				}
-			});
-			forgetLibraryManagementPreviewToken(jobId);
-			applyDialog.close();
-			await goto(
-				withBasePath(`/library/management/operations/${encodeURIComponent(operation.id)}`)
-			);
-		} catch (error) {
-			applyError = error instanceof Error ? error.message : 'Could not apply this preview.';
-		}
-	}
-
-	function openCollision(
-		item: LibraryManagementPlanItem,
-		collision: ManagementCollision,
-		opener: HTMLButtonElement
-	): void {
-		collisionOpener = opener;
-		collisionSelection = { item, collision };
-		collisionAction = '';
-		alternateRelativePath = '';
-		collisionError = '';
-		collisionDialog.showModal();
-		collisionHeading.focus();
-	}
-
-	async function resolveCollision(): Promise<void> {
-		const selection = collisionSelection;
-		const settings = settingsQuery.data;
-		const policy = policyQuery.data;
-		if (
-			!selection?.collision.requestKind ||
-			!selection.collision.existingRootId ||
-			!selection.collision.existingRelativePath ||
-			!collisionAction ||
-			!settings ||
-			!policy ||
-			!preview ||
-			!collisionRequestReady
-		) {
-			return;
-		}
-		collisionError = '';
-		try {
-			const handle = await createResolution.mutateAsync({
-				source_job_id: jobId,
-				source_plan_item_ordinal: selection.item.ordinal,
-				expected_source_operation_row_revision: preview.operation_row_revision,
-				collision_kind: selection.collision.requestKind,
-				existing_root_id: selection.collision.existingRootId,
-				existing_relative_path: selection.collision.existingRelativePath,
-				action: collisionAction,
-				expected_settings_revision: settings.settings_revision,
-				expected_policy_revision: policy.policy_revision,
-				idempotency_key: createUuid(),
-				existing_local_track_id: selection.collision.existingLocalTrackId,
-				alternate_relative_path:
-					collisionAction === 'keep_incoming_alternate' ? alternateRelativePath.trim() : null
-			});
-			rememberLibraryManagementPreviewToken(handle.job_id, handle.preview_token);
-			collisionDialog.close();
-			await goto(withBasePath(`/library/management/previews/${encodeURIComponent(handle.job_id)}`));
-		} catch (error) {
-			collisionError =
-				error instanceof Error ? error.message : 'Could not create a resolution preview.';
-		}
 	}
 </script>
 
@@ -580,8 +236,8 @@
 			{item}
 			{jobId}
 			{roots}
-			reasonLabel={inspectorReasonLabel}
-			onresolve={openCollision}
+			reasonLabel={(code) => qualifiedManagementReasonLabel(code)}
+			onresolve={(item, collision, opener) => collisionDialog?.open(item, collision, opener)}
 		/>
 	{/if}
 {/snippet}
@@ -606,10 +262,10 @@
 							<ShieldAlert class="h-3.5 w-3.5" /> Applying is the first write action · no files changed
 						</p>
 						<h1 class="mt-1 font-display text-2xl font-bold sm:text-3xl">
-							{previewHeading(preview.mode)}
+							{managementPreviewHeading(preview.mode)}
 						</h1>
 						<p class="mt-2 text-sm text-base-content/60">
-							{preview.profile_name} · {titleManagementValue(preview.origin)} · created {formatDate(
+							{preview.profile_name} · {titleManagementValue(preview.origin)} · created {formatManagementDate(
 								preview.created_at
 							)}
 						</p>
@@ -641,31 +297,33 @@
 					</div>
 					<div class="management-summary-card">
 						<span class="text-xs text-base-content/50">Temporary disk</span><strong
-							>{formatBytes(preview.summary.estimated_temporary_bytes)}</strong
+							>{formatManagementBytes(preview.summary.estimated_temporary_bytes)}</strong
 						><small>Required for staging and recovery</small>
 					</div>
 				</div>
 				<div class="mt-3 flex flex-wrap gap-2 text-xs">
 					<span class="badge badge-outline"
 						><Tags class="h-3 w-3" />
-						{quantity(preview.summary.tag_change_count, 'tag change')}</span
+						{managementQuantity(preview.summary.tag_change_count, 'tag change')}</span
 					>
 					<span class="badge badge-outline"
 						><Sparkles class="h-3 w-3" />
-						{quantity(preview.summary.artwork_change_count, 'artwork change')}</span
+						{managementQuantity(preview.summary.artwork_change_count, 'artwork change')}</span
 					>
 					<span class="badge badge-outline"
 						><FolderCog class="h-3 w-3" />
-						{quantity(preview.summary.path_change_count, 'path change')}</span
+						{managementQuantity(preview.summary.path_change_count, 'path change')}</span
 					>
 					<span class="badge badge-outline"
 						><Layers class="h-3 w-3" />
-						{quantity(preview.summary.sidecar_change_count, 'sidecar change')}</span
+						{managementQuantity(preview.summary.sidecar_change_count, 'sidecar change')}</span
 					>
 					<span class="badge badge-outline"
-						><Clock3 class="h-3 w-3" /> Expires {formatDate(preview.expires_at)}</span
+						><Clock3 class="h-3 w-3" /> Expires {formatManagementDate(preview.expires_at)}</span
 					>
-					<span class="badge badge-outline"><HardDrive class="h-3 w-3" /> {providerStatus}</span>
+					<span class="badge badge-outline"
+						><HardDrive class="h-3 w-3" /> {managementProviderStatus(preview)}</span
+					>
 				</div>
 			</header>
 
@@ -674,7 +332,7 @@
 					<ShieldAlert class="mt-0.5 h-5 w-5" /><span
 						><strong>This preview cannot be applied.</strong><br />{preview.expired
 							? 'It expired. Generate a fresh preview.'
-							: staleBannerDetail()}</span
+							: managementStaleBannerDetail(preview)}</span
 					>
 				</div>
 			{:else if preview.state === 'failed'}
@@ -713,7 +371,8 @@
 							<p class="mt-1 text-sm">
 								Top blockers: {topBlockers
 									.map(
-										([code, count]) => `${qualifiedReasonLabel(code)} (${count.toLocaleString()})`
+										([code, count]) =>
+											`${qualifiedManagementReasonLabel(code)} (${count.toLocaleString()})`
 									)
 									.join(' · ')}
 							</p>
@@ -722,10 +381,11 @@
 							<p class="mt-1 text-sm">
 								Start with Release {culpritRelease}: its blocked rows name the exact cause.
 								<button
+									type="button"
 									class="link link-hover"
 									onclick={() => {
-										reasonCode = topBlockers[0][0];
-									}}>Filter to {qualifiedReasonLabel(topBlockers[0][0])}</button
+										filters.reasonCode = topBlockers[0][0];
+									}}>Filter to {qualifiedManagementReasonLabel(topBlockers[0][0])}</button
 								>
 							</p>
 						{/if}
@@ -734,10 +394,14 @@
 								Selecting a root chooses files; it does not choose each release's exact MusicBrainz
 								edition. Prepare identities first, then generate a fresh management preview.
 							</p>
-							<a
-								class="btn btn-outline btn-sm mt-3"
+							<Button
+								variant="outline"
+								size="sm"
+								class="mt-3"
+								icon={ArrowRight}
+								iconPosition="end"
 								href={withBasePath('/library/management?tab=organize')}
-								>Open identity readiness <ArrowRight class="h-4 w-4" /></a
+								>Open identity readiness</Button
 							>
 						{/if}
 					</div>
@@ -752,10 +416,14 @@
 							Selecting a root chooses files; it does not choose each release's exact MusicBrainz
 							edition. Prepare identities first, then generate a fresh management preview.
 						</p>
-						<a
-							class="btn btn-outline btn-sm mt-3"
+						<Button
+							variant="outline"
+							size="sm"
+							class="mt-3"
+							icon={ArrowRight}
+							iconPosition="end"
 							href={withBasePath('/library/management?tab=organize')}
-							>Open identity readiness <ArrowRight class="h-4 w-4" /></a
+							>Open identity readiness</Button
 						>
 					</div>
 				</div>
@@ -775,174 +443,7 @@
 				</div>
 			{/if}
 
-			<section class="management-operation-panel space-y-4" aria-labelledby="preview-filters-title">
-				<div class="flex flex-wrap items-end justify-between gap-2">
-					<div>
-						<p class="management-step">Inspectable plan</p>
-						<h2 id="preview-filters-title" class="font-display text-xl font-semibold">
-							Files and changes
-						</h2>
-					</div>
-					<span class="text-xs text-base-content/45">Root labels and relative paths only</span>
-				</div>
-				<div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-					<label class="grid gap-1 text-xs"
-						><span>Outcome</span><select
-							class="select select-bordered select-sm bg-base-100"
-							bind:value={eligibility}
-							><option value="">All outcomes</option><option value="eligible"
-								>Eligible ({(preview.summary.eligible_count ?? 0).toLocaleString()})</option
-							><option value="warning"
-								>Warning ({(preview.summary.warning_count ?? 0).toLocaleString()})</option
-							><option value="blocked"
-								>Blocked ({(preview.summary.blocked_count ?? 0).toLocaleString()})</option
-							><option value="stale"
-								>Stale ({(preview.summary.stale_count ?? 0).toLocaleString()})</option
-							></select
-						></label
-					>
-					<label class="grid gap-1 text-xs"
-						><span>Reason</span><select
-							class="select select-bordered select-sm bg-base-100"
-							bind:value={reasonCode}
-							><option value="">All reasons</option
-							>{#each sortedReasons as [reason, count] (reason)}<option value={reason}
-									>{qualifiedReasonLabel(reason)} ({count.toLocaleString()})</option
-								>{/each}</select
-						></label
-					>
-					<label class="grid gap-1 text-xs"
-						><span>Root</span><select
-							class="select select-bordered select-sm bg-base-100"
-							bind:value={rootId}
-							><option value="">All roots</option>{#each sortedRoots as [root, count] (root)}<option
-									value={root}>{rootLabel(root)} ({count.toLocaleString()})</option
-								>{/each}</select
-						></label
-					>
-					<label class="grid gap-1 text-xs"
-						><span>Format</span><select
-							class="select select-bordered select-sm bg-base-100"
-							bind:value={audioFormat}
-							><option value="">All formats</option
-							>{#each sortedFormats as [format, count] (format)}<option value={format}
-									>{format.toUpperCase()} ({count.toLocaleString()})</option
-								>{/each}</select
-						></label
-					>
-					<label class="grid gap-1 text-xs"
-						><span>Change</span><select
-							class="select select-bordered select-sm bg-base-100"
-							bind:value={changeKind}
-							><option value="">All changes</option><option value="tags"
-								>Tags ({preview.summary.tag_change_count.toLocaleString()})</option
-							><option value="artwork"
-								>Artwork ({preview.summary.artwork_change_count.toLocaleString()})</option
-							><option value="path"
-								>Path ({preview.summary.path_change_count.toLocaleString()})</option
-							><option value="sidecars"
-								>Sidecars ({preview.summary.sidecar_change_count.toLocaleString()})</option
-							><option value="no_change"
-								>No change ({preview.summary.no_change_count.toLocaleString()})</option
-							></select
-						></label
-					>
-				</div>
-				<details class="rounded-xl border border-base-content/10 bg-base-200/35 p-3">
-					<summary class="cursor-pointer text-sm font-semibold"
-						>Artist, release, collision, and preservation filters</summary
-					>
-					<div class="mt-3 grid gap-3 lg:grid-cols-2">
-						<div class="space-y-2">
-							<label class="grid gap-1 text-xs"
-								><span>Find an artist or release</span><input
-									class="input input-bordered input-sm bg-base-100"
-									bind:value={catalogSearch}
-									placeholder="Type at least two characters"
-								/></label
-							>
-							{#if artistId || albumId}<div class="flex flex-wrap gap-1">
-									{#if artistId}<button
-											class="badge badge-outline gap-1"
-											onclick={() => {
-												artistId = '';
-												artistLabel = '';
-											}}>Artist: {artistLabel} ×</button
-										>{/if}{#if albumId}<button
-											class="badge badge-outline gap-1"
-											onclick={() => {
-												albumId = '';
-												albumLabel = '';
-											}}>Release: {albumLabel} ×</button
-										>{/if}
-								</div>{/if}
-							{#if catalogSearch.trim().length >= 2}
-								{#if catalogSearchQuery.isLoading}<div
-										class="skeleton h-16 rounded-xl"
-										role="status"
-										aria-label="Searching artists and releases"
-									></div>{:else if catalogSearchQuery.isError}<div
-										class="alert alert-error py-2 text-xs"
-										role="alert"
-									>
-										Could not search artists and releases.
-									</div>{:else if catalogSearchQuery.data && catalogSearchQuery.data.artists.length + catalogSearchQuery.data.albums.length === 0}<p
-										class="rounded-xl border border-dashed border-base-content/15 p-3 text-xs text-base-content/50"
-									>
-										No matching artists or releases.
-									</p>{:else if catalogSearchQuery.data}<div
-										class="grid max-h-44 gap-1 overflow-y-auto rounded-xl border border-base-content/10 bg-base-100 p-2"
-									>
-										{#each catalogSearchQuery.data.artists as artist (artist.id)}<button
-												class="btn btn-ghost btn-sm justify-start"
-												onclick={() => chooseArtist(artist.id, artist.name)}
-												>Artist · {artist.name}</button
-											>{/each}{#each catalogSearchQuery.data.albums as album (album.id)}<button
-												class="btn btn-ghost btn-sm justify-start"
-												onclick={() =>
-													chooseAlbum(album.id, `${album.artist_name} · ${album.title}`)}
-												>Release · {album.artist_name} · {album.title}</button
-											>{/each}
-									</div>{/if}
-							{/if}
-						</div>
-						<div class="grid gap-2 sm:grid-cols-2">
-							<label class="grid gap-1 text-xs sm:col-span-2"
-								><span>Collision class</span><select
-									class="select select-bordered select-sm bg-base-100"
-									bind:value={collisionClass}
-									><option value="">All collision classes</option
-									>{#each ['same_path_same_content', 'same_path_different_content', 'same_release_position_different_content', 'normalized_path_collision', 'normalized_catalog_path_collision', 'sidecar_path_collision', 'destination_created_after_preview'] as option (option)}<option
-											value={option}>{titleManagementValue(option)}</option
-										>{/each}</select
-								></label
-							>
-							<label class="management-trigger"
-								><input
-									type="checkbox"
-									class="checkbox checkbox-sm"
-									bind:checked={hasPreservedValue}
-								/><span
-									><strong>Preserved / local override</strong><small
-										>Values intentionally left unchanged</small
-									></span
-								></label
-							>
-							<label class="management-trigger"
-								><input
-									type="checkbox"
-									class="checkbox checkbox-sm"
-									bind:checked={hasRepresentationLoss}
-								/><span
-									><strong>Lossy representation</strong><small
-										>Format cannot store the exact value shape</small
-									></span
-								></label
-							>
-						</div>
-					</div>
-				</details>
-			</section>
+			<LibraryManagementPlanFilterBar {filters} {preview} {roots} />
 
 			{#if itemsQuery.isLoading}
 				<div class="space-y-3" role="status" aria-label="Loading preview files">
@@ -957,24 +458,7 @@
 				>
 					No files match these filters.
 					<div class="mt-3">
-						<button
-							class="btn btn-ghost btn-sm"
-							onclick={() => {
-								eligibility = '';
-								reasonCode = '';
-								rootId = '';
-								artistId = '';
-								artistLabel = '';
-								albumId = '';
-								albumLabel = '';
-								catalogSearch = '';
-								audioFormat = '';
-								changeKind = '';
-								collisionClass = '';
-								hasPreservedValue = false;
-								hasRepresentationLoss = false;
-							}}>Clear filters</button
-						>
+						<Button variant="ghost" size="sm" onclick={() => filters.clear()}>Clear filters</Button>
 					</div>
 				</div>
 			{:else}
@@ -986,12 +470,11 @@
 					{stickyFooterHeight}
 					incomplete={Boolean(itemsQuery.hasNextPage)}
 				/>
-				{#if itemsQuery.hasNextPage}<button
-						class="btn btn-outline w-full"
-						disabled={itemsQuery.isFetchingNextPage}
-						onclick={() => void itemsQuery.fetchNextPage()}
-						>{#if itemsQuery.isFetchingNextPage}<span class="loading loading-spinner loading-sm"
-							></span>{/if} Load more files</button
+				{#if itemsQuery.hasNextPage}<Button
+						variant="outline"
+						class="w-full"
+						loading={itemsQuery.isFetchingNextPage}
+						onclick={() => void itemsQuery.fetchNextPage()}>Load more files</Button
 					>{/if}
 			{/if}
 
@@ -1018,8 +501,8 @@
 								profileName={preview.profile_name}
 								ondiscard={() => goto(withBasePath('/library/management?tab=organize'))}
 							/>
-							<a href={withBasePath('/settings?tab=library')} class="btn btn-ghost btn-sm"
-								>Library settings</a
+							<Button variant="ghost" size="sm" href={withBasePath('/settings?tab=library')}
+								>Library settings</Button
 							>
 						</div>
 					</div>{:else}<div
@@ -1030,17 +513,17 @@
 						<div class="flex items-start gap-2">
 							<ShieldAlert class="mt-0.5 h-5 w-5 text-library-manage" />
 							<div>
-								<strong>{applyAction.barTitle}</strong>
-								<p class="text-xs text-base-content/55">{applyAction.barDetail}</p>
+								<strong>{applyCopy.barTitle}</strong>
+								<p class="text-xs text-base-content/55">{applyCopy.barDetail}</p>
 								{#if applyDisabledReason}
 									<p class="mt-1 text-xs text-warning">{applyDisabledReason}</p>
 								{/if}
-								{#if !previewToken && preview.ready_for_confirmation}
-									{#if reissueFailed}
-										<button class="btn btn-ghost btn-xs mt-1" onclick={retryTokenResume}>
+								{#if !token.value && preview.ready_for_confirmation}
+									{#if token.failed}
+										<Button variant="ghost" size="xs" class="mt-1" onclick={() => token.retry()}>
 											Retry token resume
-										</button>
-									{:else if reissueAttemptedJobId === jobId}
+										</Button>
+									{:else if token.resuming}
 										<p class="mt-1 text-xs text-base-content/55">
 											Resuming your private apply token…
 										</p>
@@ -1055,10 +538,11 @@
 								profileName={preview.profile_name}
 								ondiscard={() => goto(withBasePath('/library/management?tab=organize'))}
 							/>
-							<button
-								class="btn management-btn"
+							<Button
+								variant="warning"
 								disabled={!canApply}
-								onclick={(event) => openApply(event.currentTarget)}>{applyAction.button}</button
+								onclick={(event) => applyDialog?.open(event.currentTarget)}
+								>{applyCopy.button}</Button
 							>
 						</div>
 					</div>{/if}
@@ -1067,206 +551,22 @@
 	</main>
 </div>
 
-<dialog
-	bind:this={applyDialog}
-	class="modal"
-	aria-labelledby="apply-management-title"
-	onclose={() => applyOpener?.focus()}
-	oncancel={(event) => {
-		if (applyPreview.isPending) event.preventDefault();
-	}}
->
-	<div class="modal-box max-w-lg border border-warning/30">
-		<div class="flex items-start gap-3">
-			<div class="management-write-mark"><ShieldAlert class="h-5 w-5" /></div>
-			<div>
-				<p class="management-kicker">{applyAction.kicker}</p>
-				<h2
-					bind:this={applyHeading}
-					id="apply-management-title"
-					tabindex="-1"
-					class="font-display text-xl font-semibold"
-				>
-					{applyAction.title}
-				</h2>
-			</div>
-		</div>
-		<p class="mt-4 text-sm text-base-content/65">{applyAction.detail}</p>
-		<label class="mt-4 grid gap-1 text-sm"
-			><span>Type <strong>{LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE}</strong></span><input
-				class="input input-bordered bg-base-100 font-mono"
-				bind:value={confirmation}
-				autocomplete="off"
-			/></label
-		>
-		{#if applyError}<div class="alert alert-error mt-3 text-sm" role="alert">{applyError}</div>{/if}
-		<div class="modal-action">
-			<button
-				class="btn btn-ghost"
-				disabled={applyPreview.isPending}
-				onclick={() => applyDialog.close()}>Cancel</button
-			><button
-				class="btn btn-warning"
-				disabled={!canApply ||
-					confirmation !== LIBRARY_MANAGEMENT_CONFIRMATION_PHRASE ||
-					applyPreview.isPending}
-				onclick={() => void apply()}
-				>{#if applyPreview.isPending}<span class="loading loading-spinner loading-sm"
-					></span>{/if}<CircleCheckBig class="h-4 w-4" />
-				{applyAction.confirmButton}</button
-			>
-		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Cancel applying management preview" disabled={applyPreview.isPending}
-			>close</button
-		>
-	</form>
-</dialog>
-
-<dialog
-	bind:this={collisionDialog}
-	class="modal"
-	aria-labelledby="resolve-management-collision"
-	onclose={() => collisionOpener?.focus()}
-	oncancel={(event) => {
-		if (createResolution.isPending) event.preventDefault();
-	}}
->
-	<div class="modal-box max-w-2xl border border-error/25">
-		<div class="flex items-start justify-between gap-3">
-			<div>
-				<p class="management-kicker">Fresh preview required</p>
-				<h2
-					bind:this={collisionHeading}
-					id="resolve-management-collision"
-					tabindex="-1"
-					class="font-display text-xl font-semibold"
-				>
-					Choose a collision resolution
-				</h2>
-				<p class="mt-1 text-sm text-base-content/55">
-					No option is preselected. DroppedNeedle rechecks both files before it offers another Apply
-					action.
-				</p>
-			</div>
-			<button
-				class="btn btn-ghost btn-sm btn-square"
-				aria-label="Close collision resolution"
-				disabled={createResolution.isPending}
-				onclick={() => collisionDialog.close()}><X class="h-5 w-5" /></button
-			>
-		</div>
-		{#if collisionSelection}<div class="mt-4 rounded-xl border border-base-content/10 p-3 text-sm">
-				<p>
-					<strong>Incoming:</strong>
-					{displayPath(
-						collisionSelection.item.source_root_id,
-						collisionSelection.item.source_relative_path
-					)}
-				</p>
-				<p class="mt-1">
-					<strong>Existing:</strong>
-					{displayPath(
-						collisionSelection.collision.existingRootId,
-						collisionSelection.collision.existingRelativePath
-					)}
-				</p>
-				<p class="mt-1">
-					<strong>Evidence:</strong>
-					{titleManagementValue(collisionSelection.collision.classification)}
-				</p>
-			</div>{/if}
-		<fieldset class="mt-4 grid gap-2">
-			<legend class="mb-2 text-sm font-semibold">Resolution</legend>
-			<label class="management-selection-card"
-				><input
-					type="radio"
-					class="radio radio-sm"
-					name="collision-action"
-					value="keep_existing"
-					bind:group={collisionAction}
-				/><span
-					><strong>Keep existing; leave incoming in place</strong><small
-						>Creates a no-write resolution preview for the incoming destination.</small
-					></span
-				></label
-			>
-			<label class="management-selection-card"
-				><input
-					type="radio"
-					class="radio radio-sm"
-					name="collision-action"
-					value="keep_incoming_alternate"
-					bind:group={collisionAction}
-				/><span
-					><strong>Keep incoming at an alternate relative path</strong><small
-						>Both files remain.</small
-					></span
-				></label
-			>
-			<label class="management-selection-card"
-				><input
-					type="radio"
-					class="radio radio-sm"
-					name="collision-action"
-					value="recycle_existing_keep_incoming"
-					bind:group={collisionAction}
-					disabled={!recycleAvailable}
-				/><span
-					><strong>Recycle existing; keep incoming</strong><small
-						>{recycleAvailable
-							? 'Moves the existing file to the configured recycle area.'
-							: 'Unavailable until a recycle directory is configured.'}</small
-					></span
-				></label
-			>
-			<label class="management-selection-card"
-				><input
-					type="radio"
-					class="radio radio-sm"
-					name="collision-action"
-					value="recycle_incoming_keep_existing"
-					bind:group={collisionAction}
-					disabled={!recycleAvailable}
-				/><span
-					><strong>Recycle incoming; keep existing</strong><small
-						>{recycleAvailable
-							? 'Moves the incoming file to the configured recycle area.'
-							: 'Unavailable until a recycle directory is configured.'}</small
-					></span
-				></label
-			>
-		</fieldset>
-		{#if collisionAction === 'keep_incoming_alternate'}<label class="mt-3 grid gap-1 text-sm"
-				><span>Alternate relative path</span><input
-					class="input input-bordered bg-base-100 font-mono"
-					bind:value={alternateRelativePath}
-					placeholder="Artist/Album/02 Track (alternate).flac"
-				/><small class="text-base-content/45"
-					>Relative to the planned destination root; absolute paths are rejected.</small
-				></label
-			>{/if}
-		{#if collisionError}<div class="alert alert-error mt-3 text-sm" role="alert">
-				{collisionError}
-			</div>{/if}
-		<div class="modal-action">
-			<button
-				class="btn btn-ghost"
-				disabled={createResolution.isPending}
-				onclick={() => collisionDialog.close()}>Cancel</button
-			><button
-				class="btn management-btn"
-				disabled={!collisionRequestReady || createResolution.isPending}
-				onclick={() => void resolveCollision()}
-				>{#if createResolution.isPending}<span class="loading loading-spinner loading-sm"
-					></span>{/if}<HardDrive class="h-4 w-4" /> Generate resolution preview</button
-			>
-		</div>
-	</div>
-	<form method="dialog" class="modal-backdrop">
-		<button aria-label="Cancel collision resolution" disabled={createResolution.isPending}
-			>close</button
-		>
-	</form>
-</dialog>
+{#if preview}
+	<LibraryManagementApplyDialog
+		bind:this={applyDialog}
+		{jobId}
+		{preview}
+		token={token.value}
+		{canApply}
+		copy={applyCopy}
+	/>
+	<LibraryManagementCollisionDialog
+		bind:this={collisionDialog}
+		{jobId}
+		{preview}
+		{roots}
+		settingsRevision={settingsQuery.data?.settings_revision ?? null}
+		policyRevision={policyQuery.data?.policy_revision ?? null}
+		recycleAvailable={Boolean(settingsQuery.data?.recycle_bin_path.trim())}
+	/>
+{/if}

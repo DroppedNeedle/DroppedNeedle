@@ -17,6 +17,9 @@ const h = vi.hoisted(() => ({
 	acquire: vi.fn()
 }));
 
+vi.mock('$app/state', () => ({ page: { url: new URL('http://localhost/album/x') } }));
+vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+
 vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	getAlbumEditionsQuery: () => ({
 		get data() {
@@ -32,11 +35,17 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	handBackAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	confirmAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	undoAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	retagAfterChoice: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	sealCustomEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	leaveAlbumUnmanaged: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	previewEditionTags: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	writeEditionTags: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	undoTagWrite: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	editionsKey: (id: string) => ['editions', id],
 	getEditionPlanQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	removeEditionExtras: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
 	restoreEditionExtras: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }),
+	matchEditionFile: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	unmatchEditionFile: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	getWaitingAlbumsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	invalidateAlbumEdition: () => Promise.resolve()
 }));
@@ -111,7 +120,6 @@ vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 }));
 
 vi.mock('$lib/queries/library/LibraryOperationQueries.svelte', () => ({
-	getLibraryOperationQuery: () => ({ data: undefined, isError: false }),
 	getCurrentLibraryRunsQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	getLibraryRunQuery: () => ({ data: undefined, isLoading: false, isError: false }),
 	getLibraryRunHistoryQuery: () => ({ data: undefined, isLoading: false, isError: false }),
@@ -130,13 +138,7 @@ vi.mock('$lib/queries/library/LibraryEditionQueries.svelte', () => ({
 }));
 
 vi.mock('$lib/queries/library/LibraryCatalogMutations.svelte', () => ({
-	reidentifyLibraryAlbum: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false }),
-	reenableAlbumManagement: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false }),
-	selectReidentificationCandidate: () => ({
-		mutateAsync: vi.fn(),
-		isPending: false,
-		isError: false
-	})
+	reenableAlbumManagement: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false })
 }));
 
 vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', () => ({

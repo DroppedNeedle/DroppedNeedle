@@ -3,7 +3,7 @@ import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 import type { PlaybackMeta, QueueItem } from '$lib/player/types';
 import type { PlexTrackInfo } from '$lib/player/types';
 import { getCoverUrl } from '$lib/utils/errorHandling';
-import { normalizeCodec, normalizeDiscNumber } from '$lib/player/queueHelpers';
+import { normalizeCodec, normalizeDiscNumber, recordingFor } from '$lib/player/queueHelpers';
 
 export function launchPlexPlayback(
 	tracks: PlexTrackInfo[],
@@ -38,6 +38,7 @@ export function launchPlexPlayback(
 			artistId: meta.artistId,
 			streamUrl: gatewayStreamUrl('plex', t.part_key!),
 			format,
+			recordingIds: recordingFor('plex', t.recording_mbid),
 			plexRatingKey: t.plex_id
 		};
 	});

@@ -7,8 +7,12 @@
 	import type { RequestKind } from '$lib/constants';
 	import { reimportDownload } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 	import {
 		ChevronDown,
+		ChevronUp,
 		X,
 		RotateCcw,
 		Trash2,
@@ -235,11 +239,9 @@
 	);
 </script>
 
-<div
-	class="request-card relative flex flex-col rounded-box transition-all duration-200"
-	class:border-error={isFailedState}
-	class:border={isFailedState}
-	class:is-downloading={isActive && !waitingForSource && item.status === 'downloading'}
+<Card
+	padding="none"
+	class="relative transition-colors hover:bg-base-300 {isFailedState ? 'border border-error' : ''}"
 >
 	{#if albumContextMbid}
 		<a
@@ -399,50 +401,50 @@
 
 			<div class="flex gap-1 items-center">
 				{#if isActive && hasStatusMessages}
-					<button
-						class="btn btn-xs btn-ghost btn-square"
-						onclick={(e) => {
+					<IconButton
+						size="xs"
+						shape="square"
+						icon={showStatusDetails ? ChevronUp : ChevronDown}
+						label={showStatusDetails ? 'Hide details' : 'Show details'}
+						onclick={(e: MouseEvent) => {
 							e.stopPropagation();
 							showStatusDetails = !showStatusDetails;
 						}}
-						title={showStatusDetails ? 'Hide details' : 'Show details'}
 						aria-expanded={showStatusDetails}
-					>
-						<ChevronDown
-							class="h-3.5 w-3.5 transition-transform duration-200 {showStatusDetails
-								? 'rotate-180'
-								: ''}"
-						/>
-					</button>
+					/>
 				{/if}
 				{#if isActive}
 					{#if confirmingCancel}
 						<span class="text-xs text-base-content/60 mr-0.5" role="alert">Cancel?</span>
-						<button class="btn btn-xs btn-error" onclick={handleCancelClick}>Yes</button>
-						<button class="btn btn-xs btn-ghost" onclick={handleCancelNo}>No</button>
+						<Button variant="danger" size="xs" onclick={handleCancelClick}>Yes</Button>
+						<Button variant="ghost" size="xs" onclick={handleCancelNo}>No</Button>
 					{:else}
-						<button
-							class="btn btn-xs btn-ghost text-error/60 hover:text-error hover:bg-error/10"
+						<Button
+							variant="danger-ghost"
+							size="xs"
+							icon={X}
 							onclick={handleCancelClick}
 							title="Cancel download"
-						>
-							<X class="h-3.5 w-3.5" />
-						</button>
+							aria-label="Cancel download"
+						/>
 					{/if}
 				{:else}
 					{#if item.status === 'failed' || item.status === 'cancelled' || item.status === 'incomplete'}
-						<button
-							class="btn btn-xs btn-primary btn-ghost"
+						<Button
+							variant="ghost"
+							size="xs"
+							icon={RotateCcw}
 							onclick={handleRetry}
 							title="Retry request"
-						>
-							<RotateCcw class="h-3.5 w-3.5" />
-						</button>
+							aria-label="Retry request"
+						/>
 					{/if}
 					{#if authStore.isAdmin && item.can_reimport && item.task_id}
-						<button
-							class="btn btn-xs btn-ghost"
-							onclick={(e) => {
+						<Button
+							variant="ghost"
+							size="xs"
+							icon={FileDown}
+							onclick={(e: MouseEvent) => {
 								e.stopPropagation();
 								reimport.mutate(
 									{
@@ -456,33 +458,33 @@
 							disabled={reimport.isPending}
 							title="Already fixed this in slskd? Check the downloads mount again without re-searching."
 							aria-label="Retry import from slskd"
-						>
-							<FileDown class="h-3.5 w-3.5" />
-						</button>
+						/>
 					{/if}
 					{#if authStore.isAdmin && !isTrackRequest && item.status === 'imported' && item.in_library !== false}
-						<button
-							class="btn btn-xs btn-ghost text-base-content/40 hover:text-error"
+						<Button
+							variant="ghost"
+							size="xs"
+							icon={Trash2}
 							onclick={handleRemoveFromLibrary}
 							title="Remove from library"
-						>
-							<Trash2 class="h-3.5 w-3.5" />
-						</button>
+							aria-label="Remove from library"
+						/>
 					{/if}
-					<button
-						class="btn btn-xs btn-ghost text-base-content/30 hover:text-base-content/70"
+					<Button
+						variant="ghost"
+						size="xs"
+						icon={X}
 						onclick={handleClear}
 						title="Clear from history"
-					>
-						<X class="h-3.5 w-3.5" />
-					</button>
+						aria-label="Clear from history"
+					/>
 				{/if}
 			</div>
 		</div>
 	</div>
 
 	{#if showStatusDetails && hasStatusMessages}
-		<div class="px-3 sm:px-4 pb-3 sm:pb-4 -mt-1 relative z-10">
+		<div class="px-3 sm:px-4 pb-3 sm:pb-4 -mt-3 relative z-10">
 			<div
 				class="bg-base-100/50 border border-error/10 rounded-lg p-3 text-xs max-h-48 overflow-y-auto"
 			>
@@ -497,7 +499,7 @@
 			</div>
 		</div>
 	{/if}
-</div>
+</Card>
 
 {#if showDeleteModal}
 	<DeleteAlbumModal
@@ -512,17 +514,6 @@
 {/if}
 
 <style>
-	.request-card {
-		background: oklch(from var(--color-base-200) l c h / 1);
-	}
-	.request-card:hover {
-		background: oklch(from var(--color-base-300) l c h / 1);
-		box-shadow: 0 0 12px oklch(from var(--color-primary) l c h / 0.06);
-	}
-	.request-card.is-downloading {
-		box-shadow: 0 0 16px oklch(from var(--color-info) l c h / 0.08);
-	}
-
 	.progress-track {
 		height: 6px;
 		border-radius: 3px;

@@ -109,6 +109,17 @@ export function selectBestSource(
 	return null;
 }
 
+/**
+ * The recording a source gave for its file, kept under that source only so
+ * switching an item to another source never carries it along.
+ */
+export function recordingFor(
+	source: SourceType,
+	recordingMbid: string | null | undefined
+): Partial<Record<SourceType, string>> | undefined {
+	return recordingMbid ? { [source]: recordingMbid } : undefined;
+}
+
 export function getAvailableSources(data: TrackSourceData): SourceType[] {
 	const sources: SourceType[] = [];
 	if (data.localTrack) sources.push('local');
@@ -130,6 +141,12 @@ export function buildQueueItem(meta: TrackMeta, data: TrackSourceData): QueueIte
 	if (data.jellyfinTrack) sourceIds.jellyfin = data.jellyfinTrack.jellyfin_id;
 	if (data.plexTrack?.part_key) sourceIds.plex = data.plexTrack.part_key;
 
+	const recordingIds: Partial<Record<SourceType, string>> = {
+		...recordingFor('navidrome', data.navidromeTrack?.recording_mbid),
+		...recordingFor('jellyfin', data.jellyfinTrack?.recording_mbid),
+		...(data.plexTrack?.part_key ? recordingFor('plex', data.plexTrack.recording_mbid) : {})
+	};
+
 	return {
 		trackSourceId: best.trackSourceId,
 		trackName: data.trackTitle,
@@ -145,6 +162,7 @@ export function buildQueueItem(meta: TrackMeta, data: TrackSourceData): QueueIte
 		format: best.format,
 		availableSources: getAvailableSources(data),
 		sourceIds,
+		recordingIds: Object.keys(recordingIds).length > 0 ? recordingIds : undefined,
 		duration: data.trackLength,
 		plexRatingKey: data.plexTrack?.plex_id
 	};
@@ -171,6 +189,7 @@ export function buildQueueItemsFromJellyfin(
 			streamUrl: gatewayStreamUrl('jellyfin', t.jellyfin_id),
 			format,
 			availableSources: ['jellyfin'] as SourceType[],
+			recordingIds: recordingFor('jellyfin', t.recording_mbid),
 			duration: t.duration_seconds
 		};
 	});
@@ -197,6 +216,7 @@ export function buildQueueItemsFromNavidrome(
 			streamUrl: gatewayStreamUrl('navidrome', t.navidrome_id),
 			format,
 			availableSources: ['navidrome'] as SourceType[],
+			recordingIds: recordingFor('navidrome', t.recording_mbid),
 			duration: t.duration_seconds
 		};
 	});
@@ -243,6 +263,7 @@ export function buildQueueItemsFromPlex(tracks: PlexTrackInfo[], meta: TrackMeta
 				streamUrl: gatewayStreamUrl('plex', t.part_key!),
 				format,
 				availableSources: ['plex'] as SourceType[],
+				recordingIds: recordingFor('plex', t.recording_mbid),
 				duration: t.duration_seconds,
 				plexRatingKey: t.plex_id
 			};
@@ -334,6 +355,7 @@ export function buildDiscoveryQueueFromNavidrome(tracks: NavidromeTrackInfo[]): 
 		streamUrl: gatewayStreamUrl('navidrome', t.navidrome_id),
 		format: normalizeCodec(t.codec),
 		availableSources: ['navidrome'] as SourceType[],
+		recordingIds: recordingFor('navidrome', t.recording_mbid),
 		duration: t.duration_seconds
 	}));
 }
@@ -372,6 +394,7 @@ export function buildDiscoveryQueueFromJellyfin(tracks: JellyfinTrackInfo[]): Qu
 		streamUrl: gatewayStreamUrl('jellyfin', t.jellyfin_id),
 		format: normalizeCodec(t.codec),
 		availableSources: ['jellyfin'] as SourceType[],
+		recordingIds: recordingFor('jellyfin', t.recording_mbid),
 		duration: t.duration_seconds
 	}));
 }
@@ -392,6 +415,7 @@ export function buildDiscoveryQueueFromPlex(tracks: PlexTrackInfo[]): QueueItem[
 			streamUrl: gatewayStreamUrl('plex', t.part_key!),
 			format: normalizeCodec(t.codec),
 			availableSources: ['plex'] as SourceType[],
+			recordingIds: recordingFor('plex', t.recording_mbid),
 			duration: t.duration_seconds
 		}));
 }

@@ -17,6 +17,8 @@
 	import type { DownloadTask } from '$lib/types';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
 	import { formatRelativeTime } from '$lib/utils/formatting';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	import CueCountdown from './CueCountdown.svelte';
 
@@ -51,9 +53,7 @@
 	}
 </script>
 
-<article
-	class="wanted-card rounded-2xl border border-warning/20 bg-base-200/50 p-3 backdrop-blur-sm sm:p-4"
->
+<Card as="article" variant="bordered" padding="sm" class="border-warning/20">
 	<div class="flex items-start gap-3 sm:gap-4">
 		<div class="size-14 shrink-0 overflow-hidden rounded-lg ring-1 ring-base-content/10 sm:size-16">
 			<AlbumImage
@@ -119,42 +119,46 @@
 		<div class="flex shrink-0 flex-col items-center gap-2">
 			<CueCountdown fraction={ladder?.fractionElapsed ?? 0} label={countdown} {urgent} size={68} />
 			<div class="flex flex-col items-stretch gap-1">
-				<button
-					class="btn btn-ghost btn-primary btn-xs"
+				<Button
+					variant="ghost"
+					size="xs"
+					icon={RotateCcw}
 					onclick={onRetryNow}
 					disabled={retry.isPending || retried}
 					title="Try this download again right now"
 				>
-					<RotateCcw class="h-3.5 w-3.5" />
 					{retried ? 'Retrying…' : 'Retry now'}
-				</button>
-				<button
-					class="btn btn-ghost btn-xs text-base-content/60 hover:text-error"
+				</Button>
+				<Button
+					variant="ghost"
+					size="xs"
+					icon={TimerOff}
 					onclick={() => stopRetry.mutate(task.id)}
 					disabled={stopRetry.isPending}
 					title="Stop hunting for this - it won't be watched for later either"
 				>
-					<TimerOff class="h-3.5 w-3.5" /> Stop
-				</button>
+					Stop
+				</Button>
 			</div>
 		</div>
 	</div>
 	{#if authStore.isAdmin && canReimport(task)}
 		<div class="mt-2 flex justify-end">
-			<button
-				class="btn btn-ghost btn-xs"
+			<Button
+				variant="ghost"
+				size="xs"
+				icon={FileDown}
 				onclick={() =>
 					reimport.mutate({ id: task.id, release_group_mbid: task.release_group_mbid })}
 				disabled={reimport.isPending}
 				title="Already fixed this in slskd? Check the downloads mount again without re-searching."
 				aria-label="Retry import from slskd"
 			>
-				<FileDown class="h-3.5 w-3.5" />
 				{reimport.isPending ? 'Checking...' : 'Retry import'}
-			</button>
+			</Button>
 		</div>
 	{/if}
-</article>
+</Card>
 
 <style>
 	.rung {

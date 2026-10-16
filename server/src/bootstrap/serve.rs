@@ -18,9 +18,9 @@ use axum::Router;
 use thiserror::Error;
 use tokio::{net::TcpListener, sync::watch, task::JoinHandle};
 
-use crate::{
-    config::BindHost, db::DbRuntime, events::EventHub, jobs::wiring::JobsSetup,
-    tooling::datalock::DataLock,
+use super::jobs::JobsSetup;
+use droppedneedle_kernel::{
+    config::BindHost, db::DbRuntime, db::datalock::DataLock, events::EventHub,
 };
 
 /// Listen backlog, the usual server default.

@@ -7,6 +7,12 @@
 	import { createSetupMutation } from '$lib/queries/auth/AuthMutations.svelte';
 	import { toAuthUser } from '$lib/queries/auth/types';
 	import { Music, Eye, EyeOff, ShieldCheck } from 'lucide-svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import Field from '$lib/ui/Field.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
+	import Input from '$lib/ui/Input.svelte';
+	import TextField from '$lib/ui/TextField.svelte';
 
 	let displayName = $state('');
 	let username = $state('');
@@ -61,112 +67,96 @@
 			</p>
 		</div>
 
-		<div class="bg-base-200 rounded-box p-6 shadow-lg border border-base-300">
-			<div class="flex items-center gap-2 mb-5 pb-4 border-b border-base-300">
-				<ShieldCheck class="h-4 w-4 text-accent" />
-				<span class="text-sm font-semibold text-base-content/70 uppercase tracking-wider">
-					Admin Account
-				</span>
-			</div>
+		<Card variant="bordered">
+			<div>
+				<div class="flex items-center gap-2 mb-5 pb-4 border-b border-base-300">
+					<ShieldCheck class="h-4 w-4 text-accent" />
+					<span class="text-sm font-semibold text-base-content/70 uppercase tracking-wider">
+						Admin Account
+					</span>
+				</div>
 
-			<form
-				onsubmit={(e) => {
-					e.preventDefault();
-					void handleSetup();
-				}}
-				class="flex flex-col gap-4"
-			>
-				<fieldset class="fieldset">
-					<legend class="fieldset-legend">Display Name</legend>
-					<input
-						type="text"
-						class="input input-bordered w-full"
+				<form
+					onsubmit={(e) => {
+						e.preventDefault();
+						void handleSetup();
+					}}
+					class="flex flex-col gap-4"
+				>
+					<TextField
+						label="Display Name"
 						placeholder="Your name"
 						bind:value={displayName}
 						required
 						autocomplete="name"
 					/>
-				</fieldset>
 
-				<fieldset class="fieldset">
-					<legend class="fieldset-legend">Username</legend>
-					<input
-						type="text"
-						class="input input-bordered w-full"
+					<TextField
+						label="Username"
 						placeholder="jane.smith"
 						bind:value={username}
 						required
 						autocomplete="username"
 					/>
-				</fieldset>
 
-				<fieldset class="fieldset">
-					<legend class="fieldset-legend">Email (optional)</legend>
-					<input
+					<TextField
+						label="Email (optional)"
 						type="email"
-						class="input input-bordered w-full"
 						placeholder="admin@example.com"
 						bind:value={email}
 						autocomplete="email"
 					/>
-				</fieldset>
 
-				<fieldset class="fieldset">
-					<legend class="fieldset-legend">Password</legend>
-					<label class="input input-bordered flex items-center gap-2 w-full">
-						{#if showPassword}
-							<input
-								type="text"
-								class="grow"
-								placeholder="Min. 12 characters"
-								bind:value={password}
-								required
-								autocomplete="new-password"
-							/>
-						{:else}
-							<input
+					<Field label="Password">
+						{#snippet children(control)}
+							<div class="join w-full">
+								<Input
+									{...control}
+									label="Password"
+									type={showPassword ? 'text' : 'password'}
+									class="join-item w-full"
+									placeholder="Min. 12 characters"
+									required
+									autocomplete="new-password"
+									bind:value={password}
+								/>
+								<IconButton
+									label="Show password"
+									icon={showPassword ? EyeOff : Eye}
+									variant="neutral"
+									shape="square"
+									class="join-item"
+									aria-pressed={showPassword}
+									onclick={() => (showPassword = !showPassword)}
+								/>
+							</div>
+						{/snippet}
+					</Field>
+
+					<Field label="Confirm Password">
+						{#snippet children(control)}
+							<Input
+								{...control}
+								label="Confirm Password"
 								type="password"
-								class="grow"
-								placeholder="Min. 12 characters"
-								bind:value={password}
+								class="w-full"
+								placeholder="Repeat password"
 								required
 								autocomplete="new-password"
+								bind:value={confirmPassword}
 							/>
-						{/if}
-						<button
-							type="button"
-							onclick={() => (showPassword = !showPassword)}
-							class="opacity-50 hover:opacity-100 transition-opacity"
-							aria-label="Toggle password visibility"
-						>
-							{#if showPassword}<EyeOff class="h-4 w-4" />{:else}<Eye class="h-4 w-4" />{/if}
-						</button>
-					</label>
-				</fieldset>
+						{/snippet}
+					</Field>
 
-				<fieldset class="fieldset">
-					<legend class="fieldset-legend">Confirm Password</legend>
-					<input
-						type="password"
-						class="input input-bordered w-full"
-						placeholder="Repeat password"
-						bind:value={confirmPassword}
-						required
-						autocomplete="new-password"
-					/>
-				</fieldset>
-
-				{#if error}
-					<div class="alert alert-error py-2 text-sm">{error}</div>
-				{/if}
-
-				<button type="submit" class="btn btn-primary w-full mt-1" disabled={setup.isPending}>
-					{#if setup.isPending}
-						<span class="loading loading-spinner loading-sm"></span>
+					{#if error}
+						<div class="alert alert-error py-2 text-sm">{error}</div>
 					{/if}
-					Create Admin Account
-				</button>
-			</form>
-		</div>
+
+					<Button type="submit" variant="primary" class="w-full mt-1" loading={setup.isPending}>
+						Create Admin Account
+					</Button>
+				</form>
+			</div>
+		</Card>
 	</div>
 </div>

@@ -6,7 +6,8 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use droppedneedle::{AppConfig, bootstrap, docs::ApiDoc, observability::init_tracing};
+use droppedneedle::{bootstrap, docs::ApiDoc};
+use droppedneedle_kernel::{config::AppConfig, observability::init_tracing};
 use utoipa::OpenApi as _;
 
 /// `--print-openapi` dumps the contract document to stdout for the
