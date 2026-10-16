@@ -6,6 +6,8 @@
 	import { matchDropItemMutation } from '$lib/queries/import/DropImportMutations.svelte';
 	import type { DropImportItem } from '$lib/queries/import/types';
 	import type { Album } from '$lib/types';
+	import IconButton from '$lib/ui/IconButton.svelte';
+	import Input from '$lib/ui/Input.svelte';
 
 	interface Props {
 		item: DropImportItem;
@@ -36,35 +38,33 @@
 	}
 </script>
 
-<dialog bind:this={dialogEl} class="modal" {onclose}>
+<dialog bind:this={dialogEl} class="modal" aria-labelledby="drop-import-match-title" {onclose}>
 	<div class="modal-box max-w-xl">
 		<div class="flex items-start justify-between gap-3">
 			<div class="min-w-0">
-				<h3 class="text-lg font-bold">Match to an album</h3>
+				<h3 id="drop-import-match-title" class="text-lg font-bold">Match to an album</h3>
 				<p class="truncate text-xs text-base-content/50" title={item.folder_name}>
 					{item.folder_name} · {item.files_total} file{item.files_total === 1 ? '' : 's'}
 				</p>
 			</div>
-			<button
-				class="btn btn-ghost btn-sm btn-circle"
-				onclick={() => dialogEl?.close()}
-				aria-label="Close"
-			>
-				<X class="h-5 w-5" aria-hidden="true" />
-			</button>
+			<IconButton size="sm" icon={X} label="Close" onclick={() => dialogEl?.close()} />
 		</div>
 
-		<label class="input input-bordered mt-4 flex w-full items-center gap-2">
-			<Search class="h-4 w-4 opacity-50" aria-hidden="true" />
-			<input
-				type="text"
-				class="grow"
+		<div class="relative mt-4">
+			<Input
+				label="Search for an album"
+				icon={Search}
 				placeholder="Search for the album…"
+				class="w-full"
 				bind:value={searchTerm}
-				aria-label="Search for an album"
 			/>
-			{#if searchQuery.isFetching}<span class="loading loading-spinner loading-xs"></span>{/if}
-		</label>
+			{#if searchQuery.isFetching}
+				<span
+					class="loading loading-spinner loading-xs absolute top-1/2 right-3 -translate-y-1/2"
+					aria-hidden="true"
+				></span>
+			{/if}
+		</div>
 
 		<div class="mt-3 max-h-72 space-y-1 overflow-y-auto">
 			{#each results as album (album.musicbrainz_id)}

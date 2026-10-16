@@ -27,6 +27,9 @@
 	import type { HeldImport } from '$lib/types';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { albumHref } from '$lib/utils/entityRoutes';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	interface Props {
 		items: HeldImport[];
@@ -274,7 +277,7 @@
 </script>
 
 {#if first}
-	<article class="rounded-3xl border border-base-content/10 bg-base-200/60 p-4 sm:p-5">
+	<Card as="article" variant="bordered" padding="md">
 		<div class="flex items-start gap-4">
 			<div
 				class="relative size-16 shrink-0 overflow-hidden rounded-2xl ring-1 ring-base-content/10 sm:size-20"
@@ -331,38 +334,38 @@
 
 				<div class="mt-4 flex flex-wrap items-center gap-2">
 					{#if canManage}
-						<button
-							type="button"
-							class="btn btn-primary btn-sm"
+						<Button
+							variant="primary"
+							size="sm"
+							icon={RefreshCw}
+							loading={retry.isPending || retryRunning}
 							onclick={retryUnit}
 							disabled={busy || !taskId}
 						>
-							<RefreshCw
-								class="size-4 {retry.isPending || retryRunning
-									? 'animate-spin motion-reduce:animate-none'
-									: ''}"
-								aria-hidden="true"
-							/>
 							{retry.isPending
 								? 'Retrying organizer…'
 								: retryRunning
 									? 'Retry in progress…'
 									: 'Retry organizer'}
-						</button>
-						<a
+						</Button>
+						<Button
+							variant="ghost"
+							size="sm"
+							icon={Settings2}
 							href={withBasePath('/library/management?tab=automation')}
-							class="btn btn-ghost btn-sm"
 						>
-							<Settings2 class="size-4" aria-hidden="true" /> Review automation
-						</a>
-						<button
-							type="button"
-							class="btn btn-ghost btn-sm text-base-content/55 hover:text-error"
-							onclick={(event) => requestDiscard(event.currentTarget)}
+							Review automation
+						</Button>
+						<Button
+							variant="ghost"
+							size="sm"
+							icon={Trash2}
+							onclick={(event: MouseEvent) =>
+								requestDiscard(event.currentTarget as HTMLButtonElement)}
 							disabled={busy}
 						>
-							<Trash2 class="size-4" aria-hidden="true" /> Discard download
-						</button>
+							Discard download
+						</Button>
 					{:else}
 						<span class="px-2 text-xs text-base-content/50">
 							An administrator can retry, discard, or review this organizer hold.
@@ -441,7 +444,7 @@
 				</div>
 			</div>
 		</div>
-	</article>
+	</Card>
 
 	<dialog
 		bind:this={discardDialog}
@@ -463,9 +466,7 @@
 					</h3>
 				</div>
 				<form method="dialog">
-					<button class="btn btn-circle btn-ghost btn-sm" aria-label="Close">
-						<X class="size-4" aria-hidden="true" />
-					</button>
+					<IconButton type="submit" size="sm" icon={X} label="Close" />
 				</form>
 			</div>
 			<p class="mt-4 text-sm leading-relaxed text-base-content/65">
@@ -477,11 +478,10 @@
 				<div class="alert alert-error mt-4 text-sm" role="alert">{discardError}</div>
 			{/if}
 			<div class="modal-action">
-				<form method="dialog"><button class="btn btn-ghost">Keep files</button></form>
-				<button class="btn btn-error" onclick={discardUnit} disabled={discard.isPending}>
-					<Trash2 class="size-4" aria-hidden="true" />
+				<form method="dialog"><Button type="submit" variant="ghost">Keep files</Button></form>
+				<Button variant="danger" icon={Trash2} onclick={discardUnit} disabled={discard.isPending}>
 					{discard.isPending ? 'Discarding…' : 'Discard secured files'}
-				</button>
+				</Button>
 			</div>
 		</div>
 		<form method="dialog" class="modal-backdrop"><button aria-label="Close">close</button></form>

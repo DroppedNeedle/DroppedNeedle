@@ -11,6 +11,7 @@
 
 	import { tryNextSource } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import type { DownloadSourceUpdate, DownloadTask } from '$lib/types';
+	import Button from '$lib/ui/Button.svelte';
 
 	interface Props {
 		task: DownloadTask;
@@ -222,16 +223,18 @@
 		</div>
 
 		{#if canTryNext}
-			<button
-				type="button"
-				class="btn btn-outline btn-primary btn-xs source-next"
-				onclick={onTryNext}
-				disabled={nextSource.isPending}
-				aria-label="Try the next ranked download source"
-			>
-				<SkipForward class="size-3.5" aria-hidden="true" />
-				{nextSource.isPending ? 'Switching…' : 'Try next source'}
-			</button>
+			<div class="source-next">
+				<Button
+					variant="outline"
+					size="xs"
+					icon={SkipForward}
+					onclick={onTryNext}
+					disabled={nextSource.isPending}
+					aria-label="Try the next ranked download source"
+				>
+					{nextSource.isPending ? 'Switching…' : 'Try next source'}
+				</Button>
+			</div>
 		{/if}
 		{#if actionMessage}
 			<p class="source-action-error" role="alert">{actionMessage}</p>

@@ -8,6 +8,9 @@
 	} from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	let dialogEl: HTMLDialogElement | undefined = $state();
 	let submitting = $state(false);
@@ -106,7 +109,12 @@
 </script>
 
 {#if discographyDownloadStore.open}
-	<dialog bind:this={dialogEl} class="modal" onclose={handleClose}>
+	<dialog
+		bind:this={dialogEl}
+		class="modal"
+		aria-labelledby="discography-download-title"
+		onclose={handleClose}
+	>
 		<div class="modal-box max-w-lg">
 			<div class="flex items-center justify-between mb-4">
 				<div class="flex items-center gap-3">
@@ -114,13 +122,11 @@
 						<Download class="h-5 w-5 text-accent" />
 					</div>
 					<div>
-						<h3 class="text-lg font-bold">Download Discography</h3>
+						<h3 id="discography-download-title" class="text-lg font-bold">Download Discography</h3>
 						<p class="text-sm text-base-content/60">{discographyDownloadStore.artistName}</p>
 					</div>
 				</div>
-				<button class="btn btn-ghost btn-sm btn-circle" onclick={handleClose} aria-label="Close">
-					<X class="h-4 w-4" />
-				</button>
+				<IconButton size="sm" icon={X} label="Close" onclick={handleClose} />
 			</div>
 
 			<div class="flex gap-2 flex-wrap mb-4">
@@ -142,43 +148,29 @@
 				{/if}
 			</div>
 
-			<div class="bg-base-200/50 rounded-box p-3 mb-4">
-				<p class="text-xs font-medium text-base-content/50 uppercase tracking-wider mb-2">
-					Include
-				</p>
+			<Card padding="sm" class="mb-4">
+				<p class="text-xs font-medium text-base-content/50 uppercase tracking-wider">Include</p>
 				<div class="flex flex-wrap gap-3">
 					{#if albumCount > 0}
 						<label class="label cursor-pointer gap-2 p-0">
-							<input
-								type="checkbox"
-								class="checkbox checkbox-accent checkbox-sm"
-								bind:checked={includeAlbums}
-							/>
-							<span class="label-text text-sm">Albums ({albumCount})</span>
+							<input type="checkbox" class="checkbox checkbox-sm" bind:checked={includeAlbums} />
+							<span class="text-sm">Albums ({albumCount})</span>
 						</label>
 					{/if}
 					{#if epCount > 0}
 						<label class="label cursor-pointer gap-2 p-0">
-							<input
-								type="checkbox"
-								class="checkbox checkbox-accent checkbox-sm"
-								bind:checked={includeEPs}
-							/>
-							<span class="label-text text-sm">EPs ({epCount})</span>
+							<input type="checkbox" class="checkbox checkbox-sm" bind:checked={includeEPs} />
+							<span class="text-sm">EPs ({epCount})</span>
 						</label>
 					{/if}
 					{#if singleCount > 0}
 						<label class="label cursor-pointer gap-2 p-0">
-							<input
-								type="checkbox"
-								class="checkbox checkbox-accent checkbox-sm"
-								bind:checked={includeSingles}
-							/>
-							<span class="label-text text-sm">Singles ({singleCount})</span>
+							<input type="checkbox" class="checkbox checkbox-sm" bind:checked={includeSingles} />
+							<span class="text-sm">Singles ({singleCount})</span>
 						</label>
 					{/if}
 				</div>
-			</div>
+			</Card>
 
 			{#if filteredReleases.length > 0}
 				<div class="mb-4">
@@ -186,8 +178,7 @@
 						{filteredReleases.length} album{filteredReleases.length !== 1 ? 's' : ''} to request
 					</p>
 					<div
-						class="grid gap-1.5 max-h-48 overflow-y-auto pr-1"
-						style="grid-template-columns: repeat(auto-fill, minmax(3.5rem, 1fr));"
+						class="grid grid-cols-[repeat(auto-fill,minmax(3.5rem,1fr))] gap-1.5 max-h-48 overflow-y-auto pr-1"
 					>
 						{#each filteredReleases.slice(0, 40) as release (release.id)}
 							<div
@@ -220,8 +211,8 @@
 					</div>
 				</div>
 			{:else}
-				<div class="bg-base-200/30 rounded-box p-4 text-center mb-4">
-					<Library class="h-8 w-8 mx-auto text-base-content/30 mb-2" />
+				<Card padding="md" class="text-center mb-4">
+					<Library class="h-8 w-8 mx-auto text-base-content/30" />
 					<p class="text-sm text-base-content/50">
 						{#if inLibraryCount === totalReleases}
 							All releases are already in your library
@@ -229,48 +220,46 @@
 							No releases to download with current filters
 						{/if}
 					</p>
-				</div>
+				</Card>
 			{/if}
 
-			<div class="bg-base-200/50 rounded-box p-3 mb-4">
-				<p class="text-xs font-medium text-base-content/50 uppercase tracking-wider mb-2">
-					Options
-				</p>
-				<label class="label cursor-pointer justify-start gap-3 p-0 mb-1">
+			<Card padding="sm" class="mb-4">
+				<p class="text-xs font-medium text-base-content/50 uppercase tracking-wider">Options</p>
+				<label class="label cursor-pointer justify-start gap-3 p-0">
 					<input
 						type="checkbox"
-						class="toggle toggle-accent toggle-sm"
+						class="toggle toggle-sm toggle-primary"
 						bind:checked={monitorArtist}
 					/>
-					<span class="label-text text-sm">Monitor artist for future releases</span>
+					<span class="text-sm">Monitor artist for future releases</span>
 				</label>
 				{#if monitorArtist}
 					<label class="label cursor-pointer justify-start gap-3 p-0 pl-10">
 						<input
 							type="checkbox"
-							class="toggle toggle-accent toggle-sm"
+							class="toggle toggle-sm toggle-primary"
 							bind:checked={autoDownload}
 						/>
-						<span class="label-text text-sm">Auto-download new releases</span>
+						<span class="text-sm">Auto-download new releases</span>
 					</label>
 				{/if}
-			</div>
+			</Card>
 
 			<div class="modal-action mt-0">
-				<button class="btn btn-ghost" onclick={handleClose} disabled={submitting}>Cancel</button>
-				<button
-					class="btn btn-accent"
+				<Button variant="ghost" onclick={handleClose} disabled={submitting}>Cancel</Button>
+				<Button
+					variant="accent"
+					icon={Download}
+					loading={submitting}
+					disabled={filteredReleases.length === 0}
 					onclick={handleDownload}
-					disabled={submitting || filteredReleases.length === 0}
 				>
 					{#if submitting}
-						<span class="loading loading-spinner loading-sm"></span>
 						Requesting...
 					{:else}
-						<Download class="h-4 w-4" />
 						Download {filteredReleases.length} Album{filteredReleases.length !== 1 ? 's' : ''}
 					{/if}
-				</button>
+				</Button>
 			</div>
 		</div>
 		<form method="dialog" class="modal-backdrop">

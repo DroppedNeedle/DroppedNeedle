@@ -8,6 +8,9 @@
 	} from '$lib/queries/downloads/DownloadMutations.svelte';
 	import type { DownloadTask, HeldImport } from '$lib/types';
 	import { albumHref } from '$lib/utils/entityRoutes';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	import HeldTrackCard from './HeldTrackCard.svelte';
 
@@ -65,7 +68,7 @@
 	}
 </script>
 
-<article class="rounded-3xl border border-warning/25 bg-base-200/60 p-4 sm:p-5">
+<Card as="article" variant="bordered" padding="md" class="border-warning/25">
 	<div class="flex items-start gap-4">
 		<div
 			class="relative size-16 shrink-0 overflow-hidden rounded-2xl ring-1 ring-base-content/10 sm:size-20"
@@ -126,26 +129,25 @@
 			</p>
 
 			<div class="mt-4 flex flex-wrap items-center gap-2">
-				<button
-					type="button"
-					class="btn btn-primary btn-sm"
+				<Button
+					variant="primary"
+					size="sm"
+					icon={RefreshCw}
+					loading={retry.isPending}
 					onclick={() => retry.mutate(task.id)}
 					disabled={busy}
 				>
-					<RefreshCw
-						class="size-4 {retry.isPending ? 'animate-spin motion-reduce:animate-none' : ''}"
-						aria-hidden="true"
-					/>
 					{retry.isPending ? 'Retrying…' : 'Retry download'}
-				</button>
-				<button
-					type="button"
-					class="btn btn-ghost btn-sm text-base-content/55 hover:text-error"
-					onclick={(event) => requestDiscard(event.currentTarget)}
+				</Button>
+				<Button
+					variant="ghost"
+					size="sm"
+					icon={Trash2}
+					onclick={(event: MouseEvent) => requestDiscard(event.currentTarget as HTMLButtonElement)}
 					disabled={busy}
 				>
-					<Trash2 class="size-4" aria-hidden="true" /> Discard all {items.length}
-				</button>
+					Discard all {items.length}
+				</Button>
 			</div>
 
 			<div class="mt-4 border-t border-base-content/8 pt-3">
@@ -173,7 +175,7 @@
 			</div>
 		</div>
 	</div>
-</article>
+</Card>
 
 <dialog
 	bind:this={discardDialog}
@@ -195,9 +197,7 @@
 				</h3>
 			</div>
 			<form method="dialog">
-				<button class="btn btn-circle btn-ghost btn-sm" aria-label="Close">
-					<X class="size-4" aria-hidden="true" />
-				</button>
+				<IconButton type="submit" size="sm" icon={X} label="Close" />
 			</form>
 		</div>
 		<p class="mt-4 text-sm leading-relaxed text-base-content/65">
@@ -209,11 +209,10 @@
 			<div class="alert alert-error mt-4 text-sm" role="alert">{discardError}</div>
 		{/if}
 		<div class="modal-action">
-			<form method="dialog"><button class="btn btn-ghost">Keep files</button></form>
-			<button class="btn btn-error" onclick={discardUnit} disabled={discard.isPending}>
-				<Trash2 class="size-4" aria-hidden="true" />
+			<form method="dialog"><Button type="submit" variant="ghost">Keep files</Button></form>
+			<Button variant="danger" icon={Trash2} onclick={discardUnit} disabled={discard.isPending}>
 				{discard.isPending ? 'Discarding…' : 'Discard held files'}
-			</button>
+			</Button>
 		</div>
 	</div>
 	<form method="dialog" class="modal-backdrop"><button aria-label="Close">close</button></form>

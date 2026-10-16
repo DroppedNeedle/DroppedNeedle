@@ -2,6 +2,8 @@
 	import { TriangleAlert, ShieldCheck, Trash2 } from 'lucide-svelte';
 
 	import EmptyState from '$lib/components/EmptyState.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 	import {
 		deleteQuarantineEntry,
 		getQuarantineQuery
@@ -55,29 +57,31 @@
 {:else}
 	<div class="space-y-2">
 		{#each query.data?.items ?? [] as entry (entry.id)}
-			<div
-				class="flex items-center gap-3 rounded-xl border border-base-content/5 bg-base-200/50 p-3 backdrop-blur-sm"
-			>
-				<TriangleAlert class="h-5 w-5 shrink-0 text-warning" aria-hidden="true" />
-				<div class="min-w-0 flex-1">
-					<p class="truncate text-sm font-medium" title={entry.filename}>
-						{basename(entry.filename)}
-					</p>
-					<p class="truncate text-xs text-base-content/55">
-						{entry.username}
-						<span class="text-base-content/30"> · </span>{entry.reason_text ?? entry.reason}
-						<span class="text-base-content/30"> · </span>{fmtDate(entry.quarantined_at)}
-					</p>
+			<Card variant="bordered" padding="sm">
+				<div class="flex items-center gap-3">
+					<TriangleAlert class="h-5 w-5 shrink-0 text-warning" aria-hidden="true" />
+					<div class="min-w-0 flex-1">
+						<p class="truncate text-sm font-medium" title={entry.filename}>
+							{basename(entry.filename)}
+						</p>
+						<p class="truncate text-xs text-base-content/55">
+							{entry.username}
+							<span class="text-base-content/30"> · </span>{entry.reason_text ?? entry.reason}
+							<span class="text-base-content/30"> · </span>{fmtDate(entry.quarantined_at)}
+						</p>
+					</div>
+					<Button
+						variant={confirmId === entry.id ? 'danger' : 'ghost'}
+						size="xs"
+						icon={Trash2}
+						class="gap-1"
+						onclick={() => requestDelete(entry.id)}
+						disabled={del.isPending}
+					>
+						{confirmId === entry.id ? 'Confirm - delete & allow retry' : 'Delete & allow retry'}
+					</Button>
 				</div>
-				<button
-					class="btn btn-xs gap-1 {confirmId === entry.id ? 'btn-error' : 'btn-ghost'}"
-					onclick={() => requestDelete(entry.id)}
-					disabled={del.isPending}
-				>
-					<Trash2 class="h-3.5 w-3.5" />
-					{confirmId === entry.id ? 'Confirm - delete & allow retry' : 'Delete & allow retry'}
-				</button>
-			</div>
+			</Card>
 		{/each}
 	</div>
 {/if}

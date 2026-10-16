@@ -13,6 +13,7 @@
 	import { getPluginSourcesQuery } from '$lib/queries/plugins/PluginSourceQueries.svelte';
 
 	import SearchResultCard from './SearchResultCard.svelte';
+	import Button from '$lib/ui/Button.svelte';
 
 	let { jobId, onClose }: { jobId: string; onClose?: () => void } = $props();
 
@@ -155,27 +156,28 @@
 
 		<div class="flex flex-wrap items-center justify-between gap-2">
 			{#if hasMore && job.status === 'completed'}
-				<button class="btn btn-ghost btn-xs" onclick={() => (showAll = !showAll)}>
+				<Button variant="ghost" size="xs" onclick={() => (showAll = !showAll)}>
 					{showAll ? 'Show fewer' : `Show all ${candidates.length} candidates`}
-				</button>
+				</Button>
 			{:else}
 				<span></span>
 			{/if}
 			<div class="flex items-center gap-1">
 				{#if job.status === 'completed' && job.release_group_mbid}
-					<button
-						class="btn btn-ghost btn-xs text-info"
+					<Button
+						variant="ghost"
+						size="xs"
+						icon={Radar}
 						onclick={handleDismiss}
 						disabled={busy}
 						title="Turn all of these down and put the album on the watchlist. It is checked again on a schedule."
 					>
-						<Radar class="h-3.5 w-3.5" /> None of these - keep watching
-					</button>
+						None of these - keep watching
+					</Button>
 				{/if}
-				<button class="btn btn-ghost btn-xs" onclick={handleClose} disabled={busy && !picked}>
-					<X class="h-3.5 w-3.5" />
+				<Button variant="ghost" size="xs" icon={X} onclick={handleClose} disabled={busy && !picked}>
 					{job.status === 'searching' ? 'Stop search' : 'Close'}
-				</button>
+				</Button>
 			</div>
 		</div>
 	{:else}

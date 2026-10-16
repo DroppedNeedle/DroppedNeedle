@@ -13,6 +13,8 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { formatLastUpdated } from '$lib/utils/formatting';
 	import type { DropImportItem, DropImportItemStatus } from '$lib/queries/import/types';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		showAll?: boolean;
@@ -60,116 +62,118 @@
 {:else}
 	<div class="space-y-3">
 		{#each jobs as job (job.id)}
-			<div class="rounded-2xl border border-base-content/10 bg-base-200/40 p-4">
-				<div class="flex flex-wrap items-center justify-between gap-2">
-					<div class="min-w-0">
-						<p class="truncate text-sm font-semibold" title={job.upload_name}>
-							{job.upload_name}
-						</p>
-						<p class="text-xs text-base-content/50">
-							{formatLastUpdated(new Date(job.created_at * 1000))}
-							{#if showAll && job.user_id !== authStore.user?.id}
-								· by {job.user_name}
-							{/if}
-						</p>
+			<Card variant="bordered" padding="md">
+				<div>
+					<div class="flex flex-wrap items-center justify-between gap-2">
+						<div class="min-w-0">
+							<p class="truncate text-sm font-semibold" title={job.upload_name}>
+								{job.upload_name}
+							</p>
+							<p class="text-xs text-base-content/50">
+								{formatLastUpdated(new Date(job.created_at * 1000))}
+								{#if showAll && job.user_id !== authStore.user?.id}
+									· by {job.user_name}
+								{/if}
+							</p>
+						</div>
+						{#if job.status === 'processing'}
+							<span class="badge badge-info gap-1">
+								<LoaderCircle class="h-3 w-3 animate-spin" aria-hidden="true" /> Working…
+							</span>
+						{:else if job.status === 'failed'}
+							<span class="badge badge-error" title={job.error ?? undefined}>Failed</span>
+						{/if}
 					</div>
-					{#if job.status === 'processing'}
-						<span class="badge badge-info gap-1">
-							<LoaderCircle class="h-3 w-3 animate-spin" aria-hidden="true" /> Working…
-						</span>
-					{:else if job.status === 'failed'}
-						<span class="badge badge-error" title={job.error ?? undefined}>Failed</span>
+					{#if job.items.some((item) => item.status === 'needs_review')}
+						{@const daysLeft = reviewDaysLeft(job.created_at)}
+						<p class="mt-1 text-xs text-base-content/50">
+							Unmatched items are auto-removed 90 days after upload ({daysLeft}
+							{daysLeft === 1 ? 'day' : 'days'} left).
+						</p>
+					{/if}
+
+					{#if job.error}
+						<!-- a completed job carries notes here (a skipped corrupt archive),
+					     a failed one carries the reason - only the latter is an error -->
+						<p class="mt-2 text-xs {job.status === 'failed' ? 'text-error' : 'text-warning'}">
+							{job.error}
+						</p>
+					{/if}
+
+					{#if job.items.length}
+						<ul class="mt-3 space-y-2">
+							{#each job.items as item (item.id)}
+								{@const badge = badges[item.status]}
+								<li
+									class="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-base-100/60 px-3 py-2"
+								>
+									<div class="min-w-0 flex-1">
+										<div class="flex min-w-0 items-center gap-2">
+											{#if item.status === 'imported'}
+												<CircleCheckBig class="h-4 w-4 shrink-0 text-success" aria-hidden="true" />
+											{:else if item.status === 'needs_review'}
+												<CircleQuestionMark
+													class="h-4 w-4 shrink-0 text-warning"
+													aria-hidden="true"
+												/>
+											{:else if item.status === 'failed'}
+												<CircleAlert class="h-4 w-4 shrink-0 text-error" aria-hidden="true" />
+											{:else if item.status === 'skipped' || item.status === 'discarded'}
+												<SkipForward
+													class="h-4 w-4 shrink-0 text-base-content/40"
+													aria-hidden="true"
+												/>
+											{:else}
+												<LoaderCircle
+													class="h-4 w-4 shrink-0 animate-spin text-info"
+													aria-hidden="true"
+												/>
+											{/if}
+											<p class="grow-0 truncate text-sm font-medium">
+												{#if item.album_title}
+													{item.artist_name ? `${item.artist_name} - ` : ''}{item.album_title}
+												{:else}
+													{item.folder_name}
+												{/if}
+											</p>
+											<span class="badge badge-sm {badge.cls} shrink-0">{badge.label}</span>
+										</div>
+										{#if item.detail}
+											<p class="mt-0.5 truncate text-xs text-base-content/50" title={item.detail}>
+												{item.detail}
+											</p>
+										{/if}
+										{#if item.reason_action && item.status !== 'imported'}
+											<p
+												class="mt-0.5 truncate text-xs text-base-content/40"
+												data-testid="drop-import-reason-action"
+												title={item.reason_action}
+											>
+												{item.reason_action}
+											</p>
+										{/if}
+									</div>
+									{#if item.status === 'needs_review'}
+										<div class="flex shrink-0 items-center gap-1">
+											<Button variant="primary" size="xs" onclick={() => (matching = item)}>
+												Match…
+											</Button>
+											<Button
+												variant="ghost"
+												size="xs"
+												icon={Trash2}
+												onclick={() => discard.mutate(item.id)}
+												disabled={discard.isPending}
+												aria-label="Discard {item.folder_name}"
+											/>
+										</div>
+									{/if}
+								</li>
+							{/each}
+						</ul>
 					{/if}
 				</div>
-				{#if job.items.some((item) => item.status === 'needs_review')}
-					{@const daysLeft = reviewDaysLeft(job.created_at)}
-					<p class="mt-1 text-xs text-base-content/50">
-						Unmatched items are auto-removed 90 days after upload ({daysLeft}
-						{daysLeft === 1 ? 'day' : 'days'} left).
-					</p>
-				{/if}
-
-				{#if job.error}
-					<!-- a completed job carries notes here (a skipped corrupt archive),
-					     a failed one carries the reason - only the latter is an error -->
-					<p class="mt-2 text-xs {job.status === 'failed' ? 'text-error' : 'text-warning'}">
-						{job.error}
-					</p>
-				{/if}
-
-				{#if job.items.length}
-					<ul class="mt-3 space-y-2">
-						{#each job.items as item (item.id)}
-							{@const badge = badges[item.status]}
-							<li
-								class="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-base-100/60 px-3 py-2"
-							>
-								<div class="min-w-0 flex-1">
-									<div class="flex min-w-0 items-center gap-2">
-										{#if item.status === 'imported'}
-											<CircleCheckBig class="h-4 w-4 shrink-0 text-success" aria-hidden="true" />
-										{:else if item.status === 'needs_review'}
-											<CircleQuestionMark
-												class="h-4 w-4 shrink-0 text-warning"
-												aria-hidden="true"
-											/>
-										{:else if item.status === 'failed'}
-											<CircleAlert class="h-4 w-4 shrink-0 text-error" aria-hidden="true" />
-										{:else if item.status === 'skipped' || item.status === 'discarded'}
-											<SkipForward
-												class="h-4 w-4 shrink-0 text-base-content/40"
-												aria-hidden="true"
-											/>
-										{:else}
-											<LoaderCircle
-												class="h-4 w-4 shrink-0 animate-spin text-info"
-												aria-hidden="true"
-											/>
-										{/if}
-										<p class="truncate text-sm font-medium">
-											{#if item.album_title}
-												{item.artist_name ? `${item.artist_name} - ` : ''}{item.album_title}
-											{:else}
-												{item.folder_name}
-											{/if}
-										</p>
-										<span class="badge badge-sm {badge.cls} shrink-0">{badge.label}</span>
-									</div>
-									{#if item.detail}
-										<p class="mt-0.5 truncate text-xs text-base-content/50" title={item.detail}>
-											{item.detail}
-										</p>
-									{/if}
-									{#if item.reason_action && item.status !== 'imported'}
-										<p
-											class="mt-0.5 truncate text-xs text-base-content/40"
-											data-testid="drop-import-reason-action"
-											title={item.reason_action}
-										>
-											{item.reason_action}
-										</p>
-									{/if}
-								</div>
-								{#if item.status === 'needs_review'}
-									<div class="flex shrink-0 items-center gap-1">
-										<button class="btn btn-primary btn-xs" onclick={() => (matching = item)}>
-											Match…
-										</button>
-										<button
-											class="btn btn-ghost btn-xs"
-											onclick={() => discard.mutate(item.id)}
-											disabled={discard.isPending}
-											aria-label="Discard {item.folder_name}"
-										>
-											<Trash2 class="h-3.5 w-3.5" aria-hidden="true" />
-										</button>
-									</div>
-								{/if}
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			</div>
+			</Card>
 		{/each}
 	</div>
 {/if}

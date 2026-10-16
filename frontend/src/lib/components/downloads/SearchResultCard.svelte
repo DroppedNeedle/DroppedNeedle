@@ -2,6 +2,8 @@
 	import { BadgeCheck, Disc3, Download, Files, Library, Puzzle, Signal } from 'lucide-svelte';
 
 	import type { SearchCandidate } from '$lib/queries/downloads/SearchQueries.svelte';
+	import Button from '$lib/ui/Button.svelte';
+	import Card from '$lib/ui/Card.svelte';
 
 	interface Props {
 		candidate: SearchCandidate;
@@ -47,92 +49,96 @@
 	);
 </script>
 
-<div class="sleeve-card flex items-center gap-4 rounded-box border border-base-300 bg-base-200 p-3">
-	<div
-		class="sleeve grid size-14 shrink-0 place-items-center rounded-md bg-base-300"
-		aria-hidden="true"
-	>
-		{#if isSoulseek}
-			<Disc3 class="size-7 text-base-content/60" />
-		{:else if isUsenet}
-			<Download class="size-7 text-base-content/60" />
-		{:else}
-			<Puzzle class="size-7 text-base-content/60" />
-		{/if}
-	</div>
-
-	<div class="min-w-0 flex-1">
-		<p class="truncate font-semibold" title={candidate.title}>{candidate.title}</p>
-		<p class="truncate text-sm text-base-content/60" title={subtitle}>{subtitle}</p>
-		<p
-			class="mt-1 text-xs"
-			class:text-success={recommended}
-			class:text-warning={!recommended}
-			data-testid="candidate-note"
+<Card variant="bordered" padding="sm" class="sleeve-card">
+	<div class="flex items-center gap-4">
+		<div
+			class="sleeve grid size-14 shrink-0 place-items-center rounded-md bg-base-300"
+			aria-hidden="true"
 		>
-			{candidate.note.text}
-		</p>
-		<div class="mt-1.5 flex flex-wrap items-center gap-1.5">
-			{#if candidate.format}
-				<span class="badge badge-sm" class:badge-success={recommended}>{candidate.format}</span>
-			{/if}
-			{#if tracksLabel}
-				<span class="badge badge-ghost badge-sm gap-1" title={fileList || undefined}>
-					<Files class="size-3" aria-hidden="true" />{tracksLabel}
-				</span>
-			{/if}
-			{#if candidate.size_bytes > 0}
-				<span class="badge badge-ghost badge-sm">{sizeLabel(candidate.size_bytes)}</span>
-			{/if}
-			{#if isUsenet}
-				{#if candidate.indexer}
-					<span class="badge badge-ghost badge-sm gap-1">
-						<Library class="size-3" aria-hidden="true" />{candidate.indexer}
-					</span>
-				{/if}
-				{#if candidate.grabs}
-					<span class="badge badge-ghost badge-sm gap-1" aria-label="Grabs">
-						<Signal class="size-3" aria-hidden="true" />{candidate.grabs}
-					</span>
-				{/if}
-				{#if ageLabel}<span class="badge badge-ghost badge-sm">{ageLabel}</span>{/if}
-			{/if}
 			{#if isSoulseek}
-				{#if candidate.upload_speed}
-					<span class="badge badge-ghost badge-sm gap-1" aria-label="Upload speed">
-						<Signal class="size-3" aria-hidden="true" />{Math.round(candidate.upload_speed / 1000)} KB/s
-					</span>
-				{/if}
-				{#if candidate.has_free_slot}
-					<span
-						class="badge badge-ghost badge-sm gap-1 text-success"
-						aria-label="Free slot available"
-					>
-						<BadgeCheck class="size-3" aria-hidden="true" />slot
-					</span>
-				{:else if candidate.queue_length}
-					<span class="badge badge-ghost badge-sm">{candidate.queue_length} queued</span>
-				{/if}
+				<Disc3 class="size-7 text-base-content/60" />
+			{:else if isUsenet}
+				<Download class="size-7 text-base-content/60" />
+			{:else}
+				<Puzzle class="size-7 text-base-content/60" />
 			{/if}
 		</div>
-	</div>
 
-	<button
-		type="button"
-		class="btn btn-sm min-h-11 shrink-0"
-		class:btn-primary={recommended}
-		class:btn-outline={!recommended}
-		onclick={onPick}
-		disabled={picking || disabled}
-		aria-label={`Pick ${candidate.title} from ${subtitle}`}
-	>
-		{#if picking}<span class="loading loading-spinner loading-xs"></span>{/if}
-		{recommended ? 'Pick' : 'Pick anyway'}
-	</button>
-</div>
+		<div class="min-w-0 flex-1">
+			<p class="truncate text-base font-semibold" title={candidate.title}>{candidate.title}</p>
+			<p class="truncate text-sm text-base-content/60" title={subtitle}>{subtitle}</p>
+			<p
+				class="mt-1 text-xs"
+				class:text-success={recommended}
+				class:text-warning={!recommended}
+				data-testid="candidate-note"
+			>
+				{candidate.note.text}
+			</p>
+			<div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+				{#if candidate.format}
+					<span class="badge badge-sm" class:badge-success={recommended}>{candidate.format}</span>
+				{/if}
+				{#if tracksLabel}
+					<span class="badge badge-ghost badge-sm gap-1" title={fileList || undefined}>
+						<Files class="size-3" aria-hidden="true" />{tracksLabel}
+					</span>
+				{/if}
+				{#if candidate.size_bytes > 0}
+					<span class="badge badge-ghost badge-sm">{sizeLabel(candidate.size_bytes)}</span>
+				{/if}
+				{#if isUsenet}
+					{#if candidate.indexer}
+						<span class="badge badge-ghost badge-sm gap-1">
+							<Library class="size-3" aria-hidden="true" />{candidate.indexer}
+						</span>
+					{/if}
+					{#if candidate.grabs}
+						<span class="badge badge-ghost badge-sm gap-1" aria-label="Grabs">
+							<Signal class="size-3" aria-hidden="true" />{candidate.grabs}
+						</span>
+					{/if}
+					{#if ageLabel}<span class="badge badge-ghost badge-sm">{ageLabel}</span>{/if}
+				{/if}
+				{#if isSoulseek}
+					{#if candidate.upload_speed}
+						<span class="badge badge-ghost badge-sm gap-1" aria-label="Upload speed">
+							<Signal class="size-3" aria-hidden="true" />{Math.round(
+								candidate.upload_speed / 1000
+							)} KB/s
+						</span>
+					{/if}
+					{#if candidate.has_free_slot}
+						<span
+							class="badge badge-ghost badge-sm gap-1 text-success"
+							aria-label="Free slot available"
+						>
+							<BadgeCheck class="size-3" aria-hidden="true" />slot
+						</span>
+					{:else if candidate.queue_length}
+						<span class="badge badge-ghost badge-sm">{candidate.queue_length} queued</span>
+					{/if}
+				{/if}
+			</div>
+		</div>
+
+		<Button
+			variant={recommended ? 'primary' : 'outline'}
+			size="sm"
+			class="min-h-11 shrink-0"
+			loading={picking}
+			{disabled}
+			onclick={onPick}
+			aria-label={`Pick ${candidate.title} from ${subtitle}`}
+		>
+			{recommended ? 'Pick' : 'Pick anyway'}
+		</Button>
+	</div>
+</Card>
 
 <style>
-	.sleeve-card {
+	/* the sleeve tilt rides on the kit Card, outside this component's scope */
+	:global(.sleeve-card) {
 		transform: perspective(900px) rotateY(-3deg);
 		transform-style: preserve-3d;
 		transition:
@@ -140,7 +146,7 @@
 			box-shadow 0.35s ease;
 		animation: fade-in-up 0.3s ease both;
 	}
-	.sleeve-card:hover {
+	:global(.sleeve-card:hover) {
 		transform: perspective(900px) rotateY(0deg) translateY(-2px);
 		box-shadow: 0 12px 30px oklch(from var(--color-base-300) l c h / 0.6);
 	}
@@ -159,11 +165,11 @@
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {
-		.sleeve-card {
+		:global(.sleeve-card) {
 			animation: none;
 			transition: none;
 		}
-		.sleeve-card:hover {
+		:global(.sleeve-card:hover) {
 			transform: none;
 			box-shadow: none;
 		}

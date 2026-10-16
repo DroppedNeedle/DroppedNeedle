@@ -68,7 +68,11 @@
 		<DropImportZone className="mb-6" />
 		{#if isAdmin}
 			<label class="mb-3 flex items-center justify-end gap-2 text-xs text-base-content/60">
-				<input type="checkbox" class="toggle toggle-xs" bind:checked={showAllImports} />
+				<input
+					type="checkbox"
+					class="toggle toggle-sm toggle-primary"
+					bind:checked={showAllImports}
+				/>
 				Show everyone's imports
 			</label>
 		{/if}

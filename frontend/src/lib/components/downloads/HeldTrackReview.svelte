@@ -21,6 +21,8 @@
 	} from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { formatCountdown } from '$lib/queries/downloads/downloadStatus';
 	import type { HeldImport } from '$lib/types';
+	import Button from '$lib/ui/Button.svelte';
+	import IconButton from '$lib/ui/IconButton.svelte';
 
 	interface Props {
 		held: HeldImport;
@@ -147,15 +149,14 @@
 	{/if}
 
 	<div class="flex items-center gap-2">
-		<button
-			type="button"
-			class="grid size-7 shrink-0 place-items-center rounded-full text-warning ring-1 ring-warning/30 transition-colors hover:bg-warning/10 disabled:opacity-40 motion-reduce:transition-none"
+		<IconButton
+			size="sm"
+			icon={playing ? Pause : Play}
+			label={playing ? 'Pause preview' : 'Play a preview to check the audio'}
+			class="shrink-0"
 			onclick={togglePlay}
 			disabled={failed}
-			aria-label={playing ? 'Pause preview' : 'Play a preview to check the audio'}
-		>
-			{#if playing}<Pause class="h-3.5 w-3.5" />{:else}<Play class="h-3.5 w-3.5" />{/if}
-		</button>
+		/>
 		<input
 			type="range"
 			class="held-seek h-1 flex-1"
@@ -194,8 +195,10 @@
 	{/if}
 
 	<div class="flex flex-wrap items-center gap-1.5">
-		<button
-			class="btn btn-primary btn-xs"
+		<Button
+			variant="primary"
+			size="xs"
+			icon={Check}
 			onclick={() =>
 				importMut.mutate(
 					{ id: held.id, release_group_mbid: held.release_group_mbid },
@@ -206,11 +209,12 @@
 				? 'Replace your current copy with this file if it is better. The old file goes to the recycle bin'
 				: 'Add this file to your library anyway'}
 		>
-			<Check class="h-3.5 w-3.5" />
 			{isUpgrade ? 'Import upgrade' : 'Import anyway'}
-		</button>
-		<button
-			class="btn btn-ghost btn-xs text-base-content/60 hover:text-error"
+		</Button>
+		<Button
+			variant="ghost"
+			size="xs"
+			icon={X}
 			onclick={() =>
 				discardMut.mutate(
 					{ id: held.id, release_group_mbid: held.release_group_mbid },
@@ -219,11 +223,14 @@
 			disabled={busy}
 			title="Delete this file and keep looking"
 		>
-			<X class="h-3.5 w-3.5" /> Discard
-		</button>
+			Discard
+		</Button>
 		{#if canRecheck}
-			<button
-				class="btn btn-ghost btn-xs"
+			<Button
+				variant="ghost"
+				size="xs"
+				icon={RotateCcw}
+				loading={reverifyMut.isPending}
 				onclick={() =>
 					reverifyMut.mutate(
 						{ id: held.id, release_group_mbid: held.release_group_mbid },
@@ -232,12 +239,8 @@
 				disabled={busy}
 				title="Run the fingerprint check again. Confident matches import automatically"
 			>
-				{#if reverifyMut.isPending}
-					<span class="loading loading-spinner loading-xs" aria-hidden="true"></span> Checking...
-				{:else}
-					<RotateCcw class="h-3.5 w-3.5" /> Re-check
-				{/if}
-			</button>
+				{reverifyMut.isPending ? 'Checking...' : 'Re-check'}
+			</Button>
 		{/if}
 	</div>
 	{#if actionError}
