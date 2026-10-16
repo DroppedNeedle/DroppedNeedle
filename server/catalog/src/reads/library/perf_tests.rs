@@ -1498,32 +1498,29 @@ async fn history_orders_page_like_one_sort() {
 }
 
 /// The played half of a play-history order reads the listener's plays
-/// through a per-user index and looks each row up by id: for tracks from
-/// the index over listener, track and time alone, for albums through each
-/// play's track. It never walks the catalog, whether the planner has
-/// statistics on the history table or not (a fresh install has none until
-/// the daily ANALYZE after the first plays). The play counts of a page of
-/// tracks or albums probe that index once per track.
+/// through a per-user index and looks each row up by id. For tracks that
+/// is the index over listener, track and time alone. Every album statement
+/// that reads plays reads them only through that index and the small one
+/// of plays with an album and no track, never another index of the
+/// history and never a scan of a table, so it costs by the plays that
+/// count for an album. This holds whether the planner has statistics on
+/// the history table or not (a fresh install has none until the daily
+/// ANALYZE after the first plays). The play counts of a page of tracks or
+/// albums probe the index once per track.
 async fn assert_history_plans(pool: &SqlitePool, state: &str) {
     use library::player::{
-        HISTORY_ALBUMS, HISTORY_TRACKS, history_played_sql, history_unplayed_sql, play_stats_sql,
+        HISTORY_TRACKS, album_played_count_sql, album_played_sql, album_unplayed_sql,
+        history_albums_sql, history_played_sql, history_unplayed_sql, play_stats_sql,
     };
     const BY_TRACK: &str = "SEARCH h USING COVERING INDEX idx_play_history_user_track";
 
-    for (rows, filters, catalog, plays) in [
-        (
+    {
+        let (rows, filters, catalog, plays) = (
             &HISTORY_TRACKS,
             "+t.availability = 'indexed'",
             "t",
             BY_TRACK,
-        ),
-        (
-            &HISTORY_ALBUMS,
-            "+a.retired_into_album_id IS NULL",
-            "a",
-            "SEARCH h USING INDEX",
-        ),
-    ] {
+        );
         for aggregate in ["MAX(h.played_at)", "COUNT(*)"] {
             let sql = history_played_sql(rows, filters, aggregate, true);
             let plan = explain(
@@ -1572,6 +1569,86 @@ async fn assert_history_plans(pool: &SqlitePool, state: &str) {
             "the unplayed half of {catalog} is neither sorted nor probed per row, \
              {state}: {plan:?}"
         );
+    }
+
+    let filters = "+a.retired_into_album_id IS NULL";
+    let listener = ExplainBind::Text(Some("u1"));
+    let page = [
+        listener,
+        listener,
+        ExplainBind::Int(100),
+        ExplainBind::Int(0),
+    ];
+    let albums = [
+        (
+            "played by last play",
+            album_played_sql(filters, "h.played_at", true),
+        ),
+        (
+            "played by play count",
+            album_played_sql(filters, "h.plays", true),
+        ),
+        ("unplayed", album_unplayed_sql(filters, true)),
+        ("played count", album_played_count_sql(filters)),
+        ("recently played", history_albums_sql(false)),
+        ("most played", history_albums_sql(true)),
+    ];
+    for (what, sql) in &albums {
+        let binds = if *what == "played count" {
+            &page[..2]
+        } else {
+            &page[..]
+        };
+        let plan = explain(pool, sql, binds).await;
+        let what = format!("albums {what}, {state}: {plan:?}");
+        let history: Vec<&String> = plan
+            .iter()
+            .filter(|line| {
+                line.contains("library_play_history") || line.contains("idx_play_history")
+            })
+            .collect();
+        assert!(
+            matches!(history.as_slice(), [by_track, no_track]
+            if by_track.starts_with(
+                "SEARCH library_play_history USING COVERING INDEX idx_play_history_user_track \
+                 (user_id=?"
+            ) && no_track.starts_with(
+                "SEARCH library_play_history USING INDEX idx_play_history_user_album_no_track \
+                 (user_id=?"
+            )),
+            "the listener's plays come from the two history indexes alone: {what}"
+        );
+        // A subquery is read whole; a table never is. The unplayed page
+        // walks the album ids and stops at the page.
+        let subqueries: Vec<&str> = plan
+            .iter()
+            .filter_map(|line| {
+                line.strip_prefix("CO-ROUTINE ")
+                    .or_else(|| line.strip_prefix("MATERIALIZE "))
+            })
+            .collect();
+        assert!(
+            plan.iter()
+                .filter_map(|line| line.strip_prefix("SCAN "))
+                .all(|scanned| subqueries.contains(&scanned)
+                    || (what.starts_with("albums unplayed")
+                        && scanned == "a USING INDEX sqlite_autoindex_local_albums_1")),
+            "no table is scanned: {what}"
+        );
+        if what.starts_with("albums unplayed") {
+            assert!(
+                !plan
+                    .iter()
+                    .any(|line| line.contains("TEMP B-TREE FOR ORDER BY")
+                        || line.contains("CORRELATED")),
+                "the unplayed page is neither sorted nor probed per row: {what}"
+            );
+        } else {
+            assert!(
+                plan.iter().any(|line| line.starts_with("SEARCH a USING")),
+                "each played album is looked up by id: {what}"
+            );
+        }
     }
 
     let probe = "(user_id=? AND local_track_id=?)";
