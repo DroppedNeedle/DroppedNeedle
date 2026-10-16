@@ -1,9 +1,8 @@
 //! Compat principal: app-password verification plus a profile lookup.
 //!
 //! The password stores authenticate to a user id; the Subsonic handlers
-//! also need the username, display name, and admin flag. [`CompatProfiles`]
-//! is that lookup, implemented for [`UsersDeps`] in production and scripted
-//! by tests.
+//! also need the username, display name, and admin flag, which
+//! [`SubsonicVerifier`] reads from the users table.
 
 use crate::subsonic::auth::{Credentials, Principal};
 use crate::subsonic::error::SubsonicError;
@@ -27,27 +26,20 @@ pub struct CompatProfile {
     pub role: String,
 }
 
-/// User-id → profile lookup behind the compat principals.
-pub trait CompatProfiles: Clone + Send + Sync {
-    /// Profile for a user id, or `None` when the account is gone.
-    fn profile(&self, user_id: &str) -> impl Future<Output = Option<CompatProfile>> + Send;
-}
-
-impl CompatProfiles for UsersDeps {
-    async fn profile(&self, user_id: &str) -> Option<CompatProfile> {
-        let row = self.users.get_by_id(user_id).await.ok().flatten()?;
-        let username = row.username.clone().unwrap_or_default();
-        Some(CompatProfile {
-            user_id: row.id,
-            username_display: row
-                .username_display
-                .clone()
-                .unwrap_or_else(|| username.clone()),
-            username,
-            display_name: row.display_name,
-            role: row.role.as_str().to_owned(),
-        })
-    }
+/// Profile for a user id, or `None` when the account is gone.
+async fn profile(users: &UsersDeps, user_id: &str) -> Option<CompatProfile> {
+    let row = users.users.get_by_id(user_id).await.ok().flatten()?;
+    let username = row.username.clone().unwrap_or_default();
+    Some(CompatProfile {
+        user_id: row.id,
+        username_display: row
+            .username_display
+            .clone()
+            .unwrap_or_else(|| username.clone()),
+        username,
+        display_name: row.display_name,
+        role: row.role.as_str().to_owned(),
+    })
 }
 
 /// Authenticated compat caller.
@@ -84,25 +76,20 @@ impl Principal for CompatPrincipal {
 /// `compat_auth` [`authenticate`] runs the exact contract (schemes, precedence,
 /// caps); denials keep their codes, and a vanished account fails as code
 /// 40 like an unknown credential.
-#[derive(Debug, Clone)]
-pub struct SubsonicVerifier<P, U> {
+#[derive(Clone)]
+pub struct SubsonicVerifier<P> {
     passwords: P,
-    profiles: U,
+    users: UsersDeps,
 }
 
-impl<P, U> SubsonicVerifier<P, U> {
-    /// Wrap a password store and a profile lookup.
-    pub fn new(passwords: P, profiles: U) -> Self {
-        Self {
-            passwords,
-            profiles,
-        }
+impl<P> SubsonicVerifier<P> {
+    /// Wrap a password store and the users the profiles come from.
+    pub fn new(passwords: P, users: UsersDeps) -> Self {
+        Self { passwords, users }
     }
 }
 
-impl<P: SubsonicPasswordStore, U: CompatProfiles> crate::subsonic::Verifier
-    for SubsonicVerifier<P, U>
-{
+impl<P: SubsonicPasswordStore> crate::subsonic::Verifier for SubsonicVerifier<P> {
     type Principal = CompatPrincipal;
 
     async fn verify(&self, credentials: &Credentials) -> Result<CompatPrincipal, SubsonicError> {
@@ -140,9 +127,7 @@ impl<P: SubsonicPasswordStore, U: CompatProfiles> crate::subsonic::Verifier
         let principal = authenticate(&self.passwords, &params)
             .await
             .map_err(denied)?;
-        let profile = self
-            .profiles
-            .profile(&principal.user_id)
+        let profile = profile(&self.users, &principal.user_id)
             .await
             .ok_or_else(|| {
                 SubsonicError::code_only(

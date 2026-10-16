@@ -35,7 +35,7 @@ use droppedneedle_media::MediaEngine;
 use droppedneedle_media::playback::services::PlaybackDeps;
 
 /// Subsonic verifier over the app-password store.
-pub type CompatVerifier = SubsonicVerifier<ProdCompatPasswords, UsersDeps>;
+pub type CompatVerifier = SubsonicVerifier<ProdCompatPasswords>;
 
 /// Subsonic audio over the stream engine.
 pub type CompatAudio = GatewayAudio<MediaEngine>;
@@ -267,18 +267,6 @@ impl CompatSetup {
             &self.listener,
         );
         self
-    }
-
-    /// The bound Subsonic store, for tests that dispatch directly.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn subsonic_store(&self) -> SubsonicStore {
-        self.store.clone()
-    }
-
-    /// The bound Jellyfin state, for tests that read the library seam.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn jellyfin_state(&self) -> CompatJellyfinState {
-        self.jellyfin.clone()
     }
 
     /// The mounted compat routers with the shared layers, ready to merge
