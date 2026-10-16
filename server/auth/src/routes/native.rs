@@ -209,7 +209,10 @@ where
 }
 
 /// Logout. Public so a stale client can always clear its cookie: revokes the
-/// presented token when it resolves, always clears the cookie, always 204.
+/// presented sessions that resolve, always clears the cookie under both its
+/// names, always 204. A Bearer token is the only one presented when sent;
+/// otherwise the session under each cookie name the request carries ends,
+/// so a sign-out at the https address leaves no plain cookie signed in.
 #[utoipa::path(
     post,
     tag = "auth",
@@ -225,7 +228,12 @@ where
     V: crate::session::login::PasswordVerifier,
     C: crate::session::login::CredentialLookup,
 {
-    if let Some((raw_token, _)) = extract::extract(&headers) {
+    let presented = match extract::extract(&headers) {
+        Some((raw_token, extract::Transport::Bearer)) => vec![raw_token],
+        Some((_, extract::Transport::Cookie)) => cookies::SESSION_COOKIE.read_each(&headers),
+        None => Vec::new(),
+    };
+    for raw_token in presented {
         let owner = state
             .users
             .sessions
@@ -246,10 +254,9 @@ where
         }
     }
     let mut response = StatusCode::NO_CONTENT.into_response();
-    cookies::push_set_cookie(
-        response.headers_mut(),
-        &cookies::clear_cookie_value(&state.base_path),
-    );
+    for value in cookies::clear_session_cookie(&state.base_path) {
+        cookies::push_set_cookie(response.headers_mut(), &value);
+    }
     Ok(response)
 }
 

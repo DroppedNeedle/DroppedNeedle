@@ -124,10 +124,9 @@ pub fn login_handoff(
     let mut response = (StatusCode::OK, Json(user_json)).into_response();
     let headers = response.headers_mut();
     if transport == Transport::Cookie {
-        cookies::push_set_cookie(
-            headers,
-            &cookies::set_cookie_value(raw_token, base_path, secure),
-        );
+        for value in cookies::set_session_cookie(raw_token, base_path, secure) {
+            cookies::push_set_cookie(headers, &value);
+        }
     }
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(NO_STORE));
     response

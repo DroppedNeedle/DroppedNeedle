@@ -1,19 +1,150 @@
 //! Session cookie build/parse.
 //!
-//! Policy: name `droppedneedle_session`, httpOnly,
-//! `SameSite=Lax`, `Secure` auto-marked on HTTPS (direct scheme or
-//! `X-Forwarded-Proto`, so plain-HTTP LAN installs keep working) and for a
-//! sign-in from a stated `https` address ([`secure_for_sign_in`]),
+//! Policy: httpOnly, `SameSite=Lax`, `Secure` auto-marked on HTTPS (direct
+//! scheme or `X-Forwarded-Proto`, so plain-HTTP LAN installs keep working)
+//! and for a sign-in from a stated `https` address ([`secure_for_sign_in`]),
 //! `Path=<base>/api/v3`, 30-day max-age. The `__Host-` prefix stays rejected
 //! (see module docs): base-path serving and HTTP LAN forbid it.
+//!
+//! Each cookie goes by two names, chosen by its mark: `__Secure-<name>`
+//! when marked `Secure`, `<name>` when not ([`CookieName`]). The session
+//! cookie is `droppedneedle_sid` or `__Secure-droppedneedle_sid`. A request
+//! that carries the `__Secure-` name is read by it alone, and sign-out ends
+//! the session under each name the request carries and clears both.
 
-use axum::http::{HeaderMap, header::SET_COOKIE};
+use std::fmt::Display;
+
+use axum::http::{
+    HeaderMap,
+    header::{COOKIE, SET_COOKIE},
+};
 
 use super::{origin::named_origin, stated::StatedAddresses, tokens::SESSION_MAX_AGE_SECS};
 use droppedneedle_kernel::runtime_config::origin::Origin;
 
-/// Cookie name, unchanged from v2.
-pub const COOKIE_NAME: &str = "droppedneedle_session";
+/// The session cookie.
+pub const SESSION_COOKIE: CookieName = CookieName {
+    plain: "droppedneedle_sid",
+    secure: "__Secure-droppedneedle_sid",
+};
+
+/// The cookie binding a pending single sign-on login to the browser that
+/// started it.
+pub const OIDC_STATE_COOKIE: CookieName = CookieName {
+    plain: "droppedneedle_oidc_state",
+    secure: "__Secure-droppedneedle_oidc_state",
+};
+
+/// The lifetime part of a `Set-Cookie` value that removes a cookie.
+const GONE: &str = "Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT";
+
+/// One of our cookies under its two names. A cookie marked `Secure` is set
+/// as `__Secure-<name>`, an unmarked one as `<name>`, so the http and https
+/// addresses on one host name each keep their own cookie in a browser.
+///
+/// What browsers do, checked 2026-10-16 against RFC 6265bis
+/// (draft-ietf-httpbis-rfc6265bis-22) and MDN's browser compatibility data
+/// (`http.headers.Set-Cookie.host_secure_prefixes`):
+///
+/// - Cookies ignore scheme and port. An answer over plain HTTP cannot store
+///   a `Secure` cookie (§5.7 step 13), nor an unmarked one under the name
+///   of a `Secure` one whose path covers it (§5.7 step 16). With one name
+///   for both, the https sign-in would block the http one.
+/// - A `__Secure-` cookie is stored only when marked `Secure` (§5.7 step
+///   20), so only an https answer can set or clear it, and a nameless
+///   cookie whose value starts with `__Secure-` is refused (§5.7 step 22).
+///   Browsers match the prefix case-insensitively (§5.4); we read the
+///   exact name only.
+/// - Any plain-HTTP answer for the host name (another port, someone on the
+///   network) can set the plain name. So a request carrying the `__Secure-`
+///   name is read by it alone, valid or not: falling back to the plain one
+///   would let a planted cookie take over the https address once its own
+///   session is revoked.
+/// - Chrome 49, Firefox 50 and Safari 13 and later enforce the prefix, and
+///   Edge, Opera and the Android and iOS browsers follow them. An older
+///   browser treats the name as any other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CookieName {
+    plain: &'static str,
+    secure: &'static str,
+}
+
+impl CookieName {
+    /// The name a cookie with this mark is set under.
+    fn under(self, mark: SecureMark) -> &'static str {
+        if mark.0 { self.secure } else { self.plain }
+    }
+
+    /// One `Set-Cookie` value, named by its mark.
+    fn line(self, mark: SecureMark, value: &str, path: &str, lifetime: &str) -> String {
+        format!(
+            "{}={value}; Path={path}; {lifetime}; HttpOnly; SameSite=Lax{}",
+            self.under(mark),
+            mark.attribute(),
+        )
+    }
+
+    /// The `Set-Cookie` values that hand the cookie over: the cookie under
+    /// the name its mark gives and, for an unmarked one, a marked clear of
+    /// the `__Secure-` name after it. Over plain HTTP the browser ignores
+    /// that clear, so an https sign-in survives. At an https address the
+    /// server failed to mark, it removes the `__Secure-` cookie, which
+    /// would otherwise outrank the new one.
+    pub fn set(
+        self,
+        value: &str,
+        path: &str,
+        max_age: impl Display,
+        mark: SecureMark,
+    ) -> Vec<String> {
+        let mut lines = vec![self.line(mark, value, path, &format!("Max-Age={max_age}"))];
+        if !mark.0 {
+            lines.push(self.line(SecureMark(true), "", path, GONE));
+        }
+        lines
+    }
+
+    /// The `Set-Cookie` values that clear the cookie under both names, the
+    /// `__Secure-` one marked (a browser refuses it otherwise).
+    pub fn clear(self, path: &str) -> [String; 2] {
+        [
+            self.line(SecureMark(false), "", path, GONE),
+            self.line(SecureMark(true), "", path, GONE),
+        ]
+    }
+
+    /// The cookie's value from the request: the `__Secure-` name's when the
+    /// request carries it with a value, otherwise the plain name's. Order
+    /// in the `Cookie` header does not matter; where a name appears more
+    /// than once its first non-empty value counts.
+    pub fn read(self, headers: &HeaderMap) -> Option<String> {
+        first_value(headers, self.secure).or_else(|| first_value(headers, self.plain))
+    }
+
+    /// The value under each name the request carries, `__Secure-` first.
+    pub fn read_each(self, headers: &HeaderMap) -> Vec<String> {
+        let mut values: Vec<String> = [self.secure, self.plain]
+            .into_iter()
+            .filter_map(|name| first_value(headers, name))
+            .collect();
+        values.dedup();
+        values
+    }
+}
+
+/// The first non-empty value of the cookie named exactly `name`.
+fn first_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get_all(COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|cookies| cookies.split(';'))
+        .find_map(|pair| {
+            let (key, value) = pair.split_once('=')?;
+            let value = value.trim().trim_matches('"');
+            (key.trim() == name && !value.is_empty()).then(|| value.to_owned())
+        })
+}
 
 /// True when the request arrived over HTTPS: direct TLS (caller passes the
 /// effective scheme) or `X-Forwarded-Proto: https` (first entry only) from a
@@ -47,12 +178,6 @@ pub(super) fn is_secure_trusted(
 pub struct SecureMark(bool);
 
 impl SecureMark {
-    /// Unmarked, for a `Set-Cookie` that only clears a cookie. Over HTTPS
-    /// a browser lets an unmarked clear remove a `Secure` cookie too.
-    pub const fn for_clearing() -> Self {
-        Self(false)
-    }
-
     /// What the mark adds to the end of a `Set-Cookie` value.
     pub fn attribute(self) -> &'static str {
         if self.0 { "; Secure" } else { "" }
@@ -71,14 +196,6 @@ impl SecureMark {
 /// adds `Secure`. A browser on that page reached it over HTTPS, so it sends
 /// the cookie back. A sign-in from any other address, a plain-HTTP one
 /// stated beside it included, gets the first rule's answer.
-///
-/// What that answer is worth depends on the browser. Cookies ignore the
-/// scheme and the port, and a browser will not let a plain-HTTP answer
-/// replace a `Secure` cookie. So a browser that holds the `Secure` cookie
-/// from `https://nas.lan` drops the one a sign-in at `http://nas.lan:8688`
-/// sets, and cannot sign in there until it signs out at the `https`
-/// address. Another host name, or the IP address, is unaffected. A proxy
-/// that reports HTTPS has always had the same effect.
 ///
 /// `Origin` can be believed here because the browser sets it and page
 /// script cannot. A client that makes one up changes only the cookie in
@@ -111,22 +228,21 @@ pub fn cookie_path(base_path: &str) -> String {
     format!("{}/api/v3", base_path.trim_end_matches('/'))
 }
 
-/// One `Set-Cookie` value attaching the session. The raw token travels only
-/// here in cookie mode, never in the response body.
-pub fn set_cookie_value(raw_token: &str, base_path: &str, secure: SecureMark) -> String {
-    format!(
-        "{COOKIE_NAME}={raw_token}; Path={}; Max-Age={SESSION_MAX_AGE_SECS}; HttpOnly; SameSite=Lax{}",
-        cookie_path(base_path),
-        secure.attribute(),
+/// The `Set-Cookie` values attaching the session ([`CookieName::set`]).
+/// The raw token travels only here in cookie mode, never in the response
+/// body.
+pub fn set_session_cookie(raw_token: &str, base_path: &str, secure: SecureMark) -> Vec<String> {
+    SESSION_COOKIE.set(
+        raw_token,
+        &cookie_path(base_path),
+        SESSION_MAX_AGE_SECS,
+        secure,
     )
 }
 
-/// One `Set-Cookie` value clearing the session (logout): same path, dead age.
-pub fn clear_cookie_value(base_path: &str) -> String {
-    format!(
-        "{COOKIE_NAME}=; Path={}; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax",
-        cookie_path(base_path),
-    )
+/// The `Set-Cookie` values clearing the session under both names (logout).
+pub fn clear_session_cookie(base_path: &str) -> [String; 2] {
+    SESSION_COOKIE.clear(&cookie_path(base_path))
 }
 
 /// Push a `Set-Cookie` header onto a response being built.
@@ -136,46 +252,87 @@ pub fn push_set_cookie(headers: &mut HeaderMap, cookie_value: &str) {
     }
 }
 
-/// Read our session cookie from the request headers. Returns the raw token.
+/// Read our session cookie from the request headers ([`CookieName::read`]).
+/// Returns the raw token.
 pub fn read_session_cookie(headers: &HeaderMap) -> Option<String> {
-    for value in headers.get_all(axum::http::header::COOKIE) {
-        let Ok(cookies) = value.to_str() else {
-            continue;
-        };
-        for pair in cookies.split(';') {
-            let mut parts = pair.splitn(2, '=');
-            let name = parts.next().unwrap_or("").trim();
-            if name == COOKIE_NAME {
-                let token = parts.next().unwrap_or("").trim().trim_matches('"');
-                if !token.is_empty() {
-                    return Some(token.to_owned());
-                }
-            }
-        }
-    }
-    None
+    SESSION_COOKIE.read(headers)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// The mark names the cookie: `__Secure-droppedneedle_sid` with
+    /// `Secure`, `droppedneedle_sid` without. The `__Secure-` name, when
+    /// sent with a value, is the only one read; the old v2 name never is.
     #[test]
-    fn cookie_flags_and_base_path() {
-        let lan = set_cookie_value("tok", "", SecureMark(false));
-        assert!(lan.starts_with("droppedneedle_session=tok; "));
-        assert!(lan.contains("Path=/api/v3; "));
-        assert!(lan.contains("Max-Age=2592000; "));
-        assert!(lan.contains("HttpOnly; SameSite=Lax"));
-        assert!(!lan.contains("Secure"));
+    fn the_mark_names_the_cookie_and_the_secure_name_is_read_first() {
+        let tls = set_session_cookie("tok", "/music/", SecureMark(true));
+        assert_eq!(
+            tls,
+            [
+                "__Secure-droppedneedle_sid=tok; Path=/music/api/v3; Max-Age=2592000; HttpOnly; SameSite=Lax; Secure"
+            ],
+            "a marked sign-in sets its cookie alone"
+        );
 
-        let tls = set_cookie_value("tok", "/music/", SecureMark(true));
-        assert!(tls.contains("Path=/music/api/v3; "));
-        assert!(tls.ends_with("; Secure"));
+        let lan = set_session_cookie("tok", "", SecureMark(false));
+        assert_eq!(lan.len(), 2, "{lan:?}");
+        assert_eq!(
+            lan[0],
+            "droppedneedle_sid=tok; Path=/api/v3; Max-Age=2592000; HttpOnly; SameSite=Lax"
+        );
+        assert!(
+            lan[1].starts_with("__Secure-droppedneedle_sid=; Path=/api/v3; Max-Age=0; ")
+                && lan[1].ends_with("; Secure"),
+            "an unmarked sign-in clears the marked name after it: {}",
+            lan[1]
+        );
 
-        let cleared = clear_cookie_value("/music");
-        assert!(cleared.contains("Path=/music/api/v3; "));
-        assert!(cleared.contains("Max-Age=0"));
+        let cleared = clear_session_cookie("/music");
+        assert!(cleared[0].starts_with("droppedneedle_sid=; Path=/music/api/v3; Max-Age=0; "));
+        assert!(!cleared[0].contains("Secure"), "{}", cleared[0]);
+        assert!(
+            cleared[1].starts_with("__Secure-droppedneedle_sid=; Path=/music/api/v3; Max-Age=0; ")
+        );
+        assert!(cleared[1].ends_with("; Secure"), "{}", cleared[1]);
+
+        let state = OIDC_STATE_COOKIE.set("h", "/api", 600, SecureMark(true));
+        assert_eq!(
+            state,
+            [
+                "__Secure-droppedneedle_oidc_state=h; Path=/api; Max-Age=600; HttpOnly; SameSite=Lax; Secure"
+            ]
+        );
+
+        let read = |cookie: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(COOKIE, cookie.parse().unwrap());
+            read_session_cookie(&headers)
+        };
+        let reads = |cookie: &str, token: Option<&str>| {
+            assert_eq!(read(cookie).as_deref(), token, "{cookie}");
+        };
+        reads("other=1; droppedneedle_sid=a; theme=dark", Some("a"));
+        reads(
+            "__Secure-droppedneedle_sid=b; droppedneedle_sid=a",
+            Some("b"),
+        );
+        reads(
+            "droppedneedle_sid=a; __Secure-droppedneedle_sid=b",
+            Some("b"),
+        );
+        reads(
+            "__Secure-droppedneedle_sid=; droppedneedle_sid=a",
+            Some("a"),
+        );
+        reads("droppedneedle_sid=; droppedneedle_sid=a", Some("a"));
+        reads(
+            "__secure-droppedneedle_sid=b; droppedneedle_sid=a",
+            Some("a"),
+        );
+        reads("droppedneedle_session=old", None);
+        assert_eq!(read_session_cookie(&HeaderMap::new()), None);
     }
 
     #[test]
@@ -271,19 +428,6 @@ mod tests {
     }
 
     #[test]
-    fn cookie_parse_reads_ours_among_others() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            axum::http::header::COOKIE,
-            "other=1; droppedneedle_session=tok-9; theme=dark"
-                .parse()
-                .unwrap(),
-        );
-        assert_eq!(read_session_cookie(&headers).as_deref(), Some("tok-9"));
-        assert_eq!(read_session_cookie(&HeaderMap::new()), None);
-    }
-
-    #[test]
     fn secure_trust_gating_ignores_spoofed_proto() {
         let mut spoofed = HeaderMap::new();
         spoofed.insert("x-forwarded-proto", "https".parse().unwrap());
@@ -297,24 +441,15 @@ mod tests {
     }
 
     #[test]
-    fn cookie_parse_skips_non_utf8_headers() {
+    fn the_reader_skips_cookie_headers_that_are_not_text() {
         use axum::http::HeaderValue;
         let mut headers = HeaderMap::new();
-        headers.append(
-            axum::http::header::COOKIE,
-            HeaderValue::from_bytes(&[0xff, 0xfe]).unwrap(),
-        );
-        headers.append(
-            axum::http::header::COOKIE,
-            HeaderValue::from_static("droppedneedle_session=tok-9"),
-        );
+        headers.append(COOKIE, HeaderValue::from_bytes(&[0xff, 0xfe]).unwrap());
+        headers.append(COOKIE, HeaderValue::from_static("droppedneedle_sid=tok-9"));
         assert_eq!(read_session_cookie(&headers).as_deref(), Some("tok-9"));
 
         let mut only_bad = HeaderMap::new();
-        only_bad.append(
-            axum::http::header::COOKIE,
-            HeaderValue::from_bytes(&[0xff]).unwrap(),
-        );
+        only_bad.append(COOKIE, HeaderValue::from_bytes(&[0xff]).unwrap());
         assert_eq!(read_session_cookie(&only_bad), None);
     }
 }

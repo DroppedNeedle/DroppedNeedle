@@ -30,6 +30,7 @@ use droppedneedle_kernel::runtime_config::Secret;
 use droppedneedle_kernel::runtime_config::secret_sections::{
     JellyfinConnection, LastFmSettings, OidcConnection, PlexConnection,
 };
+use droppedneedle_kernel::runtime_config::sections::PublicAddress;
 use droppedneedle_media::playback::forwarding::{
     ScrobbleCredentials as _, StoredScrobbleCredentials,
 };
@@ -246,16 +247,32 @@ struct StartedLogin {
     state: String,
     /// The `name=value` state cookie the authorize answer set.
     cookie: String,
+    /// Every `Set-Cookie` value of the authorize answer, in order.
+    set_cookies: Vec<String>,
+}
+
+/// Every `Set-Cookie` value of an answer, in order.
+fn set_cookies(headers: &HeaderMap) -> Vec<String> {
+    headers
+        .get_all("set-cookie")
+        .iter()
+        .map(|value| value.to_str().expect("ascii").to_owned())
+        .collect()
 }
 
 /// Start a login and play the browser at the provider: hand the nonce to
 /// the mock the way the redirect would.
 async fn start_oidc(app: &Router, mock: &OidcMock) -> StartedLogin {
+    start_oidc_from(app, mock, &[]).await
+}
+
+/// [`start_oidc`] with the browser's request headers.
+async fn start_oidc_from(app: &Router, mock: &OidcMock, sent: &[(&str, &str)]) -> StartedLogin {
     let (status, body, headers) = call(
         app.clone(),
         "POST",
         "/api/v3/auth/oidc/authorize",
-        &[],
+        sent,
         None,
     )
     .await;
@@ -278,6 +295,7 @@ async fn start_oidc(app: &Router, mock: &OidcMock) -> StartedLogin {
             .next()
             .expect("cookie pair")
             .to_owned(),
+        set_cookies: set_cookies(&headers),
         url,
     }
 }
@@ -343,6 +361,19 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
     // One app throughout: the one-time exchange codes live in its memory.
     let app = e2e.router();
     let login = start_oidc(&app, &mock).await;
+    // Unmarked: the plain name, then a marked clear of the `__Secure-` one.
+    let sent = &login.set_cookies;
+    assert_eq!(sent.len(), 2, "{sent:?}");
+    assert!(
+        sent[0].starts_with("droppedneedle_oidc_state=") && !sent[0].contains("Secure"),
+        "{sent:?}"
+    );
+    assert!(
+        sent[1].starts_with("__Secure-droppedneedle_oidc_state=; ")
+            && sent[1].contains("Max-Age=0")
+            && sent[1].ends_with("; Secure"),
+        "{sent:?}"
+    );
     // A callback in a browser that did not start the login is refused.
     let (status, _) = land(&app, "/api/v3/auth/oidc/callback", &login, false).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -424,6 +455,44 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
         headers["location"]
             .to_str()
             .is_ok_and(|location| location.starts_with("/auth/callback?code="))
+    );
+
+    // From a stated https address the state cookie is marked, so it goes
+    // by the `__Secure-` name; the callback clears both names.
+    e2e.store
+        .save(PublicAddress {
+            origins: vec!["https://e2e.test".to_owned()],
+        })
+        .expect("public address saves");
+    let marked = start_oidc_from(&app, &mock, &[("origin", "https://e2e.test")]).await;
+    assert_eq!(marked.set_cookies.len(), 1, "{:?}", marked.set_cookies);
+    assert!(
+        marked
+            .cookie
+            .starts_with("__Secure-droppedneedle_oidc_state=")
+            && marked.set_cookies[0].ends_with("; Secure"),
+        "{:?}",
+        marked.set_cookies
+    );
+    let (status, headers) = land(&app, "/api/v3/auth/oidc/callback", &marked, true).await;
+    assert_eq!(status, StatusCode::FOUND);
+    let cleared = set_cookies(&headers);
+    assert_eq!(cleared.len(), 2, "{cleared:?}");
+    assert!(
+        cleared
+            .iter()
+            .any(|value| value.starts_with("droppedneedle_oidc_state=; ")
+                && value.contains("Max-Age=0")
+                && !value.contains("Secure")),
+        "{cleared:?}"
+    );
+    assert!(
+        cleared.iter().any(
+            |value| value.starts_with("__Secure-droppedneedle_oidc_state=; ")
+                && value.contains("Max-Age=0")
+                && value.ends_with("; Secure")
+        ),
+        "{cleared:?}"
     );
 }
 

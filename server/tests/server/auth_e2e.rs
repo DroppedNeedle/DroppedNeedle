@@ -26,7 +26,6 @@ use droppedneedle_auth::compat_auth::subsonic::{
     SubsonicDenied, SubsonicParams, WRONG_CREDENTIALS, authenticate, md5_hex,
 };
 use droppedneedle_auth::prod::ProdAuth;
-use droppedneedle_auth::session::cookies::COOKIE_NAME;
 use droppedneedle_auth::users::UsersDeps;
 use droppedneedle_auth::users::stores::SystemClock;
 use droppedneedle_auth::wiring::{AuthSetup, Upstreams};
@@ -488,8 +487,13 @@ fn bearer(token: &str) -> String {
     format!("Bearer {token}")
 }
 
+/// The session cookie's name when unmarked, as the plain-HTTP address sets it.
+const PLAIN_COOKIE: &str = "droppedneedle_sid";
+/// Its name when marked `Secure`, as the https address sets it.
+const SECURE_COOKIE: &str = "__Secure-droppedneedle_sid";
+
 fn cookie(token: &str) -> String {
-    format!("{COOKIE_NAME}={token}")
+    format!("{PLAIN_COOKIE}={token}")
 }
 
 /// Raw session token from a Set-Cookie response.
@@ -497,7 +501,7 @@ fn set_cookie_token(headers: &HeaderMap) -> Option<String> {
     let value = headers.get(axum::http::header::SET_COOKIE)?.to_str().ok()?;
     let first = value.split(';').next()?.trim();
     first
-        .strip_prefix(&format!("{COOKIE_NAME}="))
+        .strip_prefix(&format!("{PLAIN_COOKIE}="))
         .map(str::to_owned)
 }
 
@@ -700,6 +704,116 @@ async fn journey_a_setup_login_sessions_logoutall_relogin() {
         StatusCode::UNAUTHORIZED,
         "pre-logout-all cookie stays dead"
     );
+}
+
+/// One browser holds the https address's `__Secure-` cookie and the plain
+/// address's cookie on the same host name. The `__Secure-` one, when sent,
+/// is the only one read, dead or alive; sign-out ends the session under
+/// each name it carries and clears both.
+#[tokio::test]
+async fn the_secure_cookie_outranks_the_plain_one_and_sign_out_ends_both() {
+    let e2e = E2e::open("two-names").await;
+    let (_, admin) = setup_admin(e2e.router(), "e2e-admin", "e2e-admin-password-1", "bearer").await;
+    let admin = bearer(admin.as_str().expect("admin token"));
+    let (status, body, _) = call(
+        e2e.router(),
+        "POST",
+        "/api/v3/admin/users",
+        &[("authorization", admin.as_str())],
+        Some(json!({"username": "ben", "password": "ben-password-1234"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let session = |username: &'static str, password: &'static str| {
+        let app = e2e.router();
+        async move {
+            let (status, body, _) = login(app, username, password, "bearer").await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            body["token"].as_str().expect("token").to_owned()
+        }
+    };
+    let a = session("e2e-admin", "e2e-admin-password-1").await;
+    let b = session("ben", "ben-password-1234").await;
+    let c = session("e2e-admin", "e2e-admin-password-1").await;
+    let me = |jar: String| {
+        let app = e2e.router();
+        async move {
+            let (status, body, _) = call(app, "GET", "/api/v3/me", &[("cookie", &jar)], None).await;
+            (status == StatusCode::OK).then(|| body["username"].as_str().unwrap_or("").to_owned())
+        }
+    };
+
+    let both = format!("{SECURE_COOKIE}={b}; {PLAIN_COOKIE}={a}");
+    assert_eq!(me(both.clone()).await.as_deref(), Some("ben"));
+    let swapped = format!("{PLAIN_COOKIE}={a}; {SECURE_COOKIE}={b}");
+    assert_eq!(me(swapped).await.as_deref(), Some("ben"));
+    let unknown = format!("{SECURE_COOKIE}=not-a-session; {PLAIN_COOKIE}={a}");
+    assert_eq!(
+        me(unknown).await,
+        None,
+        "a dead secure cookie never falls through"
+    );
+    assert_eq!(
+        me(format!("{PLAIN_COOKIE}={a}")).await.as_deref(),
+        Some("e2e-admin")
+    );
+
+    // Sign-out at the plain address sends only its cookie: that one ends.
+    let only_plain = format!("{PLAIN_COOKIE}={c}");
+    let (status, _, _) = call(
+        e2e.router(),
+        "POST",
+        "/api/v3/auth/logout",
+        &[("cookie", only_plain.as_str())],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        me(format!("{SECURE_COOKIE}={b}")).await.as_deref(),
+        Some("ben")
+    );
+    let revoked = format!("{SECURE_COOKIE}={c}; {PLAIN_COOKIE}={a}");
+    assert_eq!(
+        me(revoked).await,
+        None,
+        "a revoked secure cookie never falls through"
+    );
+
+    // Sign-out at the https address sends both: both end, both are cleared.
+    let (status, _, headers) = call(
+        e2e.router(),
+        "POST",
+        "/api/v3/auth/logout",
+        &[("cookie", both.as_str())],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let cleared: Vec<&str> = headers
+        .get_all(axum::http::header::SET_COOKIE)
+        .iter()
+        .map(|value| value.to_str().expect("ascii"))
+        .collect();
+    assert_eq!(cleared.len(), 2, "{cleared:?}");
+    assert!(
+        cleared
+            .iter()
+            .any(|value| value.starts_with(&format!("{PLAIN_COOKIE}=; "))
+                && value.contains("Max-Age=0")
+                && !value.contains("Secure")),
+        "{cleared:?}"
+    );
+    assert!(
+        cleared
+            .iter()
+            .any(|value| value.starts_with(&format!("{SECURE_COOKIE}=; "))
+                && value.contains("Max-Age=0")
+                && value.ends_with("; Secure")),
+        "{cleared:?}"
+    );
+    assert_eq!(me(format!("{PLAIN_COOKIE}={a}")).await, None);
+    assert_eq!(me(format!("{SECURE_COOKIE}={b}")).await, None);
 }
 
 // ---------------------------------------------------------------------------

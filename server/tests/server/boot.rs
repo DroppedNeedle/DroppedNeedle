@@ -230,8 +230,18 @@ async fn login_behind_a_trusted_tls_proxy_sets_a_secure_cookie() {
         .await
         .unwrap();
     assert_eq!(setup.status(), 201);
-    let plain = setup.headers()["set-cookie"].to_str().unwrap().to_owned();
-    assert!(!plain.contains("Secure"), "plain HTTP: {plain}");
+    let plain = set_cookies(setup.headers());
+    assert_eq!(plain.len(), 2, "plain HTTP: {plain:?}");
+    assert!(plain[0].starts_with("droppedneedle_sid="), "{plain:?}");
+    assert!(!plain[0].contains("Secure"), "plain HTTP: {plain:?}");
+    // Then a marked clear of the other name, which a browser ignores over
+    // plain HTTP and applies at an https address the server failed to mark.
+    assert!(
+        plain[1].starts_with("__Secure-droppedneedle_sid=; ")
+            && plain[1].contains("Max-Age=0")
+            && plain[1].ends_with("; Secure"),
+        "{plain:?}"
+    );
 
     // The test client is a loopback peer, trusted by default.
     let login = client
@@ -243,9 +253,22 @@ async fn login_behind_a_trusted_tls_proxy_sets_a_secure_cookie() {
         .await
         .unwrap();
     assert_eq!(login.status(), 200);
-    let cookie = login.headers()["set-cookie"].to_str().unwrap();
-    assert!(cookie.contains("; Secure"), "{cookie}");
+    let cookie = set_cookies(login.headers());
+    assert_eq!(cookie.len(), 1, "{cookie:?}");
+    assert!(
+        cookie[0].starts_with("__Secure-droppedneedle_sid=") && cookie[0].ends_with("; Secure"),
+        "{cookie:?}"
+    );
     running.shut_down().await;
+}
+
+/// Every `Set-Cookie` value of an answer, in order.
+fn set_cookies(headers: &reqwest::header::HeaderMap) -> Vec<String> {
+    headers
+        .get_all("set-cookie")
+        .iter()
+        .map(|value| value.to_str().unwrap().to_owned())
+        .collect()
 }
 
 /// A proxy that hides HTTPS sends no `X-Forwarded-Proto`, so the server
@@ -253,11 +276,6 @@ async fn login_behind_a_trusted_tls_proxy_sets_a_secure_cookie() {
 /// address, the answer to a sign-in from a page there sets a `Secure`
 /// cookie, and the answer to a sign-in from anywhere else sets the cookie
 /// it always did.
-///
-/// This is the server's side only. The two addresses share a host name, so
-/// they share a cookie, and a browser that holds the `Secure` one drops the
-/// plain cookie the http address is answered with: it cannot sign in there
-/// until it signs out at the https address.
 ///
 /// First-run setup stands for the other places that set the cookie: the
 /// address is stated from the host before the first boot.
@@ -288,7 +306,10 @@ async fn the_answer_to_a_login_from_a_stated_https_address_sets_a_secure_cookie(
         .unwrap();
     assert_eq!(setup.status(), 201);
     let cookie = setup.headers()["set-cookie"].to_str().unwrap();
-    assert!(cookie.contains("; Secure"), "setup: {cookie}");
+    assert!(
+        cookie.starts_with("__Secure-droppedneedle_sid=") && cookie.ends_with("; Secure"),
+        "setup: {cookie}"
+    );
     let admin = cookie.split(';').next().unwrap().to_owned();
     let state = |origins: &'static [&'static str]| {
         let save = client
@@ -312,7 +333,14 @@ async fn the_answer_to_a_login_from_a_stated_https_address_sets_a_secure_cookie(
             assert_eq!(login.status(), 200, "{origin:?}");
             let cookie = login.headers()["set-cookie"].to_str().unwrap().to_owned();
             assert!(cookie.contains("HttpOnly; SameSite=Lax"), "{cookie}");
-            cookie.contains("; Secure")
+            let secure = cookie.ends_with("; Secure");
+            let name = if secure {
+                "__Secure-droppedneedle_sid="
+            } else {
+                "droppedneedle_sid="
+            };
+            assert!(cookie.starts_with(name), "{cookie}");
+            secure
         }
     };
 

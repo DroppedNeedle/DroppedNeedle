@@ -22,7 +22,7 @@ use axum::{
 pub enum Transport {
     /// `Authorization: Bearer` header.
     Bearer,
-    /// `droppedneedle_session` cookie.
+    /// The session cookie, under either of its names.
     Cookie,
 }
 
@@ -100,14 +100,14 @@ mod tests {
     fn bearer_wins_then_cookie() {
         let both = headers(&[
             ("authorization", "Bearer tok-b"),
-            ("cookie", "droppedneedle_session=tok-c"),
+            ("cookie", "droppedneedle_sid=tok-c"),
         ]);
         assert_eq!(
             extract(&both),
             Some(("tok-b".to_owned(), Transport::Bearer))
         );
 
-        let cookie_only = headers(&[("cookie", "droppedneedle_session=tok-c")]);
+        let cookie_only = headers(&[("cookie", "droppedneedle_sid=tok-c")]);
         assert_eq!(
             extract(&cookie_only),
             Some(("tok-c".to_owned(), Transport::Cookie))
@@ -130,7 +130,7 @@ mod tests {
         }
         let bare = headers(&[
             ("authorization", "Bearer"),
-            ("cookie", "droppedneedle_session=tok-c"),
+            ("cookie", "droppedneedle_sid=tok-c"),
         ]);
         assert_eq!(
             extract(&bare),
@@ -143,12 +143,12 @@ mod tests {
     fn empty_bearer_never_falls_through_to_cookie() {
         let empty = headers(&[
             ("authorization", "Bearer  "),
-            ("cookie", "droppedneedle_session=tok-c"),
+            ("cookie", "droppedneedle_sid=tok-c"),
         ]);
         assert_eq!(extract(&empty), None);
         let other_scheme = headers(&[
             ("authorization", "Basic dXNlcjpwYXNz"),
-            ("cookie", "droppedneedle_session=tok-c"),
+            ("cookie", "droppedneedle_sid=tok-c"),
         ]);
         assert_eq!(
             extract(&other_scheme),

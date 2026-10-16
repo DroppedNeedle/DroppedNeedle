@@ -202,37 +202,13 @@ where
         .with_state(state)
 }
 
-/// Cookie binding a pending OIDC login to the browser that started it. It
-/// holds a hash of the state, so the callback only completes in the
-/// browser that asked for the login (login CSRF).
-pub const OIDC_STATE_COOKIE: &str = "droppedneedle_oidc_state";
-
-/// One `Set-Cookie` value for the state cookie. The path covers both the
-/// v3 callback and the v2 one kept for migrated providers.
-fn oidc_state_cookie(
-    base_path: &str,
-    value: &str,
-    max_age: u64,
-    secure: cookies::SecureMark,
-) -> String {
-    format!(
-        "{OIDC_STATE_COOKIE}={value}; Path={}/api; Max-Age={max_age}; HttpOnly; SameSite=Lax{}",
-        base_path.trim_end_matches('/'),
-        secure.attribute(),
-    )
-}
-
-/// One cookie's value from the request.
-fn read_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
-    headers
-        .get_all(axum::http::header::COOKIE)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|cookies| cookies.split(';'))
-        .find_map(|pair| {
-            let (key, value) = pair.split_once('=')?;
-            (key.trim() == name).then(|| value.trim().to_owned())
-        })
+/// Path of the state cookie (`cookies::OIDC_STATE_COOKIE`), which binds a
+/// pending OIDC login to the browser that started it. It holds a hash of
+/// the state, so the callback only completes in the browser that asked for
+/// the login (login CSRF). The path covers both the v3 callback and the v2
+/// one kept for migrated providers.
+fn oidc_state_cookie_path(base_path: &str) -> String {
+    format!("{}/api", base_path.trim_end_matches('/'))
 }
 
 /// Start an OIDC login: returns the browser URL (PKCE, state and nonce
@@ -270,15 +246,14 @@ where
                 &state.stated,
             );
             let mut response = Json(OidcAuthorizeBody { authorize_url: url }).into_response();
-            cookies::push_set_cookie(
-                response.headers_mut(),
-                &oidc_state_cookie(
-                    &state.base_path,
-                    &hash_token(&login_state),
-                    STATE_TTL_SECS,
-                    secure,
-                ),
-            );
+            for value in cookies::OIDC_STATE_COOKIE.set(
+                &hash_token(&login_state),
+                &oidc_state_cookie_path(&state.base_path),
+                STATE_TTL_SECS,
+                secure,
+            ) {
+                cookies::push_set_cookie(response.headers_mut(), &value);
+            }
             insert_no_store(response.headers_mut());
             Ok(response)
         }
@@ -317,7 +292,8 @@ where
     F: OidcConfigSource,
 {
     // The callback must land in the browser that started this login.
-    let bound = read_cookie(&headers, OIDC_STATE_COOKIE)
+    let bound = cookies::OIDC_STATE_COOKIE
+        .read(&headers)
         .is_some_and(|cookie| constant_time_eq(&cookie, &hash_token(&query.state)));
     if !bound {
         tracing::debug!("oidc callback without the matching state cookie");
@@ -341,10 +317,10 @@ where
             let mut response = StatusCode::FOUND.into_response();
             let response_headers = response.headers_mut();
             response_headers.insert(axum::http::header::LOCATION, value);
-            cookies::push_set_cookie(
-                response_headers,
-                &oidc_state_cookie(&state.base_path, "", 0, cookies::SecureMark::for_clearing()),
-            );
+            for value in cookies::OIDC_STATE_COOKIE.clear(&oidc_state_cookie_path(&state.base_path))
+            {
+                cookies::push_set_cookie(response_headers, &value);
+            }
             insert_no_store(response_headers);
             Ok(response)
         }

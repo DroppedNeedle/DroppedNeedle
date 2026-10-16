@@ -9,7 +9,7 @@
 //!
 //! Mechanism choices, recorded here so they are not reopened:
 //!
-//! - Cookie sessions are the browser mechanism: `droppedneedle_session`,
+//! - Cookie sessions are the browser mechanism: `droppedneedle_sid`,
 //!   httpOnly, `SameSite=Lax`, `Secure` auto-marked on HTTPS (direct or via
 //!   `X-Forwarded-Proto`) and for a sign-in whose `Origin` is an `https`
 //!   address saved in the `public_address` setting, never for any other
@@ -23,6 +23,14 @@
 //! - The `__Host-` cookie prefix is rejected: it forbids non-`/` paths and
 //!   requires `Secure`, both incompatible with base-path serving and plain-HTTP
 //!   LAN installs. The base-path-scoped `Path` plus auto-`Secure` is the policy.
+//! - Two names per cookie, chosen by the `Secure` mark: a marked cookie is
+//!   `__Secure-<name>`, an unmarked one `<name>`, so the https and plain-HTTP
+//!   addresses on one host name keep separate sign-ins in a browser. A
+//!   request carrying the `__Secure-` name with a value is read by it alone,
+//!   valid or not, never falling back to the plain one, which any plain-HTTP
+//!   answer for the host name could have set. Sign-out revokes the session
+//!   under each name the request carries and clears both
+//!   (`cookies::CookieName`).
 //! - CSRF defence is `Lax` plus the origin check: any cookie-authenticated
 //!   unsafe method (`POST/PUT/PATCH/DELETE`) must carry `Sec-Fetch-Site:
 //!   same-origin`, or an `Origin` (or `Referer` fallback) whose scheme, host
