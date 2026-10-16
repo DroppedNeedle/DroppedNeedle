@@ -778,11 +778,11 @@ where
         Err(denied) => return denied,
     };
     let Some((kind, internal)) = state.ids.from_jf(&item_id).await else {
-        return error(StatusCode::NOT_FOUND);
+        return not_found_item(&request);
     };
     match fetch_full_item(&state, &authed.principal, &kind, &internal).await {
         Some(item) => json(StatusCode::OK, &item),
-        None => error(StatusCode::NOT_FOUND),
+        None => not_found_item(&request),
     }
 }
 

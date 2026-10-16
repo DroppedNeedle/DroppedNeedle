@@ -618,11 +618,13 @@ async fn browse_query_dialects() {
         .json(&format!("/jellyfin/Items/{}", fx.album1), Some(&auth))
         .await;
     assert_eq!(album["DateCreated"], "1970-01-01T00:16:40.0000000Z");
-    // Unknown ids and genre ids (v2 has no genre branch) 404 empty.
+    // Unknown ids and genre ids (v2 has no genre branch) 404 with the
+    // problem object.
     let genre = fx.ids.to_jf("genre", "rock").await;
     for id in [none, genre] {
         let reply = fx.get(&format!("/jellyfin/Items/{id}"), Some(&auth)).await;
-        assert_eq!((reply.status, reply.body.len()), (404, 0));
+        assert_eq!(reply.status, 404, "{id}");
+        assert_eq!(reply.json()["title"], "Not Found", "{id}");
     }
 }
 

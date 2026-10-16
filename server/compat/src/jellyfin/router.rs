@@ -2,7 +2,8 @@
 //! auth gates every handler shares.
 //!
 //! Wire contract: PascalCase JSON, real HTTP statuses, empty error bodies
-//! (not the native envelope). Audio needs the caller's token like every
+//! (not the native envelope), except the answers Jellyfin itself sends with
+//! a body (see `not_found_item`). Audio needs the caller's token like every
 //! other library route. Headerless players (Jellify, Finamp, Manet) still
 //! work: the URLs PlaybackInfo hands out carry `api_key=<token>`, and the
 //! token is read from the query as well as the headers. Anonymous audio is
@@ -22,6 +23,8 @@ use axum::routing::{get, post};
 use droppedneedle_auth::compat_auth::jellyfin::{
     JellyfinPasswordStore, JellyfinRequest, extract_client, extract_token, resolve_token, server_id,
 };
+use droppedneedle_kernel::ids::RequestId;
+use uuid::Uuid;
 
 use crate::body::AudioBody;
 use crate::settings::LiveSettings;
@@ -232,6 +235,27 @@ pub(super) fn error(status: StatusCode) -> Response {
                 .body(Body::empty())
                 .unwrap_or_default()
         })
+}
+
+/// The 404 Jellyfin sends for an item that does not exist: an ASP.NET
+/// problem object. The recording `error.unknown-item.json` (under
+/// `server/tests/reference/compat/jellyfin-10.10.6/`) keeps the path of the
+/// RFC 9110 link, but the recorder replaced its host, so the host is
+/// ASP.NET's default. `traceId` is the request's own id when the app set one.
+pub(super) fn not_found_item(request: &Request<Body>) -> Response {
+    let trace_id = request
+        .extensions()
+        .get::<RequestId>()
+        .map_or_else(|| Uuid::new_v4().to_string(), |id| id.0.clone());
+    json(
+        StatusCode::NOT_FOUND,
+        &serde_json::json!({
+            "type": "https://tools.ietf.org/html/rfc9110#section-15.5.5",
+            "title": "Not Found",
+            "status": 404,
+            "traceId": trace_id,
+        }),
+    )
 }
 
 pub(super) fn json<T: serde::Serialize>(status: StatusCode, payload: &T) -> Response {
