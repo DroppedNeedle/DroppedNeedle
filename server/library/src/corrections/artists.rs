@@ -260,8 +260,12 @@ pub(super) fn retire_artist(
         "UPDATE local_artist_aliases SET local_artist_id = ?2 WHERE local_artist_id = ?1",
         "INSERT OR IGNORE INTO local_artist_aliases (alias, local_artist_id, kind, created_at) \
          VALUES (?1, ?2, 'merged_artist', ?3)",
-        "UPDATE library_artist_credit_proofs SET local_artist_id = ?2, updated_at = ?3, \
-         row_revision = row_revision + 1 WHERE local_artist_id = ?1",
+        "UPDATE library_artist_credit_proofs SET \
+         local_artist_id = CASE WHEN local_artist_id = ?1 THEN ?2 ELSE local_artist_id END, \
+         source_local_artist_id = CASE WHEN source_local_artist_id = ?1 THEN ?2 \
+         ELSE source_local_artist_id END, updated_at = CAST(?3 * 1000 AS INTEGER), \
+         row_revision = row_revision + 1 \
+         WHERE local_artist_id = ?1 OR source_local_artist_id = ?1",
         "UPDATE OR IGNORE library_identify_credit_proofs SET source_local_artist_id = ?2 \
          WHERE source_local_artist_id = ?1",
         "DELETE FROM library_identify_credit_proofs WHERE source_local_artist_id = ?1",

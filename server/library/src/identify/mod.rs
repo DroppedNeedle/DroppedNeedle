@@ -12,6 +12,7 @@
 //! matching engine, `review` the curator operations, and `service` the
 //! orchestrator.
 
+pub mod artist_links;
 pub mod evidence;
 pub mod models;
 pub mod providers;

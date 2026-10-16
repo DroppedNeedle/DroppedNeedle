@@ -533,7 +533,8 @@ fn seal_custom_edition(
          a.album_artist_sort_name, a.year, a.original_release_date, a.primary_genre, \
          a.is_compilation, a.row_revision FROM local_albums a \
          LEFT JOIN local_artist_external_identities i \
-         ON i.local_artist_id = a.album_artist_id AND i.provider = ?2 WHERE a.id = ?1",
+         ON i.local_artist_id = a.album_artist_id AND i.provider = ?2 \
+         AND i.decision_source IN ('manual', 'legacy_import') WHERE a.id = ?1",
         params![album_id, PROVIDER],
         |row| {
             Ok((

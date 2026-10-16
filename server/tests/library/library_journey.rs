@@ -971,8 +971,10 @@ async fn an_artist_renamed_by_a_managed_run_keeps_its_row() {
     let artist = text(&rows_of_album)[0].clone();
     assert_eq!(text(&rows_of_album), vec![artist.clone(); 4]);
     let user = text("SELECT id FROM auth_users WHERE role = 'admin'")[0].clone();
+    // The app linked the artist from its files' id by now; v2's link of
+    // the same id takes its place.
     db.execute_batch(&format!(
-        "INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+        "INSERT OR REPLACE INTO local_artist_external_identities (local_artist_id, provider, \
          provider_artist_id, decision_source, selected_at) \
          VALUES ('{artist}', 'musicbrainz', '{ARTIST}', 'legacy_import', 1); \
          INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
@@ -15025,6 +15027,310 @@ async fn a_translating_profile_writes_english_artist_names() {
             path.display()
         );
     }
+}
+
+/// The edition crediting 坂本龍一 alone, as MusicBrainz names him, on the
+/// album and every track.
+fn sakamoto_alone(release: &mut Release) {
+    let sakamoto = CreditedArtist {
+        id: SAKAMOTO.to_owned(),
+        name: "坂本龍一".to_owned(),
+        sort_name: Some("Sakamoto, Ryūichi".to_owned()),
+        join: String::new(),
+    };
+    release.artists = vec![sakamoto.clone()];
+    for track in &mut release.tracks {
+        track.artists = vec![sakamoto.clone()];
+    }
+}
+
+/// Rows of a query's first column, as text.
+fn texts(db: &rusqlite::Connection, sql: &str) -> Vec<String> {
+    let mut statement = db.prepare(sql).expect("query prepares");
+    statement
+        .query_map([], |row| row.get(0))
+        .expect("query runs")
+        .collect::<Result<_, _>>()
+        .expect("rows read")
+}
+
+/// A download whose files carry no MusicBrainz artist ids, credited
+/// "Ryuichi Sakamoto", matched to an edition crediting 坂本龍一. Planning
+/// the translating run links the artist to MusicBrainz through his names;
+/// the run writes his id and English name in one go, and after a rescan
+/// the artist is the same record, with its favorite and play.
+#[tokio::test]
+async fn a_run_that_adds_ids_and_translates_keeps_the_artist() {
+    use droppedneedle_catalog::reads::library::sqlite::{LibraryDb, SqliteCatalog};
+    use droppedneedle_catalog::reads::library::stores::LibraryCatalog as _;
+    use droppedneedle_library::management::enrich::ScriptedEnrichment;
+    use droppedneedle_library::management::models::SelectionKind;
+    use droppedneedle_library::tags::{TagEdit, TagField, save_tags};
+
+    let managed = ManagedLibrary::start("lib-names-link", translating).await;
+    let scripted = Arc::new(ScriptedEnrichment::default());
+    assert!(managed.library.enrichment.set(scripted.clone()).is_ok());
+    *scripted.names.lock().expect("script") = Some(recorded_names());
+    let fixtures = [
+        "management_full.flac",
+        "management_full.mp3",
+        "management_full.m4a",
+    ];
+    let (album, tracks) = managed
+        .add_album_from("download", &fixtures, sakamoto_alone)
+        .await;
+    let owned = |values: &[&str]| values.iter().map(|v| (*v).to_owned()).collect::<Vec<_>>();
+    for track in &tracks {
+        save_tags(
+            &managed.path(track),
+            &[
+                TagEdit::verbatim(TagField::Artist, owned(&["Ryuichi Sakamoto"])),
+                TagEdit::verbatim(TagField::Artists, owned(&["Ryuichi Sakamoto"])),
+                TagEdit::verbatim(TagField::ArtistSort, Vec::new()),
+                TagEdit::verbatim(TagField::AlbumArtist, owned(&["Ryuichi Sakamoto"])),
+                TagEdit::verbatim(TagField::AlbumArtists, owned(&["Ryuichi Sakamoto"])),
+                TagEdit::verbatim(TagField::AlbumArtistSort, Vec::new()),
+                TagEdit::verbatim(TagField::MusicBrainzArtistId, Vec::new()),
+                TagEdit::verbatim(TagField::MusicBrainzAlbumArtistId, Vec::new()),
+            ],
+        )
+        .expect("tagged without artist ids");
+    }
+    rescan(&managed.library).await;
+    let db = managed.db();
+    let rows_of_album = format!(
+        "SELECT c.local_artist_id FROM local_track_artists c JOIN local_tracks t \
+         ON t.id = c.local_track_id WHERE t.local_album_id = '{album}' \
+         UNION ALL SELECT local_artist_id FROM local_album_artists WHERE local_album_id = '{album}' \
+         UNION ALL SELECT album_artist_id FROM local_albums WHERE id = '{album}'"
+    );
+    let artist = texts(&db, &rows_of_album)[0].clone();
+    assert_eq!(
+        texts(&db, &rows_of_album),
+        vec![artist.clone(); tracks.len() + 2]
+    );
+    let link = format!(
+        "SELECT provider_artist_id || ' ' || decision_source \
+         FROM local_artist_external_identities WHERE local_artist_id = '{artist}'"
+    );
+    assert_eq!(texts(&db, &link), Vec::<String>::new(), "no link yet");
+    db.execute_batch(&format!(
+        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('admin', 'artist', '{artist}', 1); \
+         INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
+         artist_name, played_at) VALUES ('play-1', 'admin', '{artist}', 'Song', \
+         'Ryuichi Sakamoto', '2026-01-01T00:00:00Z');"
+    ))
+    .expect("favorite and play seeded");
+    *scripted.relations.lock().expect("script") =
+        Some(managed.scripted_credits(&tracks, |_| concerto_credits()));
+
+    let (handle, items) = managed
+        .preview(SelectionKind::Albums, &[&album], "download")
+        .await;
+    assert!(
+        items.iter().all(|item| item.eligibility.writes()),
+        "{:?}",
+        items.iter().map(|item| &item.facts).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        texts(&db, &link),
+        [format!("{SAKAMOTO} automatic")],
+        "planning linked the artist"
+    );
+    let applied = management_apply(&managed.library, &handle).await;
+    assert_eq!(applied.job.state.as_str(), "succeeded");
+    let results = managed
+        .management()
+        .results(&handle.job_id, -1, 50)
+        .expect("results");
+    for item in &results.items {
+        assert_eq!(item.work_state, "succeeded", "{:?}", item.failure);
+        assert!(
+            item.failure
+                .as_ref()
+                .is_none_or(|failure| failure.code != "ALBUM_CHANGED"),
+            "{:?}",
+            item.failure
+        );
+    }
+
+    rescan(&managed.library).await;
+    assert_eq!(
+        texts(&db, &rows_of_album),
+        vec![artist.clone(); tracks.len() + 2]
+    );
+    assert_eq!(
+        texts(
+            &db,
+            &format!("SELECT display_name FROM local_artists WHERE id = '{artist}'")
+        ),
+        ["Ryūichi Sakamoto"]
+    );
+    assert_eq!(
+        texts(
+            &db,
+            "SELECT item_id FROM library_user_favorites WHERE item_kind = 'artist' \
+             UNION ALL SELECT local_artist_id FROM library_play_history"
+        ),
+        vec![artist.clone(); 2]
+    );
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(managed.scratch.to_path_buf().join("app.db")),
+        )
+        .await
+        .expect("reader opens");
+    let read = SqliteCatalog::new(&LibraryDb::new(&pool))
+        .get_artist(&artist)
+        .await
+        .expect("artist reads")
+        .expect("artist found");
+    assert_eq!(read.artist_mbid.as_deref(), Some(SAKAMOTO));
+    pool.close().await;
+    assert_eq!(
+        texts(
+            &db,
+            &format!(
+                "SELECT id FROM local_artists WHERE display_name = 'Ryūichi Sakamoto' \
+                 AND retired_into_artist_id IS NULL AND id <> '{artist}'"
+            )
+        ),
+        Vec::<String>::new()
+    );
+    let revision = format!("SELECT row_revision FROM local_artists WHERE id = '{artist}'");
+    let before: i64 = db
+        .query_row(&revision, [], |row| row.get(0))
+        .expect("revision");
+    rescan(&managed.library).await;
+    let after: i64 = db
+        .query_row(&revision, [], |row| row.get(0))
+        .expect("revision");
+    assert_eq!(after, before, "a rescan with nothing new");
+}
+
+/// One identify tick that matches an album links its artist to the
+/// MusicBrainz artist the release credits, though its files carry no
+/// artist id.
+#[tokio::test]
+async fn an_identified_album_links_its_artist() {
+    use droppedneedle_library::tags::{TagEdit, TagField, save_tags};
+
+    let (scratch, library, music) = bare_library("lib-identify-links");
+    let file = plant(&music, "album/01.flac", "management_full.flac");
+    save_tags(
+        &file,
+        &[
+            TagEdit::verbatim(TagField::MusicBrainzArtistId, Vec::new()),
+            TagEdit::verbatim(TagField::MusicBrainzAlbumArtistId, Vec::new()),
+        ],
+    )
+    .expect("no artist ids");
+    add_music_root(&library, &music).await;
+    let track = indexed_at(&library, "album/01.flac");
+    let album = library.scan_store.album_for_track(&track).expect("album");
+    let release = tagged_release(&library.identify_store, &album);
+    library
+        .test_providers
+        .as_ref()
+        .expect("scripted providers")
+        .set_recall(RecallResult {
+            releases: vec![release.clone()],
+            ..RecallResult::default()
+        });
+    assert_eq!(library.identify_tick().await, 1);
+    let db = scratch_db(&scratch);
+    assert_eq!(
+        texts(
+            &db,
+            &format!(
+                "SELECT i.provider_artist_id || ' ' || i.decision_source \
+                 FROM local_albums a JOIN local_artist_external_identities i \
+                 ON i.local_artist_id = a.album_artist_id WHERE a.id = '{album}'"
+            )
+        ),
+        [format!("{} automatic", release.artists[0].id)]
+    );
+}
+
+/// A custom edition under a release group credited to another artist is
+/// refused while a person linked the album's artist, and sealed while the
+/// link is the app's own, which a person has no other way to correct.
+#[tokio::test]
+async fn a_custom_edition_passes_over_the_apps_artist_link() {
+    use droppedneedle_library::operations::service::Operations;
+    const GROUP: &str = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
+    const OTHER_GROUP: &str = "2c3d4e5f-6a7b-4c8d-9e0f-1a2b3c4d5e6f";
+    const OTHER: &str = "0f6e7a1c-2b3d-4e5f-8a9b-1c2d3e4f5a6b";
+    const LINKED: &str = "aaaaaaaa-0000-4000-8000-0000000000aa";
+
+    let managed = ManagedLibrary::start("lib-custom-link", |_| {}).await;
+    let (album, _) = managed
+        .add_album_from("custom", &["management_full.flac"], |release| {
+            release.release_group_id = if release.id == REL_1 {
+                GROUP.to_owned()
+            } else {
+                OTHER_GROUP.to_owned()
+            };
+        })
+        .await;
+    let db = managed.db();
+    let (release_id, revision, artist): (String, i64, String) = db
+        .query_row(
+            "SELECT i.release_mbid, i.row_revision, a.album_artist_id \
+             FROM local_album_external_identities i JOIN local_albums a \
+             ON a.id = i.local_album_id WHERE i.local_album_id = ?1",
+            [&album],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("matched album");
+    let mut release = managed
+        .library
+        .identify_store
+        .release(&release_id, None)
+        .expect("release on file");
+    for credit in &mut release.artists {
+        credit.id = OTHER.to_owned();
+    }
+    managed
+        .library
+        .test_providers
+        .as_ref()
+        .expect("scripted providers")
+        .set_recall(RecallResult {
+            releases: vec![release],
+            ..RecallResult::default()
+        });
+    let link = |source: &str| {
+        db.execute_batch(&format!(
+            "DELETE FROM local_artist_external_identities WHERE local_artist_id = '{artist}'; \
+             INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+             provider_artist_id, decision_source, selected_at) \
+             VALUES ('{artist}', 'musicbrainz', '{LINKED}', '{source}', 1);"
+        ))
+        .expect("link set");
+    };
+    let operations = Operations::new(&managed.library);
+
+    link("manual");
+    let refused = operations
+        .seal_custom_edition(&album, &release_id, revision, "admin")
+        .await
+        .expect_err("a person's link stands");
+    let conflict = droppedneedle_library::operations::reasons::CUSTOM_EDITION_ARTIST_CONFLICT;
+    assert!(
+        format!("{refused:?}").contains(conflict.message),
+        "{refused:?}"
+    );
+
+    link("automatic");
+    operations
+        .seal_custom_edition(&album, &release_id, revision, "admin")
+        .await
+        .expect("sealed over the app's link");
+    assert!(active_manifest(&db, &album).is_some());
 }
 
 /// While MusicBrainz is down a preview keeps the six artist tags, says

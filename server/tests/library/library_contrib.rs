@@ -946,6 +946,116 @@ async fn brief_attach_rejects_ambiguous_and_unknown() {
     );
 }
 
+/// Attach the album to `MBID_RELEASE`, whose artist is `MBID_ARTIST`, the
+/// way a curator does from the duplicate check.
+async fn attach_release(rig: &Rig) -> Result<ContributionRecord, ContribError> {
+    rig.discogs.insert_release(discogs_release());
+    let release = discogs_release();
+    rig.musicbrainz.insert_resolution(
+        &release.canonical_release_url,
+        UrlRelation::Release,
+        MusicBrainzUrlResolution {
+            resource_url: release.canonical_release_url.clone(),
+            release_mbids: vec![MBID_RELEASE.to_string()],
+            release_group_mbids: Vec::new(),
+        },
+    );
+    rig.musicbrainz.insert_verification(
+        MBID_RELEASE,
+        Ok(Some(verified_release(MBID_RELEASE, MBID_GROUP))),
+    );
+    let ready = to_ready(rig).await;
+    let selected = rig
+        .service
+        .select_discogs(&ready.id, "12345", ready.row_revision, ACTOR)
+        .await?;
+    let edited = rig
+        .service
+        .update(&selected.id, selected.row_revision, &selected.draft, ACTOR)
+        .await?;
+    let checked = rig
+        .service
+        .check_duplicates(&edited.id, edited.row_revision, ACTOR, false)
+        .await?;
+    rig.service
+        .attach_existing(&checked.id, MBID_RELEASE, checked.row_revision, ACTOR)
+        .await
+}
+
+/// Every MusicBrainz link of local artists: (artist, id, decision source).
+fn artist_links(rig: &Rig) -> Vec<(String, String, String)> {
+    rig.db
+        .prepare(
+            "SELECT local_artist_id, provider_artist_id, decision_source \
+             FROM local_artist_external_identities ORDER BY local_artist_id",
+        )
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
+/// A curator's link replaces one the app made: the album's artist, linked
+/// by the app to another MusicBrainz artist, takes the curator's.
+#[tokio::test]
+async fn brief_attach_replaces_the_apps_link_of_the_artist() {
+    let rig = Rig::new();
+    rig.db
+        .execute(
+            "UPDATE local_artist_external_identities SET provider_artist_id = ?2 \
+             WHERE local_artist_id = ?1",
+            params![ARTIST, MBID_OTHER],
+        )
+        .unwrap();
+    let linked = attach_release(&rig).await.expect("not refused");
+    assert_eq!(linked.state, ContributionState::Linked);
+    assert_eq!(
+        artist_links(&rig),
+        vec![(
+            ARTIST.to_owned(),
+            MBID_ARTIST.to_owned(),
+            "manual".to_owned()
+        )]
+    );
+}
+
+/// A curator's link takes the MusicBrainz artist from another record the
+/// app linked to it, with no merge suggested.
+#[tokio::test]
+async fn brief_attach_takes_the_id_from_the_apps_link_elsewhere() {
+    let rig = Rig::new();
+    rig.db
+        .execute_batch(&format!(
+            "DELETE FROM local_artist_external_identities; \
+             INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+             updated_at) VALUES ('artist-2', 'Test Artist', 'test artist', 'person', 1, 1); \
+             INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+             provider_artist_id, decision_source, selected_at) \
+             VALUES ('artist-2', 'musicbrainz', '{MBID_ARTIST}', 'automatic', 1);"
+        ))
+        .unwrap();
+    let linked = attach_release(&rig).await.expect("not refused");
+    assert_eq!(linked.state, ContributionState::Linked);
+    assert_eq!(
+        artist_links(&rig),
+        vec![(
+            ARTIST.to_owned(),
+            MBID_ARTIST.to_owned(),
+            "manual".to_owned()
+        )]
+    );
+    let candidates: i64 = rig
+        .db
+        .query_row(
+            "SELECT COUNT(*) FROM local_artist_merge_candidates",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(candidates, 0);
+}
+
 // ---------------------------------------------------------------------------
 // Submission briefs (mocked editor - never a live provider write)
 // ---------------------------------------------------------------------------

@@ -160,9 +160,15 @@ impl LibrarySetup {
         let mut attempted = 0;
         let mut shutdown = shutdown.clone();
         loop {
+            if *shutdown.borrow() {
+                break;
+            }
+            // Artist links follow every change of a match, whoever made it,
+            // so they are swept before each claim, paused or not.
+            self.identify_store.sweep_artist_links();
             // An administrator's pause stops new claims; a job already
             // running finishes.
-            if *shutdown.borrow() || self.identification_paused() {
+            if self.identification_paused() {
                 break;
             }
             let claimed = self
@@ -176,6 +182,10 @@ impl LibrarySetup {
                 report = attempt => match report {
                     Some(report) => {
                         attempted += 1;
+                        // What the match proves about the album's artists,
+                        // before automatic management plans the album.
+                        self.identify_store
+                            .link_and_merge_album_artists(&report.job.local_album_id);
                         // A settled match is what automatic management
                         // waits for after a scan finds an album.
                         if matches!(

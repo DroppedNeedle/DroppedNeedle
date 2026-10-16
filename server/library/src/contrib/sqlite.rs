@@ -590,12 +590,29 @@ fn artist_identity(conn: &Connection, artist_id: &str) -> rusqlite::Result<Optio
     .optional()
 }
 
-fn artist_owner(conn: &Connection, artist_mbid: &str) -> rusqlite::Result<Option<String>> {
+/// The artist's MusicBrainz link when a person or v2 made it. The app's
+/// own links are revisable, so a contribution may replace them.
+fn chosen_artist_identity(conn: &Connection, artist_id: &str) -> rusqlite::Result<Option<String>> {
     conn.prepare_cached(
-        "SELECT local_artist_id FROM local_artist_external_identities \
-         WHERE provider = ?1 AND provider_artist_id = ?2",
+        "SELECT provider_artist_id FROM local_artist_external_identities \
+         WHERE local_artist_id = ?1 AND provider = ?2 \
+         AND decision_source IN ('manual', 'legacy_import')",
     )?
-    .query_row(params![PROVIDER, artist_mbid], |row| row.get(0))
+    .query_row(params![artist_id, PROVIDER], |row| row.get(0))
+    .optional()
+}
+
+/// The row linked to `artist_mbid`, and whether the app made the link.
+fn artist_owner(conn: &Connection, artist_mbid: &str) -> rusqlite::Result<Option<(String, bool)>> {
+    conn.prepare_cached(
+        "SELECT local_artist_id, decision_source NOT IN ('manual', 'legacy_import') \
+         FROM local_artist_external_identities \
+         WHERE provider = ?1 AND lower(provider_artist_id) = lower(?2) \
+         ORDER BY local_artist_id LIMIT 1",
+    )?
+    .query_row(params![PROVIDER, artist_mbid], |row| {
+        Ok((row.get(0)?, row.get(1)?))
+    })
     .optional()
 }
 
@@ -686,8 +703,25 @@ fn commit_link(conn: &Connection, link: &LinkIdentity<'_>, now: f64) -> Result<i
         ])?;
     }
     if let Some(wanted) = link.artist_mbid {
-        match artist_owner(conn, wanted)? {
-            Some(owner) if owner != link.artist_id => {
+        let owner = artist_owner(conn, wanted)?;
+        // The app's own link of the id on another row gives way to the
+        // person's, with no merge to suggest.
+        if let Some((other, true)) = &owner
+            && other != link.artist_id
+        {
+            conn.prepare_cached(
+                "DELETE FROM local_artist_external_identities WHERE local_artist_id = ?1 \
+                 AND provider = ?2 AND decision_source NOT IN ('manual', 'legacy_import')",
+            )?
+            .execute(params![other, PROVIDER])?;
+            conn.prepare_cached(
+                "UPDATE local_artists SET updated_at = ?2, row_revision = row_revision + 1 \
+                 WHERE id = ?1",
+            )?
+            .execute(params![other, now])?;
+        }
+        match owner {
+            Some((owner, false)) if owner != link.artist_id => {
                 let (left, right) = if link.artist_id < owner.as_str() {
                     (link.artist_id.to_owned(), owner)
                 } else {
@@ -705,8 +739,9 @@ fn commit_link(conn: &Connection, link: &LinkIdentity<'_>, now: f64) -> Result<i
                     now
                 ])?;
             }
-            Some(_) => {}
-            None if artist_identity(conn, link.artist_id)?.is_none() => {
+            // A person's or v2's link of the row stays; the app's own link,
+            // to this id or another, is replaced by the person's.
+            _ if chosen_artist_identity(conn, link.artist_id)?.is_none() => {
                 conn.prepare_cached(
                     "UPDATE local_artists SET updated_at = ?2, row_revision = row_revision + 1 \
                      WHERE id = ?1",
@@ -715,7 +750,14 @@ fn commit_link(conn: &Connection, link: &LinkIdentity<'_>, now: f64) -> Result<i
                 conn.prepare_cached(
                     "INSERT INTO local_artist_external_identities (local_artist_id, provider, \
                      provider_artist_id, decision_source, attempt_id, selected_by_user_id, \
-                     selected_at) VALUES (?1, ?2, ?3, 'manual', ?4, ?5, ?6)",
+                     selected_at) VALUES (?1, ?2, ?3, 'manual', ?4, ?5, ?6) \
+                     ON CONFLICT (local_artist_id, provider) DO UPDATE SET \
+                     provider_artist_id = excluded.provider_artist_id, \
+                     decision_source = excluded.decision_source, \
+                     attempt_id = excluded.attempt_id, \
+                     selected_by_user_id = excluded.selected_by_user_id, \
+                     selected_at = excluded.selected_at, \
+                     row_revision = local_artist_external_identities.row_revision + 1",
                 )?
                 .execute(params![
                     link.artist_id,
@@ -726,7 +768,7 @@ fn commit_link(conn: &Connection, link: &LinkIdentity<'_>, now: f64) -> Result<i
                     now
                 ])?;
             }
-            None => {}
+            _ => {}
         }
     }
     // Each paired file takes its track identity on the release, as v2 wrote
@@ -957,8 +999,8 @@ fn apply_update(
                 let live = album_input(conn, &row.local_album_id)?
                     .ok_or(ContribError::ContributionNotFound)?;
                 if let Some(wanted) = artist_mbid.as_deref()
-                    && artist_identity(conn, &live.artist_id)?
-                        .is_some_and(|existing| existing != wanted)
+                    && chosen_artist_identity(conn, &live.artist_id)?
+                        .is_some_and(|existing| !existing.eq_ignore_ascii_case(wanted))
                 {
                     return Err(ContribError::state(
                         "The local artist already has a different MusicBrainz identity.",
@@ -1661,8 +1703,8 @@ impl SqliteContributions {
                             Some("EXISTING_IDENTITY_CONFLICT".to_owned()),
                         )
                     } else if let Some(wanted) = identities.artist_mbid.as_deref()
-                        && artist_identity(conn, &live.artist_id)?
-                            .is_some_and(|existing| existing != wanted)
+                        && chosen_artist_identity(conn, &live.artist_id)?
+                            .is_some_and(|existing| !existing.eq_ignore_ascii_case(wanted))
                     {
                         (
                             VerificationOutcome::NeedsReview,

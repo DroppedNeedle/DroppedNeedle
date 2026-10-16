@@ -5991,9 +5991,10 @@ async fn an_artist_renamed_and_moved_by_a_tagger_takes_the_new_name() {
     assert_eq!(rig.name(&artist), "Bar");
 }
 
-/// A link the app made by itself proves nothing yet: the linked row is
-/// neither the survivor of a merge nor merged, and a credit with the
-/// linked id goes to the row its files prove.
+/// A link the app made by itself leads no merge and is never merged: a
+/// row whose every credit holds the linked id stays live beside the
+/// linked row at the run end, and the link stays while a file of the
+/// linked row carries its id.
 #[tokio::test]
 async fn an_automatic_link_neither_proves_nor_merges() {
     let rig = ArtistRig::new("artist-automatic-link");
@@ -6010,7 +6011,51 @@ async fn an_automatic_link_neither_proves_nor_merges() {
     assert_eq!(rig.retired_into(&linked), None);
     assert_eq!(rig.retired_into(&proven), None);
     assert_eq!(rig.merges(), 0);
-    assert_eq!(rig.track_artist("P/01.flac", 0), proven);
+    assert_eq!(
+        rig.count(&format!(
+            "SELECT COUNT(*) FROM local_artist_external_identities \
+             WHERE local_artist_id = '{linked}' AND provider_artist_id = '{MBID_X}' \
+             AND decision_source = 'automatic'"
+        )),
+        1
+    );
+}
+
+/// A file carrying the id the app linked a row to lands on that row
+/// under the file's name, and the row takes the name.
+#[tokio::test]
+async fn a_file_with_an_automatically_linked_id_lands_on_its_row() {
+    let rig = ArtistRig::new("artist-automatic-lands");
+    rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
+    rig.scan().await;
+    let linked = rig.track_artist("A/01.flac", 0);
+    rig.link_by(&linked, MBID_X, "automatic");
+    let pe = listed(&["Pe"], &[MBID_X]);
+    rig.put("A/01.flac", "Album A", pe, pe);
+    rig.scan().await;
+    assert_eq!(rig.track_artist("A/01.flac", 0), linked);
+    assert_eq!(
+        rig.album_artist("A/01.flac"),
+        (linked.clone(), linked.clone())
+    );
+    assert_eq!(rig.name(&linked), "Pe");
+}
+
+/// A file named like a row the app linked, carrying another id, does not
+/// land on that row.
+#[tokio::test]
+async fn a_file_with_another_id_stays_off_an_automatically_linked_row() {
+    let rig = ArtistRig::new("artist-automatic-other");
+    rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
+    rig.scan().await;
+    let linked = rig.track_artist("A/01.flac", 0);
+    rig.link_by(&linked, MBID_X, "automatic");
+    let oh = listed(&["Oh"], &[MBID_Y]);
+    rig.put("B/01.flac", "Album B", oh, oh);
+    rig.scan().await;
+    assert_ne!(rig.track_artist("B/01.flac", 0), linked);
+    assert_ne!(rig.album_artist("B/01.flac").0, linked);
+    assert_eq!(rig.track_artist("A/01.flac", 0), linked);
 }
 
 /// How a hands-off brief's old album is kept from the app.

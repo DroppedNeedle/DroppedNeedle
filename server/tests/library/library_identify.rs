@@ -30,7 +30,7 @@ use identify::rules::{
 use identify::service::{IdentifyDeps, IdentifyService};
 use identify::sqlite::SqliteIdentifyStore;
 use identify::stores::{AttemptLanding, land_job};
-use rusqlite::params;
+use rusqlite::{OptionalExtension as _, params};
 
 use crate::common::{ScratchDir, migrated_db};
 
@@ -1215,4 +1215,521 @@ async fn identify_state_migration_upgrades_in_place() {
                 .expect("schema reads");
         assert_eq!(found.as_deref(), Some(table));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Artists linked to MusicBrainz from their album's accepted match.
+// ---------------------------------------------------------------------------
+
+const LINK_X: &str = "aaaaaaaa-0000-4000-8000-00000000000a";
+const LINK_Y: &str = "aaaaaaaa-0000-4000-8000-00000000000b";
+const LINK_Z: &str = "aaaaaaaa-0000-4000-8000-00000000000c";
+const LINK_RELEASE: &str = "bbbbbbbb-0000-4000-8000-000000000001";
+const LINK_GROUP: &str = "bbbbbbbb-0000-4000-8000-000000000002";
+
+/// One credit as a test seeds it: the artist row, the name it is credited
+/// as, and the MusicBrainz id its file gave.
+type Seeded<'a> = (&'a str, &'a str, Option<&'a str>);
+
+/// A catalog whose albums' matches link their artists: rows the test
+/// seeds, a release document on file, and the identify store that works
+/// the links out.
+struct Links {
+    store: SqliteIdentifyStore,
+    db: rusqlite::Connection,
+    _dir: ScratchDir,
+}
+
+impl Links {
+    fn new() -> Self {
+        let dir = ScratchDir::new("lib-artist-links");
+        let path = dir.join("app.db");
+        migrated_db(&path);
+        let db = droppedneedle_kernel::db::open_connection(&path).expect("side connection opens");
+        db.execute(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .expect("admin seeds");
+        Self {
+            store: SqliteIdentifyStore::open(&path).expect("store opens"),
+            db,
+            _dir: dir,
+        }
+    }
+
+    fn artist(&self, id: &str, name: &str, created: f64) {
+        self.db
+            .execute(
+                "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+                 updated_at) VALUES (?1, ?2, lower(?2), 'person', ?3, ?3)",
+                params![id, name, created],
+            )
+            .expect("artist seeds");
+    }
+
+    fn link(&self, artist: &str, mbid: &str, source: &str) {
+        self.db
+            .execute(
+                "INSERT INTO local_artist_external_identities (local_artist_id, provider, \
+                 provider_artist_id, decision_source, selected_at) \
+                 VALUES (?1, 'musicbrainz', ?2, ?3, 1)",
+                params![artist, mbid, source],
+            )
+            .expect("link seeds");
+    }
+
+    fn credits(&self, table: &str, key: &str, subject: &str, credits: &[Seeded<'_>]) {
+        for (position, (artist, name, mbid)) in credits.iter().enumerate() {
+            self.db
+                .execute(
+                    &format!(
+                        "INSERT INTO {table} ({key}, position, local_artist_id, role, \
+                         credited_name, join_phrase, artist_mbid) \
+                         VALUES (?1, ?2, ?3, 'main', ?4, '', ?5)"
+                    ),
+                    params![subject, position as i64, artist, name, mbid],
+                )
+                .expect("credit seeds");
+        }
+    }
+
+    /// An album credited as `credits` with its tracks, each credited as
+    /// given, matched by `source` to the release with each track mapped to
+    /// the release track of its number.
+    fn album(
+        &self,
+        album: &str,
+        credits: &[Seeded<'_>],
+        tracks: &[(&str, &[Seeded<'_>])],
+        source: &str,
+    ) {
+        self.db
+            .execute(
+                "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+                 album_artist_name, album_artist_id, grouping_source, created_at, updated_at) \
+                 VALUES (?1, 'root-1', ?1, 'Album', 'album', ?2, ?3, 'automatic', 0, 0)",
+                params![album, credits[0].1, credits[0].0],
+            )
+            .expect("album seeds");
+        self.credits("local_album_artists", "local_album_id", album, credits);
+        self.db
+            .execute(
+                "INSERT INTO local_album_external_identities (local_album_id, provider, \
+                 release_group_mbid, release_mbid, decision_source, selected_at) \
+                 VALUES (?1, 'musicbrainz', ?2, ?3, ?4, 1)",
+                params![album, LINK_GROUP, LINK_RELEASE, source],
+            )
+            .expect("match seeds");
+        for (index, (track, track_credits)) in tracks.iter().enumerate() {
+            let number = index as i64 + 1;
+            self.db
+                .execute(
+                    "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, \
+                     relative_path, path_hash, file_size_bytes, file_mtime_ns, stat_revision, \
+                     tag_revision, title, title_folded, artist_name, album_title, \
+                     album_title_folded, disc_number, track_number, file_format, \
+                     ingest_source, imported_at, membership_source) \
+                     VALUES (?1, ?2, 'root-1', '/music/' || ?1 || '.flac', ?1 || '.flac', ?1, \
+                     1, 1, 'stat-1', 'tag-1', 'Song ' || ?3, 'song ' || ?3, ?4, 'Album', \
+                     'album', 1, ?3, 'flac', 'scan', 0, 'automatic')",
+                    params![track, album, number, track_credits[0].1],
+                )
+                .expect("track seeds");
+            self.credits(
+                "local_track_artists",
+                "local_track_id",
+                track,
+                track_credits,
+            );
+            self.db
+                .execute(
+                    "INSERT INTO local_track_external_identities (local_track_id, provider, \
+                     recording_mbid, release_mbid, release_track_mbid, decision_source, \
+                     selected_at) VALUES (?1, 'musicbrainz', 'rec-' || ?2, ?3, 'rt-' || ?2, ?4, 1)",
+                    params![track, number, LINK_RELEASE, source],
+                )
+                .expect("track mapping seeds");
+        }
+    }
+
+    /// The release on file: credited to `artists`, with `tracks` tracks
+    /// each credited to `track_artists`.
+    fn release(&self, artists: &[(&str, &str)], tracks: u32, track_artists: &[(&str, &str)]) {
+        let credited = |artists: &[(&str, &str)]| -> Vec<CreditedArtist> {
+            artists
+                .iter()
+                .map(|(id, name)| CreditedArtist {
+                    id: (*id).to_owned(),
+                    name: (*name).to_owned(),
+                    sort_name: None,
+                    join: String::new(),
+                })
+                .collect()
+        };
+        self.store.save_release(&Release {
+            id: LINK_RELEASE.to_owned(),
+            release_group_id: LINK_GROUP.to_owned(),
+            title: "Album".to_owned(),
+            artists: credited(artists),
+            tracks: (1..=tracks)
+                .map(|number| ReleaseTrack {
+                    id: format!("rt-{number}"),
+                    recording_id: format!("rec-{number}"),
+                    title: format!("Song {number}"),
+                    artists: credited(track_artists),
+                    disc: 1,
+                    position: number,
+                    absolute_position: number,
+                    ..ReleaseTrack::default()
+                })
+                .collect(),
+            ..Release::default()
+        });
+    }
+
+    fn link_of(&self, artist: &str) -> Option<(String, String)> {
+        self.db
+            .query_row(
+                "SELECT provider_artist_id, decision_source FROM local_artist_external_identities \
+                 WHERE local_artist_id = ?1",
+                params![artist],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .expect("link reads")
+    }
+
+    /// Every proof as (kind, subject, position, artist, id).
+    fn proofs(&self) -> Vec<(String, String, i64, String, String)> {
+        self.db
+            .prepare(
+                "SELECT subject_kind, subject_id, credit_position, local_artist_id, artist_mbid \
+                 FROM library_artist_credit_proofs \
+                 ORDER BY subject_kind, subject_id, credit_position",
+            )
+            .expect("proofs prepare")
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })
+            .expect("proofs read")
+            .collect::<rusqlite::Result<_>>()
+            .expect("proof rows")
+    }
+
+    fn state(&self, album: &str) -> Option<String> {
+        self.db
+            .query_row(
+                "SELECT state FROM library_artist_reconciliation_state WHERE local_album_id = ?1",
+                params![album],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("state reads")
+    }
+
+    /// Everything a pass may write, with its revisions and times.
+    fn written(&self) -> String {
+        self.db
+            .query_row(
+                "SELECT COALESCE((SELECT group_concat(id || ':' || row_revision || ':' || updated_at) \
+                 FROM local_artists), '') || '|' || COALESCE((SELECT group_concat(local_artist_id \
+                 || ':' || provider_artist_id || ':' || row_revision || ':' || selected_at) \
+                 FROM local_artist_external_identities), '') || '|' || COALESCE((SELECT \
+                 group_concat(subject_id || ':' || row_revision || ':' || updated_at) \
+                 FROM library_artist_credit_proofs), '') || '|' || COALESCE((SELECT \
+                 group_concat(local_album_id || ':' || input_revision || ':' || updated_at) \
+                 FROM library_artist_reconciliation_state), '') || '|' || COALESCE((SELECT \
+                 value FROM library_catalog_revision), 0)",
+                [],
+                |row| row.get(0),
+            )
+            .expect("written reads")
+    }
+
+    fn proof(
+        kind: &str,
+        subject: &str,
+        position: i64,
+        artist: &str,
+        mbid: &str,
+    ) -> (String, String, i64, String, String) {
+        (
+            kind.to_owned(),
+            subject.to_owned(),
+            position,
+            artist.to_owned(),
+            mbid.to_owned(),
+        )
+    }
+}
+
+fn automatic(mbid: &str) -> Option<(String, String)> {
+    Some((mbid.to_owned(), "automatic".to_owned()))
+}
+
+/// An accepted match whose album and tracks credit their artists as the
+/// release does proves every position and links each artist by itself;
+/// the album's state is projected. A second pass on nothing new writes
+/// nothing.
+#[test]
+fn an_accepted_match_links_every_credited_artist() {
+    let links = Links::new();
+    links.artist("ar-a", "Alpha", 1.0);
+    links.artist("ar-b", "Beta", 2.0);
+    let alpha: &[Seeded<'_>] = &[("ar-a", "Alpha", None)];
+    links.album(
+        "al",
+        &[("ar-a", "Alpha", None), ("ar-b", "Beta", None)],
+        &[("t1", alpha), ("t2", alpha)],
+        "automatic",
+    );
+    links.release(
+        &[(LINK_X, "Alpha"), (LINK_Y, "Beta")],
+        2,
+        &[(LINK_X, "Alpha")],
+    );
+    links.store.sweep_artist_links();
+    assert_eq!(
+        links.proofs(),
+        vec![
+            Links::proof("album", "al", 0, "ar-a", LINK_X),
+            Links::proof("album", "al", 1, "ar-b", LINK_Y),
+            Links::proof("track", "t1", 0, "ar-a", LINK_X),
+            Links::proof("track", "t2", 0, "ar-a", LINK_X),
+        ]
+    );
+    assert_eq!(links.link_of("ar-a"), automatic(LINK_X));
+    assert_eq!(links.link_of("ar-b"), automatic(LINK_Y));
+    assert_eq!(links.state("al").as_deref(), Some("projected"));
+
+    let before = links.written();
+    links.store.sweep_artist_links();
+    assert!(links.store.link_and_merge_album_artists("al"));
+    assert!(links.store.link_album_artists("al"));
+    assert_eq!(links.written(), before, "nothing new, nothing written");
+}
+
+/// An album credit "A & B" against a release crediting A and B does not
+/// line up: no album proof, and the album's credits are ambiguous. Tracks
+/// credited to A alone still link A.
+#[test]
+fn a_joined_album_credit_proves_nothing() {
+    let links = Links::new();
+    links.artist("ar-ab", "Alpha & Beta", 1.0);
+    links.artist("ar-a", "Alpha", 2.0);
+    links.album(
+        "al",
+        &[("ar-ab", "Alpha & Beta", None)],
+        &[("t1", &[("ar-a", "Alpha", None)])],
+        "automatic",
+    );
+    links.release(
+        &[(LINK_X, "Alpha"), (LINK_Y, "Beta")],
+        1,
+        &[(LINK_X, "Alpha")],
+    );
+    links.store.sweep_artist_links();
+    assert_eq!(
+        links.proofs(),
+        vec![Links::proof("track", "t1", 0, "ar-a", LINK_X)]
+    );
+    assert_eq!(
+        links.state("al").as_deref(),
+        Some("ambiguous_credit_structure")
+    );
+    assert_eq!(links.link_of("ar-a"), automatic(LINK_X));
+    assert_eq!(links.link_of("ar-ab"), None);
+}
+
+/// A credit spelled otherwise than the release credits it links nothing,
+/// until the artist's MusicBrainz names are on file with that spelling
+/// among them.
+#[test]
+fn another_spelling_links_only_through_the_artists_names() {
+    use droppedneedle_library::matching::model::{
+        ArtistAlias, ArtistName, ArtistNames, ReleaseExtras,
+    };
+
+    let links = Links::new();
+    links.artist("ar-s", "Ryuichi Sakamoto", 1.0);
+    links.album("al", &[("ar-s", "Ryuichi Sakamoto", None)], &[], "manual");
+    links.release(&[(LINK_X, "坂本龍一")], 0, &[]);
+    links.store.sweep_artist_links();
+    assert_eq!(links.link_of("ar-s"), None);
+    assert!(links.proofs().is_empty());
+    assert_eq!(links.state("al").as_deref(), Some("projected"));
+
+    let names = ArtistNames {
+        fetched_at_ms: 1,
+        artists: std::collections::BTreeMap::from([(
+            LINK_X.to_owned(),
+            ArtistName {
+                name: "坂本龍一".to_owned(),
+                sort_name: None,
+                aliases: Some(vec![ArtistAlias {
+                    name: "Ryūichi Sakamoto".to_owned(),
+                    ..ArtistAlias::default()
+                }]),
+            },
+        )]),
+    };
+    links
+        .store
+        .graft_extras(
+            LINK_RELEASE,
+            &ReleaseExtras {
+                relations: None,
+                names: Some(names),
+            },
+        )
+        .expect("names grafted");
+    assert!(links.store.link_album_artists("al"));
+    assert_eq!(links.link_of("ar-s"), automatic(LINK_X));
+}
+
+/// A best guess links nothing; once a person says it looks right, the
+/// next sweep links its artist.
+#[test]
+fn a_best_guess_links_once_it_looks_right() {
+    use droppedneedle_library::operations::choice;
+
+    let links = Links::new();
+    links.artist("ar-a", "Alpha", 1.0);
+    links.album("al", &[("ar-a", "Alpha", None)], &[], "automatic");
+    links
+        .db
+        .execute(
+            "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+             release_mbid, updated_at) VALUES ('al', 'unconfirmed', 'BEST_GUESS', ?1, 1)",
+            params![LINK_RELEASE],
+        )
+        .expect("best guess seeds");
+    links.release(&[(LINK_X, "Alpha")], 0, &[]);
+    links.store.sweep_artist_links();
+    assert_eq!(links.link_of("ar-a"), None);
+    assert_eq!(links.state("al").as_deref(), Some("waiting_for_identity"));
+
+    let tx = links.db.unchecked_transaction().expect("transaction");
+    choice::confirm(&tx, "al", "admin", 2.0).expect("looks right");
+    tx.commit().expect("commit");
+    links.store.sweep_artist_links();
+    assert_eq!(links.link_of("ar-a"), automatic(LINK_X));
+    assert_eq!(links.state("al").as_deref(), Some("projected"));
+}
+
+/// A row whose files carry another id is proven two artists, so it is
+/// not linked and loses the app's link; a row a person linked to another
+/// id keeps it, whatever its album proves.
+#[test]
+fn files_naming_another_artist_keep_the_row_unlinked() {
+    let links = Links::new();
+    links.artist("ar-a", "Alpha", 1.0);
+    links.artist("ar-p", "Pe", 2.0);
+    links.link("ar-a", LINK_X, "automatic");
+    links.link("ar-p", LINK_Y, "manual");
+    links.album(
+        "al",
+        &[("ar-a", "Alpha", Some(LINK_Y)), ("ar-p", "Pe", None)],
+        &[],
+        "automatic",
+    );
+    links.release(&[(LINK_X, "Alpha"), (LINK_Z, "Pe")], 0, &[]);
+    links.store.sweep_artist_links();
+    assert_eq!(
+        links.proofs(),
+        vec![
+            Links::proof("album", "al", 0, "ar-a", LINK_X),
+            Links::proof("album", "al", 1, "ar-p", LINK_Z),
+        ]
+    );
+    assert_eq!(links.link_of("ar-a"), None);
+    assert_eq!(
+        links.link_of("ar-p"),
+        Some((LINK_Y.to_owned(), "manual".to_owned()))
+    );
+}
+
+/// Taking the match off an album takes away, at the next sweep, its
+/// proofs, its state and the links they made.
+#[test]
+fn detaching_the_match_takes_its_links_away() {
+    use droppedneedle_library::operations::choice;
+
+    let links = Links::new();
+    links.artist("ar-a", "Alpha", 1.0);
+    links.album(
+        "al",
+        &[("ar-a", "Alpha", None)],
+        &[("t1", &[("ar-a", "Alpha", None)])],
+        "automatic",
+    );
+    links.release(&[(LINK_X, "Alpha")], 1, &[(LINK_X, "Alpha")]);
+    links.store.sweep_artist_links();
+    assert_eq!(links.link_of("ar-a"), automatic(LINK_X));
+
+    let tx = links.db.unchecked_transaction().expect("transaction");
+    choice::detach_by_person(&tx, "al", "WRONG_MATCH", "admin", 2.0)
+        .expect("detached")
+        .expect("a match to detach");
+    tx.commit().expect("commit");
+    links.store.sweep_artist_links();
+    assert!(links.proofs().is_empty());
+    assert_eq!(links.state("al"), None);
+    assert_eq!(links.link_of("ar-a"), None);
+}
+
+/// A row the app linked whose files are read again with another id loses
+/// the link at the next sweep, with no change of match.
+#[test]
+fn files_that_turn_to_another_artist_lose_the_link() {
+    let links = Links::new();
+    links.artist("ar-a", "Alpha", 1.0);
+    links.album("al", &[("ar-a", "Alpha", None)], &[], "automatic");
+    links.release(&[(LINK_X, "Alpha")], 0, &[]);
+    links.store.sweep_artist_links();
+    assert_eq!(links.link_of("ar-a"), automatic(LINK_X));
+
+    links
+        .db
+        .execute(
+            "UPDATE local_album_artists SET artist_mbid = ?1 WHERE local_artist_id = 'ar-a'",
+            params![LINK_Y],
+        )
+        .expect("files read again");
+    links.store.sweep_artist_links();
+    assert_eq!(links.link_of("ar-a"), None);
+    assert_eq!(links.state("al").as_deref(), Some("projected"));
+}
+
+/// After a sweep finds no album to work through, writes by other
+/// connections alone (plays, sessions, scans) do not walk the albums again
+/// until a floor has passed; a write through the store itself does, at
+/// the next sweep.
+#[test]
+fn the_album_walk_waits_out_other_writers() {
+    let links = Links::new();
+    links.release(&[(LINK_X, "Alpha")], 0, &[]);
+    links.store.sweep_artist_links();
+
+    links.artist("ar-a", "Alpha", 1.0);
+    links.album("al", &[("ar-a", "Alpha", None)], &[], "automatic");
+    links.store.sweep_artist_links();
+    assert_eq!(
+        links.link_of("ar-a"),
+        None,
+        "another connection's write waits"
+    );
+    assert_eq!(links.state("al"), None);
+
+    links.release(&[(LINK_X, "Alpha")], 0, &[]);
+    links.store.sweep_artist_links();
+    assert_eq!(links.link_of("ar-a"), automatic(LINK_X));
 }

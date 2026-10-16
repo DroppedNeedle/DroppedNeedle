@@ -1842,6 +1842,274 @@ async fn remap_origin_check_lists_exactly_the_code_values() {
     assert_eq!(RemapOrigin::parse("x"), None);
 }
 
+/// Migration 0054 makes the artist proof and album state tables again,
+/// strict: a proof and a state go with their album or track, an artist
+/// with a proof cannot be deleted, a proof's MusicBrainz id is a
+/// lowercase UUID, and the state lists exactly the code's values.
+#[tokio::test]
+async fn artist_proofs_and_states_go_with_their_album() {
+    use droppedneedle_library::identify::artist_links::CreditState;
+
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 54)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    apply_migrations(&pool).await.unwrap();
+    assert_migrated(&pool).await.unwrap();
+    let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(stamped >= 54 && stamped == latest_version(), "{stamped}");
+
+    assert_eq!(
+        column_names(&pool, "library_artist_credit_proofs").await,
+        [
+            "subject_kind",
+            "subject_id",
+            "local_album_id",
+            "local_track_id",
+            "credit_position",
+            "source_local_artist_id",
+            "local_artist_id",
+            "artist_mbid",
+            "canonical_name",
+            "credited_name",
+            "sort_name",
+            "join_phrase",
+            "release_mbid",
+            "release_track_mbid",
+            "album_identity_revision",
+            "track_identity_revision",
+            "evidence_hash",
+            "created_at",
+            "updated_at",
+            "row_revision",
+        ]
+    );
+    assert_eq!(
+        column_names(&pool, "library_artist_reconciliation_state").await,
+        [
+            "local_album_id",
+            "input_revision",
+            "state",
+            "reason_code",
+            "updated_at"
+        ]
+    );
+    let mut state_sql = String::new();
+    for table in [
+        "library_artist_credit_proofs",
+        "library_artist_reconciliation_state",
+    ] {
+        let sql: String =
+            sqlx::query_scalar("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1")
+                .bind(table)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(sql.trim_end().ends_with("STRICT"), "{table}: {sql}");
+        state_sql = sql;
+    }
+    let marker = "CHECK(state IN (";
+    let values = &state_sql[state_sql.find(marker).expect("state has a CHECK") + marker.len()..];
+    let listed: Vec<String> = values[..values.find(')').expect("the list ends")]
+        .split(',')
+        .map(|value| value.trim().trim_matches('\'').to_owned())
+        .collect();
+    assert_eq!(
+        listed,
+        CreditState::ALL.map(|state| state.as_str().to_owned())
+    );
+    for state in CreditState::ALL {
+        assert_eq!(CreditState::parse(state.as_str()), Some(state));
+    }
+
+    let keys: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT 'proofs', \"table\", \"from\", on_delete \
+         FROM pragma_foreign_key_list('library_artist_credit_proofs') \
+         UNION ALL SELECT 'state', \"table\", \"from\", on_delete \
+         FROM pragma_foreign_key_list('library_artist_reconciliation_state') ORDER BY 1, 3",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let key = |owner: &str, table: &str, column: &str, action: &str| {
+        (
+            owner.to_owned(),
+            table.to_owned(),
+            column.to_owned(),
+            action.to_owned(),
+        )
+    };
+    assert_eq!(
+        keys,
+        vec![
+            key("proofs", "local_albums", "local_album_id", "CASCADE"),
+            key("proofs", "local_artists", "local_artist_id", "RESTRICT"),
+            key("proofs", "local_tracks", "local_track_id", "CASCADE"),
+            key(
+                "proofs",
+                "local_artists",
+                "source_local_artist_id",
+                "RESTRICT"
+            ),
+            key("state", "local_albums", "local_album_id", "CASCADE"),
+        ]
+    );
+    let indexes: Vec<(String, String)> = sqlx::query_as(
+        "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL \
+         AND tbl_name IN ('library_artist_credit_proofs', 'library_artist_reconciliation_state') \
+         ORDER BY name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let columns: Vec<(&str, &str)> = indexes
+        .iter()
+        .map(|(name, sql)| {
+            let open = sql.rfind('(').expect("index columns");
+            (name.as_str(), &sql[open..])
+        })
+        .collect();
+    assert_eq!(
+        columns,
+        vec![
+            (
+                "idx_artist_credit_proof_album",
+                "(local_album_id, subject_kind, subject_id)"
+            ),
+            (
+                "idx_artist_credit_proof_mbid",
+                "(artist_mbid, source_local_artist_id)"
+            ),
+            (
+                "idx_artist_credit_proof_resolved",
+                "(local_artist_id, artist_mbid)"
+            ),
+            (
+                "idx_artist_credit_proof_source",
+                "(source_local_artist_id, artist_mbid)"
+            ),
+            ("idx_artist_credit_proof_track", "(local_track_id)"),
+            ("idx_artist_reconciliation_state_status", "(state)"),
+        ]
+    );
+
+    sqlx::raw_sql(
+        "PRAGMA foreign_keys = ON; \
+         INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES \
+         ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1), \
+         ('al2', 'r1', 'g2', 'U', 'u', 'a1', 'automatic', 1, 1); \
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         album_title, album_title_folded, file_format, ingest_source, imported_at, \
+         membership_source) VALUES \
+         ('t1', 'al1', 'r1', '/m/1.flac', '1.flac', 'h1', 1, 0, 's', 'T', 't', 'T', 't', \
+         'flac', 'scan', 0, 'automatic');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let mbid = "aaaaaaaa-0000-4000-8000-000000000001";
+    let hash = "0".repeat(64);
+    let proof = |kind: &str, subject: &str, album: &str, track: Option<&str>, artist_mbid: &str| {
+        let (release_track, track_revision) = match track {
+            Some(_) => ("'rt'", "1"),
+            None => ("NULL", "NULL"),
+        };
+        format!(
+            "INSERT INTO library_artist_credit_proofs (subject_kind, subject_id, local_album_id, \
+             local_track_id, credit_position, source_local_artist_id, local_artist_id, \
+             artist_mbid, canonical_name, credited_name, release_mbid, release_track_mbid, \
+             album_identity_revision, track_identity_revision, evidence_hash, created_at, \
+             updated_at) VALUES ('{kind}', '{subject}', '{album}', {}, 0, 'a1', 'a1', \
+             '{artist_mbid}', 'A', 'A', 'r', {release_track}, 1, {track_revision}, '{hash}', \
+             1000, 1000)",
+            track.map_or("NULL".to_owned(), |track| format!("'{track}'"))
+        )
+    };
+    for bad in ["AAAAAAAA-0000-4000-8000-000000000001", "not-an-id"] {
+        assert!(
+            sqlx::raw_sql(&proof("album", "al1", "al1", None, bad))
+                .execute(&pool)
+                .await
+                .is_err(),
+            "{bad} refused"
+        );
+    }
+    sqlx::raw_sql(&format!(
+        "{}; {}; {}; \
+         INSERT INTO library_artist_reconciliation_state (local_album_id, input_revision, state, \
+         reason_code, updated_at) VALUES ('al1', 'x', 'projected', 'R', 1000), \
+         ('al2', 'y', 'projected', 'R', 1000);",
+        proof("album", "al1", "al1", None, mbid),
+        proof("track", "t1", "al1", Some("t1"), mbid),
+        proof("album", "al2", "al2", None, mbid)
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(
+        sqlx::raw_sql(
+            "INSERT INTO library_artist_reconciliation_state (local_album_id, input_revision, \
+             state, reason_code, updated_at) VALUES ('al1', 'x', 'provider_conflict', 'R', 1)"
+        )
+        .execute(&pool)
+        .await
+        .is_err(),
+        "a state the code does not have is refused"
+    );
+    assert!(
+        sqlx::raw_sql("DELETE FROM local_artists WHERE id = 'a1'")
+            .execute(&pool)
+            .await
+            .is_err(),
+        "an artist with a proof stays"
+    );
+
+    let left = |pool: &SqlitePool| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (i64, i64)>(
+                "SELECT (SELECT COUNT(*) FROM library_artist_credit_proofs), \
+                 (SELECT COUNT(*) FROM library_artist_reconciliation_state)",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    sqlx::raw_sql("DELETE FROM local_tracks WHERE id = 't1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left(&pool).await, (2, 2), "the track's proof went with it");
+    sqlx::raw_sql("DELETE FROM local_albums WHERE id = 'al2'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        left(&pool).await,
+        (1, 1),
+        "the album's proof and state went with it"
+    );
+}
+
 /// Every table in the migrated schema is listed once in
 /// `server/table-owners.txt` under a known area, and the list names no
 /// table the schema lacks.

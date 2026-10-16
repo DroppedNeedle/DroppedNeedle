@@ -10,7 +10,9 @@
 //! another artist.
 //!
 //! A row is proven to be artist `x` when a person or a v2 import linked it
-//! to `x`, or when it has no link and its credits hold `x` and no other id
+//! to `x`; when the app linked it to `x` (a matched album proved it,
+//! `identify::artist_links`) and none of its credits holds another id; or
+//! when it has no link and its credits hold `x` and no other id
 //! ([`proven_rows`]). Two rows proven to be one artist are merged at the
 //! end of the scan run (`corrections::artist_convergence`).
 
@@ -25,6 +27,10 @@ use droppedneedle_kernel::db::fold_text;
 
 /// The catalog's "Various Artists" sentinel (seeded by the baseline).
 const VARIOUS_ARTISTS_ID: &str = "00000000-0000-4000-8000-000000000001";
+
+/// The catalog's two sentinel artist rows: Various Artists and Unknown
+/// Artist. Neither is ever proven to be an artist.
+pub(crate) const SENTINEL_ARTIST_IDS: [&str; 2] = [VARIOUS_ARTISTS_ID, UNKNOWN_ARTIST_ID];
 
 /// One artist credit as the catalog stores it.
 pub(super) struct Credit {
@@ -167,31 +173,45 @@ pub(super) fn upsert_artist(
 /// One live row proven to be an artist.
 pub(crate) struct Proven {
     pub id: String,
-    /// Proven by a person's or a v2 import's link, not by its files.
+    /// Proven by a link, not by its files.
     pub linked: bool,
+    /// The link is the app's own, made from a matched album's proof.
+    pub automatic: bool,
 }
 
 /// The live rows proven to be the MusicBrainz artist `mbid`, the survivor
-/// first: linked rows (oldest first), then rows proven by their files
-/// (oldest first). A link counts when a person or a v2 import made it; a
-/// row with any other link is proven by neither. Sentinels and Various
-/// Artists rows are never proven. Every test is a bounded index probe.
+/// first: rows a person or a v2 import linked, then rows the app linked
+/// whose credits hold no other id, then rows with no link proven by their
+/// files, each oldest first. Sentinels and Various Artists rows are never
+/// proven. Every test is a bounded index probe.
 pub(crate) fn proven_rows(tx: &Connection, mbid: &str) -> rusqlite::Result<Vec<Proven>> {
     let mut out: Vec<Proven> = tx
-        .prepare_cached(
-            "SELECT a.id FROM local_artist_external_identities i \
+        .prepare_cached(&format!(
+            "SELECT a.id, i.decision_source IN ('manual', 'legacy_import') AS chosen \
+             FROM local_artist_external_identities i \
              JOIN local_artists a ON a.id = i.local_artist_id \
-             WHERE lower(i.provider_artist_id) = ?1 AND i.provider = 'musicbrainz' \
-             AND i.decision_source IN ('manual', 'legacy_import') \
+             WHERE lower(i.provider_artist_id) = ?2 AND i.provider = 'musicbrainz' \
              AND a.retired_into_artist_id IS NULL AND a.kind <> 'various_artists' \
-             AND a.id NOT IN (?2, ?3) ORDER BY a.created_at, a.id",
-        )?
+             AND a.id NOT IN (?5, ?6) \
+             AND (i.decision_source IN ('manual', 'legacy_import') OR NOT {}) \
+             ORDER BY chosen DESC, a.created_at, a.id",
+            holds_other_id("a.id")
+        ))?
         .query_map(
-            params![mbid, VARIOUS_ARTISTS_ID, UNKNOWN_ARTIST_ID],
+            params![
+                mbid,
+                mbid,
+                None::<&str>,
+                None::<&str>,
+                VARIOUS_ARTISTS_ID,
+                UNKNOWN_ARTIST_ID
+            ],
             |row| {
+                let chosen: bool = row.get(1)?;
                 Ok(Proven {
                     id: row.get(0)?,
                     linked: true,
+                    automatic: !chosen,
                 })
             },
         )?
@@ -226,11 +246,11 @@ pub(crate) fn proven_rows(tx: &Connection, mbid: &str) -> rusqlite::Result<Vec<P
         }
     }
     by_files.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-    out.extend(
-        by_files
-            .into_iter()
-            .map(|(_, id)| Proven { id, linked: false }),
-    );
+    out.extend(by_files.into_iter().map(|(_, id)| Proven {
+        id,
+        linked: false,
+        automatic: false,
+    }));
     Ok(out)
 }
 
@@ -267,6 +287,12 @@ pub(super) struct Own<'a> {
     pub run_id: Option<&'a str>,
     pub track_id: Option<&'a str>,
     pub album_id: &'a str,
+}
+
+/// [`HOLDS_OTHER_ID`] for the artist row `artist` names (a column)
+/// instead of `?1`.
+fn holds_other_id(artist: &str) -> String {
+    HOLDS_OTHER_ID.replace("?1", artist)
 }
 
 /// SQL that is true when a credit of artist `?1` holds an id other than
@@ -347,9 +373,9 @@ impl Resolver<'_> {
     }
 
     /// Whether `artist` is another artist than `mbid` by what is known:
-    /// a sentinel or Various Artists row, a person's or v2's link to
-    /// another id, another id this file already put on it, or a credit
-    /// of another file holding another id.
+    /// a sentinel or Various Artists row, a link to another id (a
+    /// person's, v2's or the app's), another id this file already put on
+    /// it, or a credit of another file holding another id.
     fn says_other(&self, artist: &str, mbid: &str) -> rusqlite::Result<bool> {
         if self
             .placed
@@ -364,7 +390,6 @@ impl Resolver<'_> {
                  AND (kind = 'various_artists' OR id IN (?5, ?6))) \
                  OR EXISTS(SELECT 1 FROM local_artist_external_identities \
                  WHERE local_artist_id = ?1 AND provider = 'musicbrainz' \
-                 AND decision_source IN ('manual', 'legacy_import') \
                  AND lower(provider_artist_id) <> ?2) \
                  OR {HOLDS_OTHER_ID}"
             ))?

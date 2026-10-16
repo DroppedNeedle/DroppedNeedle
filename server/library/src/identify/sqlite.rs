@@ -16,11 +16,12 @@
 
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
 use sha2::{Digest as _, Sha256};
 
+use super::artist_links;
 use super::models::{
     AlbumIdentity, Alias, AliasKind, ArtistCredit, ArtistIdentity, AutomaticSeal,
     CandidateEvidence, CreditProof, DecisionSource, IdentifyJob, IdentifyKind, JobState,
@@ -29,6 +30,7 @@ use super::models::{
 };
 use super::queue::PRIORITY_NEW_OR_CHANGED;
 use super::stores::{Approval, RELEASE_FRESH_SECS, StoreError};
+use crate::corrections::artist_convergence::converge_ids;
 use crate::corrections::continuation::{Scope, continue_tracks};
 use crate::corrections::release_join::join_replaced;
 use crate::matching::Release;
@@ -235,6 +237,27 @@ pub(crate) fn bump_identification_stream(conn: &Connection) -> rusqlite::Result<
 /// SQLite identify store.
 pub struct SqliteIdentifyStore {
     conn: Mutex<Connection>,
+    /// Where the sweep of the app's artist links goes on from.
+    link_cursor: Mutex<String>,
+    /// When an album sweep last found nothing to do, and the database's
+    /// version then.
+    swept: Mutex<Option<Swept>>,
+}
+
+/// After an album sweep finds nothing stale, the next one waits this long
+/// while only other connections write. Plays, sessions and scans write
+/// all the time and seldom change a match; a match changed through this
+/// store wakes the sweep at once.
+const SWEEP_FLOOR: Duration = Duration::from_secs(60);
+
+/// An album sweep that found nothing stale.
+#[derive(Clone, Copy)]
+struct Swept {
+    /// `PRAGMA data_version`: moves when another connection commits.
+    data_version: i64,
+    /// This connection's own changes so far.
+    own_changes: u64,
+    at: Instant,
 }
 
 impl SqliteIdentifyStore {
@@ -245,6 +268,8 @@ impl SqliteIdentifyStore {
             droppedneedle_kernel::db::open_connection(path).map_err(|error| error.to_string())?;
         Ok(Self {
             conn: Mutex::new(conn),
+            link_cursor: Mutex::new(String::new()),
+            swept: Mutex::new(None),
         })
     }
 
@@ -1034,6 +1059,118 @@ impl SqliteIdentifyStore {
                 ],
             )
         });
+    }
+}
+
+/// Artists linked to MusicBrainz from their album's accepted match
+/// (`artist_links`).
+impl SqliteIdentifyStore {
+    /// Work out what the album's match proves about its artists and settle
+    /// their links, with no merge. Library Management runs this before it
+    /// plans an album. `false` when it failed (logged).
+    pub fn link_album_artists(&self, local_album_id: &str) -> bool {
+        self.artist_pass(local_album_id, false)
+    }
+
+    /// [`Self::link_album_artists`], then merge what the links it made
+    /// prove to be one artist. Identification runs this after each
+    /// attempt and for each album a sweep finds stale.
+    pub fn link_and_merge_album_artists(&self, local_album_id: &str) -> bool {
+        self.artist_pass(local_album_id, true)
+    }
+
+    fn artist_pass(&self, album: &str, converge: bool) -> bool {
+        let mut conn = self.lock();
+        let outcome = (|| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let now = now_ms();
+            let linked = artist_links::link_album(&tx, album, now)?;
+            if converge && !linked.is_empty() {
+                converge_ids(&tx, &linked, now as f64 / 1000.0)?;
+            }
+            tx.commit()
+        })();
+        match outcome {
+            Ok(()) => true,
+            Err(error) => {
+                let error: rusqlite::Error = error;
+                tracing::warn!(
+                    %error,
+                    album_id = album,
+                    "the album's artist links could not be worked out; a later sweep tries again"
+                );
+                false
+            }
+        }
+    }
+
+    /// One sweep: up to [`artist_links::SWEEP_BATCH`] albums whose match
+    /// or track mappings changed since their last pass, each in its own
+    /// transaction, then up to as many of the app's links, in id order
+    /// from where the last sweep stopped, each settled again.
+    pub fn sweep_artist_links(&self) {
+        let version = self.read("database version", |conn| {
+            let data: i64 = conn.query_row("PRAGMA data_version", [], |row| row.get(0))?;
+            Ok((data, conn.total_changes()))
+        });
+        let quiet = match (version, *self.swept_guard()) {
+            (Some((data, own)), Some(last)) => {
+                own == last.own_changes
+                    && (data == last.data_version || last.at.elapsed() < SWEEP_FLOOR)
+            }
+            _ => false,
+        };
+        if !quiet {
+            let stale = self
+                .read("stale albums", |conn| {
+                    artist_links::stale_albums(conn, artist_links::SWEEP_BATCH)
+                })
+                .unwrap_or_default();
+            for album in &stale {
+                self.link_and_merge_album_artists(album);
+            }
+            *self.swept_guard() =
+                version
+                    .filter(|_| stale.is_empty())
+                    .map(|(data_version, own_changes)| Swept {
+                        data_version,
+                        own_changes,
+                        at: Instant::now(),
+                    });
+        }
+        let cursor = self.cursor_guard().clone();
+        let rows = self
+            .read("linked artists", |conn| {
+                artist_links::automatic_links_after(conn, &cursor, artist_links::SWEEP_BATCH)
+            })
+            .unwrap_or_default();
+        *self.cursor_guard() = match rows.last() {
+            Some(last) if rows.len() == artist_links::SWEEP_BATCH => last.clone(),
+            _ => String::new(),
+        };
+        for artist in rows {
+            let one = std::slice::from_ref(&artist);
+            let due = self.read("artist link", |conn| {
+                Ok(!artist_links::plan(conn, one)?.is_empty())
+            });
+            if due == Some(true) {
+                self.write("settle artist link", |tx| {
+                    artist_links::settle(tx, one, now_ms())
+                });
+            }
+        }
+    }
+
+    fn swept_guard(&self) -> MutexGuard<'_, Option<Swept>> {
+        self.swept
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn cursor_guard(&self) -> MutexGuard<'_, String> {
+        self.link_cursor
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 

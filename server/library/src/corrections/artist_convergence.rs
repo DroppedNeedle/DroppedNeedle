@@ -10,10 +10,16 @@
 //! marked as distinct artists is left alone. The merge is the manual
 //! merge's, with no undo: credits, favorites, plays, links and app ids
 //! move, and the old id stays as an alias. No file is read or written.
+//!
+//! A group whose first row the app linked (from a matched album's proof)
+//! is left alone: such a link is revisable, so nothing is merged into it.
+//! The app's links among a run end's candidates are settled first, so a
+//! link whose support is gone does not lead a group.
 
 use rusqlite::{Transaction, params};
 
 use super::artists::retire_artist;
+use crate::identify::artist_links::settle;
 use crate::operations::decisions::{ArtistAction, bump_catalog, record_artist_action};
 use crate::scan::sqlite_store::artists::{Proven, proven_rows};
 
@@ -31,15 +37,62 @@ pub(crate) fn converge_artists(tx: &Transaction<'_>, now: f64) -> rusqlite::Resu
             return Ok(());
         }
     };
+    settle_automatic(tx, &ids, now)?;
+    converge_ids(tx, &ids, now)
+}
+
+/// Settle the app's links to any of `ids` before their groups are judged.
+/// A failure is rolled back and logged; the groups are judged anyway.
+fn settle_automatic(tx: &Transaction<'_>, ids: &[String], now: f64) -> rusqlite::Result<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let wanted = serde_json::to_string(ids).unwrap_or_default();
+    tx.execute("SAVEPOINT artist_links", [])?;
+    let settled = (|| {
+        let rows: Vec<String> = tx
+            .prepare_cached(
+                "SELECT local_artist_id FROM local_artist_external_identities \
+                 WHERE provider = 'musicbrainz' AND decision_source IN ('automatic', 'embedded') \
+                 AND lower(provider_artist_id) IN (SELECT value FROM json_each(?1))",
+            )?
+            .query_map(params![wanted], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        settle(tx, &rows, (now * 1000.0) as i64)
+    })();
+    match settled {
+        Ok(_) => {
+            tx.execute("RELEASE artist_links", [])?;
+        }
+        Err(error) => {
+            tx.execute("ROLLBACK TO artist_links", [])?;
+            tx.execute("RELEASE artist_links", [])?;
+            tracing::warn!(%error, "the app's artist links could not be settled; next scan tries again");
+        }
+    }
+    Ok(())
+}
+
+/// Merge the groups of live rows proven to be each of `ids`.
+pub(crate) fn converge_ids(tx: &Transaction<'_>, ids: &[String], now: f64) -> rusqlite::Result<()> {
     let mut merged = 0;
     for mbid in ids {
-        let rows = proven_rows(tx, &mbid)?;
+        let mbid = mbid.as_str();
+        let rows = proven_rows(tx, mbid)?;
         let Some((survivor, others)) = rows.split_first() else {
             continue;
         };
+        if survivor.automatic {
+            tracing::debug!(
+                artist_mbid = mbid,
+                artist_id = survivor.id,
+                "artist rows led by the app's own link; not merged"
+            );
+            continue;
+        }
         let mut retire = Vec::new();
         for row in others.iter().filter(|row| !row.linked) {
-            if every_credit_holds(tx, &row.id, &mbid)? {
+            if every_credit_holds(tx, &row.id, mbid)? {
                 retire.push(row.id.clone());
             } else {
                 tracing::debug!(
@@ -61,7 +114,7 @@ pub(crate) fn converge_artists(tx: &Transaction<'_>, now: f64) -> rusqlite::Resu
             continue;
         }
         tx.execute("SAVEPOINT artist_convergence", [])?;
-        match merge_group(tx, &survivor.id, &retire, &mbid, now) {
+        match merge_group(tx, &survivor.id, &retire, mbid, now) {
             Ok(()) => {
                 tx.execute("RELEASE artist_convergence", [])?;
                 merged += 1;
@@ -91,8 +144,8 @@ pub(crate) fn converge_artists(tx: &Transaction<'_>, now: f64) -> rusqlite::Resu
     Ok(())
 }
 
-/// The ids two or more live rows hold, by their credits or a person's or
-/// v2's link: the only ids that can have a group to merge.
+/// The ids two or more live rows hold, by their credits or a link: the
+/// only ids that can have a group to merge.
 fn candidate_ids(tx: &Transaction<'_>) -> rusqlite::Result<Vec<String>> {
     tx.prepare_cached(
         "SELECT c.mbid FROM ( \
@@ -101,8 +154,7 @@ fn candidate_ids(tx: &Transaction<'_>) -> rusqlite::Result<Vec<String>> {
          UNION SELECT artist_mbid, local_artist_id FROM local_album_artists \
           WHERE artist_mbid IS NOT NULL \
          UNION SELECT lower(provider_artist_id), local_artist_id \
-          FROM local_artist_external_identities WHERE provider = 'musicbrainz' \
-          AND decision_source IN ('manual', 'legacy_import')) c \
+          FROM local_artist_external_identities WHERE provider = 'musicbrainz') c \
          JOIN local_artists a ON a.id = c.artist AND a.retired_into_artist_id IS NULL \
          GROUP BY c.mbid HAVING COUNT(*) > 1 ORDER BY c.mbid",
     )?

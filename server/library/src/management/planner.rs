@@ -1769,6 +1769,11 @@ pub fn plan_album(
         &mut release,
         !person,
     );
+    // Link the album's artists from its match, with any names the lookup
+    // just stored, so a run that writes their ids and new names keeps
+    // them. No merge here: it would move the album's revision under the
+    // plan.
+    ctx.setup.identify_store.link_album_artists(&scope.album_id);
     extras.cover_owner = tracks.first().map(|track| track.id.clone());
     // A selection of single files is not the whole album.
     measure_replaygain(ctx, tracks, scope.track_ids.is_none(), &mut extras);
