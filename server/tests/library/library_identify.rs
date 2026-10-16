@@ -1454,6 +1454,56 @@ impl Links {
             .expect("written reads")
     }
 
+    /// An album with no match, credited as `credits`.
+    fn unmatched_album(&self, album: &str, credits: &[Seeded<'_>]) {
+        self.db
+            .execute(
+                "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+                 album_artist_name, album_artist_id, grouping_source, created_at, updated_at) \
+                 VALUES (?1, 'root-1', ?1, 'Other', 'other', ?2, ?3, 'automatic', 0, 0)",
+                params![album, credits[0].1, credits[0].0],
+            )
+            .expect("album seeds");
+        self.credits("local_album_artists", "local_album_id", album, credits);
+    }
+
+    /// One favorite and one play of the artist.
+    fn listen(&self, artist: &str) {
+        self.db
+            .execute_batch(&format!(
+                "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+                 VALUES ('admin', 'artist', '{artist}', 1); \
+                 INSERT INTO library_play_history (id, user_id, local_artist_id, track_name, \
+                 artist_name, played_at) VALUES ('play-{artist}', 'admin', '{artist}', 'Song', \
+                 'Artist', '2026-01-01T00:00:00Z');"
+            ))
+            .expect("listening seeds");
+    }
+
+    fn count(&self, sql: &str) -> i64 {
+        self.db
+            .query_row(sql, [], |row| row.get(0))
+            .unwrap_or_else(|error| panic!("{sql}: {error}"))
+    }
+
+    fn retired_into(&self, artist: &str) -> Option<String> {
+        self.db
+            .query_row(
+                "SELECT retired_into_artist_id FROM local_artists WHERE id = ?1",
+                params![artist],
+                |row| row.get(0),
+            )
+            .expect("artist reads")
+    }
+
+    /// The audit rows of automatic merges.
+    fn merges(&self) -> i64 {
+        self.count(
+            "SELECT COUNT(*) FROM library_catalog_actions \
+             WHERE reason_code = 'AUTOMATIC_PROVIDER_PROVEN_ARTIST_CONVERGENCE'",
+        )
+    }
+
     fn proof(
         kind: &str,
         subject: &str,
@@ -1707,6 +1757,109 @@ fn files_that_turn_to_another_artist_lose_the_link() {
     links.store.sweep_artist_links();
     assert_eq!(links.link_of("ar-a"), None);
     assert_eq!(links.state("al").as_deref(), Some("projected"));
+}
+
+/// A row whose every credit a matched album proves to be x is merged,
+/// right after the pass, into the row a person linked to x: its credits,
+/// favorite and play move, its id stays as an alias, and the duplicate
+/// artists list shows the merge as resolved. A second pass merges nothing.
+#[test]
+fn a_row_its_matched_album_proves_merges_into_the_linked_row() {
+    use droppedneedle_library::reconcile::groups::build;
+    use droppedneedle_library::reconcile::models::GroupState;
+    use droppedneedle_library::reconcile::store::inputs;
+
+    let links = Links::new();
+    links.artist("ar-s", "Alpha", 1.0);
+    links.artist("ar-r", "ALPHA", 2.0);
+    links.link("ar-s", LINK_X, "manual");
+    let alpha: &[Seeded<'_>] = &[("ar-r", "Alpha", None)];
+    links.album("al", alpha, &[("t1", alpha)], "automatic");
+    links.release(&[(LINK_X, "Alpha")], 1, &[(LINK_X, "Alpha")]);
+    links.listen("ar-r");
+
+    assert!(links.store.link_and_merge_album_artists("al"));
+    assert_eq!(links.retired_into("ar-r").as_deref(), Some("ar-s"));
+    assert_eq!(
+        links.count(
+            "SELECT COUNT(*) FROM local_artist_aliases WHERE alias = 'ar-r' \
+             AND local_artist_id = 'ar-s' AND kind = 'merged_artist'"
+        ),
+        1
+    );
+    assert_eq!(
+        links.count(
+            "SELECT (SELECT COUNT(*) FROM local_album_artists WHERE local_artist_id = 'ar-s') \
+             + (SELECT COUNT(*) FROM local_track_artists WHERE local_artist_id = 'ar-s')"
+        ),
+        2
+    );
+    assert_eq!(
+        links.count(
+            "SELECT (SELECT COUNT(*) FROM library_user_favorites WHERE item_id = 'ar-s') \
+             + (SELECT COUNT(*) FROM library_play_history WHERE local_artist_id = 'ar-s')"
+        ),
+        2
+    );
+    assert_eq!(links.merges(), 1);
+    let resolved: Vec<_> = build(&inputs(&links.db).expect("groups read"))
+        .into_iter()
+        .filter(|group| group.state == GroupState::ResolvedAutomatically)
+        .collect();
+    assert_eq!(resolved.len(), 1);
+    let mut members: Vec<&str> = resolved[0].members.iter().map(|m| m.id.as_str()).collect();
+    members.sort_unstable();
+    assert_eq!(members, vec!["ar-r", "ar-s"]);
+
+    assert!(links.store.link_and_merge_album_artists("al"));
+    links.store.sweep_artist_links();
+    assert_eq!(links.merges(), 1, "nothing new to merge");
+}
+
+/// No merge while the row has a credit no proof covers, while the two
+/// rows are marked as different people, or while the row the app linked
+/// has a credit of its own no proof covers.
+#[test]
+fn a_row_not_proven_on_every_credit_is_not_merged() {
+    let case = |survivor_link: &str| {
+        let links = Links::new();
+        links.artist("ar-s", "Alpha", 1.0);
+        links.artist("ar-r", "ALPHA", 2.0);
+        links.link("ar-s", LINK_X, survivor_link);
+        let alpha: &[Seeded<'_>] = &[("ar-r", "Alpha", None)];
+        links.album("al", alpha, &[("t1", alpha)], "automatic");
+        links.release(&[(LINK_X, "Alpha")], 1, &[(LINK_X, "Alpha")]);
+        links
+    };
+    let unmerged = |links: &Links| {
+        assert!(links.store.link_and_merge_album_artists("al"));
+        links.store.sweep_artist_links();
+        assert_eq!(links.retired_into("ar-r"), None);
+        assert_eq!(links.merges(), 0);
+    };
+
+    let links = case("manual");
+    links.unmatched_album("an", &[("ar-r", "Alpha", None)]);
+    unmerged(&links);
+
+    let links = case("manual");
+    links
+        .db
+        .execute(
+            "INSERT INTO library_artist_reconciliation_dismissals (left_artist_id, \
+             right_artist_id, left_artist_revision, right_artist_revision, \
+             dismissed_by_user_id, created_at, updated_at) \
+             VALUES ('ar-r', 'ar-s', 1, 1, 'admin', 1, 1)",
+            [],
+        )
+        .expect("dismissal seeds");
+    unmerged(&links);
+
+    let links = case("automatic");
+    links.album("as", &[("ar-s", "Alpha", None)], &[], "automatic");
+    links.unmatched_album("an", &[("ar-s", "Alpha", None)]);
+    unmerged(&links);
+    assert_eq!(links.link_of("ar-s"), automatic(LINK_X));
 }
 
 /// After a sweep finds no album to work through, writes by other

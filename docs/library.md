@@ -51,6 +51,8 @@ After an upgrade from v2, a one-time cleanup tidies album rows the old version l
 
 Duplicate artists can be merged from the artist identity page (admins). The preview counts what moves to the artist you keep: album and track credits, favorites, play history, playlist entries and app IDs. The merged artist's old links lead to the one you keep. As in earlier versions, merging artists can't be undone.
 
+DroppedNeedle also merges two records by itself when MusicBrainz proves they are one artist: every credit of the record that goes is on an album matched to a release crediting that artist, or in a file carrying that artist's ID. Records marked as different people are never merged. These merges show as resolved in the duplicate artists list and can't be undone either.
+
 ## Removing albums and tracks
 
 Removing an album or a track never deletes your music. The files move into a recycle bin: the recycle bin path in the download settings, or a `.recycle` folder at the top of the library folder the files came from. Each file gets its own dated folder inside it, so you can move it back by hand. Both kinds of bin are emptied of entries older than the recycle retention (30 days by default). Removing an album also stops its failed downloads from retrying, drops its held "couldn't verify" files and its blocklist, and stops its wanted watch unless you untick that in the dialog, in which case it starts looking for a replacement. If any file can't be moved, nothing is removed and the page says why. Rescan on an album page rereads just that album's folders. If an album was excluded from file organization, "Re-enable" on its page lets management touch it again.

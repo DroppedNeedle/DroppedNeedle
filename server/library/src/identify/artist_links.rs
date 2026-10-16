@@ -585,7 +585,8 @@ fn store_state(
 
 /// Work out what the album's match proves about its artists, store it,
 /// and settle the links of every row credited on it and of every row that
-/// lost a proof. Returns the ids newly linked. One transaction, no file
+/// lost a proof. Returns the ids the album proves and the ids newly
+/// linked: the groups worth judging for a merge. One transaction, no file
 /// read, nothing asked of any outside service.
 pub fn link_album(tx: &Transaction<'_>, album: &str, now_ms: i64) -> rusqlite::Result<Vec<String>> {
     let live: Option<bool> = tx
@@ -642,7 +643,9 @@ pub fn link_album(tx: &Transaction<'_>, album: &str, now_ms: i64) -> rusqlite::R
         .query_map(params![album], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     rows.extend(credited);
-    settle(tx, &rows.into_iter().collect::<Vec<_>>(), now_ms)
+    let mut ids: BTreeSet<String> = proofs.into_iter().map(|proof| proof.mbid).collect();
+    ids.extend(settle(tx, &rows.into_iter().collect::<Vec<_>>(), now_ms)?);
+    Ok(ids.into_iter().collect())
 }
 
 /// A change to one row's link.

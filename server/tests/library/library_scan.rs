@@ -5478,6 +5478,71 @@ impl ArtistRig {
             "SELECT COUNT(*) FROM library_catalog_actions WHERE reason_code = '{CONVERGED}'"
         ))
     }
+
+    /// Match the album of `relative` to a release crediting `name` as
+    /// `mbid` on the album and on every track, with each indexed track
+    /// mapped, and work out what the match proves, as identification does.
+    fn match_album(&self, relative: &str, mbid: &str, name: &str) {
+        use droppedneedle_library::identify::sqlite::SqliteIdentifyStore;
+        use droppedneedle_library::matching::{CreditedArtist, Release, ReleaseTrack};
+
+        const RELEASE: &str = "bbbbbbbb-0000-4000-8000-0000000000e1";
+        const GROUP: &str = "bbbbbbbb-0000-4000-8000-0000000000e2";
+        let album = self
+            .text(&format!(
+                "SELECT local_album_id FROM local_tracks WHERE relative_path = '{relative}'"
+            ))
+            .expect("album");
+        self.run(&format!(
+            "INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, release_mbid, decision_source, selected_at) \
+             VALUES ('{album}', 'musicbrainz', '{GROUP}', '{RELEASE}', 'automatic', 1); \
+             INSERT INTO local_track_external_identities (local_track_id, provider, \
+             recording_mbid, release_mbid, release_track_mbid, decision_source, selected_at) \
+             SELECT id, 'musicbrainz', 'rec-' || number, '{RELEASE}', 'rt-' || number, \
+             'automatic', 1 FROM (SELECT id, ROW_NUMBER() OVER (ORDER BY id) AS number \
+             FROM local_tracks WHERE local_album_id = '{album}' AND availability = 'indexed');"
+        ));
+        let credit = vec![CreditedArtist {
+            id: mbid.to_owned(),
+            name: name.to_owned(),
+            sort_name: None,
+            join: String::new(),
+        }];
+        let numbers = self.count(&format!(
+            "SELECT COUNT(*) FROM local_tracks WHERE local_album_id = '{album}' \
+             AND availability = 'indexed'"
+        ));
+        let store = SqliteIdentifyStore::open(&self.scratch.join("app.db")).expect("store opens");
+        store.save_release(&Release {
+            id: RELEASE.to_owned(),
+            release_group_id: GROUP.to_owned(),
+            title: "Album".to_owned(),
+            artists: credit.clone(),
+            tracks: (1..=numbers as u32)
+                .map(|number| ReleaseTrack {
+                    id: format!("rt-{number}"),
+                    recording_id: format!("rec-{number}"),
+                    title: format!("Song {number}"),
+                    artists: credit.clone(),
+                    disc: 1,
+                    position: number,
+                    absolute_position: number,
+                    ..ReleaseTrack::default()
+                })
+                .collect(),
+            ..Release::default()
+        });
+        assert!(store.link_album_artists(&album));
+    }
+
+    /// The MusicBrainz link of the artist and who made it.
+    fn link_source(&self, artist: &str) -> Option<String> {
+        self.text(&format!(
+            "SELECT provider_artist_id || ' ' || decision_source \
+             FROM local_artist_external_identities WHERE local_artist_id = '{artist}'"
+        ))
+    }
 }
 
 /// An artist row with no link, proven by its files to be MusicBrainz
@@ -6001,12 +6066,12 @@ async fn an_artist_renamed_and_moved_by_a_tagger_takes_the_new_name() {
     assert_eq!(rig.name(&artist), "Bar");
 }
 
-/// A link the app made by itself leads no merge and is never merged: a
-/// row whose every credit holds the linked id stays live beside the
-/// linked row at the run end, and the link stays while a file of the
-/// linked row carries its id.
+/// A row the app linked from its matched album takes in, at the run end,
+/// a row whose every credit holds the same id, but only once every credit
+/// of its own is proven: a file of it on an unmatched album holds the
+/// merge back until that file carries the id too.
 #[tokio::test]
-async fn an_automatic_link_neither_proves_nor_merges() {
+async fn an_automatic_link_merges_only_when_fully_proven() {
     let rig = ArtistRig::new("artist-automatic-link");
     rig.put("A/01.flac", "Album A", plain(&["Oh"]), plain(&["Oh"]));
     let en = listed(&["En"], &[MBID_X]);
@@ -6014,21 +6079,81 @@ async fn an_automatic_link_neither_proves_nor_merges() {
     rig.scan().await;
     let linked = rig.track_artist("A/01.flac", 0);
     let proven = rig.track_artist("B/01.flac", 0);
-    rig.link_by(&linked, MBID_X, "automatic");
-    let pe = listed(&["Pe"], &[MBID_X]);
-    rig.put("P/01.flac", "Album P", pe, pe);
+    rig.match_album("A/01.flac", MBID_X, "Oh");
+    assert_eq!(
+        rig.link_source(&linked),
+        Some(format!("{MBID_X} automatic"))
+    );
+
+    rig.put("C/01.flac", "Album C", plain(&["Oh"]), plain(&["Oh"]));
     rig.scan().await;
-    assert_eq!(rig.retired_into(&linked), None);
+    assert_eq!(rig.track_artist("C/01.flac", 0), linked);
     assert_eq!(rig.retired_into(&proven), None);
     assert_eq!(rig.merges(), 0);
+
+    let oh = listed(&["Oh"], &[MBID_X]);
+    rig.put("C/01.flac", "Album C", oh, oh);
+    rig.scan().await;
+    assert_eq!(rig.track_artist("C/01.flac", 0), linked);
+    assert_eq!(rig.retired_into(&proven), Some(linked.clone()));
+    assert_eq!(rig.track_artist("B/01.flac", 0), linked);
+    assert_eq!(rig.merges(), 1);
     assert_eq!(
-        rig.count(&format!(
-            "SELECT COUNT(*) FROM local_artist_external_identities \
-             WHERE local_artist_id = '{linked}' AND provider_artist_id = '{MBID_X}' \
-             AND decision_source = 'automatic'"
-        )),
-        1
+        rig.link_source(&linked),
+        Some(format!("{MBID_X} automatic"))
     );
+}
+
+/// A row proven only by its matched album and a row proven only by its
+/// files, neither linked, are merged at one run end, the younger into the
+/// older.
+#[tokio::test]
+async fn rows_proven_by_an_album_and_by_files_merge_at_the_run_end() {
+    let rig = ArtistRig::new("artist-proof-merge");
+    rig.put("A/01.flac", "Album A", plain(&["Pe"]), plain(&["Pe"]));
+    rig.scan().await;
+    let older = rig.track_artist("A/01.flac", 0);
+    rig.match_album("A/01.flac", MBID_X, "Pe");
+    // As when another row held the id while the album was matched.
+    rig.run(&format!(
+        "DELETE FROM local_artist_external_identities WHERE local_artist_id = '{older}'"
+    ));
+    let en = listed(&["En"], &[MBID_X]);
+    rig.put("B/01.flac", "Album B", en, en);
+    rig.scan().await;
+    let younger = rig
+        .text("SELECT id FROM local_artists WHERE display_name = 'En'")
+        .expect("the files' row");
+    assert_ne!(younger, older);
+    assert_eq!(rig.retired_into(&younger), Some(older.clone()));
+    assert_eq!(rig.retired_into(&older), None);
+    assert_eq!(rig.track_artist("B/01.flac", 0), older);
+    assert_eq!(rig.merges(), 1);
+}
+
+/// The same, with a file of the older row on an unmatched album: that row
+/// is not proven on every credit, so it takes in no other row.
+#[tokio::test]
+async fn a_row_its_album_proves_only_in_part_takes_in_no_other_row() {
+    let rig = ArtistRig::new("artist-proof-partial");
+    rig.put("A/01.flac", "Album A", plain(&["Pe"]), plain(&["Pe"]));
+    rig.put("U/01.flac", "Album U", plain(&["Pe"]), plain(&["Pe"]));
+    rig.scan().await;
+    let older = rig.track_artist("A/01.flac", 0);
+    assert_eq!(rig.track_artist("U/01.flac", 0), older);
+    rig.match_album("A/01.flac", MBID_X, "Pe");
+    rig.run(&format!(
+        "DELETE FROM local_artist_external_identities WHERE local_artist_id = '{older}'"
+    ));
+    let en = listed(&["En"], &[MBID_X]);
+    rig.put("B/01.flac", "Album B", en, en);
+    rig.scan().await;
+    let younger = rig
+        .text("SELECT id FROM local_artists WHERE display_name = 'En'")
+        .expect("the files' row");
+    assert_eq!(rig.retired_into(&younger), None);
+    assert_eq!(rig.retired_into(&older), None);
+    assert_eq!(rig.merges(), 0);
 }
 
 /// A file carrying the id the app linked a row to lands on that row
