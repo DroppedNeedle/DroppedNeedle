@@ -1,0 +1,16 @@
+{
+  "server": "jellyfin",
+  "image": "jellyfin/jellyfin:10.10.6",
+  "image_id": "sha256:96b09723b22fdde74283274bdc1f63b9b76768afd6045dd80d4a4559fc4bb7f3",
+  "reported_version": "10.10.6",
+  "recorded": "2026-10-16",
+  "recorder": "server/scripts/compat-reference.mjs",
+  "library": "../library.json",
+  "library_sha256": "f539ea2975b53338e3246d1b3a9db0a943fb89fcdac8f578af5c754c459eb567",
+  "extra_files": [
+    {
+      "fixture": "lyrics_airbag.lrc",
+      "path": "Radiohead/OK Computer/01 Airbag.lrc"
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "request": "POST /Items/00000000000000000000000000000008/PlaybackInfo?userId=00000000000000000000000000000001",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "MediaSources": [
+      {
+        "Protocol": "File",
+        "Id": "00000000000000000000000000000008",
+        "Path": "/media/music/Radiohead/OK Computer/02 Paranoid Android.flac",
+        "Type": "Default",
+        "Container": "flac",
+        "Size": 1463,
+        "Name": "02 Paranoid Android",
+        "IsRemote": false,
+        "ETag": "00000000000000000000000000000021",
+        "RunTimeTicks": 3000000,
+        "ReadAtNativeFramerate": false,
+        "IgnoreDts": false,
+        "IgnoreIndex": false,
+        "GenPtsInput": false,
+        "SupportsTranscoding": false,
+        "SupportsDirectStream": false,
+        "SupportsDirectPlay": false,
+        "IsInfiniteStream": false,
+        "UseMostCompatibleTranscodingProfile": false,
+        "RequiresOpening": false,
+        "RequiresClosing": false,
+        "RequiresLooping": false,
+        "SupportsProbing": true,
+        "MediaStreams": [
+          {
+            "Codec": "flac",
+            "TimeBase": "1/44100",
+            "VideoRange": "Unknown",
+            "VideoRangeType": "Unknown",
+            "AudioSpatialFormat": "None",
+            "LocalizedDefault": "Default",
+            "LocalizedExternal": "External",
+            "DisplayTitle": "FLAC - Stereo",
+            "IsInterlaced": false,
+            "IsAVC": false,
+            "ChannelLayout": "stereo",
+            "BitRate": 39013,
+            "BitDepth": 16,
+            "Channels": 2,
+            "SampleRate": 44100,
+            "IsDefault": false,
+            "IsForced": false,
+            "IsHearingImpaired": false,
+            "Type": "Audio",
+            "Index": 0,
+            "IsExternal": false,
+            "IsTextSubtitleStream": false,
+            "SupportsExternalStream": false,
+            "Level": 0
+          }
+        ],
+        "MediaAttachments": [],
+        "Formats": [],
+        "Bitrate": 39013,
+        "RequiredHttpHeaders": {},
+        "TranscodingSubProtocol": "http",
+        "HasSegments": false
+      }
+    ],
+    "PlaySessionId": "00000000000000000000000000000027"
+  }
+}

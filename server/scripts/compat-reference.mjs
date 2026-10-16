@@ -4,9 +4,9 @@
 // tracks. The captures live in server/tests/reference/compat; the README
 // there says how to run this.
 //
-//   plant <reference dir> <tmp dir>      copy the fixture tracks into <tmp dir>/music
+//   plant <reference dir> <tmp dir> [--set lyrics]   copy the fixture tracks into <tmp dir>/music
 //   navidrome <reference dir> --image-id <id> [--port 14533] [--set arpeggi|ratings]
-//   jellyfin <reference dir> --image-id <id> [--port 18096]
+//   jellyfin <reference dir> --image-id <id> [--port 18096] [--set lyrics]
 //   check <reference dir>                verify the checksums and the scrubbing
 //   clean <tmp dir>                      remove the planted tracks
 //
@@ -26,7 +26,11 @@ const SERVERS = {
 	jellyfin: { image: 'jellyfin/jellyfin:10.10.6', version: '10.10.6', port: 18096 }
 };
 // Request sets recorded on their own, each into `<server>-<version>-<set>`.
-const SETS = { navidrome: ['arpeggi', 'ratings'] };
+const SETS = { navidrome: ['arpeggi', 'ratings'], jellyfin: ['lyrics'] };
+// Files a set plants beside the tracks, from the fixtures folder.
+const EXTRA_FILES = {
+	lyrics: [{ fixture: 'lyrics_airbag.lrc', path: 'Radiohead/OK Computer/01 Airbag.lrc' }]
+};
 const USER = 'reference';
 const CLIENT = 'dn-ref';
 const UNKNOWN_HEX_ID = 'ffffffffffffffffffffffffffffffff';
@@ -85,17 +89,25 @@ function tmpDir(dir) {
 	return resolved;
 }
 
-function plant(refDir, dir) {
+function extraFiles(set) {
+	if (set !== undefined && !Object.values(SETS).flat().includes(set)) stop(`unknown --set ${set}`);
+	return EXTRA_FILES[set] ?? [];
+}
+
+function plant(refDir, dir, args) {
 	refuseInCi();
 	const tmp = tmpDir(dir);
 	const library = loadLibrary(refDir);
+	const extras = extraFiles(args.set);
 	if (fs.existsSync(tmp)) stop(`${tmp} exists: run clean first`);
-	for (const track of library.tracks) {
-		const target = path.join(tmp, 'music', track.path);
+	for (const file of [...library.tracks, ...extras]) {
+		const target = path.join(tmp, 'music', file.path);
 		fs.mkdirSync(path.dirname(target), { recursive: true });
-		fs.copyFileSync(path.join(FIXTURES, track.fixture), target, fs.constants.COPYFILE_EXCL);
+		fs.copyFileSync(path.join(FIXTURES, file.fixture), target, fs.constants.COPYFILE_EXCL);
 	}
-	console.log(`planted ${library.tracks.length} tracks under ${path.join(tmp, 'music')}`);
+	console.log(
+		`planted ${library.tracks.length} tracks and ${extras.length} other files under ${path.join(tmp, 'music')}`
+	);
 }
 
 function clean(dir) {
@@ -423,7 +435,8 @@ function prepare(server, refDir, args) {
 		recorded: new Date().toISOString().slice(0, 10),
 		recorder: SCRIPT,
 		library: '../library.json',
-		library_sha256: library.sha256
+		library_sha256: library.sha256,
+		...(extraFiles(set).length ? { extra_files: extraFiles(set) } : {})
 	});
 	return { pinned, library, folders, set, capture, recorder: new Recorder(server, port) };
 }
@@ -780,6 +793,11 @@ async function navidrome(refDir, args) {
 //   and one MusicBrainz artist lookup failed for that reason, so nothing
 //   was fetched.
 // - All six tracks are accepted, in five albums.
+// - With --set lyrics, the .lrc planted beside Airbag was picked up by the
+//   first scan with the library options below as they are: no option was
+//   added, and LrcLib stays disabled. Airbag then has HasLyrics true and a
+//   second MediaStreams entry of Type Lyric, whose Path is the .lrc. A
+//   track without lyrics answers /Audio/{id}/Lyrics with 404.
 function jellyfinAuth(row) {
 	const identity = `MediaBrowser Client="${CLIENT}", Device="${CLIENT}", DeviceId="${CLIENT}-device", Version="1.0"`;
 	const auth = row.auth ?? 'default';
@@ -970,8 +988,31 @@ function jellyfinWrites() {
 	];
 }
 
+// Lyrics, with lyrics_airbag.lrc planted beside Airbag: the two tracks
+// alone, the album's tracks, PlaybackInfo as Finamp sends it, then the
+// lyrics address for both, an unknown id and no token.
+function jellyfinLyrics() {
+	const user = ['userId', '{user}'];
+	const playbackInfo = (name, track) =>
+		jf(name, `/Items/${track}/PlaybackInfo`, [user], {
+			method: 'POST',
+			body: { UserId: '{user}', DeviceProfile: {} }
+		});
+	return [
+		jf('item.airbag', '/Items/{track.airbag}', [user]),
+		jf('item.paranoid-android', '/Items/{track.paranoid_android}', [user]),
+		jf('items.parent-album', '/Items', [user, ['ParentId', '{album.ok_computer}']]),
+		playbackInfo('playback-info.airbag', '{track.airbag}'),
+		playbackInfo('playback-info.paranoid-android', '{track.paranoid_android}'),
+		jf('lyrics.airbag', '/Audio/{track.airbag}/Lyrics'),
+		jf('lyrics.paranoid-android', '/Audio/{track.paranoid_android}/Lyrics'),
+		jf('error.lyrics-unknown', `/Audio/${UNKNOWN_HEX_ID}/Lyrics`),
+		jf('error.lyrics-no-token', '/Audio/{track.airbag}/Lyrics', [], { auth: 'none' })
+	];
+}
+
 async function jellyfin(refDir, args) {
-	const { pinned, library, folders, capture, recorder } = prepare('jellyfin', refDir, args);
+	const { pinned, library, folders, set, capture, recorder } = prepare('jellyfin', refDir, args);
 	const { scrub, refs } = recorder;
 	const publicInfo = jf('system.info.public', '/System/Info/Public', [], { auth: 'none' });
 
@@ -1086,9 +1127,13 @@ async function jellyfin(refDir, args) {
 		items.filter((item) => item.type === 'Audio')
 	);
 
-	await recorder.recordAll(jellyfinReads());
-	recorder.into(folders[1]);
-	await recorder.recordAll(jellyfinWrites());
+	if (set === 'lyrics') {
+		await recorder.recordAll(jellyfinLyrics());
+	} else {
+		await recorder.recordAll(jellyfinReads());
+		recorder.into(folders[1]);
+		await recorder.recordAll(jellyfinWrites());
+	}
 	recorder.write(capture(info.Version));
 }
 
@@ -1206,7 +1251,7 @@ async function main() {
 	const need = (count) => {
 		if (positional.length !== count) stop('usage: see the top of this script');
 	};
-	if (command === 'plant') return (need(2), plant(positional[0], positional[1]));
+	if (command === 'plant') return (need(2), plant(positional[0], positional[1], named));
 	if (command === 'clean') return (need(1), clean(positional[0]));
 	if (command === 'check') return (need(1), check(positional[0]));
 	if (command === 'navidrome') return (need(1), navidrome(positional[0], named));

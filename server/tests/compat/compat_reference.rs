@@ -902,7 +902,7 @@ fn compat_reference_recordings_are_unchanged_and_hold_nothing_private() {
             }
         }
     }
-    assert_eq!(folders, 6, "the recorded folders");
+    assert_eq!(folders, 7, "the recorded folders");
     assert!(
         problems.is_empty(),
         "the reference recordings are read-only:\n{}",

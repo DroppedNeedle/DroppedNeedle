@@ -1,0 +1,29 @@
+{
+  "request": "GET /Audio/00000000000000000000000000000007/Lyrics",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "transfer-encoding": "chunked"
+  },
+  "body": {
+    "Metadata": {},
+    "Lyrics": [
+      {
+        "Text": "Paper lanterns over the quiet field",
+        "Start": 0
+      },
+      {
+        "Text": "Velvet engines hum a borrowed tune",
+        "Start": 4000000
+      },
+      {
+        "Text": "",
+        "Start": 8000000
+      },
+      {
+        "Text": "Every window counts the passing moon",
+        "Start": 12000000
+      }
+    ]
+  }
+}

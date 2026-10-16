@@ -1,0 +1,144 @@
+{
+  "requests": [
+    {
+      "name": "system.info.public",
+      "file": "system.info.public.json",
+      "method": "GET",
+      "path": "/System/Info/Public",
+      "query": [],
+      "auth": "none",
+      "answer": "json"
+    },
+    {
+      "name": "login",
+      "file": "login.json",
+      "method": "POST",
+      "path": "/Users/AuthenticateByName",
+      "query": [],
+      "body": {
+        "Username": "{user_name}",
+        "Pw": "{password}"
+      },
+      "auth": "client",
+      "answer": "json"
+    },
+    {
+      "name": "item.airbag",
+      "file": "item.airbag.json",
+      "method": "GET",
+      "path": "/Items/{track.airbag}",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "item.paranoid-android",
+      "file": "item.paranoid-android.json",
+      "method": "GET",
+      "path": "/Items/{track.paranoid_android}",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "items.parent-album",
+      "file": "items.parent-album.json",
+      "method": "GET",
+      "path": "/Items",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ],
+        [
+          "ParentId",
+          "{album.ok_computer}"
+        ]
+      ],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "playback-info.airbag",
+      "file": "playback-info.airbag.json",
+      "method": "POST",
+      "path": "/Items/{track.airbag}/PlaybackInfo",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "body": {
+        "UserId": "{user}",
+        "DeviceProfile": {}
+      },
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "playback-info.paranoid-android",
+      "file": "playback-info.paranoid-android.json",
+      "method": "POST",
+      "path": "/Items/{track.paranoid_android}/PlaybackInfo",
+      "query": [
+        [
+          "userId",
+          "{user}"
+        ]
+      ],
+      "body": {
+        "UserId": "{user}",
+        "DeviceProfile": {}
+      },
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "lyrics.airbag",
+      "file": "lyrics.airbag.json",
+      "method": "GET",
+      "path": "/Audio/{track.airbag}/Lyrics",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "lyrics.paranoid-android",
+      "file": "lyrics.paranoid-android.json",
+      "method": "GET",
+      "path": "/Audio/{track.paranoid_android}/Lyrics",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "error.lyrics-unknown",
+      "file": "error.lyrics-unknown.json",
+      "method": "GET",
+      "path": "/Audio/ffffffffffffffffffffffffffffffff/Lyrics",
+      "query": [],
+      "auth": "default",
+      "answer": "json"
+    },
+    {
+      "name": "error.lyrics-no-token",
+      "file": "error.lyrics-no-token.json",
+      "method": "GET",
+      "path": "/Audio/{track.airbag}/Lyrics",
+      "query": [],
+      "auth": "none",
+      "answer": "empty"
+    }
+  ]
+}

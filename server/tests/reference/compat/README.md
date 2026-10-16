@@ -19,6 +19,7 @@ run, and no file is ever edited by hand.
 | `navidrome-0.62.0-ratings/` | Navidrome 0.62.0 again, fresh, after one rating each on a track, an album and an artist |
 | `jellyfin-10.10.6/` | Jellyfin 10.10.6, requests that only read |
 | `jellyfin-10.10.6-writes/` | The same server after one favourite, one playlist and one play report |
+| `jellyfin-10.10.6-lyrics/` | Jellyfin 10.10.6 again, fresh, with a `.lrc` file beside Airbag: the two OK Computer tracks, their album, PlaybackInfo and the lyrics address |
 
 Each folder has:
 
@@ -42,6 +43,9 @@ A folder named for a client, such as `-arpeggi`, is a run of its own on a
 fresh server. So is `-ratings`: its first three requests rate a track, an
 album and an artist, the rest read them, and its last two clear the
 track's rating and read the track again.
+`-lyrics` is a fresh server whose library also holds
+`fixtures/library/lyrics_airbag.lrc` as `Radiohead/OK Computer/01 Airbag.lrc`;
+its `capture.json` names that file under `extra_files`.
 
 ## What was removed
 
@@ -80,7 +84,8 @@ refuses to run in CI. The steps, one server at a time:
 
 1. Pin the new image tag and version at the top of the script.
 2. `plant <this folder> <checkout>/dn-ref-tmp` copies the six tracks to
-   `dn-ref-tmp/music`.
+   `dn-ref-tmp/music`. With `--set lyrics` it also copies the set's `.lrc`
+   file.
 3. Start the server yourself with that folder as its only mount,
    read-only, on a loopback port, with name lookups blocked so it cannot
    fetch artwork or metadata:
@@ -97,10 +102,12 @@ refuses to run in CI. The steps, one server at a time:
    scrubbing checks.
 5. Stop the container, then `clean <checkout>/dn-ref-tmp`.
 
-A request set of its own (`arpeggi`, `ratings`) is recorded the same way
-on a fresh container, with
-`navidrome <this folder> --image-id <id> --set <set>`. It writes only
-`navidrome-<version>-<set>/` and refuses if that folder exists.
+A request set of its own (`arpeggi`, `ratings` for Navidrome, `lyrics` for
+Jellyfin) is recorded the same way on a fresh container, with
+`navidrome <this folder> --image-id <id> --set <set>` or
+`jellyfin <this folder> --image-id <id> --set <set>`. It writes only
+`<server>-<version>-<set>/` and refuses if that folder exists. The
+`lyrics` set needs the tracks planted with `--set lyrics` too.
 
 The notes beside the setup code in the script say what was confirmed
 against each recorded version. Confirm them again for a new one.
